@@ -7,7 +7,15 @@ If it conflicts with older goal documents, `ACTIVE_GOAL.toml` and this document 
 
 本文件定义高性能本地检索、GUI、私有 benchmark 和 Codex 闭环验证阶段的无人值守交付合同。运行中不再依赖中途人类确认；所有权限、边界、证据和停止条件必须在启动前写入机器合同。
 
-当前 PR 的角色是 `Autonomous Delivery Contract Foundation`。它修复目标、状态、模板和 CI guard 的合同基础，不实现 runner、scheduler、Tauri GUI、daemon 优化、benchmark harness、Windows SSH 自动化或私有 benchmark 执行。后续实现 PR 必须从本文件和 `ACTIVE_GOAL.toml` 派生新的 linked plan。
+P1 的公开起点是 `Synthetic Smoke Baseline Contract`：它只实现
+synthetic/public fixture 上的 benchmark harness、redacted report、artifact manifest
+和 fail-closed public contract checks。当前 active slice 在 synthetic smoke
+baseline 之后承接 #53 query-set / private-query baseline groundwork：允许完善
+静态 agent replay query-set freeze、redacted preflight artifact 和 resident batch
+benchmark harness，但仍不执行或声明私有 D10K calibration，不实现 scheduler、
+Tauri GUI、daemon 优化、Windows SSH 自动化，也不打开 profile optimization issue。
+后续真实 D10K private calibration、resident daemon benchmark、热查询路径优化和
+GUI/manual 实现必须从本文件和 `ACTIVE_GOAL.toml` 派生新的 linked plan。
 
 ## 2. Policy Truth
 
@@ -153,7 +161,7 @@ automation_scheduler
 
 ## 10. 4000 字符 Goal Prompt 协议
 
-Codex `/goal` 注入上限按 4000 chars 处理。Goal Prompt 是每次 wake-up 的 guardrail，不是状态存储。Prompt 必须由确定性 compiler 生成，目标路径是 `scripts/loop/compile-goal-prompt.py`；当前 PR 只锁定协议，不实现该 compiler。
+Codex `/goal` 注入上限按 4000 chars 处理。Goal Prompt 是每次 wake-up 的 guardrail，不是状态存储。Prompt 必须由确定性 compiler 生成，目标路径是 `scripts/loop/compile-goal-prompt.py`；当前 active slice 只依赖该协议，不实现该 compiler。
 
 Prompt 固定八段：
 

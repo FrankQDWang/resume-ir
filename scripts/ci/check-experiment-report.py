@@ -8,6 +8,7 @@ import json
 import pathlib
 import sys
 import tomllib
+from collections.abc import Mapping
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -41,54 +42,85 @@ def is_experiment_report(value: object) -> bool:
     return isinstance(value, dict) and value.get("schema_version") == "resume-ir.experiment-report.v2"
 
 
-def validate_no_goal_complete_claim(value: object, path: pathlib.Path) -> None:
-    if isinstance(value, dict) and value.get("claim") == "goal_complete":
-        fail(f"{path.relative_to(ROOT)}: experiment report must not claim goal_complete")
+def is_synthetic_smoke_manifest(value: object) -> bool:
+    return isinstance(value, dict) and value.get("schema_version") == "resume-ir.synthetic-smoke-artifact-manifest.v1"
 
 
-def validate_w1_contract_fields(value: object, contracts: object, path: pathlib.Path) -> None:
-    if not isinstance(value, dict) or value.get("evidence_lane") != "w1_private":
-        return
-    rel = str(path.relative_to(ROOT))
-    contracts.validate_optimization(value.get("optimization"), f"{rel}.optimization")
-    contracts.validate_workload_manifest(value.get("workload_manifest"), f"{rel}.workload_manifest")
-    contracts.validate_platform_evidence(value.get("platform_evidence"), f"{rel}.platform_evidence")
+def relative_path(path: pathlib.Path) -> str:
+    try:
+        return str(path.resolve().relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def validate_report_or_manifest(
+    value: object,
+    contracts: object,
+    matrix: dict,
+    path: pathlib.Path,
+) -> None:
+    if is_experiment_report(value):
+        contracts.validate_experiment_report(value, matrix, relative_path(path))
+    elif is_synthetic_smoke_manifest(value):
+        contracts.validate_synthetic_smoke_artifact_manifest(value, relative_path(path))
+    else:
+        fail(f"{relative_path(path)}: unsupported report schema_version")
+
+
+def validate_pairs(paths_and_values: list[tuple[pathlib.Path, object]], contracts: object, matrix: dict) -> int:
+    reports: list[tuple[pathlib.Path, Mapping[str, object]]] = []
+    manifests: list[tuple[pathlib.Path, Mapping[str, object]]] = []
+    for path, value in paths_and_values:
+        if is_experiment_report(value):
+            if not isinstance(value, Mapping):
+                fail(f"{relative_path(path)}: expected object")
+            reports.append((path, value))
+        elif is_synthetic_smoke_manifest(value):
+            if not isinstance(value, Mapping):
+                fail(f"{relative_path(path)}: expected object")
+            manifests.append((path, value))
+    for manifest_path, manifest in manifests:
+        matches = []
+        for report_path, report in reports:
+            if manifest.get("report_sha256") == contracts.sha256_file(report_path):
+                matches.append((report_path, report))
+        if len(matches) != 1:
+            fail(f"{relative_path(manifest_path)}: expected exactly one matching report")
+        report_path, report = matches[0]
+        contracts.validate_synthetic_smoke_report_manifest_pair(report, manifest, report_path, manifest_path, matrix)
+    for report_path, report in reports:
+        if report.get("evidence_lane") != "smoke" or "synthetic_smoke" not in report:
+            continue
+        matches = [
+            manifest_path
+            for manifest_path, manifest in manifests
+            if manifest.get("report_sha256") == contracts.sha256_file(report_path)
+        ]
+        if len(matches) != 1:
+            fail(f"{relative_path(report_path)}: synthetic smoke report requires exactly one matching manifest")
+    return len(reports) + len(manifests)
+
+
+def validate_explicit_paths(paths: list[pathlib.Path]) -> int:
+    matrix = load_toml(ROOT / "perf" / "acceptance-matrix.toml")
+    contracts = load_contracts_module()
+    paths_and_values = []
+    for path in [path.resolve() for path in paths]:
+        value = load_json(path)
+        validate_report_or_manifest(value, contracts, matrix, path)
+        paths_and_values.append((path, value))
+    return validate_pairs(paths_and_values, contracts, matrix)
 
 
 def main() -> int:
-    matrix = load_toml(ROOT / "perf" / "acceptance-matrix.toml")
+    if len(sys.argv) > 1:
+        count = validate_explicit_paths([pathlib.Path(arg) for arg in sys.argv[1:]])
+        print(f"check-experiment-report.py passed ({count} explicit report/manifest file(s))")
+        return 0
+
     contracts = load_contracts_module()
-    valid_count = 0
-    invalid_count = 0
-
-    for path in sorted((ROOT / "perf" / "fixtures" / "valid").glob("*.json")):
-        value = load_json(path)
-        if not is_experiment_report(value):
-            continue
-        valid_count += 1
-        validate_no_goal_complete_claim(value, path)
-        validate_w1_contract_fields(value, contracts, path)
-        contracts.validate_experiment_report(value, matrix, str(path.relative_to(ROOT)))
-
-    for path in sorted((ROOT / "perf" / "fixtures" / "invalid").glob("*.json")):
-        value = load_json(path)
-        if not is_experiment_report(value):
-            continue
-        invalid_count += 1
-        try:
-            validate_no_goal_complete_claim(value, path)
-            validate_w1_contract_fields(value, contracts, path)
-            contracts.validate_experiment_report(value, matrix, str(path.relative_to(ROOT)))
-        except ValueError:
-            continue
-        fail(f"{path.relative_to(ROOT)}: invalid experiment fixture unexpectedly passed")
-
-    if valid_count == 0:
-        fail("no valid experiment report fixtures found")
-    if invalid_count == 0:
-        fail("no invalid experiment report fixtures found")
-
-    print("check-experiment-report.py passed")
+    contracts.main()
+    print("check-experiment-report.py passed (fixture sweep delegated to check-performance-contracts.py)")
     return 0
 
 

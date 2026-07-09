@@ -1,0 +1,51 @@
+{
+  "schema_version": "resume-ir.synthetic-smoke-artifact-manifest.v1",
+  "goal_id": "resume-ir.performance-gui-loop.2026-06",
+  "manifest_kind": "synthetic_smoke_baseline",
+  "report_schema_version": "resume-ir.experiment-report.v2",
+  "report_kind": "redacted_evidence",
+  "evidence_lane": "w1_private",
+  "claim": "no_claim",
+  "contract_pins": {
+    "active_goal_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "acceptance_matrix_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "loop_state_schema_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "experiment_report_schema_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "synthetic_smoke_artifact_manifest_schema_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "git_head_sha": "working-tree"
+  },
+  "privacy": {
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false,
+    "trace_summary_redacted": true
+  },
+  "report_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+  "report_size_bytes": 128,
+  "artifacts": [
+    {
+      "component": "synthetic_query",
+      "schema_version": "benchmark.v1",
+      "report_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "report_size_bytes": 512,
+      "target_claim": "not_evaluated"
+    },
+    {
+      "component": "ocr_throughput",
+      "schema_version": "ocr-throughput.v1",
+      "report_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "report_size_bytes": 448,
+      "target_claim": "not_evaluated"
+    },
+    {
+      "component": "vector_quality",
+      "schema_version": "vector-quality.v1",
+      "report_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "report_size_bytes": 384,
+      "target_claim": "not_evaluated"
+    }
+  ]
+}

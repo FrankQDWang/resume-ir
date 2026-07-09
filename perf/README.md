@@ -11,7 +11,8 @@ Files:
 - `acceptance-matrix.toml`: performance, evidence-lane, and privacy redlines.
 - `loop-state.schema.json`: schema for long-running goal state reports.
 - `experiment-report.schema.json`: schema for redacted experiment reports.
-- `current-loop-state.json`: current public loop-state snapshot for this docs-hardening PR.
+- `synthetic-smoke-artifact-manifest.schema.json`: schema for paired synthetic smoke baseline manifests.
+- `current-loop-state.json`: current public loop-state snapshot for the active smoke/contract slice.
 - `fixtures/valid/*.json`: synthetic positive fixtures for the CI contract guard.
 - `fixtures/invalid/*.json`: synthetic negative fixtures that must fail the CI contract guard.
 
@@ -27,5 +28,6 @@ python3 scripts/ci/check-performance-contracts.py
 
 The guard is intentionally standard-library only and is wired into PR CI. It
 checks schema versions, required scale gates, privacy booleans, W0 command
-evidence, D10K/D100K/D1M completion semantics, GUI row-count limits, and
+evidence, synthetic smoke report/manifest pairing and non-smoke field rejection,
+D10K/D100K/D1M completion semantics, GUI row-count limits, and
 positive/negative fixtures.

@@ -59,28 +59,7 @@ def require_issue_ref(value: object, path: str) -> str:
     return value
 
 
-def validate_runner_contracts(state: dict, active_goal: dict) -> None:
-    autonomous = require_mapping(active_goal.get("autonomous_delivery"), "ACTIVE_GOAL.toml.autonomous_delivery")
-
-    for key in ["goal_prompt", "event_log", "runtime_capability_attestation"]:
-        expected = require_mapping(autonomous.get(key), f"ACTIVE_GOAL.toml.autonomous_delivery.{key}")
-        observed = require_mapping(state.get(key), f"perf/current-loop-state.json.{key}")
-        if observed != expected:
-            fail(f"perf/current-loop-state.json.{key}: must match ACTIVE_GOAL.toml autonomous_delivery.{key}")
-
-    recovery = require_mapping(state.get("runner_recovery"), "perf/current-loop-state.json.runner_recovery")
-    for key in [
-        "lease_required",
-        "heartbeat_required",
-        "cas_required",
-        "idempotency_key_required",
-        "intent_before_side_effect_required",
-        "verify_after_side_effect_required",
-        "one_transition_per_wake",
-        "capability_attestation_required",
-    ]:
-        require_bool(recovery.get(key), True, f"perf/current-loop-state.json.runner_recovery.{key}")
-
+def validate_github_ledger(state: dict) -> None:
     github_ledger = require_mapping(state.get("github_ledger"), "perf/current-loop-state.json.github_ledger")
     primary_issue = require_issue_ref(
         github_ledger.get("primary_issue"),
@@ -106,6 +85,50 @@ def validate_runner_contracts(state: dict, active_goal: dict) -> None:
             fail("perf/current-loop-state.json.github_ledger.primary_issue: expected to appear in open_blockers while workflow_state=blocked_permission")
 
 
+def validate_synthetic_smoke_snapshot(state: dict, matrix: dict) -> None:
+    if state.get("workflow_state") != "baseline_captured":
+        return
+    if state.get("experiment_state") != "baseline_validated" or state.get("evidence_lane") != "smoke":
+        return
+
+    smoke_baseline = require_mapping(
+        matrix.get("synthetic_smoke_baseline"),
+        "perf/acceptance-matrix.toml.synthetic_smoke_baseline",
+    )
+    required_commands = smoke_baseline.get("required_commands")
+    if not isinstance(required_commands, list) or not required_commands:
+        fail("perf/acceptance-matrix.toml.synthetic_smoke_baseline.required_commands: expected non-empty list")
+
+    verification = require_mapping(state.get("verification"), "perf/current-loop-state.json.verification")
+    commands = verification.get("commands")
+    if not isinstance(commands, list):
+        fail("perf/current-loop-state.json.verification.commands: expected list")
+    observed: dict[str, int] = {}
+    for index, command in enumerate(commands):
+        entry = require_mapping(command, f"perf/current-loop-state.json.verification.commands[{index}]")
+        command_text = entry.get("command")
+        if not isinstance(command_text, str) or not command_text:
+            fail(f"perf/current-loop-state.json.verification.commands[{index}].command: expected non-empty string")
+        exit_code = entry.get("exit_code")
+        if not isinstance(exit_code, int) or isinstance(exit_code, bool):
+            fail(f"perf/current-loop-state.json.verification.commands[{index}].exit_code: expected integer")
+        observed[command_text] = exit_code
+
+    missing = sorted(set(required_commands) - set(observed))
+    if missing:
+        fail(f"perf/current-loop-state.json.verification.commands missing synthetic smoke required commands: {missing}")
+    failed = sorted(command for command in required_commands if observed.get(command) != 0)
+    if failed:
+        fail(f"perf/current-loop-state.json.verification.commands non-zero synthetic smoke commands: {failed}")
+    if verification.get("claim") != "partial":
+        fail("perf/current-loop-state.json.verification.claim: baseline_captured smoke snapshot must remain partial")
+    require_bool(
+        verification.get("all_required_commands_ran"),
+        True,
+        "perf/current-loop-state.json.verification.all_required_commands_ran",
+    )
+
+
 def main() -> int:
     state = load_json(ROOT / "perf" / "current-loop-state.json")
     matrix = load_toml(ROOT / "perf" / "acceptance-matrix.toml")
@@ -113,30 +136,6 @@ def main() -> int:
     contracts = load_contracts_module()
     contracts.validate_loop_state(state, matrix, "perf/current-loop-state.json")
     contracts.validate_current_loop_contract_pins(state)
-
-    if not isinstance(state, dict):
-        fail("perf/current-loop-state.json: expected object")
-    if state.get("schema_version") != "resume-ir.loop-state-report.v2":
-        fail("schema_version mismatch")
-    if state.get("goal_id") != "resume-ir.performance-gui-loop.2026-06":
-        fail("goal_id mismatch")
-
-    privacy = state.get("privacy")
-    if not isinstance(privacy, dict):
-        fail("privacy: expected object")
-    for field in contracts.PRIVACY_FALSE_FIELDS:
-        if privacy.get(field) is not False:
-            fail(f"privacy.{field}: expected false")
-
-    allowed_paths = state.get("allowed_paths")
-    if not isinstance(allowed_paths, list) or not allowed_paths:
-        fail("allowed_paths: expected non-empty list")
-
-    verification = state.get("verification")
-    if not isinstance(verification, dict):
-        fail("verification: expected object")
-    if verification.get("claim") not in {"pass", "fail", "blocked", "partial"}:
-        fail("verification.claim invalid")
 
     platform_lane = state.get("platform_lane")
     if platform_lane is not None and platform_lane not in contracts.PLATFORM_LANES:
@@ -153,7 +152,19 @@ def main() -> int:
         if visual_reference.get("production_next_server_allowed") is not False:
             fail("visual_reference.production_next_server_allowed: expected false")
 
-    validate_runner_contracts(state, active_goal)
+    validate_github_ledger(state)
+
+    active_loop = active_goal.get("loop")
+    if not isinstance(active_loop, dict):
+        fail("ACTIVE_GOAL.toml: missing [loop]")
+    for stale_key in ("workflow_state", "experiment_state"):
+        if stale_key in active_loop:
+            fail(
+                f"ACTIVE_GOAL.toml.loop.{stale_key}: current state belongs in "
+                "perf/current-loop-state.json, not ACTIVE_GOAL.toml"
+            )
+
+    validate_synthetic_smoke_snapshot(state, matrix)
 
     experiment_state = state.get("experiment_state")
     if experiment_state in {"hypothesis_registered", "accepted", "reverted", "complete"}:

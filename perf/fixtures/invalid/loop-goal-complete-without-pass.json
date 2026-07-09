@@ -11,18 +11,12 @@
     "experiment_report_schema_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
     "git_head_sha": "working-tree"
   },
-  "allowed_paths": [
-    "GOAL.md"
-  ],
   "transition_history": [
     {
       "from": "evidence_review",
       "to": "goal_complete",
       "evidence_ref": "invalid fixture"
     }
-  ],
-  "accepted_cells": [
-    "w0_docs"
   ],
   "verification": {
     "commands": [],

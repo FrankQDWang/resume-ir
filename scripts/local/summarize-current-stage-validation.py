@@ -7,12 +7,16 @@ import argparse
 import json
 import re
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
 
+ROOT = Path(__file__).resolve().parents[2]
+ACCEPTANCE_MATRIX = ROOT / "perf" / "acceptance-matrix.toml"
 HANDOFF_SCHEMA = "resume-ir.current-stage-handoff.v1"
 HANDOFF_PRIVACY_BOUNDARY = "local_only_redacted_handoff"
+D10K_PRIVATE_SCALE_GATE = "D10K_private_calibration"
 SUPPORTED_SCHEMAS = {
     "resume-ir.current-stage-smoke-summary.v1",
     "resume-ir.current-stage-blocked-summary.v1",
@@ -23,6 +27,52 @@ EXPECTED_SOURCE_PRIVACY_BOUNDARIES = {
     "resume-ir.current-stage-blocked-summary.v1": "local_only_redacted_blocked_summary",
     "resume-ir.current-stage-validation-evidence.v1": "local_only_redacted_evidence_manifest",
 }
+PRIVATE_QUERY_BASELINE_COPY_KEYS = (
+    "privacy_boundary",
+    "dataset_kind",
+    "document_count",
+    "searchable_document_count",
+    "vector_indexed_document_count",
+    "query_count",
+    "request_sample_count",
+    "query_source",
+    "private_scale_gate",
+    "query_set_sha256",
+    "tune_sha256",
+    "holdout_sha256",
+    "bucket_counts",
+    "tune_bucket_counts",
+    "holdout_bucket_counts",
+    "samples_per_bucket",
+    "query_latency_ms",
+    "query_latency_by_bucket",
+    "stage_latency_p95_ms",
+    "stage_latency_by_bucket_p95_ms",
+    "rss_delta_mb",
+    "rss_delta_mb_by_bucket",
+    "zero_result_queries",
+    "query_runner",
+    "query_mode",
+    "retrieval_layers",
+    "warm_or_cold_definition",
+    "cache_state",
+    "percentile_confidence",
+    "spawn_per_query",
+    "hot_index",
+    "hot_path_ocr",
+    "hot_path_parsing",
+    "hot_path_heavy_model_inference",
+    "contains_raw_resume_text",
+    "contains_resume_paths",
+    "contains_queries",
+)
+BASELINE_ARTIFACT_REF_FIELDS = {
+    "private-benchmark-local.json": "benchmark_report_hash",
+    "private-query-set.summary.json": "query_set_summary_hash",
+}
+BLOCKED_ARTIFACT_REF_FILES = {
+    "query-set-trace-preflight.local.json",
+}
 PRIVATE_MARKER = re.compile(r"PRIVATE-|/Users/|/home/|[A-Za-z]:\\")
 
 
@@ -31,12 +81,45 @@ def fail(message: str) -> None:
     raise SystemExit(2)
 
 
+def load_d10k_scale_gate() -> dict[str, int]:
+    try:
+        with ACCEPTANCE_MATRIX.open("rb") as handle:
+            matrix = tomllib.load(handle)
+    except OSError:
+        fail("acceptance matrix is unavailable")
+    scale_gates = matrix.get("scale_gates")
+    if not isinstance(scale_gates, dict):
+        fail("acceptance matrix scale_gates is invalid")
+    gate = scale_gates.get(D10K_PRIVATE_SCALE_GATE)
+    if not isinstance(gate, dict):
+        fail("acceptance matrix D10K scale gate is missing")
+    thresholds: dict[str, int] = {}
+    for key in [
+        "min_document_count",
+        "min_searchable_document_count",
+        "min_query_count",
+        "min_request_sample_count",
+    ]:
+        value = gate.get(key)
+        if not isinstance(value, int):
+            fail(f"acceptance matrix D10K {key} is invalid")
+        thresholds[key] = value
+    return thresholds
+
+
+D10K_SCALE_GATE = load_d10k_scale_gate()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Summarize redacted current-stage validation evidence."
     )
     parser.add_argument("--input", required=True, help="redacted summary/evidence JSON")
     parser.add_argument("--out", required=True, help="handoff JSON output path")
+    parser.add_argument(
+        "--issue-comment-out",
+        help="optional redacted GitHub issue comment body output path",
+    )
     return parser.parse_args()
 
 
@@ -195,6 +278,399 @@ def observability(document: dict[str, Any], schema: str) -> dict[str, Any]:
     return {key: value[key] for key in sorted(allowed) if key in value}
 
 
+def histogram_stage_shape(value: Any, name: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {
+            "stage_count": 0,
+            "stage_names": [],
+            "histogram_bin_count": 0,
+            "samples": 0,
+            "overflow_included": False,
+        }
+    max_bin_count = 0
+    max_samples = 0
+    overflow_included = False
+    stage_names: list[str] = []
+    for stage, histogram in value.items():
+        if not isinstance(histogram, dict):
+            continue
+        if isinstance(stage, str) and stage:
+            stage_names.append(stage)
+        bins = histogram.get("bins")
+        if isinstance(bins, list):
+            max_bin_count = max(max_bin_count, len(bins))
+        sample_count = histogram.get("samples")
+        if isinstance(sample_count, int) and sample_count > max_samples:
+            max_samples = sample_count
+        overflow_included = overflow_included or "overflow_count" in histogram
+    return {
+        "stage_count": len(stage_names),
+        "stage_names": sorted(stage_names),
+        "histogram_bin_count": max_bin_count,
+        "samples": max_samples,
+        "overflow_included": overflow_included,
+    }
+
+
+def stage_histogram_summary(value: dict[str, Any]) -> dict[str, Any]:
+    global_shape = histogram_stage_shape(value.get("stage_histogram_ms"), "stage_histogram_ms")
+    by_bucket = value.get("stage_histogram_by_bucket_ms")
+    bucket_sample_counts: dict[str, int] = {}
+    bucket_names: list[str] = []
+    max_bin_count = global_shape["histogram_bin_count"]
+    overflow_included = global_shape["overflow_included"]
+    if isinstance(by_bucket, dict):
+        for bucket, stages in by_bucket.items():
+            if not isinstance(bucket, str) or not bucket:
+                continue
+            bucket_shape = histogram_stage_shape(stages, f"stage_histogram_by_bucket_ms.{bucket}")
+            bucket_sample_counts[bucket] = bucket_shape["samples"]
+            bucket_names.append(bucket)
+            max_bin_count = max(max_bin_count, bucket_shape["histogram_bin_count"])
+            overflow_included = overflow_included or bucket_shape["overflow_included"]
+    return {
+        "global_stage_count": global_shape["stage_count"],
+        "global_stage_names": global_shape["stage_names"],
+        "global_samples": global_shape["samples"],
+        "bucket_count": len(bucket_names),
+        "bucket_names": sorted(bucket_names),
+        "bucket_sample_counts": bucket_sample_counts,
+        "histogram_bin_count": max_bin_count,
+        "overflow_included": overflow_included,
+    }
+
+
+def private_query_baseline_summary(document: dict[str, Any]) -> dict[str, Any] | None:
+    value = document.get("private_query_observability")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        fail("private_query_observability must be an object")
+    if value.get("private_scale_gate") != D10K_PRIVATE_SCALE_GATE:
+        fail("private_query_observability.private_scale_gate must be D10K_private_calibration")
+    if int_at(value, "document_count") < D10K_SCALE_GATE["min_document_count"]:
+        fail("private_query_observability.document_count is below D10K")
+    if int_at(value, "searchable_document_count") < D10K_SCALE_GATE["min_searchable_document_count"]:
+        fail("private_query_observability.searchable_document_count is below D10K")
+    if int_at(value, "vector_indexed_document_count") < D10K_SCALE_GATE["min_searchable_document_count"]:
+        fail("private_query_observability.vector_indexed_document_count is below D10K")
+    if int_at(value, "query_count") < D10K_SCALE_GATE["min_query_count"]:
+        fail("private_query_observability.query_count is below D10K")
+    if int_at(value, "request_sample_count") < D10K_SCALE_GATE["min_request_sample_count"]:
+        fail("private_query_observability.request_sample_count is below D10K")
+    summary = {
+        key: value[key]
+        for key in PRIVATE_QUERY_BASELINE_COPY_KEYS
+        if key in value
+    }
+    summary["stage_histogram_summary"] = stage_histogram_summary(value)
+    return summary
+
+
+def baseline_artifact_refs(document: dict[str, Any]) -> list[dict[str, str]]:
+    value = document.get("redacted_outputs", [])
+    if not isinstance(value, list):
+        fail("redacted_outputs must be an array")
+    refs: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            fail("redacted_outputs entries must be objects")
+        file_name = item.get("file")
+        if file_name not in BASELINE_ARTIFACT_REF_FIELDS:
+            continue
+        sha256 = item.get("sha256")
+        if not isinstance(sha256, str) or not sha256:
+            fail(f"redacted_outputs.{file_name}.sha256 is missing")
+        if file_name in seen:
+            fail(f"redacted_outputs has duplicate baseline artifact: {file_name}")
+        seen.add(file_name)
+        refs.append({"file": file_name, "sha256": sha256})
+    return sorted(refs, key=lambda ref: ref["file"])
+
+
+def blocked_artifact_refs(document: dict[str, Any], schema: str) -> list[dict[str, str]]:
+    if schema != "resume-ir.current-stage-blocked-summary.v1":
+        return []
+    value = document.get("redacted_outputs", [])
+    if not isinstance(value, list):
+        fail("redacted_outputs must be an array")
+    refs: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            fail("redacted_outputs entries must be objects")
+        file_name = item.get("file")
+        if file_name not in BLOCKED_ARTIFACT_REF_FILES:
+            continue
+        sha256 = item.get("sha256")
+        if not isinstance(sha256, str) or not sha256:
+            fail(f"redacted_outputs.{file_name}.sha256 is missing")
+        if file_name in seen:
+            fail(f"redacted_outputs has duplicate blocked artifact: {file_name}")
+        seen.add(file_name)
+        refs.append({"file": file_name, "sha256": sha256})
+    return sorted(refs, key=lambda ref: ref["file"])
+
+
+def scalar_text(value: Any, name: str) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, str) and value:
+        return value
+    fail(f"issue comment field is not scalar: {name}")
+
+
+def metric_line(label: str, value: Any) -> str:
+    return f"- {label}: {scalar_text(value, label)}"
+
+
+def latency_summary_line(label: str, value: Any) -> str:
+    if not isinstance(value, dict):
+        fail(f"issue comment latency summary is invalid: {label}")
+    parts = []
+    for key in ("samples", "p50", "p95", "p99"):
+        if key not in value:
+            fail(f"issue comment latency summary is missing {label}.{key}")
+        parts.append(f"{key}={scalar_text(value[key], f'{label}.{key}')}")
+    return f"- {label}: {', '.join(parts)}"
+
+
+def bucket_counts_line(label: str, value: Any) -> str:
+    if not isinstance(value, dict):
+        fail(f"issue comment bucket counts are invalid: {label}")
+    parts = [f"{key}={scalar_text(value[key], f'{label}.{key}')}" for key in sorted(value)]
+    return f"- {label}: {', '.join(parts)}"
+
+
+def stage_p95_line(value: Any) -> str:
+    if not isinstance(value, dict):
+        fail("issue comment stage_latency_p95_ms is invalid")
+    parts = [
+        f"{key}={scalar_text(value[key], f'stage_latency_p95_ms.{key}')}"
+        for key in sorted(value)
+    ]
+    return f"- stage_latency_p95_ms: {', '.join(parts)}"
+
+
+def issue_comment_body(handoff: dict[str, Any]) -> str:
+    summary = handoff.get("private_query_baseline_summary")
+    if summary is None:
+        blocked = handoff.get("blocked")
+        if isinstance(blocked, dict):
+            return blocked_issue_comment_body(handoff, blocked)
+        fail("issue comment requires private_query_baseline_summary or blocked handoff")
+    return private_query_issue_comment_body(handoff, summary)
+
+
+def private_query_issue_comment_body(
+    handoff: dict[str, Any], summary: dict[str, Any]
+) -> str:
+    if not isinstance(summary, dict):
+        fail("issue comment requires private_query_baseline_summary")
+    histogram = summary.get("stage_histogram_summary")
+    if not isinstance(histogram, dict):
+        fail("issue comment requires stage_histogram_summary")
+    required_fields = (
+        "query_set_sha256",
+        "tune_sha256",
+        "holdout_sha256",
+        "query_source",
+        "private_scale_gate",
+        "query_count",
+        "request_sample_count",
+        "query_runner",
+        "query_mode",
+        "retrieval_layers",
+        "warm_or_cold_definition",
+        "cache_state",
+        "percentile_confidence",
+        "spawn_per_query",
+        "hot_path_ocr",
+        "hot_path_parsing",
+        "hot_path_heavy_model_inference",
+        "contains_raw_resume_text",
+        "contains_resume_paths",
+        "contains_queries",
+    )
+    lines = [
+        "#53 Current-Stage Private Query Baseline Handoff",
+        "",
+        "This is redacted current-stage handoff evidence; not goal_complete; not a profile optimization issue closure.",
+        "",
+        "## Workload",
+    ]
+    for field in required_fields[:12]:
+        lines.append(metric_line(field, summary.get(field)))
+    lines.append(bucket_counts_line("bucket_counts", summary.get("bucket_counts")))
+    lines.append(bucket_counts_line("samples_per_bucket", summary.get("samples_per_bucket")))
+    lines.extend(
+        [
+            "",
+            "## Latency And Stages",
+            latency_summary_line("query_latency_ms", summary.get("query_latency_ms")),
+            stage_p95_line(summary.get("stage_latency_p95_ms")),
+            latency_summary_line("rss_delta_mb", summary.get("rss_delta_mb")),
+            (
+                "- stage_histogram_shape: "
+                f"global_stages={scalar_text(histogram.get('global_stage_count'), 'global_stage_count')}, "
+                f"buckets={scalar_text(histogram.get('bucket_count'), 'bucket_count')}, "
+                f"bins={scalar_text(histogram.get('histogram_bin_count'), 'histogram_bin_count')}, "
+                f"overflow={scalar_text(histogram.get('overflow_included'), 'overflow_included')}"
+            ),
+            "",
+            "## Privacy Boundary",
+        ]
+    )
+    for field in required_fields[12:]:
+        lines.append(metric_line(field, summary.get(field)))
+    artifact_refs = handoff.get("baseline_artifact_refs", [])
+    if artifact_refs:
+        if not isinstance(artifact_refs, list):
+            fail("issue comment baseline_artifact_refs must be an array")
+        lines.extend(["", "## Redacted Artifact Refs"])
+        for item in artifact_refs:
+            if not isinstance(item, dict):
+                fail("issue comment baseline_artifact_refs entries must be objects")
+            file_name = item.get("file")
+            sha256 = item.get("sha256")
+            field = BASELINE_ARTIFACT_REF_FIELDS.get(file_name)
+            if field is None or not isinstance(sha256, str) or not sha256:
+                fail("issue comment baseline artifact ref is invalid")
+            lines.append(f"- {field}: {sha256} ({file_name})")
+    lines.extend(
+        [
+            "",
+            "Do not attach raw query sets, private benchmark reports, trace logs, candidate results, local paths, diagnostics packages, indexes, SQLite databases, model caches, or resume files.",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def blocked_issue_comment_body(
+    handoff: dict[str, Any], blocked: dict[str, Any]
+) -> str:
+    next_action_value = handoff.get("next_action")
+    if not isinstance(next_action_value, dict):
+        fail("issue comment requires next_action")
+    lines = [
+        "#53 Current-Stage Blocked Handoff",
+        "",
+        "This is redacted current-stage blocked evidence; not goal_complete; not a profile optimization issue closure.",
+        "",
+        "## Blocker",
+        metric_line("current_stage_status", handoff.get("current_stage_status")),
+        metric_line("validation_profile", handoff.get("validation_profile")),
+        metric_line("current_stage_target", handoff.get("current_stage_target")),
+        metric_line("blocked_step", blocked.get("blocked_step")),
+        metric_line("blocked_category", blocked.get("blocked_category")),
+        metric_line("blocked_reason", blocked.get("blocked_reason")),
+        metric_line("private_corpus_read", blocked.get("private_corpus_read")),
+        "",
+        "## Observability",
+    ]
+    observability_value = handoff.get("observability")
+    if isinstance(observability_value, dict):
+        for field in (
+            "document_count",
+            "searchable_document_count",
+            "vector_indexed_document_count",
+            "hot_index_fully_covered",
+        ):
+            if field in observability_value:
+                lines.append(metric_line(field, observability_value.get(field)))
+    else:
+        lines.append("- observability: null")
+    trace_preflight = handoff.get("query_set_trace_preflight")
+    if isinstance(trace_preflight, dict):
+        lines.extend(
+            [
+                "",
+                "## Query Set Preflight",
+                metric_line("query_source", trace_preflight.get("query_source")),
+                metric_line("query_index_available", trace_preflight.get("query_index_available")),
+                metric_line("target_query_count", trace_preflight.get("target_query_count")),
+                metric_line("document_count", trace_preflight.get("document_count")),
+                metric_line(
+                    "searchable_document_count",
+                    trace_preflight.get("searchable_document_count"),
+                ),
+                metric_line(
+                    "vector_indexed_document_count",
+                    trace_preflight.get("vector_indexed_document_count"),
+                ),
+                metric_line("d10k_corpus_ready", trace_preflight.get("d10k_corpus_ready")),
+                bucket_counts_line(
+                    "d10k_corpus_deficits",
+                    trace_preflight.get("d10k_corpus_deficits"),
+                ),
+                metric_line("trace_logs", trace_preflight.get("trace_logs")),
+                metric_line("source_search_lines", trace_preflight.get("source_search_lines")),
+                metric_line("extracted_queries", trace_preflight.get("extracted_queries")),
+                metric_line(
+                    "duplicate_queries_dropped",
+                    trace_preflight.get("duplicate_queries_dropped"),
+                ),
+                metric_line(
+                    "candidate_queries_sampled",
+                    trace_preflight.get("candidate_queries_sampled"),
+                ),
+                bucket_counts_line(
+                    "candidate_bucket_counts",
+                    trace_preflight.get("candidate_bucket_counts"),
+                ),
+                bucket_counts_line(
+                    "candidate_bucket_deficits",
+                    trace_preflight.get("candidate_bucket_deficits"),
+                ),
+                metric_line("corpus_valid_queries", trace_preflight.get("corpus_valid_queries")),
+                bucket_counts_line(
+                    "corpus_valid_bucket_counts",
+                    trace_preflight.get("corpus_valid_bucket_counts"),
+                ),
+                bucket_counts_line(
+                    "corpus_valid_bucket_deficits",
+                    trace_preflight.get("corpus_valid_bucket_deficits"),
+                ),
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Next Action",
+            metric_line(
+                "recommended_next_step",
+                next_action_value.get("recommended_next_step"),
+            ),
+            metric_line("do_not_do", next_action_value.get("do_not_do")),
+        ]
+    )
+    artifact_refs = handoff.get("blocked_artifact_refs", [])
+    if artifact_refs:
+        if not isinstance(artifact_refs, list):
+            fail("issue comment blocked_artifact_refs must be an array")
+        lines.extend(["", "## Redacted Artifact Refs"])
+        for item in artifact_refs:
+            if not isinstance(item, dict):
+                fail("issue comment blocked_artifact_refs entries must be objects")
+            file_name = item.get("file")
+            sha256 = item.get("sha256")
+            if file_name not in BLOCKED_ARTIFACT_REF_FILES or not isinstance(sha256, str) or not sha256:
+                fail("issue comment blocked artifact ref is invalid")
+            lines.append(f"- redacted_artifact_hash: {sha256} ({file_name})")
+    lines.extend(
+        [
+            "",
+            "Do not attach raw query sets, private benchmark reports, trace logs, candidate results, local paths, diagnostics packages, indexes, SQLite databases, model caches, or resume files.",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
 def int_at(value: Any, key: str) -> int:
     if not isinstance(value, dict):
         return 0
@@ -282,6 +758,70 @@ def preflight_probes(document: dict[str, Any]) -> dict[str, str]:
     return probes
 
 
+def query_set_trace_preflight(document: dict[str, Any]) -> dict[str, Any] | None:
+    value = document.get("query_set_trace_preflight")
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        fail("query_set_trace_preflight must be an object")
+    if value.get("schema_version") != "resume-ir.query-set-trace-preflight.v1":
+        fail("query_set_trace_preflight schema is invalid")
+    output: dict[str, Any] = {
+        "schema_version": "resume-ir.query-set-trace-preflight.v1",
+    }
+    query_source = value.get("query_source")
+    if isinstance(query_source, str) and query_source:
+        output["query_source"] = query_source
+    query_index_available = value.get("query_index_available")
+    if not isinstance(query_index_available, bool):
+        fail("query_set_trace_preflight.query_index_available is invalid")
+    output["query_index_available"] = query_index_available
+    d10k_corpus_ready = value.get("d10k_corpus_ready")
+    if not isinstance(d10k_corpus_ready, bool):
+        fail("query_set_trace_preflight.d10k_corpus_ready is invalid")
+    output["d10k_corpus_ready"] = d10k_corpus_ready
+    for field in (
+        "target_query_count",
+        "document_count",
+        "searchable_document_count",
+        "vector_indexed_document_count",
+        "d10k_min_document_count",
+        "d10k_min_searchable_document_count",
+        "d10k_min_vector_indexed_document_count",
+        "trace_logs",
+        "trace_lines",
+        "source_search_lines",
+        "extracted_queries",
+        "normalization_rejected",
+        "duplicate_queries_dropped",
+        "candidate_queries_sampled",
+        "zero_hit_queries_dropped",
+        "corpus_valid_queries",
+    ):
+        item = value.get(field)
+        if not isinstance(item, int) or item < 0:
+            fail(f"query_set_trace_preflight.{field} is invalid")
+        output[field] = item
+    for field in (
+        "d10k_corpus_deficits",
+        "candidate_bucket_counts",
+        "candidate_bucket_deficits",
+        "corpus_valid_bucket_counts",
+        "required_bucket_counts",
+        "corpus_valid_bucket_deficits",
+    ):
+        item = value.get(field)
+        if not isinstance(item, dict) or not item:
+            fail(f"query_set_trace_preflight.{field} is invalid")
+        checked: dict[str, int] = {}
+        for key, count in item.items():
+            if not isinstance(key, str) or not key or not isinstance(count, int) or count < 0:
+                fail(f"query_set_trace_preflight.{field} entry is invalid")
+            checked[key] = count
+        output[field] = checked
+    return output
+
+
 def must_not_upload(document: dict[str, Any]) -> list[str]:
     value = document.get("must_not_upload", [])
     if not isinstance(value, list):
@@ -298,6 +838,36 @@ def must_not_upload(document: dict[str, Any]) -> list[str]:
 def next_action(document: dict[str, Any], schema: str) -> dict[str, str]:
     if schema == "resume-ir.current-stage-blocked-summary.v1":
         category = string_field(document, "blocked_category")
+        blocked_reason = string_field(document, "blocked_reason")
+        if blocked_reason == "query_set_index_unavailable":
+            return {
+                "status": "blocked",
+                "category": category,
+                "blocked_step": string_field(document, "blocked_step"),
+                "recommended_next_step": (
+                    "prepare or reuse an indexed local data-dir, then rerun "
+                    "current-stage validation with the static replay query-set freeze"
+                ),
+                "do_not_do": (
+                    "do not run private-query baseline, D10K calibration, or "
+                    "P95/P99 optimization until query-set freeze succeeds"
+                ),
+            }
+        if blocked_reason == "query_set_corpus_or_trace_coverage_insufficient":
+            return {
+                "status": "blocked",
+                "category": category,
+                "blocked_step": string_field(document, "blocked_step"),
+                "recommended_next_step": (
+                    "prepare a D10K-shaped indexed local corpus and collect more "
+                    "trace-derived source_search workload for deficient buckets, then rerun "
+                    "current-stage validation with the static replay query-set freeze"
+                ),
+                "do_not_do": (
+                    "do not run private-query baseline, D10K calibration, or P95/P99 "
+                    "optimization until the static query set can freeze"
+                ),
+            }
         return {
             "status": "blocked",
             "category": category,
@@ -346,7 +916,7 @@ def build_handoff(document: dict[str, Any]) -> dict[str, Any]:
 
     observability_value = observability(document, schema)
 
-    return {
+    handoff = {
         "schema_version": HANDOFF_SCHEMA,
         "privacy_boundary": HANDOFF_PRIVACY_BOUNDARY,
         "source_schema": schema,
@@ -368,6 +938,19 @@ def build_handoff(document: dict[str, Any]) -> dict[str, Any]:
         "blocked_or_not_complete": not_complete_items(document),
         "must_not_upload": must_not_upload(document),
     }
+    trace_preflight = query_set_trace_preflight(document)
+    if trace_preflight is not None:
+        handoff["query_set_trace_preflight"] = trace_preflight
+    query_baseline = private_query_baseline_summary(document)
+    if query_baseline is not None:
+        handoff["private_query_baseline_summary"] = query_baseline
+        artifact_refs = baseline_artifact_refs(document)
+        if artifact_refs:
+            handoff["baseline_artifact_refs"] = artifact_refs
+    artifact_refs = blocked_artifact_refs(document, schema)
+    if artifact_refs:
+        handoff["blocked_artifact_refs"] = artifact_refs
+    return handoff
 
 
 def main() -> int:
@@ -382,6 +965,13 @@ def main() -> int:
         json.dumps(handoff, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    if args.issue_comment_out:
+        comment = issue_comment_body(handoff)
+        reject_private_markers(comment)
+        comment_path = Path(args.issue_comment_out)
+        if comment_path.parent and str(comment_path.parent) != ".":
+            comment_path.parent.mkdir(parents=True, exist_ok=True)
+        comment_path.write_text(comment, encoding="utf-8")
     return 0
 
 

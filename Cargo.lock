@@ -217,6 +217,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 name = "benchmark-runner"
 version = "0.1.0"
 dependencies = [
+ "core-domain",
  "embedder",
  "extractor-rules",
  "index-fulltext",
@@ -446,6 +447,9 @@ version = "0.1.0"
 [[package]]
 name = "core-domain"
 version = "0.1.0"
+dependencies = [
+ "unicode-normalization",
+]
 
 [[package]]
 name = "core-foundation-sys"
@@ -1054,6 +1058,7 @@ dependencies = [
  "parser-text",
  "privacy",
  "sectionizer",
+ "sysinfo",
  "text-normalizer",
 ]
 
@@ -1950,6 +1955,7 @@ name = "resume-cli"
 version = "0.1.0"
 dependencies = [
  "benchmark-runner",
+ "core-domain",
  "embedder",
  "fs-crawler",
  "fs4",

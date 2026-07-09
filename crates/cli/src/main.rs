@@ -14,6 +14,10 @@ use benchmark_runner::{
     evaluate_vector_quality_gate_json, BenchmarkGateConfig, DedupeQualityGateConfig,
     FieldQualityGateConfig, OcrThroughputGateConfig, VectorQualityGateConfig,
 };
+use core_domain::{
+    normalize_query_set_query, query_set_query_in_semantic_bounds, QuerySetSampleShape,
+    QuerySetSourceKind,
+};
 use embedder::{
     Embedder, EmbeddingBudget, EmbeddingInput, LocalEmbeddingCommandEmbedder,
     LocalEmbeddingCommandSpec,
@@ -22,7 +26,8 @@ use fs4::fs_std::FileExt;
 use fs_crawler::{crawl_directory_with_options, ScanOptions as CrawlerScanOptions};
 use import_pipeline::{
     detect_ocr_page_count, import_root_with_options, index_ocr_text, rebuild_full_text_index,
-    remove_documents_from_full_text_index, ImportFailureKind, ImportOptions,
+    remove_documents_from_full_text_index, ImportFailureKind, ImportHardwareTier,
+    ImportMilestoneTimings, ImportOptions, ImportParseWorkers, ImportResourcePolicy,
     ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ImportTaskOwnerLock,
     ScanProfile,
 };
@@ -89,8 +94,37 @@ const OCR_LANGUAGE_REMEDIATION: &str =
 const METADATA_ENCRYPTION_REMEDIATION: &str =
     "enable SQLCipher metadata encryption before production release";
 const DATASET_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.dataset-manifest.v1";
-const QUERY_SET_SCHEMA_VERSION: &str = "resume-ir.query-set.jsonl.v1";
-const QUERY_SET_SUMMARY_SCHEMA_VERSION: &str = "resume-ir.query-set-summary.v1";
+const QUERY_SET_SCHEMA_VERSION: &str = "resume-ir.query-set.jsonl.v2";
+const QUERY_SET_SUMMARY_SCHEMA_VERSION: &str = "resume-ir.query-set-summary.v2";
+const QUERY_SET_TRACE_PREFLIGHT_SCHEMA_VERSION: &str = "resume-ir.query-set-trace-preflight.v1";
+const QUERY_ARTIFACT_ROOT_ENV: &str = "RESUME_IR_QUERY_ARTIFACT_ROOT";
+const LOCAL_EVIDENCE_DIR_ENV: &str = "RESUME_IR_LOCAL_EVIDENCE_DIR";
+const QUERY_SET_TRACE_PREFLIGHT_DEFAULT_FILE: &str = "query-set-trace-preflight.local.json";
+const PRIVATE_QUERY_SET_DEFAULT_FILE: &str = "private-query-set.local.jsonl";
+const TRACE_QUERY_INSUFFICIENT_BASE_MESSAGE: &str =
+    "query set blocked: not enough corpus-valid trace queries for the current indexed corpus";
+const QUERY_BATCH_REQUEST_SCHEMA_VERSION: &str = "resume-ir.query-batch-request.v2";
+const QUERY_PROTOCOL_VERSION: &str = "resume-ir-query-v2";
+const TRACE_QUERY_LINE_MAX_BYTES: usize = 64 * 1024;
+const QUERY_BUCKETS: [&str; 7] = [
+    "single_term",
+    "and_2",
+    "and_3_5",
+    "and_6_16",
+    "field_filter",
+    "hybrid",
+    "semantic",
+];
+const D10K_TRACE_QUERY_SET_COUNT: usize = 500;
+const D10K_TRACE_QUERY_BUCKET_MIN_COUNTS: [(&str, usize); 7] = [
+    ("single_term", 50),
+    ("and_2", 75),
+    ("and_3_5", 150),
+    ("and_6_16", 50),
+    ("field_filter", 75),
+    ("hybrid", 75),
+    ("semantic", 25),
+];
 const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
 const OCR_RUNTIME_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.ocr-runtime-manifest.v1";
 const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
@@ -161,7 +195,7 @@ Diagnostics and release evidence:
   doctor                Inspect local metadata, index, runtime, and diagnostic state.
   export-diagnostics --redact
                         Emit local aggregate diagnostics without paths, queries, or resume text.
-  benchmark-query-set   Draft local private query-set evidence.
+  benchmark-query-set   Preflight or freeze local private query-set evidence.
   benchmark-query-protocol
                         Run the local query protocol for benchmark evidence.
   benchmark-corpus-summary
@@ -186,6 +220,13 @@ const RELEASE_READINESS_MODEL_MANIFEST_EVIDENCE_LABEL: &str = "embedding model m
 const RELEASE_READINESS_DIAGNOSTICS_LABEL: &str = "redacted diagnostics evidence";
 const RELEASE_READINESS_RELEASE_ARTIFACT_MANIFEST_LABEL: &str =
     "release artifact manifest evidence";
+const CURRENT_STAGE_D10K_SCALE_GATE: &str = "D10K_private_calibration";
+const CURRENT_STAGE_D10K_DOCUMENT_MIN: u64 = 10_000;
+const CURRENT_STAGE_D10K_SEARCHABLE_DOCUMENT_MIN: u64 = 8_000;
+const CURRENT_STAGE_D10K_VECTOR_DOCUMENT_MIN: u64 = 8_000;
+const CURRENT_STAGE_D10K_QUERY_MIN: u64 = 500;
+const CURRENT_STAGE_D10K_REQUEST_SAMPLE_MIN: u64 = 5_000;
+const CURRENT_STAGE_D10K_SAMPLES_PER_BUCKET_MIN: u64 = 500;
 const RELEASE_READINESS_RELEASE_SBOM_LABEL: &str = "release SBOM evidence";
 const RELEASE_READINESS_RELEASE_PUBLICATION_AUTOMATION_LABEL: &str =
     "GitHub Release publication automation evidence";
@@ -272,7 +313,7 @@ const RELEASE_READINESS_BLOCKERS: &[ReleaseReadinessBlocker] = &[
     },
     ReleaseReadinessBlocker {
         label: RELEASE_READINESS_PERFORMANCE_LABEL,
-        detail: "stable-release private real-corpus hot-index hybrid benchmark evidence is not available; the current goal can close with local import/search closure evidence and a redacted current-stage handoff, while the 8000-document hot-index floor, 500 query samples, P50/P95/P99 metrics, P95/P99 reduction, and external 100k/1M scale validation move to the follow-up performance-optimization goal",
+        detail: "stable-release private real-corpus hot-index hybrid benchmark evidence is not available; the current goal can close with local import/search closure evidence and a redacted current-stage handoff, while the D10K 10000/8000-document hot-index floor, 500 query samples, P50/P95/P99 metrics, P95/P99 reduction, and external 100k/1M scale validation move to the follow-up performance-optimization goal",
         dependency_kind: "local_current_stage_evidence",
         needed_from: "local_private_validation_run",
         dependency_summary: "redacted stable-release hot-index hybrid benchmark evidence over the available local private corpus",
@@ -1979,6 +2020,7 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
             "parameters",
             "preflight_probes",
             "corpus_summary_observability",
+            "private_query_observability",
             "steps",
             "redacted_outputs",
             "privacy_sentinels",
@@ -2060,8 +2102,18 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
         ],
         CONTEXT,
     )?;
-    require_release_evidence_min_u64(parameters, "max_files", 8000, CONTEXT)?;
-    require_release_evidence_min_u64(parameters, "max_queries", 500, CONTEXT)?;
+    require_release_evidence_min_u64(
+        parameters,
+        "max_files",
+        CURRENT_STAGE_D10K_DOCUMENT_MIN,
+        CONTEXT,
+    )?;
+    require_release_evidence_min_u64(
+        parameters,
+        "max_queries",
+        CURRENT_STAGE_D10K_QUERY_MIN,
+        CONTEXT,
+    )?;
     for key in [
         "top_k",
         "embedding_dimension",
@@ -2084,6 +2136,10 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
         .get("corpus_summary_observability")
         .ok_or_else(|| release_evidence_invalid(CONTEXT, "corpus_summary_observability"))?;
     validate_current_stage_aggregate_observability(observability, CONTEXT)?;
+    let query_observability = object
+        .get("private_query_observability")
+        .ok_or_else(|| release_evidence_invalid(CONTEXT, "private_query_observability"))?;
+    validate_current_stage_private_query_observability(query_observability, CONTEXT)?;
 
     let steps = require_release_evidence_array(object, "steps", CONTEXT)?;
     require_release_evidence_exact_steps(
@@ -2100,7 +2156,7 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
             ("ocr_worker_bounded_loop", "success"),
             ("embedding_worker_bounded_loop", "success"),
             ("corpus_summary", "success"),
-            ("query_set_draft", "success"),
+            ("query_set_prepare", "success"),
             ("private_query_baseline", "success"),
             ("baseline_shape_gate", "success"),
             ("private_ocr_throughput_baseline", "success"),
@@ -2138,7 +2194,7 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
         "embedding-worker.stdout.txt",
         "benchmark-corpus-summary.local.json",
         "private-query-set.local.jsonl",
-        "query-set-draft.stdout.txt",
+        "query-set-prepare.stdout.txt",
         "private-benchmark-local.json",
         "private-benchmark-gate.stdout.txt",
         "private-ocr-throughput.json",
@@ -2505,10 +2561,30 @@ fn validate_current_stage_blocked_summary_manifest(
         ],
         CONTEXT,
     )?;
-    require_release_evidence_min_u64(parameters, "max_files", 8000, CONTEXT)?;
-    require_release_evidence_min_u64(parameters, "max_queries", 500, CONTEXT)?;
-    require_release_evidence_min_u64(parameters, "baseline_min_documents", 8000, CONTEXT)?;
-    require_release_evidence_min_u64(parameters, "baseline_min_queries", 500, CONTEXT)?;
+    require_release_evidence_min_u64(
+        parameters,
+        "max_files",
+        CURRENT_STAGE_D10K_DOCUMENT_MIN,
+        CONTEXT,
+    )?;
+    require_release_evidence_min_u64(
+        parameters,
+        "max_queries",
+        CURRENT_STAGE_D10K_QUERY_MIN,
+        CONTEXT,
+    )?;
+    require_release_evidence_min_u64(
+        parameters,
+        "baseline_min_documents",
+        CURRENT_STAGE_D10K_DOCUMENT_MIN,
+        CONTEXT,
+    )?;
+    require_release_evidence_min_u64(
+        parameters,
+        "baseline_min_queries",
+        CURRENT_STAGE_D10K_QUERY_MIN,
+        CONTEXT,
+    )?;
     for key in [
         "top_k",
         "embedding_dimension",
@@ -4462,6 +4538,456 @@ fn require_release_evidence_positive_u64_value(
         Some(value) if value > 0 => Ok(value),
         _ => Err(release_evidence_invalid(context, key)),
     }
+}
+
+fn require_release_evidence_number_value(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<f64> {
+    match object.get(key).and_then(serde_json::Value::as_f64) {
+        Some(value) if value.is_finite() && value >= 0.0 => Ok(value),
+        _ => Err(release_evidence_invalid(context, key)),
+    }
+}
+
+fn validate_current_stage_private_query_observability(
+    value: &serde_json::Value,
+    context: &'static str,
+) -> Result<()> {
+    const QUERY_BUCKETS: [&str; 7] = [
+        "single_term",
+        "and_2",
+        "and_3_5",
+        "and_6_16",
+        "field_filter",
+        "hybrid",
+        "semantic",
+    ];
+    const STAGES: [&str; 7] = [
+        "query_parse",
+        "prefilter",
+        "bm25",
+        "ann",
+        "fusion",
+        "bulk_hydrate",
+        "snippet",
+    ];
+    const HISTOGRAM_BOUNDS_MS: [f64; 13] = [
+        1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1_000.0, 2_500.0, 5_000.0, 10_000.0,
+        60_000.0,
+    ];
+
+    let object = value
+        .as_object()
+        .ok_or_else(|| release_evidence_invalid(context, "private_query_observability"))?;
+    validate_release_evidence_allowed_keys(
+        object,
+        &[
+            "privacy_boundary",
+            "dataset_kind",
+            "document_count",
+            "searchable_document_count",
+            "vector_indexed_document_count",
+            "query_count",
+            "request_sample_count",
+            "query_source",
+            "private_scale_gate",
+            "query_set_sha256",
+            "tune_sha256",
+            "holdout_sha256",
+            "bucket_counts",
+            "tune_bucket_counts",
+            "holdout_bucket_counts",
+            "samples_per_bucket",
+            "query_latency_ms",
+            "query_latency_by_bucket",
+            "stage_latency_p95_ms",
+            "stage_latency_by_bucket_p95_ms",
+            "stage_histogram_ms",
+            "stage_histogram_by_bucket_ms",
+            "rss_delta_mb",
+            "rss_delta_mb_by_bucket",
+            "zero_result_queries",
+            "query_runner",
+            "query_mode",
+            "retrieval_layers",
+            "warm_or_cold_definition",
+            "cache_state",
+            "percentile_confidence",
+            "spawn_per_query",
+            "hot_index",
+            "hot_path_ocr",
+            "hot_path_parsing",
+            "hot_path_heavy_model_inference",
+            "contains_raw_resume_text",
+            "contains_resume_paths",
+            "contains_queries",
+        ],
+        context,
+    )?;
+    require_release_evidence_string(
+        object,
+        "privacy_boundary",
+        "redacted_local_aggregate",
+        context,
+    )?;
+    require_release_evidence_string(object, "dataset_kind", "private-real-corpus", context)?;
+    require_release_evidence_string(object, "query_source", "trace_source_search_v1", context)?;
+    match object.get("private_scale_gate") {
+        Some(serde_json::Value::String(value)) if value == CURRENT_STAGE_D10K_SCALE_GATE => {}
+        _ => return Err(release_evidence_invalid(context, "private_scale_gate")),
+    }
+    require_release_evidence_string(object, "query_runner", "resident-batch-command", context)?;
+    require_release_evidence_string(object, "query_mode", "hybrid", context)?;
+    require_release_evidence_string(
+        object,
+        "retrieval_layers",
+        "fulltext+field+vector+rrf",
+        context,
+    )?;
+    require_release_evidence_string(
+        object,
+        "warm_or_cold_definition",
+        "current_stage_single_resident_batch_no_extra_warmup",
+        context,
+    )?;
+    require_release_evidence_string(
+        object,
+        "cache_state",
+        "hot_index_fully_covered_resident_batch_os_cache_uncontrolled",
+        context,
+    )?;
+    require_release_evidence_string(object, "percentile_confidence", "sampled", context)?;
+    require_release_evidence_bool(object, "spawn_per_query", false, context)?;
+    require_release_evidence_bool(object, "hot_index", true, context)?;
+    require_release_evidence_sha256(object, "query_set_sha256", context)?;
+    require_release_evidence_sha256(object, "tune_sha256", context)?;
+    require_release_evidence_sha256(object, "holdout_sha256", context)?;
+    for key in [
+        "hot_path_ocr",
+        "hot_path_parsing",
+        "hot_path_heavy_model_inference",
+        "contains_raw_resume_text",
+        "contains_resume_paths",
+        "contains_queries",
+    ] {
+        require_release_evidence_bool(object, key, false, context)?;
+    }
+
+    let document_count =
+        require_release_evidence_positive_u64_value(object, "document_count", context)?;
+    let searchable_document_count =
+        require_release_evidence_positive_u64_value(object, "searchable_document_count", context)?;
+    let vector_indexed_document_count = require_release_evidence_positive_u64_value(
+        object,
+        "vector_indexed_document_count",
+        context,
+    )?;
+    let query_count = require_release_evidence_positive_u64_value(object, "query_count", context)?;
+    let request_sample_count =
+        require_release_evidence_positive_u64_value(object, "request_sample_count", context)?;
+    let zero_result_queries = require_release_evidence_positive_or_zero_u64_value(
+        object,
+        "zero_result_queries",
+        context,
+    )?;
+    if document_count < CURRENT_STAGE_D10K_DOCUMENT_MIN
+        || searchable_document_count < CURRENT_STAGE_D10K_SEARCHABLE_DOCUMENT_MIN
+        || vector_indexed_document_count < CURRENT_STAGE_D10K_VECTOR_DOCUMENT_MIN
+        || searchable_document_count > document_count
+        || vector_indexed_document_count > searchable_document_count
+        || query_count < CURRENT_STAGE_D10K_QUERY_MIN
+        || request_sample_count < CURRENT_STAGE_D10K_REQUEST_SAMPLE_MIN
+        || request_sample_count < query_count
+        || zero_result_queries > request_sample_count
+    {
+        return Err(release_evidence_invalid(
+            context,
+            "private_query_observability",
+        ));
+    }
+
+    let bucket_counts = require_release_evidence_object(object, "bucket_counts", context)?;
+    validate_release_evidence_allowed_keys(bucket_counts, &QUERY_BUCKETS, context)?;
+    let tune_bucket_counts =
+        require_release_evidence_object(object, "tune_bucket_counts", context)?;
+    validate_release_evidence_allowed_keys(tune_bucket_counts, &QUERY_BUCKETS, context)?;
+    let holdout_bucket_counts =
+        require_release_evidence_object(object, "holdout_bucket_counts", context)?;
+    validate_release_evidence_allowed_keys(holdout_bucket_counts, &QUERY_BUCKETS, context)?;
+    let samples_per_bucket =
+        require_release_evidence_object(object, "samples_per_bucket", context)?;
+    validate_release_evidence_allowed_keys(samples_per_bucket, &QUERY_BUCKETS, context)?;
+    let mut total_queries = 0;
+    let mut tune_queries = 0;
+    let mut holdout_queries = 0;
+    let mut total_samples = 0;
+    for bucket in QUERY_BUCKETS {
+        let bucket_count =
+            require_release_evidence_positive_or_zero_u64_value(bucket_counts, bucket, context)?;
+        let tune_count = require_release_evidence_positive_or_zero_u64_value(
+            tune_bucket_counts,
+            bucket,
+            context,
+        )?;
+        let holdout_count = require_release_evidence_positive_or_zero_u64_value(
+            holdout_bucket_counts,
+            bucket,
+            context,
+        )?;
+        if tune_count.checked_add(holdout_count) != Some(bucket_count) {
+            return Err(release_evidence_invalid(context, "tune_bucket_counts"));
+        }
+        total_queries += bucket_count;
+        tune_queries += tune_count;
+        holdout_queries += holdout_count;
+        let sample_count = require_release_evidence_positive_or_zero_u64_value(
+            samples_per_bucket,
+            bucket,
+            context,
+        )?;
+        let min_query_count = D10K_TRACE_QUERY_BUCKET_MIN_COUNTS
+            .iter()
+            .find_map(|(expected_bucket, min_count)| {
+                (*expected_bucket == bucket).then_some(*min_count as u64)
+            })
+            .unwrap_or(CURRENT_STAGE_D10K_QUERY_MIN);
+        if bucket_count < min_query_count {
+            return Err(release_evidence_invalid(context, "bucket_counts"));
+        }
+        if sample_count < CURRENT_STAGE_D10K_SAMPLES_PER_BUCKET_MIN {
+            return Err(release_evidence_invalid(context, "samples_per_bucket"));
+        }
+        total_samples += sample_count;
+    }
+    if total_queries != query_count
+        || tune_queries.checked_add(holdout_queries) != Some(query_count)
+        || total_samples != request_sample_count
+    {
+        return Err(release_evidence_invalid(context, "samples_per_bucket"));
+    }
+
+    let query_latency = require_release_evidence_object(object, "query_latency_ms", context)?;
+    validate_current_stage_latency_observability(
+        query_latency,
+        request_sample_count,
+        "query_latency_ms",
+        context,
+    )?;
+
+    let query_latency_by_bucket =
+        require_release_evidence_object(object, "query_latency_by_bucket", context)?;
+    validate_release_evidence_allowed_keys(query_latency_by_bucket, &QUERY_BUCKETS, context)?;
+    for bucket in QUERY_BUCKETS {
+        let sample_count = require_release_evidence_positive_or_zero_u64_value(
+            samples_per_bucket,
+            bucket,
+            context,
+        )?;
+        let Some(latency) = query_latency_by_bucket.get(bucket) else {
+            return Err(release_evidence_invalid(context, "query_latency_by_bucket"));
+        };
+        let latency = latency
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(context, "query_latency_by_bucket"))?;
+        validate_current_stage_latency_observability(
+            latency,
+            sample_count,
+            "query_latency_by_bucket",
+            context,
+        )?;
+    }
+
+    let stage_latency = require_release_evidence_object(object, "stage_latency_p95_ms", context)?;
+    validate_release_evidence_allowed_keys(stage_latency, &STAGES, context)?;
+    for stage in STAGES {
+        require_release_evidence_number_value(stage_latency, stage, context)?;
+    }
+
+    let stage_latency_by_bucket =
+        require_release_evidence_object(object, "stage_latency_by_bucket_p95_ms", context)?;
+    validate_release_evidence_allowed_keys(stage_latency_by_bucket, &QUERY_BUCKETS, context)?;
+    for bucket in QUERY_BUCKETS {
+        let bucket_stages = stage_latency_by_bucket
+            .get(bucket)
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| release_evidence_invalid(context, "stage_latency_by_bucket_p95_ms"))?;
+        validate_release_evidence_allowed_keys(bucket_stages, &STAGES, context)?;
+        for stage in STAGES {
+            require_release_evidence_number_value(bucket_stages, stage, context)?;
+        }
+    }
+
+    let stage_histogram = require_release_evidence_object(object, "stage_histogram_ms", context)?;
+    validate_current_stage_stage_histogram_summary(
+        stage_histogram,
+        request_sample_count,
+        &STAGES,
+        &HISTOGRAM_BOUNDS_MS,
+        "stage_histogram_ms",
+        context,
+    )?;
+
+    let stage_histogram_by_bucket =
+        require_release_evidence_object(object, "stage_histogram_by_bucket_ms", context)?;
+    validate_release_evidence_allowed_keys(stage_histogram_by_bucket, &QUERY_BUCKETS, context)?;
+    for bucket in QUERY_BUCKETS {
+        let sample_count = require_release_evidence_positive_or_zero_u64_value(
+            samples_per_bucket,
+            bucket,
+            context,
+        )?;
+        let bucket_stages = stage_histogram_by_bucket
+            .get(bucket)
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| release_evidence_invalid(context, "stage_histogram_by_bucket_ms"))?;
+        validate_current_stage_stage_histogram_summary(
+            bucket_stages,
+            sample_count,
+            &STAGES,
+            &HISTOGRAM_BOUNDS_MS,
+            "stage_histogram_by_bucket_ms",
+            context,
+        )?;
+    }
+
+    let rss_delta = require_release_evidence_object(object, "rss_delta_mb", context)?;
+    validate_current_stage_latency_observability(
+        rss_delta,
+        request_sample_count,
+        "rss_delta_mb",
+        context,
+    )?;
+
+    let rss_delta_by_bucket =
+        require_release_evidence_object(object, "rss_delta_mb_by_bucket", context)?;
+    validate_release_evidence_allowed_keys(rss_delta_by_bucket, &QUERY_BUCKETS, context)?;
+    for bucket in QUERY_BUCKETS {
+        let sample_count = require_release_evidence_positive_or_zero_u64_value(
+            samples_per_bucket,
+            bucket,
+            context,
+        )?;
+        let Some(rss_delta) = rss_delta_by_bucket.get(bucket) else {
+            return Err(release_evidence_invalid(context, "rss_delta_mb_by_bucket"));
+        };
+        let rss_delta = rss_delta
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(context, "rss_delta_mb_by_bucket"))?;
+        validate_current_stage_latency_observability(
+            rss_delta,
+            sample_count,
+            "rss_delta_mb_by_bucket",
+            context,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn validate_current_stage_stage_histogram_summary(
+    object: &serde_json::Map<String, serde_json::Value>,
+    expected_samples: u64,
+    stages: &[&str],
+    histogram_bounds_ms: &[f64],
+    field: &'static str,
+    context: &'static str,
+) -> Result<()> {
+    validate_release_evidence_allowed_keys(object, stages, context)?;
+    for stage in stages {
+        let histogram = object
+            .get(*stage)
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| release_evidence_invalid(context, field))?;
+        validate_current_stage_histogram_observability(
+            histogram,
+            expected_samples,
+            histogram_bounds_ms,
+            field,
+            context,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_current_stage_histogram_observability(
+    object: &serde_json::Map<String, serde_json::Value>,
+    expected_samples: u64,
+    histogram_bounds_ms: &[f64],
+    field: &'static str,
+    context: &'static str,
+) -> Result<()> {
+    validate_release_evidence_allowed_keys(
+        object,
+        &["samples", "bins", "overflow_count"],
+        context,
+    )?;
+    let samples = require_release_evidence_positive_u64_value(object, "samples", context)?;
+    if samples != expected_samples {
+        return Err(release_evidence_invalid(context, field));
+    }
+    let bins = object
+        .get("bins")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| release_evidence_invalid(context, field))?;
+    if bins.len() != histogram_bounds_ms.len() {
+        return Err(release_evidence_invalid(context, field));
+    }
+
+    let mut previous_count = 0;
+    for (bin, expected_le_ms) in bins.iter().zip(histogram_bounds_ms) {
+        let bin = bin
+            .as_object()
+            .ok_or_else(|| release_evidence_invalid(context, field))?;
+        validate_release_evidence_allowed_keys(bin, &["le_ms", "count"], context)?;
+        let le_ms = require_release_evidence_number_value(bin, "le_ms", context)?;
+        let count = require_release_evidence_positive_or_zero_u64_value(bin, "count", context)?;
+        if (le_ms - *expected_le_ms).abs() > f64::EPSILON
+            || count < previous_count
+            || count > samples
+        {
+            return Err(release_evidence_invalid(context, field));
+        }
+        previous_count = count;
+    }
+
+    let overflow_count =
+        require_release_evidence_positive_or_zero_u64_value(object, "overflow_count", context)?;
+    if previous_count.checked_add(overflow_count) == Some(samples) {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid(context, field))
+    }
+}
+
+fn validate_current_stage_latency_observability(
+    object: &serde_json::Map<String, serde_json::Value>,
+    expected_samples: u64,
+    field: &'static str,
+    context: &'static str,
+) -> Result<()> {
+    validate_release_evidence_allowed_keys(object, &["samples", "p50", "p95", "p99"], context)?;
+    let samples = require_release_evidence_positive_u64_value(object, "samples", context)?;
+    let p50 = require_release_evidence_number_value(object, "p50", context)?;
+    let p95 = require_release_evidence_number_value(object, "p95", context)?;
+    let p99 = require_release_evidence_number_value(object, "p99", context)?;
+    if samples == expected_samples && p50 <= p95 && p95 <= p99 {
+        Ok(())
+    } else {
+        Err(release_evidence_invalid(context, field))
+    }
+}
+
+fn require_release_evidence_positive_or_zero_u64_value(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    context: &'static str,
+) -> Result<u64> {
+    object
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| release_evidence_invalid(context, key))
 }
 
 fn validate_current_stage_aggregate_observability(
@@ -10435,12 +10961,26 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "none".to_string())
         );
+        println!(
+            "import hardware tier: {}",
+            import_args.hardware_tier.label()
+        );
+        println!(
+            "import private/anonymous budget MiB: {}",
+            import_args.max_private_or_anonymous_mb
+        );
+        println!(
+            "import index writer heap MiB: {}",
+            bytes_to_mib(import_args.index_writer_heap_bytes)
+        );
         return Ok(());
     }
 
+    let import_started = Instant::now();
     for (task, root) in tasks.iter().zip(roots.iter()) {
         let _task_owner_lock = ImportTaskOwnerLock::acquire(data_dir, &task.id)
             .map_err(|_| CliError::user("unable to acquire import task owner lock"))?;
+        let root_offset = import_started.elapsed();
         let root_summary = import_root_with_options(
             data_dir,
             &store,
@@ -10450,11 +10990,13 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
             ImportOptions {
                 scan_profile: import_args.profile,
                 max_files: import_args.max_files,
+                parse_workers: import_args.parse_workers,
+                index_writer_heap_bytes: import_args.index_writer_heap_bytes,
             },
         )
         .map_err(CliError::import)?;
         upsert_import_scan_scope(&store, task, root, &import_args, &root_summary, now)?;
-        merge_import_summary(&mut summary, root_summary);
+        merge_import_summary(&mut summary, root_summary, root_offset);
     }
 
     let task_ids = tasks
@@ -10473,6 +11015,7 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("scan profile: {}", import_args.profile.label());
     println!("roots scanned: {}", roots.len());
     println!("files discovered: {}", summary.files_discovered);
+    println!("content bytes read: {}", summary.content_bytes_read);
     println!("searchable documents: {}", summary.searchable_documents);
     println!("ocr required documents: {}", summary.ocr_required_documents);
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
@@ -10494,6 +11037,22 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
             .map(|value| value.to_string())
             .unwrap_or_else(|| "none".to_string())
     );
+    println!(
+        "import hardware tier: {}",
+        import_args.hardware_tier.label()
+    );
+    println!(
+        "import private/anonymous budget MiB: {}",
+        import_args.max_private_or_anonymous_mb
+    );
+    println!(
+        "import index writer heap MiB: {}",
+        bytes_to_mib(import_args.index_writer_heap_bytes)
+    );
+    print_import_throughput(&summary);
+    print_import_milestone_timings(&summary);
+    print_import_stage_timings(&summary);
+    print_import_worker_metrics(&summary);
 
     Ok(())
 }
@@ -10526,6 +11085,8 @@ fn witness_command(args: &[String]) -> Result<()> {
         ImportOptions {
             scan_profile,
             max_files: None,
+            parse_workers: ImportParseWorkers::default(),
+            index_writer_heap_bytes: ImportResourcePolicy::detect().index_writer_heap_bytes,
         },
     )
     .map_err(CliError::import)?;
@@ -11921,10 +12482,11 @@ fn render_import_cancel_ipc_result(body: &serde_json::Value) {
     println!("status: cancelled");
 }
 
-fn merge_import_summary(total: &mut ImportSummary, next: ImportSummary) {
+fn merge_import_summary(total: &mut ImportSummary, next: ImportSummary, root_offset: Duration) {
     total.files_discovered += next.files_discovered;
     total.scan_errors += next.scan_errors;
     total.ignored_entries += next.ignored_entries;
+    total.content_bytes_read += next.content_bytes_read;
     total.searchable_documents += next.searchable_documents;
     total.ocr_required_documents += next.ocr_required_documents;
     total.ocr_jobs_queued += next.ocr_jobs_queued;
@@ -11933,11 +12495,336 @@ fn merge_import_summary(total: &mut ImportSummary, next: ImportSummary) {
         total.failure_counts.add(kind, count);
     }
     total.deleted_documents += next.deleted_documents;
+    total.stage_timings.add_assign(&next.stage_timings);
+    total.worker_metrics.add_assign(&next.worker_metrics);
+    merge_import_milestone_timings(
+        &mut total.milestone_timings,
+        next.milestone_timings,
+        root_offset,
+    );
     if next.scan_budget.is_some()
         && (total.scan_budget.is_none() || next.scan_budget.is_some_and(|budget| budget.exhausted))
     {
         total.scan_budget = next.scan_budget;
     }
+}
+
+fn merge_import_milestone_timings(
+    total: &mut ImportMilestoneTimings,
+    next: ImportMilestoneTimings,
+    root_offset: Duration,
+) {
+    total.first_searchable = earliest_duration(
+        total.first_searchable,
+        offset_duration(next.first_searchable, root_offset),
+    );
+    total.ttf100_searchable = earliest_duration(
+        total.ttf100_searchable,
+        offset_duration(next.ttf100_searchable, root_offset),
+    );
+    total.ttf1000_searchable = earliest_duration(
+        total.ttf1000_searchable,
+        offset_duration(next.ttf1000_searchable, root_offset),
+    );
+    total.full_import_ready = latest_duration(
+        total.full_import_ready,
+        offset_duration(next.full_import_ready, root_offset),
+    );
+    total.full_index_ready = latest_duration(
+        total.full_index_ready,
+        offset_duration(next.full_index_ready, root_offset),
+    );
+}
+
+fn offset_duration(duration: Option<Duration>, offset: Duration) -> Option<Duration> {
+    duration.map(|duration| duration + offset)
+}
+
+fn earliest_duration(current: Option<Duration>, next: Option<Duration>) -> Option<Duration> {
+    match (current, next) {
+        (Some(current), Some(next)) => Some(current.min(next)),
+        (Some(current), None) => Some(current),
+        (None, Some(next)) => Some(next),
+        (None, None) => None,
+    }
+}
+
+fn latest_duration(current: Option<Duration>, next: Option<Duration>) -> Option<Duration> {
+    match (current, next) {
+        (Some(current), Some(next)) => Some(current.max(next)),
+        (Some(current), None) => Some(current),
+        (None, Some(next)) => Some(next),
+        (None, None) => None,
+    }
+}
+
+fn print_import_milestone_timings(summary: &ImportSummary) {
+    print_import_milestone(
+        "first searchable ms",
+        summary.milestone_timings.first_searchable,
+    );
+    print_import_milestone(
+        "ttf100 searchable ms",
+        summary.milestone_timings.ttf100_searchable,
+    );
+    print_import_milestone(
+        "ttf1000 searchable ms",
+        summary.milestone_timings.ttf1000_searchable,
+    );
+    print_import_milestone(
+        "full import ready ms",
+        summary.milestone_timings.full_import_ready,
+    );
+    print_import_milestone(
+        "full index ready ms",
+        summary.milestone_timings.full_index_ready,
+    );
+}
+
+fn print_import_milestone(label: &str, duration: Option<Duration>) {
+    match duration {
+        Some(duration) => println!("{label}: {:.3}", duration_millis(duration)),
+        None => println!("{label}: n/a"),
+    }
+}
+
+fn print_import_throughput(summary: &ImportSummary) {
+    let elapsed_seconds = summary
+        .milestone_timings
+        .full_import_ready
+        .or(summary.milestone_timings.full_index_ready)
+        .map(|duration| duration.as_secs_f64())
+        .filter(|seconds| *seconds > 0.0);
+
+    print_import_rate(
+        "docs per second",
+        elapsed_seconds.map(|seconds| summary.files_discovered as f64 / seconds),
+    );
+    print_import_rate(
+        "MiB per second",
+        elapsed_seconds
+            .map(|seconds| summary.content_bytes_read as f64 / (1024.0 * 1024.0) / seconds),
+    );
+    println!(
+        "scan complete ms: {:.3}",
+        duration_millis(summary.stage_timings.scan)
+    );
+}
+
+fn print_import_rate(label: &str, rate: Option<f64>) {
+    match rate {
+        Some(rate) if rate.is_finite() => println!("{label}: {rate:.3}"),
+        _ => println!("{label}: n/a"),
+    }
+}
+
+fn print_import_stage_timings(summary: &ImportSummary) {
+    println!(
+        "stage scan ms: {:.3}",
+        duration_millis(summary.stage_timings.scan)
+    );
+    println!(
+        "stage parse ms: {:.3}",
+        duration_millis(summary.stage_timings.parse)
+    );
+    println!(
+        "stage db ms: {:.3}",
+        duration_millis(summary.stage_timings.db)
+    );
+    println!(
+        "stage index ms: {:.3}",
+        duration_millis(summary.stage_timings.index)
+    );
+    println!(
+        "stage ocr ms: {:.3}",
+        duration_millis(summary.stage_timings.ocr)
+    );
+    println!(
+        "stage embedding ms: {:.3}",
+        duration_millis(summary.stage_timings.embedding)
+    );
+}
+
+fn print_import_worker_metrics(summary: &ImportSummary) {
+    println!(
+        "parse worker count: {}",
+        summary.worker_metrics.parse_worker_count
+    );
+    println!(
+        "parse jobs queued: {}",
+        summary.worker_metrics.parse_jobs_queued
+    );
+    println!(
+        "parse prepare ms: {:.3}",
+        duration_millis(summary.worker_metrics.parse_prepare)
+    );
+    println!(
+        "parse worker wall ms: {:.3}",
+        duration_millis(summary.worker_metrics.parse_worker_wall)
+    );
+    println!(
+        "parse worker active ms: {:.3}",
+        duration_millis(summary.worker_metrics.parse_worker_active)
+    );
+    println!(
+        "parse queue full events: {}",
+        summary.worker_metrics.parse_queue_full_events
+    );
+    println!(
+        "parse queue wait ms: {:.3}",
+        duration_millis(summary.worker_metrics.parse_queue_wait)
+    );
+    println!(
+        "parse result wait ms: {:.3}",
+        duration_millis(summary.worker_metrics.parse_result_wait)
+    );
+    println!(
+        "cancel check count: {}",
+        summary.worker_metrics.cancel_check_count
+    );
+    println!(
+        "cancel check max gap ms: {:.3}",
+        duration_millis(summary.worker_metrics.cancel_check_max_gap)
+    );
+    println!(
+        "cancel check max gap phase: {}",
+        summary.worker_metrics.cancel_check_max_gap_phase.as_label()
+    );
+    println!(
+        "index publication setup ms: {:.3}",
+        duration_millis(summary.worker_metrics.index_publication_timings.setup)
+    );
+    println!(
+        "index publication documents ms: {:.3}",
+        duration_millis(summary.worker_metrics.index_publication_timings.documents)
+    );
+    println!(
+        "index publication commit ms: {:.3}",
+        duration_millis(summary.worker_metrics.index_publication_timings.commit)
+    );
+    println!(
+        "index publication plaintext validation ms: {:.3}",
+        duration_millis(
+            summary
+                .worker_metrics
+                .index_publication_timings
+                .plaintext_validation
+        )
+    );
+    println!(
+        "index publication encrypted publication ms: {:.3}",
+        duration_millis(
+            summary
+                .worker_metrics
+                .index_publication_timings
+                .encrypted_publication
+        )
+    );
+    println!(
+        "index publication encrypted validation ms: {:.3}",
+        duration_millis(
+            summary
+                .worker_metrics
+                .index_publication_timings
+                .encrypted_validation
+        )
+    );
+    println!(
+        "index publication active snapshot ms: {:.3}",
+        duration_millis(
+            summary
+                .worker_metrics
+                .index_publication_timings
+                .active_snapshot
+        )
+    );
+    println!(
+        "pdf parse document load ms: {:.3}",
+        duration_millis(summary.worker_metrics.pdf_parse_timings.document_load)
+    );
+    println!(
+        "pdf parse page content fetch ms: {:.3}",
+        duration_millis(summary.worker_metrics.pdf_parse_timings.page_content_fetch)
+    );
+    println!(
+        "pdf parse text operator prefilter ms: {:.3}",
+        duration_millis(
+            summary
+                .worker_metrics
+                .pdf_parse_timings
+                .text_operator_prefilter
+        )
+    );
+    println!(
+        "pdf parse font encoding ms: {:.3}",
+        duration_millis(summary.worker_metrics.pdf_parse_timings.font_encoding)
+    );
+    println!(
+        "pdf parse content decode ms: {:.3}",
+        duration_millis(summary.worker_metrics.pdf_parse_timings.content_decode)
+    );
+    println!(
+        "pdf parse content string parse sampled ms: {:.3}",
+        duration_millis(
+            summary
+                .worker_metrics
+                .pdf_parse_timings
+                .content_string_parse
+        )
+    );
+    println!(
+        "pdf parse text collection ms: {:.3}",
+        duration_millis(summary.worker_metrics.pdf_parse_timings.text_collection)
+    );
+    println!(
+        "pdf parse text byte decode sampled ms: {:.3}",
+        duration_millis(summary.worker_metrics.pdf_parse_timings.text_byte_decode)
+    );
+    println!(
+        "pdf parse text accumulation sampled ms: {:.3}",
+        duration_millis(summary.worker_metrics.pdf_parse_timings.text_accumulation)
+    );
+    println!(
+        "pdf parse content string operands: {}",
+        summary
+            .worker_metrics
+            .pdf_parse_timings
+            .content_string_operands
+    );
+    println!(
+        "pdf parse content string bytes: {}",
+        summary
+            .worker_metrics
+            .pdf_parse_timings
+            .content_string_bytes
+    );
+    println!(
+        "pdf parse text decode runs: {}",
+        summary.worker_metrics.pdf_parse_timings.text_decode_runs
+    );
+    println!(
+        "pdf parse text decode input bytes: {}",
+        summary
+            .worker_metrics
+            .pdf_parse_timings
+            .text_decode_input_bytes
+    );
+    println!(
+        "import post-parser normalization ms: {:.3}",
+        duration_millis(summary.worker_metrics.post_parser_timings.normalization)
+    );
+    println!(
+        "import post-parser sectionization ms: {:.3}",
+        duration_millis(summary.worker_metrics.post_parser_timings.sectionization)
+    );
+}
+
+fn duration_millis(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
+}
+
+fn bytes_to_mib(bytes: usize) -> usize {
+    bytes / (1024 * 1024)
 }
 
 fn initial_import_summary(import_args: &ImportArgs) -> ImportSummary {
@@ -12039,6 +12926,10 @@ struct ImportArgs {
     root_selection: ImportRootSelection,
     profile: ScanProfile,
     max_files: Option<usize>,
+    parse_workers: ImportParseWorkers,
+    index_writer_heap_bytes: usize,
+    hardware_tier: ImportHardwareTier,
+    max_private_or_anonymous_mb: u16,
     enqueue: bool,
     ipc_auto: bool,
     ipc_endpoint: Option<IpcImportEndpoint>,
@@ -12079,6 +12970,7 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
     let mut profile = None;
     let mut profile_seen = false;
     let mut max_files = None;
+    let mut parse_workers = None;
     let mut enqueue = false;
     let mut ipc_auto = false;
     let mut ipc_endpoint = None;
@@ -12138,6 +13030,16 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
                 };
                 max_files = Some(parse_positive_usize(value)?);
             }
+            "--parse-workers" => {
+                if parse_workers.is_some() {
+                    return Err(import_usage());
+                }
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(import_usage());
+                };
+                parse_workers = Some(parse_import_parse_workers(value)?);
+            }
             "--ipc" => {
                 if ipc_auto || ipc_endpoint.is_some() {
                     return Err(import_usage());
@@ -12191,10 +13093,16 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
         (_, max_files) => max_files,
     };
 
+    let default_resource_policy = ImportResourcePolicy::detect();
+
     Ok(ImportArgs {
         root_selection,
         profile: profile.unwrap_or(default_profile),
         max_files,
+        parse_workers: parse_workers.unwrap_or(default_resource_policy.parse_workers),
+        index_writer_heap_bytes: default_resource_policy.index_writer_heap_bytes,
+        hardware_tier: default_resource_policy.hardware_tier,
+        max_private_or_anonymous_mb: default_resource_policy.max_private_or_anonymous_mb,
         enqueue,
         ipc_auto,
         ipc_endpoint,
@@ -12278,8 +13186,12 @@ fn parse_positive_usize(value: &str) -> Result<usize> {
     Ok(parsed)
 }
 
+fn parse_import_parse_workers(value: &str) -> Result<ImportParseWorkers> {
+    Ok(ImportParseWorkers::new(parse_positive_usize(value)?))
+}
+
 fn import_usage_text() -> &'static str {
-    "usage: resume-cli import [--enqueue] [--ipc auto|<http://127.0.0.1:port/imports|/status> --ipc-token-file <path>] (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery] [--max-files <count>]"
+    "usage: resume-cli import [--enqueue] [--ipc auto|<http://127.0.0.1:port/imports|/status> --ipc-token-file <path>] (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery] [--max-files <count>] [--parse-workers <count>]"
 }
 
 fn import_usage() -> CliError {
@@ -12449,23 +13361,116 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
 }
 
 fn benchmark_query_protocol_command(data_dir: &Path, args: &[String]) -> Result<()> {
-    validate_benchmark_query_protocol_args(args)?;
-    let query_input_path = benchmark_query_env("RESUME_IR_QUERY_INPUT_PATH")?;
+    let protocol_args = parse_benchmark_query_protocol_args(args)?;
+    if !protocol_args.batch_jsonl {
+        return Err(CliError::usage(benchmark_query_protocol_usage()));
+    }
+    benchmark_query_protocol_batch_command(data_dir, &protocol_args.search_args)
+}
+
+fn benchmark_query_protocol_batch_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let batch_input_path = benchmark_query_env("RESUME_IR_QUERY_BATCH_INPUT_PATH")?;
     let top_k = benchmark_query_top_k()?;
     let mode = benchmark_query_mode()?;
+    let batch = fs::File::open(&batch_input_path)
+        .map_err(|_| CliError::user("benchmark query input is unavailable"))?;
+    let is_regular_file = batch
+        .metadata()
+        .map_err(|_| CliError::user("benchmark query input is unavailable"))?
+        .file_type()
+        .is_file();
+    let batch = BufReader::new(batch);
+    if is_regular_file {
+        let requests = benchmark_query_batch_requests(batch)?;
+        for request in requests {
+            run_benchmark_query_protocol_batch_request(data_dir, args, top_k, mode, request)?;
+        }
+        return Ok(());
+    }
+    let mut seen_request_ids = BTreeSet::new();
+    let mut query_count = 0_usize;
+    for line in batch.lines() {
+        let line = line.map_err(|_| CliError::user("benchmark query input is unavailable"))?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let request = benchmark_query_batch_line_request(line)?;
+        remember_benchmark_query_request_id(&mut seen_request_ids, &request.request_id)?;
+        run_benchmark_query_protocol_batch_request(data_dir, args, top_k, mode, request)?;
+        query_count += 1;
+    }
+    if query_count == 0 {
+        return Err(CliError::user("benchmark query input is unavailable"));
+    }
+    Ok(())
+}
+
+fn benchmark_query_batch_requests(batch: impl BufRead) -> Result<Vec<BenchmarkQueryBatchRequest>> {
+    let mut requests = Vec::new();
+    let mut seen_request_ids = BTreeSet::new();
+    for line in batch.lines() {
+        let line = line.map_err(|_| CliError::user("benchmark query input is unavailable"))?;
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let request = benchmark_query_batch_line_request(line)?;
+        remember_benchmark_query_request_id(&mut seen_request_ids, &request.request_id)?;
+        requests.push(request);
+    }
+    if requests.is_empty() {
+        return Err(CliError::user("benchmark query input is unavailable"));
+    }
+    Ok(requests)
+}
+
+fn remember_benchmark_query_request_id(
+    seen_request_ids: &mut BTreeSet<String>,
+    request_id: &str,
+) -> Result<()> {
+    if seen_request_ids.insert(request_id.to_string()) {
+        return Ok(());
+    }
+    Err(CliError::user("benchmark query input is unavailable"))
+}
+
+fn run_benchmark_query_protocol_batch_request(
+    data_dir: &Path,
+    args: &[String],
+    top_k: usize,
+    mode: SearchMode,
+    request: BenchmarkQueryBatchRequest,
+) -> Result<()> {
+    let record_started = Instant::now();
     let mut search_args = vec![
-        "--query-file".to_string(),
-        query_input_path,
+        request.query,
         "--mode".to_string(),
         mode.label().to_string(),
         "--top-k".to_string(),
         top_k.to_string(),
     ];
     search_args.extend(args.iter().cloned());
-
     let search_args = parse_search_args(data_dir, &search_args)?;
+    let outcome = run_benchmark_query_protocol_once(data_dir, &search_args, record_started)?;
+    print_benchmark_query_protocol_record(&request.request_id, &search_args, outcome);
+    println!("resume-ir-query-end");
+    Ok(())
+}
+
+fn run_benchmark_query_protocol_once(
+    data_dir: &Path,
+    search_args: &SearchArgs,
+    protocol_started: Instant,
+) -> Result<BenchmarkQueryProtocolOutcome> {
+    let rss_before_bytes = process_memory_bytes();
+    let mut stage_timings = BenchmarkQueryProtocolStageTimings {
+        query_parse_ms: duration_ms(protocol_started.elapsed()),
+        ..BenchmarkQueryProtocolStageTimings::default()
+    };
     let query_started = Instant::now();
-    let hits = match run_local_search(data_dir, &search_args)? {
+    let hits = match run_benchmark_query_protocol_search(data_dir, search_args, &mut stage_timings)?
+    {
         LocalSearchOutcome::Hits(hits) => hits,
         LocalSearchOutcome::FullTextIndexUnavailable => Vec::new(),
     };
@@ -12475,7 +13480,21 @@ fn benchmark_query_protocol_command(data_dir: &Path, args: &[String]) -> Result<
         query_started.elapsed(),
         hits.len(),
     );
-    println!("resume-ir-query-v1");
+    Ok(BenchmarkQueryProtocolOutcome {
+        hit_count: hits.len(),
+        elapsed_ms: duration_ms(protocol_started.elapsed()),
+        rss_delta_mb: rss_delta_mb(rss_before_bytes, process_memory_bytes()),
+        stage_timings,
+    })
+}
+
+fn print_benchmark_query_protocol_record(
+    request_id: &str,
+    search_args: &SearchArgs,
+    outcome: BenchmarkQueryProtocolOutcome,
+) {
+    println!("{QUERY_PROTOCOL_VERSION}");
+    println!("request_id={request_id}");
     println!("mode={}", search_args.mode.label());
     println!("layers={}", search_args.mode.benchmark_layers_label());
     println!("top_k={}", search_args.top_k);
@@ -12487,39 +13506,176 @@ fn benchmark_query_protocol_command(data_dir: &Path, args: &[String]) -> Result<
         "query_embedding_invocations={}",
         search_args.mode.benchmark_query_embedding_invocations()
     );
-    println!("hits={}", hits.len());
-    Ok(())
+    outcome.stage_timings.print_protocol_lines();
+    println!("rss_delta_mb={:.3}", outcome.rss_delta_mb);
+    println!("elapsed_ms={:.3}", outcome.elapsed_ms);
+    println!("hits={}", outcome.hit_count);
 }
 
-fn validate_benchmark_query_protocol_args(args: &[String]) -> Result<()> {
+#[derive(Clone, Copy, Debug)]
+struct BenchmarkQueryProtocolOutcome {
+    hit_count: usize,
+    elapsed_ms: f64,
+    rss_delta_mb: f64,
+    stage_timings: BenchmarkQueryProtocolStageTimings,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct BenchmarkQueryProtocolStageTimings {
+    query_parse_ms: f64,
+    prefilter_ms: f64,
+    bm25_ms: f64,
+    ann_ms: f64,
+    fusion_ms: f64,
+    bulk_hydrate_ms: f64,
+    snippet_ms: f64,
+}
+
+impl BenchmarkQueryProtocolStageTimings {
+    fn print_protocol_lines(self) {
+        println!("stage_query_parse_ms={:.3}", self.query_parse_ms);
+        println!("stage_prefilter_ms={:.3}", self.prefilter_ms);
+        println!("stage_bm25_ms={:.3}", self.bm25_ms);
+        println!("stage_ann_ms={:.3}", self.ann_ms);
+        println!("stage_fusion_ms={:.3}", self.fusion_ms);
+        println!("stage_bulk_hydrate_ms={:.3}", self.bulk_hydrate_ms);
+        println!("stage_snippet_ms={:.3}", self.snippet_ms);
+    }
+}
+
+fn duration_ms(duration: Duration) -> f64 {
+    duration.as_secs_f64() * 1000.0
+}
+
+fn rss_delta_mb(before_bytes: Option<u64>, after_bytes: Option<u64>) -> f64 {
+    let Some(before_bytes) = before_bytes else {
+        return 0.0;
+    };
+    let Some(after_bytes) = after_bytes else {
+        return 0.0;
+    };
+    after_bytes.saturating_sub(before_bytes) as f64 / 1_048_576.0
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BenchmarkQueryProtocolArgs {
+    batch_jsonl: bool,
+    search_args: Vec<String>,
+}
+
+fn parse_benchmark_query_protocol_args(args: &[String]) -> Result<BenchmarkQueryProtocolArgs> {
+    let mut batch_jsonl = false;
+    let mut search_args = Vec::new();
     for arg in args {
         match arg.as_str() {
+            "--batch-jsonl" => {
+                if batch_jsonl {
+                    return Err(CliError::usage(benchmark_query_protocol_usage()));
+                }
+                batch_jsonl = true;
+            }
             "--query-file" | "--mode" | "--top-k" | "--ipc" | "--ipc-token-file" => {
                 return Err(CliError::usage(benchmark_query_protocol_usage()));
             }
-            _ => {}
+            _ => search_args.push(arg.clone()),
         }
     }
-    Ok(())
+    Ok(BenchmarkQueryProtocolArgs {
+        batch_jsonl,
+        search_args,
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct BenchmarkQuerySetDraftArgs {
+struct BenchmarkQueryBatchRequest {
+    request_id: String,
+    query: String,
+}
+
+fn benchmark_query_batch_line_request(line: &str) -> Result<BenchmarkQueryBatchRequest> {
+    let value = serde_json::from_str::<serde_json::Value>(line)
+        .map_err(|_| CliError::user("benchmark query input is unavailable"))?;
+    if value
+        .get("schema_version")
+        .and_then(serde_json::Value::as_str)
+        != Some(QUERY_BATCH_REQUEST_SCHEMA_VERSION)
+    {
+        return Err(CliError::user("benchmark query input is unavailable"));
+    }
+    let request_id = value
+        .get("request_id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|request_id| is_benchmark_query_request_id(request_id))
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| CliError::user("benchmark query input is unavailable"))?;
+    let query = value
+        .get("query")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|query| !query.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| CliError::user("benchmark query input is unavailable"))?;
+    if !query_set_query_in_semantic_bounds(&query) {
+        return Err(CliError::user("benchmark query input is unavailable"));
+    }
+    Ok(BenchmarkQueryBatchRequest { request_id, query })
+}
+
+fn is_benchmark_query_request_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BenchmarkAgentReplayFreezeArgs {
     out: PathBuf,
+    trace_root: PathBuf,
     max_queries: usize,
     min_queries: usize,
-    allow_keyword_fallback: bool,
-    trace_root: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct DraftedPrivateQueries {
+struct BenchmarkAgentReplayPreflightArgs {
+    out: PathBuf,
+    trace_root: PathBuf,
+    max_queries: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FrozenAgentReplayQueries {
     queries: Vec<String>,
-    used_keyword_fallback: bool,
-    query_source: &'static str,
     candidate_queries_sampled: usize,
     zero_hit_queries_dropped: usize,
-    insufficient_query_message: &'static str,
+    insufficient_query_message: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct TraceQuerySelectionCounts {
+    trace_logs: usize,
+    trace_lines: usize,
+    source_search_lines: usize,
+    extracted_queries: usize,
+    normalization_rejected: usize,
+    duplicate_queries_dropped: usize,
+    candidate_queries_sampled: usize,
+    zero_hit_queries_dropped: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TraceQueryPreflight {
+    counts: TraceQuerySelectionCounts,
+    query_index_available: bool,
+    corpus_summary: BenchmarkCorpusSummary,
+    candidate_bucket_counts: BTreeMap<&'static str, usize>,
+    candidate_bucket_deficits: BTreeMap<&'static str, usize>,
+    corpus_valid_queries: usize,
+    corpus_valid_bucket_counts: BTreeMap<&'static str, usize>,
+    required_bucket_counts: BTreeMap<&'static str, usize>,
+    corpus_valid_bucket_deficits: BTreeMap<&'static str, usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -12529,77 +13685,243 @@ struct QuerySetSummaryDigests {
     holdout_sha256: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct QuerySetSplit<'a> {
+    tune_queries: Vec<&'a str>,
+    holdout_queries: Vec<&'a str>,
+    tune_bucket_counts: BTreeMap<&'static str, usize>,
+    holdout_bucket_counts: BTreeMap<&'static str, usize>,
+}
+
 fn benchmark_query_set_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let Some(action) = args.first().map(String::as_str) else {
         return Err(CliError::usage(benchmark_query_set_usage()));
     };
     match action {
-        "draft" => benchmark_query_set_draft_command(data_dir, &args[1..]),
+        "preflight-agent-replay" => {
+            benchmark_query_set_preflight_agent_replay_command(data_dir, &args[1..])
+        }
+        "freeze-agent-replay" => {
+            benchmark_query_set_freeze_agent_replay_command(data_dir, &args[1..])
+        }
         _ => Err(CliError::usage(benchmark_query_set_usage())),
     }
 }
 
-fn benchmark_query_set_draft_command(data_dir: &Path, args: &[String]) -> Result<()> {
-    let args = parse_benchmark_query_set_draft_args(args)?;
+fn benchmark_query_set_preflight_agent_replay_command(
+    data_dir: &Path,
+    args: &[String],
+) -> Result<()> {
+    let args = parse_benchmark_agent_replay_preflight_args(args)?;
     let store = MetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
     store.run_migrations().map_err(CliError::store)?;
-    let drafted = match args.trace_root.as_deref() {
-        Some(trace_root) => {
-            draft_trace_backed_private_queries(data_dir, &store, trace_root, args.max_queries)?
-        }
-        None => draft_local_private_queries(&store, args.max_queries, args.allow_keyword_fallback)?,
-    };
-    let queries = drafted.queries.clone();
-    if queries.len() < args.min_queries {
-        return Err(CliError::user(drafted.insufficient_query_message));
-    }
-
+    let preflight = preflight_trace_backed_private_queries(
+        data_dir,
+        &store,
+        &args.trace_root,
+        args.max_queries,
+    )?;
+    let counts = preflight.counts;
+    let corpus_summary = &preflight.corpus_summary;
+    let d10k_corpus_deficits = d10k_corpus_deficits(corpus_summary);
+    let summary = serde_json::json!({
+        "schema_version": QUERY_SET_TRACE_PREFLIGHT_SCHEMA_VERSION,
+        "privacy_boundary": "redacted_local_aggregate",
+        "query_source": QuerySetSourceKind::TraceSourceSearchV1.as_str(),
+        "target_query_count": args.max_queries,
+        "document_count": corpus_summary.document_count,
+        "searchable_document_count": corpus_summary.searchable_document_count,
+        "vector_indexed_document_count": corpus_summary.vector_indexed_document_count,
+        "d10k_min_document_count": CURRENT_STAGE_D10K_DOCUMENT_MIN,
+        "d10k_min_searchable_document_count": CURRENT_STAGE_D10K_SEARCHABLE_DOCUMENT_MIN,
+        "d10k_min_vector_indexed_document_count": CURRENT_STAGE_D10K_VECTOR_DOCUMENT_MIN,
+        "d10k_corpus_ready": d10k_corpus_ready(corpus_summary),
+        "d10k_corpus_deficits": d10k_corpus_deficits,
+        "trace_logs": counts.trace_logs,
+        "trace_lines": counts.trace_lines,
+        "source_search_lines": counts.source_search_lines,
+        "extracted_queries": counts.extracted_queries,
+        "normalization_rejected": counts.normalization_rejected,
+        "duplicate_queries_dropped": counts.duplicate_queries_dropped,
+        "candidate_queries_sampled": counts.candidate_queries_sampled,
+        "zero_hit_queries_dropped": counts.zero_hit_queries_dropped,
+        "query_index_available": preflight.query_index_available,
+        "candidate_bucket_counts": preflight.candidate_bucket_counts,
+        "candidate_bucket_deficits": preflight.candidate_bucket_deficits,
+        "corpus_valid_queries": preflight.corpus_valid_queries,
+        "corpus_valid_bucket_counts": preflight.corpus_valid_bucket_counts,
+        "required_bucket_counts": preflight.required_bucket_counts,
+        "corpus_valid_bucket_deficits": preflight.corpus_valid_bucket_deficits,
+        "contains_raw_query_text": false,
+        "contains_raw_resume_text": false,
+        "contains_candidate_results": false,
+        "contains_local_paths": false,
+    });
+    let summary_text = serde_json::to_string_pretty(&summary)
+        .map_err(|_| CliError::user("query set blocked: trace preflight is unavailable"))?;
     if let Some(parent) = args.out.parent() {
         if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)
-                .map_err(|_| CliError::user("query set blocked: output is unavailable"))?;
+            create_private_query_artifact_parent(parent)?;
+        }
+    }
+    write_private_query_artifact(&args.out, format!("{summary_text}\n").as_bytes())?;
+    println!("query set trace preflight: written");
+    println!("schema: {QUERY_SET_TRACE_PREFLIGHT_SCHEMA_VERSION}");
+    println!("privacy boundary: redacted_local_aggregate");
+    println!("queries: <redacted>");
+    Ok(())
+}
+
+fn benchmark_query_set_freeze_agent_replay_command(data_dir: &Path, args: &[String]) -> Result<()> {
+    let args = parse_benchmark_agent_replay_freeze_args(args)?;
+    let store = MetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
+    store.run_migrations().map_err(CliError::store)?;
+    if args.max_queries == D10K_TRACE_QUERY_SET_COUNT {
+        let corpus_summary = benchmark_corpus_summary(data_dir, &store)?;
+        if !d10k_corpus_ready(&corpus_summary) {
+            return Err(CliError::user(d10k_corpus_not_ready_message(
+                &corpus_summary,
+            )));
+        }
+    }
+    let frozen =
+        freeze_trace_backed_private_queries(data_dir, &store, &args.trace_root, args.max_queries)?;
+    let queries = frozen.queries.clone();
+    if queries.len() < args.min_queries {
+        return Err(CliError::user(frozen.insufficient_query_message));
+    }
+
+    let summary = write_frozen_private_query_set(data_dir, &args.out, &queries, &frozen)?;
+    print_query_set_result("frozen", &queries, &frozen, &summary);
+    Ok(())
+}
+
+fn write_frozen_private_query_set(
+    data_dir: &Path,
+    out: &Path,
+    queries: &[String],
+    frozen: &FrozenAgentReplayQueries,
+) -> Result<QuerySetSummaryDigests> {
+    if let Some(parent) = out.parent() {
+        if !parent.as_os_str().is_empty() {
+            create_private_query_artifact_parent(parent)?;
         }
     }
     let mut output = String::new();
     for (index, query) in queries.iter().enumerate() {
+        let shape = QuerySetSampleShape::from_query(query);
+        let bucket = query_set_bucket_for_query(query);
         output.push_str(
             &serde_json::json!({
+                "schema_version": QUERY_SET_SCHEMA_VERSION,
                 "sample_id": format!("local-query-{number:06}", number = index + 1),
+                "bucket": bucket,
                 "query": query,
+                "source_kind": QuerySetSourceKind::TraceSourceSearchV1.as_str(),
+                "query_shape": {
+                    "term_count": shape.term_count(),
+                    "has_boolean": shape.has_boolean(),
+                    "has_location": shape.has_location(),
+                    "has_years": shape.has_years(),
+                    "has_degree": shape.has_degree(),
+                    "has_skill": shape.has_skill(),
+                    "has_phrase": shape.has_phrase(),
+                },
             })
             .to_string(),
         );
         output.push('\n');
     }
-    fs::write(&args.out, output)
-        .map_err(|_| CliError::user("query set blocked: output is unavailable"))?;
-    let summary = write_query_set_redacted_summary(data_dir, &args.out, &queries, &drafted)?;
+    write_private_query_artifact(out, output.as_bytes())?;
+    write_query_set_redacted_summary(data_dir, out, queries, frozen)
+}
 
-    println!("query set: written");
+fn create_private_query_artifact_parent(path: &Path) -> Result<()> {
+    fs::create_dir_all(path)
+        .map_err(|_| CliError::user("query set blocked: output is unavailable"))?;
+    set_private_query_artifact_dir_permissions(path)
+}
+
+#[cfg(unix)]
+fn set_private_query_artifact_dir_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+        .map_err(|_| CliError::user("query set blocked: output is unavailable"))
+}
+
+#[cfg(not(unix))]
+fn set_private_query_artifact_dir_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+fn write_private_query_artifact(path: &Path, bytes: &[u8]) -> Result<()> {
+    let tmp_path = private_query_artifact_tmp_path(path)?;
+    let result = write_private_query_artifact_temp(&tmp_path, bytes).and_then(|_| {
+        fs::rename(&tmp_path, path)
+            .map_err(|_| CliError::user("query set blocked: output is unavailable"))
+    });
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result
+}
+
+fn private_query_artifact_tmp_path(path: &Path) -> Result<PathBuf> {
+    let file_name = path
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .filter(|file_name| !file_name.is_empty())
+        .ok_or_else(|| CliError::user("query set blocked: output is unavailable"))?;
+    Ok(path.with_file_name(format!(".{file_name}.tmp-{}", std::process::id())))
+}
+
+#[cfg(unix)]
+fn write_private_query_artifact_temp(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|_| CliError::user("query set blocked: output is unavailable"))?;
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .map_err(|_| CliError::user("query set blocked: output is unavailable"))?;
+    file.write_all(bytes)
+        .map_err(|_| CliError::user("query set blocked: output is unavailable"))
+}
+
+#[cfg(not(unix))]
+fn write_private_query_artifact_temp(path: &Path, bytes: &[u8]) -> Result<()> {
+    fs::write(path, bytes).map_err(|_| CliError::user("query set blocked: output is unavailable"))
+}
+
+fn print_query_set_result(
+    state: &str,
+    queries: &[String],
+    frozen: &FrozenAgentReplayQueries,
+    summary: &QuerySetSummaryDigests,
+) {
+    println!("query set: {state}");
     println!("query set summary: written");
     println!("schema: {QUERY_SET_SCHEMA_VERSION}");
     println!("summary schema: {QUERY_SET_SUMMARY_SCHEMA_VERSION}");
     println!("privacy boundary: local_only_private_query_set");
-    println!("query source: {}", drafted.query_source);
+    println!(
+        "query source: {}",
+        QuerySetSourceKind::TraceSourceSearchV1.as_str()
+    );
     println!("queries: {}", queries.len());
     println!(
-        "query fallback: {}",
-        if drafted.used_keyword_fallback {
-            "keyword"
-        } else {
-            "none"
-        }
+        "candidate queries sampled: {}",
+        frozen.candidate_queries_sampled
     );
-    if drafted.query_source == "trace_source_search_v1" {
-        println!(
-            "candidate queries sampled: {}",
-            drafted.candidate_queries_sampled
-        );
-        println!(
-            "zero-hit queries dropped: {}",
-            drafted.zero_hit_queries_dropped
-        );
-    }
+    println!(
+        "zero-hit queries dropped: {}",
+        frozen.zero_hit_queries_dropped
+    );
     println!("query set sha256: {}", summary.query_set_sha256);
     println!("tune sha256: {}", summary.tune_sha256);
     println!("holdout sha256: {}", summary.holdout_sha256);
@@ -12607,17 +13929,15 @@ fn benchmark_query_set_draft_command(data_dir: &Path, args: &[String]) -> Result
     println!("queries: <redacted>");
     println!("sample ids: <redacted>");
     println!("paths: <redacted>");
-    Ok(())
 }
 
-fn parse_benchmark_query_set_draft_args(args: &[String]) -> Result<BenchmarkQuerySetDraftArgs> {
+fn parse_benchmark_agent_replay_preflight_args(
+    args: &[String],
+) -> Result<BenchmarkAgentReplayPreflightArgs> {
     let mut out = None;
-    let mut max_queries = 500_usize;
-    let mut max_queries_seen = false;
-    let mut min_queries = 1_usize;
-    let mut min_queries_seen = false;
-    let mut allow_keyword_fallback = false;
     let mut trace_root = None;
+    let mut max_queries = D10K_TRACE_QUERY_SET_COUNT;
+    let mut max_queries_seen = false;
     let mut index = 0_usize;
     while index < args.len() {
         match args[index].as_str() {
@@ -12627,6 +13947,62 @@ fn parse_benchmark_query_set_draft_args(args: &[String]) -> Result<BenchmarkQuer
                 }
                 out = Some(take_benchmark_query_set_path(args, &mut index)?);
             }
+            "--trace-root" => {
+                if trace_root.is_some() {
+                    return Err(CliError::usage(benchmark_query_set_usage()));
+                }
+                trace_root = Some(take_benchmark_query_set_path(args, &mut index)?);
+            }
+            "--max-queries" => {
+                if max_queries_seen {
+                    return Err(CliError::usage(benchmark_query_set_usage()));
+                }
+                max_queries = take_benchmark_query_set_positive_usize(args, &mut index)?;
+                max_queries_seen = true;
+            }
+            "--min-queries" => return Err(CliError::usage(benchmark_query_set_usage())),
+            _ => return Err(CliError::usage(benchmark_query_set_usage())),
+        }
+    }
+    let trace_root = match trace_root {
+        Some(trace_root) => trace_root,
+        None => query_artifact_root_from_env()?,
+    };
+    let out = match out {
+        Some(out) => out,
+        None => local_evidence_output_path(QUERY_SET_TRACE_PREFLIGHT_DEFAULT_FILE)?,
+    };
+    ensure_query_artifact_outside_git_worktree(&out)?;
+    Ok(BenchmarkAgentReplayPreflightArgs {
+        out,
+        trace_root,
+        max_queries,
+    })
+}
+
+fn parse_benchmark_agent_replay_freeze_args(
+    args: &[String],
+) -> Result<BenchmarkAgentReplayFreezeArgs> {
+    let mut out = None;
+    let mut trace_root = None;
+    let mut max_queries = D10K_TRACE_QUERY_SET_COUNT;
+    let mut max_queries_seen = false;
+    let mut min_queries = None;
+    let mut index = 0_usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--out" => {
+                if out.is_some() {
+                    return Err(CliError::usage(benchmark_query_set_usage()));
+                }
+                out = Some(take_benchmark_query_set_path(args, &mut index)?);
+            }
+            "--trace-root" => {
+                if trace_root.is_some() {
+                    return Err(CliError::usage(benchmark_query_set_usage()));
+                }
+                trace_root = Some(take_benchmark_query_set_path(args, &mut index)?);
+            }
             "--max-queries" => {
                 if max_queries_seen {
                     return Err(CliError::usage(benchmark_query_set_usage()));
@@ -12635,41 +14011,96 @@ fn parse_benchmark_query_set_draft_args(args: &[String]) -> Result<BenchmarkQuer
                 max_queries_seen = true;
             }
             "--min-queries" => {
-                if min_queries_seen {
+                if min_queries.is_some() {
                     return Err(CliError::usage(benchmark_query_set_usage()));
                 }
-                min_queries = take_benchmark_query_set_positive_usize(args, &mut index)?;
-                min_queries_seen = true;
-            }
-            "--allow-keyword-fallback" => {
-                if allow_keyword_fallback {
-                    return Err(CliError::usage(benchmark_query_set_usage()));
-                }
-                allow_keyword_fallback = true;
-                index += 1;
-            }
-            "--trace-root" => {
-                if trace_root.is_some() {
-                    return Err(CliError::usage(benchmark_query_set_usage()));
-                }
-                trace_root = Some(take_benchmark_query_set_path(args, &mut index)?);
+                min_queries = Some(take_benchmark_query_set_positive_usize(args, &mut index)?);
             }
             _ => return Err(CliError::usage(benchmark_query_set_usage())),
         }
     }
+    let min_queries = min_queries.unwrap_or(max_queries);
     if min_queries > max_queries {
         return Err(CliError::usage(benchmark_query_set_usage()));
     }
-    if trace_root.is_some() && allow_keyword_fallback {
-        return Err(CliError::usage(benchmark_query_set_usage()));
+    if max_queries == D10K_TRACE_QUERY_SET_COUNT && min_queries != D10K_TRACE_QUERY_SET_COUNT {
+        return Err(CliError::user(
+            "query set blocked: D10K agent replay freeze requires 500 queries",
+        ));
     }
-    Ok(BenchmarkQuerySetDraftArgs {
-        out: out.ok_or_else(|| CliError::usage(benchmark_query_set_usage()))?,
+    let trace_root = match trace_root {
+        Some(trace_root) => trace_root,
+        None => query_artifact_root_from_env()?,
+    };
+    let out = match out {
+        Some(out) => out,
+        None => local_evidence_output_path(PRIVATE_QUERY_SET_DEFAULT_FILE)?,
+    };
+    ensure_query_artifact_outside_git_worktree(&out)?;
+    Ok(BenchmarkAgentReplayFreezeArgs {
+        out,
+        trace_root,
         max_queries,
         min_queries,
-        allow_keyword_fallback,
-        trace_root,
     })
+}
+
+fn query_artifact_root_from_env() -> Result<PathBuf> {
+    let value = std::env::var_os(QUERY_ARTIFACT_ROOT_ENV)
+        .ok_or_else(|| CliError::usage(benchmark_query_set_usage()))?;
+    if value.as_os_str().is_empty() {
+        return Err(CliError::usage(benchmark_query_set_usage()));
+    }
+    Ok(PathBuf::from(value))
+}
+
+fn local_evidence_output_path(file_name: &str) -> Result<PathBuf> {
+    let value = std::env::var_os(LOCAL_EVIDENCE_DIR_ENV)
+        .ok_or_else(|| CliError::usage(benchmark_query_set_usage()))?;
+    if value.as_os_str().is_empty() {
+        return Err(CliError::usage(benchmark_query_set_usage()));
+    }
+    Ok(PathBuf::from(value).join(file_name))
+}
+
+fn ensure_query_artifact_outside_git_worktree(path: &Path) -> Result<()> {
+    let absolute = if path.is_absolute() {
+        normalize_lexical_path(path)
+    } else {
+        let current_dir = std::env::current_dir()
+            .map_err(|_| CliError::user("query set blocked: output is unavailable"))?;
+        normalize_lexical_path(&current_dir.join(path))
+    };
+    let mut current = absolute.as_path();
+    loop {
+        let git_marker = current.join(".git");
+        if git_marker.is_dir() || git_marker.is_file() {
+            return Err(CliError::user(
+                "query set blocked: local query artifacts must not be written inside a git worktree",
+            ));
+        }
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        current = parent;
+    }
+    Ok(())
+}
+
+fn normalize_lexical_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn take_benchmark_query_set_path(args: &[String], index: &mut usize) -> Result<PathBuf> {
@@ -12697,51 +14128,50 @@ fn take_benchmark_query_set_positive_usize(args: &[String], index: &mut usize) -
 }
 
 fn benchmark_query_set_usage() -> &'static str {
-    "usage: resume-cli benchmark-query-set draft --out <path> [--max-queries <count>] [--min-queries <count>] [--allow-keyword-fallback] [--trace-root <path>]"
+    "usage: resume-cli benchmark-query-set preflight-agent-replay [--out <path>] [--trace-root <path>] [--max-queries <count>]\n       resume-cli benchmark-query-set freeze-agent-replay [--out <path>] [--trace-root <path>] [--max-queries <count>] [--min-queries <count>]\n       --out defaults to RESUME_IR_LOCAL_EVIDENCE_DIR/<default> when omitted\n       --trace-root defaults to RESUME_IR_QUERY_ARTIFACT_ROOT when omitted"
 }
 
 fn write_query_set_redacted_summary(
     data_dir: &Path,
     query_set_path: &Path,
     queries: &[String],
-    drafted: &DraftedPrivateQueries,
+    frozen: &FrozenAgentReplayQueries,
 ) -> Result<QuerySetSummaryDigests> {
     let hasher = ContactHasher::load_or_create(data_dir).map_err(CliError::privacy)?;
-    let (tune_queries, holdout_queries) = split_query_set_for_holdout(&hasher, queries)?;
+    let bucket_counts = query_set_bucket_counts(queries);
+    let split = split_query_set_for_holdout(&hasher, queries)?;
     let digests = QuerySetSummaryDigests {
         query_set_sha256: hasher
             .hmac_hex(
-                "resume-ir:query-set-summary:v1:all",
-                &build_query_set_hmac_payload(drafted.query_source, queries),
+                "resume-ir:query-set-summary:v2:all",
+                &build_query_set_hmac_payload(queries),
             )
             .map_err(CliError::privacy)?,
         tune_sha256: hasher
             .hmac_hex(
-                "resume-ir:query-set-summary:v1:tune",
-                &build_query_set_hmac_payload(drafted.query_source, &tune_queries),
+                "resume-ir:query-set-summary:v2:tune",
+                &build_query_set_hmac_payload(&split.tune_queries),
             )
             .map_err(CliError::privacy)?,
         holdout_sha256: hasher
             .hmac_hex(
-                "resume-ir:query-set-summary:v1:holdout",
-                &build_query_set_hmac_payload(drafted.query_source, &holdout_queries),
+                "resume-ir:query-set-summary:v2:holdout",
+                &build_query_set_hmac_payload(&split.holdout_queries),
             )
             .map_err(CliError::privacy)?,
     };
     let summary = serde_json::json!({
         "schema_version": QUERY_SET_SUMMARY_SCHEMA_VERSION,
         "privacy_boundary": "redacted_local_aggregate",
-        "query_source": drafted.query_source,
+        "query_source": QuerySetSourceKind::TraceSourceSearchV1.as_str(),
         "query_count": queries.len(),
-        "tune_query_count": tune_queries.len(),
-        "holdout_query_count": holdout_queries.len(),
-        "candidate_queries_sampled": drafted.candidate_queries_sampled,
-        "zero_hit_queries_dropped": drafted.zero_hit_queries_dropped,
-        "query_fallback": if drafted.used_keyword_fallback {
-            "keyword"
-        } else {
-            "none"
-        },
+        "tune_query_count": split.tune_queries.len(),
+        "holdout_query_count": split.holdout_queries.len(),
+        "bucket_counts": bucket_counts,
+        "tune_bucket_counts": split.tune_bucket_counts,
+        "holdout_bucket_counts": split.holdout_bucket_counts,
+        "candidate_queries_sampled": frozen.candidate_queries_sampled,
+        "zero_hit_queries_dropped": frozen.zero_hit_queries_dropped,
         "query_set_sha256": &digests.query_set_sha256,
         "tune_sha256": &digests.tune_sha256,
         "holdout_sha256": &digests.holdout_sha256,
@@ -12753,56 +14183,133 @@ fn write_query_set_redacted_summary(
     });
     let summary_text = serde_json::to_string_pretty(&summary)
         .map_err(|_| CliError::user("query set blocked: summary is unavailable"))?;
-    fs::write(
-        query_set_summary_path(query_set_path),
-        format!("{summary_text}\n"),
-    )
-    .map_err(|_| CliError::user("query set blocked: output is unavailable"))?;
+    let summary_path = query_set_summary_path(query_set_path);
+    write_private_query_artifact(&summary_path, format!("{summary_text}\n").as_bytes())?;
     Ok(digests)
 }
 
 fn split_query_set_for_holdout<'a>(
     hasher: &ContactHasher,
     queries: &'a [String],
-) -> Result<(Vec<&'a str>, Vec<&'a str>)> {
-    let mut tune_queries = Vec::new();
-    let mut holdout_queries = Vec::new();
+) -> Result<QuerySetSplit<'a>> {
+    let mut split_sides = Vec::with_capacity(queries.len());
+    let mut assignment_digests = Vec::with_capacity(queries.len());
     for query in queries {
         let assignment_digest = hasher
-            .hmac_hex("resume-ir:query-set-summary:v1:assign", query.as_bytes())
+            .hmac_hex("resume-ir:query-set-summary:v2:assign", query.as_bytes())
             .map_err(CliError::privacy)?;
         let bucket = u8::from_str_radix(&assignment_digest[..2], 16)
             .map_err(|_| CliError::user("query set blocked: summary is unavailable"))?;
-        if bucket < 0x33 {
-            holdout_queries.push(query.as_str());
-        } else {
-            tune_queries.push(query.as_str());
+        split_sides.push(bucket >= 0x33);
+        assignment_digests.push(assignment_digest);
+    }
+    rebalance_query_set_split_buckets(queries, &assignment_digests, &mut split_sides);
+    if queries.len() > 1 && split_sides.iter().all(|side| *side) {
+        if let Some(side) = split_sides.last_mut() {
+            *side = false;
         }
     }
-    if queries.len() > 1 && holdout_queries.is_empty() {
-        let query = tune_queries
-            .pop()
-            .ok_or_else(|| CliError::user("query set blocked: summary is unavailable"))?;
-        holdout_queries.push(query);
+    if queries.len() > 1 && split_sides.iter().all(|side| !*side) {
+        if let Some(side) = split_sides.last_mut() {
+            *side = true;
+        }
     }
-    if !queries.is_empty() && tune_queries.is_empty() {
-        let query = holdout_queries
-            .pop()
-            .ok_or_else(|| CliError::user("query set blocked: summary is unavailable"))?;
-        tune_queries.push(query);
+    let mut tune_queries = Vec::new();
+    let mut holdout_queries = Vec::new();
+    let mut tune_bucket_counts = empty_query_set_bucket_counts();
+    let mut holdout_bucket_counts = empty_query_set_bucket_counts();
+    for (query, is_tune) in queries.iter().zip(split_sides.iter().copied()) {
+        let bucket = query_set_bucket_for_query(query);
+        if is_tune {
+            tune_queries.push(query.as_str());
+            increment_query_set_bucket_count(&mut tune_bucket_counts, bucket);
+        } else {
+            holdout_queries.push(query.as_str());
+            increment_query_set_bucket_count(&mut holdout_bucket_counts, bucket);
+        }
     }
-    Ok((tune_queries, holdout_queries))
+    Ok(QuerySetSplit {
+        tune_queries,
+        holdout_queries,
+        tune_bucket_counts,
+        holdout_bucket_counts,
+    })
 }
 
-fn build_query_set_hmac_payload<T: AsRef<str>>(query_source: &str, queries: &[T]) -> Vec<u8> {
+fn rebalance_query_set_split_buckets(
+    queries: &[String],
+    assignment_digests: &[String],
+    split_sides: &mut [bool],
+) {
+    for bucket in QUERY_BUCKETS {
+        let mut indexes = queries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, query)| {
+                (query_set_bucket_for_query(query) == bucket).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        if indexes.len() <= 1 {
+            continue;
+        }
+        let has_tune = indexes.iter().any(|index| split_sides[*index]);
+        let has_holdout = indexes.iter().any(|index| !split_sides[*index]);
+        if has_tune && has_holdout {
+            continue;
+        }
+        indexes.sort_by(|left, right| {
+            assignment_digests[*left]
+                .cmp(&assignment_digests[*right])
+                .then_with(|| left.cmp(right))
+        });
+        if let Some(index) = indexes.first().copied() {
+            split_sides[index] = !split_sides[index];
+        }
+    }
+}
+
+fn query_set_bucket_counts<T: AsRef<str>>(queries: &[T]) -> BTreeMap<&'static str, usize> {
+    let mut counts = QUERY_BUCKETS
+        .into_iter()
+        .map(|bucket| (bucket, 0_usize))
+        .collect::<BTreeMap<_, _>>();
+    for query in queries {
+        let bucket = query_set_bucket_for_query(query.as_ref());
+        if let Some(count) = counts.get_mut(bucket) {
+            *count += 1;
+        }
+    }
+    counts
+}
+
+fn build_query_set_hmac_payload<T: AsRef<str>>(queries: &[T]) -> Vec<u8> {
     let mut payload = Vec::new();
+    update_query_set_payload_string(&mut payload, QUERY_SET_SCHEMA_VERSION);
     update_query_set_payload_string(&mut payload, QUERY_SET_SUMMARY_SCHEMA_VERSION);
-    update_query_set_payload_string(&mut payload, query_source);
+    update_query_set_payload_string(
+        &mut payload,
+        QuerySetSourceKind::TraceSourceSearchV1.as_str(),
+    );
     payload.extend((queries.len() as u64).to_le_bytes());
     for query in queries {
-        update_query_set_payload_string(&mut payload, query.as_ref());
+        let query = query.as_ref();
+        let shape = QuerySetSampleShape::from_query(query);
+        let bucket = query_set_bucket_for_query(query);
+        update_query_set_payload_string(&mut payload, query);
+        update_query_set_payload_string(&mut payload, bucket);
+        payload.extend((shape.term_count() as u64).to_le_bytes());
+        payload.push(u8::from(shape.has_boolean()));
+        payload.push(u8::from(shape.has_location()));
+        payload.push(u8::from(shape.has_years()));
+        payload.push(u8::from(shape.has_degree()));
+        payload.push(u8::from(shape.has_skill()));
+        payload.push(u8::from(shape.has_phrase()));
     }
     payload
+}
+
+fn query_set_bucket_for_query(query: &str) -> &'static str {
+    QuerySetSampleShape::from_query(query).bucket()
 }
 
 fn update_query_set_payload_string(payload: &mut Vec<u8>, value: &str) {
@@ -12819,80 +14326,133 @@ fn query_set_summary_path(query_set_path: &Path) -> PathBuf {
     query_set_path.with_file_name(format!("{base_name}.summary.json"))
 }
 
-fn draft_local_private_queries(
-    store: &MetaStore,
-    max_queries: usize,
-    allow_keyword_fallback: bool,
-) -> Result<DraftedPrivateQueries> {
-    let mut field_queries = BTreeSet::<String>::new();
-    let candidate_budget = max_queries.saturating_mul(10).max(max_queries);
-    let document_ids = store.searchable_document_ids().map_err(CliError::store)?;
-    for document_id in document_ids.iter() {
-        let Some(version) = store
-            .latest_visible_resume_version_for_document(document_id)
-            .map_err(CliError::store)?
-        else {
-            continue;
-        };
-        if version.visibility != ResumeVisibility::Searchable {
-            continue;
-        }
-        let mentions = store
-            .entity_mentions_for_version(&version.id)
-            .map_err(CliError::store)?;
-        add_query_candidates_for_mentions(&mentions, &mut field_queries, candidate_budget);
-        if field_queries.len() >= candidate_budget {
-            break;
-        }
-    }
-    let mut queries = field_queries
-        .into_iter()
-        .take(max_queries)
-        .collect::<Vec<_>>();
-    let mut seen = queries.iter().cloned().collect::<BTreeSet<_>>();
-    let mut used_keyword_fallback = false;
-    if allow_keyword_fallback && queries.len() < max_queries {
-        for document_id in document_ids {
-            let Some(version) = store
-                .latest_visible_resume_version_for_document(&document_id)
-                .map_err(CliError::store)?
-            else {
-                continue;
-            };
-            if version.visibility != ResumeVisibility::Searchable {
-                continue;
-            }
-            let Some(text) = version
-                .clean_text
-                .as_deref()
-                .or(version.raw_text.as_deref())
-            else {
-                continue;
-            };
-            if add_keyword_fallback_queries(text, &mut queries, &mut seen, max_queries) {
-                used_keyword_fallback = true;
-            }
-            if queries.len() >= max_queries {
-                break;
-            }
-        }
-    }
-    Ok(DraftedPrivateQueries {
-        queries,
-        used_keyword_fallback,
-        query_source: "local_field",
-        candidate_queries_sampled: candidate_budget,
-        zero_hit_queries_dropped: 0,
-        insufficient_query_message: "query set blocked: not enough local field queries",
-    })
-}
-
-fn draft_trace_backed_private_queries(
+fn preflight_trace_backed_private_queries(
     data_dir: &Path,
     store: &MetaStore,
     trace_root: &Path,
     max_queries: usize,
-) -> Result<DraftedPrivateQueries> {
+) -> Result<TraceQueryPreflight> {
+    if !trace_root.is_dir() {
+        return Err(CliError::user(
+            "query set blocked: trace root is unavailable",
+        ));
+    }
+    let index =
+        FullTextIndex::open_active(&data_dir.join("search-index")).map_err(CliError::fulltext)?;
+    let query_index_available = index.is_some();
+    let corpus_summary = benchmark_corpus_summary(data_dir, store)?;
+
+    let mut trace_paths = Vec::new();
+    collect_runtime_trace_logs(trace_root, &mut trace_paths)?;
+    let mut counts = TraceQuerySelectionCounts::default();
+    let mut candidate_bucket_counts = empty_query_set_bucket_counts();
+    let mut corpus_valid_bucket_counts = empty_query_set_bucket_counts();
+    let mut seen = BTreeSet::new();
+
+    for trace_path in trace_paths {
+        counts.trace_logs += 1;
+        let trace_file = fs::File::open(&trace_path)
+            .map_err(|_| CliError::user("query set blocked: trace log is unavailable"))?;
+        let mut reader = BufReader::new(trace_file);
+        let mut line_buffer = Vec::new();
+        while let Some(line) = read_bounded_trace_log_line(&mut reader, &mut line_buffer)? {
+            counts.trace_lines += 1;
+            if is_source_search_trace_line(&line) {
+                counts.source_search_lines += 1;
+            }
+            let Some(query) = extract_source_search_trace_query(&line) else {
+                continue;
+            };
+            counts.extracted_queries += 1;
+            let Some(query) = normalize_trace_query_value(&query) else {
+                counts.normalization_rejected += 1;
+                continue;
+            };
+            if !seen.insert(query.clone()) {
+                counts.duplicate_queries_dropped += 1;
+                continue;
+            }
+            counts.candidate_queries_sampled += 1;
+            increment_query_set_bucket_count(
+                &mut candidate_bucket_counts,
+                QuerySetSampleShape::from_query(&query).bucket(),
+            );
+            if let Some(index) = index.as_ref() {
+                let has_local_hit = trace_query_has_local_hit(store, index, &query)?;
+                if !has_local_hit {
+                    counts.zero_hit_queries_dropped += 1;
+                    continue;
+                }
+                increment_query_set_bucket_count(
+                    &mut corpus_valid_bucket_counts,
+                    QuerySetSampleShape::from_query(&query).bucket(),
+                );
+            }
+        }
+    }
+
+    let required_bucket_counts =
+        trace_query_full_freeze_bucket_targets(max_queries).unwrap_or_default();
+    let candidate_bucket_deficits =
+        query_set_bucket_deficits(&required_bucket_counts, &candidate_bucket_counts);
+    let corpus_valid_bucket_deficits =
+        query_set_bucket_deficits(&required_bucket_counts, &corpus_valid_bucket_counts);
+    let corpus_valid_queries = corpus_valid_bucket_counts.values().copied().sum();
+    Ok(TraceQueryPreflight {
+        counts,
+        query_index_available,
+        corpus_summary,
+        candidate_bucket_counts,
+        candidate_bucket_deficits,
+        corpus_valid_queries,
+        corpus_valid_bucket_counts,
+        required_bucket_counts,
+        corpus_valid_bucket_deficits,
+    })
+}
+
+fn d10k_corpus_ready(summary: &BenchmarkCorpusSummary) -> bool {
+    summary.document_count >= CURRENT_STAGE_D10K_DOCUMENT_MIN
+        && summary.searchable_document_count >= CURRENT_STAGE_D10K_SEARCHABLE_DOCUMENT_MIN
+        && summary.vector_indexed_document_count >= CURRENT_STAGE_D10K_VECTOR_DOCUMENT_MIN
+}
+
+fn d10k_corpus_deficits(summary: &BenchmarkCorpusSummary) -> BTreeMap<&'static str, u64> {
+    BTreeMap::from([
+        (
+            "document_count",
+            CURRENT_STAGE_D10K_DOCUMENT_MIN.saturating_sub(summary.document_count),
+        ),
+        (
+            "searchable_document_count",
+            CURRENT_STAGE_D10K_SEARCHABLE_DOCUMENT_MIN
+                .saturating_sub(summary.searchable_document_count),
+        ),
+        (
+            "vector_indexed_document_count",
+            CURRENT_STAGE_D10K_VECTOR_DOCUMENT_MIN
+                .saturating_sub(summary.vector_indexed_document_count),
+        ),
+    ])
+}
+
+fn d10k_corpus_not_ready_message(summary: &BenchmarkCorpusSummary) -> String {
+    let deficits = d10k_corpus_deficits(summary)
+        .into_iter()
+        .map(|(field, deficit)| format!("{field}={deficit}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "query set blocked: D10K agent replay freeze requires a D10K-shaped indexed corpus; corpus deficits: {deficits}"
+    )
+}
+
+fn freeze_trace_backed_private_queries(
+    data_dir: &Path,
+    store: &MetaStore,
+    trace_root: &Path,
+    max_queries: usize,
+) -> Result<FrozenAgentReplayQueries> {
     if !trace_root.is_dir() {
         return Err(CliError::user(
             "query set blocked: trace root is unavailable",
@@ -12909,65 +14469,200 @@ fn draft_trace_backed_private_queries(
     let mut trace_paths = Vec::new();
     collect_runtime_trace_logs(trace_root, &mut trace_paths)?;
     if trace_paths.is_empty() {
-        return Ok(DraftedPrivateQueries {
+        let counts = TraceQuerySelectionCounts::default();
+        return Ok(FrozenAgentReplayQueries {
             queries: Vec::new(),
-            used_keyword_fallback: false,
-            query_source: "trace_source_search_v1",
             candidate_queries_sampled: 0,
             zero_hit_queries_dropped: 0,
-            insufficient_query_message: "query set blocked: not enough corpus-valid trace queries",
+            insufficient_query_message: trace_query_insufficient_message(
+                None,
+                &empty_query_set_bucket_counts(),
+                &counts,
+                0,
+            ),
         });
     }
 
     let mut queries = Vec::new();
     let mut seen = BTreeSet::new();
-    let mut candidate_queries_sampled = 0_usize;
-    let mut zero_hit_queries_dropped = 0_usize;
+    let bucket_targets = trace_query_full_freeze_bucket_targets(max_queries);
+    let mut selected_bucket_counts = empty_query_set_bucket_counts();
+    let mut counts = TraceQuerySelectionCounts::default();
 
     for trace_path in trace_paths {
+        counts.trace_logs += 1;
         let trace_file = fs::File::open(&trace_path)
             .map_err(|_| CliError::user("query set blocked: trace log is unavailable"))?;
-        let reader = BufReader::new(trace_file);
-        for line in reader.lines() {
-            let line =
-                line.map_err(|_| CliError::user("query set blocked: trace log is unreadable"))?;
+        let mut reader = BufReader::new(trace_file);
+        let mut line_buffer = Vec::new();
+        while let Some(line) = read_bounded_trace_log_line(&mut reader, &mut line_buffer)? {
+            counts.trace_lines += 1;
+            if is_source_search_trace_line(&line) {
+                counts.source_search_lines += 1;
+            }
             let Some(query) = extract_source_search_trace_query(&line) else {
                 continue;
             };
+            counts.extracted_queries += 1;
             let Some(query) = normalize_trace_query_value(&query) else {
+                counts.normalization_rejected += 1;
                 continue;
             };
             if !seen.insert(query.clone()) {
+                counts.duplicate_queries_dropped += 1;
                 continue;
             }
-            candidate_queries_sampled += 1;
-            if trace_query_has_local_hit(store, &index, &query)? {
+            counts.candidate_queries_sampled += 1;
+            let has_local_hit = trace_query_has_local_hit(store, &index, &query)?;
+            if !has_local_hit {
+                counts.zero_hit_queries_dropped += 1;
+                continue;
+            }
+            let bucket = QuerySetSampleShape::from_query(&query).bucket();
+            if trace_query_bucket_can_accept(
+                bucket_targets.as_ref(),
+                &selected_bucket_counts,
+                bucket,
+            ) {
                 queries.push(query);
-                if queries.len() >= max_queries {
-                    return Ok(DraftedPrivateQueries {
+                increment_query_set_bucket_count(&mut selected_bucket_counts, bucket);
+                if trace_query_selection_complete(
+                    &queries,
+                    max_queries,
+                    bucket_targets.as_ref(),
+                    &selected_bucket_counts,
+                ) {
+                    return Ok(FrozenAgentReplayQueries {
                         queries,
-                        used_keyword_fallback: false,
-                        query_source: "trace_source_search_v1",
-                        candidate_queries_sampled,
-                        zero_hit_queries_dropped,
-                        insufficient_query_message:
-                            "query set blocked: not enough corpus-valid trace queries",
+                        candidate_queries_sampled: counts.candidate_queries_sampled,
+                        zero_hit_queries_dropped: counts.zero_hit_queries_dropped,
+                        insufficient_query_message: TRACE_QUERY_INSUFFICIENT_BASE_MESSAGE
+                            .to_string(),
                     });
                 }
-            } else {
-                zero_hit_queries_dropped += 1;
             }
         }
     }
 
-    Ok(DraftedPrivateQueries {
+    let selected_queries = queries.len();
+    Ok(FrozenAgentReplayQueries {
         queries,
-        used_keyword_fallback: false,
-        query_source: "trace_source_search_v1",
-        candidate_queries_sampled,
-        zero_hit_queries_dropped,
-        insufficient_query_message: "query set blocked: not enough corpus-valid trace queries",
+        candidate_queries_sampled: counts.candidate_queries_sampled,
+        zero_hit_queries_dropped: counts.zero_hit_queries_dropped,
+        insufficient_query_message: trace_query_insufficient_message(
+            bucket_targets.as_ref(),
+            &selected_bucket_counts,
+            &counts,
+            selected_queries,
+        ),
     })
+}
+
+fn query_set_bucket_deficits(
+    required_bucket_counts: &BTreeMap<&'static str, usize>,
+    observed_bucket_counts: &BTreeMap<&'static str, usize>,
+) -> BTreeMap<&'static str, usize> {
+    QUERY_BUCKETS
+        .into_iter()
+        .filter_map(|bucket| {
+            let required = required_bucket_counts.get(bucket).copied().unwrap_or(0);
+            let observed = observed_bucket_counts.get(bucket).copied().unwrap_or(0);
+            let deficit = required.saturating_sub(observed);
+            (deficit > 0).then_some((bucket, deficit))
+        })
+        .collect()
+}
+
+fn trace_query_insufficient_message(
+    bucket_targets: Option<&BTreeMap<&'static str, usize>>,
+    selected_bucket_counts: &BTreeMap<&'static str, usize>,
+    counts: &TraceQuerySelectionCounts,
+    selected_queries: usize,
+) -> String {
+    let mut message = TRACE_QUERY_INSUFFICIENT_BASE_MESSAGE.to_string();
+    if let Some(bucket_targets) = bucket_targets {
+        let deficits = QUERY_BUCKETS
+            .into_iter()
+            .filter_map(|bucket| {
+                let target = bucket_targets.get(bucket).copied().unwrap_or(0);
+                let selected = selected_bucket_counts.get(bucket).copied().unwrap_or(0);
+                (selected < target).then(|| format!("{bucket}={}", target - selected))
+            })
+            .collect::<Vec<_>>();
+        if !deficits.is_empty() {
+            message.push_str("; bucket deficits: ");
+            message.push_str(&deficits.join(","));
+        }
+    }
+    message.push_str("; trace selection counts: ");
+    message.push_str(&format!(
+        "trace_logs={} trace_lines={} source_search_lines={} extracted_queries={} normalization_rejected={} duplicate_queries_dropped={} candidate_queries_sampled={} zero_hit_queries_dropped={} selected_queries={}",
+        counts.trace_logs,
+        counts.trace_lines,
+        counts.source_search_lines,
+        counts.extracted_queries,
+        counts.normalization_rejected,
+        counts.duplicate_queries_dropped,
+        counts.candidate_queries_sampled,
+        counts.zero_hit_queries_dropped,
+        selected_queries
+    ));
+    message
+}
+
+fn trace_query_full_freeze_bucket_targets(
+    max_queries: usize,
+) -> Option<BTreeMap<&'static str, usize>> {
+    if max_queries != D10K_TRACE_QUERY_SET_COUNT {
+        return None;
+    }
+    Some(
+        D10K_TRACE_QUERY_BUCKET_MIN_COUNTS
+            .into_iter()
+            .collect::<BTreeMap<_, _>>(),
+    )
+}
+
+fn empty_query_set_bucket_counts() -> BTreeMap<&'static str, usize> {
+    QUERY_BUCKETS
+        .into_iter()
+        .map(|bucket| (bucket, 0_usize))
+        .collect()
+}
+
+fn trace_query_bucket_can_accept(
+    bucket_targets: Option<&BTreeMap<&'static str, usize>>,
+    selected_bucket_counts: &BTreeMap<&'static str, usize>,
+    bucket: &'static str,
+) -> bool {
+    let Some(bucket_targets) = bucket_targets else {
+        return true;
+    };
+    selected_bucket_counts.get(bucket).copied().unwrap_or(0)
+        < bucket_targets.get(bucket).copied().unwrap_or(0)
+}
+
+fn increment_query_set_bucket_count(
+    selected_bucket_counts: &mut BTreeMap<&'static str, usize>,
+    bucket: &'static str,
+) {
+    if let Some(count) = selected_bucket_counts.get_mut(bucket) {
+        *count += 1;
+    }
+}
+
+fn trace_query_selection_complete(
+    queries: &[String],
+    max_queries: usize,
+    bucket_targets: Option<&BTreeMap<&'static str, usize>>,
+    selected_bucket_counts: &BTreeMap<&'static str, usize>,
+) -> bool {
+    let Some(bucket_targets) = bucket_targets else {
+        return queries.len() >= max_queries;
+    };
+    bucket_targets
+        .iter()
+        .all(|(bucket, target)| selected_bucket_counts.get(bucket).copied().unwrap_or(0) >= *target)
 }
 
 fn collect_runtime_trace_logs(root: &Path, trace_paths: &mut Vec<PathBuf>) -> Result<()> {
@@ -13004,6 +14699,48 @@ fn collect_runtime_trace_logs(root: &Path, trace_paths: &mut Vec<PathBuf>) -> Re
     Ok(())
 }
 
+fn read_bounded_trace_log_line<R: BufRead>(
+    reader: &mut R,
+    buffer: &mut Vec<u8>,
+) -> Result<Option<String>> {
+    buffer.clear();
+    loop {
+        let available = reader
+            .fill_buf()
+            .map_err(|_| CliError::user("query set blocked: trace log is unreadable"))?;
+        if available.is_empty() {
+            if buffer.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+        let take_len = available
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map_or(available.len(), |index| index + 1);
+        if buffer.len().saturating_add(take_len) > TRACE_QUERY_LINE_MAX_BYTES {
+            return Err(CliError::user(
+                "query set blocked: trace log line is too large",
+            ));
+        }
+        let found_newline = available[take_len - 1] == b'\n';
+        buffer.extend_from_slice(&available[..take_len]);
+        reader.consume(take_len);
+        if found_newline {
+            break;
+        }
+    }
+    if buffer.ends_with(b"\n") {
+        buffer.pop();
+    }
+    if buffer.ends_with(b"\r") {
+        buffer.pop();
+    }
+    String::from_utf8(buffer.clone())
+        .map(Some)
+        .map_err(|_| CliError::user("query set blocked: trace log is unreadable"))
+}
+
 fn extract_source_search_trace_query(line: &str) -> Option<String> {
     let mut segments = line.split(" | ");
     let timestamp = segments.next()?;
@@ -13017,44 +14754,85 @@ fn extract_source_search_trace_query(line: &str) -> Option<String> {
     let tool_index = remaining
         .iter()
         .position(|segment| *segment == "tool=source_search")?;
-    let mut summary_index = tool_index + 1;
-    while summary_index < remaining.len()
-        && is_source_search_trace_metadata_segment(remaining[summary_index])
-    {
-        summary_index += 1;
-    }
+    let summary_index = tool_index + 1;
     if summary_index >= remaining.len() {
         return None;
     }
-    Some(remaining[summary_index..].join(" | "))
+    let query = remaining[summary_index].to_string();
+    if is_source_search_trace_non_keyword_segment(&query) {
+        return None;
+    }
+    Some(query)
 }
 
-fn is_source_search_trace_metadata_segment(segment: &str) -> bool {
-    matches!(
-        segment.split_once('='),
-        Some(("call", _))
-            | Some(("status", _))
-            | Some(("model", _))
-            | Some(("latency", _))
-            | Some(("stop_reason", _))
-    )
+fn is_source_search_trace_line(line: &str) -> bool {
+    let mut segments = line.split(" | ");
+    let Some(timestamp) = segments.next() else {
+        return false;
+    };
+    if !timestamp.starts_with('[') || segments.next() != Some("tool_called") {
+        return false;
+    }
+    segments.any(|segment| segment == "tool=source_search")
+}
+
+fn is_source_search_trace_non_keyword_segment(query: &str) -> bool {
+    matches!(query.split_once('='), Some((key, _)) if is_source_search_trace_metadata_key(key))
+}
+
+fn is_source_search_trace_metadata_key(key: &str) -> bool {
+    !key.is_empty()
+        && key.len() <= 32
+        && key
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
 }
 
 fn normalize_trace_query_value(value: &str) -> Option<String> {
-    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    let normalized = normalized.trim();
-    if normalized.is_empty()
-        || normalized.len() > 4096
-        || normalized.split_whitespace().count() > 16
-        || normalized.contains('@')
+    let normalized = normalize_query_set_query(value)?;
+    if normalized.contains('@')
         || normalized.contains('\\')
-        || normalized.contains('/')
         || normalized.contains("://")
-        || contains_sensitive_digit_run(normalized)
+        || contains_disallowed_trace_query_slash(&normalized)
+        || contains_sensitive_digit_run(&normalized)
     {
         return None;
     }
-    Some(normalized.to_string())
+    Some(normalized)
+}
+
+fn contains_disallowed_trace_query_slash(value: &str) -> bool {
+    value
+        .split_whitespace()
+        .any(trace_query_token_has_disallowed_slash)
+}
+
+fn trace_query_token_has_disallowed_slash(token: &str) -> bool {
+    if !token.contains('/') {
+        return false;
+    }
+    if token.starts_with('/')
+        || token.ends_with('/')
+        || token.contains("//")
+        || token.matches('/').count() > 1
+        || token.contains('.')
+        || token.contains(':')
+        || token.contains('~')
+    {
+        return true;
+    }
+    let Some((left, right)) = token.split_once('/') else {
+        return true;
+    };
+    !is_safe_slash_query_side(left) || !is_safe_slash_query_side(right)
+}
+
+fn is_safe_slash_query_side(value: &str) -> bool {
+    !value.is_empty()
+        && value.chars().count() <= 16
+        && value
+            .chars()
+            .all(|character| character.is_alphanumeric() || matches!(character, '+' | '#'))
 }
 
 fn contains_sensitive_digit_run(value: &str) -> bool {
@@ -13085,170 +14863,6 @@ fn trace_query_has_local_hit(
         .search(SearchQuery::new(plan.query_text()).with_limit(plan.limit()))
         .map_err(CliError::fulltext)?;
     Ok(!visible_hits(store, hits, 1)?.is_empty())
-}
-
-fn add_query_candidates_for_mentions(
-    mentions: &[EntityMention],
-    queries: &mut BTreeSet<String>,
-    max_queries: usize,
-) {
-    let skills = benchmark_query_values(mentions, EntityType::Skill);
-    let titles = benchmark_query_values(mentions, EntityType::Title);
-    let companies = benchmark_query_values(mentions, EntityType::Company);
-    let schools = benchmark_query_values(mentions, EntityType::School);
-    let majors = benchmark_query_values(mentions, EntityType::Major);
-    let certificates = benchmark_query_values(mentions, EntityType::Certificate);
-    let locations = benchmark_query_values(mentions, EntityType::Location);
-    let degrees = benchmark_query_values(mentions, EntityType::Degree);
-
-    for title in &titles {
-        for skill in &skills {
-            insert_benchmark_query_candidate(queries, &[title, skill], max_queries);
-        }
-        for company in &companies {
-            insert_benchmark_query_candidate(queries, &[company, title], max_queries);
-        }
-        for location in &locations {
-            insert_benchmark_query_candidate(queries, &[location, title], max_queries);
-        }
-    }
-    for school in &schools {
-        for major in &majors {
-            insert_benchmark_query_candidate(queries, &[school, major], max_queries);
-        }
-    }
-    for skill in &skills {
-        insert_benchmark_query_candidate(queries, &[skill], max_queries);
-    }
-    for certificate in &certificates {
-        insert_benchmark_query_candidate(queries, &[certificate], max_queries);
-    }
-    for degree in &degrees {
-        for skill in &skills {
-            insert_benchmark_query_candidate(queries, &[degree, skill], max_queries);
-        }
-    }
-}
-
-fn benchmark_query_values(mentions: &[EntityMention], entity_type: EntityType) -> Vec<String> {
-    mentions
-        .iter()
-        .filter(|mention| {
-            mention.entity_type == entity_type
-                && mention.confidence >= FIELD_FILTER_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|mention| {
-            let value = mention
-                .normalized_value
-                .as_deref()
-                .unwrap_or(&mention.raw_value);
-            normalize_benchmark_query_value(value)
-        })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
-fn normalize_benchmark_query_value(value: &str) -> Option<String> {
-    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
-    let normalized = normalized.trim();
-    if normalized.len() < 2
-        || normalized.len() > 120
-        || normalized.contains('@')
-        || normalized.contains('/')
-        || normalized.contains('\\')
-    {
-        return None;
-    }
-    Some(normalized.to_string())
-}
-
-fn insert_benchmark_query_candidate(
-    queries: &mut BTreeSet<String>,
-    parts: &[&String],
-    max_queries: usize,
-) {
-    if queries.len() >= max_queries {
-        return;
-    }
-    let query = parts
-        .iter()
-        .map(|part| part.as_str())
-        .filter(|part| !part.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
-    if normalize_benchmark_query_value(&query).is_some() {
-        queries.insert(query);
-    }
-}
-
-fn add_keyword_fallback_queries(
-    text: &str,
-    queries: &mut Vec<String>,
-    seen: &mut BTreeSet<String>,
-    max_queries: usize,
-) -> bool {
-    let mut inserted = false;
-    for token in keyword_fallback_tokens(text) {
-        if queries.len() >= max_queries {
-            break;
-        }
-        if seen.insert(token.clone()) {
-            queries.push(token);
-            inserted = true;
-        }
-    }
-    inserted
-}
-
-fn keyword_fallback_tokens(text: &str) -> Vec<String> {
-    text.split_whitespace()
-        .filter(|segment| {
-            !segment.contains('@')
-                && !segment.contains('/')
-                && !segment.contains('\\')
-                && segment.chars().filter(|ch| ch.is_ascii_digit()).count() < 5
-        })
-        .filter_map(normalize_keyword_fallback_token)
-        .collect()
-}
-
-fn normalize_keyword_fallback_token(segment: &str) -> Option<String> {
-    let normalized = segment
-        .chars()
-        .filter(|ch| ch.is_alphanumeric() || *ch == '+' || *ch == '#')
-        .collect::<String>()
-        .to_lowercase();
-    let char_count = normalized.chars().count();
-    if !(3..=40).contains(&char_count)
-        || normalized.chars().all(|ch| ch.is_ascii_digit())
-        || is_keyword_fallback_stopword(&normalized)
-    {
-        return None;
-    }
-    Some(normalized)
-}
-
-fn is_keyword_fallback_stopword(value: &str) -> bool {
-    matches!(
-        value,
-        "and"
-            | "are"
-            | "candidate"
-            | "email"
-            | "for"
-            | "from"
-            | "has"
-            | "local"
-            | "ocr"
-            | "only"
-            | "phone"
-            | "resume"
-            | "that"
-            | "the"
-            | "this"
-            | "with"
-    )
 }
 
 fn benchmark_corpus_summary_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -13484,7 +15098,7 @@ fn benchmark_query_mode() -> Result<SearchMode> {
 }
 
 fn benchmark_query_protocol_usage() -> &'static str {
-    "usage: resume-cli benchmark-query-protocol [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>]"
+    "usage: resume-cli benchmark-query-protocol --batch-jsonl [--embedding-command <path>] [--model-id <id>] [--dimension <n>] [--vector-top-k <n>] [--embedding-timeout-ms <ms>]"
 }
 
 enum LocalSearchOutcome {
@@ -13530,6 +15144,77 @@ fn run_local_search(data_dir: &Path, search_args: &SearchArgs) -> Result<LocalSe
             let vector_hits = run_semantic_search(data_dir, &store, search_args, candidate_limit)?;
             let hits = fuse_hybrid_output_hits(fulltext_hits, vector_hits, search_args.top_k);
             attach_soft_dedupe_hints(&store, hits)?
+        }
+    };
+
+    Ok(LocalSearchOutcome::Hits(hits))
+}
+
+fn run_benchmark_query_protocol_search(
+    data_dir: &Path,
+    search_args: &SearchArgs,
+    timings: &mut BenchmarkQueryProtocolStageTimings,
+) -> Result<LocalSearchOutcome> {
+    let candidate_limit = search_args
+        .top_k
+        .saturating_mul(5)
+        .clamp(search_args.top_k, 100);
+
+    let hits = match search_args.mode {
+        SearchMode::FullText => {
+            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
+                .map_err(CliError::fulltext)?
+            else {
+                return Ok(LocalSearchOutcome::FullTextIndexUnavailable);
+            };
+            let store = open_store(data_dir)?;
+            let fulltext_hits = run_fulltext_search_for_benchmark(
+                &index,
+                &store,
+                search_args,
+                candidate_limit,
+                timings,
+            )?;
+            attach_soft_dedupe_hints_for_benchmark(&store, fulltext_hits, timings)?
+        }
+        SearchMode::Semantic => {
+            let store = open_store(data_dir)?;
+            let hits = run_semantic_search_for_benchmark(
+                data_dir,
+                &store,
+                search_args,
+                candidate_limit,
+                timings,
+            )?;
+            attach_soft_dedupe_hints_for_benchmark(&store, hits, timings)?
+        }
+        SearchMode::Hybrid => {
+            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
+                .map_err(CliError::fulltext)?
+            else {
+                return Err(CliError::user(
+                    "hybrid search unavailable: full-text index is not ready",
+                ));
+            };
+            let store = open_store(data_dir)?;
+            let fulltext_hits = run_fulltext_search_for_benchmark(
+                &index,
+                &store,
+                search_args,
+                candidate_limit,
+                timings,
+            )?;
+            let vector_hits = run_semantic_search_for_benchmark(
+                data_dir,
+                &store,
+                search_args,
+                candidate_limit,
+                timings,
+            )?;
+            let fusion_started = Instant::now();
+            let hits = fuse_hybrid_output_hits(fulltext_hits, vector_hits, search_args.top_k);
+            timings.fusion_ms += duration_ms(fusion_started.elapsed());
+            attach_soft_dedupe_hints_for_benchmark(&store, hits, timings)?
         }
     };
 
@@ -13715,6 +15400,41 @@ fn run_fulltext_search(
     } else {
         filter_hits(store, hits, &search_args.filters, candidate_limit)
     }
+}
+
+fn run_fulltext_search_for_benchmark(
+    index: &FullTextIndex,
+    store: &MetaStore,
+    search_args: &SearchArgs,
+    candidate_limit: usize,
+    timings: &mut BenchmarkQueryProtocolStageTimings,
+) -> Result<Vec<SearchOutputHit>> {
+    let plan_started = Instant::now();
+    let plan = plan_search(&search_args.query, candidate_limit)
+        .map_err(|_| CliError::user("search query is empty"))?;
+    timings.query_parse_ms += duration_ms(plan_started.elapsed());
+
+    let prefilter_started = Instant::now();
+    let allowed_doc_ids = field_filter_doc_id_prefilter(store, &search_args.filters)?;
+    timings.prefilter_ms += duration_ms(prefilter_started.elapsed());
+
+    let query = SearchQuery::new(plan.query_text()).with_limit(plan.limit());
+    let bm25_started = Instant::now();
+    let hits = match &allowed_doc_ids {
+        Some(doc_ids) => index.search_allowed_doc_ids(query, doc_ids),
+        None => index.search(query),
+    }
+    .map_err(CliError::fulltext)?;
+    timings.bm25_ms += duration_ms(bm25_started.elapsed());
+
+    let hydrate_started = Instant::now();
+    let hits = if search_args.filters.is_empty() {
+        visible_hits(store, hits, candidate_limit)
+    } else {
+        filter_hits(store, hits, &search_args.filters, candidate_limit)
+    }?;
+    timings.bulk_hydrate_ms += duration_ms(hydrate_started.elapsed());
+    Ok(hits)
 }
 
 fn field_filter_doc_id_prefilter(
@@ -17672,6 +19392,68 @@ fn run_semantic_search(
     )
 }
 
+fn run_semantic_search_for_benchmark(
+    data_dir: &Path,
+    store: &MetaStore,
+    search_args: &SearchArgs,
+    candidate_limit: usize,
+    timings: &mut BenchmarkQueryProtocolStageTimings,
+) -> Result<Vec<SearchOutputHit>> {
+    let command = search_args.embedding_command.clone().ok_or_else(|| {
+        CliError::user("semantic search blocked: local embedding command not configured")
+    })?;
+    let model_id = search_args.model_id.as_deref().ok_or_else(|| {
+        CliError::user("semantic search blocked: embedding model id not configured")
+    })?;
+    let snapshot_dimension = vector_snapshot_dimension(data_dir)?;
+    let dimension = search_args.dimension.unwrap_or(snapshot_dimension);
+
+    let prefilter_started = Instant::now();
+    let allowed_doc_ids = field_filter_doc_id_prefilter(store, &search_args.filters)?;
+    timings.prefilter_ms += duration_ms(prefilter_started.elapsed());
+
+    let ann_started = Instant::now();
+    let embedder = LocalEmbeddingCommandEmbedder::new(
+        LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), model_id, dimension)
+            .map_err(CliError::embedding)?
+            .with_timeout_ms(search_args.embedding_timeout_ms)
+            .map_err(CliError::embedding)?,
+    );
+    let input = EmbeddingInput::new("query", search_args.query.as_str());
+    let query_vectors = embedder
+        .embed_batch(
+            &[input],
+            EmbeddingBudget::new(1, search_args.query.len().max(1)),
+        )
+        .map_err(CliError::embedding)?;
+    let query_vector = query_vectors
+        .into_iter()
+        .next()
+        .ok_or_else(|| CliError::user("semantic search query embedding is unavailable"))?;
+    let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), dimension)
+        .map_err(CliError::vector)?;
+    let vector_limit = search_args.vector_top_k.unwrap_or(candidate_limit);
+    let vector_hits = vector_index
+        .knn_for_model(
+            QueryVector::new(query_vector.values().to_vec()).map_err(CliError::vector)?,
+            vector_limit,
+            model_id,
+        )
+        .map_err(CliError::vector)?;
+    timings.ann_ms += duration_ms(ann_started.elapsed());
+
+    let hydrate_started = Instant::now();
+    let hits = vector_output_hits(
+        store,
+        vector_hits,
+        &search_args.filters,
+        allowed_doc_ids.as_ref(),
+        search_args.top_k,
+    )?;
+    timings.bulk_hydrate_ms += duration_ms(hydrate_started.elapsed());
+    Ok(hits)
+}
+
 fn vector_snapshot_dimension(data_dir: &Path) -> Result<usize> {
     let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
     match (inspection.state(), inspection.snapshot()) {
@@ -17865,6 +19647,17 @@ fn attach_soft_dedupe_hints(
     for (hit, hint) in hits.iter_mut().zip(hints) {
         hit.soft_dedupe_hint = hint;
     }
+    Ok(hits)
+}
+
+fn attach_soft_dedupe_hints_for_benchmark(
+    store: &MetaStore,
+    hits: Vec<SearchOutputHit>,
+    timings: &mut BenchmarkQueryProtocolStageTimings,
+) -> Result<Vec<SearchOutputHit>> {
+    let started = Instant::now();
+    let hits = attach_soft_dedupe_hints(store, hits)?;
+    timings.bulk_hydrate_ms += duration_ms(started.elapsed());
     Ok(hits)
 }
 
@@ -18757,6 +20550,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn import_parse_workers_argument_sets_direct_import_override() {
+        let args = strings(&["--root", "/tmp/resumes", "--parse-workers", "2"]);
+
+        let parsed = parse_import_args(&args).unwrap();
+
+        assert_eq!(parsed.parse_workers.get(), 2);
+        assert_eq!(parsed.profile, ScanProfile::Explicit);
+        assert_eq!(parsed.max_files, None);
+        assert_eq!(
+            parsed.index_writer_heap_bytes,
+            ImportResourcePolicy::detect().index_writer_heap_bytes
+        );
+    }
+
+    #[test]
+    fn import_parse_workers_argument_rejects_zero() {
+        let args = strings(&["--root", "/tmp/resumes", "--parse-workers", "0"]);
+
+        assert!(parse_import_args(&args).is_err());
+    }
+
+    #[test]
     fn launchctl_status_success_with_running_state_reports_running() {
         let status = service_runtime_state_from_launchctl_result(
             true,
@@ -18827,5 +20642,9 @@ mod tests {
         assert!(!args_debug.contains("/private/local/embed-command"));
         assert!(args_debug.contains("command_configured"));
         assert!(args_debug.contains("<redacted>"));
+    }
+
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
     }
 }

@@ -46,3 +46,7 @@ commands = [
     "./scripts/ci/check-licenses.sh",
     "./scripts/ci/guard-public-repo.sh",
 ]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

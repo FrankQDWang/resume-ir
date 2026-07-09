@@ -11,7 +11,6 @@
     "experiment_state",
     "evidence_lane",
     "contract_pins",
-    "allowed_paths",
     "verification",
     "privacy"
   ],
@@ -100,24 +99,10 @@
     "expected_state_version": { "type": "integer", "minimum": 0 },
     "last_confirmed_side_effect": { "type": "string", "minLength": 1 },
     "next_wake_at": { "type": "string", "minLength": 1 },
-    "goal_prompt": { "$ref": "#/$defs/goal_prompt" },
-    "event_log": { "$ref": "#/$defs/event_log" },
-    "runtime_capability_attestation": { "$ref": "#/$defs/runtime_capability_attestation" },
-    "runner_recovery": { "$ref": "#/$defs/runner_recovery" },
-    "transition_graph": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/transition_rule" }
-    },
     "contract_pins": { "$ref": "#/$defs/contract_pins" },
     "contract_integrity": { "$ref": "#/$defs/contract_integrity" },
     "github_ledger": { "$ref": "#/$defs/github_ledger" },
     "retry_policy": { "$ref": "#/$defs/retry_policy" },
-    "allowed_paths": {
-      "type": "array",
-      "items": { "type": "string", "minLength": 1 },
-      "minItems": 1,
-      "uniqueItems": true
-    },
     "current_slice": { "type": "string" },
     "blocked_count": { "type": "integer", "minimum": 0 },
     "same_blocker_key": { "type": "string" },
@@ -126,21 +111,6 @@
       "items": { "$ref": "#/$defs/transition" }
     },
     "hypothesis": { "$ref": "#/$defs/hypothesis" },
-    "accepted_cells": {
-      "description": "Legacy derived snapshot for older loop reports. Completion authority is evidence_cells.",
-      "type": "array",
-      "items": {
-        "enum": [
-          "w0_docs",
-          "d10k_private_calibration",
-          "d100k_weak_host",
-          "d1m_scale",
-          "soak_fault",
-          "gui_manual"
-        ]
-      },
-      "uniqueItems": true
-    },
     "evidence_cells": {
       "type": "array",
       "items": { "$ref": "#/$defs/evidence_cell" },
@@ -242,157 +212,6 @@
         "contract_invalid"
       ]
     },
-    "goal_prompt": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "format_version",
-        "max_chars",
-        "compiler",
-        "compiler_implemented_in_current_pr",
-        "deterministic_serialization_required",
-        "fail_on_over_budget",
-        "silent_truncation_allowed",
-        "untrusted_external_text_is_data",
-        "one_transition_per_wake"
-      ],
-      "properties": {
-        "format_version": { "const": 1 },
-        "max_chars": { "const": 4000 },
-        "compiler": { "const": "scripts/loop/compile-goal-prompt.py" },
-        "compiler_implemented_in_current_pr": { "const": false },
-        "deterministic_serialization_required": { "const": true },
-        "field_priority_required": { "const": true },
-        "character_budget_required": { "const": true },
-        "state_version_required": { "const": true },
-        "state_hash_required": { "const": true },
-        "policy_hash_required": { "const": true },
-        "prompt_hash_required": { "const": true },
-        "fail_on_over_budget": { "const": true },
-        "silent_truncation_allowed": { "const": false },
-        "untrusted_external_text_is_data": { "const": true },
-        "one_transition_per_wake": { "const": true },
-        "historical_details_in_prompt_allowed": { "const": false },
-        "minimal_next_transition_only": { "const": true }
-      }
-    },
-    "event_log": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "required_for_runner_implementation",
-        "append_only",
-        "events_path_template",
-        "derived_current_state_only",
-        "direct_current_state_edit_allowed",
-        "previous_event_hash_required",
-        "idempotency_key_required",
-        "intent_before_side_effect_required",
-        "verify_after_side_effect_required",
-        "compare_and_swap_state_update_required",
-        "lease_required",
-        "heartbeat_required"
-      ],
-      "properties": {
-        "required_for_runner_implementation": { "const": true },
-        "append_only": { "const": true },
-        "events_path_template": { "const": "perf/runs/<run_id>/events/<state_version>.json" },
-        "derived_current_state_only": { "const": true },
-        "direct_current_state_edit_allowed": { "const": false },
-        "previous_event_hash_required": { "const": true },
-        "idempotency_key_required": { "const": true },
-        "intent_before_side_effect_required": { "const": true },
-        "verify_after_side_effect_required": { "const": true },
-        "compare_and_swap_state_update_required": { "const": true },
-        "lease_required": { "const": true },
-        "heartbeat_required": { "const": true }
-      }
-    },
-    "runtime_capability_attestation": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "required",
-        "permissions_are_policy_not_capability",
-        "observe_before_act",
-        "record_unavailable_capability",
-        "missing_capability_terminal_states",
-        "required_capabilities"
-      ],
-      "properties": {
-        "required": { "const": true },
-        "permissions_are_policy_not_capability": { "const": true },
-        "observe_before_act": { "const": true },
-        "record_unavailable_capability": { "const": true },
-        "missing_capability_terminal_states": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/terminal_state" },
-          "minItems": 1,
-          "uniqueItems": true
-        },
-        "required_capabilities": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "minItems": 1,
-          "uniqueItems": true
-        }
-      }
-    },
-    "runner_recovery": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "lease_required",
-        "heartbeat_required",
-        "cas_required",
-        "idempotency_key_required",
-        "intent_before_side_effect_required",
-        "verify_after_side_effect_required",
-        "one_transition_per_wake",
-        "capability_attestation_required"
-      ],
-      "properties": {
-        "lease_required": { "const": true },
-        "heartbeat_required": { "const": true },
-        "cas_required": { "const": true },
-        "idempotency_key_required": { "const": true },
-        "intent_before_side_effect_required": { "const": true },
-        "verify_after_side_effect_required": { "const": true },
-        "one_transition_per_wake": { "const": true },
-        "capability_attestation_required": { "const": true }
-      }
-    },
-    "transition_rule": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["name", "from", "to", "required_permissions", "required_evidence", "allowed_actions"],
-      "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "from": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "minItems": 1,
-          "uniqueItems": true
-        },
-        "to": { "type": "string", "minLength": 1 },
-        "required_permissions": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true
-        },
-        "required_evidence": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true
-        },
-        "allowed_actions": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "minItems": 1,
-          "uniqueItems": true
-        }
-      }
-    },
     "contract_pins": {
       "type": "object",
       "additionalProperties": false,
@@ -408,6 +227,7 @@
         "acceptance_matrix_sha256": { "$ref": "#/$defs/hex64" },
         "loop_state_schema_sha256": { "$ref": "#/$defs/hex64" },
         "experiment_report_schema_sha256": { "$ref": "#/$defs/hex64" },
+        "synthetic_smoke_artifact_manifest_schema_sha256": { "$ref": "#/$defs/hex64" },
         "git_head_sha": { "$ref": "#/$defs/git_head" }
       }
     },

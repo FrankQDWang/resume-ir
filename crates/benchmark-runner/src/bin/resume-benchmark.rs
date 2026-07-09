@@ -68,15 +68,14 @@ fn run_synthetic_query(args: SyntheticQueryArgs) -> Result<(), CliError> {
 }
 
 fn run_private_query(args: PrivateQueryArgs) -> Result<(), CliError> {
-    let manifests = PrivateQueryManifestDigests::new(
-        args.dataset_manifest_sha256,
-        args.query_set_sha256,
-        args.model_manifest_sha256,
+    let manifests =
+        PrivateQueryManifestDigests::new(args.dataset_manifest_sha256, args.model_manifest_sha256)
+            .map_err(CliError::benchmark)?;
+    let command = PrivateQueryBenchmarkCommand::resident_batch_command_with_args(
+        args.resident_command,
+        args.resident_command_args,
     )
     .map_err(CliError::benchmark)?;
-    let command =
-        PrivateQueryBenchmarkCommand::local_command_with_args(args.command, args.command_args)
-            .map_err(CliError::benchmark)?;
     let corpus_summary = if args.allow_partial_hot_index_for_smoke {
         PrivateQueryCorpusSummary::from_redacted_json_file_allowing_partial_hot_index_for_smoke(
             args.corpus_summary,
@@ -85,13 +84,22 @@ fn run_private_query(args: PrivateQueryArgs) -> Result<(), CliError> {
         PrivateQueryCorpusSummary::from_redacted_json_file(args.corpus_summary)
     }
     .map_err(CliError::benchmark)?;
-    let config =
+    let mut config =
         PrivateQueryBenchmarkConfig::new(args.query_set, command, corpus_summary, manifests)
             .and_then(|config| config.with_max_queries(args.max_queries))
+            .and_then(|config| match args.request_sample_count {
+                Some(request_sample_count) => {
+                    config.with_request_sample_count(request_sample_count)
+                }
+                None => Ok(config),
+            })
             .and_then(|config| config.with_top_k(args.top_k))
             .and_then(|config| config.with_timeout_ms(args.timeout_ms))
             .map(|config| config.with_index_size_bytes(args.index_size_bytes))
             .map_err(CliError::benchmark)?;
+    if args.synthetic_smoke_evidence {
+        config = config.with_synthetic_smoke_evidence();
+    }
     let report = run_private_query_benchmark(config).map_err(CliError::benchmark)?;
     println!("{}", report.to_redacted_json());
     Ok(())
@@ -412,17 +420,18 @@ fn parse_synthetic_query_args(args: &[String]) -> Result<SyntheticQueryArgs, Cli
 
 fn parse_private_query_args(args: &[String]) -> Result<PrivateQueryArgs, CliError> {
     let mut query_set = None;
-    let mut command = None;
+    let mut resident_command = None;
     let mut corpus_summary = None;
     let mut max_queries = 500_usize;
+    let mut request_sample_count = None;
     let mut top_k = 10_usize;
     let mut timeout_ms = 5_000_u64;
     let mut index_size_bytes = 0_u64;
     let mut dataset_manifest_sha256 = None;
-    let mut query_set_sha256 = None;
     let mut model_manifest_sha256 = None;
     let mut allow_partial_hot_index_for_smoke = false;
-    let mut command_args = Vec::new();
+    let mut synthetic_smoke_evidence = false;
+    let mut resident_command_args = Vec::new();
     let mut index = 0_usize;
 
     while index < args.len() {
@@ -434,18 +443,18 @@ fn parse_private_query_args(args: &[String]) -> Result<PrivateQueryArgs, CliErro
                 query_set = Some(PathBuf::from(value));
                 index += 2;
             }
-            "--command" => {
+            "--resident-command" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage());
                 };
-                command = Some(PathBuf::from(value));
+                resident_command = Some(PathBuf::from(value));
                 index += 2;
             }
-            "--command-arg" => {
+            "--resident-command-arg" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage());
                 };
-                command_args.push(value.to_string());
+                resident_command_args.push(value.to_string());
                 index += 2;
             }
             "--corpus-summary" => {
@@ -457,6 +466,10 @@ fn parse_private_query_args(args: &[String]) -> Result<PrivateQueryArgs, CliErro
             }
             "--max-queries" => {
                 max_queries = parse_positive_usize(args.get(index + 1))?;
+                index += 2;
+            }
+            "--request-sample-count" => {
+                request_sample_count = Some(parse_positive_usize(args.get(index + 1))?);
                 index += 2;
             }
             "--top-k" => {
@@ -478,13 +491,6 @@ fn parse_private_query_args(args: &[String]) -> Result<PrivateQueryArgs, CliErro
                 dataset_manifest_sha256 = Some(value.to_string());
                 index += 2;
             }
-            "--query-set-sha256" => {
-                let Some(value) = args.get(index + 1) else {
-                    return Err(CliError::usage());
-                };
-                query_set_sha256 = Some(value.to_string());
-                index += 2;
-            }
             "--model-manifest-sha256" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(CliError::usage());
@@ -494,6 +500,10 @@ fn parse_private_query_args(args: &[String]) -> Result<PrivateQueryArgs, CliErro
             }
             "--allow-partial-hot-index-for-smoke" => {
                 allow_partial_hot_index_for_smoke = true;
+                index += 1;
+            }
+            "--synthetic-smoke-evidence" => {
+                synthetic_smoke_evidence = true;
                 index += 1;
             }
             "--json" => {
@@ -508,17 +518,18 @@ fn parse_private_query_args(args: &[String]) -> Result<PrivateQueryArgs, CliErro
 
     Ok(PrivateQueryArgs {
         query_set: query_set.ok_or_else(CliError::usage)?,
-        command: command.ok_or_else(CliError::usage)?,
-        command_args,
+        resident_command: resident_command.ok_or_else(CliError::usage)?,
+        resident_command_args,
         corpus_summary: corpus_summary.ok_or_else(CliError::usage)?,
         max_queries,
+        request_sample_count,
         top_k,
         timeout_ms,
         index_size_bytes,
         dataset_manifest_sha256: dataset_manifest_sha256.ok_or_else(CliError::usage)?,
-        query_set_sha256: query_set_sha256.ok_or_else(CliError::usage)?,
         model_manifest_sha256: model_manifest_sha256.ok_or_else(CliError::usage)?,
         allow_partial_hot_index_for_smoke,
+        synthetic_smoke_evidence,
     })
 }
 
@@ -1314,7 +1325,7 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark private-query --query-set <jsonl> --command <path> [--command-arg <arg> ...] --corpus-summary <json> --dataset-manifest-sha256 <sha256> --query-set-sha256 <sha256> --model-manifest-sha256 <sha256> [--allow-partial-hot-index-for-smoke] [--max-queries <n>] [--top-k <n>] [--timeout-ms <n>] [--index-size-bytes <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--allow-smoke-confidence] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--max-run-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--current-stage-baseline] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256> --model-manifest-sha256 <sha256>] [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark private-query --query-set <jsonl> --resident-command <path> [--resident-command-arg <arg> ...] --corpus-summary <json> --dataset-manifest-sha256 <sha256> --model-manifest-sha256 <sha256> [--allow-partial-hot-index-for-smoke] [--synthetic-smoke-evidence] [--max-queries <n>] [--request-sample-count <n>] [--top-k <n>] [--timeout-ms <n>] [--index-size-bytes <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--allow-smoke-confidence] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--max-run-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--current-stage-baseline] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256> --model-manifest-sha256 <sha256>] [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
@@ -1346,17 +1357,18 @@ struct SyntheticQueryArgs {
 #[derive(Clone, Debug)]
 struct PrivateQueryArgs {
     query_set: PathBuf,
-    command: PathBuf,
-    command_args: Vec<String>,
+    resident_command: PathBuf,
+    resident_command_args: Vec<String>,
     corpus_summary: PathBuf,
     max_queries: usize,
+    request_sample_count: Option<usize>,
     top_k: usize,
     timeout_ms: u64,
     index_size_bytes: u64,
     dataset_manifest_sha256: String,
-    query_set_sha256: String,
     model_manifest_sha256: String,
     allow_partial_hot_index_for_smoke: bool,
+    synthetic_smoke_evidence: bool,
 }
 
 #[derive(Clone, Debug)]

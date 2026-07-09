@@ -21,7 +21,7 @@
     "power_mode": "plugged"
   },
   "dataset": {
-    "dataset_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "dataset_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "scale_gate": "D10K_private_calibration",
     "document_count": 10000,
     "searchable_document_count": 8000,
@@ -37,22 +37,20 @@
     "bucket_counts": {
       "single_term": 50,
       "and_2": 75,
-      "and_3_5": 125,
+      "and_3_5": 150,
       "and_6_16": 50,
       "field_filter": 75,
       "hybrid": 75,
-      "semantic": 25,
-      "extreme": 25
+      "semantic": 25
     },
     "samples_per_bucket": {
       "single_term": 500,
-      "and_2": 500,
-      "and_3_5": 1000,
+      "and_2": 625,
+      "and_3_5": 1500,
       "and_6_16": 500,
-      "field_filter": 500,
-      "hybrid": 500,
-      "semantic": 500,
-      "extreme": 500
+      "field_filter": 625,
+      "hybrid": 625,
+      "semantic": 625
     },
     "hmac_split": true
   },
@@ -78,8 +76,7 @@
       "and_6_16": 100,
       "field_filter": 80,
       "hybrid": 120,
-      "semantic": 180,
-      "extreme": 220
+      "semantic": 180
     },
     "p95_ms": {
       "single_term": 90,
@@ -88,8 +85,7 @@
       "and_6_16": 170,
       "field_filter": 150,
       "hybrid": 220,
-      "semantic": 380,
-      "extreme": 480
+      "semantic": 380
     },
     "p99_ms": {
       "single_term": 180,
@@ -98,8 +94,7 @@
       "and_6_16": 330,
       "field_filter": 300,
       "hybrid": 440,
-      "semantic": 760,
-      "extreme": 900
+      "semantic": 760
     },
     "stage_p95_ms": {
       "query_parse": 3,

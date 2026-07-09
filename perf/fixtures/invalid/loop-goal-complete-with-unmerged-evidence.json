@@ -11,9 +11,6 @@
     "experiment_report_schema_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
     "git_head_sha": "working-tree"
   },
-  "allowed_paths": [
-    "perf/"
-  ],
   "current_slice": "invalid unmerged completion fixture",
   "transition_history": [
     {

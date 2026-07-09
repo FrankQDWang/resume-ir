@@ -19,6 +19,7 @@ __pycache__/
 # Local secrets and sensitive runtime artifacts
 .env
 .env.*
+!.env.example
 *.db
 *.db-*
 *.sqlite

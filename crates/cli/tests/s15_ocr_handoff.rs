@@ -432,8 +432,10 @@ esac
         .unwrap()
         .expect("OCR resume version");
     assert_eq!(version.page_count, Some(2));
-    assert!(version.clean_text.unwrap().contains("S89PageOneToken"));
-    assert!(version.raw_text.unwrap().contains("S89PageTwoToken"));
+    let clean_text = version.clean_text.unwrap();
+    assert!(clean_text.contains("S89PageOneToken"));
+    assert!(clean_text.contains("S89PageTwoToken"));
+    assert_eq!(version.raw_text, None);
 
     for token in ["S89PageOneToken", "S89PageTwoToken"] {
         let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))

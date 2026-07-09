@@ -13,6 +13,7 @@ fi
 tracked_sensitive_paths=$(
   git ls-files \
     | grep -E '(^|/)(local-data|data|resume-data|resumes|corpus|corpora|indexes|logs|diagnostics|bench-results|model-cache|\.cache)(/|$)|\.(sqlite|sqlite3|db|log|profraw)$|(^|/)(\.env(\..*)?|ipc\.auth|[^/]*\.(token|pem|key))$' \
+    | grep -v '^\.env\.example$' \
     | grep -v '^tests/fixtures/resumes/' || true
 )
 

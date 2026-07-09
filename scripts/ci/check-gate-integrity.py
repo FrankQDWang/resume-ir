@@ -121,12 +121,12 @@ def main() -> int:
     require_bool(merge_policy.get("require_no_admin_bypass"), True, "autonomous_delivery.merge_policy.require_no_admin_bypass")
     require_bool(merge_policy.get("require_no_direct_main_push"), True, "autonomous_delivery.merge_policy.require_no_direct_main_push")
 
-    scope_current_pr = active_goal.get("scope", {}).get("current_pr", {})
+    active_slice = active_goal.get("scope", {}).get("active_slice", {})
     gate_changes = [path for path in changed_paths() if is_gate_path(path)]
-    if gate_changes and scope_current_pr.get("contract_change_allowed") is not True:
-        fail("gate-changing diff requires scope.current_pr.contract_change_allowed=true: " + ", ".join(gate_changes))
-    if gate_changes and not scope_current_pr.get("scope_exception_reason"):
-        fail("gate-changing diff requires scope.current_pr.scope_exception_reason")
+    if gate_changes and active_slice.get("contract_change_allowed") is not True:
+        fail("gate-changing diff requires scope.active_slice.contract_change_allowed=true: " + ", ".join(gate_changes))
+    if gate_changes and not active_slice.get("scope_exception_reason"):
+        fail("gate-changing diff requires scope.active_slice.scope_exception_reason")
 
     template = (ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8").lower()
     for phrase in [

@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/resume-ir/perf/synthetic-smoke-artifact-manifest.schema.json",
+  "title": "resume-ir synthetic smoke artifact manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "goal_id",
+    "manifest_kind",
+    "report_schema_version",
+    "report_kind",
+    "evidence_lane",
+    "claim",
+    "contract_pins",
+    "privacy",
+    "report_sha256",
+    "report_size_bytes",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": { "const": "resume-ir.synthetic-smoke-artifact-manifest.v1" },
+    "goal_id": { "const": "resume-ir.performance-gui-loop.2026-06" },
+    "manifest_kind": { "const": "synthetic_smoke_baseline" },
+    "report_schema_version": { "const": "resume-ir.experiment-report.v2" },
+    "report_kind": { "const": "redacted_evidence" },
+    "evidence_lane": { "const": "smoke" },
+    "claim": { "const": "no_claim" },
+    "contract_pins": { "$ref": "#/$defs/contract_pins" },
+    "privacy": { "$ref": "#/$defs/privacy" },
+    "report_sha256": { "$ref": "#/$defs/hex64" },
+    "report_size_bytes": { "type": "integer", "minimum": 1 },
+    "artifacts": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/artifact" },
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "required": ["component"],
+            "properties": { "component": { "const": "synthetic_query" } }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": ["component"],
+            "properties": { "component": { "const": "ocr_throughput" } }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": ["component"],
+            "properties": { "component": { "const": "vector_quality" } }
+          }
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": ["component"],
+            "properties": { "component": { "const": "private_query_runner" } }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "hex64": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "git_head": { "type": "string", "pattern": "^([a-f0-9]{7,40}|working-tree)$" },
+    "contract_pins": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active_goal_sha256",
+        "acceptance_matrix_sha256",
+        "loop_state_schema_sha256",
+        "experiment_report_schema_sha256",
+        "synthetic_smoke_artifact_manifest_schema_sha256",
+        "git_head_sha"
+      ],
+      "properties": {
+        "active_goal_sha256": { "$ref": "#/$defs/hex64" },
+        "acceptance_matrix_sha256": { "$ref": "#/$defs/hex64" },
+        "loop_state_schema_sha256": { "$ref": "#/$defs/hex64" },
+        "experiment_report_schema_sha256": { "$ref": "#/$defs/hex64" },
+        "synthetic_smoke_artifact_manifest_schema_sha256": { "$ref": "#/$defs/hex64" },
+        "git_head_sha": {
+          "allOf": [
+            { "$ref": "#/$defs/git_head" }
+          ],
+          "not": { "const": "working-tree" }
+        }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contains_raw_resume_text",
+        "contains_raw_query_text",
+        "contains_candidate_results",
+        "contains_local_paths",
+        "contains_tokens",
+        "contains_diagnostics_package",
+        "trace_summary_redacted"
+      ],
+      "properties": {
+        "contains_raw_resume_text": { "const": false },
+        "contains_raw_query_text": { "const": false },
+        "contains_candidate_results": { "const": false },
+        "contains_local_paths": { "const": false },
+        "contains_tokens": { "const": false },
+        "contains_diagnostics_package": { "const": false },
+        "trace_summary_redacted": { "const": true }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "component",
+        "schema_version",
+        "report_sha256",
+        "report_size_bytes",
+        "target_claim"
+      ],
+      "properties": {
+        "component": {
+          "enum": ["synthetic_query", "ocr_throughput", "vector_quality", "private_query_runner"]
+        },
+        "schema_version": { "type": "string", "minLength": 1 },
+        "report_sha256": { "$ref": "#/$defs/hex64" },
+        "report_size_bytes": { "type": "integer", "minimum": 1 },
+        "target_claim": { "const": "not_evaluated" }
+      }
+    }
+  }
+}

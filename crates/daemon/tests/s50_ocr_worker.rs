@@ -261,11 +261,10 @@ esac
         .unwrap()
         .expect("OCR resume version");
     assert_eq!(version.page_count, Some(2));
-    assert!(version
-        .clean_text
-        .unwrap()
-        .contains("S89DaemonPageOneToken"));
-    assert!(version.raw_text.unwrap().contains("S89DaemonPageTwoToken"));
+    let clean_text = version.clean_text.unwrap();
+    assert!(clean_text.contains("S89DaemonPageOneToken"));
+    assert!(clean_text.contains("S89DaemonPageTwoToken"));
+    assert_eq!(version.raw_text, None);
 
     assert_eq!(search_fulltext(&data_dir, "S89DaemonPageOneToken").len(), 1);
     assert_eq!(search_fulltext(&data_dir, "S89DaemonPageTwoToken").len(), 1);

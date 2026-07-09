@@ -11,10 +11,6 @@
     "experiment_report_schema_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
     "git_head_sha": "working-tree"
   },
-  "allowed_paths": [
-    "GOAL.md",
-    "perf/"
-  ],
   "current_slice": "fixture lawful post-pr_opened machine continuation through merge method selection",
   "blocked_count": 0,
   "transition_history": [
@@ -48,9 +44,6 @@
       "to": "merge_method_selected",
       "evidence_ref": "schema fixture"
     }
-  ],
-  "accepted_cells": [
-    "w0_docs"
   ],
   "verification": {
     "commands": [

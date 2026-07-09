@@ -1,4 +1,6 @@
-use std::{fmt, str::FromStr};
+use std::{collections::BTreeSet, fmt, str::FromStr};
+
+use unicode_normalization::UnicodeNormalization;
 
 const FNV_OFFSET_A: u64 = 0xcbf29ce484222325;
 const FNV_OFFSET_B: u64 = 0x6c62272e07bb0142;
@@ -164,6 +166,273 @@ impl UnixTimestamp {
     pub fn as_unix_seconds(self) -> i64 {
         self.seconds
     }
+}
+
+pub const QUERY_SET_BUCKETS: [&str; 7] = [
+    "single_term",
+    "and_2",
+    "and_3_5",
+    "and_6_16",
+    "field_filter",
+    "hybrid",
+    "semantic",
+];
+pub const QUERY_SET_MAX_QUERY_BYTES: usize = 4096;
+pub const QUERY_SET_MAX_TERMS: usize = 16;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuerySetSourceKind {
+    TraceSourceSearchV1,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuerySetSourceKindParseError {
+    Invalid,
+}
+
+impl QuerySetSourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TraceSourceSearchV1 => "trace_source_search_v1",
+        }
+    }
+
+    pub fn is_agent_query_replay(self) -> bool {
+        matches!(self, Self::TraceSourceSearchV1)
+    }
+}
+
+impl FromStr for QuerySetSourceKind {
+    type Err = QuerySetSourceKindParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "trace_source_search_v1" => Ok(Self::TraceSourceSearchV1),
+            _ => Err(QuerySetSourceKindParseError::Invalid),
+        }
+    }
+}
+
+impl fmt::Display for QuerySetSourceKindParseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Invalid => formatter.write_str("invalid query set source kind"),
+        }
+    }
+}
+
+impl std::error::Error for QuerySetSourceKindParseError {}
+
+pub fn query_set_query_in_semantic_bounds(query: &str) -> bool {
+    let term_count = QuerySetSampleShape::from_query(query).term_count();
+    query.len() <= QUERY_SET_MAX_QUERY_BYTES && term_count > 0 && term_count <= QUERY_SET_MAX_TERMS
+}
+
+pub fn normalize_query_set_query(query: &str) -> Option<String> {
+    let normalized = query.nfkc().collect::<String>();
+    let mut seen = BTreeSet::new();
+    let mut terms = Vec::new();
+    for term in query_set_logical_terms(&normalized) {
+        let value = term.value.split_whitespace().collect::<Vec<_>>().join(" ");
+        if value.is_empty() {
+            continue;
+        }
+        let key = (term.quoted, value.clone());
+        if !seen.insert(key) {
+            continue;
+        }
+        if term.quoted {
+            terms.push(format!("\"{value}\""));
+        } else {
+            terms.push(value);
+        }
+    }
+    let normalized = terms.join(" ");
+    query_set_query_in_semantic_bounds(&normalized).then_some(normalized)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QuerySetSampleShape {
+    term_count: usize,
+    has_boolean: bool,
+    has_location: bool,
+    has_years: bool,
+    has_degree: bool,
+    has_skill: bool,
+    has_phrase: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QuerySetSampleShapeMetadata {
+    pub term_count: usize,
+    pub has_boolean: bool,
+    pub has_location: bool,
+    pub has_years: bool,
+    pub has_degree: bool,
+    pub has_skill: bool,
+    pub has_phrase: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct QuerySetLogicalTerm<'a> {
+    value: &'a str,
+    quoted: bool,
+}
+
+impl QuerySetSampleShape {
+    pub fn from_query(query: &str) -> Self {
+        let lower = query.to_lowercase();
+        let terms = query_set_logical_terms(query);
+        Self {
+            term_count: terms.len(),
+            has_boolean: terms
+                .iter()
+                .any(|term| !term.quoted && is_query_set_explicit_boolean_operator(term.value)),
+            has_location: query_set_contains_any_token(
+                &lower,
+                &[
+                    "beijing",
+                    "shanghai",
+                    "shenzhen",
+                    "guangzhou",
+                    "hangzhou",
+                    "chengdu",
+                    "wuhan",
+                    "北京",
+                    "上海",
+                    "深圳",
+                    "广州",
+                    "杭州",
+                    "成都",
+                    "武汉",
+                ],
+            ),
+            has_years: query.chars().any(|ch| ch.is_ascii_digit()),
+            has_degree: query_set_contains_any_token(
+                &lower,
+                &[
+                    "bachelor", "master", "phd", "doctor", "degree", "本科", "硕士", "博士", "学历",
+                ],
+            ),
+            has_skill: terms
+                .iter()
+                .any(|term| term.value.chars().any(char::is_alphabetic)),
+            has_phrase: terms.iter().any(|term| term.quoted),
+        }
+    }
+
+    pub fn from_metadata(metadata: QuerySetSampleShapeMetadata) -> Self {
+        Self {
+            term_count: metadata.term_count,
+            has_boolean: metadata.has_boolean,
+            has_location: metadata.has_location,
+            has_years: metadata.has_years,
+            has_degree: metadata.has_degree,
+            has_skill: metadata.has_skill,
+            has_phrase: metadata.has_phrase,
+        }
+    }
+
+    pub fn term_count(self) -> usize {
+        self.term_count
+    }
+
+    pub fn has_boolean(self) -> bool {
+        self.has_boolean
+    }
+
+    pub fn has_location(self) -> bool {
+        self.has_location
+    }
+
+    pub fn has_years(self) -> bool {
+        self.has_years
+    }
+
+    pub fn has_degree(self) -> bool {
+        self.has_degree
+    }
+
+    pub fn has_skill(self) -> bool {
+        self.has_skill
+    }
+
+    pub fn has_phrase(self) -> bool {
+        self.has_phrase
+    }
+
+    pub fn bucket(self) -> &'static str {
+        if self.has_boolean {
+            "hybrid"
+        } else if self.has_phrase {
+            "semantic"
+        } else if self.term_count >= 2 && (self.has_location || self.has_years || self.has_degree) {
+            "field_filter"
+        } else {
+            match self.term_count {
+                0 | 1 => "single_term",
+                2 => "and_2",
+                3..=5 => "and_3_5",
+                _ => "and_6_16",
+            }
+        }
+    }
+}
+
+fn query_set_logical_terms(query: &str) -> Vec<QuerySetLogicalTerm<'_>> {
+    let mut terms = Vec::new();
+    let mut chars = query.char_indices().peekable();
+    while let Some((start, character)) = chars.next() {
+        if character.is_whitespace() {
+            continue;
+        }
+        if is_query_set_phrase_quote(character) {
+            let content_start = start + character.len_utf8();
+            let mut content_end = query.len();
+            for (index, next) in chars.by_ref() {
+                if is_query_set_phrase_quote(next) {
+                    content_end = index;
+                    break;
+                }
+            }
+            let value = query[content_start..content_end].trim();
+            if !value.is_empty() {
+                terms.push(QuerySetLogicalTerm {
+                    value,
+                    quoted: true,
+                });
+            }
+            continue;
+        }
+        let mut end = query.len();
+        while let Some((index, next)) = chars.peek().copied() {
+            if next.is_whitespace() {
+                end = index;
+                break;
+            }
+            chars.next();
+        }
+        terms.push(QuerySetLogicalTerm {
+            value: &query[start..end],
+            quoted: false,
+        });
+    }
+    terms
+}
+
+fn is_query_set_phrase_quote(character: char) -> bool {
+    matches!(character, '"' | '“' | '”')
+}
+
+fn is_query_set_explicit_boolean_operator(value: &str) -> bool {
+    matches!(
+        value.trim_matches(|ch: char| !ch.is_alphanumeric()),
+        "AND" | "OR" | "NOT"
+    )
+}
+
+fn query_set_contains_any_token(value: &str, tokens: &[&str]) -> bool {
+    tokens.iter().any(|token| value.contains(token))
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

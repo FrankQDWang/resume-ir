@@ -15,8 +15,8 @@ The current goal is local import/search closure, not final latency tuning.
 Closure evidence for this stage is a repeatable local operator workflow, CLI
 and daemon closed-loop checks, current-stage dry-run/smoke/blocked handoff
 evidence, observable aggregate metrics, and a real local validation path over
-the available private corpus. A local 10k validation baseline, full
-8000-document hot-index coverage, 500-query private benchmark, P95/P99
+the available private corpus. A local D10K validation baseline, 10000-document
+corpus size, 8000-document searchable/vector hot-index coverage, 500-query private benchmark, P95/P99
 reduction, stricter latency targets, and external 100k/1M real-corpus
 validation belong to the deferred performance-optimization goal and stable
 release evidence. Do not keep this goal open solely to drain an OCR-heavy local
@@ -125,33 +125,45 @@ diagnostic/fault evidence wiring can produce `fault-simulation.v1`; it does not
 clear actual ENOSPC, daemon kill, process crash, power-loss, or hardware
 fault-drill release blockers.
 
-If `--query-set <local-query-set.jsonl>` is omitted, execute mode drafts a
-local private query set after import/OCR/embedding work by running
-`resume-cli benchmark-query-set draft`. The generated JSONL schema is
-`resume-ir.query-set.jsonl.v1` and its privacy boundary is
-`local_only_private_query_set`. The query-set file may contain private query
-terms derived from high-confidence non-contact fields and must stay local under
-the evidence directory; stdout and the current-stage evidence manifest include
-only counts, basenames, and SHA-256 digests. The draft command excludes names,
-emails, phones, local paths, filenames, raw resume text, document IDs, and
-sample IDs derived from source data.
-
-If `--query-set-trace-root <local-seektalent-artifacts-runs-root>` is also
-provided, the generated local query set is pinned to
-`trace_source_search_v1`: `resume-cli benchmark-query-set draft` reads only
+If `--query-set <local-query-set.jsonl>` is omitted, current-stage validation
+must receive `--query-set-trace-root <local-seektalent-artifacts-runs-root>` or
+`RESUME_IR_QUERY_ARTIFACT_ROOT`. Generated local query sets are pinned to
+`trace_source_search_v1`: `resume-cli benchmark-query-set freeze-agent-replay` reads only
 `$RESUME_IR_QUERY_ARTIFACT_ROOT/**/runtime/trace.log`, keeps only
-`tool_called` + `source_search` invocation arguments, and still writes the raw
-query text only to the local JSONL. Dry-run plans and redacted evidence refer
+`tool_called` + `tool=source_search` keyword query segment, and writes the raw
+query text only to the local JSONL with privacy boundary
+`local_only_private_query_set`. Dry-run plans and redacted evidence refer
 to the source symbolically as `$RESUME_IR_QUERY_ARTIFACT_ROOT`; they never
-record the local trace-root path.
+record the local trace-root path. Before an indexed local data directory is
+available, the env-default preflight command can write only redacted trace/query
+shape counts and bucket deficits:
 
-The smoke profile passes `--allow-keyword-fallback` to the local query-set
-draft command. That fallback is only for proving the current-stage wiring when
-a tiny OCR-heavy sample has searchable text but too few high-confidence
-non-contact field mentions. It still writes only a local private JSONL query
-set and redacted stdout. The full profile does not use the fallback: the full
-500-query baseline remains blocked until the local corpus can produce the
-required field-backed query set.
+```bash
+RESUME_IR_LOCAL_EVIDENCE_DIR=<local-evidence-dir> RESUME_IR_QUERY_ARTIFACT_ROOT=<local-seektalent-artifacts-runs-root> resume-cli --data-dir <local-data-dir> benchmark-query-set preflight-agent-replay
+```
+
+That preflight does not write a query set,
+does not emit `query_set_sha256`, and is not benchmark evidence. For the full
+500-query profile the freeze remains a one-shot static freeze from existing
+trace artifacts. The freeze keeps scanning until the static set satisfies the
+D10K bucket minimums from
+`perf/acceptance-matrix.toml`; zero-result trace queries are dropped from the
+static set and counted only as a redacted aggregate. If the full static freeze cannot meet those bucket
+minimums, the freeze command may print redacted bucket deficit counts only; it
+must not print raw query text, trace paths, or resume paths. An agent replay freeze
+with `--max-queries 500` must also use `--min-queries 500`; lower explicit
+minimums are rejected so the D10K freeze cannot become a partial static set.
+The same full D10K freeze also requires a D10K-shaped indexed corpus before it
+scans traces or writes the JSONL/summary/hash: at least 10000 documents, 8000
+searchable documents, and 8000 vector-indexed documents. If those floors are not
+met, use the redacted preflight `d10k_corpus_deficits` output to prepare the
+local corpus instead of freezing a misleading `query_set_sha256`.
+The smoke and full profiles use the same static query-set boundary: provide an
+existing local static `--query-set`, explicit `--query-set-trace-root
+"$RESUME_IR_QUERY_ARTIFACT_ROOT"`, or `RESUME_IR_QUERY_ARTIFACT_ROOT` as the
+trace-root default. When all are absent, current-stage validation stops before
+query-set generation. It does not derive query terms from imported corpus fields
+or maintain a parallel query-source path.
 
 The smoke profile also passes
 `--allow-partial-hot-index-for-smoke` to `resume-benchmark private-query`.
@@ -163,17 +175,19 @@ profile does not use the flag and remains blocked until the required hot-index
 coverage floor is met.
 Private-query reports must also carry
 `query_embedding_runtime: "local-command"` and
-`query_embedding_command_invocations` equal to the redacted query sample count.
-This is evidence honesty for the hybrid query hot path: it records that each
-query invoked the local embedding command to produce a query vector without
-recording the command path, query text, vectors, model bytes, or local runtime
-paths. It is not a latency optimization claim and it does not clear embedding
-model license/distribution review.
+`query_embedding_command_invocations` equal to `request_sample_count`. They
+must keep `query_count` as the frozen unique query-set size and
+`samples_per_bucket` as the executed request distribution. This is evidence
+honesty for the hybrid query hot path: it records that each measured request
+invoked the local embedding command to produce a query vector without recording
+the command path, query text, vectors, model bytes, or local runtime paths. It
+is not a latency optimization claim and it does not clear embedding model
+license/distribution review.
 The private benchmark evidence validator follows the selected validation
 profile: full profile still requires the 8000-document searchable/vector floors
-and 500 latency samples, while smoke profile requires non-zero searchable,
-vector, and query-sample evidence plus the same privacy, protocol, and internal
-consistency checks.
+and 500 unique queries with 5000 measured request samples, while smoke profile
+requires non-zero searchable, vector, and request-sample evidence plus the same
+privacy, protocol, and internal consistency checks.
 
 `benchmark-corpus-summary.local.json` also carries redacted aggregate
 `document_status_counts`, `ingest_job_status_counts`,
@@ -203,6 +217,16 @@ the corpus-summary basename and digest, not the report body.
 
 Execute mode automatically writes `current-stage-handoff.json` after it writes a
 local smoke summary, blocked summary, or full current-stage evidence manifest.
+For a blocked summary or a full evidence manifest that contains
+`private_query_observability`, it also writes `current-stage-issue-comment.md`,
+a redacted Markdown body intended for the #53 issue ledger. For full evidence,
+that body contains only the compact `private_query_baseline_summary` fields,
+public-safe `benchmark_report_hash` / `query_set_summary_hash` digest refs for
+the redacted local artifacts, and the privacy confirmation. For blocked
+evidence, it contains only the blocked step, category, reason, redacted
+aggregate observability counts, next action, and basename/hash refs such as
+`query-set-trace-preflight.local.json`. It is not posted automatically and is
+not a substitute for the underlying local evidence.
 To rebuild or inspect that committed-safe operator handoff manually, run:
 
 ```bash
@@ -211,20 +235,48 @@ scripts/local/summarize-current-stage-validation.py \
   --out <local-evidence-dir>/current-stage-handoff.json
 ```
 
+To also draft the redacted #53 comment body from a blocked summary or full
+evidence manifest:
+
+```bash
+scripts/local/summarize-current-stage-validation.py \
+  --input <local-evidence-dir>/current-stage-blocked-summary.json \
+  --out <local-evidence-dir>/current-stage-handoff.json \
+  --issue-comment-out <local-evidence-dir>/current-stage-issue-comment.md
+```
+
 The output schema is `resume-ir.current-stage-handoff.v1` with privacy boundary
 `local_only_redacted_handoff`. It copies only structured status, preflight
 probe statuses, redacted aggregate observability counts, completed step names,
 must-not-upload categories, not-complete/BLOCKED items, redacted
-`derived_blockers`, and a `next_action` object. Derived blockers are computed
-only from aggregate observability counts: failed-permanent documents become an
+`derived_blockers`, and a `next_action` object. When the source is a full
+current-stage evidence manifest with `private_query_observability`, it also
+adds `private_query_baseline_summary`: public-safe query-set identifiers,
+query/request/bucket counts, latency percentiles, stage P95 summaries, RSS
+delta summaries, hot-path booleans, and a compact stage-histogram shape summary
+only. It also adds `baseline_artifact_refs` for the redacted aggregate
+`private-benchmark-local.json` and `private-query-set.summary.json` basenames
+when those digests are present in the evidence manifest. It does not copy the
+full private benchmark report, raw queries, candidate results, raw query-set
+JSONL files, local paths, or full histogram payloads. Derived
+blockers are computed only from aggregate observability counts:
+failed-permanent documents become an
 `import/parser` blocker, OCR-required documents or queued OCR jobs become an
 `ocr` blocker, vector coverage below searchable coverage becomes an `embedding`
 blocker, and incomplete hot-index coverage becomes a `benchmark` blocker. They
 are handoff guidance, not release-clearing evidence. For blocked summaries,
 `next_action` names the blocker category and the next rerun target, while
 explicitly preserving the current-stage boundary: do not chase P95/P99
-optimization and do not require million-resume validation in this stage. It
-fails closed if the input contains private markers or local path
+optimization and do not require million-resume validation in this stage. A
+`query_set_index_unavailable` handoff points operators to prepare or reuse an
+indexed local data-dir before rerunning the static replay query-set freeze; it
+may still carry `query-set-trace-preflight.local.json` as trace-only redacted
+coverage with `query_index_available=false`. That artifact does not clear the
+freeze, produce `query_set_sha256`, or count as private benchmark evidence. When
+the preflight artifact exists, the handoff includes that basename/hash in
+`blocked_artifact_refs` so the #53 ledger and generated redacted issue-comment
+body can cite the redacted trace preflight without opening the local artifact.
+It fails closed if the input contains private markers or local path
 shapes, or if the input schema does not use its required source privacy boundary
 (`local_only_redacted_aggregate_summary` for smoke,
 `local_only_redacted_blocked_summary` for blocked handoff, and
@@ -238,9 +290,9 @@ needs structured non-clearing blocked-state context.
 ```bash
 scripts/local/run-current-stage-validation.sh --dry-run \
   --validation-profile full \
-  --resume-root <private-local-root> \
-  --data-dir <local-data-dir> \
-  --out-dir <local-evidence-dir> \
+  [--resume-root <private-local-root>] \
+  [--data-dir <local-data-dir>] \
+  [--out-dir <local-evidence-dir>] \
   [--query-set <local-query-set.jsonl>] \
   [--query-set-trace-root <local-seektalent-artifacts-runs-root>] \
   [--reuse-imported-corpus --reuse-dataset-manifest <prior-redacted-dataset-manifest.json>] \
@@ -265,9 +317,14 @@ scripts/local/run-current-stage-validation.sh --dry-run \
   --max-files 10000 \
   --max-queries 500 \
   --top-k 10 \
+  [--private-query-request-sample-count <request-sample-count>] \
   [--private-query-timeout-ms <query-command-timeout-ms>] \
   [--ocr-jobs-per-tick <bounded-ocr-job-budget>]
 ```
+
+`--resume-root`, `--data-dir`, and `--out-dir` may be omitted when
+`RESUME_IR_PRIVATE_RESUME_ROOT`, `RESUME_IR_DATA_DIR`, and
+`RESUME_IR_LOCAL_EVIDENCE_DIR` are set in the local shell.
 
 For Tesseract combined languages such as `eng+chi_sim`, pass repeated
 `--language-pack <lang>=<local-tessdata-file>` entries so the local OCR runtime
@@ -370,11 +427,31 @@ performance optimization goal.
 
 If local query-set generation fails before the private benchmark can run,
 execute mode also writes `current-stage-blocked-summary.json` with
-`blocked_step: "query_set_draft"`, `blocked_category: "query-set"`, and
-`blocked_reason: "query_set_draft_failed"`. That summary includes the same
-redacted corpus observability counts and the query-set draft stdout digest, but
-does not include the query-set file, query bodies, local paths, or benchmark
-reports.
+`blocked_step: "query_set_prepare"`, `blocked_category: "query-set"`, and
+`blocked_reason: "query_set_prepare_failed"`. If the static replay freeze cannot
+read the local search index needed to filter corpus-valid queries, execute mode
+uses the sharper `blocked_reason: "query_set_index_unavailable"` instead. That
+summary includes the same redacted corpus observability counts plus basename-only
+digests for query-set prepare stdout/stderr. For query-set prepare failures,
+including index-unavailable freeze failures, execute mode also attempts a
+redacted trace preflight and records the basename/hash for
+`query-set-trace-preflight.local.json` when it succeeds. The
+preflight artifact is a redacted aggregate of trace counts, index availability,
+deduplicated candidate bucket counts/deficits, and corpus-valid bucket
+counts/deficits when the local search index is available. It also carries the
+redacted D10K corpus-readiness fields `document_count`,
+`searchable_document_count`, `vector_indexed_document_count`,
+`d10k_corpus_ready`, and `d10k_corpus_deficits`; those fields are preserved in
+the blocked handoff and generated #53 issue-comment body. It does not include
+the query-set file, query bodies, local paths, stderr text, or benchmark
+reports. Candidate bucket counts diagnose static trace coverage only; they do
+not replace the corpus-valid freeze or produce `query_set_sha256`.
+When the blocked reason is
+`query_set_corpus_or_trace_coverage_insufficient`, use both the redacted corpus
+observability counts and the query-set preflight bucket deficits: the next
+action is to prepare a D10K-shaped indexed local corpus and collect enough
+trace-derived `source_search` workload for deficient buckets before rerunning
+the static freeze.
 If the private query baseline command itself fails, execute mode writes the same
 blocked summary schema with `blocked_step: "private_query_baseline"`,
 `blocked_category: "benchmark"`, and
@@ -422,9 +499,9 @@ indexes, SQLite data, or local paths.
 ```bash
 scripts/local/run-current-stage-validation.sh --execute \
   --validation-profile full \
-  --resume-root <private-local-root> \
-  --data-dir <local-data-dir> \
-  --out-dir <local-evidence-dir> \
+  [--resume-root <private-local-root>] \
+  [--data-dir <local-data-dir>] \
+  [--out-dir <local-evidence-dir>] \
   [--query-set <local-query-set.jsonl>] \
   [--query-set-trace-root <local-seektalent-artifacts-runs-root>] \
   [--reuse-imported-corpus --reuse-dataset-manifest <prior-redacted-dataset-manifest.json>] \
@@ -464,9 +541,9 @@ does not write `current-stage-validation-evidence.json` and does not run
 ```bash
 scripts/local/run-current-stage-validation.sh --execute \
   --validation-profile smoke \
-  --resume-root <private-local-root-or-small-local-sample-root> \
-  --data-dir <local-data-dir> \
-  --out-dir <local-evidence-dir> \
+  [--resume-root <private-local-root-or-small-local-sample-root>] \
+  [--data-dir <local-data-dir>] \
+  [--out-dir <local-evidence-dir>] \
   [--query-set <local-query-set.jsonl>] \
   [--query-set-trace-root <local-seektalent-artifacts-runs-root>] \
   --model-manifest <local-model-manifest.json> \
@@ -492,6 +569,7 @@ scripts/local/run-current-stage-validation.sh --execute \
   --max-files <bounded-file-count> \
   --max-queries <bounded-query-count> \
   --top-k 10 \
+  [--private-query-request-sample-count <request-sample-count>] \
   [--private-query-timeout-ms <query-command-timeout-ms>] \
   [--ocr-jobs-per-tick <bounded-ocr-job-budget>]
 ```
@@ -501,11 +579,21 @@ bounded worker may claim during one foreground worker tick. The default is `1`
 for compatibility; raising it is a current-stage baseline throughput control,
 not a P95/P99 query-latency optimization claim.
 
-Use `--private-query-timeout-ms` to set the benchmark runner's per-query command
-budget for local `resume-cli benchmark-query-protocol` invocations. The default
-is `30000`; raising it is a current-stage validation command budget for cold or
-OCR-heavy local data directories, not a claim that query P95/P99 latency has
-been optimized.
+Use `--private-query-timeout-ms` to set the benchmark runner's per-request
+budget; the runner derives one resident batch command timeout from that budget
+and the query count. The default is `30000`; raising it is a current-stage
+validation command budget for cold or OCR-heavy local data directories, not a
+claim that query P95/P99 latency has been optimized.
+Use `--private-query-request-sample-count` only to control measured request
+sample volume. Full profile defaults to `5000`; smoke profile defaults to the
+current bounded query count.
+The current-stage wrapper does not expose a separate per-bucket sample floor.
+`resume-benchmark private-query` owns the scale-shaped request bucket floor:
+D10K-shaped runs with at least 10000 documents and 5000 requested samples must
+satisfy 500 samples per bucket, D100K-shaped runs must satisfy 1000, and
+D1M-shaped runs must satisfy 2000. The `private-query` CLI intentionally has
+no manual per-bucket floor flag; the floor is derived only from the private
+scale shape. Smoke runs still cannot claim D10K calibration.
 
 Smoke mode passes `--allow-smoke-confidence` to the benchmark gate because a
 bounded local wiring run may have `percentile_confidence: "smoke"`. Full
@@ -861,7 +949,8 @@ private corpus; it does not require looping on P95/P99 latency reduction in this
 goal. The report must use `dataset_kind: "private-real-corpus"`,
 `target_claim: "benchmark_baseline_observed"`, `corpus_origin:
 "private_local"`, `privacy_boundary: "redacted_local_aggregate"`,
-`query_protocol: "resume-ir-query-v1"`, `query_mode: "hybrid"`,
+`query_protocol: "resume-ir-query-v2"`, `query_runner:
+"resident-batch-command"`, `spawn_per_query: false`, `query_mode: "hybrid"`,
 `retrieval_layers: "fulltext+field+vector+rrf"`, `hot_index: true`, explicit
 aggregate `searchable_document_count` and `vector_indexed_document_count`
 hot-index coverage fields, false hot-path OCR/parsing/heavy-model-inference
@@ -869,21 +958,27 @@ booleans, false raw-data/path/query booleans, and sha256 digests for the local
 dataset manifest, query set, reviewed embedding model manifest, and redacted
 `benchmark-corpus-summary` preflight. It must also have internally consistent
 aggregate metrics: hot-index coverage counts are non-zero and no larger than
-`document_count`, latency samples equal query count, zero-result queries do not
-exceed query count, total hits do not exceed `query_count * top_k`, latency
-percentiles P50/P95/P99 are present and ordered, `query_total_ms` is positive,
-and reported QPS matches `query_count / (query_total_ms / 1000)` within
-rounding tolerance. Do not upload reports if they contain raw resume text, local
+`document_count`, latency and RSS samples equal `request_sample_count`,
+`samples_per_bucket` sums to `request_sample_count`, zero-result queries do not
+exceed `request_sample_count`, total hits do not exceed
+`request_sample_count * top_k`, latency percentiles P50/P95/P99 are present and
+ordered, `query_latency_by_bucket`, `stage_latency_by_bucket_ms`, and
+`rss_delta_mb_by_bucket` contain exactly the positive-sample bucket summaries
+implied by `samples_per_bucket`,
+`query_total_ms` is positive, and reported QPS matches
+`request_sample_count / (query_total_ms / 1000)` within rounding tolerance. Do
+not upload reports if they contain raw resume text, local
 paths, queries, sample IDs, or filenames.
 
 The current local private corpus is approximately ten thousand resumes, not a
 100k or 1M corpus. Stable-release performance readiness therefore still needs a
 redacted hot-index hybrid baseline over the available private corpus with at
 least 8000 local documents, at least 8000 hot-searchable documents, at least
-8000 vector-indexed documents, and 500 query latency samples. That evidence now
-belongs to the follow-up performance optimization goal, together with P95/P99
-reduction and external 100k/1M scale validation; do not keep rerunning this
-goal solely because hot-index coverage or latency is not yet release-grade.
+8000 vector-indexed documents, 500 unique queries, and 5000 measured request
+samples. That evidence now belongs to the follow-up performance optimization
+goal, together with P95/P99 reduction and external 100k/1M scale validation; do
+not keep rerunning this goal solely because hot-index coverage or latency is not
+yet release-grade.
 
 Generate the private query benchmark report locally only after the target
 private corpus has been imported, indexed, and warmed, and after the local query
@@ -892,18 +987,38 @@ heavy model inference on the query path. Prefer the product-owned
 `resume-cli benchmark-query-protocol` command over private wrapper scripts; it
 returns only the benchmark protocol and runs the query through the normal
 product hybrid search path. The query-set JSONL stays local and may contain raw
-private queries; the benchmark runner passes each query through an owner-only
-temporary file path in `RESUME_IR_QUERY_INPUT_PATH` plus
-`RESUME_IR_QUERY_TOP_K` and `RESUME_IR_QUERY_MODE=hybrid`, and must return only
-`resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`,
-`top_k=<n>`, and `hits=<n>` on stdout. Do not upload the query-set, the report,
-or command wrappers unless they have been separately reviewed to contain no raw
-queries, filenames, local paths, tokens, or resume data.
-If a wrapper is still needed, it must delegate through
-`resume-cli benchmark-query-protocol` or pass the query file through
-`resume-cli search --query-file "$RESUME_IR_QUERY_INPUT_PATH" --mode hybrid`
-instead of putting the raw query in argv; wrapper stdout must still be reduced
-to the benchmark protocol only.
+private queries; the benchmark runner writes an owner-only batch JSONL scratch
+file and starts exactly one resident command with
+`RESUME_IR_QUERY_BATCH_INPUT_PATH`, `RESUME_IR_QUERY_TOP_K` and
+`RESUME_IR_QUERY_MODE=hybrid`. Each batch JSONL request uses
+`resume-ir.query-batch-request.v2` and carries a local opaque `request_id`;
+regular file batches must have unique request IDs before any query executes.
+Each response record must return only `resume-ir-query-v2`,
+`request_id=<matching local request id>`, `mode=hybrid`,
+`layers=fulltext+field+vector+rrf`, `top_k=<n>`,
+`query_embedding_runtime=local-command`, `query_embedding_invocations=1`,
+numeric `stage_*_ms` timings for query parse, prefilter, BM25, ANN, fusion,
+bulk hydrate, and snippet, numeric `rss_delta_mb=<n>`, numeric
+`elapsed_ms=<n>` for that query record, `hits=<n>`, and
+`resume-ir-query-end` on stdout. The runner accepts out-of-order response
+records from a concurrent resident batch command, reorders them by the original
+execution plan, and rejects missing, duplicated, unknown, or mismatched request
+IDs before attributing latency or hits to the frozen query set. The benchmark
+runner uses the record `elapsed_ms` values for
+`query_latency_ms`; it must not derive per-query percentiles by dividing total
+batch time by query count. It also emits `query_latency_by_bucket`,
+`stage_latency_by_bucket_ms`, `rss_delta_mb`, and `rss_delta_mb_by_bucket` so the
+#53 baseline can rank query-shape hotspots and identify the slow stage and
+resource delta inside each bucket without exposing raw query text.
+Full current-stage evidence carries the same safe subset under
+`private_query_observability`: counts, bucket samples, P50/P95/P99 aggregates,
+global stage P95, per-bucket stage P95 values, bounded stage histograms, RSS
+delta aggregates, and `zero_result_queries` only. Do not upload the
+query-set, the batch scratch, the report, or command wrappers unless they have
+been separately reviewed to
+contain no raw queries, filenames, local paths, tokens, or resume data.
+This removes benchmark process spawn from the #53 baseline path, but it is not
+by itself a W1 resident-daemon latency claim.
 
 Before generating the benchmark report, capture local hot-index corpus coverage
 as a redacted aggregate summary:
@@ -918,24 +1033,60 @@ The benchmark runner will reject summaries that do not prove full hot-index
 coverage and will emit only the summary file's SHA-256 digest in the benchmark
 report. The summary is local evidence only and must not contain raw resume
 text, local paths, queries, filenames, sample IDs, or document IDs.
+The query-set must use `resume-ir.query-set.jsonl.v2`; `private-query` rejects
+older query-set rows and carries only aggregate `bucket_counts`,
+`request_sample_count`, `samples_per_bucket`, `query_latency_by_bucket`, and
+`rss_delta_mb_by_bucket`
+into the redacted benchmark report. The sibling
+`private-query-set.summary.json` must exactly describe the
+loaded query-set rows: `query_count` and every `bucket_counts` entry must match
+the JSONL rows used for this run, and multi-query summaries must carry a
+non-empty tune/holdout split whose counts add up to `query_count`. The summary
+must also carry `tune_bucket_counts` and `holdout_bucket_counts`; each bucket's
+tune plus holdout count must equal `bucket_counts`, and buckets with more than
+one frozen query must have coverage on both sides. Otherwise `private-query`
+rejects the baseline before emitting a report. `--max-queries` is a hard upper
+bound on the static JSONL row count, not a prefix-truncation mode; extra rows
+must be removed by freezing a new static query set with a new summary. Static
+query strings must be unique; duplicate query rows cannot count toward frozen
+`query_count` or bucket coverage. Static `sample_id` values must also be
+unique local record identities; duplicate sample IDs are rejected before the
+resident batch command runs.
 
 ```bash
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   private-query \
   --query-set private-query-set.jsonl \
-  --command resume-cli \
-  --command-arg --data-dir --command-arg <local-data-dir> \
-  --command-arg benchmark-query-protocol \
-  --command-arg --embedding-command --command-arg <embedding-command> \
-  --command-arg --model-id --command-arg <model-id> \
-  --command-arg --dimension --command-arg <dim> \
+  --resident-command resume-cli \
+  --resident-command-arg --data-dir --resident-command-arg <local-data-dir> \
+  --resident-command-arg benchmark-query-protocol \
+  --resident-command-arg --batch-jsonl \
+  --resident-command-arg --embedding-command --resident-command-arg <embedding-command> \
+  --resident-command-arg --model-id --resident-command-arg <model-id> \
+  --resident-command-arg --dimension --resident-command-arg <dim> \
   --corpus-summary benchmark-corpus-summary.local.json \
-  --max-queries 500 --top-k 10 \
+  --max-queries 500 --request-sample-count 5000 \
+  --top-k 10 \
   --dataset-manifest-sha256 <sha256> \
-  --query-set-sha256 <sha256> \
   --model-manifest-sha256 <sha256> \
   --json > private-benchmark-local.json
 ```
+
+`private-query` reads the public-safe `query_set_sha256` from the sibling
+`private-query-set.summary.json` written by the query-set prepare step. The
+summary is not allowed to describe a superset, subset, or different bucket
+distribution from the measured JSONL, and it must expose public-safe
+`tune_sha256` and `holdout_sha256` identifiers plus bucket-level
+`tune_bucket_counts` / `holdout_bucket_counts` for the frozen split. For the
+full D10K-or-larger private calibration shapes, the measured JSONL's static
+`bucket_counts` must also satisfy the D10K query bucket minimums from
+`perf/acceptance-matrix.toml`; the runner must not treat repeated request
+samples as a substitute for unique static query coverage. The same full
+D10K-or-larger shapes accept only `trace_source_search_v1` as the
+`query_source`.
+Current-stage full profile validates that summary source before invoking
+`private-query`, so fake or custom benchmark runners cannot turn another query
+construction path into D10K baseline evidence.
 
 The strict gate below remains available for the follow-up performance
 optimization goal and should not be used as this goal's completion blocker:
@@ -944,7 +1095,7 @@ optimization goal and should not be used as this goal's completion blocker:
 cargo run -p benchmark-runner --bin resume-benchmark --locked -- \
   gate --report private-benchmark-local.json \
   --require-private-real-corpus \
-  --min-documents 8000 --min-queries 500 \
+  --min-documents 10000 --min-queries 500 \
   --max-p95-ms 200 --max-zero-result-queries 0
 ```
 

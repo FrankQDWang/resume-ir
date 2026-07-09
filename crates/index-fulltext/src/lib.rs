@@ -2,14 +2,17 @@ pub fn crate_name() -> &'static str {
     "index-fulltext"
 }
 
+use std::borrow::{Borrow, Cow};
 use std::collections::BTreeSet;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::{Component, Path, PathBuf};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chacha20poly1305::{
     aead::{Aead, KeyInit, Payload},
@@ -17,16 +20,17 @@ use chacha20poly1305::{
 };
 use regex::Regex;
 use tantivy::collector::TopDocs;
+use tantivy::indexer::NoMergePolicy;
 use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery};
 use tantivy::schema::{
-    Field, IndexRecordOption, Schema, TantivyDocument, Value, FAST, STORED, STRING, TEXT,
+    Field, IndexRecordOption, Schema, TantivyDocument, Value, STORED, STRING, TEXT,
 };
 use tantivy::{Index, IndexReader, IndexWriter, Term};
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-const WRITER_HEAP_BYTES: usize = 50_000_000;
+const DEFAULT_WRITER_HEAP_BYTES: usize = 50_000_000;
 const DEFAULT_LIMIT: usize = 10;
 const MAX_LIMIT: usize = 100;
 const ACTIVE_SNAPSHOT_FILE: &str = "active-snapshot";
@@ -47,6 +51,19 @@ const INDEX_OPEN_RETRY_ATTEMPTS: usize = 20;
 const INDEX_OPEN_RETRY_DELAY: Duration = Duration::from_millis(50);
 const INDEX_MUTATION_RETRY_ATTEMPTS: usize = 20;
 const INDEX_MUTATION_RETRY_DELAY: Duration = Duration::from_millis(50);
+const SINGLE_WORKER_SNAPSHOT_DOCUMENT_LIMIT: usize = 10_000;
+const SNAPSHOT_PUBLISH_CONTROL_DOCUMENT_INTERVAL: usize = 8;
+
+#[cfg(test)]
+static REDACTION_REGEX_PASSES: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+fn record_redaction_regex_pass() {
+    REDACTION_REGEX_PASSES.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(not(test))]
+fn record_redaction_regex_pass() {}
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct IndexDocument {
@@ -150,6 +167,113 @@ impl fmt::Debug for SearchHit {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SnapshotPublishPhase {
+    Setup,
+    DocumentIndexing,
+    TantivyCommit,
+    PlaintextValidation,
+    EncryptedPublication,
+    EncryptedValidation,
+    ActiveSnapshotWrite,
+}
+
+impl SnapshotPublishPhase {
+    pub fn as_label(self) -> &'static str {
+        match self {
+            Self::Setup => "index_publication_setup",
+            Self::DocumentIndexing => "index_publication_documents",
+            Self::TantivyCommit => "index_publication_commit",
+            Self::PlaintextValidation => "index_publication_plaintext_validation",
+            Self::EncryptedPublication => "index_publication_encrypted_publication",
+            Self::EncryptedValidation => "index_publication_encrypted_validation",
+            Self::ActiveSnapshotWrite => "index_publication_active_snapshot",
+        }
+    }
+}
+
+/// Optional cancellation and phase attribution control for long snapshot publication work.
+#[derive(Clone, Copy)]
+pub struct SnapshotPublishControl<'a> {
+    cancel_check: Option<&'a dyn Fn() -> bool>,
+    phase_observer: Option<&'a dyn Fn(SnapshotPublishPhase)>,
+    phase_timing_observer: Option<&'a dyn Fn(SnapshotPublishPhase, Duration)>,
+    document_interval: usize,
+    writer_heap_bytes: usize,
+}
+
+impl<'a> SnapshotPublishControl<'a> {
+    pub fn disabled() -> Self {
+        Self {
+            cancel_check: None,
+            phase_observer: None,
+            phase_timing_observer: None,
+            document_interval: SNAPSHOT_PUBLISH_CONTROL_DOCUMENT_INTERVAL,
+            writer_heap_bytes: DEFAULT_WRITER_HEAP_BYTES,
+        }
+    }
+
+    pub fn from_cancel_check(cancel_check: &'a dyn Fn() -> bool) -> Self {
+        Self {
+            cancel_check: Some(cancel_check),
+            phase_observer: None,
+            phase_timing_observer: None,
+            document_interval: SNAPSHOT_PUBLISH_CONTROL_DOCUMENT_INTERVAL,
+            writer_heap_bytes: DEFAULT_WRITER_HEAP_BYTES,
+        }
+    }
+
+    pub fn with_phase_observer(mut self, phase_observer: &'a dyn Fn(SnapshotPublishPhase)) -> Self {
+        self.phase_observer = Some(phase_observer);
+        self
+    }
+
+    pub fn with_phase_timing_observer(
+        mut self,
+        phase_timing_observer: &'a dyn Fn(SnapshotPublishPhase, Duration),
+    ) -> Self {
+        self.phase_timing_observer = Some(phase_timing_observer);
+        self
+    }
+
+    pub fn with_writer_heap_bytes(mut self, writer_heap_bytes: usize) -> Self {
+        self.writer_heap_bytes = writer_heap_bytes.max(1);
+        self
+    }
+
+    fn writer_heap_bytes(self) -> usize {
+        self.writer_heap_bytes
+    }
+
+    fn report_phase(self, phase: SnapshotPublishPhase) {
+        if let Some(phase_observer) = self.phase_observer {
+            phase_observer(phase);
+        }
+    }
+
+    fn report_phase_timing(self, phase: SnapshotPublishPhase, elapsed: Duration) {
+        if let Some(phase_timing_observer) = self.phase_timing_observer {
+            phase_timing_observer(phase, elapsed);
+        }
+    }
+
+    fn check(self) -> Result<()> {
+        if self.cancel_check.is_some_and(|cancel_check| cancel_check()) {
+            return Err(FullTextError::cancelled());
+        }
+
+        Ok(())
+    }
+
+    fn check_after_document(self, index: usize) -> Result<()> {
+        if index.is_multiple_of(self.document_interval) {
+            self.check()?;
+        }
+
+        Ok(())
+    }
+}
+
 pub struct FullTextIndex {
     index: Index,
     reader: IndexReader,
@@ -183,6 +307,33 @@ impl FullTextIndex {
     }
 
     pub fn open_or_create(index_dir: &Path) -> Result<Self> {
+        Self::open_or_create_with_writer_mode(
+            index_dir,
+            WriterThreadMode::Auto,
+            DEFAULT_WRITER_HEAP_BYTES,
+        )
+    }
+
+    fn open_or_create_with_writer_mode(
+        index_dir: &Path,
+        writer_thread_mode: WriterThreadMode,
+        writer_heap_bytes: usize,
+    ) -> Result<Self> {
+        Self::open_or_create_with_writer_config(
+            index_dir,
+            SnapshotWriterConfig {
+                thread_mode: writer_thread_mode,
+                merge_policy: WriterMergePolicy::Default,
+            },
+            writer_heap_bytes,
+        )
+    }
+
+    fn open_or_create_with_writer_config(
+        index_dir: &Path,
+        writer_config: SnapshotWriterConfig,
+        writer_heap_bytes: usize,
+    ) -> Result<Self> {
         fs::create_dir_all(index_dir).map_err(FullTextError::io)?;
         let schema = build_schema();
         let index = if index_dir.join("meta.json").exists() {
@@ -194,9 +345,14 @@ impl FullTextIndex {
         let schema = index.schema();
         let fields = IndexFields::from_schema(&schema)?;
         let reader = index.reader().map_err(FullTextError::tantivy)?;
-        let writer = index
-            .writer(WRITER_HEAP_BYTES)
-            .map_err(FullTextError::tantivy)?;
+        let writer = match writer_config.thread_mode {
+            WriterThreadMode::Auto => index.writer(writer_heap_bytes),
+            WriterThreadMode::SingleWorker => index.writer_with_num_threads(1, writer_heap_bytes),
+        }
+        .map_err(FullTextError::tantivy)?;
+        if matches!(writer_config.merge_policy, WriterMergePolicy::NoMerge) {
+            writer.set_merge_policy(Box::new(NoMergePolicy));
+        }
 
         Ok(Self {
             index,
@@ -221,6 +377,40 @@ impl FullTextIndex {
     where
         I: IntoIterator<Item = IndexDocument>,
     {
+        self.replace_documents_with_control(documents, SnapshotPublishControl::disabled())
+    }
+
+    pub fn replace_document_refs<'a, I>(&self, documents: I) -> Result<()>
+    where
+        I: IntoIterator<Item = &'a IndexDocument>,
+    {
+        self.replace_documents_with_control(documents, SnapshotPublishControl::disabled())
+    }
+
+    fn replace_documents_with_control<I, D>(
+        &self,
+        documents: I,
+        control: SnapshotPublishControl<'_>,
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = D>,
+        D: Borrow<IndexDocument>,
+    {
+        self.replace_documents_with_redaction(documents, control, IndexDocumentRedaction::Redact)
+    }
+
+    fn replace_documents_with_redaction<I, D>(
+        &self,
+        documents: I,
+        control: SnapshotPublishControl<'_>,
+        redaction: IndexDocumentRedaction,
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = D>,
+        D: Borrow<IndexDocument>,
+    {
+        control.report_phase(SnapshotPublishPhase::DocumentIndexing);
+        control.check()?;
         let writer = self
             .writer
             .as_ref()
@@ -231,46 +421,34 @@ impl FullTextIndex {
             .delete_all_documents()
             .map_err(FullTextError::tantivy)?;
 
-        for document in documents {
+        for (index, document) in documents.into_iter().enumerate() {
+            control.check_after_document(index)?;
+            let document = document.borrow();
             if document.is_deleted {
                 continue;
             }
 
-            let file_name = redact_contact_values(&document.file_name);
-            let clean_text = redact_contact_values(&document.clean_text);
-            let sections = document
-                .sections
-                .iter()
-                .map(|section| {
-                    (
-                        section.section_type.as_str(),
-                        redact_contact_values(&section.text),
-                    )
-                })
-                .collect::<Vec<_>>();
-            let section_text = document
-                .sections
-                .iter()
-                .zip(sections.iter())
-                .map(|(_, (_, text))| text.as_str())
-                .collect::<Vec<_>>()
-                .join("\n");
-
+            let (file_name, clean_text) = match redaction {
+                IndexDocumentRedaction::Redact => (
+                    redact_contact_values_cow(&document.file_name),
+                    redact_contact_values_cow(&document.clean_text),
+                ),
+                IndexDocumentRedaction::TrustedRedacted => (
+                    Cow::Borrowed(document.file_name.as_str()),
+                    Cow::Borrowed(document.clean_text.as_str()),
+                ),
+            };
             let mut tantivy_document = TantivyDocument::default();
             tantivy_document.add_text(self.fields.doc_id, &document.doc_id);
             tantivy_document.add_text(self.fields.version_id, &document.version_id);
-            tantivy_document.add_text(self.fields.file_name, &file_name);
-            tantivy_document.add_text(self.fields.clean_text, &clean_text);
-            tantivy_document.add_text(self.fields.all_sections, &section_text);
+            tantivy_document.add_text(self.fields.file_name, file_name.as_ref());
+            tantivy_document.add_text(self.fields.clean_text, clean_text.as_ref());
             tantivy_document.add_bool(self.fields.is_deleted, false);
-            for (section_type, text) in &sections {
-                tantivy_document.add_text(self.fields.section_type, section_type);
-                tantivy_document.add_text(self.fields.section_text, text);
-            }
             writer
                 .add_document(tantivy_document)
                 .map_err(FullTextError::tantivy)?;
         }
+        control.check()?;
 
         Ok(())
     }
@@ -341,7 +519,7 @@ impl FullTextIndex {
                     version_id,
                     file_name: text_value(&stored, self.fields.file_name).unwrap_or_default(),
                     clean_text,
-                    sections: section_values(&stored, self.fields),
+                    sections: Vec::new(),
                     is_deleted: false,
                 });
             }
@@ -363,12 +541,7 @@ impl FullTextIndex {
         let searcher = self.reader.searcher();
         let query_parser = QueryParser::for_index(
             &self.index,
-            vec![
-                self.fields.file_name,
-                self.fields.clean_text,
-                self.fields.section_text,
-                self.fields.all_sections,
-            ],
+            vec![self.fields.file_name, self.fields.clean_text],
         );
         if query.text().trim().is_empty() {
             return Ok(Vec::new());
@@ -478,7 +651,46 @@ fn is_transient_index_operation_error(error: &FullTextError) -> bool {
         FullTextError::Io { diagnostic } | FullTextError::Tantivy { diagnostic } => {
             is_windows_file_lock_diagnostic(diagnostic)
         }
+        FullTextError::Cancelled => false,
         FullTextError::Internal { .. } => false,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WriterThreadMode {
+    Auto,
+    SingleWorker,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WriterMergePolicy {
+    Default,
+    NoMerge,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SnapshotWriterConfig {
+    thread_mode: WriterThreadMode,
+    merge_policy: WriterMergePolicy,
+}
+
+fn writer_config_for_snapshot(document_count: Option<usize>) -> SnapshotWriterConfig {
+    match document_count {
+        Some(count) if count <= SINGLE_WORKER_SNAPSHOT_DOCUMENT_LIMIT => SnapshotWriterConfig {
+            thread_mode: WriterThreadMode::SingleWorker,
+            merge_policy: WriterMergePolicy::NoMerge,
+        },
+        _ => SnapshotWriterConfig {
+            thread_mode: WriterThreadMode::Auto,
+            merge_policy: WriterMergePolicy::Default,
+        },
+    }
+}
+
+fn exact_size_hint(size_hint: (usize, Option<usize>)) -> Option<usize> {
+    match size_hint {
+        (lower, Some(upper)) if lower == upper => Some(lower),
+        _ => None,
     }
 }
 
@@ -520,37 +732,179 @@ pub fn publish_snapshot<I>(index_root: &Path, snapshot_name: &str, documents: I)
 where
     I: IntoIterator<Item = IndexDocument>,
 {
-    validate_snapshot_name(snapshot_name)?;
+    publish_snapshot_with_control(
+        index_root,
+        snapshot_name,
+        documents,
+        SnapshotPublishControl::disabled(),
+    )
+}
 
-    let staging_root = index_root.join(STAGING_DIR);
-    let snapshots_root = index_root.join(SNAPSHOTS_DIR);
-    fs::create_dir_all(&staging_root).map_err(FullTextError::io)?;
-    fs::create_dir_all(&snapshots_root).map_err(FullTextError::io)?;
+pub fn publish_snapshot_with_control<I>(
+    index_root: &Path,
+    snapshot_name: &str,
+    documents: I,
+    control: SnapshotPublishControl<'_>,
+) -> Result<()>
+where
+    I: IntoIterator<Item = IndexDocument>,
+{
+    publish_snapshot_documents_with_control(index_root, snapshot_name, documents, control)
+}
 
-    let staging_dir = staging_root.join(format!("{snapshot_name}.tmp"));
-    if staging_dir.exists() {
-        remove_snapshot_dir_all(&staging_dir)?;
-    }
-    let published_dir = snapshots_root.join(snapshot_name);
-    if published_dir.exists() {
-        return Err(FullTextError::internal("full-text snapshot already exists"));
-    }
+pub fn publish_trusted_redacted_snapshot_with_control<I>(
+    index_root: &Path,
+    snapshot_name: &str,
+    documents: I,
+    control: SnapshotPublishControl<'_>,
+) -> Result<()>
+where
+    I: IntoIterator<Item = IndexDocument>,
+{
+    publish_snapshot_documents_with_redaction(
+        index_root,
+        snapshot_name,
+        documents,
+        control,
+        IndexDocumentRedaction::TrustedRedacted,
+    )
+}
 
-    let index = FullTextIndex::open_or_create(&staging_dir)?;
-    index.replace_documents(documents)?;
-    index.commit()?;
-    drop(index);
-    validate_plaintext_snapshot_contents(&staging_dir)?;
+pub fn publish_snapshot_refs<'a, I>(
+    index_root: &Path,
+    snapshot_name: &str,
+    documents: I,
+) -> Result<()>
+where
+    I: IntoIterator<Item = &'a IndexDocument>,
+{
+    publish_snapshot_refs_with_control(
+        index_root,
+        snapshot_name,
+        documents,
+        SnapshotPublishControl::disabled(),
+    )
+}
 
-    publish_encrypted_staging_snapshot(index_root, &staging_dir, &published_dir)?;
-    let validation = validate_snapshot_contents(&published_dir);
-    if validation.is_err() {
-        let _ = fs::remove_dir_all(&published_dir);
-    }
-    validation?;
-    write_active_snapshot(index_root, snapshot_name)?;
+pub fn publish_snapshot_refs_with_control<'a, I>(
+    index_root: &Path,
+    snapshot_name: &str,
+    documents: I,
+    control: SnapshotPublishControl<'_>,
+) -> Result<()>
+where
+    I: IntoIterator<Item = &'a IndexDocument>,
+{
+    publish_snapshot_documents_with_control(index_root, snapshot_name, documents, control)
+}
+
+fn publish_snapshot_documents_with_control<I, D>(
+    index_root: &Path,
+    snapshot_name: &str,
+    documents: I,
+    control: SnapshotPublishControl<'_>,
+) -> Result<()>
+where
+    I: IntoIterator<Item = D>,
+    D: Borrow<IndexDocument>,
+{
+    publish_snapshot_documents_with_redaction(
+        index_root,
+        snapshot_name,
+        documents,
+        control,
+        IndexDocumentRedaction::Redact,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum IndexDocumentRedaction {
+    Redact,
+    TrustedRedacted,
+}
+
+fn publish_snapshot_documents_with_redaction<I, D>(
+    index_root: &Path,
+    snapshot_name: &str,
+    documents: I,
+    control: SnapshotPublishControl<'_>,
+    redaction: IndexDocumentRedaction,
+) -> Result<()>
+where
+    I: IntoIterator<Item = D>,
+    D: Borrow<IndexDocument>,
+{
+    let (documents, staging_dir, published_dir, index) =
+        measure_snapshot_publish_phase(control, SnapshotPublishPhase::Setup, || {
+            validate_snapshot_name(snapshot_name)?;
+            control.check()?;
+            let documents = documents.into_iter();
+            let writer_config = writer_config_for_snapshot(exact_size_hint(documents.size_hint()));
+
+            let staging_root = index_root.join(STAGING_DIR);
+            let snapshots_root = index_root.join(SNAPSHOTS_DIR);
+            fs::create_dir_all(&staging_root).map_err(FullTextError::io)?;
+            fs::create_dir_all(&snapshots_root).map_err(FullTextError::io)?;
+
+            let staging_dir = staging_root.join(format!("{snapshot_name}.tmp"));
+            if staging_dir.exists() {
+                remove_snapshot_dir_all(&staging_dir)?;
+            }
+            let published_dir = snapshots_root.join(snapshot_name);
+            if published_dir.exists() {
+                return Err(FullTextError::internal("full-text snapshot already exists"));
+            }
+
+            let index = FullTextIndex::open_or_create_with_writer_config(
+                &staging_dir,
+                writer_config,
+                control.writer_heap_bytes(),
+            )?;
+            Ok((documents, staging_dir, published_dir, index))
+        })?;
+
+    measure_snapshot_publish_phase(control, SnapshotPublishPhase::DocumentIndexing, || {
+        index.replace_documents_with_redaction(documents, control, redaction)
+    })?;
+    measure_snapshot_publish_phase(control, SnapshotPublishPhase::TantivyCommit, || {
+        control.check()?;
+        index.commit()
+    })?;
+    measure_snapshot_publish_phase(control, SnapshotPublishPhase::PlaintextValidation, || {
+        control.check()?;
+        drop(index);
+        validate_plaintext_snapshot_contents(&staging_dir)
+    })?;
+    measure_snapshot_publish_phase(control, SnapshotPublishPhase::EncryptedPublication, || {
+        control.check()?;
+        publish_encrypted_staging_snapshot(index_root, &staging_dir, &published_dir)
+    })?;
+    measure_snapshot_publish_phase(control, SnapshotPublishPhase::EncryptedValidation, || {
+        control.check()?;
+        let validation = validate_snapshot_contents(&published_dir);
+        if validation.is_err() {
+            let _ = fs::remove_dir_all(&published_dir);
+        }
+        validation
+    })?;
+    measure_snapshot_publish_phase(control, SnapshotPublishPhase::ActiveSnapshotWrite, || {
+        control.check()?;
+        write_active_snapshot(index_root, snapshot_name)
+    })?;
 
     Ok(())
+}
+
+fn measure_snapshot_publish_phase<T>(
+    control: SnapshotPublishControl<'_>,
+    phase: SnapshotPublishPhase,
+    operation: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    control.report_phase(phase);
+    let started = Instant::now();
+    let result = operation();
+    control.report_phase_timing(phase, started.elapsed());
+    result
 }
 
 pub fn publish_incremental_snapshot<I>(
@@ -1649,9 +2003,6 @@ struct IndexFields {
     version_id: Field,
     file_name: Field,
     clean_text: Field,
-    section_type: Field,
-    section_text: Field,
-    all_sections: Field,
     is_deleted: Field,
 }
 
@@ -1668,15 +2019,6 @@ impl IndexFields {
             clean_text: schema
                 .get_field("clean_text")
                 .map_err(FullTextError::tantivy)?,
-            section_type: schema
-                .get_field("section_type")
-                .map_err(FullTextError::tantivy)?,
-            section_text: schema
-                .get_field("section_text")
-                .map_err(FullTextError::tantivy)?,
-            all_sections: schema
-                .get_field("all_sections")
-                .map_err(FullTextError::tantivy)?,
             is_deleted: schema
                 .get_field("is_deleted")
                 .map_err(FullTextError::tantivy)?,
@@ -1686,14 +2028,11 @@ impl IndexFields {
 
 fn build_schema() -> Schema {
     let mut builder = Schema::builder();
-    builder.add_text_field("doc_id", STRING | STORED | FAST);
-    builder.add_text_field("version_id", STRING | STORED | FAST);
+    builder.add_text_field("doc_id", STRING | STORED);
+    builder.add_text_field("version_id", STORED);
     builder.add_text_field("file_name", TEXT | STORED);
     builder.add_text_field("clean_text", TEXT | STORED);
-    builder.add_text_field("section_type", STRING | STORED | FAST);
-    builder.add_text_field("section_text", TEXT | STORED);
-    builder.add_text_field("all_sections", TEXT | STORED);
-    builder.add_bool_field("is_deleted", STORED | FAST);
+    builder.add_bool_field("is_deleted", STORED);
     builder.build()
 }
 
@@ -1708,20 +2047,6 @@ fn bool_value(document: &TantivyDocument, field: Field) -> Option<bool> {
     document
         .get_first(field)
         .and_then(|value| value.as_value().as_bool())
-}
-
-fn section_values(document: &TantivyDocument, fields: IndexFields) -> Vec<IndexSection> {
-    let section_types = document
-        .get_all(fields.section_type)
-        .filter_map(|value| value.as_value().as_str().map(str::to_string));
-    let section_texts = document
-        .get_all(fields.section_text)
-        .filter_map(|value| value.as_value().as_str().map(str::to_string));
-
-    section_types
-        .zip(section_texts)
-        .map(|(section_type, text)| IndexSection { section_type, text })
-        .collect()
 }
 
 fn build_snippet(text: &str, query: &str) -> String {
@@ -1739,61 +2064,191 @@ fn build_snippet(text: &str, query: &str) -> String {
 }
 
 pub fn redact_contact_values(text: &str) -> String {
+    redact_contact_values_cow(text).into_owned()
+}
+
+fn redact_contact_values_cow(text: &str) -> Cow<'_, str> {
     static EMAIL_REGEX: OnceLock<Regex> = OnceLock::new();
     static PHONE_REGEX: OnceLock<Regex> = OnceLock::new();
     static COMPACT_PHONE_REGEX: OnceLock<Regex> = OnceLock::new();
     static WECHAT_REGEX: OnceLock<Regex> = OnceLock::new();
     static LOCAL_PATH_REGEX: OnceLock<Regex> = OnceLock::new();
 
-    let email_redacted = EMAIL_REGEX
-        .get_or_init(|| Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b").unwrap())
-        .replace_all(text, "<redacted-email>");
-    let phone_redacted = PHONE_REGEX
-        .get_or_init(|| {
-            Regex::new(
-                r"(?x)
-                (?:\+\d{1,3}[\s.-]*)?
-                (?:
-                    \(\d{3}\)[\s.-]*
-                    |
-                    \d{3,4}[\s.-]+
+    let mut redacted = None;
+    if text.contains('@') {
+        record_redaction_regex_pass();
+        replace_redaction(
+            &mut redacted,
+            text,
+            EMAIL_REGEX.get_or_init(|| {
+                Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b").unwrap()
+            }),
+            "<redacted-email>",
+        );
+    }
+    if contains_separated_phone_signal(redacted_text(text, &redacted)) {
+        record_redaction_regex_pass();
+        replace_redaction(
+            &mut redacted,
+            text,
+            PHONE_REGEX.get_or_init(|| {
+                Regex::new(
+                    r"(?x)
+                    (?:\+\d{1,3}[\s.-]*)?
+                    (?:
+                        \(\d{3}\)[\s.-]*
+                        |
+                        \d{3,4}[\s.-]+
+                    )
+                    \d{3,4}[\s.-]*\d{4}
+                    ",
                 )
-                \d{3,4}[\s.-]*\d{4}
-                ",
-            )
-            .unwrap()
-        })
-        .replace_all(&email_redacted, "<redacted-phone>");
-    let compact_phone_redacted = COMPACT_PHONE_REGEX
-        .get_or_init(|| Regex::new(r"\+?(?:1)?\d{10}\b").unwrap())
-        .replace_all(&phone_redacted, "<redacted-phone>");
-    let wechat_redacted = WECHAT_REGEX
-        .get_or_init(|| {
-            Regex::new(
-                r"(?ix)\b(?:wechat|weixin|wx|微信|微信号)\s*[:：]\s*[A-Za-z][A-Za-z0-9_.-]{5,31}\b",
-            )
-            .unwrap()
-        })
-        .replace_all(&compact_phone_redacted, "<redacted-wechat>");
-    LOCAL_PATH_REGEX
-        .get_or_init(|| {
-            Regex::new(
-                r"(?ix)
-                (?:
-                    file://\S+
-                    |
-                    (?:~|/Users|/home|/private|/var|/tmp|[A-Z]:[\\/])\S*
-                    |
-                    \b[A-Z]:\\\S+
-                    |
-                    \S*(?:/Users/|/home/|/private/|\\Users\\)\S*
+                .unwrap()
+            }),
+            "<redacted-phone>",
+        );
+    }
+    if contains_compact_phone_signal(redacted_text(text, &redacted)) {
+        record_redaction_regex_pass();
+        replace_redaction(
+            &mut redacted,
+            text,
+            COMPACT_PHONE_REGEX.get_or_init(|| Regex::new(r"\+?(?:1)?\d{10}\b").unwrap()),
+            "<redacted-phone>",
+        );
+    }
+    if contains_wechat_signal(redacted_text(text, &redacted)) {
+        record_redaction_regex_pass();
+        replace_redaction(
+            &mut redacted,
+            text,
+            WECHAT_REGEX.get_or_init(|| {
+                Regex::new(
+                    r"(?ix)\b(?:wechat|weixin|wx|微信|微信号)\s*[:：]\s*[A-Za-z][A-Za-z0-9_.-]{5,31}\b",
                 )
-                ",
-            )
-            .unwrap()
-        })
-        .replace_all(&wechat_redacted, "<redacted-path>")
-        .into_owned()
+                .unwrap()
+            }),
+            "<redacted-wechat>",
+        );
+    }
+    if contains_local_path_signal(redacted_text(text, &redacted)) {
+        record_redaction_regex_pass();
+        replace_redaction(
+            &mut redacted,
+            text,
+            LOCAL_PATH_REGEX.get_or_init(|| {
+                Regex::new(
+                    r"(?ix)
+                    (?:
+                        file://\S+
+                        |
+                        (?:~|/Users|/home|/private|/var|/tmp|[A-Z]:[\\/])\S*
+                        |
+                        \b[A-Z]:\\\S+
+                        |
+                        \S*(?:/Users/|/home/|/private|\\Users\\)\S*
+                    )
+                    ",
+                )
+                .unwrap()
+            }),
+            "<redacted-path>",
+        );
+    }
+    match redacted {
+        Some(value) => Cow::Owned(value),
+        None => Cow::Borrowed(text),
+    }
+}
+
+fn replace_redaction(
+    current: &mut Option<String>,
+    original: &str,
+    regex: &Regex,
+    replacement: &str,
+) {
+    if let Cow::Owned(value) = regex.replace_all(redacted_text(original, current), replacement) {
+        *current = Some(value);
+    }
+}
+
+fn redacted_text<'a>(original: &'a str, redacted: &'a Option<String>) -> &'a str {
+    redacted.as_deref().unwrap_or(original)
+}
+
+fn contains_separated_phone_signal(text: &str) -> bool {
+    let mut digits = 0_usize;
+    let mut candidate_len = 0_usize;
+    let mut separator_seen = false;
+
+    for byte in text.bytes() {
+        match byte {
+            b'0'..=b'9' => {
+                digits += 1;
+                candidate_len += 1;
+                if digits >= 10 && separator_seen {
+                    return true;
+                }
+            }
+            b'+' | b'(' | b')' => {
+                candidate_len += 1;
+                separator_seen = true;
+            }
+            b' ' | b'\t' | b'\n' | b'\r' | b'.' | b'-' if candidate_len > 0 => {
+                candidate_len += 1;
+                separator_seen = true;
+            }
+            _ => {
+                digits = 0;
+                candidate_len = 0;
+                separator_seen = false;
+            }
+        }
+
+        if candidate_len > 32 {
+            digits = 0;
+            candidate_len = 0;
+            separator_seen = false;
+        }
+    }
+
+    false
+}
+
+fn contains_compact_phone_signal(text: &str) -> bool {
+    let mut consecutive_digits = 0_usize;
+    for byte in text.bytes() {
+        if byte.is_ascii_digit() {
+            consecutive_digits += 1;
+            if consecutive_digits >= 10 {
+                return true;
+            }
+        } else {
+            consecutive_digits = 0;
+        }
+    }
+
+    false
+}
+
+fn contains_wechat_signal(text: &str) -> bool {
+    text.contains("微信")
+        || contains_ascii_case_insensitive(text, b"wechat")
+        || contains_ascii_case_insensitive(text, b"weixin")
+        || contains_ascii_case_insensitive(text, b"wx")
+}
+
+fn contains_ascii_case_insensitive(haystack: &str, needle: &[u8]) -> bool {
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+fn contains_local_path_signal(text: &str) -> bool {
+    text.as_bytes()
+        .iter()
+        .any(|byte| matches!(byte, b'/' | b'\\' | b'~'))
 }
 
 fn nearest_char_boundary_before(text: &str, mut index: usize) -> usize {
@@ -1814,12 +2269,17 @@ pub type Result<T> = std::result::Result<T, FullTextError>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FullTextError {
+    Cancelled,
     Io { diagnostic: String },
     Tantivy { diagnostic: String },
     Internal { diagnostic: String },
 }
 
 impl FullTextError {
+    fn cancelled() -> Self {
+        Self::Cancelled
+    }
+
     fn io(error: std::io::Error) -> Self {
         Self::Io {
             diagnostic: error.to_string(),
@@ -1842,6 +2302,7 @@ impl FullTextError {
 impl fmt::Display for FullTextError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            FullTextError::Cancelled => formatter.write_str("full-text index operation cancelled"),
             FullTextError::Io { .. } => formatter.write_str("full-text index IO error"),
             FullTextError::Tantivy { .. } => {
                 formatter.write_str("full-text index operation failed")
@@ -1859,6 +2320,341 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn contact_redaction_skips_regex_passes_when_text_has_no_match_signals() {
+        REDACTION_REGEX_PASSES.store(0, Ordering::Relaxed);
+
+        let redacted = redact_contact_values("Synthetic candidate summary without contact markers");
+
+        assert_eq!(
+            redacted,
+            "Synthetic candidate summary without contact markers"
+        );
+        assert_eq!(
+            REDACTION_REGEX_PASSES.load(Ordering::Relaxed),
+            0,
+            "no-match text should not run full regex replacement passes"
+        );
+    }
+
+    #[test]
+    fn contact_redaction_borrows_text_when_no_redaction_is_needed() {
+        let text = "Synthetic candidate summary without contact markers";
+
+        let redacted = redact_contact_values_cow(text);
+
+        assert!(matches!(redacted, Cow::Borrowed(value) if value == text));
+    }
+
+    #[test]
+    fn contact_redaction_preserves_all_supported_redaction_outputs() {
+        let redacted = redact_contact_values(
+            "Email: person@example.test Phone: +1 650-555-1234 Compact: 16505551234 \
+             WeChat: wx_candidate01 File: file://redacted-source/resume.pdf",
+        );
+
+        assert!(redacted.contains("<redacted-email>"));
+        assert_eq!(redacted.matches("<redacted-phone>").count(), 2);
+        assert!(redacted.contains("<redacted-wechat>"));
+        assert!(redacted.contains("<redacted-path>"));
+        assert!(!redacted.contains("person@example.test"));
+        assert!(!redacted.contains("650-555-1234"));
+        assert!(!redacted.contains("16505551234"));
+        assert!(!redacted.contains("wx_candidate01"));
+        assert!(!redacted.contains("file://redacted-source/resume.pdf"));
+    }
+
+    #[test]
+    fn contact_redaction_skips_phone_regexes_for_date_only_numbers() {
+        REDACTION_REGEX_PASSES.store(0, Ordering::Relaxed);
+
+        let redacted =
+            redact_contact_values("Experience 2020-01 to 2024-12; led 3 projects and 2 teams");
+
+        assert_eq!(
+            redacted,
+            "Experience 2020-01 to 2024-12; led 3 projects and 2 teams"
+        );
+        assert_eq!(
+            REDACTION_REGEX_PASSES.load(Ordering::Relaxed),
+            0,
+            "date-like numeric text should not run phone redaction regexes"
+        );
+    }
+
+    #[test]
+    fn borrowed_snapshot_publish_indexes_documents_without_taking_ownership() {
+        let index_root = temp_dir("borrowed-snapshot-publish");
+        let documents = [IndexDocument {
+            doc_id: "doc_borrowed".to_string(),
+            version_id: "ver_borrowed".to_string(),
+            file_name: "borrowed.pdf".to_string(),
+            clean_text: "Borrowed snapshot Rust search".to_string(),
+            sections: vec![IndexSection {
+                section_type: "skills".to_string(),
+                text: "Rust search".to_string(),
+            }],
+            is_deleted: false,
+        }];
+
+        publish_snapshot_refs(&index_root, "fulltext-borrowed-1-0-0", documents.iter()).unwrap();
+
+        let index = FullTextIndex::open_active(&index_root).unwrap().unwrap();
+        let hits = index.search(SearchQuery::new("Borrowed Rust")).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].doc_id, "doc_borrowed");
+        assert_eq!(documents[0].doc_id, "doc_borrowed");
+
+        remove_dir(&index_root);
+    }
+
+    #[test]
+    fn snapshot_publish_control_cancels_between_documents() {
+        let index_root = temp_dir("snapshot-publish-control-cancel");
+        let documents = (0..32)
+            .map(|index| IndexDocument {
+                doc_id: format!("doc_{index:03}"),
+                version_id: format!("ver_{index:03}"),
+                file_name: format!("candidate-{index:03}.pdf"),
+                clean_text: format!("Candidate {index:03} Rust search"),
+                sections: vec![IndexSection {
+                    section_type: "skills".to_string(),
+                    text: "Rust search".to_string(),
+                }],
+                is_deleted: false,
+            })
+            .collect::<Vec<_>>();
+        let checks = AtomicUsize::new(0);
+        let cancel_check = || checks.fetch_add(1, Ordering::SeqCst) >= 2;
+        let control = SnapshotPublishControl::from_cancel_check(&cancel_check);
+
+        let error = publish_snapshot_refs_with_control(
+            &index_root,
+            "fulltext-cancelled-1-0-0",
+            documents.iter(),
+            control,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, FullTextError::Cancelled));
+        assert!(checks.load(Ordering::SeqCst) >= 3);
+        assert!(FullTextIndex::open_active(&index_root).unwrap().is_none());
+
+        remove_dir(&index_root);
+    }
+
+    #[test]
+    fn snapshot_publish_control_reports_publication_subphases() {
+        let index_root = temp_dir("snapshot-publish-control-phases");
+        let documents = [IndexDocument {
+            doc_id: "doc_phases".to_string(),
+            version_id: "ver_phases".to_string(),
+            file_name: "phases.pdf".to_string(),
+            clean_text: "Snapshot phase attribution Rust search".to_string(),
+            sections: vec![IndexSection {
+                section_type: "skills".to_string(),
+                text: "Rust search".to_string(),
+            }],
+            is_deleted: false,
+        }];
+        let phases = Mutex::new(Vec::new());
+        let cancel_check = || false;
+        let phase_observer = |phase: SnapshotPublishPhase| {
+            phases.lock().unwrap().push(phase.as_label().to_string());
+        };
+        let control = SnapshotPublishControl::from_cancel_check(&cancel_check)
+            .with_phase_observer(&phase_observer);
+
+        publish_snapshot_refs_with_control(
+            &index_root,
+            "fulltext-phases-1-0-0",
+            documents.iter(),
+            control,
+        )
+        .unwrap();
+
+        let phases = phases.into_inner().unwrap();
+        for expected_phase in [
+            "index_publication_setup",
+            "index_publication_documents",
+            "index_publication_commit",
+            "index_publication_plaintext_validation",
+            "index_publication_encrypted_publication",
+            "index_publication_encrypted_validation",
+            "index_publication_active_snapshot",
+        ] {
+            assert!(
+                phases.iter().any(|phase| phase == expected_phase),
+                "missing {expected_phase} in {phases:?}"
+            );
+        }
+
+        remove_dir(&index_root);
+    }
+
+    #[test]
+    fn snapshot_publish_control_reports_publication_phase_timings() {
+        let index_root = temp_dir("snapshot-publish-control-phase-timings");
+        let documents = [IndexDocument {
+            doc_id: "doc_phase_timings".to_string(),
+            version_id: "ver_phase_timings".to_string(),
+            file_name: "phase-timings.pdf".to_string(),
+            clean_text: "Snapshot phase timing Rust search".to_string(),
+            sections: vec![IndexSection {
+                section_type: "skills".to_string(),
+                text: "Rust search".to_string(),
+            }],
+            is_deleted: false,
+        }];
+        let timings = Mutex::new(Vec::new());
+        let phase_timing_observer = |phase: SnapshotPublishPhase, elapsed: Duration| {
+            timings
+                .lock()
+                .unwrap()
+                .push((phase.as_label().to_string(), elapsed));
+        };
+        let control =
+            SnapshotPublishControl::disabled().with_phase_timing_observer(&phase_timing_observer);
+
+        publish_snapshot_refs_with_control(
+            &index_root,
+            "fulltext-phase-timings-1-0-0",
+            documents.iter(),
+            control,
+        )
+        .unwrap();
+
+        let timings = timings.into_inner().unwrap();
+        for expected_phase in [
+            "index_publication_setup",
+            "index_publication_documents",
+            "index_publication_commit",
+            "index_publication_plaintext_validation",
+            "index_publication_encrypted_publication",
+            "index_publication_encrypted_validation",
+            "index_publication_active_snapshot",
+        ] {
+            assert!(
+                timings
+                    .iter()
+                    .any(|(phase, elapsed)| phase == expected_phase && *elapsed >= Duration::ZERO),
+                "missing timing for {expected_phase} in {timings:?}"
+            );
+        }
+
+        remove_dir(&index_root);
+    }
+
+    #[test]
+    fn trusted_redacted_snapshot_publish_skips_redundant_redaction_passes() {
+        let index_root = temp_dir("trusted-redacted-snapshot-publish");
+        let documents = vec![IndexDocument {
+            doc_id: "doc_trusted_redacted".to_string(),
+            version_id: "ver_trusted_redacted".to_string(),
+            file_name: "<redacted-email> resume.pdf".to_string(),
+            clean_text: "Email <redacted-email> Phone <redacted-phone> File <redacted-path> Rust"
+                .to_string(),
+            sections: Vec::new(),
+            is_deleted: false,
+        }];
+        REDACTION_REGEX_PASSES.store(0, Ordering::Relaxed);
+
+        publish_trusted_redacted_snapshot_with_control(
+            &index_root,
+            "trusted-redacted-1-0-0",
+            documents,
+            SnapshotPublishControl::disabled(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            REDACTION_REGEX_PASSES.load(Ordering::Relaxed),
+            0,
+            "trusted-redacted snapshot publish should not rerun contact redaction regexes"
+        );
+
+        remove_dir(&index_root);
+    }
+
+    #[test]
+    fn staged_import_snapshot_writer_mode_uses_single_worker_for_milestones() {
+        assert_eq!(
+            writer_config_for_snapshot(Some(1)).thread_mode,
+            WriterThreadMode::SingleWorker
+        );
+        assert_eq!(
+            writer_config_for_snapshot(Some(100)).thread_mode,
+            WriterThreadMode::SingleWorker
+        );
+        assert_eq!(
+            writer_config_for_snapshot(Some(1_000)).thread_mode,
+            WriterThreadMode::SingleWorker
+        );
+        assert_eq!(
+            writer_config_for_snapshot(Some(1_200)).thread_mode,
+            WriterThreadMode::SingleWorker
+        );
+        assert_eq!(
+            writer_config_for_snapshot(Some(8_248)).thread_mode,
+            WriterThreadMode::SingleWorker
+        );
+        assert_eq!(
+            writer_config_for_snapshot(Some(10_000)).thread_mode,
+            WriterThreadMode::SingleWorker
+        );
+        assert_eq!(
+            writer_config_for_snapshot(Some(10_001)).thread_mode,
+            WriterThreadMode::Auto
+        );
+        assert_eq!(
+            writer_config_for_snapshot(None).thread_mode,
+            WriterThreadMode::Auto
+        );
+    }
+
+    #[test]
+    fn staged_import_snapshot_writer_config_uses_single_worker_without_commit_merges() {
+        let config = writer_config_for_snapshot(Some(8_248));
+
+        assert_eq!(config.thread_mode, WriterThreadMode::SingleWorker);
+        assert_eq!(config.merge_policy, WriterMergePolicy::NoMerge);
+    }
+
+    #[test]
+    fn fulltext_schema_keeps_metadata_out_of_unused_columnar_indexes() {
+        use tantivy::schema::FieldType;
+
+        let schema = build_schema();
+        let doc_id = schema.get_field("doc_id").unwrap();
+        let version_id = schema.get_field("version_id").unwrap();
+        let is_deleted = schema.get_field("is_deleted").unwrap();
+
+        match schema.get_field_entry(doc_id).field_type() {
+            FieldType::Str(options) => {
+                assert!(options.is_stored());
+                assert!(options.get_indexing_options().is_some());
+                assert!(!options.is_fast());
+            }
+            other => panic!("doc_id should be a string field, got {other:?}"),
+        }
+        match schema.get_field_entry(version_id).field_type() {
+            FieldType::Str(options) => {
+                assert!(options.is_stored());
+                assert!(options.get_indexing_options().is_none());
+                assert!(!options.is_fast());
+            }
+            other => panic!("version_id should be a string field, got {other:?}"),
+        }
+        match schema.get_field_entry(is_deleted).field_type() {
+            FieldType::Bool(options) => {
+                assert!(options.is_stored());
+                assert!(!options.is_indexed());
+                assert!(!options.is_fast());
+            }
+            other => panic!("is_deleted should be a bool field, got {other:?}"),
+        }
+    }
 
     #[test]
     fn snapshot_publish_retries_transient_windows_rename_lock() {

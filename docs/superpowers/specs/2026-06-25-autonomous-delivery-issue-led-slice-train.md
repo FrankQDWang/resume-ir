@@ -296,7 +296,7 @@ source_root = $RESUME_IR_QUERY_ARTIFACT_ROOT
 source_glob = **/runtime/trace.log
 event_filter = tool_called
 tool_filter = source_search
-query_source = source_search invocation argument only
+query_source = source_search keyword query segment only
 query_extraction_version = trace_source_search_v1
 ```
 
@@ -314,12 +314,12 @@ file path
 URL
 provider payload
 token
-raw log line outside the source_search invocation
+raw log line outside the source_search keyword query segment
 debug blob
 screenshot OCR
 ```
 
-The extractor collects real `source_search` queries, filters a fixed set that is useful on the D10K private corpus, and freezes it by `query_set_sha256`. Some zero-result queries may remain as a measured bucket, but the benchmark cannot be dominated by queries that do not find candidates.
+The extractor collects real `source_search` queries, filters a fixed set that is useful on the D10K private corpus, validates candidates against the current local searchable corpus, drops zero-hit queries, and freezes the result by `query_set_sha256`. The frozen benchmark gate must use `--max-zero-result-queries 0`.
 
 Required metrics:
 
@@ -404,7 +404,7 @@ Before each slice, the runner must check:
 goal_id unchanged
 ACTIVE_GOAL.toml authority valid
 ACTIVE_GOAL.toml hash unchanged or explicitly migrated
-allowed_paths match slice
+ACTIVE_GOAL.toml allowed_paths match slice
 primary issue present
 primary hypothesis present
 baseline hash present
