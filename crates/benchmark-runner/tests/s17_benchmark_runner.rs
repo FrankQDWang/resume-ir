@@ -4648,6 +4648,11 @@ fn query_fixture_script_body() -> &'static str {
 }
 
 #[cfg(windows)]
+fn resident_batch_query_fixture_script_body() -> &'static str {
+    query_fixture_script_body()
+}
+
+#[cfg(windows)]
 fn unbound_resident_batch_query_fixture_script_body() -> &'static str {
     concat!(
         "@echo off\r\n",
@@ -4854,6 +4859,43 @@ fn resident_batch_invocation_count_query_fixture_script_body() -> &'static str {
         "  echo elapsed_ms=8.0\r\n",
         "  echo hits=!hits!\r\n",
         "  echo resume-ir-query-end\r\n",
+        "  set /a request_index+=1\r\n",
+        ")\r\n",
+        "exit /b 0\r\n",
+    )
+}
+
+#[cfg(windows)]
+fn elapsed_ms_query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "set /a elapsed=1\r\n",
+        "set /a request_index=1\r\n",
+        "for /f \"usebackq delims=\" %%L in (\"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\") do (\r\n",
+        "  set \"request_id=private-query-request-!request_index!\"\r\n",
+        "  echo %%L | findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" >nul\r\n",
+        "  if errorlevel 1 (set \"hits=0\") else (set \"hits=%RESUME_IR_QUERY_TOP_K%\")\r\n",
+        "  echo resume-ir-query-v2\r\n",
+        "  echo request_id=!request_id!\r\n",
+        "  echo mode=hybrid\r\n",
+        "  echo layers=fulltext+field+vector+rrf\r\n",
+        "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo query_embedding_runtime=local-command\r\n",
+        "  echo query_embedding_invocations=1\r\n",
+        "  echo stage_query_parse_ms=1.0\r\n",
+        "  echo stage_prefilter_ms=2.0\r\n",
+        "  echo stage_bm25_ms=3.0\r\n",
+        "  echo stage_ann_ms=4.0\r\n",
+        "  echo stage_fusion_ms=5.0\r\n",
+        "  echo stage_bulk_hydrate_ms=6.0\r\n",
+        "  echo stage_snippet_ms=7.0\r\n",
+        "  echo rss_delta_mb=0.0\r\n",
+        "  echo elapsed_ms=!elapsed!\r\n",
+        "  echo hits=!hits!\r\n",
+        "  echo resume-ir-query-end\r\n",
+        "  set /a elapsed*=4\r\n",
         "  set /a request_index+=1\r\n",
         ")\r\n",
         "exit /b 0\r\n",
