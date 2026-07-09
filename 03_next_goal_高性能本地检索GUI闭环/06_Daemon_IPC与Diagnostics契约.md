@@ -44,7 +44,7 @@
 1. 默认 transport 是本机 Unix domain socket 或 Windows named pipe；loopback TCP 只能作为显式开发模式。
 2. 每条消息使用 length-prefixed UTF-8 JSON envelope，最大 request body 是 65536 bytes；超过限制返回 `REQUEST_TOO_LARGE`。
 3. IPC payload 可以在内存中携带 interactive raw query，但 daemon 禁止把 raw query 写入日志、diagnostics、trace、benchmark summary 或 git。
-4. benchmark batch 不通过 diagnostics 传 raw query。客户端先注册本地 query stream，daemon 返回 `query_set_id`，后续 batch 只引用 `query_id`、shape、hash 和 `query_set_id`。
+4. benchmark batch 可在本机私有 IPC/pipe 中携带 query，但不得把 raw query 写入 diagnostics、trace、benchmark summary 或 git；公开/诊断证据只引用 `query_set_sha256`、request/sample counts、bucket aggregate 和 redaction flags。
 5. cancel request 必须能取消 queued、running 和 batch child request；已完成请求返回 idempotent cancelled/complete 状态。
 6. 单个 batch 最多 64 个 query references；interactive search in-flight 上限 8，Codex validation 上限 2，benchmark 上限 1，background 上限 4。
 7. queued cancel acknowledgement P95 必须 <= 200ms；running cancel 必须在下一安全 checkpoint 之前进入 cancelled 或 complete。
@@ -113,36 +113,20 @@ Benchmark registration:
   "bucket_counts": {
     "single_term": 50,
     "and_2": 75,
-    "and_3_5": 125,
+    "and_3_5": 150,
     "and_6_16": 50,
     "field_filter": 75,
     "hybrid": 75,
-    "semantic": 25,
-    "extreme": 25
+    "semantic": 25
   },
   "contains_raw_query_in_diagnostics": false
 }
 ```
 
-Search batch request:
+Resident batch request stream:
 
-```json
-{
-  "schema_version": "resume-ir.search-batch-request.v1",
-  "request_id": "uuid",
-  "client_capability": "benchmark",
-  "deadline_ms": 30000,
-  "batch_id": "bench-local-redacted-001",
-  "query_set_id": "daemon-local-query-set-001",
-  "queries": [
-    {
-      "query_id": "qhash_001",
-      "query_shape": "hybrid",
-      "query_hash": "hex"
-    }
-  ],
-  "top_k": 20
-}
+```jsonl
+{"schema_version":"resume-ir.query-batch-request.v2","request_id":"private-query-request-1","query":"<local-private-query>"}
 ```
 
 Overload response:

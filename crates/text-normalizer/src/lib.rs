@@ -2,6 +2,7 @@ pub fn crate_name() -> &'static str {
     "text-normalizer"
 }
 
+use std::collections::HashMap;
 use std::fmt;
 use std::ops::Range;
 
@@ -56,6 +57,18 @@ impl TextNormalizer {
         remove_repeated_headers_and_footers(&mut normalized_lines);
         let normalized_lines = collapse_blank_lines(normalized_lines);
         join_lines(normalized_lines)
+    }
+
+    pub fn normalize_text_only(source: &str) -> String {
+        let lines = source_text_lines(source);
+        let mut normalized_lines = lines
+            .into_iter()
+            .map(normalize_text_line)
+            .collect::<Vec<_>>();
+
+        remove_repeated_text_headers_and_footers(&mut normalized_lines);
+        let normalized_lines = collapse_blank_text_lines(normalized_lines);
+        normalized_lines.join("\n")
     }
 }
 
@@ -165,26 +178,17 @@ fn repair_spaced_ascii_word(line: Line) -> Line {
 }
 
 fn remove_repeated_headers_and_footers(lines: &mut [Line]) {
-    let non_empty = lines
-        .iter()
-        .filter(|line| !line.is_blank())
-        .map(|line| line.text.as_str())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
+    let repeated_short_lines =
+        repeated_short_line_flags(lines.iter().map(|line| line.text.as_str()));
 
-    for line in lines.iter_mut() {
+    for (line, repeated_short_line) in lines.iter_mut().zip(repeated_short_lines) {
         if line.is_blank() || is_page_number_line(&line.text) {
             line.text.clear();
             line.byte_origins.clear();
             continue;
         }
 
-        let repeated = non_empty
-            .iter()
-            .filter(|candidate| candidate.as_str() == line.text)
-            .count()
-            > 1;
-        if repeated && line.text.len() <= 80 {
+        if repeated_short_line {
             line.text.clear();
             line.byte_origins.clear();
         }
@@ -232,6 +236,142 @@ fn join_lines(lines: Vec<Line>) -> NormalizedText {
     output
 }
 
+fn source_text_lines(source: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let mut chars = source.chars().peekable();
+
+    while let Some(character) = chars.next() {
+        match character {
+            '\r' => {
+                if matches!(chars.peek(), Some('\n')) {
+                    chars.next();
+                }
+                lines.push(std::mem::take(&mut line));
+            }
+            '\n' | '\u{000c}' => lines.push(std::mem::take(&mut line)),
+            _ => line.push(character),
+        }
+    }
+
+    lines.push(line);
+    lines
+}
+
+fn normalize_text_line(line: String) -> String {
+    let Some(first_non_space) = line
+        .char_indices()
+        .find_map(|(index, character)| (!is_horizontal_space(character)).then_some(index))
+    else {
+        return String::new();
+    };
+    let last_non_space = line
+        .char_indices()
+        .filter_map(|(index, character)| {
+            (!is_horizontal_space(character)).then_some(index + character.len_utf8())
+        })
+        .next_back()
+        .unwrap();
+
+    let mut output = String::new();
+    let mut pending_space = false;
+    for character in line[first_non_space..last_non_space].chars() {
+        if is_horizontal_space(character) {
+            pending_space = true;
+            continue;
+        }
+
+        if pending_space && !output.is_empty() {
+            output.push(' ');
+        }
+        pending_space = false;
+        output.push(character);
+    }
+
+    repair_spaced_ascii_word_text(output)
+}
+
+fn repair_spaced_ascii_word_text(line: String) -> String {
+    let tokens = line.split(' ').collect::<Vec<_>>();
+    if tokens.len() < 4
+        || !tokens
+            .iter()
+            .all(|token| token.len() == 1 && token.as_bytes()[0].is_ascii_alphabetic())
+    {
+        return line;
+    }
+
+    line.chars()
+        .filter(|character| *character != ' ')
+        .collect::<String>()
+}
+
+fn remove_repeated_text_headers_and_footers(lines: &mut [String]) {
+    let repeated_short_lines = repeated_short_line_flags(lines.iter().map(String::as_str));
+
+    for (line, repeated_short_line) in lines.iter_mut().zip(repeated_short_lines) {
+        if line.is_empty() || is_page_number_line(line) {
+            line.clear();
+            continue;
+        }
+
+        if repeated_short_line {
+            line.clear();
+        }
+    }
+}
+
+fn repeated_short_line_flags<'a>(lines: impl Iterator<Item = &'a str> + Clone) -> Vec<bool> {
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for line in lines.clone() {
+        if line.is_empty() || line.len() > 80 {
+            continue;
+        }
+        *counts.entry(line).or_insert(0) += 1;
+    }
+
+    lines
+        .map(|line| {
+            !line.is_empty() && line.len() <= 80 && counts.get(line).is_some_and(|count| *count > 1)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn repeated_short_line_counts<'a>(lines: impl Iterator<Item = &'a str>) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for line in lines {
+        if line.is_empty() || line.len() > 80 {
+            continue;
+        }
+        *counts.entry(line.to_string()).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn collapse_blank_text_lines(lines: Vec<String>) -> Vec<String> {
+    let mut collapsed = Vec::new();
+    let mut previous_blank = true;
+
+    for line in lines {
+        if line.is_empty() {
+            if !previous_blank {
+                collapsed.push(line);
+            }
+            previous_blank = true;
+        } else {
+            collapsed.push(line);
+            previous_blank = false;
+        }
+    }
+
+    while collapsed.last().is_some_and(String::is_empty) {
+        collapsed.pop();
+    }
+
+    collapsed
+}
+
 fn merged_origin(origins: &[Range<usize>]) -> Range<usize> {
     let mut start = usize::MAX;
     let mut end = 0_usize;
@@ -256,4 +396,46 @@ fn is_page_number_line(text: &str) -> bool {
     lower.starts_with("page ")
         && lower.contains(" of ")
         && lower.chars().any(|character| character.is_ascii_digit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_short_line_counts_ignores_blank_and_long_lines() {
+        let long_line = "x".repeat(81);
+        let lines = [
+            "",
+            "Confidential Resume",
+            "Unique",
+            long_line.as_str(),
+            "Confidential Resume",
+            long_line.as_str(),
+        ];
+
+        let counts = repeated_short_line_counts(lines.iter().copied());
+
+        assert_eq!(counts.get("Confidential Resume"), Some(&2));
+        assert_eq!(counts.get("Unique"), Some(&1));
+        assert_eq!(counts.get(long_line.as_str()), None);
+        assert_eq!(counts.get(""), None);
+    }
+
+    #[test]
+    fn repeated_short_line_flags_marks_only_duplicate_short_lines() {
+        let long_line = "x".repeat(81);
+        let lines = [
+            "",
+            "Confidential Resume",
+            "Unique",
+            long_line.as_str(),
+            "Confidential Resume",
+            long_line.as_str(),
+        ];
+
+        let flags = repeated_short_line_flags(lines.iter().copied());
+
+        assert_eq!(flags, [false, true, false, false, true, false]);
+    }
 }

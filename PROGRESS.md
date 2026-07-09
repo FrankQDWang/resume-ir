@@ -1793,11 +1793,958 @@ guards, local runtime discovery, and PR #9 CI state.
   databases, model caches, runtime binaries, tokens, signing material,
   notarization credentials, GitHub API calls, release artifacts, or Windows
   signing material were committed or uploaded.
+  S496-S613 used synthetic/public smoke fixtures, synthetic/private-shaped query-set,
+  query-protocol, private-query runner, current-stage fixtures, public docs/check
+  text, and local-only redacted trace capability probes. No real resume data, raw
+  query text, raw trace content, candidate results, local paths, generated private
+  benchmark reports, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded. Local trace work produced only
+  redacted aggregate counts and did not publish a real query_set_sha256 or run D10K
+  calibration.
+  S614 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, path-free sample symbol counts, and public-safe
+  report hashes were recorded. No real resume data, filenames, raw parsed text,
+  raw OCR text, raw queries, candidate results, local paths, trace content,
+  diagnostics packages, indexes, SQLite databases, model caches, tokens, or
+  credentials were committed or uploaded.
+  S615 used a private local-only import timing witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, total wall-clock timings, import stage timing aggregates, and a
+  public-safe report hash were recorded. No real resume data, filenames, raw
+  parsed text, raw OCR text, raw queries, candidate results, local paths, trace
+  content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S616 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage timing aggregates, path-free sample
+  symbol counts, and public-safe hashes were recorded. No real resume data,
+  filenames, raw parsed text, raw OCR text, raw queries, candidate results, local
+  paths, trace content, diagnostics packages, indexes, SQLite databases, model
+  caches, tokens, or credentials were committed or uploaded.
+  S617 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage timing aggregates, and public-safe
+  hashes were recorded. No real resume data, filenames, raw parsed text, raw OCR
+  text, raw queries, candidate results, local paths, trace content, diagnostics
+  packages, indexes, SQLite databases, model caches, tokens, or credentials were
+  committed or uploaded.
+  S618 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage timing aggregates, path-free symbol
+  counts, and public-safe hashes were recorded. No real resume data, filenames,
+  raw parsed text, raw OCR text, raw queries, candidate results, local paths,
+  trace content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S619 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage timing aggregates, path-free symbol
+  counts, and public-safe hashes were recorded. No real resume data, filenames,
+  raw parsed text, raw OCR text, raw queries, candidate results, local paths,
+  trace content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S620 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage timing aggregates, path-free symbol
+  counts, and public-safe hashes were recorded. No real resume data, filenames,
+  raw parsed text, raw OCR text, raw queries, candidate results, local paths,
+  trace content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S621 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage timing aggregates, path-free symbol
+  counts, and public-safe hashes were recorded. No real resume data, filenames,
+  raw parsed text, raw OCR text, raw queries, candidate results, local paths,
+  trace content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S622 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage timing aggregates, path-free symbol
+  counts, and public-safe hashes were recorded. No real resume data, filenames,
+  raw parsed text, raw OCR text, raw queries, candidate results, local paths,
+  trace content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S623 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage timing aggregates, path-free symbol
+  counts, and public-safe hashes were recorded. The tested dependency-feature
+  change was reverted after missing the rollback guard. No real resume data,
+  filenames, raw parsed text, raw OCR text, raw queries, candidate results,
+  local paths, trace content, diagnostics packages, indexes, SQLite databases,
+  model caches, tokens, or credentials were committed or uploaded.
+  S624 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage timing aggregates, aggregate content
+  byte counts, path-free symbol counts, and public-safe hashes were recorded.
+  No real resume data, filenames, raw parsed text, raw OCR text, raw queries,
+  candidate results, local paths, trace content, diagnostics packages, indexes,
+  SQLite databases, model caches, tokens, or credentials were committed or
+  uploaded.
+  S625 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage timing aggregates, aggregate content
+  byte counts, path-free symbol counts, and public-safe hashes were recorded.
+  No real resume data, filenames, raw parsed text, raw OCR text, raw queries,
+  candidate results, local paths, trace content, diagnostics packages, indexes,
+  SQLite databases, model caches, tokens, or credentials were committed or
+  uploaded.
+  S626 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage and milestone timing aggregates,
+  aggregate content byte counts, path-free symbol counts, and public-safe
+  hashes were recorded. No real resume data, filenames, raw parsed text, raw
+  OCR text, raw queries, candidate results, local paths, trace content,
+  diagnostics packages, indexes, SQLite databases, model caches, tokens, or
+  credentials were committed or uploaded.
+  S627 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage and milestone timing aggregates,
+  aggregate content byte counts, path-free symbol counts, and public-safe
+  hashes were recorded. No real resume data, filenames, raw parsed text, raw
+  OCR text, raw queries, candidate results, local paths, trace content,
+  diagnostics packages, indexes, SQLite databases, model caches, tokens, or
+  credentials were committed or uploaded.
+  S628 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage, milestone, and throughput timing
+  aggregates, aggregate content byte counts, path-free symbol counts, and
+  public-safe hashes were recorded. No real resume data, filenames, raw parsed
+  text, raw OCR text, raw queries, candidate results, local paths, trace
+  content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S629 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage, milestone, and throughput timing
+  aggregates, aggregate content byte counts, path-free symbol fragments, and
+  public-safe hashes were recorded. No real resume data, filenames, raw parsed
+  text, raw OCR text, raw queries, candidate results, local paths, trace
+  content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S630 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage, milestone, and throughput timing
+  aggregates, aggregate content byte counts, path-free symbol fragments, and
+  public-safe hashes were recorded. No real resume data, filenames, raw parsed
+  text, raw OCR text, raw queries, candidate results, local paths, trace
+  content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S631 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage, milestone, and throughput timing
+  aggregates, aggregate content byte counts, path-free symbol fragments, and
+  public-safe hashes were recorded. No real resume data, filenames, raw parsed
+  text, raw OCR text, raw queries, candidate results, local paths, trace
+  content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S632 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage, milestone, and throughput timing
+  aggregates, aggregate content byte counts, path-free symbol fragments, and
+  public-safe hashes were recorded. No real resume data, filenames, raw parsed
+  text, raw OCR text, raw queries, candidate results, local paths, trace
+  content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S633 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage, milestone, and throughput timing
+  aggregates, aggregate content byte counts, path-free symbol fragments, and
+  public-safe hashes were recorded. No real resume data, filenames, raw parsed
+  text, raw OCR text, raw queries, candidate results, local paths, trace
+  content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S634 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage, milestone, and throughput timing
+  aggregates, aggregate content byte counts, path-free symbol fragments, and
+  public-safe hashes were recorded. No real resume data, filenames, raw parsed
+  text, raw OCR text, raw queries, candidate results, local paths, trace
+  content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S635 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, wall-clock timings, import stage, milestone, and throughput timing
+  aggregates, aggregate content byte counts, path-free symbol buckets, and
+  public-safe hashes were recorded. No real resume data, filenames, raw parsed
+  text, raw OCR text, raw queries, candidate results, local paths, trace
+  content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S636 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, import stage, milestone, throughput timing aggregates, and aggregate
+  content byte counts were recorded. No real resume data, filenames, raw parsed
+  text, raw OCR text, raw queries, candidate results, local paths, trace
+  content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S637 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, import stage, milestone, throughput timing aggregates, aggregate
+  content byte counts, and path-free profile buckets were recorded. No real
+  resume data, filenames, raw parsed text, raw OCR text, raw queries, candidate
+  results, local paths, trace content, diagnostics packages, indexes, SQLite
+  databases, model caches, tokens, or credentials were committed or uploaded.
+  S638 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, import stage, milestone, throughput timing aggregates, aggregate
+  content byte counts, path-free profile buckets, and RSS aggregates were
+  recorded. No real resume data, filenames, raw parsed text, raw OCR text, raw
+  queries, candidate results, local paths, trace content, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were
+  committed or uploaded.
+  S639 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, import stage, milestone, throughput timing aggregates, aggregate
+  content byte counts, path-free profile buckets, and RSS aggregates were
+  recorded. No real resume data, filenames, raw parsed text, raw OCR text, raw
+  queries, candidate results, local paths, trace content, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were
+  committed or uploaded.
+  S640 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, import stage, milestone, throughput timing aggregates, aggregate
+  content byte counts, path-free profile buckets, and RSS aggregates were
+  recorded. No real resume data, filenames, raw parsed text, raw OCR text, raw
+  queries, candidate results, local paths, trace content, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were
+  committed or uploaded.
+  S641 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, import stage, milestone, throughput timing aggregates, aggregate
+  content byte counts, path-free profile buckets, and RSS aggregates were
+  recorded. No real resume data, filenames, raw parsed text, raw OCR text, raw
+  queries, candidate results, local paths, trace content, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were
+  committed or uploaded.
+  S642 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, import stage, milestone, throughput timing aggregates, aggregate
+  content byte counts, path-free profile buckets, and RSS aggregates were
+  recorded. No real resume data, filenames, raw parsed text, raw OCR text, raw
+  queries, candidate results, local paths, trace content, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were
+  committed or uploaded.
+  S643 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, import stage, milestone, throughput timing aggregates, aggregate
+  content byte counts, path-free profile buckets, and RSS aggregates were
+  recorded. No real resume data, filenames, raw parsed text, raw OCR text, raw
+  queries, candidate results, local paths, trace content, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were
+  committed or uploaded.
+  S644 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, import stage, milestone, throughput timing aggregates, aggregate
+  content byte counts, path-free profile buckets, and RSS aggregates were
+  recorded. No real resume data, filenames, raw parsed text, raw OCR text, raw
+  queries, candidate results, local paths, trace content, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were
+  committed or uploaded.
+  S645 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, import stage, milestone, throughput timing aggregates, aggregate
+  content byte counts, path-free profile buckets, and RSS aggregates were
+  recorded. No real resume data, filenames, raw parsed text, raw OCR text, raw
+  queries, candidate results, local paths, trace content, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were
+  committed or uploaded.
+  S646 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, import stage, milestone, throughput timing aggregates, aggregate
+  content byte counts, path-free profile buckets, public-safe summary hashes,
+  and RSS aggregates were recorded. No real resume data, filenames, raw parsed
+  text, raw OCR text, raw queries, candidate results, local paths, trace
+  content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S647 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, import stage, milestone, throughput timing aggregates, aggregate
+  content byte counts, public-safe stdout hashes, RSS, page reclaim, and page
+  fault aggregates were recorded. No real resume data, filenames, raw parsed
+  text, raw OCR text, raw queries, candidate results, local paths, trace
+  content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+  S648 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, import stage, milestone, throughput timing aggregates, worker queue
+  and cancel-responsiveness aggregates, public-safe stdout hashes, RSS, page
+  reclaim, and page fault aggregates were recorded. No real resume data,
+  filenames, raw parsed text, raw OCR text, raw queries, candidate results,
+  local paths, trace content, diagnostics packages, indexes, SQLite databases,
+  model caches, tokens, or credentials were committed or uploaded.
+  S649 used a private local-only import performance witness against the
+  user-authorized `$RESUME_IR_PRIVATE_RESUME_ROOT`; only redacted aggregate
+  counts, import stage, milestone, throughput timing aggregates, worker queue
+  and cancel-responsiveness aggregates, public-safe stdout hashes, RSS, page
+  reclaim, and page fault aggregates were recorded. No real resume data,
+  filenames, raw parsed text, raw OCR text, raw queries, candidate results,
+  local paths, trace content, diagnostics packages, indexes, SQLite databases,
+  model caches, tokens, or credentials were committed or uploaded.
+- S650 private-import evidence used the same authorized local root and 1200-file
+  command shape as #97's observe-before-act baseline. Only aggregate counts,
+  timings, resource totals, stdout hashes, and public-safe phase labels were
+  recorded. No real resume data, filenames, raw parsed text, raw OCR text, raw
+  queries, candidate results, local paths, trace content, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were committed
+  or uploaded.
+- S651 private-import evidence used the same authorized local root and 1200-file
+  command shape as #98's observe-before-act baseline. Only aggregate counts,
+  timings, resource totals, stdout hashes, and public-safe phase labels were
+  recorded. No real resume data, filenames, raw parsed text, raw OCR text, raw
+  queries, candidate results, local paths, trace content, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were committed
+  or uploaded.
+- S652-S654 private-import evidence used the same authorized local root and
+  1200-file command shape as #99/#100/#101 observe-before-act, after, and
+  profiling runs. Only aggregate counts, timings, worker metrics, resource
+  totals, stdout hashes, public-safe phase labels, and path-free symbol bucket
+  labels were recorded. No real resume data, filenames, raw parsed text, raw OCR
+  text, raw queries, candidate results, local paths, raw trace content,
+  diagnostics packages, indexes, SQLite databases, model caches, tokens, or
+  credentials were committed or uploaded.
+- S655 private-import evidence used the same authorized local root with the
+  1200-file #102 command shape plus one aggregate full-root sizing sample. Only
+  aggregate counts, timings, worker metrics, resource totals, stdout hashes, and
+  public-safe phase labels were recorded. No real resume data, filenames, raw
+  parsed text, raw OCR text, raw queries, candidate results, local paths, raw
+  trace content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+- S656-S657 private-import evidence used the same authorized local root with
+  the 1200-file #103/#104 command shape plus aggregate full-root sizing
+  repeats. Only aggregate counts, timings, worker metrics, resource totals,
+  stdout hashes, sanitized symbol labels, and public-safe phase labels were
+  recorded. No real resume data, filenames, raw parsed text, raw OCR text, raw
+  queries, candidate results, local paths, raw trace content, diagnostics
+  packages, indexes, SQLite databases, model caches, tokens, or credentials
+  were committed or uploaded.
+- S658 private-import evidence used the same authorized local root with the
+  #105 1200-file command shape plus aggregate full-root confirmation repeats.
+  Only aggregate counts, timings, worker metrics, resource totals, stdout
+  hashes, public issue/file references, and public-safe phase labels were
+  recorded. No real resume data, filenames, raw parsed text, raw OCR text, raw
+  queries, candidate results, local paths, raw trace content, diagnostics
+  packages, indexes, SQLite databases, model caches, tokens, or credentials
+  were committed or uploaded.
+- S659 private-import evidence used the same authorized local root with the
+  #106 full-root command shape and path-free vmmap attribution. Only aggregate
+  counts, timings, worker metrics, resource totals, stdout/stderr hashes,
+  public issue/file references, and public-safe phase labels were recorded. No
+  real resume data, filenames, raw parsed text, raw OCR text, raw queries,
+  candidate results, local paths, raw trace content, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were
+  committed or uploaded.
+- S660 private-import evidence used the same authorized local root with the
+  #107 full-root command shape and path-free sampler. Only aggregate counts,
+  timings, worker metrics, tier labels, resource budgets, resource totals,
+  stdout/stderr hashes, public issue/file references, and public-safe phase
+  labels were recorded. No real resume data, filenames, raw parsed text, raw
+  OCR text, raw queries, candidate results, local paths, raw trace content,
+  diagnostics packages, indexes, SQLite databases, model caches, tokens, or
+  credentials were committed or uploaded.
+- S661 private-import evidence used the same authorized local root with the
+  #108 full-root command shape plus path-free mid-run/tail profiling and an
+  RSS-only witness. Only aggregate counts, timings, worker metrics, sanitized
+  profile buckets, tier labels, resource budgets, resource totals,
+  stdout/stderr hashes, public issue/file references, and public-safe phase
+  labels were recorded. No real resume data, filenames, raw parsed text, raw
+  OCR text, raw queries, candidate results, local paths, raw trace content,
+  diagnostics packages, indexes, SQLite databases, model caches, tokens, or
+  credentials were committed or uploaded.
+- S662 private-import evidence used the same authorized local root with the
+  #109/#110 full-root command shape, path-free profiler summaries, and an
+  RSS-only witness. Only aggregate counts, timings, worker metrics, sanitized
+  profile buckets, path-free symbol names, tier labels, resource budgets,
+  resource totals, stdout/stderr hashes, public issue/file references, and
+  public-safe phase labels were recorded. No real resume data, filenames, raw
+  parsed text, raw OCR text, raw queries, candidate results, local paths, raw
+  trace content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+- S663 private-import evidence used the same authorized local root with the
+  #111 full-root command shape, path-free profiler summaries, and an RSS-only
+  witness. Only aggregate counts, timings, worker metrics, sanitized profile
+  buckets, path-free symbol names, tier labels, resource budgets, resource
+  totals, stdout/stderr hashes, public issue/file references, and public-safe
+  phase labels were recorded. No real resume data, filenames, raw parsed text,
+  raw OCR text, raw queries, candidate results, local paths, raw trace content,
+  diagnostics packages, indexes, SQLite databases, model caches, tokens, or
+  credentials were committed or uploaded.
+- S664 private-import evidence used the same authorized local root with the
+  #112 full-root command shape, clean RSS-sampled confirmations, and a path-free
+  profiler summary. Only aggregate counts, timings, worker metrics, sanitized
+  profile buckets, path-free symbol names, tier labels, resource budgets,
+  resource totals, stdout/stderr hashes, public issue/file references, and
+  public-safe phase labels were recorded. No real resume data, filenames, raw
+  parsed text, raw OCR text, raw queries, candidate results, local paths, raw
+  trace content, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+- S665 private-import evidence used the same authorized local root with the
+  #113 full-root command shape, a fresh RSS-sampled baseline, and a path-free
+  profiler summary. Only aggregate counts, timings, worker metrics, sanitized
+  profile buckets, path-free symbol names, tier labels, resource budgets,
+  resource totals, stdout/stderr hashes, public issue references, and
+  public-safe phase labels were recorded. No real resume data, filenames, raw
+  parsed text, raw OCR text, raw queries, candidate results, local paths, raw
+  sample files, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+- S666 private-import evidence used the same authorized local root with the
+  #114 full-root command shape, clean RSS-sampled confirmations, and a path-free
+  profiler summary. Only aggregate counts, timings, worker metrics, sanitized
+  profile buckets, path-free symbol names, tier labels, resource budgets,
+  resource totals, stdout/stderr hashes, public issue references, and
+  public-safe phase labels were recorded. No real resume data, filenames, raw
+  parsed text, raw OCR text, raw queries, candidate results, local paths, raw
+  sample files, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+- S667 private-import evidence used the same authorized local root with the
+  #115 full-root command shape, clean RSS-sampled confirmations, and a path-free
+  profiler summary. Only aggregate counts, timings, worker metrics, sanitized
+  profile buckets, path-free symbol names, tier labels, resource budgets,
+  resource totals, stdout/stderr hashes, public issue references, and
+  public-safe phase labels were recorded. No real resume data, filenames, raw
+  parsed text, raw OCR text, raw queries, candidate results, local paths, raw
+  sample files, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+- S668 private-import evidence used the same authorized local root with the
+  #116 full-root command shape, clean RSS-sampled before/after confirmations,
+  and a path-free profiler summary. Only aggregate counts, timings, worker
+  metrics, sanitized profile buckets, path-free symbol names, tier labels,
+  resource budgets, resource totals, stdout/stderr hashes, public issue
+  references, and public-safe phase labels were recorded. No real resume data,
+  filenames, raw parsed text, raw OCR text, raw queries, candidate results,
+  local paths, raw sample files, diagnostics packages, indexes, SQLite
+  databases, model caches, tokens, or credentials were committed or uploaded.
+- S669 private-import evidence used the same authorized local root with the
+  #117 full-root command shape, clean RSS-sampled before/after confirmations,
+  and path-free profiler summaries. Only aggregate counts, timings, worker
+  metrics, sanitized profile buckets, path-free symbol names, tier labels,
+  resource budgets, resource totals, stdout/stderr hashes, public issue
+  references, and public-safe phase labels were recorded. Raw profiler files
+  and raw profiler hashes stayed local-only. No real resume data, filenames,
+  raw parsed text, raw OCR text, raw queries, candidate results, local paths,
+  raw sample files, diagnostics packages, indexes, SQLite databases, model
+  caches, tokens, or credentials were committed or uploaded.
+- S670 private-import evidence used the same authorized local root with the
+  #118 full-root command shape, clean RSS-sampled before/after confirmations,
+  path-free profiler summaries, and public-safe snapshot publication phase
+  elapsed timings. Only aggregate counts, timings, worker metrics, sanitized
+  profile buckets, path-free symbol names, tier labels, resource budgets,
+  resource totals, stdout/stderr hashes, public issue references, and
+  public-safe phase labels were recorded. Raw profiler files, raw profiler
+  hashes, and macOS `sample` stderr path output stayed local-only. No real
+  resume data, filenames, raw parsed text, raw OCR text, raw queries, candidate
+  results, local paths, raw sample files, diagnostics packages, indexes, SQLite
+  databases, model caches, tokens, or credentials were committed or uploaded.
+- S671 private-import evidence used the same authorized local root with the
+  #119 full-root command shape, clean RSS-sampled before/after confirmations,
+  path-free profiler summaries, and public-safe snapshot publication phase
+  elapsed timings. Only aggregate counts, timings, worker metrics, sanitized
+  max sample nodes, path-free symbol names, tier labels, resource budgets,
+  resource totals, stdout/stderr hashes, public issue references, and
+  public-safe phase labels were recorded. Raw profiler files, raw profiler
+  hashes, and macOS `sample` stderr path output stayed local-only. No real
+  resume data, filenames, raw parsed text, raw OCR text, raw queries, candidate
+  results, local paths, raw sample files, diagnostics packages, indexes, SQLite
+  databases, model caches, tokens, or credentials were committed or uploaded.
+- S672 private-import evidence used the same authorized local root with the
+  #120 full-root command shape, clean RSS-sampled before/after confirmations,
+  path-free profiler summaries, and public-safe hardware-tier/writer-heap
+  evidence. Only aggregate counts, timings, worker metrics, sanitized max sample
+  nodes, path-free symbol names, tier labels, resource budgets, resource totals,
+  stdout/stderr hashes, public issue references, and public-safe phase labels
+  were recorded. Raw profiler files, raw profiler hashes, and macOS `sample`
+  stderr path output stayed local-only. No real resume data, filenames, raw
+  parsed text, raw OCR text, raw queries, candidate results, local paths, raw
+  sample files, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+- S673 private-import evidence used the same authorized local root with the
+  #121 full-root command shape, clean RSS-sampled before/after confirmations,
+  path-free profiler summaries, and failed/reverted parser-hypothesis evidence.
+  Only aggregate counts, timings, worker metrics, sanitized max sample nodes,
+  path-free symbol names, tier labels, resource budgets, resource totals,
+  stdout/stderr hashes, public issue references, and public-safe phase labels
+  were recorded. Raw profiler files, raw profiler hashes, and macOS `sample`
+  stderr path output stayed local-only. No real resume data, filenames, raw
+  parsed text, raw OCR text, raw queries, candidate results, local paths, raw
+  sample files, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded.
+- S675 private-import evidence used the same authorized local root with the
+  #122 full-root command shape, clean RSS-sampled before/after confirmations,
+  path-free profiler summaries, and public-safe PDF parser subphase attribution.
+  Only aggregate counts, timings, worker metrics, sanitized sample buckets, tier
+  labels, resource budgets, resource totals, stdout/stderr hashes, public issue
+  references, and public-safe phase labels were recorded. Raw profiler files,
+  raw profiler hashes, raw CLI stdout/stderr, and macOS `sample` stderr path
+  output stayed local-only. No real resume data, filenames, raw parsed text, raw
+  OCR text, raw queries, candidate results, local paths, raw sample files,
+  diagnostics packages, indexes, SQLite databases, model caches, tokens, or
+  credentials were committed or uploaded.
+- S676 private-import evidence used the same authorized local root with the
+  #124 full-root command shape, clean RSS-sampled before/attempted-after
+  confirmations, path-free profiler summaries, and failed/reverted parser
+  prefilter hypothesis evidence. Only aggregate counts, timings, worker metrics,
+  sanitized sample buckets, tier labels, resource budgets, resource totals,
+  stdout/stderr hashes, public issue references, and public-safe phase labels
+  were recorded. Raw profiler files, raw profiler hashes, raw CLI stdout/stderr,
+  and macOS `sample` stderr path output stayed local-only. No real resume data,
+  filenames, raw parsed text, raw OCR text, raw queries, candidate results,
+  local paths, raw sample files, diagnostics packages, indexes, SQLite
+  databases, model caches, tokens, or credentials were committed or uploaded.
+- S676 public issue trail is #124 completion comment
+  https://github.com/FrankQDWang/resume-ir/issues/124#issuecomment-4921025770,
+  #124 close comment
+  https://github.com/FrankQDWang/resume-ir/issues/124#issuecomment-4921026623,
+  #37 backlog update
+  https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4921027812,
+  and follow-up #125
+  https://github.com/FrankQDWang/resume-ir/issues/125.
+- S677 private-import evidence used the same authorized local root with the
+  #125 full-root command shape, clean/profile RSS-sampled before/after
+  confirmations, path-free profiler summaries, and the retained parser-pdf
+  text-only content decoder implementation. Only aggregate counts, timings,
+  worker metrics, sanitized sample buckets, tier labels, resource budgets,
+  resource totals, stdout/stderr hashes, public issue references, and
+  public-safe phase labels were recorded. Raw profiler files, raw profiler
+  hashes, raw CLI stdout/stderr, and macOS `sample` stderr stayed local-only.
+  No real resume data, filenames, raw parsed text, raw OCR text, raw queries,
+  candidate results, local paths, raw sample files, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were
+  committed or uploaded.
+- S677 public issue trail is #125 observe comment
+  https://github.com/FrankQDWang/resume-ir/issues/125#issuecomment-4921064422,
+  #125 completion comment
+  https://github.com/FrankQDWang/resume-ir/issues/125#issuecomment-4921175425,
+  #125 close comment
+  https://github.com/FrankQDWang/resume-ir/issues/125#issuecomment-4921176538,
+  #37 backlog update
+  https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4921180664,
+  and follow-up #126
+  https://github.com/FrankQDWang/resume-ir/issues/126.
+- S678 private-import evidence used the same authorized local root with the
+  #126 full-root command shape, corrected RSS monitoring, path-free profiler
+  summaries, and a reverted parser-pdf streaming decoder/collector experiment.
+  Only aggregate counts, timings, worker metrics, sanitized sample buckets,
+  tier labels, resource budgets, stdout/stderr hashes, public issue references,
+  and public-safe phase labels were recorded. Raw profiler files, raw profiler
+  hashes, raw CLI stdout/stderr, and macOS `sample` stderr stayed local-only.
+  No real resume data, filenames, raw parsed text, raw OCR text, raw queries,
+  candidate results, local paths, raw sample files, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were
+  committed or uploaded.
+- S678 public issue trail is #126 observe comment
+  https://github.com/FrankQDWang/resume-ir/issues/126#issuecomment-4921237714,
+  #126 failed/reverted close evidence
+  https://github.com/FrankQDWang/resume-ir/issues/126#issuecomment-4921310339,
+  #37 backlog update
+  https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4921313194,
+  and follow-up #127
+  https://github.com/FrankQDWang/resume-ir/issues/127.
+- S679 private-import evidence used the same authorized local root with the
+  #127 full-root command shape, corrected RSS monitoring, path-free profiler
+  summaries, and retained first-sample PDF parser attribution plus exact string
+  and decode counters. Only aggregate counts, timings, worker metrics,
+  sanitized sample buckets, tier labels, resource budgets, stdout/status
+  hashes, public issue references, and public-safe phase labels were recorded.
+  Raw profiler files, raw profiler hashes, raw CLI stdout/stderr, and macOS
+  `sample` stderr stayed local-only. No real resume data, filenames, raw parsed
+  text, raw OCR text, raw queries, candidate results, local paths, raw sample
+  files, diagnostics packages, indexes, SQLite databases, model caches, tokens,
+  or credentials were committed or uploaded.
+- S679 public issue trail is #127 observe comment
+  https://github.com/FrankQDWang/resume-ir/issues/127#issuecomment-4921374469,
+  #127 completion comment
+  https://github.com/FrankQDWang/resume-ir/issues/127#issuecomment-4921589294,
+  #37 backlog update
+  https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4921590563,
+  and follow-up #128
+  https://github.com/FrankQDWang/resume-ir/issues/128.
+- S680 private-import evidence used the same authorized local root with the
+  #128 full-root command shape, corrected RSS monitoring, path-free profiler
+  summaries, and retained direct-append PDF text decoding. Only aggregate
+  counts, timings, worker metrics, sanitized sample buckets, tier labels,
+  resource budgets, stdout/status hashes, public issue references, and
+  public-safe phase labels were recorded. Raw profiler files, raw profiler
+  hashes, raw CLI stdout/stderr, and macOS `sample` stderr stayed local-only.
+  No real resume data, filenames, raw parsed text, raw OCR text, raw queries,
+  candidate results, local paths, raw sample files, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were
+  committed or uploaded.
+- S680 public issue trail is #128 observe comment
+  https://github.com/FrankQDWang/resume-ir/issues/128#issuecomment-4921629096,
+  #128 completion comment
+  https://github.com/FrankQDWang/resume-ir/issues/128#issuecomment-4921708683,
+  #37 backlog update
+  https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4921710307,
+  and follow-up #129
+  https://github.com/FrankQDWang/resume-ir/issues/129.
+- S681 private-import evidence used the same authorized local root with the
+  #129 full-root command shape, corrected RSS monitoring, path-free profiler
+  summaries, and a reverted no-escape PDF literal borrowing hypothesis. Only
+  aggregate counts, timings, worker metrics, sanitized sample buckets, tier
+  labels, resource budgets, stdout/stderr hashes, public issue references, and
+  public-safe phase labels were recorded. Raw profiler files, raw profiler
+  hashes, raw CLI stdout/stderr, and macOS `sample` stderr stayed local-only.
+  No real resume data, filenames, raw parsed text, raw OCR text, raw queries,
+  candidate results, local paths, raw sample files, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were
+  committed or uploaded.
+- S681 public issue trail is #129 observe comment
+  https://github.com/FrankQDWang/resume-ir/issues/129#issuecomment-4921773244,
+  #129 completion comment
+  https://github.com/FrankQDWang/resume-ir/issues/129#issuecomment-4921855910,
+  #37 backlog update
+  https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4921857747,
+  and follow-up #130
+  https://github.com/FrankQDWang/resume-ir/issues/130.
+- S682 private-import evidence used the same authorized local root with the
+  #130 full-root command shape, path-free profiler summaries, and a retained
+  post-parser normalization optimization. Only aggregate counts, timings,
+  worker metrics, sanitized sample buckets, tier labels, resource budgets,
+  stdout/stderr hashes, public issue references, and public-safe phase labels
+  were recorded. Raw profiler files, raw profiler hashes, raw CLI
+  stdout/stderr, and macOS `sample` stderr stayed local-only. No real resume
+  data, filenames, raw parsed text, raw OCR text, raw queries, candidate
+  results, local paths, raw sample files, diagnostics packages, indexes,
+  SQLite databases, model caches, tokens, or credentials were committed or
+  uploaded.
+- S682 public issue trail is #130 observe comment
+  https://github.com/FrankQDWang/resume-ir/issues/130#issuecomment-4921934910,
+  #130 completion comment
+  https://github.com/FrankQDWang/resume-ir/issues/130#issuecomment-4922047008,
+  #37 backlog update
+  https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4922049275,
+  and follow-up #131
+  https://github.com/FrankQDWang/resume-ir/issues/131.
+- S683 private-import evidence used the same authorized local root with the
+  #131 full-root command shape, path-free profiler summaries, and a reverted
+  index writer-mode hypothesis. Only aggregate counts, timings, worker metrics,
+  sanitized sample buckets, tier labels, resource budgets, stdout/status/stderr
+  hashes, public issue references, and public-safe phase labels were recorded.
+  Raw profiler files, raw profiler hashes, raw CLI stdout/stderr, and macOS
+  `sample` stderr stayed local-only. No real resume data, filenames, raw parsed
+  text, raw OCR text, raw queries, candidate results, local paths, raw sample
+  files, diagnostics packages, indexes, SQLite databases, model caches, tokens,
+  or credentials were committed or uploaded.
+- S683 public issue trail is #131 observe comment
+  https://github.com/FrankQDWang/resume-ir/issues/131#issuecomment-4922145165,
+  #131 failed/reverted completion comment
+  https://github.com/FrankQDWang/resume-ir/issues/131#issuecomment-4922235813,
+  #37 backlog update
+  https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4922240049,
+  and follow-up #132
+  https://github.com/FrankQDWang/resume-ir/issues/132.
+- S684 private-import evidence used the same authorized local root with the
+  #132 full-root command shape, path-free profiler summaries, and a reverted
+  PDF `BT`/`ET` text-object-boundary skip hypothesis. Only aggregate counts,
+  timings, worker metrics, sanitized sample buckets, tier labels, resource
+  budgets, stdout/status/stderr hashes, public issue references, and
+  public-safe phase labels were recorded. Raw profiler files, raw profiler
+  hashes, raw CLI stdout/stderr, and macOS `sample` stderr stayed local-only.
+  No real resume data, filenames, raw parsed text, raw OCR text, raw queries,
+  candidate results, local paths, raw sample files, diagnostics packages,
+  indexes, SQLite databases, model caches, tokens, or credentials were
+  committed or uploaded.
+- S684 public issue trail is #132 observe/hypothesis comment
+  https://github.com/FrankQDWang/resume-ir/issues/132#issuecomment-4922391227,
+  #132 failed/reverted completion comment
+  https://github.com/FrankQDWang/resume-ir/issues/132#issuecomment-4922481040,
+  #37 backlog update
+  https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4922482494,
+  and follow-up #133
+  https://github.com/FrankQDWang/resume-ir/issues/133.
+- S685 public contract-state repair reconciles stale #53 machine state to the
+  live #37/#133 import issue train before #133 implementation. The repair
+  updates ACTIVE_GOAL active_slice, current loop state, the autonomous-goal
+  gate expectation, and synthetic-smoke fixture contract pins only. No private
+  import run was performed, no new baseline/profile numbers are claimed, and no
+  real resume data, filenames, raw parsed text, raw OCR text, raw queries,
+  candidate results, local paths, raw stdout/stderr, profiler files, indexes,
+  SQLite databases, model caches, tokens, or credentials were committed or
+  uploaded. #133 state-repair comment is
+  https://github.com/FrankQDWang/resume-ir/issues/133#issuecomment-4923285393.
+- S686 accepts #133 and advances the import issue train to #134. Fresh
+  retained-code private aggregate evidence for #133 preserved 8720 discovered,
+  8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0
+  deleted, 0 scan errors, and 3538586345 content bytes. The retained parser
+  change borrows regular PDF content tokens instead of allocating owned strings
+  for every regular operator/operand token, preserving the permissive malformed
+  PDF recall behavior required after the #132 rollback. Clean PDF content
+  decode moved 8474.399ms to 4608.937ms (-45.6%); profiled PDF content decode
+  moved 8300.373ms to 5047.524ms (-39.2%). Clean full-import-ready moved
+  39249.266ms to 37767.646ms (-3.8%); profiled full-import-ready moved
+  37494.739ms to 37707.385ms (+0.57%, within guard). #133 accepted comment is
+  https://github.com/FrankQDWang/resume-ir/issues/133#issuecomment-4923451460,
+  #37 update is
+  https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4923466032,
+  and follow-up #134 is https://github.com/FrankQDWang/resume-ir/issues/134.
+- S687 rejects #134 and advances the import issue train to #135. Fresh
+  retained-code private aggregate evidence for #134 preserved 8720 discovered,
+  8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0
+  deleted, 0 scan errors, and 3538586345 content bytes. The attempted simple
+  PDF name-borrowing parser change preserved counts/content bytes but moved
+  profiled PDF content decode only 4824.672ms to 4632.708ms (-4.0%) while
+  profiled full-import-ready moved 39452.314ms to 39577.495ms (+0.3%), parser
+  worker wall moved 35085.526ms to 35420.820ms (+1.0%), allocation bucket
+  worsened 5442 to 5580, and parser_pdf bucket worsened 358 to 364. The
+  hypothesis was rejected and reverted with no #134 production code retained.
+  #134 completion comment is
+  https://github.com/FrankQDWang/resume-ir/issues/134#issuecomment-4923655948,
+  #37 update is
+  https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4923658863,
+  and follow-up #135 is https://github.com/FrankQDWang/resume-ir/issues/135.
+- S688 locally accepts a #135 index-publication optimization but is blocked on
+  GitHub reconciliation. Fresh #135 private aggregate evidence preserved 8720
+  discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193
+  failed, 0 deleted, 0 scan errors, and 3538586345 content bytes. The retained
+  `index-fulltext` change keeps staged import snapshots on single-worker
+  indexing but disables Tantivy merge policy for that one-shot snapshot commit
+  path; this is distinct from #131's rejected auto-writer shape. Clean index
+  publication commit moved 5339.450ms to 5074.446ms (-5.0%); profiled index
+  publication commit moved 5906.433ms to 5475.943ms (-7.3%). Clean
+  full-import-ready moved 37303.191ms to 36624.945ms (-1.8%); profiled
+  full-import-ready moved 39186.164ms to 36740.646ms (-6.2%). Required local
+  tests and gates passed, but `gh`/`curl` to GitHub failed with TLS handshake
+  timeout before posting #135 completion evidence, closing #135, updating #37,
+  or opening the next follow-up issue. #135 remains open at
+  https://github.com/FrankQDWang/resume-ir/issues/135, and
+  `perf/current-loop-state.json` records `blocked_external_retryable`.
+- S689 reconciles the #135 GitHub side effects through the GitHub connector and
+  advances the active import issue train to #136. Fresh connector observation
+  found #135 and #37 in the open-issue search, #135 had no prior comments, and
+  open PRs were only unrelated dependabot PRs #54-#57. The connector created
+  follow-up #136 at https://github.com/FrankQDWang/resume-ir/issues/136,
+  posted #135 completion evidence at
+  https://github.com/FrankQDWang/resume-ir/issues/135#issuecomment-4924305808,
+  posted the parent #37 update at
+  https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4924306013,
+  and closed #135 as completed. `ACTIVE_GOAL.toml`,
+  `perf/current-loop-state.json`, and the autonomous-goal gate now point at
+  #136 with `workflow_state=discovery_profile_issue_opened` and
+  `experiment_state=bottleneck_selected`. No new private import observe/profile
+  run was performed in this reconciliation slice, so #136 still must start from
+  fresh before-clean and before-profile evidence. No raw resumes, filenames,
+  raw parsed text, OCR text, raw queries, candidate results, local paths, raw
+  stdout/stderr, profiler files, indexes, databases, model caches, tokens,
+  credentials, diagnostics packages, or private benchmark artifacts were
+  committed or uploaded.
+- S690 accepts #136 and advances the import issue train to #137. The required
+  read-only product-capability audit found that mixed-directory import is
+  currently extension-gated plus parser/text-success driven (`docx`, `pdf`,
+  `doc`, `txt`) rather than semantic resume-classifier driven; full-text search
+  searches both `file_name` and `clean_text`; and local metadata storage keeps
+  full `clean_text` and original path/source URI internally while current
+  CLI/daemon search/detail outputs do not expose complete body text or original
+  paths as a public IPC/detail contract. Fresh #136 private aggregate evidence
+  preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR
+  queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes.
+  The retained `index-fulltext` change removes unused full-text metadata
+  columnar/index work: `doc_id` remains stored and exact-indexed for doc-id
+  filters, while `version_id` and `is_deleted` are stored-only and unused FAST
+  fields are removed. Clean index publication commit moved 5112.767ms to
+  5100.889ms (-0.2%) and clean full-import-ready moved 36747.056ms to
+  36539.887ms (-0.6%). Direct-profile index publication commit moved
+  5364.428ms to 5256.299ms (-2.0%), stage index moved 13310.056ms to
+  13121.768ms (-1.4%), cancel max gap moved 935.515ms to 892.490ms (-4.6%),
+  and the sanitized Tantivy bucket moved 1398 to 1233 (-11.8%); profiled
+  full-import-ready moved 37600.056ms to 38311.395ms (+1.9%), so this slice
+  claims only a narrow index-tail/schema-cost improvement, not a full-run win.
+  Verification passed the focused RED/GREEN schema test, full `index-fulltext`
+  tests, import-pipeline PDF/post-parser timing test, CLI import/search
+  fixture, fmt, cargo check, release build, rust-analyzer diagnostics with only
+  existing cfg inactive-code WeakWarnings, performance/autonomous/loop-state
+  checks, public repo guard, and focused diff check. #136 completion comment is
+  https://github.com/FrankQDWang/resume-ir/issues/136#issuecomment-4924570023,
+  #37 update is
+  https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4924572862,
+  and follow-up #137 is https://github.com/FrankQDWang/resume-ir/issues/137.
+  `ACTIVE_GOAL.toml`, `perf/current-loop-state.json`, the autonomous-goal gate,
+  and synthetic-smoke fixture pins now point at #137. No raw resumes, filenames,
+  raw parsed text, OCR text, raw queries, candidate results, local paths, raw
+  stdout/stderr, profiler files, indexes, databases, model caches, tokens,
+  credentials, diagnostics packages, or private benchmark artifacts were
+  committed or uploaded.
+- S691 records #137 fresh observe/profile evidence and rejects/reverts the
+  fresh-staging append-only/delete-skip hypothesis. Fresh GitHub observation
+  found #137 and parent #37 open, #136/#133/#132 closed, and no open PRs.
+  Current code audit reconfirmed that mixed-directory import is extension-gated
+  plus parser/text-success driven (`docx`, `pdf`, `doc`, `txt`) rather than
+  semantic resume-classifier driven; full-text search uses both `file_name` and
+  `clean_text`; and local metadata stores full `clean_text` plus source
+  URI/original path internally while public CLI/daemon search/detail outputs
+  redact and truncate snippets and do not expose complete body or original
+  paths as public contract. Fresh #137 before-clean evidence preserved 8720
+  discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193
+  failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on
+  H2_Aggressive with 1536 MiB aggregate budget, 256 MiB writer heap, and 3
+  parser workers; it measured first-searchable 2848.600ms, TTF100 3240.416ms,
+  TTF1000 5503.077ms, full-import/full-index 36777.282ms, scan 2675.901ms,
+  parse 32264.355ms, DB 13222.179ms, index 12615.227ms, RSS 694779904,
+  index_publication_commit 5020.928ms, PDF content decode 4422.550ms,
+  text-operator prefilter 4187.266ms, document load 3903.482ms, text collection
+  3311.240ms, stdout hash
+  `b8c92798437eefb09c58b4856ed23593e4221e2041fceb0177f7a28fbbfec0e9`,
+  status hash
+  `463e09f86f07f9704391908f8a7d3a78a62d5d944baee88bad61ad20868dbafd`,
+  and empty stderr. Fresh before-profile preserved counts/content bytes and
+  measured first-searchable 2443.309ms, TTF100 2859.197ms, TTF1000 5427.807ms,
+  full-import/full-index 37900.230ms, scan 2266.855ms, parse 33806.748ms, DB
+  14075.984ms, index 13063.207ms, RSS 727760896, index_publication_commit
+  5166.442ms, PDF content decode 5173.375ms, document load 4685.988ms,
+  text-operator prefilter 4468.307ms, text collection 3863.687ms, stdout hash
+  `e6fd38628c74f64c457ba9371440f96752dfacfa4db8c879fd201a8dae2e029a`,
+  status hash
+  `d9498ee6d53c693c9d03d9539a2792f92840b37ccfa386d761ab78c0c061ae1f`,
+  empty stderr, and sanitized buckets allocation=14302, rayon=26331,
+  lopdf=16748, tantivy_index=1339, sqlite_db=2216, regex=1112,
+  parser_pdf=1052, import_pipeline=204, sectionizer=162, text_normalizer=65,
+  filesystem_io=45, sync_write=313. The tested hypothesis skipped redundant
+  `delete_all_documents()` for a fresh empty staged snapshot; RED/GREEN focused
+  test proved the code path, but private after evidence failed rollback guards,
+  so the code was reverted and no #137 production code is retained. Attempted
+  after-clean preserved counts/content bytes and measured full-import/full-index
+  36745.132ms (-0.1% vs before-clean), index 12617.838ms (+0.0%), commit
+  5014.275ms (-0.1%), RSS 738803712, and empty stderr. Attempted after-profile
+  preserved counts/content bytes but regressed full-import/full-index
+  37900.230ms to 38502.891ms (+1.6%), stage index 13063.207ms to 13322.573ms
+  (+2.0%), and commit 5166.442ms to 5326.811ms (+3.1%), with RSS 806813696 and
+  empty stderr; broader profile buckets also worsened on allocation, rayon,
+  lopdf, and sqlite_db, while Tantivy was flat/slightly lower. Verification
+  after rollback passed `cargo fmt --all -- --check`,
+  `CARGO_INCREMENTAL=0 cargo test -p index-fulltext --locked -- --test-threads=1`,
+  `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`,
+  `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`,
+  `rust-analyzer diagnostics .` with existing cfg inactive-code WeakWarnings
+  only, `python3 scripts/ci/check-performance-contracts.py`,
+  `python3 scripts/ci/check-autonomous-goal.py`,
+  `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`,
+  and `git diff --check`. #137 evidence comment is
+  https://github.com/FrankQDWang/resume-ir/issues/137#issuecomment-4924778583
+  and #37 update is
+  https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4924778760.
+  #137 remains open; do not retry the empty-staging append-only/delete-skip
+  hypothesis without new evidence. No raw resumes, filenames, raw parsed text,
+  OCR text, raw queries, candidate results, local paths, raw stdout/stderr,
+  raw profiler files, indexes, databases, model caches, tokens, credentials,
+  diagnostics packages, or private benchmark artifacts were committed or
+  uploaded.
+- S692 pivots the issue train from the closed #137 L4 import-tail hypothesis to
+  product-capability audit #138. Fresh GitHub observation found #137/#53/#37/#33
+  open before mutation and only Dependabot PRs #54-#57 open; local `main` was
+  at `71917e84e865b5aca6667ee30f790aaffd08a6be`, synced with `origin/main`,
+  with a dirty pre-existing worktree. #138 was opened as the read-only audit for
+  mixed-directory import, query/search recall, and detail/hydrate contract:
+  https://github.com/FrankQDWang/resume-ir/issues/138. #137 was closed not
+  planned with final failed-hypothesis evidence:
+  https://github.com/FrankQDWang/resume-ir/issues/137#issuecomment-4924947742.
+  #37 was updated to keep the parent import/searchability ledger open and point
+  at #138:
+  https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4924950431.
+  #33 and #53 remain open but were not mutated in this first pivot slice.
+  `ACTIVE_GOAL.toml`, `perf/current-loop-state.json`, the autonomous-goal gate,
+  and synthetic-smoke contract fixture pins now point at #138. Loop state now
+  records `workflow_state=slice_selected`, `experiment_state=contract_locked`,
+  `evidence_lane=w0_docs`, `primary_issue=#138`, and open blockers `#37/#138`.
+  Verification for the local state repair passed
+  `python3 scripts/ci/check-performance-contracts.py`,
+  `python3 scripts/ci/check-autonomous-goal.py`, and
+  `python3 scripts/ci/check-loop-state.py`,
+  `./scripts/ci/guard-public-repo.sh`, and focused `git diff --check`; the first performance-contract
+  rerun exposed stale synthetic-smoke active-goal/report pins, which were
+  repaired before the passing rerun. This slice does not run a new private
+  import baseline/profile, retain #137 production code, close #37, implement
+  GUI, optimize the query hot path, add semantic resume classification, expose
+  raw paths/full text, claim D10K/D100K/D1M, stable-release readiness, or
+  `goal_complete`. Public evidence remains redacted issue references and
+  aggregate timings only; no raw resumes, filenames from private corpora, raw
+  text, raw queries, candidate results, local paths, profiler captures, indexes,
+  databases, model caches, diagnostics packages, tokens, or credentials were
+  committed or uploaded.
 
 ## Slice Status
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S692 | Issue train pivots from #137 L4 import tail to #138 product-capability audit | #138 opened for read-only mixed-directory import, query/search recall, and detail/hydrate contract audit: https://github.com/FrankQDWang/resume-ir/issues/138. #137 closed not planned as failed/reverted: https://github.com/FrankQDWang/resume-ir/issues/137#issuecomment-4924947742. #37 updated to keep the parent ledger open and point at #138: https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4924950431. Local state now points at #138 with `workflow_state=slice_selected`, `experiment_state=contract_locked`, and `primary_issue=#138`; synthetic-smoke fixture pins were updated after the ACTIVE_GOAL hash changed. Verification passed `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and focused `git diff --check`. | #37 remains open as the parent import/searchability ledger. #33 and #53 remain open downstream query ledgers and were not mutated in this first pivot slice. #138 must start from fresh repo/GitHub/contract observation and produce a product contract gap list before any GUI, query-hot-path, or classifier implementation. |
+| S691 | Issue #137 records fresh evidence and rejects/reverts append-only empty-staging delete-skip | Fresh #137 before-clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on H2 with 1536 MiB aggregate budget and 256 MiB writer heap, measuring full-import/full-index 36777.282ms, stage index 12615.227ms, RSS 694779904, index_publication_commit 5020.928ms, PDF content decode 4422.550ms, text-operator prefilter 4187.266ms, document load 3903.482ms, text collection 3311.240ms, stdout hash `b8c92798437eefb09c58b4856ed23593e4221e2041fceb0177f7a28fbbfec0e9`, status hash `463e09f86f07f9704391908f8a7d3a78a62d5d944baee88bad61ad20868dbafd`, and empty stderr. Fresh before-profile preserved counts/content bytes and measured full-import/full-index 37900.230ms, stage index 13063.207ms, RSS 727760896, index_publication_commit 5166.442ms, PDF content decode 5173.375ms, document load 4685.988ms, text-operator prefilter 4468.307ms, text collection 3863.687ms, stdout hash `e6fd38628c74f64c457ba9371440f96752dfacfa4db8c879fd201a8dae2e029a`, status hash `d9498ee6d53c693c9d03d9539a2792f92840b37ccfa386d761ab78c0c061ae1f`, empty stderr, and sanitized buckets allocation=14302, rayon=26331, lopdf=16748, tantivy_index=1339, sqlite_db=2216, regex=1112, parser_pdf=1052, import_pipeline=204, sectionizer=162, text_normalizer=65, filesystem_io=45, sync_write=313. The fresh-staging append-only/delete-skip hypothesis was tested and rejected: attempted after-clean was effectively flat (commit 5020.928ms -> 5014.275ms), and attempted after-profile regressed full-import/full-index 37900.230ms -> 38502.891ms (+1.6%), stage index 13063.207ms -> 13322.573ms (+2.0%), and commit 5166.442ms -> 5326.811ms (+3.1%). The code was reverted; no #137 production code is retained. Verification after rollback passed fmt, index-fulltext single-thread focused suite, CLI import/search fixture, release build, rust-analyzer diagnostics with existing cfg inactive-code WeakWarnings only, performance/autonomous/loop-state checks, public repo guard, and `git diff --check`. GitHub comments succeeded: #137 https://github.com/FrankQDWang/resume-ir/issues/137#issuecomment-4924778583 and #37 https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4924778760. | #137 remains open. This is a failed/reverted import index-tail hypothesis only. It does not close #37 or #137, retain production code, claim full baseline, D10K/D100K/D1M, stable release readiness, GUI readiness, query hot-path tuning, OCR/embedding completion, semantic resume classification, original-path/detail contract completion, or `goal_complete`. Next bounded step should not retry empty-staging append-only/delete-skip without new evidence; choose fresh commit sub-attribution or the comparable PDF content-decode/document-load tail from new observe-before-act evidence. |
+| S690 | Issue #136 accepts a narrow full-text metadata schema-cost trim and opens #137 | #136 started from fresh retained-code evidence after #135/#136 state reconciliation. Before clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on H2 with 1536 MiB aggregate budget, 256 MiB writer heap, and 3 parser workers, measuring first-searchable 2892.642ms, TTF100 3317.172ms, TTF1000 5605.688ms, full-import-ready/full-index-ready 36747.056ms, scan 2712.477ms, parse 32207.512ms, DB 13117.143ms, index 12728.485ms, RSS 867794944, index publication commit 5112.767ms, PDF content decode 4417.845ms, text-operator prefilter 4026.281ms, document load 3898.377ms, text collection 3298.787ms, import stdout hash `70069bceca5987f48f015b57714a14459a3f58def4976b1990720363b343a216`, status hash `4d55748a166125145fe07923c81c3b55c794a801624b55273fa31ea61e52750d`, and empty stderr. Before direct profile preserved counts/content bytes and measured full-import-ready/full-index-ready 37600.056ms, scan 2314.155ms, parse 33302.211ms, DB 13639.486ms, index 13310.056ms, RSS 912719872, first-searchable 2488.693ms, TTF100 2905.573ms, TTF1000 5469.586ms, index publication commit 5364.428ms, PDF content decode 5124.236ms, text-operator prefilter 4321.702ms, document load 4682.614ms, text collection 3858.704ms, stdout hash `a5fd2bde9029e9bfa02e967c9c178d314409f26144877282cbbaeb403944683d`, status hash `764c3e113fcd8d7474212414e3fa96ece3c78778798f4b9b78b2bbe8bc08b132`, empty stderr, and sanitized buckets allocation=1387, rayon=26353, lopdf=16754, tantivy_index=1398, sqlite_db=2558, regex=1077, parser_pdf=1072, sectionizer=167, text_normalizer=70, import_pipeline=217, filesystem_io=593, sync_write=196. The read-only product audit found extension-gated/parser-success import rather than semantic resume classification, search over `file_name` plus `clean_text`, and local full text/path storage that is not currently exposed as full body/original-path IPC detail output. RED `CARGO_INCREMENTAL=0 cargo test -p index-fulltext tests::fulltext_schema_keeps_metadata_out_of_unused_columnar_indexes --locked -- --exact` failed because metadata fields still carried fast/index options. GREEN keeps `doc_id` stored plus exact-indexed for field filters, makes `version_id` and `is_deleted` stored-only, and removes unused FAST fields. After clean preserved counts/content bytes and measured full-import-ready/full-index-ready 36539.887ms (-0.6% vs clean before), RSS 698761216, stage index 12775.895ms (+0.4%), index publication commit 5100.889ms (-0.2%), stdout hash `1013cc128aa5280bdb7ca57dc3bfa7083701ba9a4cdd2155ea5b2cd8cccaa2a1`, status hash `d895c23e7de02d6c459d5b839ff58ef1883e46d235a7eee9b902e3226f30d9a4`, and empty stderr. After direct profile preserved counts/content bytes and measured full-import-ready/full-index-ready 38311.395ms (+1.9% vs profile before, not claimed as full-run improvement), stage index 13121.768ms (-1.4%), RSS 792854528, index publication commit 5256.299ms (-2.0%), cancel max gap 892.490ms (-4.6%) still at `index_publication_commit`, stdout hash `fe45be5e153d7b1b0596975179bc00860a229f4fe340f2f67cf9d3e52162cbba`, status hash `3c52a0c7267788e9f172f5551de01e880e9f785c3c0fe6a4cc18eae453ceabec`, empty stderr, and sanitized buckets allocation=1225, rayon=25014, lopdf=16419, tantivy_index=1233, sqlite_db=2468, regex=983, parser_pdf=1073, sectionizer=179, text_normalizer=65, import_pipeline=178, filesystem_io=543, sync_write=191. Verification passed: focused RED/GREEN schema test, `CARGO_INCREMENTAL=0 cargo test -p index-fulltext --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo test -p import-pipeline parallel_parse_workers_record_pdf_and_post_parser_phase_timings --locked`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo fmt --all -- --check`, `CARGO_INCREMENTAL=0 cargo check -p index-fulltext -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics .` with existing cfg inactive-code WeakWarnings only, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and focused `git diff --check`. GitHub connector mutations succeeded: #137 opened at https://github.com/FrankQDWang/resume-ir/issues/137, #136 completion comment posted at https://github.com/FrankQDWang/resume-ir/issues/136#issuecomment-4924570023, #136 closed completed, and #37 updated at https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4924572862. Local state was repaired so `ACTIVE_GOAL.toml`, `perf/current-loop-state.json`, `scripts/ci/check-autonomous-goal.py`, and synthetic-smoke fixture pins now use active issue `#137`; loop state records `workflow_state=discovery_profile_issue_opened`, `experiment_state=bottleneck_selected`, `primary_issue=#137`, and open blockers `#37/#137`. | This is a narrow L4 index-tail/schema-cost slice only. It does not close #37, does not claim full-run improvement, full baseline, D10K/D100K/D1M, stable release readiness, GUI readiness, query hot-path tuning, OCR/embedding completion, semantic resume classification, original-path/detail contract completion, or `goal_complete`. #137 must start from fresh observe-before-act evidence; the #136 after-profile residuals still show `index_publication_commit` 5256.299ms, PDF content decode 5017.216ms, text-operator prefilter 4620.153ms, document load 4545.174ms, and text collection 3779.795ms as context only, not a #137 baseline. |
+| S689 | Issue train reconciled: #135 closed completed, #136 opened and active | GitHub connector read found #135/#37 still in open-issue search before mutation, #135 comments empty, and open PRs only dependabot #54-#57. Connector mutations succeeded: #136 created at https://github.com/FrankQDWang/resume-ir/issues/136, #135 completion comment posted at https://github.com/FrankQDWang/resume-ir/issues/135#issuecomment-4924305808, #37 update posted at https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4924306013, and #135 closed completed. Local state was repaired so `ACTIVE_GOAL.toml`, `perf/current-loop-state.json`, and `scripts/ci/check-autonomous-goal.py` now use active issue `#136`; loop state records `workflow_state=discovery_profile_issue_opened`, `experiment_state=bottleneck_selected`, `primary_issue=#136`, and open blockers `#37/#136`. | This is a GitHub/local-state reconciliation only. It does not run a new private import baseline/profile, does not add #136 code, does not claim full baseline/D10K/D100K/D1M, does not close #37, does not add GUI, tune the query hot path, add mixed-directory semantic resume classification, expose raw paths or full text, or make `goal_complete` true. #136 must start from fresh observe-before-act evidence. |
+| S688 | Issue #135 locally reduces staged snapshot commit cost; GitHub reconciliation blocked | #135 started from fresh same-root retained-code evidence after #134. Before clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on H2 with 1536 MiB aggregate budget, 256 MiB writer heap, and 3 parser workers, measuring first-searchable 2505.048ms, TTF100 2903.631ms, TTF1000 5226.321ms, full-import-ready/full-index-ready 37303.191ms, scan 2330.232ms, parse 33060.300ms, DB 13584.746ms, index 13134.383ms, parse worker wall 33047.791ms, active 35969.296ms, queue wait 2997.871ms, RSS 945356800, index publication setup/documents/commit/plaintext validation/encrypted publication/encrypted validation/active snapshot 322.262ms / 2214.714ms / 5339.450ms / 6.136ms / 897.085ms / 1252.384ms / 2.855ms, PDF document load/page fetch/prefilter/font/content decode/text collection 4079.516ms / 2830.933ms / 4518.379ms / 2140.821ms / 4654.969ms / 3443.423ms, content operands/bytes/text decode runs/input bytes 16989924 / 44079187 / 16555366 / 42008756, stdout hash `1de80cc41cf861f24a87a92bfef9177d879ed7a8cce1ebdec06ea0dd9cd4a14a`, status hash `9db6e93d92b9667f7f49f1e6d5dd2001778f4de97dcfe1aabadeb6d15bf053cb`, and empty stderr. Before profile preserved counts/content bytes and measured full-import-ready/full-index-ready 39186.164ms, scan 2256.918ms, parse 34813.548ms, DB 13917.554ms, index 13773.908ms, parse worker wall 34802.133ms, active 35810.985ms, RSS 900595712, first-searchable 2428.687ms, TTF100 2828.493ms, TTF1000 5232.320ms, index publication commit 5906.433ms, PDF content decode 4707.879ms, stdout hash `a71b4dbcbc86c7a37e485bdd3f5a4235974e937a362f764a1b334132634de928`, status hash `e880e5133fe5eff102feea35aa429a15dd1fa5a70df39a8a946504acb509f090`, empty stderr, and sanitized buckets allocation=2260, rayon=4926, lopdf=2590, tantivy_index=586, sqlite_db=682, regex=347, parser_pdf=355, sectionizer=51, text_normalizer=38, import_pipeline=108, filesystem_io=179, sync_write=39. RED `cargo test -p index-fulltext staged_import_snapshot_writer_config_uses_single_worker_without_commit_merges --locked` failed because `writer_config_for_snapshot` and `WriterMergePolicy` did not exist. GREEN added a snapshot writer config that keeps <=10000-document staged import snapshots on `SingleWorker` and applies Tantivy `NoMergePolicy`, while auto-writer snapshots keep the default merge policy. After clean preserved counts/content bytes and measured full-import-ready/full-index-ready 36624.945ms (-1.8% vs before clean), parse worker wall 32151.193ms, RSS 818987008, index publication commit 5074.446ms (-5.0%), stdout hash `f5b0c219c4ca2782aae2ebdd49e54d3f8a1d57c0e5676996298a4259375b735e`, status hash `b21263d2f54214d30cc48b189290de04eaefc5e48164f2face5472929c225416`, and empty stderr. After profile preserved counts/content bytes and measured full-import-ready/full-index-ready 36740.646ms (-6.2% vs before profile), parse worker wall 32921.489ms, RSS 909410304, index publication commit 5475.943ms (-7.3%), stdout hash `f301f3a193d9730bbfa262b0302a862a36397864a6e7f40c22ad149d6fa0a31f`, status hash `2e256a713d601e72e15cf3cbefc604a1f24b3cdc1b70e57f86444ecb0ca36751`, empty stderr, and sanitized buckets allocation=2458, rayon=5787, lopdf=2697, tantivy_index=589, sqlite_db=688, regex=400, parser_pdf=375, sectionizer=66, text_normalizer=35, import_pipeline=96, filesystem_io=173, sync_write=39. Verification passed: `cargo test -p index-fulltext staged_import_snapshot_writer --locked`, `cargo test -p index-fulltext --locked -- --test-threads=1`, `cargo test -p import-pipeline parallel_parse_workers_record_pdf_and_post_parser_phase_timings --locked`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo fmt --all -- --check`, `cargo check -p index-fulltext -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics .` with existing cfg inactive-code WeakWarnings only, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, and `./scripts/ci/guard-public-repo.sh`. GitHub reconciliation failed after local verification: `gh issue create`, `gh issue view 135`, `gh api repos/FrankQDWang/resume-ir/issues/135`, and `curl -I https://github.com`/`https://api.github.com` failed with TLS handshake/SSL connection errors, so no #135 completion comment, #37 update, #135 close, or follow-up issue was created in this slice. | This is a locally accepted L4 index-publication optimization with an external GitHub side-effect blocker. It does not close #37 or #135, does not open #136, does not run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune the query hot path, add mixed-directory semantic resume classification, expose raw paths or full text, or make `goal_complete` true. Next wake should first retry GitHub reconciliation for #135; only after #135 is commented/closed and a follow-up issue exists should `ACTIVE_GOAL.toml` and the loop state advance. |
+| S687 | Issue #134 rejects parser name-borrowing and opens #135 index-publication follow-up | #134 started from fresh same-root retained-code evidence after #133. Before clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on H2 with 1536 MiB aggregate budget, 256 MiB writer heap, and 3 parser workers, measuring first-searchable 2857.621ms, TTF100 3242.704ms, TTF1000 5887.339ms, full-import-ready/full-index-ready 37646.116ms, scan 2684.015ms, parse 33159.074ms, DB 13283.068ms, index 13211.303ms, parse worker wall 33148.132ms, active 36437.967ms, RSS 907493376, index publication setup/documents/commit/plaintext validation/encrypted publication/encrypted validation/active snapshot 307.936ms / 2343.006ms / 5200.056ms / 5.635ms / 871.624ms / 1255.406ms / 2.884ms, PDF document load/page fetch/prefilter/font/content decode/text collection 4088.336ms / 2761.268ms / 4576.152ms / 2207.157ms / 4770.676ms / 3595.807ms, content operands/bytes/text decode runs/input bytes 16989924 / 44079187 / 16555366 / 42008756, stdout hash `85f518f81d50d832b00ba73cd0ccbcff0422f5487073e776af7255c22b2e8b4f`, status hash `a432571d7b2a4e41dd4282396e80cc1a0be66eea865a631d99f453563e89e9f3`, and empty stderr. Before profile preserved counts/content bytes and measured full-import-ready/full-index-ready 39452.314ms, scan 2263.141ms, parse 35101.087ms, DB 14176.130ms, index 14089.606ms, parse worker wall 35085.526ms, active 36792.687ms, RSS 671858688, first-searchable 2445.877ms, TTF100 2832.089ms, TTF1000 5091.190ms, index publication commit 5910.921ms, PDF document load/page fetch/prefilter/font/content decode/text collection 4207.389ms / 2835.406ms / 4479.755ms / 2207.034ms / 4824.672ms / 3567.004ms, unchanged content counters, stdout hash `34d1ddef0921f9662fac781a103f697befbe1989029567788291d55128075df9`, status hash `6426ed98d08ae56473cc539e3abd86d86eeef10211ec1f0e462098846e451809`, empty stderr, and sanitized buckets allocation=5442, rayon=6731, lopdf=2917, tantivy_index=788, sqlite_db=643, regex=461, parser_pdf=358, sectionizer=78, text_normalizer=34, import_pipeline=83, filesystem_io=191, sync_write=241. RED `cargo test -p parser-pdf simple_content_names_are_borrowed_from_the_content_stream --locked` failed because `parse_name` returned owned `Vec<u8>`; GREEN temporarily borrowed simple PDF `/Name` operands and kept escaped names owned. After clean preserved counts/content bytes and measured full-import-ready/full-index-ready 38939.257ms (+3.4% vs before clean), parse worker wall 34259.233ms (+3.35%), RSS 891666432, PDF content decode 4398.279ms (-7.8%), unchanged content counters, stdout hash `0f28b699fa3cd0406f2b569c963ad11caa906833aa478b90e4be8dc1aa042996`, status hash `c0f5d2826d3412102acd5dc2cbe5521dcff0743db5bcb3a549bc33df840b5eee`, and empty stderr. After profile preserved counts/content bytes and measured full-import-ready/full-index-ready 39577.495ms (+0.3% vs before profile), parse worker wall 35420.820ms (+1.0%), RSS 835174400, PDF content decode 4632.708ms (-4.0%), unchanged content counters, stdout hash `d9dd2ab6b2854a13134fcbbfd3741de45bf31c9caff39f785d596dff6712ebaa`, status hash `e6d90cb723b4db5b9a7c0ca2ea0c03e00fd273f1ce44062d4f51ee06c06b15f6`, empty stderr, and sanitized buckets allocation=5580, rayon=6581, lopdf=2726, tantivy_index=865, sqlite_db=704, regex=486, parser_pdf=364, sectionizer=75, text_normalizer=35, import_pipeline=106, filesystem_io=241, sync_write=242. Decision: rejected and reverted because the parser-side metric moved too little, the full-runtime envelope did not improve, and allocation/parser buckets worsened; no #134 production code was retained. Post-revert verification passed: `cargo test -p parser-pdf --locked`, `cargo test -p import-pipeline parallel_parse_workers_record_pdf_and_post_parser_phase_timings --locked`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo fmt --all -- --check`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`, `rust-analyzer diagnostics .` with existing cfg inactive-code WeakWarnings only, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and `git diff --check`. #134 completion comment is https://github.com/FrankQDWang/resume-ir/issues/134#issuecomment-4923655948; #134 is closed not planned; #37 update is https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4923658863; follow-up #135 is https://github.com/FrankQDWang/resume-ir/issues/135. `ACTIVE_GOAL.toml`, `perf/current-loop-state.json`, the autonomous-goal gate, and synthetic-smoke fixture pins were advanced to #135 after #134 closure. | This is a failed/reverted L4 parser micro-optimization and issue-train handoff only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune the query hot path, add mixed-directory semantic resume classification, expose raw paths or full text, or make `goal_complete` true. #135 must start from fresh observe-before-act evidence and target the index publication commit tail without retrying #131's rejected auto-writer shape unless new evidence explains the previous full-import, early-milestone, RSS, and profile-bucket regressions. |
+| S686 | Issue #133 reduces PDF content-decode allocation while preserving malformed-PDF recall | #133 started from fresh same-root retained-code evidence after #132. Before clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on H2 with 1536 MiB aggregate budget, 256 MiB writer heap, and 3 parser workers, measuring first-searchable 2948.060ms, TTF100 3374.197ms, TTF1000 5906.177ms, full-import-ready/full-index-ready 39249.266ms, scan 2760.390ms, parse 34312.065ms, DB 13844.952ms, index 13931.896ms, parse worker wall 34300.429ms, active 40168.243ms, queue wait 3647.620ms, RSS 895320064, PDF document load/page fetch/prefilter/font/content decode/text collection 4136.050ms / 2665.938ms / 4310.464ms / 2220.077ms / 8474.399ms / 3508.035ms, content operands/bytes/text decode runs/input bytes 16989924 / 44079187 / 16555366 / 42008756, stdout hash `189fbc5c6846c7c10fd626c0e6a820704ddf2d3e8790672f3fe9275fd1c61d71`, status hash `fe37d43e3461ee4f1755b38a1d1162f1307b7fd048fadd509051932bea7d058f`, and empty stderr. Before profile preserved counts/content bytes and measured full-import-ready/full-index-ready 37494.739ms, scan 2185.850ms, parse 33471.315ms, DB 13327.794ms, index 12737.161ms, parse worker wall 33460.361ms, active 38808.778ms, queue wait 3525.399ms, RSS 697581568, first-searchable 2371.590ms, TTF100 2779.518ms, TTF1000 5213.009ms, PDF document load/page fetch/prefilter/font/content decode/text collection 3956.280ms / 2484.375ms / 4478.836ms / 2051.122ms / 8300.373ms / 3399.215ms, unchanged content counters, stdout hash `4d8b8cdc4170d076f975757346141be4d1a487c0bf90594a301631420b58597a`, status hash `82b0007be95eb17abae5c8ca718bc485a54743a055cb401f44d394edd0a210b9`, empty stderr, and sanitized buckets allocation=2267, rayon=6281, lopdf=2503, tantivy_index=1638, sqlite_db=382, regex=237, parser_pdf=157, sectionizer=34, text_normalizer=5. RED `cargo test -p parser-pdf regular_content_tokens_are_borrowed_from_the_content_stream --locked -- --exact` failed because `parse_regular_token` returned `String`; GREEN changed regular PDF content token parsing to return borrowed byte slices, match operators on byte strings, and parse numeric operands from borrowed ASCII/UTF-8 slices while preserving all current operators/operands and permissive outside-`BT` behavior. After clean preserved counts/content bytes and measured full-import-ready/full-index-ready 37767.646ms, parse worker wall 33231.677ms, RSS 883998720, PDF content decode 4608.937ms (-45.6% vs clean), unchanged content counters, stdout hash `39fea83f7226ceb7a2e90616151e492789095764ef8f939a521b4672090a773f`, status hash `44bb5f5005ed91ee5e09f7648128108a7043ad795cb9dd4858a2d45f53a36f21`, and empty stderr. After profile preserved counts/content bytes and measured full-import-ready/full-index-ready 37707.385ms (+0.57% within guard), parse worker wall 33460.151ms, RSS 709394432, PDF content decode 5047.524ms (-39.2% vs profile), unchanged content counters, stdout hash `4bd37b263ed9678093b135e797b34e38abf37848672f3507cdc42fb261088811`, status hash `15a82b843a41a6ba815528ae5b7fc7e3f7363b2cfbef65acbc03064e46453b8b`, empty stderr, and sanitized buckets allocation=2372, rayon=5185, lopdf=2519, tantivy_index=1686, sqlite_db=317, regex=256, parser_pdf=158, sectionizer=44, text_normalizer=0. Verification passed: `cargo fmt --all -- --check`, `cargo test -p parser-pdf regular_content_tokens_are_borrowed_from_the_content_stream --locked`, focused parser compatibility tests, `cargo test -p parser-pdf --locked`, `cargo test -p import-pipeline parallel_parse_workers_record_pdf_and_post_parser_phase_timings --locked`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics .` with existing cfg inactive-code WeakWarnings only, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and `git diff --check`. #133 accepted comment is https://github.com/FrankQDWang/resume-ir/issues/133#issuecomment-4923451460; #133 is closed completed; #37 update is https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4923466032; follow-up #134 is https://github.com/FrankQDWang/resume-ir/issues/134. `ACTIVE_GOAL.toml`, `perf/current-loop-state.json`, the autonomous-goal gate, and synthetic-smoke fixture pins were advanced to #134 after #133 closure. | This is an L4 parser allocation optimization and issue-train handoff only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune the query hot path, add mixed-directory semantic resume classification, expose raw paths or full text, or make `goal_complete` true. #134 must start from fresh observe-before-act evidence; the #133 after-profile residuals of index publication commit around 5517.061ms, PDF content decode 5047.524ms, text-operator prefilter 4402.441ms, document load 4430.143ms, and text collection 3761.161ms are context, not a #134 baseline. |
+| S685 | Reconcile stale #53 machine state to #133 import-lane issue train | `ACTIVE_GOAL.toml` now sets active slice issue `#133`, enables private aggregate benchmark permission for #133 observe/profile, and limits the slice to parser/import plus state-repair paths. `perf/current-loop-state.json` now records `workflow_state=discovery_profile_issue_opened`, `experiment_state=bottleneck_selected`, `evidence_lane=w1_private`, `primary_issue=#133`, and open blockers `#37/#133`. The autonomous-goal gate's stale `#53` expectation was updated to `#133`, and the synthetic-smoke fixture pins/report digest were refreshed after the ACTIVE_GOAL hash changed. RED before gate repair: `python3 scripts/ci/check-autonomous-goal.py` failed with `scope.active_slice.issue: expected '#53'`. GREEN after repair: `cargo test -p fs-crawler filters_temporary_hidden_and_unsupported_files --locked -- --exact`, `cargo test -p index-fulltext mixed_chinese_english_query_matches_clean_text --locked -- --exact`, `cargo test -p resume-cli --test s49_detail_cli detail_local_prints_redacted_fields_and_short_snippet_without_private_paths --locked -- --exact`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, and `./scripts/ci/guard-public-repo.sh`. #133 comment: https://github.com/FrankQDWang/resume-ir/issues/133#issuecomment-4923285393. | This is a public contract-state repair only. It does not run private import observe/profile, change import/parser production behavior, close #37 or #133, claim full baseline/D10K/D100K/D1M, add GUI, tune the query hot path, add semantic mixed-directory resume classification, expose full text or raw paths, or make `goal_complete` true. #133 must still start implementation from fresh observe/profile and preserve #132 rollback counts/searchability/content bytes. |
+| S684 | Issue #132 rejects strict PDF `BT`/`ET` text-object-boundary skipping | #132 started from fresh same-root evidence after #131. Before clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget, 256 MiB writer heap, and 3 parser workers, measuring first-searchable `2847.078ms`, TTF100 `3261.210ms`, TTF1000 `5547.325ms`, full-import-ready/full-index-ready `36684.690ms`, scan `2678.700ms`, parse `32134.421ms`, DB `12763.300ms`, index `12617.240ms`, parse worker wall `32123.755ms`, active `35787.068ms`, queue wait `3227.077ms`, RSS `858488832`, max gap `829.722ms` at `index_publication_commit`, stdout hash `d7760835e62448f87e0d882b1213951ac4520c43b098b9d1cf71b75e6890de51`, status hash `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`, and empty stderr. Before profile preserved counts/content bytes and measured full-import-ready/full-index-ready `39519.135ms`, scan `2617.372ms`, parse `35006.345ms`, DB `14160.892ms`, index `13543.854ms`, parse worker wall `34995.351ms`, active `41128.440ms`, queue wait `3655.473ms`, RSS `606994432`, first-searchable `2822.510ms`, TTF100 `3279.548ms`, TTF1000 `6406.163ms`, max gap `865.586ms` at `index_publication_commit`, index publication setup/documents/commit/plaintext validation/encrypted publication/encrypted validation/active snapshot `353.756ms / 2246.888ms / 5317.621ms / 5.727ms / 907.582ms / 1326.750ms / 3.114ms`, PDF document load/page fetch/prefilter/font encoding/content decode/text collection `4133.594ms / 2698.404ms / 4428.955ms / 2239.240ms / 8803.998ms / 3643.466ms`, PDF content string operands/bytes/text decode runs/input bytes `16989924 / 44079187 / 16555366 / 42008756`, normalization/sectionization `1444.489ms / 510.607ms`, stdout hash `b8037f647d6794e808bdafdafd8420d5da9efb3d74d6ce80c952e93c8df5acc9`, status hash `185338c8ea797dd23b000c510fd52e2621d876b709672f706f3cb6171646b262`, empty stderr, and sanitized buckets `allocation=4643`, `rayon=11072`, `lopdf=4326`, `regex=547`, `sqlite_db=977`, `tantivy_index=1819`, `parser_pdf=555`, `import_pipeline=96`, `text_normalizer=43`, `sectionizer=85`, `filesystem_io=284`, `sync_write=298`. RED `cargo test -p parser-pdf text_only_content_decoder_skips_non_text_object_operands --locked` failed because current retained code counted 4 outside/inside string operands while the attempted contract expected only the 1 in-text operand. GREEN temporarily made the text-only parser skip operands outside formal `BT`/`ET` text objects. `cargo test -p parser-pdf --locked` passed before private measurement. Attempted after clean improved the primary PDF content decode metric `8803.998ms -> 5281.094ms` (-40.0%) and measured full-import-ready `34332.713ms`, parse worker wall `29863.512ms`, RSS `642727936`, first-searchable `2949.329ms`, TTF100 `3345.847ms`, TTF1000 `5493.219ms`, stdout hash `2d8950da14364acdba71312d0f63b28cc778c04fca1e837447e774ffe7fc7c50`, status hash `5c82db1daac5a144f6f73f5cfd81bbb0a5a527d0772ba2c0da5a94237a905bcd`, and empty stderr, but changed classification to 8246 searchable, 281 OCR-required/backlog, and 281 OCR queued. Decision: rejected and reverted because counts/searchability changed unexpectedly; this proves at least two private-corpus PDFs rely on current permissive text extraction outside formal text objects. Post-revert verification passed: `cargo fmt --all -- --check`, `cargo test -p parser-pdf --locked`, `cargo test -p import-pipeline parallel_parse_workers_record_pdf_and_post_parser_phase_timings --locked`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, and `rust-analyzer diagnostics .` with existing cfg inactive-code WeakWarnings only. #132 observe and completion comments are https://github.com/FrankQDWang/resume-ir/issues/132#issuecomment-4922391227 and https://github.com/FrankQDWang/resume-ir/issues/132#issuecomment-4922481040; #37 update is https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4922482494; #132 is closed as not planned; follow-up #133 is https://github.com/FrankQDWang/resume-ir/issues/133. | This is a failed/reverted L4 parser compatibility hypothesis only. It does not close #37, retain #132 production code, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. #133 must start from fresh observe-before-act evidence and preserve current permissive PDF extraction behavior while reducing content-decode allocation/cost, or record that the bottleneck moved elsewhere. |
+| S683 | Issue #131 rejects H2 large-snapshot auto writer mode | #131 started from fresh same-root evidence after #130. Before clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 256 MiB writer heap and 3 parser workers, measuring first-searchable `2762.047ms`, TTF100 `3153.388ms`, TTF1000 `5392.329ms`, full-import-ready/full-index-ready `36891.703ms`, scan `2594.660ms`, parse `32455.440ms`, DB `12515.281ms`, index `12688.794ms`, parse worker wall `32443.904ms`, active `35140.433ms`, queue wait `3207.795ms`, RSS `622739456`, max gap `1083.281ms` at `index_publication_commit`, index publication setup/documents/commit/plaintext validation/encrypted publication/encrypted validation/active snapshot `301.321ms / 2167.755ms / 5081.380ms / 5.518ms / 910.070ms / 1269.847ms / 2.683ms`, PDF content decode `7524.288ms`, prefilter `4007.085ms`, text collection `3078.259ms`, normalization `1201.967ms`, stdout hash `69de6486b148e8fea2bee207f830e7e722712a40f2e95f2cf86205a5759865de`, status hash `44939edb2256e9f489170fde6e2da251b14b4aeeb1ac052a3e5a90ea008f202a`, and empty stderr. Before profile preserved counts/content bytes and measured full-import-ready/full-index-ready `39228.238ms`, scan `2225.619ms`, parse `35044.336ms`, DB `13616.426ms`, index `14050.735ms`, parse worker wall `35032.998ms`, active `39415.609ms`, queue wait `3615.671ms`, RSS `787021824`, first-searchable `2394.172ms`, TTF100 `2802.771ms`, TTF1000 `5221.885ms`, max gap `902.491ms` at `index_publication_commit`, index publication setup/documents/commit/plaintext validation/encrypted publication/encrypted validation/active snapshot `328.237ms / 2280.136ms / 6049.131ms / 6.048ms / 937.918ms / 1324.114ms / 2.960ms`, PDF document load/page fetch/prefilter/font encoding/content decode/text collection `3990.794ms / 2526.913ms / 4489.476ms / 2134.165ms / 8370.159ms / 3446.451ms`, normalization/sectionization `1371.399ms / 494.968ms`, stdout hash `717426e8a3dca69c9dcb5ce3cc78b048022f7a5eb33697b3349e338f46af7051`, status hash `fbb1f15b3d53d0a3c31755d52bbf1f74338087bd9644a6acc51522466bc0fe32`, empty stderr, and sanitized buckets `allocation=2310`, `rayon=4870`, `lopdf=2371`, `regex=359`, `sqlite_db=650`, `tantivy_index=613`, `parser_pdf=377`, `import_pipeline=104`, `text_normalizer=35`, `sectionizer=60`, `filesystem_io=215`, `sync_write=165`. RED `cargo test -p index-fulltext h2_full_import_snapshot_writer_mode_allows_auto_workers --locked -- --exact` failed because `writer_thread_mode_for_snapshot` did not accept writer heap budget; GREEN temporarily allowed H2-sized, large current-import snapshots to use Tantivy auto writer mode while keeping small milestones single-worker. Attempted after clean preserved counts/content bytes and measured full-import-ready `41675.202ms`, parse worker wall `36854.435ms`, RSS `1077493760`, max gap `723.215ms`, index commit `5047.496ms`, stdout hash `c606410271ce6d5d136cef31f8f31f2361071ac518e8f02fe0e79cf304eae28b`, status hash `10027b4deca713b6e5db48f688dabf14ea671ae5e0ed40e7da329a81c302f6c2`, and empty stderr. Attempted after profile preserved counts/content bytes and measured full-import-ready `41789.890ms`, parse worker wall `34307.781ms`, RSS `1016266752`, first-searchable `5428.863ms`, TTF100 `5898.020ms`, TTF1000 `8793.876ms`, max gap `744.707ms`, index commit `4234.063ms`, encrypted validation `2567.536ms`, stdout hash `f65f5dd9059362a3334d04685df930f7f330f4d3af6914b59faed02434a7c319`, status hash `05ae8240408a02f354c164cb79ab934f9947ba4b4897005b0614763db70cddab`, empty stderr, and sanitized buckets `allocation=2487`, `rayon=6530`, `lopdf=2757`, `regex=352`, `sqlite_db=619`, `tantivy_index=1504`, `parser_pdf=381`, `import_pipeline=100`, `text_normalizer=39`, `sectionizer=66`, `filesystem_io=317`, `sync_write=320`. Decision: rejected and reverted. The primary profiled commit metric improved `6049.131ms -> 4234.063ms` (-30.0%) and max gap improved, but rollback guards failed: profiled full-import-ready regressed `39228.238ms -> 41789.890ms` (+6.5%), clean full-import-ready regressed `36891.703ms -> 41675.202ms`, early milestones regressed in the attempted after profile, RSS rose though still under H2 budget, and sanitized Tantivy/rayon/allocation/filesystem/sync buckets moved upward. Post-revert verification passed: `cargo fmt --all -- --check`, focused writer-mode RED/GREEN tests, `cargo test -p index-fulltext staged_import_snapshot_writer_mode_uses_single_worker_for_milestones --locked`, `cargo test -p index-fulltext --locked -- --test-threads=1`, `cargo check -p index-fulltext -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics .`, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and `git diff --check`. #131 observe and completion comments are https://github.com/FrankQDWang/resume-ir/issues/131#issuecomment-4922145165 and https://github.com/FrankQDWang/resume-ir/issues/131#issuecomment-4922235813; #37 update is https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4922240049; #131 is closed as not planned; follow-up #132 is https://github.com/FrankQDWang/resume-ir/issues/132. | This is a failed/reverted import index-publication writer-mode hypothesis only. It does not close #37, retain #131 production code, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. #132 must start from fresh observe-before-act evidence and choose one next primary bottleneck, likely PDF text-only parser scope/content decode unless fresh evidence points elsewhere; do not retry the #131 auto-writer shape without new evidence explaining the full-import/validation/RSS tradeoff. |
+| S682 | Issue #130 reduces post-parser normalization duplicate-line scanning | #130 started from fresh same-root evidence after #129. Before clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 256 MiB writer heap and 3 parser workers, measuring full-import-ready/full-index-ready `35090.849ms`, scan `2620.504ms`, parse `30814.016ms`, DB `11732.536ms`, index `11698.104ms`, parse worker wall `30803.563ms`, active `38270.650ms`, queue wait `4326.896ms`, RSS `840581120`, first-searchable `2798.242ms`, TTF100 `3179.246ms`, TTF1000 `5459.035ms`, PDF content decode `7317.769ms`, text collection `3000.121ms`, normalization `5544.142ms`, sectionization `434.100ms`, stdout hash `aa85a64aaf3a45bfcd8701ca68c999b460a16d99e3e50dd2556c5529516b4073`, and empty stderr. Before profile preserved counts/content bytes and measured full-import-ready/full-index-ready `37189.408ms`, scan `2150.637ms`, parse `33350.595ms`, DB `12590.321ms`, index `12096.713ms`, parse worker wall `33339.792ms`, active `40234.853ms`, queue wait `4399.230ms`, RSS `766394368`, first-searchable `2331.371ms`, TTF100 `2746.187ms`, TTF1000 `5075.404ms`, PDF document load `3600.194ms`, page content fetch `2438.636ms`, text prefilter `4323.674ms`, font encoding `1870.716ms`, content decode `7684.433ms`, text collection `3128.080ms`, normalization `5724.324ms`, sectionization `460.476ms`, stdout hash `856a32336150d6a7c4e0c424ab265b0134734dc6b834b100e9ca7e6da29adc1d`, empty stderr, and sanitized buckets `allocation=2201`, `filesystem_io=199`, `import_pipeline=93`, `lopdf=2538`, `parser_pdf=358`, `rayon=5481`, `regex=313`, `sectionizer=67`, `sqlite_db=597`, `tantivy_index=574`, `text_normalizer=46`. RED `cargo test -p text-normalizer repeated_short_line_counts_ignores_blank_and_long_lines --locked` failed because `repeated_short_line_counts` did not exist; GREEN added the focused helper and then RED `cargo test -p text-normalizer repeated_short_line_flags_marks_only_duplicate_short_lines --locked` failed because `repeated_short_line_flags` did not exist. Final GREEN replaced repeated per-line duplicate scans in both origin-preserving and text-only repeated header/footer removal with one borrowed short-line occurrence pass, keeping the counting helper test-only. After clean final preserved counts/content bytes and measured full-import-ready/full-index-ready `38379.538ms`, scan `2699.557ms`, parse `33956.892ms`, DB `13436.887ms`, index `12126.712ms`, parse worker wall `33945.960ms`, active `34836.573ms`, queue wait `2929.258ms`, RSS `799031296`, first-searchable `2882.360ms`, TTF100 `3279.726ms`, TTF1000 `5576.855ms`, PDF content decode `7521.411ms`, text collection `3092.790ms`, normalization `1209.771ms`, sectionization `445.086ms`, stdout hash `8e4c03cced0eae43c5317a6afc9eca33e0fbf166579c3c93dce79a12bc0ddcfb`, and empty stderr; the clean run showed full-import/parse-wall variance, so acceptance uses the final paired profile guard. After profile final preserved counts/content bytes and measured full-import-ready/full-index-ready `37143.492ms`, scan `2131.393ms`, parse `33371.666ms`, DB `13104.162ms`, index `12513.217ms`, parse worker wall `33361.060ms`, active `37391.940ms`, queue wait `3404.461ms`, RSS `755974144`, first-searchable `2298.330ms`, TTF100 `2721.364ms`, TTF1000 `5190.883ms`, PDF document load `3767.458ms`, page content fetch `2515.942ms`, text prefilter `4445.428ms`, font encoding `1969.960ms`, content decode `7960.912ms`, text collection `3274.904ms`, normalization `1285.823ms`, sectionization `474.828ms`, stdout hash `569e33a6f9178d807715a1f36aaa8bf34413354399d40f52f0e9f6646a256ee5`, empty stderr, and sanitized buckets `allocation=2497`, `filesystem_io=201`, `import_pipeline=102`, `lopdf=2861`, `parser_pdf=402`, `rayon=5589`, `regex=350`, `sectionizer=70`, `sqlite_db=630`, `tantivy_index=608`, `text_normalizer=28`. Accepted movement: profiled normalization improved `5724.324ms -> 1285.823ms` (-77.5%), full-import-ready stayed flat within guard (`37189.408ms -> 37143.492ms`), parse worker wall stayed inside guard (`33339.792ms -> 33361.060ms`), RSS stayed below the H2 1536 MiB budget, counts/content bytes stayed stable, and stderr stayed empty. Verification passed: `cargo fmt --all -- --check`, focused RED/GREEN text-normalizer tests, `cargo test -p text-normalizer --locked`, `cargo test -p import-pipeline parallel_parse_workers_record_pdf_and_post_parser_phase_timings --locked`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo check -p text-normalizer -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics .`, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and `git diff --check`. #130 observe and completion comments are https://github.com/FrankQDWang/resume-ir/issues/130#issuecomment-4921934910 and https://github.com/FrankQDWang/resume-ir/issues/130#issuecomment-4922047008; #37 update is https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4922049275; #130 is closed; follow-up #131 is https://github.com/FrankQDWang/resume-ir/issues/131. | This is an L4 import post-parser normalization slice only. It closes #130 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. #131 must start from fresh observe-before-act evidence and select one primary residual path among PDF content decode/text-only parsing, narrower prefilter/text collection, or ordered DB/index publication tail. |
+| S681 | Issue #129 rejects no-escape PDF literal borrowing | #129 started from fresh same-root evidence after #128. Before clean C preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 256 MiB writer heap and 3 parser workers, measuring docs/s `256.141`, MiB/s `99.127`, first-searchable `2230.494ms`, TTF100 `2626.177ms`, TTF1000 `4853.604ms`, full-import-ready/full-index-ready `34043.700ms`, scan `2072.815ms`, parse `30315.131ms`, DB `11235.489ms`, index `11540.932ms`, parse worker wall `30305.322ms`, active `37544.563ms`, queue wait `4267.243ms`, RSS `654622720`, max gap `708.161ms` at `index_publication_commit`, stdout hash `216d3b0837d6866ebd9f407a1a487b327816dff326910ae8612b26350a1e412f`, and empty stderr. Before profile preserved counts/content bytes and measured docs/s `240.937`, MiB/s `93.243`, first-searchable `2285.876ms`, TTF100 `2686.735ms`, TTF1000 `5018.419ms`, full-import-ready/full-index-ready `36192.041ms`, scan `2102.944ms`, parse `32394.915ms`, DB `12351.539ms`, index `11683.841ms`, parse worker wall `32384.121ms`, active `38811.645ms`, queue wait `4259.434ms`, RSS `884178944`, PDF content decode `7411.101ms`, text collection `3019.299ms`, normalization `5600.322ms`, sectionization `442.236ms`, exact counters content string operands `16989924`, content string bytes `44079187`, text decode runs `16555366`, text decode input bytes `42008756`, stdout hash `945f8fe7d63555135b8abe0313a50ec9c682099a1ec092205c9111596b9479f2`, empty stderr, and sanitized buckets `allocation=3311`, `rayon=6676`, `lopdf=2205`, `regex=440`, `sqlite_db=573`, `tantivy_index=695`, `parser_pdf=321`, `import_pipeline=90`, `sectionizer=75`, `filesystem_io=2426`. RED `cargo test -p parser-pdf text_only_content_decoder_borrows_unescaped_literal_string_operands --locked` failed because `TextOnlyOperand::String` was still an owned `Vec<u8>`. GREEN temporarily changed the text-only decoder to borrow unescaped literal operands and keep escaped literals owned, with focused parser tests passing. Attempted after clean preserved counts/content bytes and measured full-import-ready `35280.733ms`, parse worker wall `30941.907ms`, RSS `655441920`, PDF content decode `7167.429ms`, text collection `2970.243ms`, normalization `5453.803ms`, stdout hash `3ac0bd5fb2a0575b78667324a67a1437c7a0119bca5bac2b3cbd64e86be90bd8`, and empty stderr. Attempted after profile preserved counts/content bytes and measured full-import-ready `36065.101ms`, parse worker wall `32332.849ms`, RSS `891420672`, PDF content decode `7346.963ms`, text collection `3053.724ms`, normalization `5577.083ms`, stdout hash `91ca7df8bd30978d756de61ecc0ea83b992cf6809f2683d3435e55b4893a343e`, empty stderr, and sanitized buckets `allocation=3322`, `rayon=7625`, `lopdf=2117`, `regex=485`, `sqlite_db=574`, `tantivy_index=666`, `parser_pdf=315`, `import_pipeline=87`, `sectionizer=72`, `filesystem_io=2635`. Decision: failed and reverted. The primary metric did not meet the declared delta: profiled PDF content decode moved only `7411.101ms -> 7346.963ms` (-0.9%), sanitized allocation worsened `3311 -> 3322`, and parser_pdf moved only `321 -> 315` (-1.9%). Counts stayed stable, stderr stayed empty, RSS stayed below H2 budget, and full-import-ready/parse wall stayed inside guard, but the extra lifetime/Cow complexity is not retained. Post-revert verification passed: `cargo fmt --all -- --check`, `cargo test -p parser-pdf --locked`, `cargo test -p import-pipeline parallel_parse_workers_record_pdf_and_post_parser_phase_timings --locked`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`, and `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`. #129 observe and completion comments are https://github.com/FrankQDWang/resume-ir/issues/129#issuecomment-4921773244 and https://github.com/FrankQDWang/resume-ir/issues/129#issuecomment-4921855910; #37 update is https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4921857747; #129 is closed as not planned; follow-up #130 is https://github.com/FrankQDWang/resume-ir/issues/130. | This is a failed/reverted L4 parser micro-optimization hypothesis only. It does not close #37, retain #129 parser changes, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. #130 must start from fresh observe-before-act evidence and choose one primary path among post-parser normalization, text byte decoding/ToUnicode, narrower content-token parsing, or ordered writer/index-publication variance. |
+| S674 | Issue #123 aligns hardware-tier contract names and RAM thresholds | #123 is a W0/docs contract cleanup follow-up from #107, with no runtime import behavior change and no private benchmark. `perf/acceptance-matrix.toml` now has a single `governor_profile_selection` contract: detected total RAM selects the static tier, unknown RAM falls back to `H0_Eco`, CPU/core count only caps effective parser workers, H0 is RAM <= 8 GiB, H1 is RAM > 8 GiB and <= 24 GiB, and H2 is RAM > 24 GiB. `03_next_goal_高性能本地检索GUI闭环/04_数据流与状态机.md` now uses the implementation/evidence names `H0_Eco`, `H1_Balanced`, and `H2_Aggressive`, and records the 1/2/3 parser-worker and 512/1024/1536 MiB private/anonymous budgets. Because the acceptance matrix hash changed, `perf/current-loop-state.json` and paired synthetic-smoke fixture contract pins were refreshed; the valid smoke artifact manifest report hash was also updated to match the valid report. Verification passed: `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and focused `git diff --check` over the touched contract/doc/fixture files. Privacy confirmation: no real resumes, filenames, raw parsed text, OCR text, raw queries, candidate results, local paths, traces, databases, indexes, model caches, tokens, or credentials were added. | This is a docs/public-contract alignment slice only. It does not close #37 or #122, does not run or claim private import baseline/profile evidence, does not change Rust import behavior, does not tune query hot path, does not add GUI, and does not make `goal_complete` true. #122 remains the next import-performance implementation issue for PDF parser subphase attribution before another parser optimization. |
+| S675 | Issue #122 adds PDF parser subphase attribution before the next parser optimization | #122 started from fresh current-code evidence on the same authorized private root after #121/#123. Before clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget, 256 MiB writer heap, and 3 parser workers, measuring docs/s `205.885`, MiB/s `79.678`, first-searchable `2771.649ms`, full-import-ready/full-index-ready `42353.808ms`, scan `2594.786ms`, parse `36146.194ms`, DB `13712.302ms`, index `12853.399ms`, parse worker wall `36135.885ms`, active `56985.863ms`, queue wait `7087.934ms`, RSS `805175296`, cancel max gap `806.293ms` at `index_publication_commit`, stdout hash `424664891934c46818c024a3750c267a33096abc07af51e6ad26ebe2cb076dbc`, and empty stderr. Before profile preserved counts/content bytes and measured full-import-ready `40014.793ms`, parse worker wall `34026.825ms`, active `58157.786ms`, queue wait `8122.997ms`, RSS `604700672`, max gap `812.261ms` at `index_publication_commit`, stdout hash `d76727ddcd699febdf7df45a9398020dc9a19405fca8863564d1ce769881e6c2`, and sanitized buckets `rayon=20175`, `allocation=19468`, `lopdf=13491`, `tantivy=1081`, `parser_pdf=677`, `sqlite3_step=48`, `parse_worker_loop=35`, and `write_incremental_full_text_index=28`. RED `cargo test -p parser-pdf parse_with_timings_reports_text_extraction_subphases --locked` failed because `PdfParser::parse_with_timings` did not exist, and RED `cargo test -p import-pipeline parallel_parse_workers_record_pdf_and_post_parser_phase_timings --locked` failed because `ImportWorkerMetrics` had no PDF/post-parser timing fields. GREEN adds `PdfTextExtractionTimings`, `PdfParser::parse_with_timings`, import-pipeline aggregation for both sequential and parse-worker paths, CLI output lines for document load/object parsing, page content fetch, text-operator prefilter, font encoding/ToUnicode lookup, content stream decode, text collection/decoding, post-parser normalization, and post-parser sectionization, plus focused tests. After clean preserved counts/content bytes and measured docs/s `225.522`, MiB/s `87.278`, first-searchable `2871.763ms`, TTF100 `3264.943ms`, TTF1000 `5993.510ms`, full-import-ready/full-index-ready `38665.823ms`, scan `2697.006ms`, parse `32136.237ms`, DB `11872.511ms`, index `12035.466ms`, parse worker wall `32125.557ms`, active `52490.144ms`, queue wait `7211.727ms`, RSS `708132864`, max gap `840.549ms` at `index_publication_commit`, stdout hash `6a558666e72a03dc96f918647d1cdc242f1ad798213def524c2ec0571c2c2c90`, and subphase timings document load `3459.271ms`, page content fetch `2439.742ms`, prefilter `5034.226ms`, font encoding `1825.302ms`, content decode `10316.025ms`, text collection `4652.247ms`, normalization `5602.765ms`, and sectionization `449.737ms`. After profile preserved counts/content bytes and measured docs/s `223.193`, MiB/s `86.376`, first-searchable `2377.767ms`, TTF100 `2811.237ms`, TTF1000 `5837.294ms`, full-import-ready/full-index-ready `39069.254ms`, scan `2204.524ms`, parse `32999.420ms`, DB `12537.858ms`, index `11930.227ms`, parse worker wall `32988.639ms`, active `54351.866ms`, queue wait `7470.876ms`, RSS `744194048`, max gap `778.724ms` at `index_publication_commit`, stdout hash `034243f0442f7e5c475f3c8d42a91b8bf9774f5ab712396c3141b92174e6a9ac`, subphase timings document load `3778.772ms`, page content fetch `2476.373ms`, prefilter `5141.060ms`, font encoding `1926.232ms`, content decode `10607.268ms`, text collection `4885.539ms`, normalization `5789.431ms`, sectionization `463.230ms`, and sanitized buckets `rayon=9410`, `allocation=5141`, `lopdf=4867`, `tantivy_index=3706`, `sqlite_db=469`, `regex=359`, `parser_pdf=214`, `sectionizer=47`, `filesystem_io=31`. Accepted movement: this is an attribution/observability slice, not a parser-speed optimization; counts stayed stable, stderr stayed empty, RSS stayed below the H2 1536 MiB budget, and the actionable parser bottleneck moved from generic `lopdf`/`parser_pdf` evidence to specific summed subphases led by content stream decode, then normalization/prefilter/text collection. The subphase values are summed across workers/pages and must not be read as wall-clock parse time; wall-clock parse evidence remains `parse worker wall`. Verification passed: `cargo fmt --all -- --check`, `cargo test -p parser-pdf --locked`, `cargo test -p import-pipeline parallel_parse_workers_record_pdf_and_post_parser_phase_timings --locked`, `cargo test -p import-pipeline parallel_parse_workers_record_queue_and_cancel_evidence --locked`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, `rust-analyzer diagnostics .`, and focused `git diff --check`. #122 observe and completion comments are https://github.com/FrankQDWang/resume-ir/issues/122#issuecomment-4920729821 and https://github.com/FrankQDWang/resume-ir/issues/122#issuecomment-4920881192; #37 update is https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4920895871; #122 is closed; follow-up #124 is https://github.com/FrankQDWang/resume-ir/issues/124. | This is an L4 import parser attribution slice only. It closes #122 but does not close #37, optimize the parser, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. #124 must start from fresh observe-before-act evidence and target the measured PDF content decode bottleneck or record why it cannot be independently reduced. |
+| S676 | Issue #124 fails and reverts the stricter PDF text-operator prefilter hypothesis | #124 started from fresh current-code evidence on the same authorized private root after #122. Before clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget, 256 MiB writer heap, and 3 parser workers, measuring docs/s `207.102`, MiB/s `80.149`, first-searchable `2781.735ms`, TTF100 `3201.646ms`, TTF1000 `6334.436ms`, full-import-ready/full-index-ready `42104.766ms`, scan `2616.557ms`, parse `35310.146ms`, DB `13327.245ms`, index `13038.080ms`, parse worker wall `35299.077ms`, active `59122.482ms`, queue wait `8076.320ms`, RSS `922107904`, max gap `926.362ms` at `index_publication_commit`, stdout hash `8407b7fff95d5257d71d9c5101d575b07bf3bd8da5d868e4b604d15b250ab186`, and subphase timings document load `4078.439ms`, page content fetch `2659.685ms`, prefilter `5199.299ms`, font encoding `2110.871ms`, content decode `11861.002ms`, text collection `5319.097ms`, normalization `6152.168ms`, and sectionization `485.823ms`. Before profile preserved counts/content bytes and measured full-import-ready `41125.348ms`, parse worker wall `34728.329ms`, active `56468.263ms`, queue wait `7568.010ms`, RSS `874184704`, stdout hash `bd37d0321ac42a189ad9553f89f41df0f4fc4b8fe967129a5f95ee3244596e44`, subphase timings prefilter `5173.921ms`, content decode `11241.058ms`, normalization `5935.162ms`, and sanitized buckets `rayon=10286`, `allocation=5723`, `lopdf=5097`, `tantivy_index=4051`, `sqlite_db=506`, `regex=371`, `parser_pdf=246`, `sectionizer=52`, `filesystem_io=28`. Hypothesis: require a real prior `Tf` font-selection operator before treating text-showing operators as decode-worthy, so streams that could not produce text in the current extractor could skip `lopdf::Content::decode`. RED `cargo test -p parser-pdf page_content_without_text_showing_operator_can_skip_text_decode --locked` failed because `BT (Resume) Tj ET` still passed the prefilter. GREEN implemented a stateful prefilter that skipped comments, strings, hex strings, and names, and only accepted `Tj`/`TJ`/`'`/`\"` after `Tf`; focused parser/import/CLI checks passed before performance measurement. Attempted after clean preserved counts/content bytes but measured docs/s `202.709`, full-import-ready `43017.311ms`, parse worker wall `35754.853ms`, RSS `664059904`, stdout hash `85bb76a6daf26bb56a50a0b95d741ff8d0d503dc2bbefbaa039570164fe380a5`, prefilter `1452.387ms`, and content decode `12604.272ms`. Attempted after profile preserved counts/content bytes and measured docs/s `216.738`, full-import-ready `40232.838ms`, parse worker wall `33886.369ms`, RSS `923254784`, stdout hash `49c53e0d608206d7918796ae05851ae6e6d6648cea2787d89ff2ce6ba63e2ec8`, prefilter `1402.866ms`, content decode `12168.949ms`, and sanitized buckets `rayon=11322`, `allocation=5819`, `lopdf=5295`, `tantivy_index=3997`, `sqlite_db=563`, `regex=372`, `parser_pdf=238`, `sectionizer=41`, `filesystem_io=29`, `import_pipeline=10`. Decision: failed and reverted. The stricter prefilter reduced the prefilter subphase materially (`5173.921ms -> 1402.866ms` profiled), but it did not reduce the primary target; content decode worsened (`11241.058ms -> 12168.949ms` profiled and `11861.002ms -> 12604.272ms` clean). Clean parse worker wall/full-import-ready also regressed, so the retained code returns to the #122 attribution state. Post-revert verification passed: `cargo fmt --all -- --check`, `cargo test -p parser-pdf --locked`, `cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, `rust-analyzer diagnostics .`, and focused `git diff --check`. #124 observe and hypothesis comments are https://github.com/FrankQDWang/resume-ir/issues/124#issuecomment-4920933814 and https://github.com/FrankQDWang/resume-ir/issues/124#issuecomment-4920942170; follow-up #125 is https://github.com/FrankQDWang/resume-ir/issues/125. | This is a failed/reverted L4 parser micro-optimization hypothesis only. It closes #124 as failed/reverted but does not close #37, retain #124 parser changes, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. #125 must start from fresh observe-before-act evidence and target a stronger text-only content decode strategy instead of another prefilter-only change. |
+| S677 | Issue #125 replaces full PDF content decode with a bounded text-only decoder | #125 started from fresh current-code evidence on the same authorized private root after #124. Before clean A preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes, measuring docs/s `204.309`, MiB/s `79.068`, first-searchable `2835.093ms`, TTF100 `3265.078ms`, TTF1000 `6434.836ms`, full-import-ready/full-index-ready `42680.523ms`, scan `2661.302ms`, parse `36204.197ms`, DB `14112.996ms`, index `12626.889ms`, parse worker wall `36193.159ms`, active `58949.249ms`, queue wait `7890.716ms`, max gap `766.575ms` at `index_publication_commit`, stdout hash `312fa14242616db40816e3f40df3eb231a1649a2a96186da2e65612236a1daf1`, and subphase timings document load `3997.400ms`, page content fetch `2653.283ms`, prefilter `5197.854ms`, font encoding `2115.976ms`, content decode `11878.010ms`, text collection `5297.928ms`, normalization `6083.060ms`, and sectionization `486.335ms`; the first clean RSS sampler collected 0 samples because the monitor started before the child pid was bound, so clean B is the resource-bearing clean baseline. Before clean B preserved counts/content bytes and measured docs/s `228.549`, MiB/s `88.449`, first-searchable `2228.995ms`, TTF100 `2645.198ms`, TTF1000 `5304.385ms`, full-import-ready/full-index-ready `38153.693ms`, scan `2056.410ms`, parse `32316.868ms`, DB `11969.991ms`, index `11602.797ms`, parse worker wall `32306.551ms`, active `50649.597ms`, queue wait `6963.268ms`, RSS `727236608`, max gap `730.995ms` at `index_publication_commit`, stdout hash `8403f0935604cd19435fc42504474192bd3de5f92933530836fe32d2a9f71b93`, and subphase timings content decode `9820.834ms`, text collection `4495.804ms`, normalization `5536.629ms`, and sectionization `441.230ms`. Before profile preserved counts/content bytes and measured docs/s `225.142`, MiB/s `87.131`, first-searchable `2371.774ms`, TTF100 `2783.962ms`, TTF1000 `5758.365ms`, full-import-ready/full-index-ready `38731.067ms`, scan `2198.889ms`, parse `32959.829ms`, DB `12240.644ms`, index `11579.408ms`, parse worker wall `32949.601ms`, active `54703.372ms`, queue wait `7788.639ms`, RSS `838156288`, max gap `724.975ms` at `index_publication_commit`, stdout hash `0161fa383e907f030ac20694e6e66a94018bc597c045bc5f053f6ba5d7d67ca8`, PDF subphases document load `3837.311ms`, page content fetch `2511.021ms`, prefilter `5317.631ms`, font encoding `1943.526ms`, content decode `10525.277ms`, text collection `4877.208ms`, normalization `5900.281ms`, sectionization `463.687ms`, and sanitized buckets `rayon=17111`, `lopdf=10451`, `allocation=8938`, `sqlite_db=1357`, `regex=660`, `parser_pdf=528`, `tantivy_index=433`, `import_pipeline=117`, `sectionizer=96`, `filesystem_io=55`. RED `cargo test -p parser-pdf text_only_content_decoder --locked` failed because `decode_text_only_content` and `collect_text_only_page_text` did not exist. GREEN adds a private parser-pdf text-only content decoder that scans content streams for only the current extractor operators (`Tf`, `Tj`, `TJ`, `'`, `\"`, `T*`, `ET`), materializes only font/text operands needed for collection, handles literal strings, hex strings, arrays, integer TJ spacing, names, comments, and inline-image skip boundaries, and keeps malformed text operands corrupted. The production page path now measures this text-only decode under `pdf parse content decode ms` and then collects text with the existing font encoding state; `lopdf::Content::decode` remains only as a test parity oracle. After clean preserved counts/content bytes and measured docs/s `238.211`, MiB/s `92.188`, first-searchable `2802.255ms`, TTF100 `3201.082ms`, TTF1000 `5522.091ms`, full-import-ready/full-index-ready `36606.176ms`, scan `2623.493ms`, parse `32192.068ms`, DB `12129.931ms`, index `11848.459ms`, parse worker wall `32180.877ms`, active `39686.524ms`, queue wait `4536.477ms`, RSS `736116736`, max gap `779.793ms` at `index_publication_commit`, stdout hash `b5f4f48f8af06912ebf96ad94bdc4af06e78c83abf551a063c886e66755a2999`, and PDF/post-parser timings content decode `7374.983ms`, text collection `3518.192ms`, normalization `5524.761ms`, and sectionization `432.147ms`. After profile preserved counts/content bytes and measured docs/s `227.939`, MiB/s `88.213`, first-searchable `2507.644ms`, TTF100 `2900.846ms`, TTF1000 `5667.993ms`, full-import-ready/full-index-ready `38255.870ms`, scan `2350.555ms`, parse `34267.963ms`, DB `12832.962ms`, index `12084.434ms`, parse worker wall `34256.511ms`, active `46867.358ms`, queue wait `5414.395ms`, RSS `867500032`, max gap `727.030ms` at `index_publication_commit`, stdout hash `91a256f2e6d7687f66e5b721db31fd08d12df57581c767019b0f99d13a60e130`, PDF subphases document load `4097.613ms`, page content fetch `2806.382ms`, prefilter `5604.098ms`, font encoding `2137.747ms`, content decode `8547.555ms`, text collection `4479.720ms`, normalization `6264.846ms`, sectionization `500.306ms`, and sanitized buckets `rayon=14736`, `lopdf=10252`, `allocation=9110`, `sqlite_db=1614`, `parser_pdf=765`, `regex=731`, `tantivy_index=519`, `import_pipeline=137`, `sectionizer=118`, `filesystem_io=61`. Accepted movement: profiled `pdf parse content decode ms` improved `10525.277ms -> 8547.555ms` (-18.8%), clean RSS-bearing content decode improved `9820.834ms -> 7374.983ms` (-24.9%), counts and content bytes stayed stable, stderr stayed empty, RSS stayed below the H2 1536 MiB budget, full-import-ready improved slightly in profile (`38731.067ms -> 38255.870ms`, -1.2%), and parse worker wall regressed only within guard (`32949.601ms -> 34256.511ms`, +4.0%). Residual bottleneck moved toward combined text-only decode+collection allocation and post-parser normalization/prefilter; follow-up #126 is https://github.com/FrankQDWang/resume-ir/issues/126. Verification passed: `cargo fmt --all -- --check`, `cargo test -p parser-pdf --locked`, `cargo test -p import-pipeline parallel_parse_workers_record_pdf_and_post_parser_phase_timings --locked`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, and `rust-analyzer diagnostics .` with existing cfg inactive-code WeakWarnings only. | This is an L4 import parser optimization slice only. It closes #125 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. #126 must start from fresh observe-before-act evidence and target residual decoder materialization/allocation or record why the bottleneck moved elsewhere. |
+| S678 | Issue #126 fails and reverts the streaming PDF text-only collector hypothesis | #126 started from fresh current-code evidence on the same authorized private root after #125. Before clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget, 256 MiB writer heap, and 3 parser workers, measuring first-searchable `2402.809ms`, TTF100 `2800.261ms`, TTF1000 `5235.371ms`, full-import-ready/full-index-ready `40814.852ms`, scan `2231.881ms`, parse `36729.980ms`, DB `14187.200ms`, index `12906.661ms`, parse worker wall `36718.864ms`, active `43990.386ms`, queue wait `4453.355ms`, RSS `662814720`, max gap `858.043ms` at `index_publication_commit`, content decode `8109.773ms`, text collection `3897.981ms`, combined decode+collection `12007.754ms`, normalization `5954.591ms`, and sectionization `472.593ms`. Before profile preserved counts/content bytes and measured first-searchable `2465.547ms`, TTF100 `2929.889ms`, TTF1000 `5778.742ms`, full-import-ready `40174.648ms`, parse worker wall `36023.621ms`, active `48466.596ms`, queue wait `5503.457ms`, RSS `856457216`, max gap `833.568ms` at `index_publication_commit`, content decode `8843.783ms`, text collection `4239.220ms`, combined decode+collection `13083.003ms`, normalization `6535.056ms`, sectionization `507.184ms`, and sanitized buckets `allocation=23861`, `rayon=16865`, `lopdf=10778`, `regex=2032`, `sqlite_db=1513`, `tantivy_index=798`, `parser_pdf=793`, `import_pipeline=155`, `sectionizer=154`, `filesystem_io=56`. RED `cargo test -p parser-pdf streaming_text_collector --locked` failed because `collect_streaming_page_text` did not exist. GREEN added a streaming collector prototype that avoided TextOnlyContent operation-vector materialization on the production path while preserving focused parity and inline-image skip behavior. Attempted after clean preserved counts/content bytes and measured full-import-ready `36661.223ms`, parse worker wall `32156.213ms`, RSS `791052288`, content decode `7912.758ms`, text collection `3387.543ms`, and combined decode+collection `11300.301ms` (-5.9% clean). Attempted after profile preserved counts/content bytes and measured full-import-ready `40950.319ms`, parse worker wall `36322.802ms`, RSS `845742080`, max gap `1243.157ms` at `index_publication_commit`, content decode `9320.157ms`, text collection `4036.915ms`, combined decode+collection `13357.072ms` (+2.1% profile), and sanitized buckets `allocation=22648`, `rayon=18881`, `lopdf=10633`, `regex=1969`, `sqlite_db=1590`, `tantivy_index=842`, `parser_pdf=809`, `import_pipeline=169`, `sectionizer=129`, `filesystem_io=54`. Decision: failed and reverted because the primary profiled combined decode+collection metric did not meet the >=5% expected delta and instead regressed. The retained production code returns to the #125 materialized text-only decoder path. Post-revert verification passed: `cargo fmt --all -- --check`, `cargo test -p parser-pdf --locked`, `cargo test -p import-pipeline parallel_parse_workers_record_pdf_and_post_parser_phase_timings --locked`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, and `rust-analyzer diagnostics .` with existing cfg inactive-code WeakWarnings only. #126 observe and failed/reverted comments are https://github.com/FrankQDWang/resume-ir/issues/126#issuecomment-4921237714 and https://github.com/FrankQDWang/resume-ir/issues/126#issuecomment-4921310339; #37 update is https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4921313194; #126 is closed as not planned; follow-up #127 is https://github.com/FrankQDWang/resume-ir/issues/127. | This is a failed/reverted L4 parser allocation hypothesis only. It does not close #37, retain #126 production code, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. #127 must start from fresh observe-before-act evidence and attribute residual parser allocation across token/string parsing, text byte decoding/ToUnicode, post-parser normalization, and ordered index-publication tail variance before another optimization. |
+| S679 | Issue #127 attributes residual PDF parser string/decode churn with bounded overhead | #127 started from fresh retained-code evidence on the same authorized private root after #126 rollback. Before clean B preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, 49 ignored, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget, 256 MiB writer heap, and 3 parser workers, measuring first-searchable `2369.630ms`, TTF100 `2753.629ms`, TTF1000 `5063.200ms`, full-import-ready/full-index-ready `35246.729ms`, scan `2200.942ms`, parse `31289.411ms`, DB `11639.583ms`, index `11667.399ms`, parse worker wall `31279.431ms`, active `39955.079ms`, queue wait `4851.763ms`, RSS `858177536`, stdout hash `a28a3cb169402433f1a25a2526495c4c5720055656f69c87fa6df7e23e583a6c`, status hash `978b9427a8e5d629f6d542451c321dde347073b859439696e8992e49867b7495`, and empty stderr. Before profile preserved counts/content bytes and measured first-searchable `2441.073ms`, TTF100 `2850.769ms`, TTF1000 `5430.654ms`, full-import-ready/full-index-ready `37685.721ms`, scan `2267.071ms`, parse `33772.871ms`, DB `12683.051ms`, index `11843.493ms`, parse worker wall `33761.915ms`, active `43090.898ms`, queue wait `4980.135ms`, RSS `704380928`, stdout hash `f1e53fc9447d322536347310c8b687017ec8d744b000796cbb7db3e1dafd583e`, status hash `532b778f703417c9168180d53aab4a740a3121844c8076cdafa2c42b85c92ae4`, and sanitized buckets `allocation=17856`, `rayon=35593`, `lopdf=20755`, `regex=1104`, `sqlite_db=2147`, `tantivy_index=6159`, `parser_pdf=1238`, `import_pipeline=115`, `sectionizer=151`, `filesystem_io=649`. RED `cargo test -p parser-pdf parse_with_timings_reports_text_extraction_subphases --locked` failed until parser-pdf exposed the new subphase fields/counters; RED `cargo test -p import-pipeline parallel_parse_workers_record_pdf_and_post_parser_phase_timings --locked` failed until worker aggregation exposed them; RED CLI fixture expectations failed until the public-safe output lines existed. GREEN adds first-sample timing plus exact counters for PDF content string parsing, text byte decoding, and text accumulation, aggregates those metrics through import-pipeline, and prints `pdf parse content string parse sampled ms`, `pdf parse text byte decode sampled ms`, `pdf parse text accumulation sampled ms`, `pdf parse content string operands`, `pdf parse content string bytes`, `pdf parse text decode runs`, and `pdf parse text decode input bytes` in CLI import output. After clean preserved counts/content bytes and measured first-searchable `2789.974ms`, TTF100 `3199.479ms`, TTF1000 `5760.674ms`, full-import-ready/full-index-ready `38416.738ms`, scan `2612.030ms`, parse `33931.120ms`, DB `12881.578ms`, index `13210.697ms`, parse worker wall `33920.020ms`, active `43124.905ms`, queue wait `4815.142ms`, RSS `884441088`, stdout hash `e3317276963de0df018d13c6a0a329d0e8323d017c2c70facd6da6f9379295b2`, status hash `129b120d89c33679c1972626b09db8f91980a1712d3f389462a716ccbfdc7e12`, PDF timings content decode `7878.490ms`, text collection `3959.277ms`, normalization `5873.272ms`, sectionization `474.974ms`, and exact counters content string operands `16989924`, content string bytes `44079187`, text decode runs `16555366`, and text decode input bytes `42008756`. After profile preserved counts/content bytes and measured first-searchable `2928.025ms`, TTF100 `3389.144ms`, TTF1000 `6205.536ms`, full-import-ready/full-index-ready `39555.877ms`, scan `2751.998ms`, parse `34958.177ms`, DB `13322.766ms`, index `13053.672ms`, parse worker wall `34946.960ms`, active `46036.551ms`, queue wait `5007.573ms`, RSS `816365568`, stdout hash `8ff95a1b7c856f8bf739a55848e26b4eaeeca412cd086b9cc2bc56538ef2dd26`, status hash `f533ef14e0a9bdd99604fe017f368e39d86962c344d2f7dc2eb64ac4a545f0a7`, PDF timings content decode `8471.374ms`, text collection `4331.883ms`, normalization `6321.731ms`, sectionization `507.242ms`, identical exact counters, and sanitized buckets `allocation=19025`, `rayon=35577`, `lopdf=21495`, `regex=1366`, `sqlite_db=2544`, `tantivy_index=6241`, `parser_pdf=1416`, `import_pipeline=137`, `sectionizer=210`, `filesystem_io=717`. Accepted movement: this is attribution, not a speed optimization. Clean lane showed expected variance across before clean A, before clean B, and final after clean; profile-to-profile full-import-ready stayed inside guard (`37685.721ms -> 39555.877ms`, +4.96%), parse worker wall stayed inside guard (`33761.915ms -> 34946.960ms`, +3.51%), counts stayed stable, stderr stayed empty, and RSS stayed below the H2 1536 MiB budget. Bottleneck attribution moved to high-volume tiny PDF string/decode churn plus existing allocation/lopdf/rayon pressure; the sampled/first-sample ms fields are target-selection evidence and not total worker time. Verification passed: `cargo fmt --all -- --check`, `cargo test -p parser-pdf parse_with_timings_reports_text_extraction_subphases --locked`, `cargo test -p import-pipeline parallel_parse_workers_record_pdf_and_post_parser_phase_timings --locked`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`, `cargo test -p parser-pdf --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics .`, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and `git diff --check`. #127 observe and completion comments are https://github.com/FrankQDWang/resume-ir/issues/127#issuecomment-4921374469 and https://github.com/FrankQDWang/resume-ir/issues/127#issuecomment-4921589294; #37 update is https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4921590563; #127 is closed; follow-up #128 is https://github.com/FrankQDWang/resume-ir/issues/128. | This is an L4 import parser attribution slice only. It closes #127 but does not close #37, optimize the parser wall time, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. #128 must start from fresh observe-before-act evidence and target one measured high-volume PDF text decode/string churn bottleneck or record why the bottleneck moved elsewhere. |
+| S680 | Issue #128 reduces PDF text decode append churn | #128 started from fresh retained-code evidence on the same authorized private root after #127. Before clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget, 256 MiB writer heap, and 3 parser workers, measuring first-searchable `2775.654ms`, TTF100 `3179.652ms`, TTF1000 `5466.138ms`, full-import-ready/full-index-ready `36711.660ms`, scan `2614.965ms`, parse `32438.166ms`, DB `12151.474ms`, index `11941.186ms`, parse worker wall `32428.065ms`, active `38408.774ms`, queue wait `4212.371ms`, RSS `900988928`, stdout hash `6de559e617ec9b17e5473baf9251c59ff43ca5ce56c6c7e83db10eb4fe187be3`, status hash `cbf1b6410f8204dccfceb7377edd84eb360cf936b760f3a6be6728e0214494a7`, PDF content decode `7127.952ms`, text collection `3575.294ms`, normalization `5414.053ms`, sectionization `431.187ms`, and exact counters content string operands `16989924`, content string bytes `44079187`, text decode runs `16555366`, and text decode input bytes `42008756`. Before profile preserved counts/content bytes and measured first-searchable `2292.111ms`, TTF100 `2685.440ms`, TTF1000 `4968.694ms`, full-import-ready/full-index-ready `35209.968ms`, scan `2136.636ms`, parse `31384.634ms`, DB `11825.343ms`, index `11565.175ms`, parse worker wall `31373.957ms`, active `39413.483ms`, queue wait `4462.603ms`, RSS `748699648`, stdout hash `e2a1acc624fd4b03ef10927ddfe8a6da6806c452e4368335ac971920864d94c0`, status hash `9a79b77bfd2e29519f870d26c27f520b730f4c8f029fb8c60d52c3ae6d0e9e45`, PDF content decode `7337.582ms`, text collection `3713.374ms`, normalization `5585.311ms`, sectionization `439.302ms`, identical exact counters, and sanitized buckets `allocation=229`, `rayon=5604`, `lopdf=2645`, `regex=476`, `sqlite_db=649`, `tantivy_index=675`, `parser_pdf=394`, `import_pipeline=82`, `sectionizer=65`, `filesystem_io=105`. RED `cargo test -p parser-pdf decode_text_bytes_into --locked` failed before implementation because `decode_text_bytes_into` did not exist. GREEN adds `decode_text_bytes_into`, switches production `collect_text_only_operands` to decode directly into the page buffer instead of allocating a temporary `String` per PDF text run, and rolls back partial writes on decode errors; the old return-`String` helper remains test-only for parity paths. After clean preserved counts/content bytes and measured first-searchable `2753.842ms`, TTF100 `3161.926ms`, TTF1000 `5479.865ms`, full-import-ready/full-index-ready `37968.808ms`, scan `2575.627ms`, parse `33719.148ms`, DB `12533.720ms`, index `11699.395ms`, parse worker wall `33707.054ms`, active `37790.771ms`, queue wait `3773.223ms`, RSS `870121472`, stdout hash `1acda804ccc999884db1a833ee31932fa8c65106fc0e422c7d342757448a40e6`, status hash `dc3162c88a3da7ed3db17ec5ea30fb729ba7aaff0fdd1165feac370114e2323b`, PDF content decode `7201.126ms`, text collection `2960.995ms`, normalization `5415.572ms`, sectionization `431.973ms`, and unchanged exact counters. After profile preserved counts/content bytes and measured first-searchable `2256.604ms`, TTF100 `2755.358ms`, TTF1000 `5042.737ms`, full-import-ready/full-index-ready `35429.364ms`, scan `2054.039ms`, parse `31658.104ms`, DB `11694.075ms`, index `11800.555ms`, parse worker wall `31647.495ms`, active `38706.200ms`, queue wait `4199.381ms`, RSS `839598080`, stdout hash `3fd63f9edd605727de756fd8af4c68f0476926fd2572c4c364e62d855f23dd97`, status hash `e58f6334cc254900fecfedda4115a13c78b4f3542596a2a9dd7f7f3be61e2406`, PDF content decode `7427.862ms`, text collection `3054.434ms`, normalization `5594.665ms`, sectionization `441.495ms`, unchanged exact counters, and sanitized buckets `allocation=212`, `rayon=4742`, `lopdf=2292`, `regex=447`, `sqlite_db=614`, `tantivy_index=744`, `parser_pdf=364`, `import_pipeline=91`, `sectionizer=79`, `filesystem_io=119`. Accepted movement: profiled `pdf parse text collection ms` improved `3713.374ms -> 3054.434ms` (-17.75%), combined `content decode + text collection` improved `11050.956ms -> 10482.296ms` (-5.15%), sanitized allocation improved `229 -> 212` (-7.4%), and sanitized parser_pdf improved `394 -> 364` (-7.6%). Counts stayed stable, stderr stayed empty, RSS stayed below the H2 1536 MiB budget, full-import-ready stayed inside guard (`35209.968ms -> 35429.364ms`, +0.62% profile), and parse worker wall stayed inside guard (`31373.957ms -> 31647.495ms`, +0.87% profile). Bottleneck moved away from decoded-text append churn toward PDF content decode/string operand materialization, post-parser normalization, and the existing index publication tail. Verification passed: `cargo fmt --all -- --check`, RED/GREEN `cargo test -p parser-pdf decode_text_bytes_into --locked`, `cargo test -p parser-pdf text_only_content_decoder_matches_lopdf_for_supported_text_operators --locked`, `cargo test -p parser-pdf --locked`, `cargo test -p import-pipeline parallel_parse_workers_record_pdf_and_post_parser_phase_timings --locked`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics .`, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and `git diff --check`. #128 observe and completion comments are https://github.com/FrankQDWang/resume-ir/issues/128#issuecomment-4921629096 and https://github.com/FrankQDWang/resume-ir/issues/128#issuecomment-4921708683; #37 update is https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4921710307; #128 is closed; follow-up #129 is https://github.com/FrankQDWang/resume-ir/issues/129. | This is an L4 import parser optimization slice only. It closes #128 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. #129 must start from fresh observe-before-act evidence and target residual PDF content string operand materialization or record why post-parser normalization has become the stronger next target. |
+| S673 | Issue #121 rejects image-XObject discard as insufficient parser optimization | #121 started from fresh current-code evidence on the same authorized private root after #120. Before clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget, 256 MiB index writer heap, and 3 parse workers, measuring docs/s `208.780`, MiB/s `80.798`, first-searchable `2527.961ms`, full-import-ready/full-index-ready `41766.359ms`, scan `2357.889ms`, parse `34871.068ms`, DB `13873.315ms`, index `12563.824ms`, queue wait `7272.104ms`, ps max RSS `824901632`, cancel checks `101297`, max gap `854.718ms` at `index_publication_commit`, phase timings setup `282.997ms`, documents `2173.844ms`, commit `4986.646ms`, plaintext validation `5.892ms`, encrypted publication `917.939ms`, encrypted validation `1235.094ms`, active snapshot `2.696ms`, stdout hash `9144c0b0580c27597391e7cfc3eddce71b52ee45f25170c300ec2f05210620d2`, and empty stderr. Before profile preserved counts/content bytes and measured full-import-ready `43287.827ms`, parse worker wall `36698.689ms`, parse worker active `61008.793ms`, parse prepare `5273.960ms`, DB `14291.678ms`, index `12933.527ms`, ps max RSS `902791168`, max gap `849.384ms` at `index_publication_commit`, phase timings commit `5167.110ms`, stdout hash `e8df7e86e645dc67986200aad48721f12abd7626bef0cf164b2907d4701b8c62`, and sanitized max sample nodes `rayon=19131`, `malloc=14364`, `lopdf=11418`, `tantivy=1104`, `parser_pdf=616`, `sqlite3_step=41`, `write_incremental_full_text_index=28`, `pwrite=17`, `fsync=16`, `FullTextIndex=15`, and `process_files_with_parse_workers=13`. RED `CARGO_INCREMENTAL=0 cargo test -p parser-pdf text_extraction_load --locked -- --nocapture` failed as expected after the focused tests were changed to require image XObject stream objects to be absent from the text-extraction load. GREEN changed the `lopdf` load filter to return `None` for image XObject stream objects, preserving text extraction on the synthetic text+image fixture. Attempted after clean preserved counts/content bytes and measured full-import-ready `41282.055ms`, parse worker wall `34375.803ms`, parse worker active `56179.112ms`, parse prepare `4938.615ms`, DB `13370.009ms`, index `12358.054ms`, ps max RSS `957972480`, max gap `776.147ms` at `index_publication_commit`, phase timings commit `4784.602ms`, and stdout hash `f2b5a2f7ee9a2a2e3a6b4d9ba4e4f52765ccab2daf4e37e49510f3d3146476d5`. Attempted after profile preserved counts/content bytes and measured full-import-ready `42200.989ms`, parse worker wall `35941.160ms`, parse worker active `59545.266ms`, parse prepare `5502.276ms`, DB `13946.130ms`, index `12464.503ms`, ps max RSS `928808960`, max gap `769.720ms` at `index_publication_commit`, phase timings commit `4777.892ms`, stdout hash `0e5ccd8cf1e3fefaaafdc697ef97c13081a5896a0d7ea1ef7f0777f798d7b471`, and sanitized max sample nodes `rayon=20975`, `malloc=15419`, `lopdf=12472`, `tantivy=1129`, `parser_pdf=658`, `sqlite3_step=47`, `write_incremental_full_text_index=27`, `pwrite=18`, `fsync=18`, `FullTextIndex=18`, and `process_files_with_parse_workers=15`. Decision: rejected and reverted because the declared `>=3%` parse wall/active delta was not met (`36698.689ms -> 35941.160ms`, -2.1%; `61008.793ms -> 59545.266ms`, -2.4%), sanitized `lopdf`/allocation buckets did not decline, and the parser hotspot remained. Post-revert verification passed: `cargo fmt --all -- --check`, `CARGO_INCREMENTAL=0 cargo test -p parser-pdf text_extraction_load --locked -- --nocapture`, `CARGO_INCREMENTAL=0 cargo test -p parser-pdf --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo check -p parser-pdf --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, and `rust-analyzer diagnostics .` with existing cfg inactive-code WeakWarnings only. #121 observe and completion comments are https://github.com/FrankQDWang/resume-ir/issues/121#issuecomment-4916273928 and https://github.com/FrankQDWang/resume-ir/issues/121#issuecomment-4916361034; #37 update is https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4916365121; #121 is closed as not planned; follow-up #122 is https://github.com/FrankQDWang/resume-ir/issues/122. | This is a failed/reverted L4 parser micro-optimization hypothesis only. It does not close #37, retain production code for #121, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. #122 must start from fresh evidence and add public-safe PDF parser subphase attribution before the next parser optimization, separating at least document load/object parsing, page content fetch, text-operator prefilter, font encoding/ToUnicode work, content stream decode, text collection/decoding, and post-parser normalization/sectionization. |
+| S672 | Issue #120 applies detected H2 writer-heap budget to current-import fulltext publication | #120 started from fresh current-code evidence on the same authorized private root after #119. Before clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget and 3 parse workers, measuring docs/s `202.515`, MiB/s `78.374`, first-searchable `2453.883ms`, TTF100 `2875.856ms`, TTF1000 `5746.693ms`, full-import-ready/full-index-ready `43058.485ms`, scan `2291.297ms`, parse `36028.809ms`, DB `13740.499ms`, index `13937.236ms`, queue wait `7241.139ms`, ps max RSS `979992576`, cancel checks `101296`, max gap `1082.527ms` at `index_publication_commit`, phase timings setup `304.108ms`, documents `2278.016ms`, commit `5926.297ms`, plaintext validation `7.292ms`, encrypted publication `963.437ms`, encrypted validation `1461.271ms`, active snapshot `2.831ms`, stdout hash `f043fb0918f7f0f6154d572f461ffa8ab08e985bbf652fbf51286cb77d7c330d`, and empty stderr. Before profile preserved counts/content bytes and measured full-import-ready `46105.059ms`, index `14772.316ms`, ps max RSS `1026785280`, max gap `1183.986ms` at `index_publication_commit`, phase timings documents `2418.855ms` and commit `6399.092ms`, stdout hash `8e34b3eb35c6f583499d21d53e22e105fbe73d33cc9f5e46e6b6bb2aceaa3a3c`, and sanitized max sample nodes `tantivy=2819`, `tantivy_segment=2833`, `fsync_ftruncate_write=359`, `rayon_wait=2649`, `lopdf_parser=14166`, `write_incremental_full_text_index=62`, `FullTextIndex::commit=15`, `tantivy_save_metas=47`, `tantivy_sync_directory=131`, `sqlite_commit=74`, `fsync=28`, and `pwrite=27`. RED `CARGO_INCREMENTAL=0 cargo test -p import-pipeline tests::import_resource_policy_classifies_hardware_tiers --locked -- --exact` failed because the policy/options did not expose `index_writer_heap_bytes`, and RED `CARGO_INCREMENTAL=0 cargo test -p resume-cli tests::import_parse_workers_argument_sets_direct_import_override --locked -- --exact` failed because CLI import options lacked the writer heap budget. GREEN adds `index_writer_heap_bytes` to `ImportResourcePolicy`, `ImportOptions`, and CLI import arguments; keeps H0/H1/H2 writer heaps at `64/128/256 MiB`; threads the selected budget into `SnapshotPublishControl`; and reports public-safe `import index writer heap MiB`. After clean preserved counts/content bytes and measured docs/s `209.323`, MiB/s `81.009`, first-searchable `2739.928ms`, TTF100 `3164.784ms`, TTF1000 `5989.370ms`, full-import-ready/full-index-ready `41658.049ms`, scan `2568.713ms`, parse `35223.340ms`, DB `13298.363ms`, index `12544.071ms`, queue wait `7349.002ms`, ps max RSS `769294336`, max gap `827.331ms` at `index_publication_commit`, phase timings documents `2152.290ms`, commit `4967.962ms`, encrypted publication `917.713ms`, encrypted validation `1252.817ms`, and stdout hash `ea64f4b89c2e7fac5fd1796a4dda2616eea7ca12c143bd71a8af85d4457bd9f5`. After profile preserved counts/content bytes and measured full-import-ready `44329.246ms`, index `13269.289ms`, ps max RSS `883621888`, max gap `837.119ms` at `index_publication_commit`, phase timings documents `2283.831ms`, commit `5346.859ms`, encrypted publication `956.484ms`, encrypted validation `1328.433ms`, stdout hash `4cdb28f62d6f15c5d018b57de24d6a69d451ff338da5626df49a26c34ca7da04`, and sanitized max sample nodes `import_root_with_options=3`, `process_files_with_parse_workers=19`, `commit_ready_import_file_results=26`, `finish_import_file=7`, `flush_pending_searchable_documents=10`, `write_incremental_full_text_index=51`, `FullTextIndex_commit=9`, `tantivy_save_metas=40`, `tantivy_sync_directory=106`, `sqlite_commit=85`, `tantivy=2542`, `tantivy_segment=2596`, `fsync_ftruncate_write=299`, `redact_contact_values_cow=20`, `replace_redaction=27`, `regex_backtracker=168`, `regex_pikevm=210`, `lopdf_parser=12821`, `sqlite3_step=76`, and `rayon_wait=2700`. Accepted movement: `index_publication_commit` improved `5926.297ms -> 4967.962ms` (-16.2%) clean and `6399.092ms -> 5346.859ms` (-16.4%) profiled; stage index improved `13937.236ms -> 12544.071ms` (-10.0%) clean and `14772.316ms -> 13269.289ms` (-10.2%) profiled; full-import-ready improved `43058.485ms -> 41658.049ms` (-3.3%) clean and `46105.059ms -> 44329.246ms` (-3.9%) profiled; max cancel gap improved `1082.527ms -> 827.331ms` (-23.6%) clean and `1183.986ms -> 837.119ms` (-29.3%) profiled, with stable counts and RSS below the H2 1536 MiB budget. Verification passed: `cargo fmt --all -- --check`, RED/GREEN focused import-pipeline and resume-cli tests, `CARGO_INCREMENTAL=0 cargo test -p index-fulltext --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo test -p import-pipeline --lib --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `CARGO_INCREMENTAL=0 cargo check -p index-fulltext -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics .` with existing cfg inactive-code WeakWarnings only, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and focused `git diff --check`. #120 observe and completion comments are https://github.com/FrankQDWang/resume-ir/issues/120#issuecomment-4915823648 and https://github.com/FrankQDWang/resume-ir/issues/120#issuecomment-4916173041; #37 update is https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4916176726; #120 is closed; follow-up #121 is https://github.com/FrankQDWang/resume-ir/issues/121. | This is an L2/L4 import index-publication writer-budget slice only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. The writer-heap budget reduced `index_publication_commit`, but the after profile still shows full-import-ready `44329.246ms`, parse `38021.337ms`, DB `14380.212ms`, index `13269.289ms`, and remaining sanitized hotspots around `lopdf_parser`, `tantivy_segment`/`tantivy`, `rayon_wait`, and sync/write buckets; #121 must start from fresh evidence and choose one next primary bottleneck across parser CPU/input decode, ordered writer/DB/index publication, and early milestone variance. |
+| S671 | Issue #119 skips redundant redaction for trusted current-import fulltext publication | #119 started from fresh current-code evidence on the same authorized private root after #118. Before clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget and 3 parse workers, measuring docs/s `170.917`, MiB/s `66.145`, first-searchable `2676.686ms`, TTF100 `3084.484ms`, TTF1000 `6133.489ms`, full-import-ready/full-index-ready `51019.038ms`, scan `2512.732ms`, parse `40999.752ms`, DB `13036.495ms`, index `23091.836ms`, queue wait `7320.360ms`, ps max RSS `894189568`, cancel checks `101296`, max gap `476.877ms` at `index_publication_commit`, phase timings setup `288.160ms`, documents `14144.561ms`, commit `3198.825ms`, plaintext validation `5.222ms`, encrypted publication `981.015ms`, encrypted validation `1456.530ms`, active snapshot `2.544ms`, stdout hash `924b0e72805a45fdbc676913e7fa78791f658749fa55f7c587926c0aa9d3b954`, and empty stderr. Before profile preserved counts/content bytes and measured full-import-ready `55340.130ms`, index `24112.679ms`, ps max RSS `976551936`, max gap `523.212ms` at `index_publication_commit`, phase timings documents `14869.151ms` and commit `3311.279ms`, stdout hash `0335db9668d947d3ed97bbc1256b47e3df33a72171163b3a412bf13111386d8d`, and sanitized max sample nodes `write_incremental_full_text_index=6228`, `redact_contact_values_cow=5717`, `replace_redaction=5716`, `tantivy=2284`, `parser_pdf_extract_text_layer=3138`, `lopdf_parser=4895`, and `sqlite3_step=2070`. RED `CARGO_INCREMENTAL=0 cargo test -p index-fulltext tests::trusted_redacted_snapshot_publish_skips_redundant_redaction_passes --locked -- --exact` failed because `publish_trusted_redacted_snapshot_with_control` did not exist. GREEN adds an explicit trusted-redacted snapshot publication path in `index-fulltext`, preserves ordinary snapshot publication redaction behavior, and switches only the current-import cached fulltext publication path in `import-pipeline` to the trusted-redacted publisher because cached documents are already redacted before retention. After clean preserved counts/content bytes and measured docs/s `208.197`, MiB/s `80.573`, first-searchable `2779.112ms`, TTF100 `3207.144ms`, TTF1000 `5993.991ms`, full-import-ready/full-index-ready `41883.438ms`, scan `2605.287ms`, parse `34895.072ms`, DB `13131.907ms`, index `13313.925ms`, queue wait `7372.742ms`, ps max RSS `941752320`, max gap `993.512ms` at `index_publication_commit`, phase timings documents `2166.455ms`, commit `5537.980ms`, encrypted publication `935.647ms`, encrypted validation `1415.395ms`, and stdout hash `33c2dc6269210f44ad08dcba64484f29752c94dd1f41b6d925cbfe1479fb868d`. After profile preserved counts/content bytes and measured full-import-ready `45224.165ms`, index `14189.026ms`, ps max RSS `907853824`, max gap `981.324ms` at `index_publication_commit`, phase timings documents `2370.881ms`, commit `5822.422ms`, encrypted publication `984.392ms`, encrypted validation `1515.361ms`, stdout hash `62976de86d430dc1524b8ef90cff8588b12ba035b98cb5e3cc1a78a1b2a713c2`, and sanitized max sample nodes `write_incremental_full_text_index=2407`, `redact_contact_values_cow=1406`, `replace_redaction=802`, `tantivy=1153`, `parser_pdf_extract_text_layer=2749`, `lopdf_parser=4421`, and `sqlite3_step=1817`. Accepted movement: `index_publication_documents` improved `14144.561ms -> 2166.455ms` (-84.7%) clean and `14869.151ms -> 2370.881ms` (-84.1%) profiled; full-import-ready improved `51019.038ms -> 41883.438ms` (-17.9%) clean and `55340.130ms -> 45224.165ms` (-18.3%) profiled; stage index improved `23091.836ms -> 13313.925ms` (-42.3%) clean and `24112.679ms -> 14189.026ms` (-41.2%) profiled, with stable counts and RSS under the H2 1536 MiB budget. Verification passed: `cargo fmt --all -- --check`, RED/GREEN trusted-redacted focused test, `CARGO_INCREMENTAL=0 cargo test -p import-pipeline current_import_index_cache --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo test -p index-fulltext --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo test -p import-pipeline --lib --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `CARGO_INCREMENTAL=0 cargo check -p index-fulltext -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics .` with existing cfg inactive-code WeakWarnings only, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and focused `git diff --check`. #119 observe and completion comments are https://github.com/FrankQDWang/resume-ir/issues/119#issuecomment-4915583772 and https://github.com/FrankQDWang/resume-ir/issues/119#issuecomment-4915701978; #37 update is https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4915705248; #119 is closed; follow-up #120 is https://github.com/FrankQDWang/resume-ir/issues/120. | This is an L4 import index-publication document-construction/redaction slice only. It does not close #37, optimize `index_publication_commit`, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. The bottleneck moved to `index_publication_commit`, and cancel max gap also remains/worsens there around `981-994ms`; #120 must start from fresh evidence around Tantivy commit duration, fsync/write behavior, writer mode, segment count, snapshot size, and whether commit latency is project-owned or IO/Tantivy-bound. |
+| S670 | Issue #118 adds snapshot publication phase elapsed evidence | #118 started from fresh current-code evidence on the same authorized private root after #117. Before clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget and 3 parse workers, measuring docs/s `168.184`, MiB/s `65.088`, first-searchable `2742.082ms`, TTF100 `3180.030ms`, TTF1000 `6490.465ms`, full-import-ready/full-index-ready `51847.889ms`, scan `2579.296ms`, parse `41784.267ms`, DB `13578.129ms`, index `23044.242ms`, queue wait `7648.876ms`, ps max RSS `921796608`, cancel checks `101296`, max gap `500.053ms` at `index_publication_commit`, stdout hash `6a235650ccab1794ea36a454851c81a1bc3dfe914600bd0116becd4d02ad5530`, and empty stderr. Before profile preserved counts/content bytes and measured full-import-ready `55675.622ms`, index `24038.515ms`, queue wait `8524.431ms`, ps max RSS `892665856`, cancel checks `101297`, max gap `518.158ms` at `index_publication_commit`, stdout hash `4cbef3f9e7efb9c2f765a6e98463fcac5cf8e19f2550bc79ab65f81c7709c731`, and sanitized buckets `allocation=26226`, `lopdf_object_parser=18839`, `filesystem_io=8842`, `index_publication=2905`, `redaction_regex=1501`, `parser_pdf=833`, `scheduler_wait=728`, `db_sqlite=338`, `cancel_polling=0`. RED `CARGO_INCREMENTAL=0 cargo test -p index-fulltext tests::snapshot_publish_control_reports_publication_phase_timings --locked -- --exact` failed because `with_phase_timing_observer` did not exist. RED `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact` failed because CLI import output lacked snapshot publication phase elapsed lines. GREEN adds `SnapshotPublishControl::with_phase_timing_observer`, measures setup, document indexing, Tantivy commit, plaintext validation, encrypted publication, encrypted validation, and active snapshot write inside `publish_snapshot_documents_with_control`, threads the aggregate into `ImportWorkerMetrics`, and prints public-safe `index publication ... ms` lines in CLI import output without changing import semantics, worker counts, writer mode, or privacy redaction. After clean preserved counts/content bytes and measured docs/s `171.034`, MiB/s `66.191`, first-searchable `2741.356ms`, TTF100 `3157.654ms`, TTF1000 `6303.131ms`, full-import-ready/full-index-ready `50983.876ms`, scan `2574.820ms`, parse `40791.272ms`, DB `13155.709ms`, index `22881.782ms`, queue wait `7548.370ms`, ps max RSS `887881728`, cancel checks `101296`, max gap `490.513ms` at `index_publication_commit`, stdout hash `aea0e77c20bc73fddf2aa24f49cae1a5fc52fde586bdbcc47aabc608cc2b323f`, and phase elapsed timings setup `287.652ms`, documents `14068.019ms`, commit `3129.769ms`, plaintext validation `5.753ms`, encrypted publication `958.468ms`, encrypted validation `1421.782ms`, active snapshot `2.596ms`. After profile preserved counts/content bytes and measured full-import-ready `54015.134ms`, index `23877.582ms`, queue wait `8280.297ms`, ps max RSS `960954368`, cancel checks `101296`, max gap `490.843ms` at `index_publication_commit`, stdout hash `b365c1d29284dbfa474d224e050422b7b488115fe0a74ec2378dc5ff32215e7f`, phase elapsed timings setup `283.656ms`, documents `14815.879ms`, commit `3262.819ms`, plaintext validation `6.209ms`, encrypted publication `950.655ms`, encrypted validation `1424.658ms`, active snapshot `2.804ms`, and sanitized buckets `allocation=26179`, `lopdf_object_parser=18660`, `filesystem_io=8961`, `index_publication=2748`, `redaction_regex=1477`, `parser_pdf=837`, `scheduler_wait=757`, `db_sqlite=323`, `cancel_polling=0`. Accepted movement: this is an observability/attribution slice, not a wall-time optimization. The max cancel-gap phase remains `index_publication_commit`, but elapsed publication evidence shows `index_publication_documents` dominates publication time (`14068.019/14815.879ms`) rather than commit alone (`3129.769/3262.819ms`), while encrypted publication+validation is about `2376ms`. Counts stayed stable, clean full-import-ready and stage index moved slightly down, clean RSS improved, and comparable profile RSS stayed within rollback guard (`892665856 -> 960954368`, +7.6%) and below the H2 1536 MiB budget. Verification passed: `cargo fmt --all -- --check`, `CARGO_INCREMENTAL=0 cargo test -p index-fulltext --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo test -p import-pipeline --lib --locked -- --test-threads=1` after a transient isolated legacy-doc test failure reproduced cleanly as pass, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `CARGO_INCREMENTAL=0 cargo check -p index-fulltext -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics .` with existing cfg inactive-code WeakWarnings only, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and focused `git diff --check`. #118 observe and completion comments are https://github.com/FrankQDWang/resume-ir/issues/118#issuecomment-4915274475 and https://github.com/FrankQDWang/resume-ir/issues/118#issuecomment-4915444655; #37 update is https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4915447123; #118 is closed; follow-up #119 is https://github.com/FrankQDWang/resume-ir/issues/119. | This is an L2/L4 observability slice only. It does not close #37, optimize `index_publication_documents`, optimize Tantivy commit, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. #119 must start from fresh evidence around `index_publication_documents`: add-document/redaction cost, section/body payload aggregate, writer mode, document/section counts, current-import cache behavior, and whether Tantivy writer work or project-owned pre-index work dominates. |
+| S669 | Issue #117 splits `index_publication` cancel-gap attribution | #117 followed the reverted #116 per-document cancel-check hypothesis and did no performance fix before adding attribution. Fresh before clean evidence on the same authorized private root preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget and 3 parse workers, measuring docs/s `166.648`, MiB/s `64.493`, first-searchable `2917.295ms`, TTF100 `3360.529ms`, TTF1000 `6642.934ms`, full-import-ready `52325.935ms`, full-index-ready `52325.935ms`, scan `2738.986ms`, parse `41915.831ms`, DB `13789.259ms`, index `23229.490ms`, queue wait `7651.363ms`, cancel checks `101296`, max gap `493.257ms` at coarse `index_publication`, ps max RSS `895959040`, stdout hash `4f7a4d68664f8c3088cf4abc150ba3cf55e900c10af2b06b424f37bc2c9472c7`, and empty stderr. The paired before profile preserved counts/content bytes and measured full-import-ready `56815.300ms`, index `24758.945ms`, queue wait `8916.589ms`, cancel checks `101296`, max gap `611.249ms` at coarse `index_publication`, ps max RSS `855195648`, sanitized buckets `allocation=29555`, `lopdf_object_parser=20339`, `filesystem_io=9450`, `index_publication=2964`, `redaction_regex=1594`, `parser_pdf=885`, `scheduler_wait=810`, `db_sqlite=335`; raw profiler output and raw profiler file hash stayed local-only. RED `CARGO_INCREMENTAL=0 cargo test -p index-fulltext snapshot_publish_control_reports_publication_subphases --locked -- --exact` failed because `SnapshotPublishPhase` and `with_phase_observer` did not exist. GREEN adds public-safe `SnapshotPublishPhase` labels, a phase observer on `SnapshotPublishControl`, and import-pipeline mapping to `ImportCancelCheckPhase` subphase labels for setup, document indexing, Tantivy commit, plaintext validation, encrypted publication, encrypted validation, and active-snapshot pointer write. Focused GREEN tests passed for `tests::snapshot_publish_control_reports_publication_subphases` and `tests::snapshot_publish_phases_map_to_import_cancel_subphase_labels`. After clean A preserved counts/content bytes and measured first-searchable `2912.788ms`, TTF100 `3369.263ms`, TTF1000 `6529.402ms`, full-import-ready `52317.585ms`, index `23102.505ms`, queue wait `7260.600ms`, ps max RSS `1022820352`, cancel checks `101296`, max gap `505.226ms` at `index_publication_commit`, stdout hash `04531addf2ed44f8cd1e07468066f707e89181751c2b348debc6ee0a8333f609`, and empty stderr. After clean B preserved counts/content bytes and measured first-searchable `2501.945ms`, TTF100 `2941.672ms`, TTF1000 `5985.061ms`, full-import-ready `52795.429ms`, index `22984.471ms`, queue wait `7530.696ms`, ps max RSS `991707136`, cancel checks `101296`, max gap `510.283ms` at `index_publication_commit`, stdout hash `6f4c344561cec350db424a3a78e21d5712bcfc28bb7863d358b15f537bc61960`, and empty stderr. The after profile preserved counts/content bytes and measured full-import-ready `54709.496ms`, index `23744.530ms`, queue wait `8346.771ms`, ps max RSS `932102144`, cancel checks `101296`, max gap `534.965ms` at `index_publication_commit`, stdout hash `d3e34e58b34297eb87415d28661d37f9799f577aa5424647c8777395733eb9a1`, sanitized buckets `allocation=25408`, `lopdf_object_parser=18198`, `filesystem_io=8935`, `index_publication=2721`, `redaction_regex=1523`, `parser_pdf=765`, `scheduler_wait=720`, `db_sqlite=332`; sanitized symbols included `publish_snapshot_documents_with_control=22`, `FullTextIndex::replace_documents_with_control=30`, `write_incremental_full_text_index=10`, `flush_pending_searchable_documents=12`, `commit_ready_import_file_results=23`, `finish_import_file=11`, `parse_worker_loop=46`, `parser_pdf::extract_text_layer=85`, `redact_contact_values_cow=58`, `replace_redaction=47`, and `sqlite3_step=71`. Accepted movement: the primary metric moved from coarse `index_publication` to `index_publication_commit` in all three after runs with stable counts and stable full-import-ready (`52325.935ms -> 52317.585/52795.429ms` clean; sampled `56815.300ms -> 54709.496ms`). Clean RSS rose versus the single before clean sample but remained below the H2 1536 MiB budget, and the comparable sampled profile RSS stayed within the 10% guard (`855195648 -> 932102144`, +9.0%). Verification passed: `CARGO_INCREMENTAL=0 cargo test -p index-fulltext --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo test -p import-pipeline --lib --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `CARGO_INCREMENTAL=0 cargo check -p index-fulltext -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `cargo fmt --all -- --check`, `rust-analyzer diagnostics .` with only existing cfg inactive-code WeakWarnings, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and focused `git diff --check`. #117 observe and completion comments are https://github.com/FrankQDWang/resume-ir/issues/117#issuecomment-4914974890 and https://github.com/FrankQDWang/resume-ir/issues/117#issuecomment-4915163592; #37 update is https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4915166979; #117 is closed; follow-up #118 is https://github.com/FrankQDWang/resume-ir/issues/118. | This is an L2/L4 attribution slice only. It does not close #37, optimize Tantivy commit, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. #118 must start from fresh evidence around `index_publication_commit`: Tantivy commit duration, fsync/write behavior, writer mode, segment count, snapshot size, cancel observability, and whether commit latency or surrounding encrypted publication is project-owned enough to optimize. |
+| S668 | Issue #116 rejects per-document snapshot cancel checks and reverts | #116 followed #115's redaction-cache improvement and reprofiled the remaining `index_publication` cancel tail before implementation. The fresh clean baseline preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget and 3 parse workers, measuring docs/s `173.951`, MiB/s `67.320`, first-searchable `2495.615ms`, TTF100 `2915.607ms`, TTF1000 `5896.252ms`, full-import-ready `50128.991ms`, full-index-ready `50128.991ms`, scan `2323.757ms`, parse `40329.715ms`, DB `13018.779ms`, index `22318.413ms`, queue wait `7196.858ms`, cancel checks `101296`, max gap `466.028ms` at `index_publication`, ps max RSS `821739520`, stdout hash `45d9382812800812f226db747ea137595a357f9058c641dce2a4c4055ac22a26`, and empty stderr. The paired path-free profile preserved counts/content bytes and measured full-import-ready `53602.513ms`, index `23533.362ms`, queue wait `7849.286ms`, cancel checks `101296`, max gap `476.672ms` at `index_publication`, ps max RSS `833028096`, and sanitized buckets `allocation=13261`, `lopdf_object_parser=10710`, `scheduler_wait=3875`, `db_sqlite=2574`, `index_publication=2242`, `redaction_regex=1261`, `parser_pdf=693`, `filesystem_io=572`, `cancel_polling=14`; sanitized symbols included `publish_snapshot_documents_with_control=27`, `FullTextIndex::replace_documents_with_control=34`, `write_incremental_full_text_index=9`, `flush_pending_searchable_documents=13`, `commit_ready_import_file_results=23`, `finish_import_file=9`, `parse_worker_loop=46`, `parser_pdf::extract_text_layer=85`, `redact_contact_values_cow=56`, `replace_redaction=47`, `sqlite3_step=76`, `lopdf::_direct_object=2860`, `lopdf::_dictionary=2533`, and `lopdf::_indirect_object=2465`. The bounded hypothesis was that `SnapshotPublishControl` checking every 8 documents left avoidable cancel latency during controlled snapshot indexing, so #116 tried checking after every indexed document. RED `CARGO_INCREMENTAL=0 cargo test -p index-fulltext tests::snapshot_publish_control_checks_each_document --locked -- --exact` failed with `snapshot publication checked cancellation less often than document count`; GREEN passed that new test and the existing cancellation test. Same-root after A with the attempted change preserved counts/content bytes and measured full-import-ready `50695.216ms`, index `22615.142ms`, TTF1000 `6170.082ms`, ps max RSS `881000448`, cancel checks `140688`, max gap `481.660ms` at `index_publication`, stdout hash `5bc2eb34eb47c8d18ccc2a9597e68a2f7db5d2dbe1a061b6c908ebe91f3dab1a`, and empty stderr. After B preserved counts/content bytes and measured full-import-ready `50368.651ms`, index `22444.933ms`, TTF1000 `5898.543ms`, ps max RSS `953171968`, cancel checks `140688`, max gap `468.801ms` at `index_publication`, stdout hash `5c5b633bca6d8417e40f8552439782527def67a8ee9d04010ac2c5844648df18`, and empty stderr. Decision: rejected and reverted because the primary cancel metric did not improve (`466.028ms -> 481.660/468.801ms`), the max-gap phase stayed `index_publication`, and RSS variance increased; no #116 Rust/test change is retained. Rollback verification passed `CARGO_INCREMENTAL=0 cargo test -p index-fulltext tests::snapshot_publish_control_cancels_between_documents --locked -- --exact` and `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`. #116 observe and completion comments are https://github.com/FrankQDWang/resume-ir/issues/116#issuecomment-4914827073 and https://github.com/FrankQDWang/resume-ir/issues/116#issuecomment-4914872679; #116 was closed as not planned, and follow-up #117 was opened at https://github.com/FrankQDWang/resume-ir/issues/117. | This is a failed/reverted L2 cancel-latency hypothesis only. It does not close #37, retain production code, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. The result proves the remaining max gap is not primarily solved by per-document cancel checks and needs #117 subphase attribution across document indexing, Tantivy commit, plaintext validation, encryption/staging publication, encrypted validation, and active-snapshot pointer write before another implementation. |
+| S667 | Issue #115 caches redacted current-import fulltext documents | #115 followed #114's retained-object/RSS improvement and reprofiled ordered fulltext publication before changing code. The fresh clean baseline preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget and 3 parse workers, measuring docs/s `161.186`, MiB/s `62.379`, first-searchable `2690.546ms`, TTF100 `3095.179ms`, TTF1000 `6001.798ms`, full-import-ready `54098.954ms`, full-index-ready `54098.953ms`, scan `2508.495ms`, parse `42591.259ms`, DB `13672.814ms`, index `24881.281ms`, queue wait `6588.338ms`, max gap `420.740ms` at `index_publication`, ps max RSS `1011613696`, stdout hash `44d08c332a13fb1a49edabcf8f334d154c3be9129d3118bdcd9d6b589743e73a`, and empty stderr. The paired path-free profile preserved counts/content bytes and measured docs/s `150.887`, MiB/s `58.394`, first-searchable `2561.427ms`, TTF100 `2967.130ms`, TTF1000 `6065.172ms`, full-import-ready `57791.473ms`, scan `2386.282ms`, parse `45733.992ms`, DB `14626.327ms`, index `26318.532ms`, queue wait `7729.017ms`, max gap `460.808ms` at `index_publication`, ps max RSS `852721664`, and sanitized weighted symbols led by `parse_worker_loop`, `import_root_with_options`, `process_files_with_parse_workers`, `PdfParser::parse`, `parser_pdf::extract_text_layer`, `commit_ready_import_file_results`, `flush_pending_searchable_documents`, `write_incremental_full_text_index`, `index_fulltext::publish_snapshot_documents_with_control`, `index_fulltext::redact_contact_values_cow`, `index_fulltext::replace_redaction`, and `regex_automata::Core::search_nofail`. The bounded L4 hypothesis was that current-import milestone and final fulltext publications repeatedly re-redacted cached documents, so the import cache should retain already-redacted `file_name` and `clean_text` while preserving the stored-index privacy contract. RED `CARGO_INCREMENTAL=0 cargo test -p import-pipeline tests::current_import_index_cache_redacts_contact_text_before_retaining --locked -- --exact` failed because cached documents retained contact text. GREEN routes `CachedIndexDocument::from_index_document` through `redact_contact_values` for retained `file_name` and `clean_text`, leaving flush cadence, index APIs, stored redaction behavior, and milestones unchanged. Clean after A preserved counts/content bytes and measured docs/s `174.672`, MiB/s `67.598`, first-searchable `2747.825ms`, TTF100 `3156.587ms`, TTF1000 `6264.543ms`, full-import-ready `49922.114ms`, scan `2574.718ms`, parse `39874.960ms`, DB `12693.648ms`, index `22527.645ms`, queue wait `7248.858ms`, max gap `467.540ms` at `index_publication`, ps max RSS `924123136`, stdout hash `6ed54adf05995fae577fbdfa01b17aeca7ba9c8672df73c50f1060382395912c`, and empty stderr. Clean after B preserved counts/content bytes and measured docs/s `172.035`, MiB/s `66.578`, first-searchable `2431.013ms`, TTF100 `2848.810ms`, TTF1000 `5803.198ms`, full-import-ready `50687.308ms`, scan `2257.968ms`, parse `41072.849ms`, DB `13243.760ms`, index `22513.884ms`, queue wait `6778.505ms`, max gap `467.533ms` at `index_publication`, ps max RSS `929792000`, stdout hash `5bf51ff5dec7218f41030fd075b05e8fecdaeff789e84ec63ce241445b175901`, and empty stderr. Accepted movement: clean full-import-ready improved `54098.954 -> 49922.114ms` (-7.7%) and confirmed at `50687.308ms` (-6.3%); index improved `24881.281 -> 22527.645ms` (-9.5%) and confirmed at `22513.884ms` (-9.5%); clean RSS improved `1011613696 -> 924123136` (-8.65%) and confirmed at `929792000` (-8.09%); TTF1000 after A was +4.4% within guard and after B improved -3.3%. The after profile preserved counts/content bytes and measured full-import-ready `53175.113ms`, index `23544.612ms`, ps max RSS `949829632`, while weighted symbols moved `index_fulltext::publish_snapshot_documents_with_control` `8397 -> 6636` (-21%), `index_fulltext::redact_contact_values_cow` `6940 -> 5900` (-15%), `index_fulltext::replace_redaction` `6798 -> 5666` (-16.6%), `regex_automata::Core::search_nofail` `6715 -> 5590` (-16.8%), and `FullTextIndex::replace_documents_with_control` `6423 -> 4622` (-28%). Verification passed: focused RED/GREEN import-cache test, `CARGO_INCREMENTAL=0 cargo test -p import-pipeline current_import_index_cache --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo test -p import-pipeline --lib --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo test -p index-fulltext --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `CARGO_INCREMENTAL=0 cargo check -p import-pipeline -p index-fulltext -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, and `cargo fmt --all -- --check`. | This is an L4 current-import fulltext redaction-cache slice only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. The main index/redaction work moved, but `index_publication` cancel-gap did not improve (`420.740ms -> 467.540/467.533ms`, sampled after `523.725ms`), so the next issue must start from fresh profiling across ordered DB/index publication, cancel checkpoints, parser CPU, and input/decode variance before another implementation. |
+| S666 | Issue #114 clears PDF image streams during LoPDF load filtering | #114 followed #113's evidence-only parser/allocation selection and implemented a bounded parser RSS/retained-object slice. RED `CARGO_INCREMENTAL=0 cargo test -p parser-pdf text_extraction_load_filter_clears_image_stream_content --locked -- --exact` failed because `filter_text_extraction_object` did not exist. GREEN loads PDFs for text extraction with `LoPdfDocument::load_mem_with_options(... LoadOptions::with_filter(...))`, clears `/Subtype /Image` stream content during load while preserving dictionaries, removes the post-load whole-document image stream clearing pass, and keeps existing text+image extraction and OCR-required behavior. The focused GREEN test `CARGO_INCREMENTAL=0 cargo test -p parser-pdf tests::text_extraction_load_filter_clears_image_stream_content --locked -- --exact` passed. Full focused verification passed: `CARGO_INCREMENTAL=0 cargo test -p parser-pdf --locked`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `CARGO_INCREMENTAL=0 cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `cargo fmt --all -- --check`, and `rust-analyzer diagnostics .` with only existing cfg inactive-code WeakWarnings. The #113 clean before baseline preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget and 3 parse workers, measuring first-searchable `2676.928ms`, TTF100 `3054.407ms`, TTF1000 `5827.724ms`, full-import-ready `52570.813ms`, parse `41152.311ms`, DB `12901.496ms`, index `24944.679ms`, queue wait `6945.052ms`, max gap `439.907ms` at `index_publication`, and ps max RSS `956334080`. Clean after A preserved counts/content bytes and measured first-searchable `2869.341ms`, TTF100 `3249.075ms`, TTF1000 `5974.444ms`, full-import-ready `52768.066ms`, parse `41131.540ms`, DB `13098.008ms`, index `24721.438ms`, queue wait `7264.467ms`, max gap `415.429ms` at `index_publication`, ps max RSS `834813952`, stdout hash `9dc7670e56ab1ca64a33c9a9b6b8a58f05926bc3376ed5451665037beef652ea`, and empty stderr. Clean after B preserved counts/content bytes and measured first-searchable `2544.483ms`, TTF100 `2943.244ms`, TTF1000 `5808.423ms`, full-import-ready `53139.751ms`, parse `41763.506ms`, DB `13286.987ms`, index `24972.511ms`, queue wait `7287.684ms`, max gap `420.199ms` at `index_publication`, ps max RSS `886046720`, stdout hash `90502dad49963be9802705a745e52304ce204d53f446598d80c18c16a45b1c90`, and empty stderr. Accepted movement: clean RSS improved `956334080 -> 834813952` (-12.7%) and confirmed at `886046720` (-7.35%), while counts stayed stable and full-import-ready stayed within guard at +0.4% and +1.1%; early first-searchable/TTF100 variance in after A did not persist in after B. The after path-free profile preserved counts/content bytes and measured first-searchable `2601.838ms`, TTF100 `3012.266ms`, TTF1000 `6275.460ms`, full-import-ready `57779.207ms`, parse `46043.838ms`, DB `14707.437ms`, index `26414.129ms`, queue wait `8753.992ms`, max gap `461.476ms` at `index_publication`, ps max RSS `989036544`, buckets `lopdf_object_parser=15911`, `scheduler_wait=6927`, `index_fulltext=5082`, `db_sqlite=3508`, `redaction_regex=1881`, `text_rules=1192`, `filesystem_io=762`, `parser_pdf_post_load=933`, `parser_pdf_page_content=190`, `allocation=202`, `lopdf_document_load=57`, and stdout hash `35514e2a5e0290e877bb764271619146d6a39ed9203f333f851af2b2f5aadd2a`; this sampled run is retained for attribution, not as the RSS comparator, because sampler overhead/variance inflated RSS above clean runs. #114 was closed with completion comment https://github.com/FrankQDWang/resume-ir/issues/114#issuecomment-4914482496, #37 was updated at https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4914490292, and follow-up #115 was opened at https://github.com/FrankQDWang/resume-ir/issues/115. | This is an L4 parser RSS/retained-object slice only. It does not close #37, claim LoPDF parser CPU removal, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. Remaining evidence points to dependency-level LoPDF object parse CPU, scheduler wait, ordered DB/fulltext publication tail, and `index_publication` cancel-gap variance; #115 must start from fresh ordered-publication profiling before choosing another implementation. |
+| S665 | Issue #113 closes as LoPDF parser/allocation evidence-only selection | #113 reran the same authorized private root after #112 and made no production code changes. The fresh unsampled baseline preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget and 3 parse workers, measuring docs/s `165.872`, MiB/s `64.193`, first-searchable `2676.928ms`, TTF100 `3054.407ms`, TTF1000 `5827.724ms`, full-import-ready `52570.813ms`, full-index-ready `52570.812ms`, scan `2490.592ms`, parse `41152.311ms`, DB `12901.496ms`, index `24944.679ms`, parse worker wall `41138.358ms`, parse worker active `52261.628ms`, queue full events `2987`, queue wait `6945.052ms`, result wait `26.003ms`, max gap `439.907ms` at `index_publication`, 250 RSS samples, ps max RSS `956334080`, stdout hash `fe6b6d12bd31039c52f558ae6a11ff18771a21bbfff7643e31a324049a8111bb`, and empty stderr. The paired path-free profile preserved counts/content bytes and measured docs/s `152.880`, MiB/s `59.165`, first-searchable `2582.769ms`, TTF100 `2989.666ms`, TTF1000 `6352.421ms`, full-import-ready `57038.148ms`, full-index-ready `57038.147ms`, scan `2415.522ms`, parse `45348.317ms`, DB `14430.808ms`, index `26168.157ms`, parse worker wall `45337.175ms`, parse worker active `63551.160ms`, queue full events `3340`, queue wait `8715.770ms`, result wait `42.919ms`, max gap `467.653ms` at `index_publication`, 272 RSS samples, ps max RSS `931774464`, stdout hash `57a1c1846a51c892d7b06b45006ed6498b4bcb7f1eeed56e45fb631630a07982`, and empty stderr. Sanitized profile buckets were `lopdf_object_parser=16144`, `scheduler_wait=5698`, `index_fulltext=4823`, `db_sqlite=3465`, `redaction_regex=1999`, `text_rules=1210`, `filesystem_io=711`, `import_pipeline=282`, `parser_pdf_page_content=210`, `allocation=185`, `lopdf_document_load=52`, `parser_pdf_font_decode=0`, and `parser_pdf_post_load=0`. Path-free symbols were led by `lopdf::parser::_direct_object`, `_dictionary`, `_indirect_object`, and `name`, while project-owned `parser_pdf` symbols were much smaller. LoPDF source inspection showed `LoadOptions::with_filter` is invoked after `read_object` parses each object, so #113 did not implement a parser CPU change and instead closed as evidence-only at https://github.com/FrankQDWang/resume-ir/issues/113#issuecomment-4914351651. #37 was updated at https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4914360756, and follow-up #114 was opened at https://github.com/FrankQDWang/resume-ir/issues/114 to evaluate load-time image stream filtering for parser RSS/retained-object behavior. | This is an L4 parser/allocation observe/selection slice only. It does not close #37, change production code, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. Remaining evidence points to dependency-level LoPDF object parse CPU, ordered DB/fulltext publication tail, scheduler wait, and RSS/retained-object experiments; #114 must start from fresh before/after evidence and must not promise LoPDF object parser CPU reduction from a post-parse filter. |
+| S664 | Issue #112 skips per-directory sort for unbudgeted scans | #112 started from fresh observe-before-act evidence on the same authorized private root after #111. The unsampled before run preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget and 3 parse workers, measuring docs/s `160.827`, first-searchable `2649.925ms`, TTF100 `3045.179ms`, TTF1000 `6161.063ms`, full-import-ready `54219.762ms`, full-index-ready `54219.761ms`, scan `2483.340ms`, parse `42946.914ms`, DB `13531.581ms`, index `25278.112ms`, parse worker wall `42935.883ms`, parse worker active `57286.048ms`, queue wait `8039.695ms`, ps max RSS `855867392`, max gap `493.731ms` at `index_publication`, stdout hash `6792e25928e9b66a3f94acd5374c38cc1081d06fd1e7c0f24aeb36e7ad6883d3`, and stderr hash `a96c4ef09139091f7ca3271c474577c3b1c7ff6931ec83db5c93e1606dceb68c`. The paired path-free profile preserved counts/content bytes and measured scan `2512.999ms`, full-import-ready `55768.638ms`, ps max RSS `874364928`, buckets `scheduler_wait=416`, `allocation=10001`, `filesystem_io=871`, `pdf_parser=10097`, `redaction_regex=877`, `text_rules=850`, `index_fulltext=859`, `db_sqlite=1843`, `import_pipeline=148`, and path-free LoPDF symbols led by `_direct_object`, `_dictionary`, and `_indirect_object`. The bounded L4 hypothesis was that unbudgeted scans do not need per-directory sorting because the final report is sorted before return, while budgeted `--max-files` scans must retain deterministic directory ordering. RED `CARGO_INCREMENTAL=0 cargo test -p fs-crawler tests::unbudgeted_scan_processes_directory_entries_in_file_system_order --locked -- --exact` failed because current code opened `a.pdf,b.pdf` after sorting instead of filesystem order `b.pdf,a.pdf`. GREEN adds `order_directory_entries_for_scan`, calls it from the crawl loop, skips sorting only when `max_files` is `None`, keeps final report sorting unchanged, and adds a budgeted negative-control test proving `max_files=1` still selects the sorted first file. A preliminary after run preserved counts/content bytes but the wrapper failed before RSS capture, so it is retained only as a noisy timing witness: scan `2775.240ms`, first-searchable `2952.335ms`, full-import-ready `51894.011ms`, stdout hash `adf3d4d9442853f89a6eb9a15ae3ac7fc063a71942bb84a1ad2a441137c445d8`. Clean confirmation A preserved counts/content bytes and measured scan `2423.986ms` (-2.4%), first-searchable `2594.658ms` (-2.1%), TTF100 `2989.944ms` (-1.8%), TTF1000 `5835.190ms` (-5.3%), full-import-ready `55335.591ms` (+2.1%), parse `43504.338ms`, DB `14198.243ms`, index `26143.319ms`, ps max RSS `786366464`, and stdout hash `311c5757c375cdbe2e1941671bbdf123288c5ffeb87f2d9e411dc67faaa1002b`. Clean confirmation B preserved counts/content bytes and measured scan `2253.377ms` (-9.3%), first-searchable `2427.672ms` (-8.4%), TTF100 `2825.497ms` (-7.2%), TTF1000 `5492.554ms` (-10.9%), full-import-ready `53035.595ms` (-2.2%), parse `41376.309ms`, DB `13201.347ms`, index `24920.352ms`, ps max RSS `903643136`, and stdout hash `f2f5dbf2fbee81ecccf9f5f1f138ed3787cf3f674374d55d3b4ca8a30fee7b5b`. The after path-free profile preserved counts/content bytes and measured scan `2389.124ms`, first-searchable `2563.485ms`, full-import-ready `59240.911ms`, ps max RSS `789315584`, buckets `allocation=41581`, `pdf_parser=17066`, `db_sqlite=3407`, `scheduler_wait=3479`, `index_fulltext=2629`, `text_rules=1117`, `filesystem_io=979`, `redaction_regex=309`, `import_pipeline=219`, and path-free LoPDF symbols led by `_direct_object`, `_dictionary`, `_indirect_object`, `name`, and `integer`; raw sample stayed local-only. Accepted movement: confirmation B met the primary scan target and moved first-searchable/TTF100/TTF1000 without count changes or full-import regression, while confirmation A shows scan variance and prevents claiming bottleneck removal. Verification passed: RED/GREEN focused fs-crawler tests, `CARGO_INCREMENTAL=0 cargo test -p fs-crawler --locked`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `CARGO_INCREMENTAL=0 cargo check -p fs-crawler -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `cargo fmt --all -- --check`, `rust-analyzer diagnostics .` with only existing cfg inactive-code WeakWarnings, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and `git diff --check -- crates/fs-crawler/src/lib.rs`. #112 was closed with completion comment https://github.com/FrankQDWang/resume-ir/issues/112#issuecomment-4913817318, #37 was updated at https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4913820664 and https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4913842390, and follow-up #113 was opened at https://github.com/FrankQDWang/resume-ir/issues/113. | This is an L4 scan constant-factor slice only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. Remaining profile evidence still points to parser/allocation, queue wait/scheduler behavior, and ordered DB/index publication; #113 must start from fresh targeted evidence before choosing another parser/allocation implementation. |
+| S663 | Issue #111 borrows no-op fulltext redaction during snapshot publication | #111 started from fresh observe-before-act evidence on the same authorized private root after #110. The unsampled before run preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget and 3 parse workers, measuring docs/s `144.794`, MiB/s `56.035`, first-searchable `2990.324ms`, TTF100 `3429.856ms`, TTF1000 `6818.003ms`, full-import-ready `60223.649ms`, full-index-ready `60223.649ms`, scan `2811.262ms`, parse `47967.529ms`, DB `15818.890ms`, index `27138.587ms`, parse worker wall `47954.694ms`, parse worker active `64057.000ms`, queue wait `7798.790ms`, max gap `578.456ms` at `index_publication`, stdout hash `137338155108d7b6d53220e98685ecbb2c1b7e3658bf763fc936c0395c5fbda7`, and empty stderr. The paired path-free profile preserved counts/content bytes and measured full-import-ready `55756.674ms`, parse `44622.170ms`, DB `14362.091ms`, index `25906.714ms`, ps max RSS `785399808`, buckets `scheduler_wait=418064`, `allocation=16975`, `filesystem_io=10518`, `pdf_parser=9069`, `redaction_regex=8619`, `text_rules=2083`, `index_fulltext=1637`, `db_sqlite=540`, and stdout hash `6e7d8cebcbb4cf15b0171761af3c9ce828182e94437d6ec7df0e51263316ba8b`. The bounded L4 hypothesis was that full-text snapshot publication was still allocating owned redaction strings for documents that contained no contact/path material, so a borrowed no-op path could reduce index-publication work while preserving the public `redact_contact_values` API and stored-index privacy behavior. RED `CARGO_INCREMENTAL=0 cargo test -p index-fulltext contact_redaction_borrows_text_when_no_redaction_is_needed --locked -- --exact` failed on missing `redact_contact_values_cow`; GREEN adds the private `Cow` redaction path, keeps `redact_contact_values` returning `String`, and makes `replace_documents_with_control` borrow no-op redaction results for `file_name` and `clean_text`. Same-root after-run A preserved counts/content bytes and measured docs/s `155.808`, MiB/s `60.298`, first-searchable `2882.110ms`, TTF100 `3276.251ms`, TTF1000 `6374.181ms`, full-import-ready `55966.366ms`, scan `2707.329ms`, parse `43986.007ms`, DB `13851.782ms`, index `26019.026ms`, parse worker wall `43973.749ms`, parse worker active `60472.383ms`, queue wait `8347.920ms`, max gap `537.903ms` at `index_publication`, and stdout hash `964fa926d10368010a037e77d35f9c3e2c260c34879f10b52399e3ec76b37658`. After-run B preserved counts/content bytes and measured docs/s `155.579`, MiB/s `60.209`, first-searchable `2684.046ms`, TTF100 `3101.290ms`, TTF1000 `6118.255ms`, full-import-ready `56048.858ms`, parse `44369.065ms`, DB `14077.056ms`, index `26009.185ms`, parse worker wall `44357.467ms`, parse worker active `60050.327ms`, queue wait `8141.033ms`, max gap `493.789ms` at `index_publication`, and stdout hash `7d3a1dd884019974de14914453fbd07cbd75e7194cd6e54ffba3e8daa995d6c6`. The after path-free profile preserved counts/content bytes and measured full-import-ready `58479.388ms`, parse `46853.036ms`, DB `14768.049ms`, index `26762.993ms`, ps max RSS `915800064`, buckets `scheduler_wait=414342`, `allocation=16980`, `filesystem_io=9858`, `pdf_parser=9410`, `redaction_regex=8515`, `text_rules=1981`, `index_fulltext=1959`, `db_sqlite=608`, and stdout hash `f91f3ae696e150e94f192272873953098a6039a752f1472e5f60cc2706cdbdf0`. The RSS-only witness preserved counts/content bytes and measured first-searchable `3033.337ms`, TTF100 `3471.188ms`, TTF1000 `7186.302ms`, full-import-ready `58329.494ms`, parse `46312.177ms`, DB `15219.798ms`, index `26102.355ms`, ps max RSS `813252608`, and stdout hash `d9c7a4e4f47cc11bcf150cdf751b29d424f85cf6b3f6e6c70f8bc053a9a62ec0`. Accepted movement versus the unsampled before run: full-import-ready improved `60223.649ms -> 55966.366ms` (-7.1%) and confirmed at `56048.858ms` (-6.9%); stage index improved `27138.587ms -> 26019.026ms` (-4.1%) and confirmed at `26009.185ms` (-4.2%); TTF1000 improved `6818.003ms -> 6374.181ms` (-6.5%) and confirmed at `6118.255ms` (-10.3%). Counts, content bytes, selected tier, budget, worker count, OCR backlog, and failure totals stayed stable. The sampled profile did not show a strong allocation-bucket reduction (`16975 -> 16980`) and redaction moved only slightly (`8619 -> 8515`), so this is accepted as a small bounded index-publication improvement, not as bottleneck removal. Verification passed: RED/GREEN focused redaction-borrow test, `CARGO_INCREMENTAL=0 cargo test -p index-fulltext contact_redaction --locked`, `CARGO_INCREMENTAL=0 cargo test -p index-fulltext stored_index_fields_redact_contact_values_before_commit --locked`, `CARGO_INCREMENTAL=0 cargo test -p index-fulltext --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `CARGO_INCREMENTAL=0 cargo check -p index-fulltext -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `cargo fmt --all -- --check`, `rust-analyzer diagnostics .` with only existing cfg inactive-code WeakWarnings, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and focused `git diff --check`. #111 completion comment: https://github.com/FrankQDWang/resume-ir/issues/111#issuecomment-4913532364. | This is an L4 import index-publication/redaction allocation slice only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. Remaining evidence is split across parser work, scheduler/queue wait, filesystem read/decode, redaction/PDF work, and the `index_publication` tail; the next slice must start from fresh profile evidence before choosing parser CPU, input read/decode, ordered DB/index publication, queue fairness, or early milestone variance. |
+| S662 | Issue #110 clears PDF image XObject stream bodies before text extraction | #109 first completed the observe/selection step after #108 on the same authorized private root. The unsampled #109 baseline preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget and 3 parse workers, measuring first-searchable `2898.741ms`, TTF100 `3290.010ms`, TTF1000 `6652.996ms`, full-import-ready `59424.434ms`, full-index-ready `59424.434ms`, scan `2725.363ms`, parse `46699.202ms`, DB `15292.826ms`, index `27669.482ms`, parse worker wall `46686.443ms`, parse worker active `63525.507ms`, queue wait `8241.381ms`, max gap `678.633ms` at `index_publication`, stdout hash `e1cf447973d28168638cf4e91ce1b934a26ca3b58f16275cdbcec9c5a3103214`, and empty stderr. The path-free #109 sampled profile preserved counts/content bytes and measured full-import-ready `73667.046ms`, parse `58805.478ms`, DB `20556.848ms`, index `30254.652ms`, ps max RSS `886243328`, and sanitized buckets `allocation=18723`, `pdf_parser=17414`, `db_sqlite=3577`, `index_fulltext=1472`, `redaction_regex=1255`, `text_rules=1128`; path-free symbols repeatedly included `lopdf::parser::_direct_object`, `lopdf::parser::_indirect_object`, `lopdf::parser::_dictionary`, `lopdf::parser::name`, and allocator/free functions. #109 selected PDF object parsing/allocation as the next primary bottleneck, opened #110, and was closed as evidence-only. #110's bounded hypothesis was that image XObject stream bodies are not needed for text extraction and can be cleared after LoPDF load while preserving page content streams, font resources, ToUnicode CMaps, text+image PDFs, and scanned-PDF OCR-required classification. RED `CARGO_INCREMENTAL=0 cargo test -p parser-pdf tests::text_extraction_load_drops_image_xobject_stream_bodies --locked -- --exact` first failed on missing API and then on an over-specific object-removal expectation; GREEN adds `load_document_for_text_extraction`, clears `/Subtype /Image` stream bodies while retaining the object dictionaries, and proves a text+image PDF still extracts `Resume with image`. Final same-root after-run A preserved counts/content bytes and measured first-searchable `2851.997ms`, TTF100 `3298.767ms`, TTF1000 `6181.580ms`, full-import-ready `54949.858ms`, parse `42926.374ms`, DB `13979.477ms`, index `25671.610ms`, parse worker wall `42914.380ms`, parse worker active `56773.789ms`, queue wait `7599.187ms`, max gap `892.590ms` at `index_publication`, and stdout hash `b2ceee30a8692b83f741610a5afb2e583c3539fa9e6d7232710cd6d322670bea`. Final after-run B preserved counts/content bytes and measured first-searchable `2722.134ms`, TTF100 `3122.767ms`, TTF1000 `5952.024ms`, full-import-ready `57659.314ms`, parse `45099.258ms`, DB `14577.874ms`, index `27255.550ms`, parse worker wall `45087.674ms`, parse worker active `58401.196ms`, queue wait `7601.167ms`, max gap `593.324ms` at `index_publication`, and stdout hash `48cdb9cbacc94783b07667f5ab8b6173f37b6b3f7b769ae43a50517ce5676e34`. The RSS-only witness preserved counts/content bytes and measured ps max RSS `726155264`, full-import-ready `56028.232ms`, parse `43952.797ms`, index `26657.871ms`, and stdout hash `4836f3f0e40b16955396d8814da56a0332db4bb6c417ab8be89183fb2915068d`. The post-change path-free profiler run preserved counts/content bytes and measured full-import-ready `59929.748ms`, parse `47895.028ms`, DB `15341.644ms`, index `27624.051ms`, ps max RSS `951615488`, and buckets `allocation=19272`, `pdf_parser=18382`, `db_sqlite=3573`, `index_fulltext=1739`, `redaction_regex=1220`, `text_rules=1126`; this run is retained for profiler attribution, while the RSS-only witness is the resource comparator because sampler overhead inflated the profiler run. Accepted movement versus #109 unsampled baseline: full-import-ready improved `59424.434ms -> 54949.858ms` (-7.5%) and confirmed at `57659.314ms` (-3.0%); parse worker wall improved `46686.443ms -> 42914.380ms` (-8.1%) and confirmed at `45087.674ms` (-3.4%); parse worker active improved `63525.507ms -> 56773.789ms` (-10.6%) and confirmed at `58401.196ms` (-8.1%); TTF1000 improved `6652.996ms -> 6181.580ms` (-7.1%) and confirmed at `5952.024ms` (-10.5%); RSS-only witness improved `886243328 -> 726155264` (-18.1%) and stayed below the H2 1536 MiB budget. Verification passed: `CARGO_INCREMENTAL=0 cargo test -p parser-pdf --locked`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `CARGO_INCREMENTAL=0 cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `cargo fmt --all -- --check`, `rust-analyzer diagnostics .` with only existing cfg inactive-code WeakWarnings, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, and `./scripts/ci/guard-public-repo.sh`. #109 evidence comment: https://github.com/FrankQDWang/resume-ir/issues/109#issuecomment-4912938183; #110 completion comment: https://github.com/FrankQDWang/resume-ir/issues/110#issuecomment-4913274934; #37 update: https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4913277446. | This is an L4 PDF parser/RSS slice only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. The bottleneck moved but remains open: `index_publication` is still the cancel max-gap phase, ordered DB/index publication remains material, and any next slice must start from fresh profile evidence before choosing DB/index tail, cancel-gap variance, or more parser allocation. |
+| S661 | Issue #108 reduces PDF text-operator prefilter false positives | #108 started from fresh observe-before-act evidence on the same authorized private root after #107. The unsampled baseline preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on `H2_Aggressive` with 1536 MiB budget, measuring docs/s `123.160`, MiB/s `47.663`, first-searchable `2929.592ms`, full-import-ready `70802.067ms`, full-index-ready `70802.067ms`, scan `2732.560ms`, parse `61719.497ms`, DB `21821.633ms`, index `31035.559ms`, parse workers `3`, parse worker wall `61696.539ms`, parse worker active `70073.623ms`, queue wait `7350.301ms`, max gap `638.102ms` at `index_publication`, stdout hash `4581488fad1c97e9ba871e94a598bf80b394b626a63bfa8fd986eab17168f80b`, and empty stderr. The mid-run path-free sampled profile preserved counts/content bytes and measured first-searchable `5392.943ms`, TTF100 `6007.762ms`, TTF1000 `10196.982ms`, full-import-ready `79151.953ms`, parse `68832.079ms`, DB `25388.342ms`, index `30884.679ms`, ps max RSS `857718784`, and sanitized buckets `import_pipeline=20969`, `allocation=19131`, `pdf_parser=17530`, `filesystem_io=5386`, `db_sqlite=3291`, `index_fulltext=1717`, `redaction_regex=1303`, `text_rules=1094`. The tail profile preserved counts/content bytes and measured first-searchable `2764.078ms`, TTF100 `3207.753ms`, TTF1000 `6270.902ms`, full-import-ready `58905.512ms`, parse `46585.061ms`, DB `15501.338ms`, index `28348.950ms`, max gap `664.517ms` at `index_publication`, and sanitized buckets `index_fulltext=386`, `allocation=316`, `filesystem_io=172`, `redaction_regex=137`, `db_sqlite=44`, `text_rules=43`, `import_pipeline=33`. The bounded hypothesis was that `content_may_show_text` was doing repeated byte-window operator checks and could classify `Tj`/`TJ`/quote markers inside PDF literal strings or comments as real text-showing operators, causing unnecessary `Content::decode` and parser/allocation work on no-text pages. RED `CARGO_INCREMENTAL=0 cargo test -p parser-pdf tests::page_content_without_text_showing_operator_can_skip_text_decode --locked -- --exact` failed on `q (Tj) /Im1 Do Q`. GREEN replaces the prefilter with a single lexical content-stream scan that skips PDF comments, literal strings, and hex strings while preserving operator-boundary detection. After-run A preserved counts/content bytes and measured docs/s `152.479`, MiB/s `59.010`, first-searchable `2906.196ms`, TTF100 `3353.590ms`, TTF1000 `6448.181ms`, full-import-ready `57188.134ms`, parse `44838.848ms`, DB `14773.722ms`, index `26206.495ms`, parse worker active `60727.463ms`, max gap `553.972ms` at `index_publication`, and stdout hash `6c5c0ddadb85510e8ced845d6612fcc8e17deb0e546f5140fa18acb893353351`. After-run B preserved counts/content bytes and measured docs/s `135.171`, MiB/s `52.311`, first-searchable `3260.983ms`, TTF100 `3682.301ms`, TTF1000 `6731.893ms`, full-import-ready `64511.009ms`, parse `55714.191ms`, DB `17628.083ms`, index `28188.821ms`, parse worker active `60351.345ms`, max gap `633.981ms` at `index_publication`, and stdout hash `2884b501beb858d4a27d3a57cd4e90f4752cd768d4ee041877fb679e6fc4a47d`. The RSS witness preserved counts/content bytes and measured ps max RSS `926957568`, below the H2 1536 MiB budget; it is recorded as resource evidence, not as the primary no-sample speed comparator. Accepted movement versus the no-sample before baseline: the two no-sample after runs improved full-import-ready by `19.2%` and `8.9%`, parse wall by `27.4%` and `9.7%`, and parse worker active by `13.3%` and `13.9%`; counts/content bytes stayed stable. Verification passed: the RED/GREEN focused parser-pdf test, `CARGO_INCREMENTAL=0 cargo test -p parser-pdf --locked`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `CARGO_INCREMENTAL=0 cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`, `cargo build -p resume-cli --release --locked`, `cargo fmt --all -- --check`, `rust-analyzer diagnostics .` with only existing cfg inactive-code WeakWarnings, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, and `python3 scripts/ci/check-loop-state.py`. #108 was closed with completion comment https://github.com/FrankQDWang/resume-ir/issues/108#issuecomment-4912801556, #37 was updated at https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4912805489, and follow-up #109 was opened for remaining parser-allocation vs ordered DB/index tail selection. | This is an L4 PDF prefilter/parser slice only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. Remaining evidence is still split across parser allocation/PDF work, ordered DB/index publication, and `index_publication` cancel-gap variance; #109 must start from fresh evidence before another implementation slice. |
+| S660 | Issue #107 adds RAM-tiered import resource policy evidence | #107 started from fresh observe-before-act evidence on the same authorized private root after the #106 RSS slice. The detected host profile for the retained before/after evidence was 32 GiB RAM with 10-way available parallelism, and the old fixed default selected 3 parse workers. The unsampled before run preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes, with first-searchable `2884.159ms`, TTF100 `3288.943ms`, TTF1000 `6021.691ms`, full-import-ready `54077.728ms`, full-index-ready `54077.728ms`, scan `2708.710ms`, parse `41906.854ms`, DB `13862.218ms`, index `26126.082ms`, parse workers `3`, parse queue wait `6557.070ms`, max gap `570.844ms` at `index_publication`, stdout hash `dd0099f6863a5f101b31ffe93fc4d708a3382fb0a5b3630da712e632b7b7ff45`, and stderr hash `c8bf72591a8b6f106fa565465d2c8130f2cf4d2b821a15e5cc75cb3e1179c403`. The paired path-free sampled before run preserved the same counts/content bytes and measured ps max RSS `891502592`, physical footprint peak `214748364`, full-import-ready `69843.532ms`, TTF1000 `7707.572ms`, and stdout hash `b20d03db6354a5a0f91714b199e469d2284a357e9a8d92c19561183f5e5d5d6d`. The bounded hypothesis, refined from user review, was that RAM should determine the import hardware tier and RSS budget while CPU/core count should cap workers only: H0_Eco is RAM <= 8 GiB with 1 parse worker and 512 MiB private/anonymous budget, H1_Balanced is RAM > 8 GiB and <= 24 GiB with 2 parse workers and 1024 MiB budget, and H2_Aggressive is RAM > 24 GiB with 3 parse workers and 1536 MiB budget. RED first proved the tier policy API did not exist. GREEN adds detected `ImportHardwareProfile`, `ImportHardwareTier`, and `ImportResourcePolicy`, keeps explicit `--parse-workers` overrides, surfaces `import hardware tier` and `import private/anonymous budget MiB` in CLI evidence, and aligns existing `governor_profiles` thresholds without adding a parallel schema. The unsampled after run preserved the same counts/content bytes and reported `H2_Aggressive`, budget `1536`, parse workers `3`, first-searchable `3173.345ms`, TTF100 `3567.878ms`, TTF1000 `6291.044ms`, full-import-ready `56429.436ms`, full-index-ready `56429.436ms`, scan `2999.660ms`, parse `43786.523ms`, DB `14702.682ms`, index `26786.561ms`, parse queue wait `6504.115ms`, max gap `530.302ms` at `index_publication`, stdout hash `1a495a80ee4779f4193a5d048dd5790b5255645e1fce2bf0e064f639e73cac74`, and stderr hash `e0f1a67f0447ff577bfe61448a19cbac419233fd5793d6fbf41efa955b7e101d`. The paired path-free sampled after run preserved counts/content bytes and reported `H2_Aggressive`, budget `1536`, parse workers `3`, ps max RSS `838418432`, physical footprint peak `132330291`, full-import-ready `71459.269ms`, TTF1000 `7636.999ms`, max gap `1335.388ms` at `index_publication`, and stdout hash `76e1490cf7c378eb9966e098f4305caa9eaec28935f0b6eef20462a365f9db5c`. Accepted movement: the fixed low-memory interpretation was replaced by a public tier-aware budget in import evidence; this host is correctly classified as H2_Aggressive, retains the intended 3-worker default, and the sampled RSS peak is below the H2 1536 MiB budget while counts remain unchanged. Full-import-ready and TTF1000 stayed within the no-regression guard for this resource-policy slice; early milestones and sampled max-gap remained noisy and are not claimed as wall-time improvements. Verification passed: `CARGO_INCREMENTAL=0 cargo test -p import-pipeline import_resource_policy --locked`, `CARGO_INCREMENTAL=0 cargo test -p import-pipeline tests::import_options_low_memory_default_caps_parse_workers --locked -- --exact`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli import_parse_workers --locked`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `CARGO_INCREMENTAL=0 cargo check -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `cargo fmt --all -- --check`, `rust-analyzer diagnostics .` with only existing cfg inactive-code WeakWarnings, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and focused `git diff --check`. Observe and refinement comments were posted at https://github.com/FrankQDWang/resume-ir/issues/107#issuecomment-4912219702 and https://github.com/FrankQDWang/resume-ir/issues/107#issuecomment-4912465713; #107 was closed with completion comment https://github.com/FrankQDWang/resume-ir/issues/107#issuecomment-4912537165. | This is an L2 import resource-policy/evidence slice only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. Follow-up should use fresh profiling before tiering any non-RAM governor signals such as disk/IO throughput, page faults, ordered DB/index publication tail, OCR/embedding background concurrency, thermal/battery state, or early milestone variance. |
+| S659 | Issue #106 reduces redundant retained/indexed fulltext RSS after full-root attribution | #106 started from fresh observe-before-act evidence on the same authorized private root. The unsampled full-root baseline preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes, with first-searchable `2660.288ms`, TTF100 `3080.574ms`, TTF1000 `6040.138ms`, full-import-ready `61706.066ms`, full-index-ready `61614.786ms`, corrected parse `46807.702ms`, DB `13470.391ms`, index `34469.953ms`, parse workers `3`, parse queue wait `6111.143ms`, max gap `619.789ms` at `index_publication`, RSS `1387839488`, stdout hash `c6abafeeec465efb0e85923ac77a9ceb88711cc5d19cc2da4bce1dfac1b44efa`, and stderr hash `e2d9b55a76ef3f0eee4def2a1bcd9984ee100b38fe493680ab69c8542be47df1`. The paired path-free sampled profile preserved the same counts/content bytes and attributed resident memory to a total resident peak of `1395864371`, malloc resident `1176715262`, text/data/linkedit resident `196783922`, stack `1474560`, mapped-file `49152`, VM_ALLOCATE `0`, and physical footprint `394054860`, with stdout hash `2f4b3f03a4e6c2984e36f3862d15e4d69c58673bf49b896b892b40ca854646c1`. The bounded hypothesis was that full-root RSS and index-publication time were inflated by retaining and publishing duplicate resume body text: `clean_text`, per-section cached/indexed text, and final snapshot documents were all resident during tail publication. RED tests first proved the current-import cache retained section text and that the schema still exposed redundant section fields. GREEN drops retained cache section text, streams final current-import documents by consuming the cache, defers the last tail flush to the top-level final publication when possible, and removes redundant `section_type`/`section_text` fulltext fields while preserving `file_name` plus `clean_text` searchability. After-run E preserved counts/content bytes and measured first-searchable `2823.337ms`, TTF100 `3210.692ms`, TTF1000 `5747.491ms`, full-import-ready `52452.721ms`, full-index-ready `52452.721ms`, corrected parse `45441.318ms`, DB `13083.291ms`, index `25061.410ms`, max gap `451.336ms` at `index_publication`, RSS `938524672`, stdout hash `d525c3f2ec69d64cedba76541894d42dab469278ebf4793705b2cb611c2d9f1a`, and stderr hash `a03b52f394a93c69bd28aa1f7df745ddcd70d62a491c36a02f5243ce23cf2708`. Confirmation after-run F preserved counts/content bytes and measured first-searchable `2520.049ms`, TTF100 `2929.519ms`, TTF1000 `5748.091ms`, full-import-ready `54718.615ms`, full-index-ready `54718.615ms`, corrected parse `47750.996ms`, DB `14391.095ms`, index `26282.236ms`, max gap `661.104ms` at `index_publication`, RSS `1039745024`, stdout hash `e5cc1f3e5bce39f9c4a53a4f69617cb80a4a0c757638facbf36501ffc1e9c80a`, and stderr hash `3d237d9aff59b6a18056a200b2d31b70dbe1b9c684f96eb1b6ab19a33c955486`. Accepted movement versus the #106 unsampled baseline: RSS improved `1387839488 -> 938524672` (-32.38%) and confirmed at `1039745024` (-25.08%); full-import-ready improved `61706.066ms -> 52452.721ms` (-15.00%) and confirmed at `54718.615ms` (-11.32%); index improved `34469.953ms -> 25061.410ms` (-27.30%) and confirmed at `26282.236ms` (-23.75%); TTF1000 improved about -4.84% in both after runs. Verification passed: `CARGO_INCREMENTAL=0 cargo test -p import-pipeline searchable_flush_policy_publishes_first_match_then_batches_followups --locked`, `CARGO_INCREMENTAL=0 cargo test -p import-pipeline current_import_index_cache --locked`, `CARGO_INCREMENTAL=0 cargo test -p index-fulltext --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `CARGO_INCREMENTAL=0 cargo check -p index-fulltext -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `cargo fmt --all -- --check`, `rust-analyzer diagnostics .` with only inactive-code WeakWarnings, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and `git diff --check -- crates/import-pipeline/src/lib.rs crates/index-fulltext/src/lib.rs crates/index-fulltext/tests/s8_fulltext.rs PROGRESS.md`. #106 was closed with completion comment https://github.com/FrankQDWang/resume-ir/issues/106#issuecomment-4912130371, and follow-up #107 was opened for hardware-tiered import worker/RSS governance. | This is an L4/L2 import RSS and fulltext publication slice only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. RSS improved materially but confirmation remains above the current fixed 768 MiB first-import redline (`938524672` and `1039745024`), so the import lane remains blocked on further RSS/resource policy work. #107 tracks the separate hardware-tiered governance request: RAM/CPU/core detection, 8GB low-end and 32GB-class tiers, tier-specific worker defaults, and tier-specific RSS/resource redlines. |
+| S658 | Issue #105 raises staged fulltext snapshot single-worker coverage to D10K-calibration size | #105 started from fresh observe-before-act evidence on the same authorized private root. The 1200-file baseline A preserved 1200 discovered, 1172 searchable, 8 OCR-required/backlog, 8 OCR queued, 20 failed, 0 deleted, 0 scan errors, and 439021920 content bytes, with first-searchable `640.169ms`, TTF100 `1066.231ms`, TTF1000 `3876.130ms`, full-import-ready `5295.096ms`, corrected parse `3634.316ms`, DB `1059.739ms`, index `2246.828ms`, max gap `248.125ms` at `index_publication`, RSS `284770304`, and stdout hash `f23bc3671515e5a84559c39156010c439fa285184297126d2828cc1cc529a212`. The full-root delayed-tail profile preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes, with first-searchable `2390.611ms`, TTF100 `2776.006ms`, TTF1000 `5588.009ms`, full-import-ready `67612.753ms`, corrected parse `49724.601ms`, DB `12931.943ms`, index `41554.253ms`, max gap `1588.435ms` at `index_publication`, RSS `1264074752`, stdout hash `0815ac6d3c9754500b283518458bea7a8402df3264a4f8fad710d5da2e2b3caf`, and a path-free delayed-tail sample led by `index_fulltext=7101`, `allocation=3040`, `filesystem=1245`, `redaction_regex=573`, `db_sqlcipher=309`, and `parse_worker_pipeline=173`. Sanitized top symbols were Tantivy writer, BufWriter, FST compile, index merger, postings serializer, compressor, and managed-directory publication work. The bounded hypothesis was that the staged snapshot writer should use single-worker Tantivy publication through the current full-root/D10K-calibration-sized slice, not only through 4096 documents. RED `CARGO_INCREMENTAL=0 cargo test -p index-fulltext staged_import_snapshot_writer_mode_uses_single_worker_for_milestones --locked` failed because 8248 returned `Auto`; GREEN raises `SINGLE_WORKER_SNAPSHOT_DOCUMENT_LIMIT` to `10000` and updates the test so 8248 and 10000 use `SingleWorker` while 10001 and unknown-size snapshots still use `Auto`. The 1200-file after-run preserved the same counts and content bytes, measuring first-searchable `642.668ms`, TTF100 `1079.620ms`, TTF1000 `3914.168ms`, full-import-ready `5282.417ms`, corrected parse `3650.182ms`, DB `1122.138ms`, index `2214.420ms`, max gap `222.551ms` at `index_publication`, RSS `268746752`, and stdout hash `e4a83ffebcc96e134cbef4cdcb393182c236088d051c82607d5f40b2e92358f3`. Full-root after A preserved counts and measured full-import-ready `58570.462ms`, corrected parse `44260.790ms`, DB `12821.672ms`, index `33076.390ms`, max gap `524.713ms` at `index_publication`, RSS `1352450048`, and stdout hash `b0cb074b56be99adaa0fe031569c4d9f3bddc699135f72208ea03ca7d2e88f3d`; full-root after B confirmed counts and measured first-searchable `2604.086ms`, TTF100 `3009.948ms`, TTF1000 `5739.554ms`, full-import-ready `58977.904ms`, corrected parse `44725.799ms`, DB `11943.850ms`, index `33058.233ms`, max gap `540.124ms` at `index_publication`, RSS `1467219968`, and stdout hash `17372a946541c60d6c0068a2c4078f3d8307e19ebdb2d57aa60f7ed98241cf0a`. Accepted movement: full-root index stage improved `41554.253ms -> 33058.233ms` (-20.45%), max `index_publication` gap improved `1588.435ms -> 540.124ms` (-65.99%), and full-import-ready improved `67612.753ms -> 58977.904ms` (-12.77%) with unchanged counts/content bytes. Verification passed: `CARGO_INCREMENTAL=0 cargo test -p index-fulltext staged_import_snapshot_writer_mode_uses_single_worker_for_milestones --locked`, `CARGO_INCREMENTAL=0 cargo test -p index-fulltext --locked -- --test-threads=1`, `CARGO_INCREMENTAL=0 cargo check -p index-fulltext -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo fmt --all -- --check`, `rust-analyzer diagnostics .` with only existing cfg inactive-code WeakWarnings, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, and `./scripts/ci/guard-public-repo.sh`. #105 was closed with completion comment https://github.com/FrankQDWang/resume-ir/issues/105#issuecomment-4911680883 and follow-up #106 opened for RSS. | This is an L4/L2 ordered fulltext index-publication tail slice only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. Full-root RSS remains above the 768 MiB first-import redline and was noisy across #105 runs (`1264074752` before, `1352450048` after A, `1467219968` after B); #106 must start with fresh path-free memory attribution before any RSS optimization. |
+| S657 | Issue #104 skips PDF page decode work when page content has no text-show operators | #104 used the corrected #103 1200-file evidence as its observe-before-act baseline. The selected bounded L4 hypothesis was that scanned or no-text PDF pages should fetch page content first and skip page font lookup plus `Content::decode` when the decompressed content contains no PDF text-showing operator. RED `CARGO_INCREMENTAL=0 cargo test -p parser-pdf page_content_without_text_showing_operator_can_skip_text_decode --locked` failed until `content_may_show_text` existed. GREEN keeps text-layer behavior intact and only short-circuits pages without `Tj`, `TJ`, single-quote, or double-quote operators. 1200-file after-run A preserved counts at 1200 discovered, 1172 searchable, 8 OCR-required/backlog, 8 OCR queued, 20 failed, 0 deleted, 0 scan errors, and 439021920 content bytes, but measured full-import-ready `5901.370ms`, corrected parse `3966.680ms`, DB `1194.461ms`, index `2508.909ms`, first-searchable `667.894ms`, TTF100 `1106.141ms`, TTF1000 `4093.066ms`, RSS `285425664`, and stdout hash `27f9399311d627ceb901ec156ad362428fdc777aec247fb574c19b12d3d4c561`, so it was not accepted alone. 1200-file after-run B preserved the same counts and measured full-import-ready `4913.349ms`, corrected parse `3593.079ms`, DB `1154.604ms`, index `2250.647ms`, first-searchable `290.669ms`, TTF100 `703.708ms`, TTF1000 `3516.990ms`, parse prepare `93.373ms`, parse worker wall `3580.049ms`, parse worker active `6831.409ms`, queue wait `1240.363ms`, cancel max gap `245.982ms` at `index_publication`, RSS `272105472`, and stdout hash `6456e0ed4845b13d161beb85b8b628782a77f430df1bbef7ffe62acbe36d3d41`. Against the #103 comparable repeat B, the 1200-file parser metric moved only `3676.058ms -> 3593.079ms` (-2.26%) and full-import-ready moved `5002.169ms -> 4913.349ms` (-1.78%), so the small 8-document OCR/no-text subset did not meet the 5% 1200-file target. Full-root aggregate sizing repeated the same 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 scan errors, and 3538586345 content bytes. Compared with the #102 full-root sizing run, after-run A measured corrected parse `59256.355ms -> 51632.375ms` (-12.87%), full-import-ready `70203.198ms -> 70911.206ms` (+1.01%), index `42313.078ms -> 43399.904ms` (+2.57%), parse worker wall `59243.935ms -> 51620.869ms` (-12.87%), and RSS `1621213184 -> 1549549568`; after-run B confirmed corrected parse `51744.436ms` (-12.68%), full-import-ready `70599.386ms` (+0.56%), index `44105.790ms` (+4.24%), parse worker wall `51733.128ms` (-12.68%), RSS `1441906688`, and stdout hash `989eb466883687248b998da04fbb44832a17670f7cd791ebfecdb325eee231bb`. #104 is accepted as a parser-side movement on the larger no-text/scanned subset, not as a full-import-ready win: the full-root bottleneck transferred to ordered writer/index publication, and full-root RSS remains above the import acceptance redline even though it improved from #102 sizing. Verification passed: `cargo fmt --all -- --check`, `CARGO_INCREMENTAL=0 cargo test -p parser-pdf --locked`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `CARGO_INCREMENTAL=0 cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics .` with only pre-existing inactive-code WeakWarnings, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, and `./scripts/ci/guard-public-repo.sh`. | This is an L4 PDF no-text page extraction slice only. It closes #104 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add mixed-directory resume-only classification, expose raw paths or full text, or make `goal_complete` true. Follow-up #105 should start from fresh evidence and should prefer ordered writer/index publication and full-root RSS attribution before more parser micro-work. |
+| S656 | Issue #103 selects parser CPU/PDF parsing after corrected parse timing | #103 refreshed corrected 1200-file import/profile evidence after #102 and changed no production code. Counts stayed stable across 1200-file repeats at 1200 discovered, 1172 searchable, 8 OCR-required/backlog, 8 OCR queued, 20 failed, 0 deleted, 0 scan errors, and 439021920 content bytes. Corrected baseline repeat A measured first-searchable `678.456ms`, TTF100 `1120.774ms`, TTF1000 `4034.136ms`, full-import-ready `5478.826ms`, scan `492.101ms`, corrected parse wall `3768.854ms`, DB `1167.977ms`, index `2286.863ms`, parse worker wall `3756.140ms`, parse worker active `6770.992ms`, queue wait `813.677ms`, cancel max gap `240.273ms` at `index_publication`, RSS `279576576`, and stdout hash `5514f5f66705facffe51cb27d667ac7dfbf1fe17f80b2e03c2d5a02fabfcf551`. Corrected baseline repeat B measured first-searchable `293.483ms`, TTF100 `698.348ms`, TTF1000 `3593.670ms`, full-import-ready `5002.169ms`, scan `126.152ms`, corrected parse wall `3676.058ms`, DB `1150.610ms`, index `2261.350ms`, parse worker wall `3663.861ms`, parse worker active `6793.532ms`, queue wait `912.165ms`, cancel max gap `246.860ms` at `index_publication`, RSS `281772032`, and stdout hash `b0b7e7aed40668892b8eb02ad5564cb10ddef386966f8bc2f19afbc4fb3bdbd6`. Path-free sampling preserved public-safe evidence only and showed bucket counts led by `pdf_parser=4091`, `allocation=4003`, `db_sqlcipher=986`, `redaction_regex=668`, `index_fulltext=624`, `text_rules=499`, with sanitized top symbols dominated by `lopdf::parser` object parsing. #103 closed as a profile/selection issue and opened #104 for the bounded PDF parser no-text-page slice. | This is an observe/selection slice only. It does not change code, close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, expose raw paths/full text, or make `goal_complete` true. Corrected worker-active remains CPU-work evidence only, not wall-clock parse time. |
+| S655 | Issue #102 fixes parallel parse timing semantics and splits worker-active evidence | #102 started from the same authorized private root and 1200-file command shape. The before runs preserved counts at 1200 discovered, 1172 searchable, 8 OCR-required/backlog, 8 OCR queued, 20 failed, 0 deleted, 0 scan errors, and 439021920 content bytes; the comparable before repeat B measured first-searchable `327.303ms`, TTF100 `779.303ms`, TTF1000 `4207.350ms`, full-import-ready `5716.477ms`, scan `147.996ms`, parse `9059.629ms` under the old summed-worker aggregate, DB `1441.578ms`, index `2381.609ms`, queue wait `962.723ms`, cancel max gap `290.309ms` at `index_publication`, and stdout hash `1082024f6d276feb396929d259af57ac8408fdb1cc561058d6544173c462904e`. A user review correctly flagged that the old `stage parse ms` was summing parallel worker durations and should not be read as wall-clock parse time. GREEN changed parallel import evidence so `stage parse ms` records the worker wall-clock window, from worker start to the last worker finish, while the old summed worker workload is preserved as `parse worker active ms`; CLI evidence also prints `parse prepare ms` and `parse worker wall ms`. The same slice kept the bounded DB-tail optimization from the #102 hypothesis: import cancellation probes are cached for 25ms while preserving logical cancel-check counts and max-gap attribution. Corrected after-run A preserved counts and measured docs/s `222.336`, first-searchable `599.559ms`, TTF100 `1026.724ms`, TTF1000 `3998.858ms`, full-import-ready `5397.234ms`, scan `432.899ms`, corrected stage parse `3766.821ms`, DB `1154.567ms`, index `2276.798ms`, parse prepare `614.390ms`, parse worker wall `3755.480ms`, parse worker active `6990.625ms`, queue wait `876.318ms`, cancel max gap `239.006ms`, RSS `299450368`, and stdout hash `f0f9361d93fed9319031e4beb9fb155f4c9c954452134c0fce16ed1aeed7e81a`. Corrected after-run B preserved counts and measured docs/s `243.686`, first-searchable `303.096ms`, TTF100 `707.192ms`, TTF1000 `3555.966ms`, full-import-ready `4924.368ms`, scan `128.542ms`, corrected stage parse `3599.943ms`, DB `1168.539ms`, index `2265.240ms`, parse prepare `89.765ms`, parse worker wall `3586.572ms`, parse worker active `6783.001ms`, queue wait `1226.248ms`, cancel max gap `238.424ms`, RSS `277905408`, and stdout hash `51db0f28862d4b2e891eb4923a343dac073fbc2a6d6a13c5143bba04867f75ea`. The old parse aggregate is no longer used for before-after parse deltas; comparable DB improved `1441.578ms -> 1168.539ms` (-18.9%), full-import-ready improved `5716.477ms -> 4924.368ms` (-13.9%), TTF1000 improved `4207.350ms -> 3555.966ms` (-15.5%), and cancel max gap improved `290.309ms -> 238.424ms` (-17.9%) without count changes. An additional aggregate full-root sizing run over 8720 discovered files preserved public-safe evidence only: 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 scan errors, content bytes `3538586345`, full-import-ready `70203.198ms`, corrected stage parse `59256.355ms`, DB `13641.047ms`, index `42313.078ms`, parse prepare `5249.372ms`, parse worker wall `59243.935ms`, parse worker active `52409.537ms`, and RSS `1621213184`; this is not a D10K/W1/full-baseline claim. Verification passed: `cargo fmt --all -- --check`, `CARGO_INCREMENTAL=0 cargo test -p import-pipeline parse_worker_clock_reports_wall_clock_separate_from_active_sum --locked`, `CARGO_INCREMENTAL=0 cargo test -p import-pipeline parallel_parse_workers_record_queue_and_cancel_evidence --locked`, `CARGO_INCREMENTAL=0 cargo test -p import-pipeline cancel_poller --locked`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `CARGO_INCREMENTAL=0 cargo check -p import-pipeline -p resume-cli --locked`, `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics .` with only pre-existing inactive-code WeakWarnings, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, and `./scripts/ci/guard-public-repo.sh`. #102 closes with corrected evidence semantics and DB-tail improvement. | This is an import evidence-semantics plus bounded DB-tail slice only. It does not close #37, run OCR or embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add resume-vs-non-resume semantic classification, expose raw paths or full text in search/detail, or make `goal_complete` true. Corrected metrics show parser wall time remains the largest 1200-file stage while full-root sizing also shows a large index publication tail; the next issue should start from fresh corrected-profile evidence and choose one of parser CPU or index publication tail. |
+| S654 | Issue #101 reprofiles current 3-worker import after the low-memory cap | #101 refreshed the same authorized private root and 1200-file command shape after #100. No code changed. The first profiler attempt was discarded because it sampled the `/usr/bin/time` wrapper rather than `resume-cli`; the retained direct sample targeted `resume-cli`. Counts stayed stable across retained runs: 1200 discovered, 1172 searchable, 8 OCR-required/backlog, 8 OCR queued, 20 failed, 0 deleted, 0 scan errors, and 439021920 content bytes. Baseline repeat A measured docs/s `177.165`, first-searchable `686.253ms`, TTF100 `1103.496ms`, TTF1000 `4872.380ms`, full-import-ready `6773.351ms`, scan `499.682ms`, parse `8616.791ms`, DB `1673.299ms`, index `2797.818ms`, `parse_worker_count=3`, queue wait `781.287ms`, queue-full events `389`, cancel max gap `401.181ms` at `index_publication`, RSS `275054592`, and stdout hash `2b68771d4ebafb1252b21ec35e524016d77b59e10040b0148663cac0cd245a19`. Baseline repeat B measured docs/s `180.670`, first-searchable `381.976ms`, TTF100 `799.508ms`, TTF1000 `4852.772ms`, full-import-ready `6641.933ms`, scan `187.826ms`, parse `9288.283ms`, DB `1949.283ms`, index `2778.729ms`, `parse_worker_count=3`, queue wait `1480.280ms`, queue-full events `629`, cancel max gap `403.814ms` at `index_publication`, RSS `293208064`, and stdout hash `fefa3a47e5e0a86792228dacd37f31556d53056ffb9fcf2952014fa603aa5819`. The retained direct-sampled run measured docs/s `200.818`, first-searchable `492.835ms`, TTF100 `987.135ms`, TTF1000 `4425.882ms`, full-import-ready `5975.550ms`, scan `322.087ms`, parse `9345.598ms`, DB `1414.284ms`, index `2420.411ms`, `parse_worker_count=3`, queue wait `1070.325ms`, queue-full events `496`, cancel max gap `241.606ms` at `index_publication`, stdout hash `395eb65a179dd83f5986eebeea5316f43ef399cd07271cd5ee7408c1b6357d75`, and sampled physical footprint peak `103.4M`. Public-safe active sample buckets were led by `pdf_parser` inclusive_sum `24139`, `db_sqlcipher` `13011`, `parse_worker_pipeline` `10231`, `index_fulltext` `9983`, `redaction_regex` `5600`, `text_rules` `3325`, and `filesystem` `3202`, with idle Rayon wait frames excluded. #101 closes as a profile/selection slice and opened #102 for the next bounded parser-active vs ordered writer/index-tail decision. | This is an observe/profile slice only. It confirms current import is not purely sequential and that the 3-worker path remains active, but it does not change code, close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, add resume-vs-non-resume semantic classification, expose raw paths/full text in search/detail, or make `goal_complete` true. The next performance issue is #102; mixed-directory resume-only selection and full-detail/path display remain separate product contract gaps. |
+| S653 | Issue #100 raises the low-memory parse cap from 2 to 3 workers | Follow-up #100 used the #99 default 2-worker baseline: 1200 discovered, 1172 searchable, 8 OCR-required/backlog, 8 OCR queued, 20 failed, 0 deleted, 0 scan errors, content bytes `439021920`, docs/s `199.528`, MiB/s `69.616`, first-searchable `312.832ms`, TTF100 `790.225ms`, TTF1000 `4336.104ms`, full-import-ready `6014.206ms`, full-index-ready `6014.090ms`, scan `142.221ms`, parse `6435.802ms`, DB `1176.990ms`, index `2548.901ms`, OCR/embedding `0.000ms`, `parse_worker_count=2`, `parse_jobs_queued=1199`, `parse_queue_full_events=831`, `parse_queue_wait_ms=1983.784`, `parse_result_wait_ms=7.483`, `cancel_check_count=13521`, `cancel_check_max_gap_ms=269.454`, `cancel_check_max_gap_phase=index_publication`, RSS `268025856`, and stdout hash `0f39e4749e7b3f0ac09523fb4bd836a9bec8f0830f83628551878447b8c25473`. The bounded L2 hypothesis was that raising `MAX_IMPORT_PARSE_WORKERS` from 2 to 3 would reduce parse queue backpressure and improve full-import-ready or TTF1000 by at least 5% while staying inside the 8GB-target RSS guard. The retained code change is deliberately small: `MAX_IMPORT_PARSE_WORKERS` is now `3`, and the focused worker-cap test now expects 8-way available parallelism and oversized explicit requests to clamp at 3 while preserving 2-way and 1-way behavior. A first same-root after-run preserved counts and measured `parse_worker_count=3`, queue wait `806.061ms`, full-import-ready `5517.401ms`, and TTF1000 `4027.858ms`, but first-searchable `680.389ms` and TTF100 `1117.214ms` triggered confirmation. A second after-run preserved counts and measured queue wait `1277.029ms`, full-import-ready `5215.822ms`, and TTF1000 `3792.178ms`, but first-searchable `401.573ms` and TTF100 `843.789ms` were still noisy. Same-code explicit 2-worker control preserved counts and measured full-import-ready `7292.129ms`, TTF1000 `5766.725ms`, queue wait `1733.735ms`, and RSS `282771456`, showing the mid-run slowdown was not unique to 3 workers. The accepted third 3-worker confirmation preserved counts and measured docs/s `215.921`, MiB/s `75.335`, first-searchable `324.355ms`, TTF100 `815.044ms`, TTF1000 `3990.507ms`, full-import-ready `5557.595ms`, full-index-ready `5557.390ms`, scan `156.533ms`, parse `8298.060ms`, DB `1339.462ms`, index `2445.120ms`, OCR/embedding `0.000ms`, `parse_worker_count=3`, `parse_jobs_queued=1199`, `parse_queue_full_events=535`, `parse_queue_wait_ms=1078.436`, `parse_result_wait_ms=15.716`, `cancel_check_count=13521`, `cancel_check_max_gap_ms=326.525`, `cancel_check_max_gap_phase=index_publication`, RSS `285458432`, and stdout hash `627ff19c795069887888531197929c575dc3b68295cb0b38a6e41fe7f883b18`. Against the #100 baseline, the accepted run improved full-import-ready `6014.206ms -> 5557.595ms` (-7.6%), TTF1000 `4336.104ms -> 3990.507ms` (-8.0%), queue wait `1983.784ms -> 1078.436ms` (-45.6%), and queue-full events `831 -> 535` (-35.6%); first-searchable moved `312.832ms -> 324.355ms` (+3.7%) and TTF100 `790.225ms -> 815.044ms` (+3.1%), both within the 5% guard; RSS stayed below 512 MiB. Verification passed: `CARGO_INCREMENTAL=0 cargo test -p import-pipeline import_options_low_memory_default_caps_parse_workers --locked`, `CARGO_INCREMENTAL=0 cargo test -p import-pipeline parallel_parse_workers_record_queue_and_cancel_evidence --locked`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --bin resume-cli import_parse_workers_argument --locked`, `CARGO_INCREMENTAL=0 cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo fmt --all -- --check`, `CARGO_INCREMENTAL=0 cargo check -p import-pipeline -p resume-cli --locked`, and `CARGO_INCREMENTAL=0 cargo build -p resume-cli --release --locked`. A pre-implementation RED attempt using the updated cap test was killed after the local rustc process stayed at 0% CPU for more than five minutes; the passing focused tests above are the retained verification. | This is an L2 import parse-worker cap slice only. It closes #100 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, add resume-vs-non-resume classification, or make `goal_complete` true. Remaining bottleneck evidence is still split across parse CPU, ordered writer/index publication, and early milestone variance; the next issue should start from fresh evidence and should not raise worker count again without stronger fairness/RSS/cancel evidence. |
+| S652 | Issue #99 profiles current parse parallelism and selects the 3-worker cap experiment | Fresh #99 observe-before-act evidence used the same authorized private root and 1200-file command shape. The corrected default run preserved counts at 1200 discovered, 1172 searchable, 8 OCR-required/backlog, 8 OCR queued, 20 failed, 0 deleted, and 0 scan errors, with content bytes `439021920`, docs/s `199.528`, MiB/s `69.616`, scan `142.221ms`, parse `6435.802ms`, DB `1176.990ms`, index `2548.901ms`, OCR/embedding `0.000ms`, first-searchable `312.832ms`, TTF100 `790.225ms`, TTF1000 `4336.104ms`, full-import-ready `6014.206ms`, full-index-ready `6014.090ms`, `parse_worker_count=2`, `parse_jobs_queued=1199`, `parse_queue_full_events=831`, `parse_queue_wait_ms=1983.784`, `parse_result_wait_ms=7.483`, `cancel_check_count=13521`, `cancel_check_max_gap_ms=269.454`, `cancel_check_max_gap_phase=index_publication`, RSS `268025856`, and stdout hash `0f39e4749e7b3f0ac09523fb4bd836a9bec8f0830f83628551878447b8c25473`. A sequential control with `--parse-workers 1` preserved counts and measured docs/s `134.847`, MiB/s `47.049`, first-searchable `321.653ms`, TTF100 `1074.390ms`, TTF1000 `6961.001ms`, full-import-ready `8898.955ms`, full-index-ready `8898.858ms`, parse `5434.907ms`, DB `1040.213ms`, index `2267.579ms`, `parse_worker_count=0`, RSS `216154112`, and stdout hash `7df46480ab31e4ae5756e5d5821bdec8b9e9d95ee363eda14a0f192c3663a695`. This proved the current import path is not purely sequential: the 2-worker default improved full-import-ready by 32.4%, TTF1000 by 37.7%, and TTF100 by 26.5% versus sequential while adding about 51.9 MiB RSS and staying well below the 512 MiB rollback line. #99 closed as a profile/selection slice and opened #100 for the bounded 3-worker low-memory cap experiment. | This is an L2 observe/selection slice only. It does not change code, close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, or make `goal_complete` true. |
+| S651 | Issue #98 reduces the index-publication cancel-check max gap | Fresh observe-before-act baseline for #98 used the same authorized private root and 1200-file command shape, preserving counts at 1200 discovered, 1172 searchable, 8 OCR-required/backlog, 8 OCR queued, 20 failed, 0 deleted, and 0 scan errors. Baseline timing measured scan `489.017ms`, parse `6912.145ms`, DB `1126.255ms`, index `2312.256ms`, first-searchable `671.871ms`, TTF100 `1129.259ms`, TTF1000 `4516.832ms`, full-import-ready `6190.408ms`, full-index-ready `6190.302ms`, RSS `249692160`, stdout hash `25b058f100bbdfc375a6d58d4771cb4a50e1cfb8bd69267282f25b087a61dd2a`, `parse_worker_count=2`, `parse_jobs_queued=1199`, `parse_queue_full_events=512`, `parse_queue_wait_ms=1226.155`, `parse_result_wait_ms=0.001`, `cancel_check_count=13203`, `cancel_check_max_gap_ms=1073.491`, and `cancel_check_max_gap_phase=index_publication`. Issue #98 selected the bounded L2/L4 responsiveness hypothesis that the snapshot publication path should reuse the existing import cancellation check during long index publication work. RED failed until `SnapshotPublishControl`, `publish_snapshot_refs_with_control`, and `FullTextError::Cancelled` existed; GREEN added bounded snapshot publication checkpoints in index-fulltext and passed the existing import cancellation check from `flush_pending_searchable_documents` into incremental snapshot publication. Same-root after-run preserved counts and measured `cancel_check_max_gap_ms=271.010` but full-import-ready `7060.661ms`, so a confirmation run was required before acceptance. The confirmation preserved counts and measured scan `175.264ms`, parse `6744.869ms`, DB `1105.356ms`, index `2299.988ms`, first-searchable `348.218ms`, TTF100 `834.684ms`, TTF1000 `4230.360ms`, full-import-ready `5763.182ms`, full-index-ready `5763.082ms`, RSS `256262144`, stdout hash `57af6ad4af18eb63be08652b5036dbcaced3a857622e0ee6b27376fd16d3e372`, `parse_queue_full_events=605`, `parse_queue_wait_ms=1445.619`, `parse_result_wait_ms=9.599`, `cancel_check_count=13521`, `cancel_check_max_gap_ms=245.973`, and `cancel_check_max_gap_phase=index_publication`. Primary gap improved `1073.491ms -> 245.973ms` (-77.1%), full-import-ready improved `6190.408ms -> 5763.182ms` (-6.9%), and RSS stayed below the 512 MiB rollback line. Verification passed: RED `cargo test -p index-fulltext snapshot_publish_control_cancels_between_documents --locked` failed for missing control API/error type; GREEN passed `cargo test -p index-fulltext snapshot_publish_control_cancels_between_documents --locked`, `cargo test -p index-fulltext --lib --locked -- --test-threads=1`, `cargo test -p index-fulltext --test s8_fulltext --locked -- --test-threads=1`, `cargo test -p import-pipeline parallel_parse_workers_record_queue_and_cancel_evidence --locked`, `cargo test -p import-pipeline current_import_index_cache_publishes_later_flush_without_active_snapshot_read --locked`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo test -p resume-cli import_parse_workers --locked`, `cargo check -p index-fulltext -p import-pipeline -p resume-cli -p resume-daemon --locked`, `cargo build -p resume-cli --release --locked`, `cargo fmt --all -- --check`, `rust-analyzer diagnostics .` with existing cfg inactive-code WeakWarnings only, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, and `./scripts/ci/guard-public-repo.sh`. Broad `cargo test -p import-pipeline --lib --locked -- --test-threads=1` was not used as #98 proof because an unrelated local DOC converter fixture timed out near its 15s parser timeout; the #98-affected focused import tests passed. | This is an L2/L4 import index-publication cancellation-responsiveness slice only. It closes #98 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, add resume-vs-non-resume classification, or make `goal_complete` true. The remaining max gap is still labelled `index_publication` at about 246ms; next slice should start from fresh evidence and choose the next largest import bottleneck, likely parser throughput or finer-grained index publication attribution only if new evidence shows cancel responsiveness remains the limiter. |
+| S650 | Issue #97 attributes the remaining cancel-check max gap to index publication | Fresh observe-before-act baseline for #97 used the same authorized private root and 1200-file command shape, preserving counts at 1200 discovered, 1172 searchable, 8 OCR-required/backlog, 8 OCR queued, 20 failed, 0 deleted, and 0 scan errors. Baseline timing measured scan `492.034ms`, parse `6743.163ms`, DB `1062.670ms`, index `2263.549ms`, first-searchable `696.800ms`, TTF100 `1208.604ms`, TTF1000 `4579.746ms`, full-import-ready `6034.621ms`, full-index-ready `6034.520ms`, RSS `259457024`, stdout hash `497c99073070d1905e762eabda40babc3b90910cb78b5224ee3fd49e28f34b18`, `parse_worker_count=2`, `parse_jobs_queued=1199`, `parse_queue_full_events=631`, `parse_queue_wait_ms=1443.373`, `parse_result_wait_ms=5.351`, `cancel_check_count=13201`, and `cancel_check_max_gap_ms=985.862`. Issue #97 selected the bounded L2 observability hypothesis that the max cancel-check gap needed public-safe phase attribution before further tuning. RED failed until the CLI printed `cancel check max gap phase:` and import worker metrics recorded `cancel_check_max_gap_phase`; GREEN added `ImportCancelCheckPhase`, attributed each measured gap to the previous phase, and threaded phase markers through scan, sequential parse, parse prepare, queue wait, result wait, worker-result commit, DB writes, and index publication without changing worker count, queue capacity, parser, OCR, embedding, GUI, or query hot path. Same-root after-run preserved counts and measured scan `145.309ms`, parse `6808.604ms`, DB `1159.808ms`, index `2373.239ms`, first-searchable `325.884ms`, TTF100 `804.072ms`, TTF1000 `4329.872ms`, full-import-ready `5921.986ms`, full-index-ready `5921.879ms`, RSS `261341184`, stdout hash `632789baf2050593f1cc76588a8359700d916d2471dd2385ee63b978ac65cfb4`, `parse_queue_full_events=717`, `parse_queue_wait_ms=1742.622`, `parse_result_wait_ms=7.064`, `cancel_check_count=13203`, `cancel_check_max_gap_ms=1054.023`, and `cancel_check_max_gap_phase=index_publication`. Full-import-ready improved within noise (`6034.621ms -> 5921.986ms`, -1.87%) and RSS stayed below the 512 MiB rollback line. The top-level max gap did not improve because this slice was attribution-only; the actionable result is that the bottleneck moved from unknown/outside result waits to `index_publication`. Follow-up #98 tracks the bounded index-publication cancel-gap reduction slice. Verification passed: RED `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact` failed for missing phase output and `cargo test -p import-pipeline parallel_parse_workers_record_queue_and_cancel_evidence --locked` failed for missing phase metrics; GREEN passed `cargo test -p import-pipeline parallel_parse_workers_record_queue_and_cancel_evidence --locked`, `cargo test -p import-pipeline cancel_check_max_gap_is_attributed_to_previous_phase --locked`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo test -p import-pipeline --lib --locked -- --test-threads=1`, `cargo test -p resume-cli import_parse_workers --locked`, `cargo check -p resume-cli -p resume-daemon --locked`, `cargo build -p resume-cli --release --locked`, `cargo fmt --all -- --check`, `rust-analyzer diagnostics .` with existing cfg inactive-code WeakWarnings only, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, and `./scripts/ci/guard-public-repo.sh`. | This is an L2 import observability slice only. It closes #97 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, add resume-vs-non-resume classification, or make `goal_complete` true. Next issue #98 should reduce or further split the `index_publication` max cancel-check gap with fresh observe-before-act evidence. |
+| S649 | Issue #96 bounds parse-result wait cancellation polling but fails the macro max-gap hypothesis | Fresh observe-before-act baseline for #96 measured the same 1200 private-file import twice. Baseline A preserved counts at 1200 discovered, 1172 searchable, 8 OCR-required/backlog, 8 OCR queued, 20 failed, 0 deleted, and 0 scan errors, with scan `522.293ms`, parse `8184.931ms`, DB `1464.093ms`, index `2564.439ms`, first-searchable `704.613ms`, TTF100 `1231.474ms`, TTF1000 `5281.028ms`, full-import-ready `7034.712ms`, full-index-ready `7034.596ms`, RSS `286064640`, page reclaims `35944`, page faults `525`, stdout hash `519e70bf2515d51b53e647064fcc9c871743ffcd6e9247c77dfdc316d6665edd`, `parse_worker_count=2`, `parse_jobs_queued=1199`, `parse_queue_full_events=639`, `parse_queue_wait_ms=1662.674`, and `cancel_check_max_gap_ms=1156.665`. Baseline B preserved the same counts and measured scan `159.707ms`, parse `7842.427ms`, DB `1386.309ms`, index `2459.286ms`, first-searchable `334.883ms`, TTF100 `853.247ms`, TTF1000 `4802.351ms`, full-import-ready `6434.460ms`, full-index-ready `6434.342ms`, RSS `269156352`, stdout hash `7d62a98f32722406587f49f5cca5c3f832d67ee0d2d9d885ef4db3edea0f259c`, `parse_worker_count=2`, `parse_jobs_queued=1199`, `parse_queue_full_events=668`, `parse_queue_wait_ms=1722.170`, `parse_result_wait_ms=5.679`, `cancel_check_count=13201`, and `cancel_check_max_gap_ms=1139.475`. Issue #96 selected the bounded L2 hypothesis that parse-result waits should poll the existing cancellation check while blocked, targeting a material drop in `cancel_check_max_gap_ms` without changing worker count, queue capacity, parser internals, OCR, embedding, GUI, or query hot path. RED failed until `recv_parse_result_with_cancel_poll` existed; GREEN replaced blocking parse-result receives with a 50ms `recv_timeout` loop that calls the existing cancellation closure on timeout. Focused tests prove waiting for a delayed parse result polls cancellation repeatedly, and the previous worker-metrics test still passes. Same-root after-runs preserved all counts. After A measured scan `501.279ms`, parse `7796.978ms`, DB `1379.214ms`, index `2505.954ms`, first-searchable `671.360ms`, TTF100 `1215.556ms`, TTF1000 `5082.390ms`, full-import-ready `6794.559ms`, RSS `293208064`, stdout hash `871bc2601d0e75173fb513ea682351e3c6dca1ccf730346491e3443763216aa1`, `parse_queue_wait_ms=1641.236`, `parse_result_wait_ms=10.244`, `cancel_check_count=13202`, and `cancel_check_max_gap_ms=1133.404`. Confirmation after B measured scan `147.354ms`, parse `7372.291ms`, DB `1413.760ms`, index `2470.887ms`, first-searchable `315.382ms`, TTF100 `827.107ms`, TTF1000 `4676.992ms`, full-import-ready `6384.080ms`, RSS `273825792`, stdout hash `718d482b5eff7dd6f426a2795a37d41208d94722a0399b8060071752939d9eef`, `parse_queue_full_events=841`, `parse_queue_wait_ms=2146.191`, `parse_result_wait_ms=4.652`, `cancel_check_count=13202`, and `cancel_check_max_gap_ms=1132.556`. The primary macro target did not materially improve (`1139.475ms -> 1132.556ms`, only -0.61%), so the original result-wait hypothesis is recorded as failed even though the wait path is now cancellable. Verification passed: RED `cargo test -p import-pipeline recv_parse_result_polls_cancel_while_waiting --locked` failed for missing helper; GREEN passed that test plus `cargo test -p import-pipeline parallel_parse_workers_record_queue_and_cancel_evidence --locked`, `cargo test -p import-pipeline --lib --locked -- --test-threads=1`, `cargo test -p resume-cli import_parse_workers --locked`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo check -p resume-cli -p resume-daemon --locked`, `cargo build -p resume-cli --release --locked`, `cargo fmt --all -- --check`, `rust-analyzer diagnostics .`, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and `git diff --check -- crates/import-pipeline/src/lib.rs PROGRESS.md`. | This is an L2 import cancellation-responsiveness slice with a failed macro hypothesis. It closes #96 as a bounded wait-path fix plus failed top-level `cancel_check_max_gap_ms` reduction, but it does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, add resume-vs-non-resume classification, or make `goal_complete` true. Follow-up #97 must attribute the remaining ~1.13s max cancel-check gap outside parse-result waits before further cancel tuning. |
+| S648 | Issue #95 adds parse-worker queue and cancel-responsiveness evidence | Fresh observe-before-act baseline measured current default import over 1200 private files at scan `510.383ms`, parse `8454.489ms`, DB `1514.715ms`, index `2548.810ms`, first-searchable `691.143ms`, TTF100 `1217.485ms`, TTF1000 `5385.773ms`, full-import-ready `7144.053ms`, full-index-ready `7143.935ms`, throughput `167.972 docs/s`, RSS `266223616`, page reclaims `34599`, page faults `517`, 1172 searchable, 8 OCR-required/backlog, 8 OCR queued, 20 failed, stdout hash `d2ef826b08c6eb5b75d4ac85bcf37a40265e246a6085728d9a34c87381bcb181`. The baseline CLI output had no `queue`, `worker`, `cancel`, or `wait` evidence lines beyond `ocr jobs queued`; a same-command 5s path-free profile attempt preserved counts but had weak symbolization, so built-in stage timings remain the primary evidence. Issue #95 selected the L2 evidence hypothesis that the existing parse-worker import path needs aggregate queue-wait and cancel-responsiveness fields before further scheduling changes. RED failed until `ImportSummary.worker_metrics` existed; GREEN added `ImportWorkerMetrics` with parse worker count, parse jobs queued, queue-full events, queue wait, result wait, cancel check count, and max cancel-check gap, then printed these fields from `resume-cli import`. Same-root after-run preserved counts and measured scan `501.145ms`, parse `8674.151ms`, DB `1654.590ms`, index `2657.616ms`, first-searchable `677.185ms`, TTF100 `1226.674ms`, TTF1000 `5661.582ms`, full-import-ready `7418.890ms`, throughput `161.749 docs/s`, RSS `280723456`, page reclaims `35799`, page faults `4`, stdout hash `faf584de91fa6aa090d0035f2038c13d8d964908c62afdd5d059aef955a1aa26`, `parse_worker_count=2`, `parse_jobs_queued=1199`, `parse_queue_full_events=635`, `parse_queue_wait_ms=1826.119`, `parse_result_wait_ms=8.490`, `cancel_check_count=13201`, and `cancel_check_max_gap_ms=1144.362`. Full-import-ready moved +3.85% versus baseline, within the 5% observability budget; RSS stayed below the 512 MiB rollback line. Verification passed: TDD RED `cargo test -p import-pipeline parallel_parse_workers_record_queue_and_cancel_evidence --locked` failed for missing `worker_metrics`, then GREEN passed; `cargo fmt --all -- --check`, `cargo test -p import-pipeline parallel_parse_workers_record_queue_and_cancel_evidence --locked`, `cargo test -p import-pipeline --lib --locked -- --test-threads=1`, `cargo test -p resume-cli --test s9_import_search import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --exact`, `cargo test -p resume-cli import_parse_workers --locked`, `cargo check -p resume-cli -p resume-daemon --locked`, and `cargo build -p resume-cli --release --locked` all exited 0; final contract/privacy/rust-analyzer gates are recorded with this slice closeout. | This is an L2 import observability slice only. It closes #95 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, add resume-vs-non-resume classification, or make `goal_complete` true. New evidence says result wait is small but queue-full backpressure and max cancel-check gap are visible enough to justify follow-up #96 for scheduling/cancel-responsiveness before more worker-count tuning. |
+| S647 | Issue #94 default bounded parse-worker rollout with first-searchable gate | Fresh observe-before-act baseline before this slice measured default sequential import over 1200 files at scan `506.633ms`, parse `6839.929ms`, DB `1384.524ms`, index `2467.201ms`, first-searchable `689.137ms`, TTF100 `1602.983ms`, TTF1000 `8773.381ms`, full-import-ready `11212.484ms`, full-index-ready `11212.091ms`, throughput `107.024 docs/s`, RSS `228687872`, 1172 searchable, 8 OCR-required/backlog, 8 OCR queued, 20 failed, stdout hash `6c4a4a508d85c4a348e63485c9953218e902d271fefa0c66e79e18689c60ef78`. The strict pre-slice `--parse-workers 2` control preserved counts and measured first-searchable `366.748ms`, TTF100 `895.260ms`, TTF1000 `4945.622ms`, full-import-ready `6719.019ms`, RSS `265682944`, stdout hash `8f3b2bec1a9f995054a8f7961f089bfec0cbd3542df2c603bbf98286ce9e51ed`, proving bounded parallel parse was useful but needed fairness/default policy. Issue #94 selected the L2 import scheduling hypothesis that low-memory default should use the existing capped 2-worker parse pipeline only after a sequential first-searchable prefix has flushed and published progress. RED failed until `ImportOptions::low_memory_default_for_available_parallelism` existed; GREEN caps the low-memory default by available parallelism and the existing 2-worker maximum, keeps `--parse-workers 1` as rollback, and routes default imports through a sequential first-searchable prefix before starting parser workers for the remaining files. Same-root after-runs preserved all counts. The new default measured scan `152.584ms`, parse `7205.054ms` summed across workers, DB `1355.879ms`, index `2595.929ms`, first-searchable `317.504ms`, TTF100 `826.158ms`, TTF1000 `4685.295ms`, full-import-ready `6442.106ms`, throughput `186.274 docs/s`, RSS `266878976`, page reclaims `38788`, page faults `2`, stdout hash `01ab7e0e2b825c7c8d375e6e7034db53023d6980453b2015020f0fcaf5f3e85c`. The same-code rollback control `--parse-workers 1` preserved counts and measured full-import-ready `10306.603ms`, TTF100 `1169.791ms`, TTF1000 `8012.199ms`, first-searchable `304.292ms`, RSS `228212736`, stdout hash `79346ac2dcc38cb8f625d47e1b1b69fcfc950c606b4cb0012312f3346565c180`. Against the pre-slice default baseline, new default improved full-import-ready by 42.5%, TTF100 by 48.5%, and TTF1000 by 46.6%; against same-code sequential rollback it improved full-import-ready by 37.5% and TTF1000 by 41.5%, with RSS still below the 512 MiB rollback line. Verification passed: `cargo fmt --all -- --check`, `cargo test -p import-pipeline import_options_low_memory_default_caps_parse_workers --locked`, `cargo test -p import-pipeline import_root_publishes_first_searchable --locked -- --test-threads=1`, `cargo test -p import-pipeline searchable_progress_before_full_import --locked -- --test-threads=1`, `cargo test -p import-pipeline --lib --locked -- --test-threads=1`, `cargo test -p resume-cli import_parse_workers --locked`, `cargo check -p resume-cli -p resume-daemon --locked`, `cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics .`, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and `git diff --check -- crates/import-pipeline/src/lib.rs PROGRESS.md`. | This is an L2 import parse scheduling/default rollout slice only. It closes #94 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, add resume-vs-non-resume classification, or make `goal_complete` true. The accumulated parse stage remains largest because worker durations are summed across threads, while wall-clock bottleneck moved toward ordered DB/index writer plus remaining parse CPU; follow-up #95 tracks the missing queue-wait and cancel-latency evidence before the next L2 tuning slice. |
+| S646 | Issue #92 removes redundant `all_sections` fulltext write amplification | Fresh observe-before-act baseline measured 100 files at scan `169.177ms`, parse `476.177ms`, DB `76.408ms`, index `360.759ms`, first-searchable `340.847ms`, full-import-ready `1083.560ms`, 92 searchable, 5 OCR-required/backlog, 3 failed; 500 files at scan `210.962ms`, parse `2334.278ms`, DB `391.580ms`, index `912.252ms`, first-searchable `381.523ms`, TTF100 `1189.347ms`, full-import-ready `3853.305ms`, 484 searchable, 6 OCR-required/backlog, 10 failed; 1000 files at scan `255.602ms`, parse `4796.205ms`, DB `866.302ms`, index `1359.680ms`, first-searchable `422.495ms`, TTF100 `1227.343ms`, full-import-ready `7286.613ms`, 974 searchable, 8 OCR-required/backlog, 18 failed; and 1200 files at scan `191.692ms`, parse `5387.247ms`, DB `1026.893ms`, index `2536.011ms`, first-searchable `375.717ms`, TTF100 `1100.814ms`, TTF1000 `6933.338ms`, full-import-ready `9152.117ms`, throughput `131.117 docs/s`, content bytes `439021920`, RSS `273006592`, 1172 searchable, 8 OCR-required/backlog, 20 failed. The paired 1200 profile measured scan `133.731ms`, parse `5776.499ms`, DB `1070.873ms`, index `2498.199ms`, first-searchable `304.988ms`, TTF100 `1094.915ms`, TTF1000 `7299.789ms`, full-import-ready `9490.085ms`, RSS `260276224`, and path-free buckets `lopdf_total=2089`, `lopdf_parser=1833`, `parser_pdf=43`, `extractor_rules=146`, `text_normalizer=22`, `index_fulltext=44`, `sqlite=604`, `allocation=1819`, `regex=226`, and `tantivy=135`; public-safe hashes were `benchmark_report_hash=8fb2f154b521574a158b86bd315d516ea52e27377251539b97a80197de49cff5`, `profile_summary_hash=642f3590f47b3472f86377ce99cfbc9d20405eefbcf6ade42127ba102fe77b99`, and `corpus_profile_hash=dc905226d30d218367674cae1d7ad10a0311b0839339da74bf7670ab648e8d50`. Issue #92 selected the bounded fulltext index write-amplification hypothesis that new snapshots should not duplicate the full resume body through a joined `all_sections` text field when `clean_text` and per-section `section_text` already preserve content searchability. RED failed until the fulltext schema omitted `all_sections`; GREEN removes the field from new schemas, snapshot writes, and query parser fields while keeping `clean_text` and `section_text`. Same-root after-runs preserved all counts. The 1200 after-run measured index `2226.960ms` versus `2536.011ms` (-12.18%), full-import-ready `8754.753ms` (-4.34%), first-searchable `360.810ms` (-3.97%), TTF100 `1077.512ms` (-2.12%), and TTF1000 `6738.499ms` (-2.81%). A 1200 confirmation measured index `2202.089ms` (-13.17%), full-import-ready `8548.351ms` (-6.60%), first-searchable `306.161ms` (-18.51%), TTF100 `1001.514ms` (-9.02%), and TTF1000 `6639.958ms` (-4.23%). The after-profile preserved counts and measured index `2299.649ms` versus sampled baseline `2498.199ms` (-7.94%), full-import-ready `9102.281ms` (-4.08%), RSS `225689600`, and path-free buckets `index_fulltext=36`, `sqlite=574`, `regex=209`, and `tantivy=145`; bottleneck remains parse-dominant in dependency-heavy `lopdf`. Verification passed: RED/GREEN focused schema test, `cargo test -p index-fulltext --test s8_fulltext --locked -- --test-threads=1`, `cargo test -p resume-cli --test s9_import_search --locked -- --test-threads=1`, `cargo test -p import-pipeline --locked -- --test-threads=1`, `cargo check -p index-fulltext -p import-pipeline -p resume-cli --locked`, `cargo fmt --all -- --check`, and `cargo build -p resume-cli --release --locked`; final contract/privacy/rust-analyzer gates are recorded with the slice closeout. | This is an import fulltext index write-amplification slice only. It closes #92 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, add resume-vs-non-resume classification, or make `goal_complete` true. Remaining import evidence is still parse-dominant in `lopdf` with index/SQLite variance; the next slice must start from fresh observe-before-act evidence and should target a stronger parser/input-read/L2 scheduling bottleneck or track non-resume filtering as a separate product/import correctness issue. |
+| S645 | Issue #91 failed post-index searchable status batch hypothesis and was reverted | Fresh observe-before-act baseline after S644 measured 100 files at scan `162.260ms`, parse `436.791ms`, DB `68.578ms`, index `349.146ms`, first-searchable `327.792ms`, full-import-ready `1017.726ms`, 92 searchable, 5 OCR-required/backlog, 3 failed; 500 files at scan `210.786ms`, parse `2085.354ms`, DB `334.667ms`, index `878.104ms`, first-searchable `377.232ms`, TTF100 `1066.127ms`, full-import-ready `3512.842ms`, 484 searchable, 6 OCR-required/backlog, 10 failed; 1000 files at scan `250.519ms`, parse `4209.901ms`, DB `735.651ms`, index `1301.695ms`, first-searchable `418.099ms`, TTF100 `1115.604ms`, full-import-ready `6505.079ms`, 974 searchable, 8 OCR-required/backlog, 18 failed; and 1200 files at scan `180.025ms`, parse `4968.264ms`, DB `924.213ms`, index `2369.408ms`, first-searchable `348.429ms`, TTF100 `1023.820ms`, TTF1000 `6418.021ms`, full-import-ready `8451.002ms`, throughput `141.995 docs/s`, content bytes `439021920`, RSS `241090560`, 1172 searchable, 8 OCR-required/backlog, 20 failed. A paired 1200 profile measured scan `129.121ms`, parse `5338.008ms`, DB `972.686ms`, index `2592.986ms`, first-searchable `303.033ms`, TTF100 `988.843ms`, TTF1000 `6948.638ms`, full-import-ready `9042.481ms`, and path-free sampled buckets `lopdf_total=2346`, `lopdf_parser=2026`, `parser_pdf=38`, `extractor_rules=162`, `text_normalizer=21`, `index_fulltext=28`, `sqlite=592`, `filesystem=298`, `allocation=1731`, `regex=232`, `tantivy=107`, and `zip=0`. Issue #91 tested the bounded L4 DB/storage hypothesis that post-index searchable status updates should be marked in one SQLite transaction per flush instead of one `upsert_document` call per document. RED failed as expected until `MetaStore::mark_documents_searchable` existed; GREEN added the batch status API and routed `flush_pending_searchable_documents` through it. Same-root after-runs preserved counts but regressed the primary metrics: the 1200 after-run measured DB `1067.034ms` versus baseline `924.213ms` (+15.45%), full-import-ready `9642.341ms` versus `8451.002ms` (+14.10%), and first-searchable `353.639ms` versus `348.429ms` (+1.49%). The after-profile also regressed DB `972.686 -> 1220.690ms` (+25.50%) and sampled `sqlite=592 -> 727`. This crossed the rollback guard, so the #91 Rust/test change was reverted. Post-revert verification passed: `cargo fmt --all --check`, `cargo check -p meta-store -p import-pipeline --locked`, `cargo test -p import-pipeline tests::searchable_flush_policy_publishes_first_match_then_batches_followups --locked -- --exact`, `cargo test -p meta-store searchable_import_document_upsert_reuses_candidate_and_replaces_mentions --locked -- --exact`, `rust-analyzer diagnostics . --severity warning`, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and `git diff --check -- PROGRESS.md crates/meta-store/src/lib.rs crates/meta-store/tests/s3_sqlite.rs crates/import-pipeline/src/lib.rs`. | This records a failed L4 import DB status-update hypothesis only. No #91 Rust/test change is retained. It closes #91 as failed and does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, add resume-vs-non-resume classification, or make `goal_complete` true. Remaining evidence is parse/index-dominant with DB variance; do not retry post-index searchable status batching unless the storage design changes, and keep non-resume file filtering as a separate product/import correctness issue. |
+| S644 | Issue #90 failed TTF100 snapshot removal hypothesis and was reverted | Fresh observe-before-act baseline after S643 measured 100 files at scan `164.919ms`, parse `450.798ms`, DB `71.470ms`, index `396.667ms`, first-searchable `357.790ms`, full-import-ready `1084.894ms`, 92 searchable, 5 OCR-required/backlog, 3 failed; 500 files at scan `214.147ms`, parse `2129.763ms`, DB `346.435ms`, index `895.918ms`, first-searchable `391.473ms`, TTF100 `1105.085ms`, full-import-ready `3590.290ms`, 484 searchable, 6 OCR-required/backlog, 10 failed; 1000 files at scan `247.367ms`, parse `4157.707ms`, DB `732.701ms`, index `1309.732ms`, first-searchable `425.117ms`, TTF100 `1127.540ms`, full-import-ready `6454.509ms`, 974 searchable, 8 OCR-required/backlog, 18 failed; and 1200 files at scan `202.315ms`, parse `4960.532ms`, DB `941.934ms`, index `2393.453ms`, first-searchable `381.971ms`, TTF100 `1078.520ms`, TTF1000 `6436.687ms`, full-import-ready `8507.132ms`, 1172 searchable, 8 OCR-required/backlog, 20 failed. A paired 1200 profile measured scan `142.769ms`, parse `5472.170ms`, DB `1004.812ms`, index `2456.523ms`, first-searchable `317.757ms`, TTF100 `1124.506ms`, TTF1000 `6983.281ms`, full-import-ready `9085.408ms`, and path-free sampled buckets `lopdf_total=2478`, `lopdf_parser=2174`, `extractor_rules=176`, `parser_pdf=33`, and `text_normalizer=22`. Issue #90 tested the bounded index flush-cadence hypothesis that removing the dedicated TTF100 fulltext snapshot while preserving first-searchable, TTF1000, and final flushes would reduce 1200-file index work while keeping TTF100 below the 10s redline. RED failed as expected until the 100-doc milestone no longer triggered `should_flush_searchable_documents`; GREEN changed the milestone set from `[100, 1000]` to `[1000]`. Same-root after-runs preserved counts, but the primary 1200 after-run measured index `2415.057ms` versus baseline `2393.453ms` (+0.90%), first-searchable `491.818ms` (+28.76%), TTF100/TTF1000 `7826.849ms`, and full-import-ready `10181.102ms` (+19.68%). A 1200 confirmation again preserved counts but measured index `2394.119ms` (+0.03%), TTF100/TTF1000 `7750.102ms`, and full-import-ready `10214.945ms` (+20.08%). Although TTF100 stayed under redline, the primary index metric did not improve by the required 5% and rollback guards were exceeded, so the #90 Rust/test change was reverted. Verification passed after revert: `cargo test -p import-pipeline searchable_flush_policy_publishes_first_match_then_batches_followups --locked`, `cargo test -p import-pipeline --locked`, `cargo check -p import-pipeline --locked`, `cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics . --severity warning`, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, `cargo fmt --all -- --check`, and `git diff --check -- PROGRESS.md crates/import-pipeline/src/lib.rs`. | This records a failed L2/L1 import flush-cadence hypothesis only. No #90 Rust/test change is retained. It closes #90 as failed and does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, add resume-vs-non-resume classification, or make `goal_complete` true. Remaining evidence is still parse-dominant in dependency-heavy `lopdf`; next work should not remove the TTF100 snapshot for this corpus and should choose a stronger parser/input-read bottleneck or a separate product issue for non-resume filtering. |
+| S643 | Issue #89 consolidates searchable import DB writes into one transaction | Fresh observe-before-act baseline after S642 measured 100 files at scan `169.566ms`, parse `465.366ms`, DB `87.178ms`, index `350.791ms`, first-searchable `332.907ms`, full-import-ready `1074.060ms`, 92 searchable, 5 OCR-required/backlog, 3 failed; 500 files at scan `210.728ms`, parse `2268.516ms`, DB `416.933ms`, index `879.457ms`, first-searchable `374.181ms`, full-import-ready `3779.987ms`, 484 searchable, 6 OCR-required/backlog, 10 failed; 1000 files at scan `254.602ms`, parse `4585.510ms`, DB `921.893ms`, index `1331.113ms`, first-searchable `437.837ms`, full-import-ready `7100.934ms`, 974 searchable, 8 OCR-required/backlog, 18 failed; and 1200 files at scan `179.917ms`, parse `5393.870ms`, DB `1100.282ms`, index `2434.877ms`, first-searchable `346.111ms`, full-import-ready `9118.959ms`, 1172 searchable, 8 OCR-required/backlog, 20 failed. A 1200 confirmation measured scan `131.854ms`, parse `5316.517ms`, DB `1122.616ms`, index `2462.763ms`, first-searchable `319.799ms`, and full-import-ready `9043.646ms`; the paired 1200 profile measured DB `1401.304ms` and path-free buckets `lopdf_total=2626`, `lopdf_parser=2243`, `allocation=2365`, `sqlite_total=955`, `filesystem=544`, `index_fulltext=494`, `regex=342`, and `extractor_rules=195`. Issue #89 selected the bounded L4 DB/storage hypothesis that the direct searchable import path should avoid separate document, version, mention, and candidate-assignment write transactions by committing the searchable import document bundle once. RED failed until `SearchableImportDocument` and `MetaStore::upsert_searchable_import_document` existed; GREEN writes document, resume version, entity mentions, and hashed-contact candidate assignment in one SQLite transaction while preserving existing candidate assignment when a reimport has no contacts. Same-root after-runs preserved all counts. The 100/500/1000 after-runs measured DB `82.466ms`, `390.719ms`, and `855.188ms` with first-searchable `350.156ms`, `385.708ms`, and `428.191ms`; the primary 1200 after-run measured scan `189.307ms`, parse `5522.418ms`, DB `1043.939ms`, index `2481.668ms`, first-searchable `360.162ms`, TTF100 `1120.412ms`, TTF1000 `7064.789ms`, full-import-ready `9248.439ms`, throughput `129.752 docs/s`, RSS `257064960`, 1172 searchable, 8 OCR-required/backlog, and 20 failed. A 1200 confirmation measured scan `137.472ms`, parse `5528.634ms`, DB `1051.393ms`, index `2550.511ms`, first-searchable `311.354ms`, TTF100 `1083.931ms`, TTF1000 `7139.802ms`, full-import-ready `9278.438ms`, throughput `129.332 docs/s`, RSS `237518848`, and the same counts. Averaged over the paired 1200 before/after runs, DB moved `1111.449 -> 1047.666ms` (-5.74%), full-import-ready stayed inside the rollback guard `9081.303 -> 9263.439ms` (+2.01%), and first-searchable was effectively neutral `332.955 -> 335.758ms` (+0.84%); parse and index remain the larger bottlenecks. Verification passed: `cargo test -p meta-store searchable_import_document_upsert_reuses_candidate_and_replaces_mentions --locked -- --exact`, `cargo test -p import-pipeline import_root_persists_clean_text_without_duplicate_raw_text_body --locked`, `cargo test -p resume-cli --test s21_import_candidate_assignment import_assigns_candidates_from_hashed_contacts_and_search_folds_versions --locked -- --exact`, `cargo test -p resume-cli --test s21_import_candidate_assignment reimport_preserves_existing_candidate_assignment_without_contacts --locked -- --exact`, `cargo check -p import-pipeline -p meta-store --locked`, `cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics . --severity warning`, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, `cargo fmt --all -- --check`, and `git diff --check -- PROGRESS.md crates/meta-store/src/lib.rs crates/meta-store/tests/s3_sqlite.rs crates/import-pipeline/src/lib.rs`. | This is an L4 import DB transaction-consolidation slice only. It closes #89 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, add resume-vs-non-resume classification, or make `goal_complete` true. Remaining evidence is still parse/index-dominant with DB variance; the next slice needs a fresh profile and should choose a stronger parser/input-read/index bottleneck or open a separate product issue for non-resume file filtering. |
+| S642 | Issue #88 failed PDF font-encoding lazy-resolution hypothesis | Fresh observe-before-act baseline after S641 measured 100 files at scan `162.477ms`, parse `483.391ms`, DB `90.348ms`, index `357.063ms`, first-searchable `339.967ms`, full-import-ready `1095.783ms`, 92 searchable, 5 OCR-required/backlog, 3 failed; 500 files at scan `209.175ms`, parse `2300.044ms`, DB `424.342ms`, index `893.447ms`, first-searchable `374.416ms`, TTF100 `1115.995ms`, full-import-ready `3831.161ms`, 484 searchable, 6 OCR-required/backlog, 10 failed; 1000 files at scan `256.008ms`, parse `4561.213ms`, DB `952.053ms`, index `1428.623ms`, first-searchable `426.199ms`, TTF100 `1158.401ms`, full-import-ready `7206.229ms`, 974 searchable, 8 OCR-required/backlog, 18 failed; and 1200 files at scan `189.493ms`, parse `5762.482ms`, DB `1245.085ms`, index `2454.748ms`, first-searchable `362.144ms`, TTF100 `1140.684ms`, TTF1000 `7469.585ms`, full-import-ready `9663.012ms`, throughput `124.185 docs/s` / `43.329 MiB/s`, content bytes `439021920`, 1172 searchable, 8 OCR-required/backlog, 20 failed. A 1200 confirmation measured parse `5525.111ms`, DB `1214.608ms`, index `2587.250ms`, full-import-ready `9472.053ms`; symbolized attribution was used only for path-free buckets and showed `lopdf/pdf=2307`, `allocation=1810`, `filesystem=1232`, `sqlite=862`, `regex=353`, `index_fulltext=321`, `extractor_rules=184`, and `text_normalizer=53`. Issue #88 selected the L4 parser hypothesis that resolving page font encodings lazily when `Tf` selects a font would reduce the dominant PDF/lopdf parse bucket. RED failed as expected while the eager path cached an unused page font; GREEN passed focused parser tests and the attempted implementation also passed `cargo test -p parser-pdf --locked -- --test-threads=1`, `cargo test -p import-pipeline --locked -- --test-threads=1`, `cargo test -p resume-cli --test s9_import_search --locked -- --test-threads=1`, and `cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`. Same-root after-runs preserved counts but did not clear the pre-registered `>=2%` parse-stage threshold: 1200 after measured parse `5766.844ms`, full-import-ready `9659.252ms`; confirmation measured parse `5485.137ms`, full-import-ready `9419.008ms`; third run measured parse `5493.808ms`, full-import-ready `9417.623ms`. The result was neutral/noisy rather than a proven win, and it repeated the older S634/#80 conclusion that lazy font-encoding lookup is too weak for this corpus. The #88 Rust/test change was reverted; post-revert `cargo test -p parser-pdf --locked -- --test-threads=1` passed. Required gates also passed: `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, `cargo fmt --all -- --check`, post-revert `cargo check -p parser-pdf -p import-pipeline -p resume-cli --locked`, `git diff --check -- PROGRESS.md crates/parser-pdf/src/lib.rs crates/parser-pdf/tests/s6_pdf.rs`, and `rust-analyzer diagnostics . --severity warning`. #88 was closed as a failed hypothesis, and #37 was updated with the failed-slice link. | This records a failed L4 import parser micro-optimization only. No #88 Rust/test change is retained. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining evidence is still parse-dominant in dependency-heavy `lopdf` with input-read/SQLite/index variance; next work should not retry lazy font encoding and should choose a stronger parser/input-read/DB scheduling hotspot from a fresh profile. |
+| S641 | Issue #87 fulltext redaction regex signal gating | Fresh observe-before-act baseline after S640 measured 100 files at scan `120.259ms`, parse `478.010ms`, DB `85.886ms`, index `379.468ms`, first-searchable `290.706ms`, full-import-ready `1064.573ms`, 92 searchable, 5 OCR-required/backlog, 3 failed; 500 files at scan `207.124ms`, parse `2412.465ms`, DB `439.792ms`, index `1085.488ms`, first-searchable `391.366ms`, TTF100 `1151.010ms`, full-import-ready `4149.763ms`, 484 searchable, 6 OCR-required/backlog, 10 failed; 1000 files at scan `292.494ms`, parse `4833.418ms`, DB `961.100ms`, index `1630.032ms`, first-searchable `502.063ms`, TTF100 `1331.906ms`, full-import-ready `7726.081ms`, 974 searchable, 8 OCR-required/backlog, 18 failed; and 1200 files at scan `198.978ms`, parse `5485.651ms`, DB `1191.702ms`, index `2838.848ms`, first-searchable `383.325ms`, TTF100 `1156.233ms`, TTF1000 `7377.168ms`, full-import-ready `9726.002ms`, throughput `123.381 docs/s` / `43.048 MiB/s`, content bytes `439021920`, 1172 searchable, 8 OCR-required/backlog, 20 failed. The paired 1200 profile measured scan `159.802ms`, parse `5762.812ms`, DB `1242.080ms`, index `2798.006ms`, full-import-ready `9973.202ms`, peak RSS `238368KB`, and path-free buckets `lopdf_parser=2084`, `allocation=1894`, `sqlite=724`, `regex_automata=329`, `index_fulltext=306`, `text_normalizer=20`. Issue #87 selected the bounded L4/index-redaction hypothesis that `index_fulltext::redact_contact_values` should skip impossible email, phone, compact-phone, WeChat, and local-path regex passes using cheap signal checks while preserving exact redaction behavior. RED failed until no-match synthetic text ran zero regex passes, and a second RED failed until date-only numeric text skipped phone regexes; GREEN added signal gates and focused coverage for no-match, date-only, and all supported redaction outputs. Same-root final after-runs preserved all counts. The final 1200 after baseline measured scan `194.625ms`, parse `5686.977ms`, DB `1237.678ms`, index `2577.702ms`, first-searchable `362.541ms`, TTF100 `1139.789ms`, TTF1000 `7473.343ms`, and full-import-ready `9708.089ms`; index improved `2838.848 -> 2577.702ms` (-9.20%) and full-import-ready was effectively neutral `9726.002 -> 9708.089ms` (-0.18%), while TTF1000 was noisy `7377.168 -> 7473.343ms` (+1.30%). A 1200 confirmation preserved counts and measured index `2568.806ms` (-9.51% versus baseline) but full-import-ready `9955.710ms` (+2.36%) due to parse/DB noise. The after-profile preserved counts and measured index `2588.912ms` (-7.47% versus sampled baseline) but full-import-ready `10113.019ms` (+1.40%); broad `regex_automata` did not move (`329 -> 329`), showing the sample bucket is dominated by other regex paths and this slice is accepted only as lower-layer index-stage movement, not a total import or profile-bucket win. Verification passed: RED/GREEN contact-redaction focused tests, `cargo test -p index-fulltext --locked -- --test-threads=1`, `cargo test -p import-pipeline --locked -- --test-threads=1`, `cargo test -p resume-cli --test s9_import_search --locked -- --test-threads=1`, `cargo check -p index-fulltext -p import-pipeline -p resume-cli --locked`, `cargo fmt --all -- --check`, `cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics . --severity warning`, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, and `./scripts/ci/guard-public-repo.sh`. | This is an L4 import fulltext redaction/index-stage slice only. It closes #87 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining import evidence is still parse-dominant in dependency-heavy `lopdf`, with DB/index variance and broad regex samples still visible; the next slice needs a fresh profile and should prefer a stronger project-owned parser/scheduling bottleneck over more weak regex micro-work. |
+| S640 | Issue #86 import DB-stage duplicate raw-text persistence | Fresh observe-before-act baseline after S639 measured 100 files at scan `172.507ms`, parse `507.490ms`, DB `104.508ms`, index `419.746ms`, first-searchable `346.127ms`, full-import-ready `1205.573ms`, 92 searchable, 5 OCR-required/backlog, 3 failed; 500 files at scan `223.819ms`, parse `2590.197ms`, DB `537.445ms`, index `1070.876ms`, first-searchable `399.008ms`, TTF100 `1252.279ms`, full-import-ready `4427.677ms`, 484 searchable, 6 OCR-required/backlog, 10 failed; 1000 files at scan `265.689ms`, parse `5286.815ms`, DB `1240.915ms`, index `1590.609ms`, first-searchable `436.154ms`, TTF100 `1277.947ms`, full-import-ready `8395.140ms`, 974 searchable, 8 OCR-required/backlog, 18 failed; and 1200 files at scan `191.613ms`, parse `6031.282ms`, DB `1442.938ms`, index `3010.881ms`, first-searchable `357.321ms`, TTF100 `1232.289ms`, TTF1000 `8174.736ms`, full-import-ready `10689.690ms`, throughput `112.258 docs/s` / `39.167 MiB/s`, content bytes `439021920`, 1172 searchable, 8 OCR-required/backlog, 20 failed. The paired 1200 profile measured scan `169.987ms`, parse `5808.261ms`, DB `1342.498ms`, index `2869.305ms`, full-import-ready `10201.660ms`, peak RSS `234576KB`, and path-free buckets led by `lopdf_parser=1811`, `allocation=1673`, `sqlite=719`, `index_fulltext=305`, and `text_normalizer=20`. Issue #86 selected the bounded L4 DB/storage-behavior hypothesis that direct import and OCR indexing should keep normalized `clean_text` but stop duplicating the same body into `resume_version.raw_text`. RED failed until both import and OCR indexing persisted `raw_text=None` while keeping searchable `clean_text`; GREEN changed only those write paths and updated OCR handoff/daemon tests to assert both OCR page tokens remain searchable from `clean_text`. Same-root after-runs preserved all counts. The 1200 after-run measured DB `1200.559ms` and full-import-ready `10178.113ms`; a 1200 confirmation measured scan `148.830ms`, parse `5842.979ms`, DB `1303.307ms`, index `2942.335ms`, first-searchable `323.781ms`, TTF100 `1166.354ms`, TTF1000 `7924.361ms`, and full-import-ready `10249.423ms`. Confirmation deltas versus baseline: DB `1442.938 -> 1303.307ms` (-9.68%), full-import-ready `10689.690 -> 10249.423ms` (-4.12%), first-searchable `357.321 -> 323.781ms` (-9.39%), TTF100 `1232.289 -> 1166.354ms` (-5.35%), TTF1000 `8174.736 -> 7924.361ms` (-3.06%), and throughput `112.258 -> 117.080 docs/s` (+4.30%). The after-profile was noisy and did not confirm the DB improvement under sampling (`DB=1392.476ms`, `full-import-ready=10856.189ms`, peak RSS `237120KB`, `allocation=1747`), so acceptance is based on repeated ordinary import stage timing with counts unchanged, not on a profile-bucket transfer. Verification passed: import-pipeline duplicate RED/GREEN tests, full `cargo test -p import-pipeline --locked -- --test-threads=1`, `cargo test -p resume-cli --test s15_ocr_handoff --locked -- --test-threads=1`, `cargo test -p resume-daemon --test s50_ocr_worker --locked -- --test-threads=1`, `cargo test -p resume-cli --test s9_import_search --locked -- --test-threads=1`, `cargo check -p import-pipeline -p resume-cli -p resume-daemon --locked`, `cargo fmt --all -- --check`, `cargo build -p resume-cli --release --locked`, `rust-analyzer diagnostics . --severity warning`, performance/autonomous/loop contract checks, and public repo guard. | This is an L4 import DB/storage-behavior slice only. It closes #86 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining import evidence is still parse-dominant in dependency-heavy `lopdf` with index/SQLite variance; the next slice needs a fresh profile and should not treat this raw-text duplicate removal as resolving the higher-level import blocker. |
+| S639 | Issue #85 one-pass import language-set classification | Fresh observe-before-act baseline after S638 measured 100 files at scan `181.634ms`, parse `594.249ms`, DB `122.848ms`, index `395.966ms`, first-searchable `352.183ms`, full-import-ready `1296.016ms`, 92 searchable, 5 OCR-required/backlog, 3 failed; 500 files at scan `233.694ms`, parse `2653.358ms`, DB `565.058ms`, index `1197.423ms`, first-searchable `405.661ms`, TTF100 `1331.235ms`, full-import-ready `4655.297ms`, 484 searchable, 6 OCR-required/backlog, 10 failed; 1000 files at scan `272.776ms`, parse `5367.966ms`, DB `1304.001ms`, index `1625.692ms`, first-searchable `457.836ms`, TTF100 `1372.973ms`, full-import-ready `8583.275ms`, 974 searchable, 8 OCR-required/backlog, 18 failed; and 1200 files at scan `202.567ms`, parse `6021.816ms`, DB `1483.375ms`, index `3381.898ms`, first-searchable `372.379ms`, TTF100 `1227.679ms`, TTF1000 `8319.754ms`, full-import-ready `11102.831ms`, throughput `108.081 docs/s` / `37.710 MiB/s`, 1172 searchable, 8 OCR-required/backlog, 20 failed. The paired 1200 profile measured scan `182.218ms`, parse `6315.443ms`, DB `1521.690ms`, index `3050.510ms`, full-import-ready `11082.653ms`, peak RSS `239472KB`, and path-free buckets led by `lopdf_parser=2587`, `allocation=2000`, `sqlite=775`, `regex_automata=376`, `index_fulltext=308`, and `text_normalizer=21`. A granular no-change profile confirmed contact-hasher work was too small to select (`contact_hasher=11`, `hmac_sha=45`) and #85 instead selected the project-owned algorithmic hypothesis that `language_set(clean_text)` should avoid two full text scans inside the DB-timed resume-version write path. RED failed until `classify_language_set` existed; GREEN makes language classification scan once, stop when both English and CJK signals are found, and preserve output order (`en`, then `zh`, else `unknown`). Same-root after-runs preserved all counts. The 1200 after-confirmation measured scan `145.567ms`, parse `5714.440ms`, DB `1378.496ms`, index `2949.512ms`, first-searchable `321.443ms`, TTF100 `1122.366ms`, TTF1000 `7682.705ms`, and full-import-ready `10199.682ms`, improving DB `1483.375 -> 1378.496ms` (-7.07%), full-import-ready `11102.831 -> 10199.682ms` (-8.13%), TTF1000 `8319.754 -> 7682.705ms` (-7.66%), and first-searchable `372.379 -> 321.443ms` (-13.68%). The after-profile preserved counts and measured DB `1521.690 -> 1467.490ms` (-3.56%), full-import-ready `11082.653 -> 10736.667ms` (-3.12%), and allocation bucket `2000 -> 1779` (-11.05%); `lopdf` remained dominant, so this slice did not transfer the main bottleneck. | This is an L4 import DB-stage text-scan slice only. It closes #85 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining import evidence is still parse-dominant in dependency-heavy `lopdf` with SQLite/index variance; next work needs a fresh profile and should either prove another project-owned hotspot or move to a bounded L2 import scheduling/throughput issue. |
+| S638 | Issue #84 moves pending import index documents instead of cloning before flush | Fresh observe-before-act baseline after S637 measured 100 files at scan `164.017ms`, parse `499.195ms`, DB `99.245ms`, index `384.739ms`, first-searchable `337.486ms`, full-import-ready `1148.567ms`, 92 searchable, 5 OCR-required/backlog, 3 failed; 500 files at scan `216.744ms`, parse `2412.553ms`, DB `491.260ms`, index `1029.389ms`, first-searchable `389.861ms`, TTF100 `1177.924ms`, full-import-ready `4155.680ms`, 484 searchable, 6 OCR-required/backlog, 10 failed; 1000 files at scan `290.280ms`, parse `5024.794ms`, DB `1133.974ms`, index `1608.797ms`, first-searchable `451.216ms`, TTF100 `1367.062ms`, full-import-ready `8069.612ms`, 974 searchable, 8 OCR-required/backlog, 18 failed; and 1200 files at scan `212.158ms`, parse `6126.314ms`, DB `1491.731ms`, index `3146.145ms`, first-searchable `392.254ms`, TTF100 `1251.771ms`, TTF1000 `8199.176ms`, full-import-ready `10996.577ms`, throughput `109.125 docs/s` / `38.074 MiB/s`, 1172 searchable, 8 OCR-required/backlog, 20 failed. The paired 1200 profile measured scan `159.293ms`, parse `5656.064ms`, DB `1289.881ms`, index `2892.718ms`, full-import-ready `10011.067ms`, peak RSS `253376KB`, and path-free buckets led by `lopdf_parser=2145`, `allocation=1789`, `sqlite=655`, `index_fulltext=306`, and `text_normalizer=20`. Issue #84 selected the bounded L4/index allocation hypothesis that `flush_pending_searchable_documents` should move pending `IndexDocument`s into incremental snapshot writes instead of cloning their large `clean_text` payloads before every flush. RED failed until `take_pending_searchable_documents` existed; GREEN drains pending `(Document, IndexDocument)` pairs into separate document/status and index replacement vectors, preserving flush milestones and counts. Same-root after-runs preserved all counts. The 100/500 after timings were noisy/regressed, but the 1000 and 1200 import-scale metrics improved; the 1200 confirmation measured scan `144.679ms`, parse `5582.393ms`, DB `1323.647ms`, index `2922.939ms`, first-searchable `312.267ms`, TTF100 `1114.803ms`, TTF1000 `7528.630ms`, and full-import-ready `9984.629ms`, improving full-import-ready `10996.577 -> 9984.629ms` (-9.20%), index `3146.145 -> 2922.939ms` (-7.09%), TTF1000 `8199.176 -> 7528.630ms` (-8.18%), and first-searchable `392.254 -> 312.267ms` (-20.39%). The after-profile preserved counts and measured peak RSS `244384KB`, allocation bucket `1789 -> 1726` (-3.52%), and index `2892.718 -> 2881.455ms` (-0.39%), but profile full-import-ready was noisy (`10011.067 -> 10334.304ms`), so the allocation hypothesis is only partially confirmed. | This is an L4 import flush/index allocation slice only. It closes #84 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining import evidence is still parse-dominant in dependency-heavy `lopdf` with SQLite/index variance; future slices need fresh profile evidence before more L4 work or should move to a bounded L2 import scheduling/throughput issue. |
+| S637 | Issue #83 text-only normalization for import clean text | Fresh observe-before-act baseline after S636 measured 100 files at scan `165.294ms`, parse `479.735ms`, DB `91.218ms`, index `376.233ms`, first-searchable `338.746ms`, full-import-ready `1113.934ms`, 92 searchable, 5 OCR-required/backlog, 3 failed; 500 files at scan `212.554ms`, parse `2310.397ms`, DB `459.647ms`, index `998.688ms`, first-searchable `382.038ms`, TTF100 `1148.602ms`, full-import-ready `3986.717ms`, 484 searchable, 6 OCR-required/backlog, 10 failed; 1000 files at scan `257.045ms`, parse `4534.326ms`, DB `963.418ms`, index `1466.526ms`, first-searchable `420.466ms`, TTF100 `1172.825ms`, full-import-ready `7231.524ms`, 974 searchable, 8 OCR-required/backlog, 18 failed; and 1200 files at scan `179.981ms`, parse `5306.419ms`, DB `1154.802ms`, index `2749.555ms`, first-searchable `349.683ms`, TTF100 `1112.308ms`, TTF1000 `7049.280ms`, full-import-ready `9402.099ms`, throughput `127.631 docs/s` / `44.531 MiB/s`, 1172 searchable, 8 OCR-required/backlog, 20 failed. The paired 1200 profile stayed parse-dominant (`parse=5875.161ms`, `db=1357.249ms`, `index=2842.014ms`) but showed discarded clean-text allocation opportunity (`allocation=1918`, `text_normalizer=43`) in the import parse stage. Issue #83 selected the bounded L4 hypothesis that import/OCR clean-text generation should avoid the offset-preserving normalizer path when the import pipeline only consumes normalized text. RED failed until `TextNormalizer::normalize_text_only` existed and matched `TextNormalizer::normalize(...).text()` on representative whitespace/header/footer/OCR-spacing cases; GREEN routes import and OCR clean-text paths through the text-only API. Same-root after-runs preserved all counts. The first 100/500/1000/1200 after-run was noisy and did not show a stable main-metric win (`1200 parse=5365.625ms`, `full=9513.424ms`), so a 1200 confirmation/profile was required. The 1200 confirmation measured parse `5158.988ms` and full-import-ready `9256.845ms`, improving parse `5306.419 -> 5158.988ms` (-2.78%) and full import `9402.099 -> 9256.845ms` (-1.54%) with counts unchanged. The after-profile measured parse `5446.475ms` and full `9580.455ms` versus sampled baseline `5875.161ms` and `10223.752ms`; path-free buckets moved `allocation=1918 -> 1604` and `text_normalizer=43 -> 21`, while `lopdf/nom` remained dominant. | This is an L4 import text-normalizer allocation slice only. It closes #83 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining import evidence is still parse-dominant in dependency-heavy `lopdf/nom`; future slices need stronger project-owned hotspot evidence or a larger import-pipeline scheduling/parse strategy issue. |
+| S636 | Issue #82 PDF parser drops duplicate per-page text retention | Fresh observe-before-act baseline after S635 measured 100 files at scan `161.238ms`, parse `466.470ms`, DB `85.949ms`, index `373.778ms`, first-searchable `328.949ms`, full-import-ready `1088.695ms`, 92 searchable, 5 OCR-required/backlog, 3 failed; 500 files at scan `202.156ms`, parse `2247.999ms`, DB `417.852ms`, index `955.273ms`, first-searchable `362.705ms`, TTF100 `1105.032ms`, full-import-ready `3828.088ms`, 484 searchable, 6 OCR-required/backlog, 10 failed; 1000 files at scan `243.927ms`, parse `4363.134ms`, DB `914.733ms`, index `1443.205ms`, first-searchable `421.096ms`, TTF100 `1163.789ms`, full-import-ready `6974.730ms`, 974 searchable, 8 OCR-required/backlog, 18 failed; and 1200 files at scan `179.142ms`, parse `5412.620ms`, DB `1159.495ms`, index `2684.387ms`, first-searchable `348.163ms`, TTF100 `1132.793ms`, TTF1000 `7233.896ms`, full-import-ready `9447.827ms`, throughput `127.013 docs/s` / `44.315 MiB/s`, 1172 searchable, 8 OCR-required/backlog, 20 failed. The paired 1200 profile kept parse dominant (`parse=5283.470ms`, `db=1157.788ms`, `index=2724.098ms`) with dependency-heavy `lopdf` and allocation buckets, so #82 selected the bounded L4 hypothesis that PDF import parse should not retain duplicate per-page text copies when the import pipeline only consumes full text and page count. RED changed the PDF text-layer test to require empty `ParseOutput::pages()` for this import-fast path; it failed until `parser_pdf::extract_text_layer` stopped carrying page text into `ParseOutput`. Same-root after-runs preserved all counts. The confirmation after-run measured 1200 parse `4976.072ms`, full-import-ready `8971.317ms`, TTF1000 `6829.791ms`, first-searchable `297.596ms`, DB `1125.172ms`, and index `2730.450ms`; against baseline, parse improved `5412.620 -> 4976.072ms` (-8.07%), full-import-ready improved `9447.827 -> 8971.317ms` (-5.04%), and TTF1000 improved `7233.896 -> 6829.791ms` (-5.59%). The 100/500/1000 after-runs also preserved counts and measured parse `399.701ms`, `1980.366ms`, and `4160.800ms`. | This is an L4 import PDF parse allocation slice only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining 1200-file evidence is still parse-dominant (`stage_parse_ms=4976.072`, `stage_index_ms=2730.450`), so follow-up work needs a stronger project-owned parser/parse-scheduling bottleneck rather than treating #82 as a higher-layer blocker closure. |
+| S635 | Issue #81 import staged fulltext snapshot writer worker count | Fresh observe-before-act release baseline measured 100 files at scan `86.771ms`, parse `403.405ms`, DB `86.730ms`, index `524.828ms`, first-searchable `266.814ms`, full-import-ready `1103.071ms`, 92 searchable, 5 OCR-required/backlog, 3 failed; 500 files at scan `106.978ms`, parse `2006.120ms`, DB `447.990ms`, index `1342.007ms`, first-searchable `282.770ms`, TTF100 `1147.554ms`, full-import-ready `3911.027ms`, 484 searchable, 6 OCR-required/backlog, 10 failed; 1000 files at scan `116.992ms`, parse `4116.918ms`, DB `945.874ms`, index `1963.059ms`, first-searchable `296.629ms`, TTF100 `1161.696ms`, full-import-ready `7154.923ms`, 974 searchable, 8 OCR-required/backlog, 18 failed; and 1200 files at scan `126.065ms`, parse `5378.731ms`, DB `1183.936ms`, index `3590.955ms`, first-searchable `306.092ms`, TTF100 `1185.240ms`, TTF1000 `7678.752ms`, full-import-ready `10293.856ms`, throughput `116.574 docs/s` / `40.673 MiB/s`, 1172 searchable, 8 OCR-required/backlog, 20 failed. The 1200 sampled profile made Tantivy the largest redacted bucket (`tantivy=2750`) with allocation and lopdf still visible. Issue #81 selected the L4 hypothesis that staged import snapshots through the TTF1000/1200 range should avoid Tantivy's default multi-worker writer overhead. RED failed until a snapshot writer-mode policy existed; GREEN keeps the public `open_or_create` behavior on Tantivy auto mode, but `publish_snapshot_refs` now uses a single-worker writer when the exact snapshot size is <=4096 documents and falls back to auto mode for larger/unknown iterators. Same-root after-runs preserved all counts. The confirmation after-run measured 1200-file index `2729.566ms`, full-import-ready `8960.954ms`, first-searchable `301.074ms`, TTF100 `1036.253ms`, and TTF1000 `6825.684ms`; against baseline, index improved `3590.955 -> 2729.566ms` (-23.99%), full-import-ready improved `10293.856 -> 8960.954ms` (-12.95%), TTF1000 improved `7678.752 -> 6825.684ms` (-11.11%), and counts stayed unchanged. 100/500/1000 index stages also improved `524.828 -> 375.593ms` (-28.44%), `1342.007 -> 986.881ms` (-26.46%), and `1963.059 -> 1476.618ms` (-24.78%). | This is an L4 import fulltext snapshot writer tuning slice only. It closes #81 but does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining 1200-file evidence is parse-dominant again (`stage_parse_ms=4961.684`, `stage_index_ms=2729.566`), so the next issue should select from the latest profile rather than treat #81 as a higher-layer blocker closure. |
+| S634 | Issues #79 and #80 failed parser-pdf micro-optimization hypotheses and were reverted | Fresh observe-before-act baseline measured 100-file wall `1119.767ms`, scan `87.941ms`, parse `392.465ms`, DB `89.336ms`, index `512.036ms`, first-searchable `258.278ms`, 92 searchable, 5 OCR-required, 5 OCR queued, 3 failed; 500-file wall `3927.757ms`, scan `106.132ms`, parse `2023.670ms`, DB `446.011ms`, index `1311.447ms`, first-searchable `271.019ms`, TTF100 `1137.557ms`, 484 searchable, 6 OCR-required, 6 OCR queued, 10 failed; 1000-file wall `7146.945ms`, scan `117.227ms`, parse `4099.427ms`, DB `948.213ms`, index `1938.862ms`, first-searchable `292.620ms`, TTF100 `1165.484ms`, 974 searchable, 8 OCR-required, 8 OCR queued, 18 failed; and 1200-file wall `10306.592ms`, scan `125.010ms`, parse `5403.525ms`, DB `1193.623ms`, index `3535.904ms`, first-searchable `297.762ms`, TTF100 `1202.090ms`, TTF1000 `7720.234ms`, full-import-ready `10272.167ms`, throughput `116.821 docs/s` / `40.759 MiB/s`, 1172 searchable, 8 OCR-required, 8 OCR queued, 20 failed. The 1200 profile kept parse dominant and recorded path-free buckets including `lopdf_parser=2272`, `alloc=4213`, `direct_object=1139`, `sqlite=528`, `tantivy=493`, `index_fulltext=40`, and `parser_pdf=34`. Issue #79 tested striding the parser-pdf per-operation deadline checks; the focused RED/GREEN test passed after implementation, but 1200 parse moved only `5403.525 -> 5399.939ms` while full-import-ready regressed `10272.167 -> 10500.489ms`, crossing the rollback guard, so #79 was reverted and closed as `not planned`. Issue #80 tested lazy font-encoding lookup for selected `Tf` fonts; the RED/GREEN unused invalid font-resource test passed after implementation, but 1200 parse regressed `5403.525 -> 5469.385ms` and full-import-ready regressed `10272.167 -> 10439.224ms` without a bottleneck move, so #80 was reverted and closed as `not planned`. | This records two failed parser-pdf micro-optimization hypotheses only. No #79 or #80 Rust/test change is retained. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining evidence says parser-pdf glue-level micro-changes are too weak; the next slice needs stronger project-owned hotspot evidence. |
+| S633 | Issues #77 and #78 failed import micro-optimization hypotheses and were reverted | Fresh observe-before-act baseline measured 100-file wall `3051ms`, scan `196.178ms`, parse `475.614ms`, DB `89.690ms`, index `521.936ms`, first-searchable `376.917ms`, 92 searchable, 5 OCR-required, 5 OCR queued, 3 failed; 500-file wall `4280ms`, scan `208.958ms`, parse `2265.381ms`, DB `459.355ms`, index `1311.850ms`, first-searchable `377.949ms`, TTF100 `1259.530ms`, 484 searchable, 6 OCR-required, 6 OCR queued, 10 failed; 1000-file wall `8286ms`, scan `306.295ms`, parse `4736.193ms`, DB `1172.424ms`, index `2024.523ms`, first-searchable `504.251ms`, TTF100 `1610.699ms`, 974 searchable, 8 OCR-required, 8 OCR queued, 18 failed; and 1200-file wall `10278ms`, scan `184.239ms`, parse `5209.311ms`, DB `1166.303ms`, index `3605.261ms`, first-searchable `368.155ms`, TTF100 `1275.180ms`, TTF1000 `7520.711ms`, full-import-ready `10178.677ms`, throughput `117.894 docs/s` / `41.133 MiB/s`, 1172 searchable, 8 OCR-required, 8 OCR queued, 20 failed. The 1200 profile measured parse `5664.833ms`, DB `1334.772ms`, index `3483.541ms`, full-import-ready `10625.177ms`, and path-free buckets including `lopdf_parser=1765`, `sqlite=719`, `tantivy=418`, `alloc=2282`, and `index_fulltext=42`. Issue #77 tested replacing candidate assignment's full `resume_version` read with a narrow existence probe; after 1200/profile runs regressed DB to `1423.681ms` and then `1781.991ms` in the sampled run, with sqlite bucket `719 -> 773`, the change and test were reverted and #77 was closed as `not planned`. Issue #78 tested moving pending `(Document, IndexDocument)` flush batches instead of cloning index documents; 100/500/1000 index timings moved slightly down, but 1200 index repeatedly regressed to `3751.531ms`, `3731.287ms`, and `3785.141ms` versus baseline `3605.261ms`, so the change and test were reverted and #78 was closed as `not planned`. | This records two failed/weak micro-optimization hypotheses only. No #77 or #78 Rust change is retained. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Current evidence still points to parse-dominant `lopdf` work with index-publication variance; future slices need stronger project-owned hotspot evidence before changing code. |
+| S632 | Issue #76 borrowed fulltext snapshot publication for current-import cache | Fresh release baseline after #75 measured 100-file wall `1136ms`, scan `93.502ms`, parse `418.692ms`, DB `89.668ms`, index `503.148ms`, first-searchable `261.815ms`, 92 searchable, 5 OCR-required, 5 OCR queued, 3 failed; 500-file wall `3915ms`, scan `107.066ms`, parse `2006.687ms`, DB `442.243ms`, index `1320.260ms`, first-searchable `282.852ms`, TTF100 `1172.583ms`, 484 searchable, 6 OCR-required, 6 OCR queued, 10 failed; 1000-file wall `7295ms`, scan `117.798ms`, parse `4243.998ms`, DB `949.655ms`, index `1941.241ms`, first-searchable `282.574ms`, TTF100 `1174.021ms`, 974 searchable, 8 OCR-required, 8 OCR queued, 18 failed; and 1200-file wall `10333ms`, scan `129.015ms`, parse `5273.106ms`, DB `1224.664ms`, index `3609.107ms`, first-searchable `294.631ms`, TTF100 `1192.266ms`, TTF1000 `7569.684ms`, full-import-ready `10251.442ms`, throughput `117.057 docs/s` / `40.841 MiB/s`, 1172 searchable, 8 OCR-required, 8 OCR queued, 20 failed. The 1200 profile measured parse `5326.178ms`, DB `1181.550ms`, index `3542.957ms`, TTF1000 `7657.175ms`, full-import-ready `10190.998ms`, and path-free buckets led by `lopdf_parser=2089`, `sqlite=639`, `tantivy=533`, `alloc=2762`, and `index_fulltext=35`. Issue #76 selected the L4/index-publication hypothesis that the current-import fulltext cache should publish borrowed `IndexDocument` references instead of cloning the cached vector on milestone/final snapshot publication. RED failed until `publish_snapshot_refs` existed; GREEN added borrowed fulltext replacement/publish APIs and routed the current-import cache through them while preserving the owned APIs. Same-root after-runs preserved all counts. The 1200 after-run measured wall `10188ms`, scan `174.444ms`, parse `5257.481ms`, DB `1148.336ms`, index `3559.893ms`, first-searchable `349.124ms`, TTF100 `1224.782ms`, TTF1000 `7437.938ms`, full-import-ready `10153.951ms`, and throughput `118.181 docs/s` / `41.234 MiB/s`; index moved `3609.107 -> 3559.893ms` (-1.36%) and full-import-ready moved `10251.442 -> 10153.951ms` (-0.95%). Reprofile kept counts unchanged but measured index `3685.779ms` and full-import-ready `10354.004ms` versus sampled baseline `3542.957ms` and `10190.998ms`; allocation-like sample buckets dropped `2762 -> 2307`, but the import main metric did not show a stable win. | This closes #76 as a low-level clone/allocation removal plus failed/weak latency hypothesis, not as an accepted import-lane performance improvement. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining bottleneck is still parse-dominant with index-publication variance visible. |
+| S631 | Issue #75 PDF EOF marker tail-window preflight | Fresh release baseline after #74 measured 100-file wall `1405ms`, scan `127.473ms`, parse `550.446ms`, DB `102.007ms`, index `556.659ms`, first-searchable `318.826ms`, 92 searchable, 5 OCR-required, 5 OCR queued, 3 failed; 500-file wall `6426ms`, scan `223.922ms`, parse `3862.647ms`, DB `583.847ms`, index `1696.004ms`, first-searchable `401.242ms`, TTF100 `1508.081ms`, 484 searchable, 6 OCR-required, 6 OCR queued, 10 failed; 1000-file wall `10137ms`, scan `370.233ms`, parse `5789.715ms`, DB `1257.382ms`, index `2592.253ms`, first-searchable `562.217ms`, TTF100 `1587.233ms`, 974 searchable, 8 OCR-required, 8 OCR queued, 18 failed; and 1200-file wall `13070ms`, scan `355.948ms`, parse `6553.283ms`, DB `1464.999ms`, index `4455.050ms`, first-searchable `584.314ms`, TTF100 `1596.322ms`, TTF1000 `9417.255ms`, full-import-ready `12844.941ms`, throughput `93.422 docs/s` / `32.595 MiB/s`, 1172 searchable, 8 OCR-required, 8 OCR queued, 20 failed. The 1200 profile measured scan `135.137ms`, parse `6401.334ms`, DB `1414.320ms`, index `3997.386ms`, TTF100 `1372.874ms`, TTF1000 `9013.661ms`, full-import-ready `11963.770ms`, and path-free symbols still led by `lopdf::parser` while parser-pdf's EOF marker preflight scanned the full PDF buffer before lopdf parse. Issue #75 selected the L4 hypothesis that EOF marker validation should search only the final PDF tail window. The RED parser-pdf test failed until `has_pdf_eof_marker` existed; GREEN bounded EOF marker search to the final 16 KiB and kept valid synthetic PDFs accepted while early non-tail markers are corrupted. Same-root after-runs preserved all aggregate counts. The 1200 after-run reported wall `10810ms`, scan `187.149ms`, parse `5684.554ms`, DB `1266.444ms`, index `3596.438ms`, first-searchable `353.151ms`, TTF100 `1258.165ms`, TTF1000 `7991.522ms`, full-import-ready `10748.667ms`, throughput `111.642 docs/s` / `38.952 MiB/s`; parse improved `6553.283 -> 5684.554ms` (-13.26%) and full-import-ready improved `12844.941 -> 10748.667ms` (-16.32%). Reprofile kept counts unchanged and measured parse `5543.812ms`, DB `1200.573ms`, index `3579.171ms`, TTF1000 `7812.581ms`, full-import-ready `10461.317ms`; against the sampled baseline, parse improved `6401.334 -> 5543.812ms` (-13.40%) and full-import-ready improved `11963.770 -> 10461.317ms` (-12.56%). | This is an L4 import PDF parser preflight slice only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining import bottleneck is still lopdf parse plus index publication under stage timing. |
+| S630 | Issue #74 PDF encrypted-marker preflight and text-signal parser optimization | Fresh release baseline after #73 measured 100-file wall `1958ms`, scan `170.704ms`, parse `649.292ms`, DB `97.935ms`, index `530.958ms`, first-searchable `354.174ms`, 92 searchable, 5 OCR-required, 5 OCR queued, 3 failed; 500-file wall `5184ms`, scan `218.470ms`, parse `3101.287ms`, DB `477.391ms`, index `1347.925ms`, first-searchable `388.101ms`, TTF100 `1454.086ms`, 484 searchable, 6 OCR-required, 6 OCR queued, 10 failed; 1000-file wall `10425ms`, scan `260.384ms`, parse `6739.589ms`, DB `1208.060ms`, index `2166.066ms`, first-searchable `438.648ms`, TTF100 `1499.234ms`, 974 searchable, 8 OCR-required, 8 OCR queued, 18 failed; and 1200-file wall `14244ms`, scan `220.069ms`, parse `8323.285ms`, DB `1625.718ms`, index `4010.664ms`, first-searchable `391.088ms`, TTF100 `1584.962ms`, TTF1000 `10613.769ms`, full-import-ready `14199.722ms`, throughput `84.509 docs/s` / `29.485 MiB/s`, 1172 searchable, 8 OCR-required, 8 OCR queued, 20 failed. The 1200 profile measured scan `147.823ms`, parse `7977.512ms`, DB `1504.644ms`, index `3669.173ms`, TTF100 `1554.172ms`, TTF1000 `10370.329ms`, and path-free symbols led by `lopdf::parser` while private aggregate preflight evidence showed every sampled PDF contained EOF-tail bytes and many contained literal `/Encrypt` bytes outside an encrypted trailer. Issue #74 selected the L4 hypothesis that the raw full-file `/Encrypt` scan caused false encrypted classification risk and unnecessary parser preflight work, while the post-extraction text-signal check scanned full text even after enough text was present. The RED parser-pdf test failed because literal page text containing `/Encrypt` was classified as encrypted; GREEN moved encryption detection to the parsed PDF trailer and short-circuited text-signal detection after three non-whitespace characters. Same-root after-runs preserved all aggregate counts. The 1200 after-run reported wall `12657ms`, scan `195.893ms`, parse `6566.331ms`, DB `1549.999ms`, index `4271.844ms`, first-searchable `375.531ms`, TTF100 `1397.356ms`, TTF1000 `9663.390ms`, full-import-ready `12600.687ms`, throughput `95.233 docs/s` / `33.227 MiB/s`; parse improved `8323.285 -> 6566.331ms` (-21.11%) and full-import-ready improved `14199.722 -> 12600.687ms` (-11.26%). Reprofile kept counts unchanged and measured parse `6259.849ms`, DB `1566.154ms`, index `3635.353ms`, TTF1000 `8721.545ms`, full-import-ready `11670.290ms`; against the sampled baseline, parse improved `7977.512 -> 6259.849ms` (-21.53%) and full-import-ready improved `13317.436 -> 11670.290ms` (-12.37%). | This is an L4 import PDF parser slice only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining import bottleneck is still parse plus index publication under stage timing; macOS sample thread labels remain secondary to the built-in stage metrics. |
+| S629 | Issue #73 import fulltext snapshot cache for current-import flushes | Fresh release baseline measured 100-file wall `1523ms`, scan `99.316ms`, parse `615.347ms`, DB `101.871ms`, index `650.248ms`, first-searchable `295.398ms`, 92 searchable, 5 OCR-required, 5 OCR queued, 3 failed; 500-file wall `6110ms`, scan `252.608ms`, parse `3471.719ms`, DB `579.954ms`, index `1747.881ms`, first-searchable `434.140ms`, TTF100 `1723.338ms`, 484 searchable, 6 OCR-required, 6 OCR queued, 10 failed; 1000-file wall `11215ms`, scan `284.576ms`, parse `6959.047ms`, DB `1235.698ms`, index `2570.682ms`, first-searchable `477.204ms`, TTF100 `1752.386ms`, 974 searchable, 8 OCR-required, 8 OCR queued, 18 failed; and 1200-file wall `15314ms`, scan `334.080ms`, parse `7911.544ms`, DB `1598.644ms`, index `5265.468ms`, first-searchable `527.755ms`, TTF100 `1804.668ms`, TTF1000 `10862.239ms`, full-import-ready `15126.372ms`, throughput `79.332 docs/s` / `27.679 MiB/s`, 1172 searchable, 8 OCR-required, 8 OCR queued, 20 failed. The 1200 profile measured scan `140.971ms`, parse `7763.041ms`, DB `1324.235ms`, index `4913.245ms`, TTF100 `1588.753ms`, TTF1000 `10362.919ms`, and path-free PDF parser symbols (`_direct_object`, `_dictionary`, `_indirect_object`, `name`) while stage timings showed index publication still consumed roughly 4.9-5.3s. Issue #73 selected the L1 hypothesis that current-import milestone/final flushes should reuse an in-memory fulltext document set instead of reopening the active snapshot created earlier in the same import. The RED import-pipeline test failed because `write_incremental_full_text_index` had no current-import cache path; GREEN added a private cache that initializes once from active/persisted documents, applies each replacement/deletion delta in memory, and leaves OCR/delete callers on the old path. Same-root after-runs preserved all aggregate counts. The 1200 after-run reported wall `12758ms`, scan `187.104ms`, parse `7477.994ms`, DB `1323.994ms`, index `3686.683ms`, first-searchable `368.564ms`, TTF100 `1471.758ms`, TTF1000 `9688.424ms`, full-import-ready `12692.359ms`, throughput `94.545 docs/s` / `32.987 MiB/s`; index improved `5265.468 -> 3686.683ms` (-29.98%) and full-import-ready improved `15126.372 -> 12692.359ms` (-16.09%). Reprofile kept counts unchanged and measured index `3714.916ms`, parse `8663.589ms`, DB `1645.495ms`, proving the next runtime bottleneck is again parse-dominant. | This is an L1 import index-publication slice only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining import bottleneck is parse-dominant in `lopdf::parser`; `sample` still overcounts Tantivy watcher thread labels, so stage timings remain the primary accepted metric. |
+| S628 | Issue #72 import throughput fields for acceptance-matrix evidence | Fresh release baseline after #71 measured 100-file wall `1433ms`, scan `95.776ms`, parse `609.853ms`, DB `97.819ms`, index `598.044ms`, first-searchable `262.783ms`, 92 searchable, 5 OCR-required, 5 OCR queued, 3 failed; 500-file wall `5242ms`, scan `110.782ms`, parse `2914.490ms`, DB `492.947ms`, index `1682.305ms`, first-searchable `286.809ms`, TTF100 `1456.295ms`, 484 searchable, 6 OCR-required, 6 OCR queued, 10 failed; 1000-file wall `9514ms`, scan `128.200ms`, parse `5974.713ms`, DB `1055.972ms`, index `2307.838ms`, first-searchable `297.831ms`, TTF100 `1455.795ms`, 974 searchable, 8 OCR-required, 8 OCR queued, 18 failed; and 1200-file wall `13833ms`, scan `132.326ms`, parse `7275.348ms`, DB `1325.274ms`, index `5040.810ms`, first-searchable `309.237ms`, TTF100 `1486.350ms`, TTF1000 `9751.535ms`, 1172 searchable, 8 OCR-required, 8 OCR queued, 20 failed. The 1200-file profile stayed parse-dominant (`lopdf_parser=2419`) with index publication still visible (`tantivy=452`, `index_fulltext=64`). Issue #72 selected the import evidence gap that `perf/acceptance-matrix.toml` requires `docs_per_second`, `mib_per_second`, and `scan_complete_ms`, while `resume-cli import` did not print those fields. The RED CLI test failed until import summaries printed `docs per second`, `MiB per second`, and `scan complete ms` derived only from existing aggregate counts, content bytes, full-import-ready timing, and scan stage timing. Same-root after-runs preserved all aggregate counts and printed the new fields: 100-file `58.336 docs/s`, `26.330 MiB/s`, scan-complete `165.754ms`; 500-file `90.636 docs/s`, `33.795 MiB/s`, scan-complete `220.289ms`; 1000-file `101.396 docs/s`, `36.611 MiB/s`, scan-complete `223.829ms`; and 1200-file `88.184 docs/s`, `30.768 MiB/s`, scan-complete `134.325ms`. | This is an L0/L1 import evidence-completeness slice only. It does not claim a latency improvement, close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining runtime bottleneck is still parse-dominant in `lopdf::parser`, with index publication visible after milestone flushing. |
+| S627 | Issue #71 import TTF100 milestone flush for searchable-lag reduction | Fresh release baseline after #70 measured 100-file wall `2072ms`, first-searchable `344.775ms`, TTF100 `n/a`, full-import-ready `1519.399ms`, 92 searchable, 5 OCR-required, 5 OCR queued, 3 failed; 500-file wall `4947ms`, first-searchable `393.571ms`, TTF100 `4911.788ms`, full-import-ready `4911.951ms`, 484 searchable, 6 OCR-required, 6 OCR queued, 10 failed; 1000-file wall `9207ms`, first-searchable `436.712ms`, TTF100 `9168.319ms`, full-import-ready `9168.440ms`, 974 searchable, 8 OCR-required, 8 OCR queued, 18 failed; and 1200-file wall `13211ms`, first-searchable `352.766ms`, TTF100 `9403.335ms`, TTF1000 `9403.335ms`, full-import-ready `13169.354ms`, 1172 searchable, 8 OCR-required, 8 OCR queued, 20 failed. The 1200-file profile kept `lopdf::parser` dominant (`lopdf_parser=2246`, `sqlite=680`, `regex_automata=209`, `extractor_rules=167`) but exposed an L1 searchable-lag regression from the 1024 follow-up flush policy: TTF100 waited for final/full-index publication on 500/1000 runs, and TTF100/TTF1000 collapsed onto the first 1024-document snapshot on 1200. The RED flush-policy test failed until searchable publication added milestone-aware flushes at 100 and 1000 while preserving immediate first-searchable publication and the 1024 follow-up batch. Same-root after-runs preserved all aggregate counts. TTF100 improved to `1598.737ms` on the initial 500 run and to `1456.530ms` / `1469.883ms` on two 500 repeats; to `1638.556ms` on 1000; and to `1572.160ms` on 1200. The 1200 TTF1000 guard stayed within bounds at `9910.619ms` (+5.39% versus `9403.335ms`), and the profiled 1200 run measured TTF100 `1576.285ms`, TTF1000 `10164.361ms` (+1.28% versus sampled baseline), full-import-ready `13910.452ms`, public-safe summary hash `edf8ee5775509fb150f1499b90a8ba84adfc96fb31865403110754c5f97e4ddd`, and expected cost transfer into index publication (`tantivy=561`, `index_fulltext=58`) while `lopdf_parser=1859` remained the top CPU bucket. The first 500 after-run wall was `5706ms` (+15.34%, just over the rollback guard), but two immediate repeats were `5272ms` (+6.57%) and `5307ms` (+7.28%) with identical counts, so the slice is accepted with the noisy first-run noted. | This is an L1 import searchable-milestone publication slice only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining import bottleneck is parse-dominant in `lopdf::parser`; the extra milestone snapshot also makes index publication visible again and should be watched in the next fresh profile. |
+| S626 | Issue #70 import milestone timings for first-searchable and TTF evidence | Fresh release baseline after #69 measured 100-file wall `2039ms`, scan `127.391ms`, parse `641.134ms`, DB `96.916ms`, index `613.336ms`, 92 searchable, 5 OCR-required, 5 OCR queued, 3 failed; 500-file wall `4891ms`, scan `211.129ms`, parse `3062.966ms`, DB `478.667ms`, index `1083.044ms`, 484 searchable, 6 OCR-required, 6 OCR queued, 10 failed; and 1000-file wall `9196ms`, scan `253.044ms`, parse `6104.568ms`, DB `1021.216ms`, index `1752.813ms`, 974 searchable, 8 OCR-required, 8 OCR queued, 18 failed. A 1000-file profile kept `lopdf::parser` dominant (`lopdf_parser=1984`, `sqlite=673`, `regex_automata=191`, `extractor_rules=154`) and issue #70 selected the evidence gap that import output lacked first-searchable, TTF100, TTF1000, full-import-ready, and full-index-ready timings. The RED CLI test failed until import summaries recorded milestone timings at successful searchable index publication and CLI multi-root summaries merged them with root offsets. Same-root after-runs preserved all aggregate counts and emitted milestone evidence: 100-file first-searchable `337.822ms`, TTF100 `n/a`, TTF1000 `n/a`, full-import-ready `1525.077ms`, full-index-ready `1524.927ms`; 500-file first-searchable `391.645ms`, TTF100 `5200.312ms`, TTF1000 `n/a`, full-import-ready `5200.496ms`, full-index-ready `5200.312ms`; and 1000-file first-searchable `432.187ms`, TTF100 `9370.982ms`, TTF1000 `n/a`, full-import-ready `9371.094ms`, full-index-ready `9370.982ms`. The 1000-file rollback guard stayed within bounds: wall `9196 -> 9414ms` (+2.37%) and parse `6104.568 -> 6273.138ms` (+2.76%) with counts unchanged. The after-profile summary hash was `01cc289a95dfd21dc450871c8da1006179f6141c97dccb1dbdaa35354ec2f95d`; `lopdf::parser` remained dominant (`lopdf_parser=1872`), so the bottleneck did not transfer. | This is import evidence/observability only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. The milestone evidence exposes that current TTF100 for 500/1000 waits until final/full-index flush under the existing 1024 follow-up batch policy; the next slice needs a fresh issue and bounded L1/L2 hypothesis if that lag is targeted. |
+| S625 | Issue #69 extractor rules reuse per-document line index | Fresh release baseline after #68 measured 100-file wall `2097ms`, scan `168.414ms`, parse `654.452ms`, DB `99.948ms`, index `615.574ms`, 92 searchable, 5 OCR-required, 3 failed; 500-file wall `4780ms`, scan `217.744ms`, parse `3073.168ms`, DB `483.691ms`, index `967.185ms`, 484 searchable, 6 OCR-required, 10 failed; and 1000-file wall `9204ms`, scan `257.173ms`, parse `6148.521ms`, DB `1028.113ms`, index `1724.983ms`, 974 searchable, 8 OCR-required, 18 failed. A 1000-file profile kept `lopdf::parser` dominant and showed a project-owned extractor sub-hotspot with `extractor_rules::indexed_lines=22` sample hits. Issue #69 selected the bounded hypothesis of building line offsets once per document and passing the slice through line-oriented extractors. The RED unit test first observed 12 `indexed_lines` calls per `extract_strong_fields` invocation; after the change it observed 1. Same-root after-runs preserved all aggregate counts and reported 100-file wall `1487ms`, parse `594.947ms`; 500-file wall `4645ms`, parse `2900.280ms`; and 1000-file wall `8918ms`, parse `5913.030ms`. Versus baseline, 1000-file wall moved `9204 -> 8918ms` (-3.11%) and parse moved `6148.521 -> 5913.030ms` (-3.83%) with counts unchanged. The after-profile had `extractor_rules::indexed_lines=0` sample hits; sampled wall/parse overhead stayed within the rollback guard against the sampled baseline, while `lopdf::parser` remained the dominant import parse bottleneck. | This is an extractor-rules import parse sub-hotspot slice only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining import bottleneck is still parse-dominant in `lopdf::parser`; the next slice needs a fresh issue and symbol-bound parser or pipeline hypothesis. |
+| S624 | Issue #68 import evidence now reports aggregate content bytes read | Fresh release baseline after #67 rollback measured 100-file wall `1582ms`, scan `97.443ms`, parse `637.300ms`, DB `105.003ms`, index `701.962ms`, 92 searchable, 5 OCR-required, 3 failed; 500-file wall `6684ms`, scan `117.053ms`, parse `4096.804ms`, DB `614.146ms`, index `1804.228ms`, 484 searchable, 6 OCR-required, 10 failed; and 1000-file wall `9895ms`, scan `391.894ms`, parse `6610.123ms`, DB `1096.189ms`, index `1749.120ms`, 974 searchable, 8 OCR-required, 18 failed. The 1000-file profile measured wall `10138ms`, parse `6849.479ms`, DB `1206.511ms`, index `1901.360ms`, profile summary hash `7fb2d5fca047d8f7c7750d910729d380905059df879fd2164fbdf16300716794`, and path-free counts led by `lopdf::parser=1910`, `sqlite=689`, `extractor_rules=210`, `regex_automata=204`, `lopdf::encodings=61`, `lopdf::object=49`, and `parser_pdf=48`; aggregate first-1000 corpus sizing was 996 PDF, 2 DOC, 2 DOCX, and 378,754,539 bytes. Issue #68 selected the missing `content bytes read` CLI evidence as a bounded L0/L1 import observability slice. The RED CLI test failed until import summaries accumulated bytes successfully read from content files and the import CLI printed `content bytes read`. Same-root after-runs preserved all counts and reported 100-file `47,327,755` bytes read, wall `2148ms`, parse `669.549ms`; 500-file `195,489,962` bytes read, wall `5091ms`, parse `3211.918ms`; and 1000-file `378,611,093` bytes read, wall `9438ms`, parse `6300.801ms`. The 1000-file regression guard passed with unchanged counts, wall `9895 -> 9438ms` (-4.62%), and parse `6610.123 -> 6300.801ms` (-4.68%), but this slice is accepted for evidence completeness only, not as a claimed CPU optimization. | This is import evidence/observability only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining import bottleneck is still parse-dominant in `lopdf::parser`; the next optimization slice needs a fresh symbol-bound parse or import pipeline hypothesis. |
+| S623 | Issue #67 L3 lopdf non-rayon dependency-feature hypothesis rejected and reverted | Fresh release baseline after #66 measured 100-file wall `1804.123ms`, parse `658.389ms`, DB `97.136ms`, index `569.644ms`, 92 searchable, 5 OCR-required, 3 failed; 500-file wall `4896.696ms`, parse `3167.326ms`, DB `513.484ms`, index `967.652ms`, 484 searchable, 6 OCR-required, 10 failed; and 1000-file wall `9343.255ms`, parse `6309.850ms`, DB `1084.501ms`, index `1644.673ms`, 974 searchable, 8 OCR-required, 18 failed. The 1000-file profile measured wall `9657.696ms`, parse `6512.388ms`, DB `1131.533ms`, index `1748.666ms`, profile summary hash `a5c0b343eef62809f12e9ab7013c39d749140150b1ad629eefc971586ad88d2b`, and path-free counts led by `lopdf::parser=1434`, `sqlite=593`, `extractor_rules=181`, `regex_automata=146`, `lopdf::encodings=56`, and `parser_pdf=41`; a longer sample showed `lopdf::parser::_dictionary`, `lopdf::parser::_direct_object`, and rayon bridge/join frames, so #67 tested disabling `lopdf`'s default `rayon` feature while preserving date/time features. The RED feature check first found `lopdf feature "rayon"`; after the change the feature check no longer found it and parser-pdf tests passed. Same-root after-runs preserved counts but regressed 1000-file wall `9343.255 -> 9846.841ms` (+5.39%) and parse `6309.850 -> 6721.191ms` (+6.52%); 500-file wall also regressed `4896.696 -> 5389.989ms` (+10.07%) and parse `3167.326 -> 3499.271ms` (+10.48%). The after-profile still showed parse dominance with `lopdf::parser=289` but wall/parse did not meet the improvement threshold. The Cargo dependency change was reverted; `cargo tree -p parser-pdf --edges features --locked` again shows `lopdf feature "rayon"`, `cargo test -p parser-pdf --locked` passes, and the release binary was rebuilt after rollback. | This records a failed import parser build-feature hypothesis only. No #67 production change is retained. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining import bottleneck is still parse-dominant in `lopdf::parser`; future parse slices need either a project-owned pre-lopdf skip/cache path or stronger symbol/function evidence than dependency feature pruning. |
+| S622 | Issue #66 L2 searchable flush cadence reduced 1000-file fulltext index cost locally | Fresh release baseline measured 100-file wall `1474.667ms`, parse `617.837ms`, DB `100.726ms`, index `609.321ms`, 92 searchable, 5 OCR-required, 3 failed; 500-file wall `5023.806ms`, parse `3187.114ms`, DB `496.953ms`, index `1054.184ms`, 484 searchable, 6 OCR-required, 10 failed; and 1000-file wall `11145.952ms`, parse `6545.986ms`, DB `1228.826ms`, index `3029.547ms`, 974 searchable, 8 OCR-required, 18 failed. The 1000-file profile rerun measured wall `10774.578ms`, parse `6429.001ms`, DB `1120.746ms`, index `3031.658ms`, profile summary hash `544b714f3982db305203b5b328bbf2d3182d25da39c2c85947d5f12fe2678656`, and path-free counts led by `lopdf::parser=1340`, `tantivy=765`, `sqlite=548`, `regex_automata=295`, `extractor_rules=140`, and `index_fulltext=72`. The accepted implementation keeps first-searchable immediate publication but raises the follow-up searchable flush batch from 512 to 1024 to avoid the 1000-file mid-run fulltext snapshot. Same-root after-run measured 1000-file wall `9600.444ms`, parse `6450.649ms`, DB `1108.451ms`, index `1703.888ms`, with counts unchanged; versus the #66 baseline, 1000-file wall fell `13.87%`, DB fell `9.80%`, and index fell `43.76%`. The after-profile measured 1000-file wall `10521.616ms`, parse `6892.953ms`, DB `1114.716ms`, index `1732.282ms`, profile summary hash `649f3bc955579c56e76b3eef0b4cfa3aa60e7559d39bf402546dd59551258ba8`, and path-free counts `tantivy=130` and `index_fulltext=22`, down from `tantivy=765` and `index_fulltext=72`. 100/500 counts stayed unchanged; repeated 100-file and temporary 512-control runs showed wall-clock noise independent of the new threshold. | This is import fulltext snapshot publication cadence only. It preserves first-searchable immediate tests but increases follow-up batch size, so it does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining 1000-file bottleneck is parse-dominant again, with `lopdf::parser` still leading the profile. |
+| S621 | Issue #65 PDF font encoding cache reduced 1000-file import parse time locally | Fresh release baseline measured 100-file wall `2103.309ms`, parse `696.889ms`, index `596.479ms`, 92 searchable, 5 OCR-required, 3 failed; 500-file wall `5121.804ms`, parse `3282.287ms`, index `1072.079ms`, 484 searchable, 6 OCR-required, 10 failed; and 1000-file wall `11402.510ms`, parse `6796.711ms`, DB `1103.399ms`, index `3116.593ms`, 974 searchable, 8 OCR-required, 18 failed. The 1000-file profile showed parse dominance with path-free symbol counts led by `lopdf::parser=1254`, `tantivy=628`, `sqlite=557`, `regex_automata=260`, `extractor_rules=176`, `lopdf::encodings=61`, and profile summary hash `be7ea688fbe557b7c9715c40ab7fa646d4e29888b9cde8befd3e1bad41a0c33e`. The accepted implementation reuses `lopdf` font encodings across pages through a document-scoped parser cache, backed by a two-page shared ToUnicode PDF unit test. Same-root after-runs measured 100-file wall `2122.179ms`, parse `676.711ms`, counts unchanged; 500-file wall `5063.813ms`, parse `3219.462ms`, counts unchanged; and 1000-file wall `10858.493ms`, parse `6377.322ms`, DB `1089.333ms`, index `3053.383ms`, counts unchanged. Versus the #65 baseline, 1000-file wall fell `4.77%` and parse fell `6.17%`; 500-file wall fell `1.13%` and parse fell `1.91%`; 100-file parse fell `2.90%` while wall moved up `0.90%`. The after-profile measured 1000-file wall `10938.257ms`, parse `6475.092ms`, profile summary hash `eaa2a9f6ec6d4c87a02ce1c8adce2ec54f875017b0fe0a2f023c4cd79c9dffb8`, and remaining path-free counts still led by `lopdf::parser=1369`, `tantivy=638`, `sqlite=628`, `regex_automata=265`, and `extractor_rules=167`; issue #65 records the slice and was closed as completed. | This is import PDF parser encoding-cache optimization only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. The next import slice should target remaining `lopdf::parser` cost or the 1000-file index/DB cost from a fresh profile. |
+| S620 | Issue #64 L3 release profile tuning reduced import wall and parse time locally | Fresh release observe/profile baseline measured 100-file wall `2514.998ms`, scan `161.323ms`, parse `797.991ms`, DB `102.869ms`, index `591.328ms`, OCR `0.0ms`, embedding `0.0ms`, 92 searchable, 5 OCR-required, 3 failed; and 500-file wall `5697.711ms`, scan `212.828ms`, parse `3771.732ms`, DB `520.894ms`, index `1133.395ms`, OCR `0.0ms`, embedding `0.0ms`, 484 searchable, 6 OCR-required, 10 failed. A pre-edit LTO A/B build with `CARGO_PROFILE_RELEASE_LTO=thin` and `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1` measured 100-file wall `2089.693ms`, parse `717.316ms`, and 500-file wall `5376.539ms`, parse `3492.750ms`, with counts unchanged. The accepted implementation adds `[profile.release] lto = "thin"` and `codegen-units = 1`; a normal release rebuild then measured 100-file wall `2097.743ms`, parse `712.655ms`, index `588.645ms`, 92 searchable, 5 OCR-required, 3 failed; and 500-file wall `5250.460ms`, parse `3398.417ms`, index `1059.029ms`, 484 searchable, 6 OCR-required, 10 failed. Versus the #64 pre-change baseline, 100-file wall fell `16.59%`, 100-file parse fell `10.69%`, 500-file wall fell `7.85%`, 500-file parse fell `9.90%`, and 500-file index fell `6.56%`. The after-profile sample hash was `a5357c511715c33338ed3bedfcb40cee49899a4b5e5f713b50a137dbe1a6caf1`, with path-free symbol counts still led by `lopdf::parser=806`, `extractor_rules=132`, `regex_automata=99`, and `sqlite=388`; issue #64 records the slice and was closed as completed. | This is import release-profile tuning only. It does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. The next import optimization should target the still-dominant release `lopdf::parser` parse cost or a separately observed project-owned extractor/index bottleneck. |
+| S619 | Issue #63 release-built import evidence reset complete locally | A fresh observe pass found the post-#62 import profile was stable under the dev binary but invalid as the forward optimization baseline because current goal docs require release-build performance evidence. Dev-built comparison measured 100-file wall `9797.858ms`, parse `6510.151ms`, index `2165.508ms`, 92 searchable, 5 OCR-required, 3 failed, stdout hash `a644dab5dfeba23dc3d4bb42de5d292ea85e7922c2d6aa5bdda44cdc9db30c42`; and 500-file wall `49696.957ms`, parse `38571.261ms`, index `9761.085ms`, 484 searchable, 6 OCR-required, 10 failed, stdout hash `7c5818557fb6c3020798873fc6de4a44740a5706412844eebb3d8effdd1fc849`. After `cargo build -p resume-cli --release --locked`, the same-root release baseline measured 100-file wall `1932.624ms`, scan `105.414ms`, parse `675.926ms`, DB `90.834ms`, index `591.139ms`, OCR `0.0ms`, embedding `0.0ms`, 92 searchable, 5 OCR-required, 3 failed, stdout hash `c4a9936c506508b6c1dfe3a5dac2f29530c5a505674e40af5c74fd82c8db649b`; and 500-file wall `4893.827ms`, scan `101.347ms`, parse `3231.556ms`, DB `442.620ms`, index `1071.311ms`, OCR `0.0ms`, embedding `0.0ms`, 484 searchable, 6 OCR-required, 10 failed, stdout hash `cd266e57b13939265624264366423677dba0a918e87a67bc0f87777310184880`. A release profile rerun measured 500-file wall `5187.019ms`, parse `3466.853ms`, index `1074.897ms`, stdout hash `5b0dc6ae0ee64da9c5601039fa8aa6ee9fb65b7fc3f616e85cbae70d83d97ec4`, and path-free symbol counts `lopdf::parser=575`, `lopdf::reader=218`, `parser_pdf=38`, `extractor_rules=116`, `regex_automata=93`, `sqlite=476`, `index_fulltext=14`, sample hash `283346cc93fe282fabf055c27dec9af7e7771e3dc11c1c9e11fd383742c19af1`. Issue #63 records the methodology reset: future import performance slices must use release-built baselines, while old dev-built #58-#62 numbers remain historical comparison only. | This is an L0 evidence-methodology correction only. It does not change production code, close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. The next import optimization should target the release-profiled parse stage, where lopdf object parsing remains the largest measured release bottleneck. |
+| S618 | Issue #62 PDF content decode fast-path hypothesis rejected and reverted | A fresh same-root observe pass after #61 measured 100-file import wall `9304.996ms` with scan `392.567ms`, parse `6544.947ms`, DB `147.254ms`, index `2176.608ms`, OCR `0.0ms`, embedding `0.0ms`, 92 searchable, 5 OCR-required, 3 failed, stdout hash `e44041818ca0b2591233d7d42cb168a18701a2175944356965e278126df7136e`; and 500-file import wall `49889.466ms` with scan `426.609ms`, parse `39198.368ms`, DB `810.120ms`, index `9403.478ms`, OCR `0.0ms`, embedding `0.0ms`, 484 searchable, 6 OCR-required, 10 failed, stdout hash `fa7583f1b61146f9bf1a22c525ecd63bc404a427c4fec24fe02ec6a480b32476`. A 500-file path-free sample still showed parse dominance and PDF/lopdf content decode activity (`parser_pdf=63`, `lopdf=11598`, `extractor_rules=180`, `regex_automata=417`, `sqlite=386`, `zip=766`, `tantivy=0`, sample hash `4ac1513ef7f38514d9e842617c4d00de1fd47cccc158a670020a3a061e0a7c77`), so issue #62 tested a bounded L4 parser hypothesis. The attempted parser change preserved aggregate counts but missed the rollback condition: 100-file after-run wall `10711.350ms`, parse `7100.645ms`, index `2388.917ms`; 500-file after-run wall `50353.506ms`, parse `39157.514ms`, index `9698.857ms`, with the same 484 searchable, 6 OCR-required, 10 failed. The 500-file parse delta was only `0.10%` while wall time worsened `0.93%`, so the code and tests were reverted, `cargo test -p parser-pdf --locked` passed after rollback, and issue #62 was closed as a failed hypothesis. | This records a rejected import-parse hypothesis only. It does not change production code, close #37, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. The next import parse slice needs a stronger symbol-bound hypothesis before touching parser code again. |
+| S617 | Issue #61 follow-up searchable index flush batch reduced 500-file index stage | Issue #61 continued from #60's post-parse evidence that 500-file import had shifted to full-text index publication: wall `74637.148ms`, index `28942.094ms`, parse `43899.463ms`, 484 searchable, 6 OCR-required, 10 failed. Focused RED changed `searchable_flush_policy_publishes_first_match_then_batches_followups` to require first-searchable immediate publication but defer follow-up searchable batches until 512 pending documents; implementation changed `IMPORT_SEARCHABLE_FLUSH_BATCH` from 128 to 512. Same-root private reruns after the change measured 100-file wall `9995.920ms` with scan `475.369ms`, parse `6646.832ms`, DB `147.396ms`, index `2178.465ms`, OCR `0.0ms`, embedding `0.0ms`, 92 searchable, 5 OCR-required, 3 failed, stdout hash `790c9c919f01c3437153eaf82822b3fa66b3f4d9d95969392588b5939538cd01`; and 500-file wall `49061.248ms` with scan `524.861ms`, parse `38381.795ms`, DB `732.942ms`, index `9367.674ms`, OCR `0.0ms`, embedding `0.0ms`, 484 searchable, 6 OCR-required, 10 failed, stdout hash `99452fef256acaf2745087350097c1f2c670d02cb47386312ffc9b33a7d59ee0`. Compared with #60 after-runs, the 500-file index stage fell `67.63%` and wall time fell `34.27%`; the 100-file run remained first+final-snapshot shaped and moved within noise with index `2246.159ms` to `2178.465ms`. | This is import index publication cadence only. It does not run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. Remaining import cost is split between parse and full-text index publication; larger corpora may need a different incremental index architecture rather than more batch tuning. |
+| S616 | Issue #60 extractor regex cache reduced private import parse time | Issue #60 continued from #59's parse bottleneck evidence. A same-root private 100-file sampling run showed parse-stage dominance and path-free sample hits concentrated in regex compilation/matching (`regex_automata=4011`, `regex::=212`, `Regex::=49`, `extractor_rules=75`, `extract_strong_fields=15`, sample hash `05bb44243111c97c02d18eb49a85fb3ba0e5c480ce6fc194d563660be157156b`). Focused RED added an internal `labeled_name_regex_reuses_compiled_instance` test, then `crates/extractor-rules/src/lib.rs` hoisted stable extraction regexes and alias regex arrays into `LazyLock` process-lifetime compiled instances while preserving rule output. Clean same-root reruns after the change measured 100-file wall `9785.042ms` with parse `6896.442ms`, scan `432.781ms`, DB `165.215ms`, index `2246.159ms`, OCR `0.0ms`, embedding `0.0ms`, 92 searchable, 5 OCR-required, 3 failed; and 500-file wall `74637.148ms` with parse `43899.463ms`, scan `587.851ms`, DB `1095.068ms`, index `28942.094ms`, OCR `0.0ms`, embedding `0.0ms`, 484 searchable, 6 OCR-required, 10 failed. Compared with #59 clean stage baselines, parse fell from `42056.325ms` to `6896.442ms` for 100 files and from `247227.46ms` to `43899.463ms` for 500 files. | This is import parse optimization only. It does not run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. The next observed bottleneck is full-text index publication cost, especially the 500-file post-parse index stage. |
+| S615 | Issue #59 import stage timing observability complete locally | Issue #59 captured the remaining acceptance gap after #58: private import had total wall time and path-free sample evidence, but no built-in scan/parse/db/index/OCR/embedding stage timings. `crates/import-pipeline/src/lib.rs` now records aggregate `ImportStageTimings` for scan, parse, DB, index, OCR, and embedding in `ImportSummary`; `crates/cli/src/main.rs` prints fixed `stage <name> ms` labels in import output; and `crates/cli/tests/s9_import_search.rs` asserts those labels are present without leaking paths. A same-root private rerun produced complete stage timings: 100-file import `43494.349ms` total with scan `177.853ms`, parse `42056.325ms`, DB `168.457ms`, index `618.915ms`, OCR `0.0ms`, embedding `0.0ms`, 92 searchable, 5 OCR-required, 3 failed; 500-file import `252155.278ms` total with scan `234.133ms`, parse `247227.46ms`, DB `821.135ms`, index `3819.505ms`, OCR `0.0ms`, embedding `0.0ms`, 484 searchable, 6 OCR-required, 10 failed. Verification passed `cargo test -p import-pipeline --locked`, `cargo test -p resume-cli --test s9_import_search --locked`, `cargo check -p import-pipeline -p resume-cli --locked`, `cargo fmt --check`, `rust-analyzer diagnostics .`, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, and `./scripts/ci/guard-public-repo.sh`. | This is import observability only. It does not optimize the newly observed parse bottleneck, run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query hot path, provide Windows weak-host evidence, or make `goal_complete` true. |
+| S614 | Issue #58 import full-text snapshot flush cadence reduced cold private import wall time | A private local-only baseline on the user-authorized import root first measured 100-file cold import at `52284.671ms` with 92 searchable, 5 OCR-required, 3 failed, and 500-file cold import at `293638.262ms` with 484 searchable, 6 OCR-required, 10 failed. A 5-second path-free macOS sample during the baseline showed the main hotspot in full-text/Tantivy snapshot publishing (`tantivy=636`, `index_fulltext=85`, `sqlite=62`, `parser_pdf=18` symbol hits). Issue #58 was opened for this single bottleneck. Focused RED pinned the flush policy; implementation keeps first-searchable immediate but removes the 32-file progress-boundary index flush and batches follow-up searchable publication at 128 pending documents or final completion. The same private root remeasured at 100-file `42153.351ms` with the same 92/5/3 counts and 500-file `263406.147ms` with the same 484/6/10 counts. Verification passed `cargo test -p import-pipeline --locked`, `cargo test -p resume-cli --test s9_import_search --locked`, `cargo check -p import-pipeline -p resume-cli --locked`, `cargo fmt --check`, `rust-analyzer diagnostics .`, `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, and `./scripts/ci/guard-public-repo.sh`. | This is an import-only L1/L2 flush-cadence slice. It does not add GUI, query hot-path optimization, resident daemon benchmark, D10K calibration, Windows weak-host evidence, full stage instrumentation, OCR/embedding throughput completion, or `goal_complete`. Current import CLI still emits exact total wall time and aggregate counts, but exact scan/parse/db/index stage timings remain a follow-up observability gap. |
+| S600-S613 | #53 D10K baseline readiness observation | Static freeze blocker naming, D10K full-baseline gates, release-readiness/handoff D10K rejection, preflight corpus readiness counts, current-stage blocked handoff projection, D10K freeze corpus-floor rejection, non-D10K corpus handoff classification, provided query-set prepare digest output, provided query-set dry-run fidelity, explicit experiment-report path handling, matrix-sourced D10K thresholds for handoff/private-benchmark validation, and synthetic smoke trace-to-query-set freeze are covered by focused tests/checks. | Still requires D10K-shaped private indexed corpus plus enough trace-derived source_search workload before real query_set_sha256 or D10K baseline exists. |
+| S589-S599 | #53 static query-set handoff integrity | Frozen query-set to private-query synthetic handoff, v2 query_set_sha256 HMAC domain binding, resident-batch request binding failures, canonical query-set normalization, private-query runner canonical row enforcement, legacy summary cleanup, smoke/loop duplicate guard reduction, dataset manifest SHA contract hard-cut, owner-only preflight evidence output, and git-worktree output rejection are covered by focused tests/checks. | Public/synthetic fixtures only; no real query_set_sha256, D10K baseline, profile issue, W1, scale gate, or goal_complete. |
+| S570-S588 | #53 smoke and current-stage query-set readiness | Env-default trace/evidence paths, owner-only query artifacts, zero-hit/corpus-valid preflight and freeze, synthetic smoke runner/protocol/resource observations, and duplicate smoke-claim cleanup are covered. | Requires real private trace root, data-dir/search index, and model inputs before actual freeze/baseline. |
+| S560-S569 | #53 resident batch protocol and local private artifact safety | Request-id-bound resident batch responses, duplicate/unknown/missing response rejection, shared query semantics/source kinds, owner-only local files/dirs, and env defaults are covered. | Harness only; no private calibration or optimization evidence. |
+| S496-S559 | #53 query-set/private-query groundwork | Static query-set v2 metadata, bucket/sample counts, stage/query latency aggregates, summary integrity, current-stage projection, and local-only redacted trace preflight capability were added or simplified. | Current available private capabilities are insufficient for D10K freeze/baseline; no real private query text or benchmark report is committed. |
 | S495 | Issue #37 retained-lineage doctor convergence boundary complete locally | Issue #37's doctor diagnostics now classify one step beyond stale-running recovery on the latest import-task lineage for a root. `crates/meta-store/src/lib.rs` adds `latest_import_task_by_root(...)`; `crates/cli/src/main.rs` adds two public-safe doctor scopes, `--post-pending-import-task-recovery-boundary` and `--post-recovery-retained-lineage-convergence-boundary`, plus redacted labels for lock-bound, status-update failure, row-refresh failure, recoverable reentry, running-without-progress, visible progress, completed, and permanent-failure branches. `crates/cli/tests/s13_diagnostics.rs` adds focused redaction/branch coverage for each label, and a fresh local-only private witness on the user-authorized corpus reproduced `stale_running_task_lock_bound -> stale_running_task_recovered_before_post_boundary -> retained_lineage_still_recoverable_after_reentry -> retained_lineage_running_without_visible_progress_yet -> retained_lineage_converged_to_visible_progress` without leaking paths or raw corpus data. Verification passed `cargo test -p resume-cli --test s13_diagnostics --locked`, `cargo test -p resume-cli --test s9_import_search import_reuses_stale_running_task_after_cli_process_kill --locked`, `python3 scripts/ci/check-pr-budget.py`, `git diff --check -- crates/meta-store/src/lib.rs crates/cli/src/main.rs crates/cli/tests/s13_diagnostics.rs`, and `./scripts/ci/guard-public-repo.sh`. | This is still an L1 full-import OCR-backlog diagnostics slice only. It improves issue #37's bounded private witness classification and PR readiness, but it does not prove terminal completion, representative hot-index coverage, downstream `agent_query_replay` readiness, Windows weak-host evidence, GUI/manual acceptance, or `goal_complete`. |
 | S494 | Issue #37 evidence_review non-PR continuation contract repair complete locally | Read-only issue #37 evidence proved the autonomous contract could reach `evidence_review` with zero code diff and no truthful PR path, while `ACTIVE_GOAL.toml` still allowed only `open_pr` from `evidence_review` and `scripts/ci/check-autonomous-goal.py` still passed. The contract slice adds machine-readable `select_follow_up_slice: evidence_review -> slice_selected`, documents the truthful non-PR branch in docs 13/18 for evidence-only and zero-diff cases, adds a valid loop fixture for the non-PR continuation, syncs `perf/current-loop-state.json` to the new `ACTIVE_GOAL.toml` hash, and updates the checker to enforce both exits. Verification passed `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, and `python3 scripts/ci/check-performance-contracts.py`. | This repairs the autonomous contract mismatch only. It does not advance any product implementation lane, private benchmark evidence, PR/CI merge lifecycle, Windows weak-host proof, GUI/manual evidence, or `goal_complete`. |
 | S493 | Pending import-task doctor boundary now distinguishes query failure from row materialization corruption | Issue #37 narrowed the import-task doctor witness so `resume-cli doctor --pending-import-task-boundary` no longer collapses SQLite query/setup failures and corrupt queued-task row decoding into the same label. `crates/meta-store/src/lib.rs` now exposes `PendingImportTaskByRootDiagnostic` plus `diagnose_pending_import_task_by_root(...)` so the boundary can separate statement/query failures from `read_import_task(row)` materialization failures, and `crates/cli/src/main.rs` maps those outcomes to distinct public-safe labels: `pending_import_task_query_failure` and `pending_import_task_row_materialization_failure`. `crates/cli/tests/s13_diagnostics.rs` updates the missing-table witness to assert the query-failure label and adds a corrupt-row witness that flips a queued task `id` to `zeroblob(16)` and proves the CLI reports the row-materialization label without leaking the data dir, requested root, canonical root, or metadata key. Fresh verification passed `cargo test -p resume-cli --test s13_diagnostics --locked`, `cargo test -p meta-store --test s3_sqlite --locked`, `cargo test -p resume-cli --test s9_import_search --locked import_reuses_stale_running_task_after_cli_process_kill`, `python3 scripts/ci/check-pr-budget.py`, and `./scripts/ci/guard-public-repo.sh`. | This is still an L1 full-import OCR-backlog diagnostics slice only. It improves the post-import terminal witness for issue #37, but it does not yet open/merge the slice PR, rerun CI on the new head, clear broader OCR-backlog blockers, produce Windows weak-host evidence, prove any of the five required benchmark lanes end to end, or make `goal_complete` true. |
@@ -2294,6 +3241,1660 @@ guards, local runtime discovery, and PR #9 CI state.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S600
+
+- Scope: make the #53 blocked handoff recommend the right next action when
+  static `agent_query_replay` freeze fails from zero corpus-valid queries.
+- Evidence: a local-only redacted #53 probe found an indexed `local-data`
+  corpus with 3 documents, 2 searchable documents, and 0 vector-indexed
+  documents; `preflight-agent-replay` saw 6261 trace logs, 1311
+  `source_search` lines, 20 deduplicated candidates, 20 zero-hit candidates,
+  and 0 corpus-valid queries. `freeze-agent-replay --max-queries 500
+  --min-queries 500` failed closed and wrote no query set or
+  `query_set_sha256`.
+- Implementation: the former trace-only blocked reason was hard-cut to
+  `query_set_corpus_or_trace_coverage_insufficient`, and its handoff next action
+  now says to prepare a D10K-shaped indexed local corpus and collect more
+  trace-derived `source_search` workload for deficient buckets before rerunning
+  the static freeze. The current-stage CI assertion and query benchmark/runbook
+  docs now preserve that corpus-plus-trace diagnosis. Direct
+  `freeze-agent-replay` insufficient-query stderr now names corpus-valid trace
+  queries for the current indexed corpus so standalone CLI failures match the
+  handoff diagnosis.
+- Boundary: local-only redacted aggregate evidence only; no raw queries, trace
+  lines, candidate results, resume text, local paths, query set, private
+  benchmark report, D10K/W1/profile/scale, or `goal_complete` claim.
+
+### S601
+
+- Scope: reduce duplicate query-set digest validation in the current-stage
+  runner.
+- Implementation: `run-current-stage-validation.sh` now treats
+  `query_set_summary_sha256()` as a boundary/source extractor for an already
+  validated redacted query-set summary instead of re-validating the digest shape
+  with a local regex. The canonical fail-closed checks remain in the Rust
+  private query-set summary loader, private benchmark report gate, and
+  `validate-current-stage-private-benchmark.py`.
+- Boundary: no query-set format relaxation, no raw query publication, no D10K
+  baseline claim, and no new guardrail surface.
+
+### S602
+
+- Scope: hard-cut the current-stage full private query baseline gate to the
+  D10K contract before any L1-L4 optimization can start.
+- Implementation: full current-stage validation now requires
+  `private_scale_gate = "D10K_private_calibration"`, `document_count >= 10000`,
+  `searchable_document_count >= 8000`, and
+  `vector_indexed_document_count >= 8000`; the dry-run gate plan now uses
+  `--min-documents 10000`, and the current-stage CI fixture proves that a
+  full-profile private query report without the D10K scale gate fails closed
+  before benchmark gate, diagnostics, or release-readiness steps run.
+- Boundary: smoke profile remains small/partial and does not claim D10K, W1,
+  profile optimization, scale readiness, or `goal_complete`.
+
+### S603
+
+- Scope: align release-readiness and current-stage handoff with the same D10K
+  full-baseline contract.
+- Implementation: `release-readiness --current-stage-evidence` now rejects full
+  current-stage evidence unless private query observability carries
+  `private_scale_gate = "D10K_private_calibration"`, D10K document/search/vector
+  floors, 500 trace-derived queries, 5000 resident-batch samples, per-bucket
+  D10K minima, stage latency, stage histogram, and RSS aggregate observability.
+  The handoff summarizer also fails closed before producing a #53 issue comment
+  if full private query evidence is below D10K or missing the D10K scale gate.
+- Boundary: synthetic smoke and blocked handoffs remain partial evidence only;
+  this does not run or claim a private D10K baseline, W1, profile optimization,
+  scale readiness, or `goal_complete`.
+
+### S604
+
+- Scope: make #53 trace preflight identify whether the selected local data-dir
+  is D10K-shaped before attempting static query-set freeze or private baseline.
+- TDD red check: `cargo test -p resume-cli --test s304_query_set benchmark_query_set_preflight_agent_replay_reports_redacted_corpus_valid_shape --locked -- --exact --test-threads=1`
+  first failed because `resume-ir.query-set-trace-preflight.v1` had trace and
+  corpus-valid query counts but no corpus scale/readiness fields.
+- Implementation: `benchmark-query-set preflight-agent-replay` now reuses the
+  existing redacted corpus summary path and writes `document_count`,
+  `searchable_document_count`, `vector_indexed_document_count`, D10K minimums,
+  `d10k_corpus_ready`, and `d10k_corpus_deficits` into the local preflight
+  artifact. The output remains redacted aggregate only and still does not write
+  a query set or `query_set_sha256`.
+- Boundary: synthetic/private-shaped fixtures only; no raw query text, trace
+  line, candidate result, resume text, local path, private benchmark report,
+  D10K/W1/profile/scale, or `goal_complete` claim.
+
+### S605
+
+- Scope: carry the #53 trace preflight's D10K corpus-readiness observation into
+  the current-stage blocked handoff and generated issue-comment body.
+- TDD red check: `./scripts/ci/check-current-stage-validation.sh` first failed
+  because `current-stage-blocked-summary.json` did not include
+  `"d10k_corpus_ready": false` from the redacted trace preflight.
+- Implementation: `run-current-stage-validation.sh` now copies the preflight
+  `document_count`, `searchable_document_count`,
+  `vector_indexed_document_count`, D10K minimums, `d10k_corpus_ready`, and
+  `d10k_corpus_deficits` into the blocked summary. The handoff summarizer
+  preserves the same fields and prints them in the redacted #53 comment body,
+  so the next baseline attempt can distinguish non-D10K corpus readiness from
+  trace bucket coverage without opening private artifacts.
+- Boundary: redacted aggregate handoff only; no raw query text, trace line,
+  candidate result, resume text, local path, query set, private benchmark
+  report, D10K/W1/profile/scale, or `goal_complete` claim.
+
+### S606
+
+- Scope: prevent a full D10K `agent_query_replay` static freeze from producing
+  a misleading local query set or `query_set_sha256` on a non-D10K indexed
+  corpus.
+- TDD red check: `cargo test -p resume-cli --test s304_query_set benchmark_query_set_freeze_agent_replay_rejects_d10k_freeze_on_non_d10k_corpus --locked -- --exact --test-threads=1`
+  first failed because `freeze-agent-replay --max-queries 500 --min-queries 500`
+  succeeded against a tiny synthetic corpus with enough trace-shaped queries.
+- Implementation: `freeze-agent-replay` now checks the redacted corpus summary
+  before scanning traces for the 500-query D10K path and fails closed unless the
+  selected data-dir has at least 10000 documents, 8000 searchable documents, and
+  8000 vector-indexed documents. Smaller non-500 smoke freezes remain available
+  for static query-set wiring, while D10K bucket deficit observation stays on
+  the preflight artifact.
+- Boundary: synthetic/private-shaped fixtures only; no raw query text, trace
+  line, candidate result, resume text, local path, query set, private benchmark
+  report, D10K/W1/profile/scale, or `goal_complete` claim.
+
+### S607
+
+- Scope: keep the current-stage #53 handoff classification aligned with the
+  D10K corpus-floor freeze rejection.
+- TDD red check: `./scripts/ci/check-current-stage-validation.sh` first failed
+  because a 500-query freeze failure with full bucket coverage but
+  `d10k_corpus_ready=false` was classified as generic
+  `query_set_prepare_failed`.
+- Implementation: the blocked-summary classifier now treats positive
+  `d10k_corpus_deficits` for a 500-query preflight as the existing
+  `query_set_corpus_or_trace_coverage_insufficient` reason, so the generated
+  handoff and #53 comment point to preparing a D10K-shaped indexed corpus
+  instead of implying a tool failure.
+- Boundary: synthetic/private-shaped fixture only; no raw query text, trace
+  line, candidate result, resume text, local path, query set, private benchmark
+  report, D10K/W1/profile/scale, or `goal_complete` claim.
+
+### S608
+
+- Scope: make current-stage validation leave the same public-safe query-set
+  identifiers in `query-set-prepare.stdout.txt` when it reuses an existing local
+  static query set as when it freezes one.
+- TDD red check: `./scripts/ci/check-current-stage-validation.sh` first failed
+  because the provided `--query-set` path wrote only `query set: provided`,
+  redacted query/path markers, and no `query source`, `query set sha256`,
+  `tune sha256`, or `holdout sha256` lines.
+- Implementation: after the sibling redacted query-set summary is validated,
+  the provided-query-set path now appends only public-safe summary fields to the
+  prepare stdout: `query_source`, `query_count`, `query_set_sha256`,
+  `tune_sha256`, `holdout_sha256`, and `hmac split: true`.
+- Boundary: synthetic/private-shaped query-set fixture only; no raw query text,
+  trace line, candidate result, resume text, local path, private benchmark
+  report, D10K/W1/profile/scale, or `goal_complete` claim.
+
+### S609
+
+- Scope: align the redacted current-stage dry-run plan for provided
+  `--query-set` inputs with S608's execute-mode behavior.
+- TDD red check: `./scripts/ci/check-current-stage-validation.sh` first failed
+  because the provided-query-set dry-run plan said to copy and validate the
+  local query-set pair but did not say the prepare stdout will carry
+  `query_source`, `query_count`, `query_set_sha256`, `tune_sha256`, and
+  `holdout_sha256`.
+- Implementation: the dry-run `query_set_prepare` command now states that
+  current-stage validation writes only those public-safe summary identifiers
+  plus redacted query/path markers to
+  `<local-evidence-dir>/query-set-prepare.stdout.txt`.
+- Boundary: redacted plan text and synthetic/private-shaped query-set fixture
+  only; no raw query text, trace line, candidate result, resume text, local
+  path, private benchmark report, D10K/W1/profile/scale, or `goal_complete`
+  claim.
+
+### S610
+
+- Scope: simplify explicit experiment-report validation while fixing its
+  repo-relative path handling.
+- RED check: `python3 scripts/ci/check-experiment-report.py perf/fixtures/valid/w1-d1m-goal-report.json`
+  first failed before validating the report because
+  `check-experiment-report.py` called `Path.relative_to(ROOT)` on a relative
+  path.
+- Implementation: explicit file arguments are now resolved before validation,
+  and the wrapper no longer repeats `goal_complete`, optimization,
+  workload-manifest, or platform-evidence checks already owned by
+  `check-performance-contracts.py`.
+- Verification: repo-relative valid W1 report and synthetic smoke
+  report/manifest pair now pass through the explicit entrypoint; repo-relative
+  invalid `goal_complete` fixture still fails via the canonical report
+  validator.
+- Boundary: public fixture validation only; no raw query text, trace line,
+  candidate result, resume text, local path, private benchmark report,
+  D10K/W1/profile/scale, or `goal_complete` claim.
+
+### S611
+
+- Scope: reduce duplicate D10K threshold ownership in the current-stage handoff
+  summarizer.
+- Implementation: `summarize-current-stage-validation.py` now reads the D10K
+  private calibration document, searchable, query, and request-sample floors
+  from `perf/acceptance-matrix.toml` instead of carrying a second copy of those
+  numbers. The current handoff vector-indexed floor continues to track the
+  D10K searchable floor because the matrix does not define a separate vector
+  floor.
+- Verification: Python compilation, current-stage handoff, and current-stage
+  validation checks pass; `rg` no longer finds the removed D10K numeric
+  constants in the summarizer.
+- Boundary: public threshold ownership cleanup only; no raw query text, trace
+  line, candidate result, resume text, local path, private benchmark report,
+  D10K/W1/profile/scale, or `goal_complete` claim.
+
+### S612
+
+- Scope: reduce duplicate D10K threshold ownership in the current-stage private
+  benchmark validator.
+- Implementation: `validate-current-stage-private-benchmark.py` now reads the
+  full-profile D10K document, searchable, query, request-sample, and per-bucket
+  sample floors from `perf/acceptance-matrix.toml` instead of carrying another
+  copy of those numbers. The full-profile vector-indexed floor continues to
+  track the D10K searchable floor because the matrix does not define a separate
+  vector floor; the smoke profile keeps its local tiny floors.
+- Verification: Python compilation, current-stage handoff, and current-stage
+  validation checks pass; `rg` no longer finds removed full-profile threshold
+  constants in the private benchmark validator.
+- Boundary: public threshold ownership cleanup only; no raw query text, trace
+  line, candidate result, resume text, local path, private benchmark report,
+  D10K/W1/profile/scale, or `goal_complete` claim.
+
+### S613
+
+- Scope: make synthetic smoke exercise the product query-set freeze path before
+  the resident batch private-query runner smoke.
+- Implementation: `check-benchmark-smoke.sh` no longer hand-writes the
+  private-query smoke JSONL and summary. It now creates a synthetic/public trace
+  root, runs `resume-cli benchmark-query-set freeze-agent-replay` against the
+  imported public fixture corpus, validates the redacted freeze stdout and
+  summary, and feeds the generated local query set into
+  `resume-benchmark private-query`.
+- Verification: shell syntax, benchmark smoke, and benchmark smoke with paired
+  redacted report/manifest output pass.
+- Boundary: synthetic/public fixture only; raw synthetic query text remains in
+  the temporary local query-set file and is not committed or written to public
+  evidence. No real query text, trace content, candidate result, local path,
+  private benchmark report, D10K/W1/profile/scale, or `goal_complete` claim.
+
+### S614
+
+- Scope: provide a lightweight local embedding runtime for private baseline
+  bring-up without requiring a heavyweight local model environment.
+- Implementation: added `scripts/local/embedding-runtime-hash.py`, a dependency
+  free `resume-ir-embedding-v1` adapter that parses the existing embedding input
+  protocol, validates model id/dimension from environment, tokenizes locally,
+  produces deterministic signed hash vectors with L2 normalization, and emits no
+  raw text, local path, model cache, or diagnostics payload. The local embedding
+  runtime check now covers determinism, vector shape, and privacy leakage for
+  the hash adapter, while the runbook documents it as a performance-baseline
+  bring-up runtime rather than a semantic quality claim.
+- Verification: the focused check fails before the adapter exists, then passes
+  after implementation; Python compilation and existing `model
+  draft-manifest`/`validate-manifest`/`preflight` chain pass with the hash
+  runtime.
+- Boundary: local lightweight embedding runtime only; no private corpus/result,
+  raw query, real resume text, local model cache, D10K/W1/profile/scale, vector
+  quality, P95/P99 optimization, or `goal_complete` claim.
+
+### S615
+
+- Scope: make the resident-batch private query runner handle trace-derived
+  quoted queries and prove the local hash embedding smoke path end to end.
+- TDD red check: `cargo test -p benchmark-runner --test s17_benchmark_runner
+  private_query_benchmark_writes_valid_json_batch_for_quoted_queries --locked
+  -- --exact --nocapture` first failed with
+  `private_query_resident_command_status` because the runner hand-built
+  query-batch JSON and corrupted a query whose content ended at a quote
+  boundary.
+- Implementation: `write_private_query_batch_file` now serializes the full
+  batch request object with `serde_json` instead of manually interpolating an
+  escaped query string. The regression resident script JSON-parses the generated
+  batch before emitting protocol output, so invalid runner batch JSON fails
+  closed. A bounded local-only hash embedding smoke witness then reused the
+  imported 24-document private corpus slice, regenerated OCR/model preflight
+  evidence, froze a 3-query static trace-derived query set, and produced a
+  redacted private-query smoke report with 3 request samples, 0 zero-result
+  queries, `query_embedding_runtime: local-command`, and 3 query embedding
+  command invocations.
+- Verification: the RED test passes after implementation, `cargo build -p
+  benchmark-runner --locked` passes, the manual resident query protocol returns
+  3 protocol records, the manual private-query runner returns a redacted smoke
+  report, the current-stage smoke execute returns `smoke_satisfied`, and the
+  aggregate/report/stdout privacy marker scan passes.
+- Boundary: bounded smoke evidence only. The local query-set file remains
+  private and uncommitted. This does not claim full private baseline, D10K/W1,
+  profile optimization, scale gate, vector quality, release readiness, P95/P99
+  optimization, or `goal_complete`.
+
+### S616
+
+- Scope: introduce a real lightweight local open-source embedding runtime for
+  the next private baseline without committing model files or caches.
+- TDD red check: `./scripts/ci/check-local-embedding-runtime.sh` first failed
+  with `missing local multilingual E5 ONNX embedding runtime adapter`.
+- Implementation: added `scripts/local/embedding-runtime-e5-onnx.py`, a local
+  offline `resume-ir-embedding-v1` adapter for
+  `intfloat/multilingual-e5-small`. It requires a local tokenizer/model
+  directory, loads ONNX through CPU `onnxruntime`, adds the E5 retrieval prefixes
+  (`query: ` for the canonical query input, `passage: ` for documents), average
+  pools and L2 normalizes 384-dimensional vectors, and suppresses third-party
+  stdout/stderr so raw text, local paths, model bytes, vectors, and cache
+  locations are not printed. The local embedding runtime check now covers the
+  E5 adapter with stubbed `transformers`/`onnxruntime` modules for protocol,
+  prefix, determinism, vector shape, and privacy behavior. The runbook now marks
+  the hash adapter as smoke-only and documents E5 ONNX as the recommended
+  semantic baseline runtime.
+- Verification: the RED check passes after implementation. A local-only real E5
+  ONNX preflight using a temporary reviewed model manifest returned
+  `embedding-runtime-preflight.v1` with `runtime_status: "ready"`,
+  `model_manifest: "valid"`, `embedding_protocol: "passed"`,
+  `model_id: "intfloat/multilingual-e5-small"`, `dimension: 384`, and
+  `license_reviewed: true`. Full command verification is recorded in the final
+  command report for this slice.
+- Boundary: public adapter, runbook, and synthetic/stubbed protocol tests only;
+  no real resume data, raw queries, private benchmark report, local model cache,
+  model weights, vector snapshots, D10K/W1/profile/scale, vector quality claim,
+  P95/P99 optimization, or `goal_complete` claim.
+
+### S618
+
+- Scope: test the issue #62 import-parse hypothesis that path-free PDF/lopdf
+  sample evidence was actionable enough for a bounded content-decode fast path.
+- Observe: same-root private aggregate baseline measured 100-file wall
+  `9304.996ms`, parse `6544.947ms`, index `2176.608ms`, 92 searchable,
+  5 OCR-required, 3 failed; and 500-file wall `49889.466ms`, parse
+  `39198.368ms`, index `9403.478ms`, 484 searchable, 6 OCR-required, 10 failed.
+  A 500-file path-free sample recorded PDF/lopdf content-decode activity and
+  public-safe hashes only.
+- Result: the attempted parser change preserved counts but missed the rollback
+  condition. The 500-file after-run was wall `50353.506ms`, parse `39157.514ms`,
+  index `9698.857ms`, so parse improved only `0.10%` while wall worsened
+  `0.93%`. The code and tests were reverted, issue #62 was commented and closed
+  as a failed hypothesis, and #37 remains open.
+- Verification: `cargo test -p parser-pdf --locked`, `rust-analyzer diagnostics
+  .`, `python3 scripts/ci/check-performance-contracts.py`, `python3
+  scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`,
+  `./scripts/ci/guard-public-repo.sh`, and `git diff --check -- PROGRESS.md`
+  passed.
+- Boundary: private local aggregate import evidence only; no raw resume text,
+  filenames, local paths, diagnostics packages, raw queries, candidate results,
+  D10K/W1/full baseline, GUI, query hot-path optimization, or `goal_complete`
+  claim.
+
+### S635
+
+- Scope: issue #81 is an L4 import fulltext snapshot writer worker-count slice.
+  It targets staged snapshot publication overhead in the import path only. It
+  does not change search semantics, stored/index schema, snapshot encryption,
+  parser behavior, OCR, embedding, GUI, daemon query behavior, or acceptance
+  matrix redlines.
+- Observe baseline: the release-built import baseline against the authorized
+  private root measured 100 files at 1134.026 ms external wall, 92 searchable,
+  5 OCR-required/backlog, 3 failed, 47,327,755 content bytes, scan 86.771 ms,
+  parse 403.405 ms, database 86.730 ms, index 524.828 ms, first-searchable
+  266.814 ms, full-import-ready 1103.071 ms, and throughput 90.656 docs/s /
+  40.918 MiB/s; 500 files at 3944.611 ms external wall, 484 searchable,
+  6 OCR-required/backlog, 10 failed, 195,489,962 content bytes, scan
+  106.978 ms, parse 2006.120 ms, database 447.990 ms, index 1342.007 ms,
+  first-searchable 282.770 ms, TTF100 1147.554 ms, full-import-ready
+  3911.027 ms, and throughput 127.844 docs/s / 47.669 MiB/s; 1000 files at
+  7185.883 ms external wall, 974 searchable, 8 OCR-required/backlog,
+  18 failed, 378,611,093 content bytes, scan 116.992 ms, parse 4116.918 ms,
+  database 945.874 ms, index 1963.059 ms, first-searchable 296.629 ms,
+  TTF100 1161.696 ms, full-import-ready 7154.923 ms, and throughput
+  139.764 docs/s / 50.465 MiB/s; and 1200 files at 10378.531 ms external wall,
+  1172 searchable, 8 OCR-required/backlog, 20 failed, 439,021,920 content
+  bytes, scan 126.065 ms, parse 5378.731 ms, database 1183.936 ms, index
+  3590.955 ms, first-searchable 306.092 ms, TTF100 1185.240 ms, TTF1000
+  7678.752 ms, full-import-ready 10293.856 ms, and throughput 116.574 docs/s /
+  40.673 MiB/s.
+- Baseline profile and hypothesis: a 1200-file local sample recorded path-free
+  buckets led by `tantivy=2750`, `allocation=1583`, `lopdf_parser=1436`,
+  `direct_object=1078`, `indirect_object=408`, `dictionary_lookup=395`,
+  `sqlite=330`, `string_text=25`, and `import_pipeline=9`. The hypothesis was
+  that staged snapshots through the 1000/1200 range should avoid Tantivy's
+  default auto writer worker count because the import loop publishes multiple
+  small/medium snapshots for first-searchable, TTF100, TTF1000, and final
+  readiness.
+- RED/GREEN: RED was observed with
+  `cargo test -p index-fulltext staged_import_snapshot_writer_mode_uses_single_worker_for_milestones --locked`
+  failing before the writer-mode policy existed. GREEN added a private
+  `WriterThreadMode` selector: public `FullTextIndex::open_or_create` continues
+  to use Tantivy auto mode, while `publish_snapshot_refs` uses a single-worker
+  writer only when the iterator has an exact size hint <=4096 documents and
+  falls back to auto mode for larger or unknown-size iterators. The focused
+  test then passed.
+- After runs: the first same-root after-run preserved all counts and measured
+  1200-file index 2720.904 ms, full-import-ready 9706.746 ms, TTF1000
+  7385.596 ms, and path-free buckets `tantivy=2228`, `lopdf_parser=1695`,
+  `allocation=1644`, `direct_object=1082`, `indirect_object=489`,
+  `dictionary_lookup=477`, `sqlite=283`, `string_text=28`, and
+  `import_pipeline=6`. A confirmation after-run preserved all counts and
+  measured 100 files at scan 88.684 ms, parse 409.917 ms, database 87.721 ms,
+  index 375.593 ms, first-searchable 258.122 ms, full-import-ready
+  963.009 ms; 500 files at scan 104.794 ms, parse 2027.394 ms, database
+  425.670 ms, index 986.881 ms, first-searchable 280.239 ms, TTF100
+  1016.585 ms, full-import-ready 3549.645 ms; 1000 files at scan 116.927 ms,
+  parse 4099.481 ms, database 926.470 ms, index 1476.618 ms,
+  first-searchable 290.242 ms, TTF100 1009.500 ms, full-import-ready
+  6629.120 ms; and 1200 files at scan 123.375 ms, parse 4961.684 ms,
+  database 1135.206 ms, index 2729.566 ms, first-searchable 301.074 ms,
+  TTF100 1036.253 ms, TTF1000 6825.684 ms, full-import-ready 8960.954 ms.
+- Outcome: issue #81 met its acceptance guard. The confirmation 1200-file run
+  improved index `3590.955 -> 2729.566 ms` (-23.99%), full-import-ready
+  `10293.856 -> 8960.954 ms` (-12.95%), TTF1000 `7678.752 -> 6825.684 ms`
+  (-11.11%), TTF100 `1185.240 -> 1036.253 ms` (-12.57%), and
+  first-searchable `306.092 -> 301.074 ms` (-1.64%). 100/500/1000 index stages
+  improved by -28.44%, -26.46%, and -24.78%, respectively.
+- Verification: `cargo test -p index-fulltext
+  staged_import_snapshot_writer_mode_uses_single_worker_for_milestones --locked`,
+  `cargo test -p index-fulltext --locked`, `cargo test -p import-pipeline
+  --locked`, `cargo test -p resume-cli --test s9_import_search --locked`,
+  `cargo fmt --all -- --check`, `python3
+  scripts/ci/check-performance-contracts.py`, `python3
+  scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`,
+  `./scripts/ci/guard-public-repo.sh`, `rust-analyzer diagnostics .
+  --severity warning`, and `git diff --check -- crates/index-fulltext/src/lib.rs
+  PROGRESS.md` passed.
+- Boundary: only aggregate counts, timings, path-free symbol buckets, and
+  public-safe hashes were recorded publicly. No raw private resume data,
+  filenames, local paths, raw parsed text, raw OCR text, raw queries, candidate
+  results, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded. S635 closes #81 only; it
+  does not close #37, run OCR/embedding workers, claim D10K/W1/full baseline,
+  add GUI, tune query hot path, provide Windows weak-host evidence, or make
+  `goal_complete` true. The latest profile is parse-dominant again and should
+  drive the next issue-led slice.
+
+### S634
+
+- Scope: issues #79 and #80 were parser-pdf follow-up hypotheses after S633.
+  Both were issue-led, baseline-first, and bounded to import-stage
+  micro-optimizations. #79 targeted per-operation deadline-check overhead in
+  the PDF content operation loop. #80 targeted eager font encoding resolution
+  for page fonts that may never be selected by a `Tf` operation. Both failed to
+  improve the primary 1200-file parse metric enough to retain; no Rust or test
+  code from either hypothesis is retained.
+- Observe baseline: the release-built import baseline against the authorized
+  private root measured 100 files at 1119.767 ms wall, 92 searchable,
+  5 OCR-required, 5 OCR queued, 3 failed, scan 87.941 ms, parse 392.465 ms,
+  database 89.336 ms, index 512.036 ms, first-searchable 258.278 ms,
+  full-import-ready 1083.224 ms, and throughput 92.317 docs/s / 41.668 MiB/s;
+  500 files at 3927.757 ms wall, 484 searchable, 6 OCR-required, 6 OCR queued,
+  10 failed, scan 106.132 ms, parse 2023.670 ms, database 446.011 ms,
+  index 1311.447 ms, first-searchable 271.019 ms, TTF100 1137.557 ms,
+  full-import-ready 3894.033 ms, and throughput 128.402 docs/s / 47.877 MiB/s;
+  1000 files at 7146.945 ms wall, 974 searchable, 8 OCR-required, 8 OCR queued,
+  18 failed, scan 117.227 ms, parse 4099.427 ms, database 948.213 ms,
+  index 1938.862 ms, first-searchable 292.620 ms, TTF100 1165.484 ms,
+  full-import-ready 7116.075 ms, and throughput 140.527 docs/s / 50.740 MiB/s;
+  and 1200 files at 10306.592 ms wall, 1172 searchable, 8 OCR-required,
+  8 OCR queued, 20 failed, scan 125.010 ms, parse 5403.525 ms, database
+  1193.623 ms, index 3535.904 ms, first-searchable 297.762 ms, TTF100
+  1202.090 ms, TTF1000 7720.234 ms, full-import-ready 10272.167 ms, and
+  throughput 116.821 docs/s / 40.759 MiB/s.
+- Baseline profile and slice selection: the 1200-file sampled run kept the same
+  counts and recorded path-free buckets `alloc=4213`, `lopdf_parser=2272`,
+  `string_text=1858`, `direct_object=1139`, `dictionary_lookup=731`,
+  `indirect_object=584`, `sqlite=528`, `tantivy=493`,
+  `import_pipeline=53`, `index_fulltext=40`, and `parser_pdf=34`. The sampled
+  project-owned call tree still showed `parser_pdf::extract_text_layer` and
+  `parser_pdf::collect_page_text` under `import_pipeline::run_import`, but most
+  parse cost remained inside `lopdf`/text extraction internals.
+- #79 result: RED was observed with
+  `cargo test -p parser-pdf operation_deadline_checks_use_bounded_stride --locked`
+  failing before the helper existed; after implementation it passed. Same-root
+  after runs preserved counts, but the required 1200-file signal failed:
+  parse moved only 5403.525 -> 5399.939 ms, while full-import-ready regressed
+  10272.167 -> 10500.489 ms and crossed the rollback guard. The code/test were
+  reverted and #79 was closed as `not planned`.
+- #80 result: RED was observed with
+  `cargo test -p parser-pdf unused_invalid_font_resource_does_not_block_used_text_layer --locked`
+  failing with `CORRUPTED_DOCUMENT` before lazy font lookup; after
+  implementation it passed. Same-root after runs preserved counts, but the
+  primary metric regressed instead of improving: 1200 parse moved
+  5403.525 -> 5469.385 ms and full-import-ready moved
+  10272.167 -> 10439.224 ms. The code/test were reverted and #80 was closed as
+  `not planned`.
+- Boundary: only aggregate counts, timings, path-free symbol buckets, and
+  public-safe hashes were recorded publicly. No raw private resume data,
+  filenames, local paths, raw parsed text, raw OCR text, raw queries, candidate
+  results, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded. S634 does not close #37,
+  run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query
+  hot path, provide Windows weak-host evidence, or make `goal_complete` true.
+  The next import slice should avoid parser-pdf glue-level micro-changes unless
+  a stronger project-owned symbol/function hotspot appears.
+
+### S633
+
+- Scope: issues #77 and #78 were follow-up import performance hypotheses after
+  S632. Both were issue-led, baseline-first, and bounded to import-stage
+  micro-optimizations. #77 targeted DB-stage candidate assignment by replacing a
+  full `resume_version` row load with a narrow existence probe. #78 targeted
+  index-stage allocation by moving pending flush batches instead of cloning
+  pending `IndexDocument` values. Both missed their rollback conditions and no
+  Rust code from either hypothesis is retained.
+- Observe baseline: the release-built import baseline against the authorized
+  private root measured 100 files at 3051 ms wall, 92 searchable,
+  5 OCR-required, 5 OCR queued, 3 failed, scan 196.178 ms, parse 475.614 ms,
+  database 89.690 ms, index 521.936 ms, first-searchable 376.917 ms,
+  full-import-ready 1284.595 ms, and throughput 77.846 docs/s / 35.136 MiB/s;
+  500 files at 4280 ms wall, 484 searchable, 6 OCR-required, 6 OCR queued,
+  10 failed, scan 208.958 ms, parse 2265.381 ms, database 459.355 ms,
+  index 1311.850 ms, first-searchable 377.949 ms, TTF100 1259.530 ms,
+  full-import-ready 4252.320 ms, and throughput 117.583 docs/s / 43.843 MiB/s;
+  1000 files at 8286 ms wall, 974 searchable, 8 OCR-required, 8 OCR queued,
+  18 failed, scan 306.295 ms, parse 4736.193 ms, database 1172.424 ms,
+  index 2024.523 ms, first-searchable 504.251 ms, TTF100 1610.699 ms,
+  full-import-ready 8250.630 ms, and throughput 121.203 docs/s / 43.763 MiB/s;
+  and 1200 files at 10278 ms wall, 1172 searchable, 8 OCR-required,
+  8 OCR queued, 20 failed, scan 184.239 ms, parse 5209.311 ms, database
+  1166.303 ms, index 3605.261 ms, first-searchable 368.155 ms, TTF100
+  1275.180 ms, TTF1000 7520.711 ms, full-import-ready 10178.677 ms, and
+  throughput 117.894 docs/s / 41.133 MiB/s.
+- Baseline profile and slice selection: the 1200-file sampled run kept the same
+  1172 searchable / 8 OCR-required / 8 OCR queued / 20 failed counts and
+  measured scan 128.608 ms, parse 5664.833 ms, database 1334.772 ms, index
+  3483.541 ms, first-searchable 296.039 ms, TTF100 1218.839 ms, TTF1000
+  7952.249 ms, full-import-ready 10625.177 ms, and path-free buckets
+  `lopdf_parser=1765`, `sqlite=719`, `tantivy=418`, `alloc=2282`, and
+  `index_fulltext=42`. Parser remained dominant, but the project-owned #77 and
+  #78 hypotheses were selected because DB/materialization and pending-index
+  allocation were visible, bounded, and testable without changing contracts.
+- #77 result: RED was observed with
+  `cargo test -p meta-store hashed_contact_assignment_only_probes_resume_version_existence --locked`
+  failing before the helper existed; after implementation it passed. Same-root
+  after runs preserved counts but did not lower the DB-stage metric: 1200 after
+  measured full-import-ready 12429.231 ms, parse 6743.777 ms, database
+  1423.681 ms, and index 3914.226 ms. The profiled 1200 after-run measured
+  full-import-ready 13473.022 ms, parse 7312.433 ms, database 1781.991 ms,
+  index 4207.830 ms, and sampled sqlite bucket `719 -> 773`. The hypothesis was
+  rejected, the code/test were reverted, the existing
+  `hashed_contact_assignment_reuses_candidate_and_updates_version_count` focused
+  test passed post-revert, and #77 was closed as `not planned`.
+- #78 result: RED was observed with
+  `cargo test -p import-pipeline pending_index_batch_moves_replacements_and_can_restore_on_publish_failure --locked`
+  failing to compile before the helper existed; after implementation it passed.
+  Same-root after runs preserved counts and slightly lowered 100/500/1000 index
+  timing, but the required 1200-file signal failed. The first 1200 after-run
+  measured full-import-ready 10955.204 ms, parse 5729.857 ms, database
+  1328.876 ms, and index 3751.531 ms. Two 1200 repeats measured index
+  3731.287 ms and 3785.141 ms versus baseline 3605.261 ms, so the hypothesis
+  was rejected before another profiler run. The code/test were reverted, the
+  adjacent `current_import_index_cache_publishes_later_flush_without_active_snapshot_read`
+  focused test passed post-revert, `cargo fmt --all -- --check` passed, and #78
+  was closed as `not planned`.
+- Boundary: only aggregate counts, timings, path-free symbol buckets, and
+  public-safe hashes were recorded publicly. No raw private resume data,
+  filenames, local paths, raw parsed text, raw OCR text, raw queries, candidate
+  results, diagnostics packages, indexes, SQLite databases, model caches,
+  tokens, or credentials were committed or uploaded. S633 does not close #37,
+  run OCR/embedding workers, claim D10K/W1/full baseline, add GUI, tune query
+  hot path, provide Windows weak-host evidence, or make `goal_complete` true.
+  The next import slice should require stronger project-owned hotspot evidence;
+  current evidence remains parse-dominant in `lopdf` with index-publication
+  variance.
+
+### S632
+
+- Scope: issue #76 addressed a narrow current-import index-publication
+  allocation point observed after S631. The slice stayed inside index-fulltext
+  and import-pipeline and targeted the cached `IndexDocument` vector clone that
+  happened when publishing milestone/final fulltext snapshots.
+- Observe baseline: the release-built import baseline against the authorized
+  private root measured 100 files at 1136 ms wall, 92 searchable,
+  5 OCR-required, 5 OCR queued, 3 failed, scan 93.502 ms, parse 418.692 ms,
+  database 89.668 ms, index 503.148 ms, first-searchable 261.815 ms,
+  full-import-ready 1106.373 ms, and throughput 90.385 docs/s / 40.796 MiB/s;
+  500 files at 3915 ms wall, 484 searchable, 6 OCR-required, 6 OCR queued,
+  10 failed, scan 107.066 ms, parse 2006.687 ms, database 442.243 ms, index
+  1320.260 ms, first-searchable 282.852 ms, TTF100 1172.583 ms,
+  full-import-ready 3883.382 ms, and throughput 128.754 docs/s / 48.008 MiB/s;
+  1000 files at 7295 ms wall, 974 searchable, 8 OCR-required, 8 OCR queued,
+  18 failed, scan 117.798 ms, parse 4243.998 ms, database 949.655 ms, index
+  1941.241 ms, first-searchable 282.574 ms, TTF100 1174.021 ms,
+  full-import-ready 7264.099 ms, and throughput 137.663 docs/s / 49.706 MiB/s;
+  and 1200 files at 10333 ms wall, 1172 searchable, 8 OCR-required,
+  8 OCR queued, 20 failed, scan 129.015 ms, parse 5273.106 ms, database
+  1224.664 ms, index 3609.107 ms, first-searchable 294.631 ms, TTF100
+  1192.266 ms, TTF1000 7569.684 ms, full-import-ready 10251.442 ms, and
+  throughput 117.057 docs/s / 40.841 MiB/s.
+- Baseline profile and hypothesis: the sampled 1200-file profile kept the same
+  1172 searchable / 8 OCR-required / 8 OCR queued / 20 failed counts and
+  measured scan 125.976 ms, parse 5326.178 ms, database 1181.550 ms, index
+  3542.957 ms, first-searchable 302.057 ms, TTF100 1222.176 ms, TTF1000
+  7657.175 ms, full-import-ready 10190.998 ms, and path-free buckets
+  `lopdf_parser=2089`, `sqlite=639`, `tantivy=533`, `alloc=2762`, and
+  `index_fulltext=35`. Issue #76 selected the bounded hypothesis that
+  current-import snapshot publication should borrow cached `IndexDocument`
+  values instead of cloning the entire current-import vector before writing a
+  Tantivy snapshot. The rollback condition was any changed import counts,
+  borrowed publish divergence from the owned publish path, or material
+  1200-file index/full-import regression.
+- RED/GREEN: the RED index-fulltext test failed to compile until
+  `publish_snapshot_refs` existed. GREEN added borrowed document replacement and
+  snapshot publication APIs, kept the owned APIs as wrappers, and changed the
+  current-import cache path to publish `current_import_index_documents.documents`
+  by iterator reference instead of cloning the vector.
+- Same-root after-run: the same private root preserved all aggregate counts.
+  The 100-file after-run measured full-import-ready 1317.949 ms, parse
+  512.381 ms, index 526.842 ms, and first-searchable 356.758 ms; the 500-file
+  after-run measured full-import-ready 4796.160 ms, parse 2600.733 ms, index
+  1430.950 ms, first-searchable 406.002 ms, and TTF100 1353.773 ms; the
+  1000-file after-run measured full-import-ready 7812.885 ms, parse
+  4588.717 ms, index 1940.986 ms, first-searchable 429.655 ms, and TTF100
+  1471.526 ms; and the 1200-file after-run measured 10188 ms wall,
+  scan 174.444 ms, parse 5257.481 ms, database 1148.336 ms, index
+  3559.893 ms, first-searchable 349.124 ms, TTF100 1224.782 ms, TTF1000
+  7437.938 ms, full-import-ready 10153.951 ms, and throughput 118.181 docs/s /
+  41.234 MiB/s. Against the corrected baseline, 1200-file index moved
+  3609.107 -> 3559.893 ms (-1.36%), full-import-ready moved
+  10251.442 -> 10153.951 ms (-0.95%), and TTF1000 moved
+  7569.684 -> 7437.938 ms (-1.74%).
+- Reprofile and decision: the sampled 1200-file reprofile kept counts unchanged
+  and measured scan 148.623 ms, parse 5307.220 ms, database 1198.016 ms, index
+  3685.779 ms, first-searchable 316.856 ms, TTF100 1229.186 ms, TTF1000
+  7779.034 ms, full-import-ready 10354.004 ms, and path-free buckets
+  `lopdf_parser=1804`, `sqlite=565`, `tantivy=434`, `alloc=2307`, and
+  `index_fulltext=40`. Against the sampled baseline, index moved
+  3542.957 -> 3685.779 ms (+4.03%) and full-import-ready moved
+  10190.998 -> 10354.004 ms (+1.60%), while allocation-like samples dropped
+  2762 -> 2307. The retained code removes the clone/allocation point and has
+  focused coverage, but #76 is recorded as a weak/failed latency hypothesis and
+  not as an accepted import main-metric improvement.
+- Verification: `cargo test -p index-fulltext --locked`,
+  `cargo test -p import-pipeline --locked -- --test-threads=1`,
+  `cargo test -p resume-cli --test s9_import_search --locked`,
+  `cargo check -p resume-cli --locked`, `cargo fmt --check`, `rust-analyzer
+  analysis-stats . --run-all-ide-things`, `python3
+  scripts/ci/check-performance-contracts.py`, `python3
+  scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`,
+  and `./scripts/ci/guard-public-repo.sh` passed before this ledger update.
+- Boundary: private local aggregate import evidence only; no raw resume text,
+  filenames, local paths, diagnostics packages, raw queries, candidate results,
+  D10K/W1/full baseline, GUI, query hot-path optimization, or `goal_complete`
+  claim. Issue #37 remains open.
+
+### S631
+
+- Scope: issue #75 addressed an L4 import PDF parser preflight bottleneck
+  observed after S630. The slice stayed inside parser-pdf and targeted only the
+  EOF marker validation that ran before `lopdf` parsing.
+- Observe baseline: the release-built import baseline against the authorized
+  private root measured 100 files at 1405 ms wall, 92 searchable, 5
+  OCR-required, 5 OCR queued, 3 failed, scan 127.473 ms, parse 550.446 ms,
+  database 102.007 ms, index 556.659 ms, first-searchable 318.826 ms,
+  full-import-ready 1339.407 ms, and throughput 74.660 docs/s / 33.698 MiB/s;
+  500 files at 6426 ms wall, 484 searchable, 6 OCR-required, 6 OCR queued,
+  10 failed, scan 223.922 ms, parse 3862.647 ms, database 583.847 ms, index
+  1696.004 ms, first-searchable 401.242 ms, TTF100 1508.081 ms,
+  full-import-ready 6374.038 ms, and throughput 78.443 docs/s / 29.249 MiB/s;
+  1000 files at 10137 ms wall, 974 searchable, 8 OCR-required, 8 OCR queued,
+  18 failed, scan 370.233 ms, parse 5789.715 ms, database 1257.382 ms, index
+  2592.253 ms, first-searchable 562.217 ms, TTF100 1587.233 ms,
+  full-import-ready 10024.719 ms, and throughput 99.753 docs/s / 36.018 MiB/s;
+  and 1200 files at 13070 ms wall, 1172 searchable, 8 OCR-required,
+  8 OCR queued, 20 failed, scan 355.948 ms, parse 6553.283 ms, database
+  1464.999 ms, index 4455.050 ms, first-searchable 584.314 ms, TTF100
+  1596.322 ms, TTF1000 9417.255 ms, full-import-ready 12844.941 ms, and
+  throughput 93.422 docs/s / 32.595 MiB/s.
+- Baseline profile and hypothesis: the sampled 1200-file profile measured
+  12070 ms wall with the same 1172 searchable / 8 OCR-required / 8 OCR queued /
+  20 failed counts, scan 135.137 ms, parse 6401.334 ms, database 1414.320 ms,
+  index 3997.386 ms, first-searchable 340.534 ms, TTF100 1372.874 ms, TTF1000
+  9013.661 ms, full-import-ready 11963.770 ms, and path-free symbol buckets led
+  by `lopdf_parser=1929`, `sqlite=654`, and `tantivy=583`. Issue #75 selected
+  the bounded hypothesis that parser-pdf should not full-scan the entire PDF
+  buffer for `%%EOF` before handing the bytes to `lopdf`; the rollback condition
+  was any changed import counts, acceptance of malformed PDFs whose only EOF
+  marker is outside the tail, or a material 1200-file parse/full-import
+  regression.
+- RED/GREEN: the RED parser-pdf test failed to compile until
+  `has_pdf_eof_marker` existed. GREEN added a 16 KiB EOF tail search window and
+  a regression test proving a body-only `%%EOF` marker outside that tail is
+  rejected as corrupted while a valid synthetic PDF is still accepted.
+- Same-root after-run: the same private root preserved all aggregate counts.
+  The 1200-file after-run measured 10810 ms wall, scan 187.149 ms,
+  parse 5684.554 ms, database 1266.444 ms, index 3596.438 ms,
+  first-searchable 353.151 ms, TTF100 1258.165 ms, TTF1000 7991.522 ms,
+  full-import-ready 10748.667 ms, and throughput 111.642 docs/s /
+  38.952 MiB/s. Against the corrected baseline, parse moved
+  6553.283 -> 5684.554 ms (-13.26%), full-import-ready moved
+  12844.941 -> 10748.667 ms (-16.32%), first-searchable moved
+  584.314 -> 353.151 ms (-39.56%), TTF100 moved 1596.322 -> 1258.165 ms
+  (-21.18%), and TTF1000 moved 9417.255 -> 7991.522 ms (-15.14%).
+- Reprofile: the sampled 1200-file reprofile kept counts unchanged and measured
+  10561 ms wall, scan 124.338 ms, parse 5543.812 ms, database 1200.573 ms,
+  index 3579.171 ms, first-searchable 305.123 ms, TTF100 1238.892 ms, TTF1000
+  7812.581 ms, full-import-ready 10461.317 ms, `lopdf_parser=1815`,
+  `sqlite=599`, and `tantivy=567`. Against the sampled baseline, parse moved
+  6401.334 -> 5543.812 ms (-13.40%) and full-import-ready moved
+  11963.770 -> 10461.317 ms (-12.56%). The bottleneck remains `lopdf` parse
+  plus index publication, so #37 remains open.
+- Verification: `cargo build -p resume-cli --release --locked`, the focused
+  `eof_marker_must_be_in_pdf_tail` parser-pdf RED/GREEN test, `cargo test -p
+  parser-pdf --locked`, `cargo test -p resume-cli --test s9_import_search
+  --locked`, `cargo test -p import-pipeline --locked -- --test-threads=1`,
+  `cargo check -p resume-cli --locked`, `cargo fmt --check`,
+  `rust-analyzer analysis-stats . --run-all-ide-things`, `python3
+  scripts/ci/check-performance-contracts.py`, `python3
+  scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`,
+  and `./scripts/ci/guard-public-repo.sh` passed. A parallel
+  `import-pipeline` run failed once due overlapping Cargo/test shared state and
+  then passed sequentially.
+- Boundary: private local aggregate import evidence only; no raw resume text,
+  filenames, local paths, diagnostics packages, raw queries, candidate results,
+  D10K/W1/full baseline, GUI, query hot-path optimization, or `goal_complete`
+  claim.
+
+### S630
+
+- Scope: issue #74 addressed an L4 import PDF parser bottleneck observed after
+  S629. The slice stayed inside parser-pdf and targeted encrypted-marker
+  preflight and text-signal work only.
+- Observe baseline: the release-built import baseline against the authorized
+  private root measured 100 files at 1958 ms wall, 92 searchable, 5
+  OCR-required, 5 OCR queued, 3 failed, scan 170.704 ms, parse 649.292 ms,
+  database 97.935 ms, index 530.958 ms, first-searchable 354.174 ms,
+  full-import-ready 1450.697 ms, and throughput 68.932 docs/s / 31.113 MiB/s;
+  500 files at 5184 ms wall, 484 searchable, 6 OCR-required, 6 OCR queued,
+  10 failed, scan 218.470 ms, parse 3101.287 ms, database 477.391 ms, index
+  1347.925 ms, first-searchable 388.101 ms, TTF100 1454.086 ms,
+  full-import-ready 5152.746 ms, and throughput 97.036 docs/s / 36.181 MiB/s;
+  1000 files at 10425 ms wall, 974 searchable, 8 OCR-required, 8 OCR queued,
+  18 failed, scan 260.384 ms, parse 6739.589 ms, database 1208.060 ms, index
+  2166.066 ms, first-searchable 438.648 ms, TTF100 1499.234 ms,
+  full-import-ready 10388.669 ms, and throughput 96.259 docs/s / 34.756 MiB/s;
+  and 1200 files at 14244 ms wall, 1172 searchable, 8 OCR-required,
+  8 OCR queued, 20 failed, scan 220.069 ms, parse 8323.285 ms, database
+  1625.718 ms, index 4010.664 ms, first-searchable 391.088 ms, TTF100
+  1584.962 ms, TTF1000 10613.769 ms, full-import-ready 14199.722 ms, and
+  throughput 84.509 docs/s / 29.485 MiB/s.
+- Baseline profile and hypothesis: the sampled 1200-file profile measured
+  13372 ms wall with the same 1172 searchable / 8 OCR-required / 8 OCR queued /
+  20 failed counts, scan 147.823 ms, parse 7977.512 ms, database 1504.644 ms,
+  index 3669.173 ms, first-searchable 318.762 ms, TTF100 1554.172 ms, TTF1000
+  10370.329 ms, full-import-ready 13317.436 ms, and public-safe stdout hash
+  `74078ceafbbebbb29c8092ab5a6e42242d71f033a97ee45f25ff6e5e3dfb3798`.
+  Path-free symbol fragments remained led by `lopdf::parser::_dictionary`,
+  `_direct_object`, and `_indirect_object`. Aggregate private preflight evidence
+  showed the sampled PDFs all had EOF-tail markers and many had literal
+  `/Encrypt` bytes outside an encrypted trailer, so #74 tested removing the raw
+  full-file encrypted-marker scan and relying on the parsed trailer instead.
+  Roll back if aggregate counts changed, encrypted PDFs stopped being rejected
+  through the trailer path, or the 1200-file parse/full-import metrics failed to
+  improve and no bottleneck transfer was observed.
+- RED/GREEN check: the focused
+  `literal_encrypt_text_is_not_classified_as_encrypted` parser-pdf test first
+  failed because page text containing literal `/Encrypt` was classified as
+  encrypted. GREEN moved encrypted detection to `document.trailer`, kept
+  invalid-structure handling unchanged, and short-circuited `has_text_signal`
+  once three non-whitespace characters are observed.
+- Same-root after-runs: aggregate counts stayed unchanged. The 100-file run
+  measured 1854 ms wall, scan 167.109 ms, parse 497.001 ms, database
+  86.701 ms, index 499.687 ms, first-searchable 337.180 ms, full-import-ready
+  1251.755 ms, and throughput 79.888 docs/s / 36.058 MiB/s. The 500-file run
+  measured 5313 ms wall, scan 236.854 ms, parse 2985.153 ms, database
+  647.810 ms, index 1386.520 ms, first-searchable 404.872 ms, TTF100
+  1412.209 ms, full-import-ready 5266.850 ms, and throughput 94.933 docs/s /
+  35.398 MiB/s. The 1000-file run measured 9147 ms wall, scan 261.653 ms,
+  parse 5108.086 ms, database 1098.700 ms, index 2616.678 ms,
+  first-searchable 461.422 ms, TTF100 1390.489 ms, full-import-ready
+  9099.647 ms, and throughput 109.894 docs/s / 39.680 MiB/s. The 1200-file run
+  measured 12657 ms wall, scan 195.893 ms, parse 6566.331 ms, database
+  1549.999 ms, index 4271.844 ms, first-searchable 375.531 ms, TTF100
+  1397.356 ms, TTF1000 9663.390 ms, full-import-ready 12600.687 ms, and
+  throughput 95.233 docs/s / 33.227 MiB/s. Against the 1200 baseline, parse
+  improved 21.11%, full-import-ready improved 11.26%, TTF100 improved 11.84%,
+  and TTF1000 improved 8.95%.
+- Reprofile and bottleneck: the sampled after-profile kept counts unchanged and
+  measured 11732 ms wall, scan 192.443 ms, parse 6259.849 ms, database
+  1566.154 ms, index 3635.353 ms, first-searchable 375.717 ms, TTF100
+  1438.840 ms, TTF1000 8721.545 ms, full-import-ready 11670.290 ms, and
+  public-safe stdout hash
+  `e8591c8918ea44d317f8397f57d0ae327c998ded34841b2dd10b42d9edc54102`.
+  Versus the sampled baseline, parse improved 21.53%, full-import-ready improved
+  12.37%, and TTF1000 improved 15.90%. Remaining cost is still parse plus index
+  publication, with stage timing treated as the primary metric because macOS
+  sampling overcounts long-lived index watcher thread labels.
+- Verification: release build, parser-pdf tests, import-pipeline tests,
+  resume-cli `s9_import_search`, resume-cli check, `cargo fmt --check`,
+  performance/autonomous/loop-state checks, public-repo guard, and
+  rust-analyzer `analysis-stats --run-all-ide-things` passed.
+- Boundary: private local aggregate import evidence only; no raw resume text,
+  filenames, local paths, diagnostics packages, raw queries, candidate results,
+  D10K/W1/full baseline, GUI, query hot-path optimization, or `goal_complete`
+  claim.
+
+### S629
+
+- Scope: issue #73 addressed L1 import index-publication cost after S627/S628.
+  Searchable milestone flushing now publishes at first-searchable, 100, 1000,
+  and final import. Before this slice, each later flush could rebuild the next
+  snapshot by reopening the active fulltext snapshot that the same import had
+  just written.
+- Observe baseline: the release-built import baseline against the authorized
+  private root measured 100 files at 1523 ms wall, 92 searchable, 5
+  OCR-required, 5 OCR queued, 3 failed, scan 99.316 ms, parse 615.347 ms,
+  database 101.871 ms, index 650.248 ms, first-searchable 295.398 ms,
+  full-import-ready 1468.140 ms, and throughput 68.113 docs/s / 30.743 MiB/s;
+  500 files at 6110 ms wall, 484 searchable, 6 OCR-required, 6 OCR queued,
+  10 failed, scan 252.608 ms, parse 3471.719 ms, database 579.954 ms, index
+  1747.881 ms, first-searchable 434.140 ms, TTF100 1723.338 ms,
+  full-import-ready 6061.196 ms, and throughput 82.492 docs/s / 30.759 MiB/s;
+  1000 files at 11215 ms wall, 974 searchable, 8 OCR-required, 8 OCR queued,
+  18 failed, scan 284.576 ms, parse 6959.047 ms, database 1235.698 ms, index
+  2570.682 ms, first-searchable 477.204 ms, TTF100 1752.386 ms,
+  full-import-ready 11064.638 ms, and throughput 90.378 docs/s / 32.633 MiB/s;
+  and 1200 files at 15314 ms wall, 1172 searchable, 8 OCR-required, 8 OCR
+  queued, 20 failed, scan 334.080 ms, parse 7911.544 ms, database 1598.644 ms,
+  index 5265.468 ms, first-searchable 527.755 ms, TTF100 1804.668 ms, TTF1000
+  10862.239 ms, full-import-ready 15126.372 ms, and throughput 79.332 docs/s /
+  27.679 MiB/s.
+- Baseline profile: the sampled 1200-file profile measured 14219 ms wall with
+  the same 1172 searchable / 8 OCR-required / 8 OCR queued / 20 failed counts,
+  scan 140.971 ms, parse 7763.041 ms, database 1324.235 ms, index 4913.245 ms,
+  first-searchable 320.368 ms, TTF100 1588.753 ms, TTF1000 10362.919 ms,
+  full-import-ready 14157.733 ms, and public-safe stdout hash
+  `e1c237547b61489ed630ad354cc316bb5b41315f21ef08e63bc0d5c5dcd3eaf1`.
+  Path-free symbol fragments were still led by `lopdf::parser::_direct_object`,
+  `_dictionary`, `_indirect_object`, and `name`; the macOS sampler overcounted
+  Tantivy watcher thread labels, so stage timings were used as the accepted
+  index-publication evidence.
+- Hypothesis and rollback: keep a current-import fulltext document cache across
+  milestone/final flushes. The first write initializes the cache from active or
+  persisted documents, and later writes apply replacements/deletions in memory
+  instead of reopening the active snapshot written by the same import. Roll back
+  if aggregate counts change, first-searchable/TTF100/TTF1000 regress outside
+  redlines, or the 1200-file index stage does not improve and no bottleneck
+  transfer is observed.
+- RED/GREEN check: the focused import-pipeline test first failed to compile
+  because `write_incremental_full_text_index` accepted no current-import cache.
+  The implementation adds a private `CurrentImportIndexDocuments` cache, keeps
+  OCR/delete callers on the no-cache path, and passes the cache through normal
+  foreground import flushes. The RED test then passed, followed by the full
+  import-pipeline unit suite and the full CLI import/search integration suite.
+- Result: same-root after-runs preserved all aggregate counts. The 100-file run
+  reported wall 4693 ms, internal full-import-ready 1564.475 ms, 63.919 docs/s,
+  28.850 MiB/s, scan 200.926 ms, parse 710.026 ms, database 120.335 ms, and
+  index 531.207 ms. The 500-file run reported wall 5821 ms,
+  full-import-ready 5764.688 ms, 86.735 docs/s, 32.341 MiB/s, scan
+  222.659 ms, parse 3558.820 ms, database 590.884 ms, index 1384.325 ms, and
+  TTF100 1515.805 ms. The 1000-file run reported wall 9831 ms,
+  full-import-ready 9769.759 ms, 102.357 docs/s, 36.958 MiB/s, scan
+  263.904 ms, parse 6406.380 ms, database 1117.173 ms, index 1969.430 ms, and
+  TTF100 1563.477 ms. The 1200-file run reported wall 12758 ms,
+  full-import-ready 12692.359 ms, 94.545 docs/s, 32.987 MiB/s, scan
+  187.104 ms, parse 7477.994 ms, database 1323.994 ms, index 3686.683 ms,
+  first-searchable 368.564 ms, TTF100 1471.758 ms, and TTF1000 9688.424 ms.
+  The primary metric improved from 5265.468 ms to 3686.683 ms (-29.98%), and
+  full-import-ready improved from 15126.372 ms to 12692.359 ms (-16.09%).
+- Reprofile: the 1200-file reprofile preserved counts and measured scan
+  136.239 ms, parse 8663.589 ms, database 1645.495 ms, index 3714.916 ms,
+  first-searchable 309.428 ms, TTF100 1560.213 ms, TTF1000 11179.421 ms, and
+  full-import-ready 14178.840 ms. Index remained lower than baseline while
+  parse became the dominant measured stage again.
+- Verification: focused RED/GREEN `cargo test -p import-pipeline
+  current_import_index_cache_publishes_later_flush_without_active_snapshot_read
+  --locked -- --nocapture`, full `cargo test -p import-pipeline --locked --
+  --test-threads=1`,
+  full `cargo test -p resume-cli --test s9_import_search --locked`,
+  `cargo check -p resume-cli --locked`, release rebuild plus same-root
+  100/500/1000/1200 import reruns, 1200-file reprofile, `cargo fmt --check`,
+  `rust-analyzer analysis-stats . --run-all-ide-things`, `python3
+  scripts/ci/check-performance-contracts.py`, `python3
+  scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`,
+  `./scripts/ci/guard-public-repo.sh`, and `git diff --check --
+  crates/import-pipeline/src/lib.rs PROGRESS.md` passed.
+- Boundary: #73 records import index-publication improvement only. It does not
+  close #37, complete OCR/embedding backlog readiness, claim D10K, D100K, D1M,
+  W1, full baseline, GUI, query optimization, Windows readiness, or goal
+  completion. All private evidence remained aggregate-only and path-free.
+
+### S628
+
+- Scope: issue #72 addressed import evidence completeness for current
+  `perf/acceptance-matrix.toml` redlines. The matrix requires import evidence
+  to report docs/sec, MiB/sec, and scan-complete timing, but `resume-cli import`
+  printed only counts, content bytes, stage timings, and milestone timings.
+- Observe baseline: the release-built import baseline against the authorized
+  private root measured 100 files at 1433 ms wall, 92 searchable, 5
+  OCR-required, 5 OCR queued, 3 failed, scan 95.776 ms, parse 609.853 ms,
+  database 97.819 ms, index 598.044 ms, first-searchable 262.783 ms, TTF100
+  `n/a`, TTF1000 `n/a`, full-import-ready 1403.093 ms, and 47,327,755 content
+  bytes read; 500 files at 5242 ms wall, 484 searchable, 6 OCR-required,
+  6 OCR queued, 10 failed, scan 110.782 ms, parse 2914.490 ms, database
+  492.947 ms, index 1682.305 ms, first-searchable 286.809 ms, TTF100
+  1456.295 ms, TTF1000 `n/a`, full-import-ready 5207.648 ms, and 195,489,962
+  content bytes read; 1000 files at 9514 ms wall, 974 searchable,
+  8 OCR-required, 8 OCR queued, 18 failed, scan 128.200 ms, parse
+  5974.713 ms, database 1055.972 ms, index 2307.838 ms, first-searchable
+  297.831 ms, TTF100 1455.795 ms, TTF1000 `n/a`, full-import-ready
+  9480.302 ms, and 378,611,093 content bytes read; and 1200 files at 13833 ms
+  wall, 1172 searchable, 8 OCR-required, 8 OCR queued, 20 failed, scan
+  132.326 ms, parse 7275.348 ms, database 1325.274 ms, index 5040.810 ms,
+  first-searchable 309.237 ms, TTF100 1486.350 ms, TTF1000 9751.535 ms,
+  full-import-ready 13789.757 ms, and 439,021,920 content bytes read.
+- Baseline profile: the sampled 1200-file profile measured 14881 ms wall with
+  the same 1172 searchable / 8 OCR-required / 8 OCR queued / 20 failed counts,
+  scan 134.675 ms, parse 8205.261 ms, database 1520.290 ms, index
+  4956.336 ms, first-searchable 313.590 ms, TTF100 1646.388 ms, TTF1000
+  10992.120 ms, full-import-ready 14834.598 ms, public-safe stdout hash
+  `b4353a146ee2bccd2a5b6b8fffcbceb287d452b0f33f77e8580e53f56a16db76`, and
+  public-safe sample summary hash
+  `b50afb1ce5074a53ff4e6d5ad7aa2a7db06cf2a1cb6583c08793d888b0d40c78`.
+  Path-free buckets stayed parse-dominant: `lopdf_parser=2419`, `sqlite=828`,
+  `tantivy=452`, `regex_automata=226`, `extractor_rules=188`, `hmac=90`,
+  `import_pipeline=80`, `index_fulltext=64`, `lopdf_encodings=61`,
+  `lopdf_object=55`, and `parser_pdf=52`.
+- Hypothesis and rollback: add only derived import throughput fields to the CLI
+  summary: `docs per second`, `MiB per second`, and `scan complete ms`. These
+  fields are computed from existing aggregate counts, content bytes,
+  full-import-ready timing, and scan stage timing. This slice does not claim a
+  runtime improvement. Roll back if any existing import field disappears or
+  changes meaning, if aggregate counts change on same-root reruns, or if any
+  privacy/contract/focused gate fails.
+- RED/GREEN check: the focused CLI import/search test first failed because
+  stdout did not contain `docs per second:`. The implementation adds a
+  `print_import_throughput` helper and keeps import execution unchanged. The
+  same focused test then passed, followed by the full `s9_import_search`
+  integration test.
+- Result: same-root after-runs preserved all aggregate counts and printed all
+  new fields. The 100-file run reported wall 2280 ms, `58.336 docs/s`,
+  `26.330 MiB/s`, scan-complete 165.754 ms, 92 searchable, 5 OCR-required,
+  5 OCR queued, and 3 failed. The 500-file run reported wall 5555 ms,
+  `90.636 docs/s`, `33.795 MiB/s`, scan-complete 220.289 ms, 484 searchable,
+  6 OCR-required, 6 OCR queued, and 10 failed. The 1000-file run reported wall
+  9900 ms, `101.396 docs/s`, `36.611 MiB/s`, scan-complete 223.829 ms,
+  974 searchable, 8 OCR-required, 8 OCR queued, and 18 failed. The 1200-file
+  run reported wall 13649 ms, `88.184 docs/s`, `30.768 MiB/s`, scan-complete
+  134.325 ms, 1172 searchable, 8 OCR-required, 8 OCR queued, and 20 failed.
+- Verification: `cargo fmt --check`, focused RED/GREEN `cargo test -p
+  resume-cli --test s9_import_search
+  import_fixtures_builds_searchable_index_and_reopens_snapshot --locked -- --
+  nocapture`, full `cargo test -p resume-cli --test s9_import_search --locked`,
+  `cargo check -p resume-cli --locked`, release rebuild plus same-root
+  100/500/1000/1200 import reruns, `rust-analyzer analysis-stats .
+  --run-all-ide-things`, `python3 scripts/ci/check-performance-contracts.py`,
+  `python3 scripts/ci/check-autonomous-goal.py`, `python3
+  scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and
+  `git diff --check -- crates/cli/src/main.rs crates/cli/tests/s9_import_search.rs
+  PROGRESS.md` passed.
+- Boundary: #72 records import evidence completeness only. It does not close
+  #37, complete OCR/embedding backlog readiness, claim D10K, D100K, D1M, W1,
+  full baseline, GUI, query optimization, Windows readiness, or goal
+  completion. All private evidence remained aggregate-only and path-free.
+
+### S627
+
+- Scope: issue #71 addressed L1 import searchable-lag only. After #70, import
+  milestone evidence showed that the 1024 follow-up searchable flush policy made
+  TTF100 wait for the final/full-index publication on 500/1000-file runs and
+  made TTF100/TTF1000 share the first 1024-document snapshot on a 1200-file
+  run.
+- Observe baseline: the release-built import baseline against the authorized
+  private root measured 100 files at 2072 ms wall, 92 searchable, 5
+  OCR-required, 5 OCR queued, 3 failed, scan 168.407 ms, parse 641.800 ms,
+  database 99.963 ms, index 607.454 ms, first-searchable 344.775 ms, TTF100
+  `n/a`, TTF1000 `n/a`, full-import-ready 1519.399 ms, and full-index-ready
+  1519.021 ms; 500 files at 4947 ms wall, 484 searchable, 6 OCR-required,
+  6 OCR queued, 10 failed, scan 215.267 ms, parse 3134.834 ms, database
+  484.401 ms, index 1070.603 ms, first-searchable 393.571 ms, TTF100
+  4911.788 ms, TTF1000 `n/a`, full-import-ready 4911.951 ms, and
+  full-index-ready 4911.788 ms; 1000 files at 9207 ms wall, 974 searchable,
+  8 OCR-required, 8 OCR queued, 18 failed, scan 257.860 ms, parse
+  6153.900 ms, database 1040.448 ms, index 1703.529 ms, first-searchable
+  436.712 ms, TTF100 9168.319 ms, TTF1000 `n/a`, full-import-ready
+  9168.440 ms, and full-index-ready 9168.319 ms; and 1200 files at 13211 ms
+  wall, 1172 searchable, 8 OCR-required, 8 OCR queued, 20 failed, scan
+  183.196 ms, parse 7275.919 ms, database 1302.895 ms, index 4391.591 ms,
+  first-searchable 352.766 ms, TTF100 9403.335 ms, TTF1000 9403.335 ms,
+  full-import-ready 13169.354 ms, and full-index-ready 13168.753 ms. OCR and
+  embedding stage timings remained 0.000 ms.
+- Baseline profile: the 1200-file profile measured 13640 ms wall with the same
+  1172 searchable / 8 OCR-required / 8 OCR queued / 20 failed counts, scan
+  135.888 ms, parse 7757.238 ms, database 1374.741 ms, index 4314.987 ms,
+  first-searchable 323.993 ms, TTF100 10036.107 ms, TTF1000 10036.107 ms,
+  full-import-ready 13599.543 ms, and public-safe summary hash
+  `33420bb013ce0ce0aa5d753cee4b9da421e21b62582118fe11842f235d230ed1`.
+  Path-free buckets stayed parse-dominant: `lopdf_parser=2246`,
+  `sqlite=680`, `regex_automata=209`, `extractor_rules=167`,
+  `lopdf_encodings=56`, `parser_pdf=53`, `lopdf_object=60`, and
+  `import_pipeline=61`.
+- Hypothesis and rollback: add milestone-aware searchable flushes only when
+  cumulative searchable documents cross 100 or 1000, while preserving immediate
+  first-searchable publication and the 1024 follow-up batch. Expected delta was
+  at least 50% lower TTF100 on 500/1000/1200 with unchanged counts, TTF1000
+  no worse than 10% on 1200, and full wall no worse than 15% on
+  500/1000/1200.
+- RED/GREEN check: the focused flush-policy test first failed because 99
+  pending searchable documents after the first published document did not flush
+  when they crossed TTF100. The implementation adds explicit 100/1000
+  searchable milestones to the flush predicate. The test then proved the 100
+  milestone flush, the post-100 non-flush state, the 1000 milestone flush, and
+  the preserved 1024-document batch fallback.
+- Result: same-root after-runs preserved all aggregate counts and content bytes.
+  The 100-file run reported wall 2090 ms, first-searchable 343.927 ms, TTF100
+  `n/a`, TTF1000 `n/a`, full-import-ready 1561.346 ms, and full-index-ready
+  1561.098 ms. The first 500-file after-run reported wall 5706 ms,
+  first-searchable 393.129 ms, TTF100 1598.737 ms, full-import-ready
+  5673.484 ms, and full-index-ready 5673.219 ms; this initial wall result was
+  15.34% above baseline, just past the rollback guard, so the 500-file run was
+  repeated twice. The repeats reported wall 5272 ms / 5307 ms and TTF100
+  1456.530 ms / 1469.883 ms, keeping wall within the guard (+6.57% /
+  +7.28%) and counts unchanged. The 1000-file run reported wall 10061 ms,
+  first-searchable 433.831 ms, TTF100 1638.556 ms, full-import-ready
+  10027.307 ms, and full-index-ready 10027.195 ms. The 1200-file run reported
+  wall 14079 ms, first-searchable 362.350 ms, TTF100 1572.160 ms, TTF1000
+  9910.619 ms, full-import-ready 14032.613 ms, and full-index-ready
+  14032.423 ms. Versus baseline, TTF100 improved by about 67-70% on the 500
+  repeats, 82.13% on 1000, and 83.28% on 1200; 1200 TTF1000 regressed only
+  5.39%, within the rollback guard.
+- After-profile: the sampled 1200-file run completed successfully with public
+  summary hash
+  `edf8ee5775509fb150f1499b90a8ba84adfc96fb31865403110754c5f97e4ddd`.
+  It reported wall 13963 ms, scan 131.091 ms, parse 7615.593 ms, database
+  1343.783 ms, index 4802.933 ms, first-searchable 306.920 ms, TTF100
+  1576.285 ms, TTF1000 10164.361 ms, full-import-ready 13910.452 ms, and
+  full-index-ready 13910.306 ms. Path-free buckets showed the expected cost
+  transfer into index publication (`tantivy=561`, `index_fulltext=58`) while
+  `lopdf_parser=1859` remained the top CPU bucket.
+- Verification: `cargo fmt --check`, `cargo test -p import-pipeline
+  searchable_flush_policy_publishes_first_match_then_batches_followups --locked
+  -- --nocapture`, `cargo test -p import-pipeline
+  import_root_publishes_first_searchable_before_batch_threshold --locked -- --
+  nocapture`, `cargo test -p resume-cli --test s9_import_search --locked`,
+  `cargo check -p import-pipeline -p resume-cli --locked`, release rebuild plus
+  same-root 100/500/1000/1200 import reruns and 1200 sampled profile,
+  `rust-analyzer analysis-stats . --run-all-ide-things`, `python3
+  scripts/ci/check-performance-contracts.py`, `python3
+  scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`,
+  `./scripts/ci/guard-public-repo.sh`, and `git diff --check --
+  crates/import-pipeline/src/lib.rs PROGRESS.md` passed.
+- Boundary: #71 records an import first-searchable/TTF milestone publication
+  optimization only. It does not close #37, complete OCR/embedding backlog
+  readiness, claim D10K, D100K, D1M, W1, full baseline, GUI, query
+  optimization, Windows readiness, or goal completion. All private evidence
+  remained aggregate-only and path-free.
+
+### S626
+
+- Scope: issue #70 addressed an import evidence gap only. The active import
+  contract requires first-searchable, TTF100, TTF1000, full-import-ready, and
+  full-index-ready evidence, but the import CLI only printed aggregate counts
+  and stage timings.
+- Observe baseline: the release-built import baseline against the authorized
+  private root measured 100 files at 2039 ms wall, 92 searchable, 5
+  OCR-required, 5 OCR queued, 3 failed, scan 127.391 ms, parse 641.134 ms,
+  database 96.916 ms, index 613.336 ms, and 47,327,755 content bytes read; 500
+  files at 4891 ms wall, 484 searchable, 6 OCR-required, 6 OCR queued,
+  10 failed, scan 211.129 ms, parse 3062.966 ms, database 478.667 ms, index
+  1083.044 ms, and 195,489,962 content bytes read; and 1000 files at 9196 ms
+  wall, 974 searchable, 8 OCR-required, 8 OCR queued, 18 failed, scan
+  253.044 ms, parse 6104.568 ms, database 1021.216 ms, index 1752.813 ms, and
+  378,611,093 content bytes read. OCR and embedding stage timings remained
+  0.000 ms.
+- Baseline profile: the 1000-file profile measured 9177 ms wall with the same
+  974 searchable / 8 OCR-required / 8 OCR queued / 18 failed counts, scan
+  124.660 ms, parse 6192.510 ms, database 1077.354 ms, index 1712.044 ms, and
+  public-safe summary hash
+  `f0329ecd10b9a5f3e5e0b6d47cf82c9db2cd28c8cc20b0e29aba4b0f5c6fde19`.
+  Path-free buckets remained parse-dominant: `lopdf_parser=1984`,
+  `sqlite=673`, `regex_automata=191`, `extractor_rules=154`,
+  `lopdf_encodings=51`, `parser_pdf=50`, `lopdf_object=45`, and
+  `import_pipeline=40`.
+- RED/GREEN check: the focused CLI import test first failed because import
+  stdout did not contain `first searchable ms:`, `ttf100 searchable ms:`,
+  `ttf1000 searchable ms:`, `full import ready ms:`, or `full index ready ms:`.
+  The implementation adds `ImportMilestoneTimings` to `ImportSummary`, records
+  searchable milestones after successful fulltext index publication, sets full
+  import/index ready at import completion, merges multi-root CLI summaries with
+  root elapsed offsets, and prints missing thresholds as `n/a`. The focused CLI
+  test and the import-pipeline first-searchable summary test then passed.
+- Result: same-root after-runs preserved all aggregate counts and emitted the
+  new milestone evidence. The 100-file run reported wall 1558 ms, parse
+  658.119 ms, database 97.748 ms, index 602.847 ms, first-searchable
+  337.822 ms, TTF100 `n/a`, TTF1000 `n/a`, full-import-ready 1525.077 ms, and
+  full-index-ready 1524.927 ms. The 500-file run reported wall 5235 ms, parse
+  3096.326 ms, database 484.394 ms, index 1394.500 ms, first-searchable
+  391.645 ms, TTF100 5200.312 ms, TTF1000 `n/a`, full-import-ready
+  5200.496 ms, and full-index-ready 5200.312 ms. The 1000-file run reported
+  wall 9414 ms, parse 6273.138 ms, database 1057.290 ms, index 1767.022 ms,
+  first-searchable 432.187 ms, TTF100 9370.982 ms, TTF1000 `n/a`,
+  full-import-ready 9371.094 ms, and full-index-ready 9370.982 ms. Counts and
+  content bytes stayed unchanged across all after-runs.
+- After-profile: the 1000-file sampled run completed successfully with public
+  summary hash
+  `01cc289a95dfd21dc450871c8da1006179f6141c97dccb1dbdaa35354ec2f95d`.
+  It reported wall 9409 ms, parse 6396.696 ms, database 1111.483 ms, index
+  1723.046 ms, first-searchable 293.294 ms, TTF100 9370.172 ms, TTF1000 `n/a`,
+  full-import-ready 9370.311 ms, and full-index-ready 9370.172 ms. Path-free
+  buckets still kept `lopdf_parser=1872` dominant, followed by `sqlite=758`,
+  `regex_automata=205`, `extractor_rules=157`, `import_pipeline=54`, and
+  `parser_pdf=43`; the bottleneck did not transfer.
+- Verification: `cargo fmt --check`, `cargo test -p resume-cli --test
+  s9_import_search --locked`, `cargo test -p import-pipeline
+  import_root_publishes_first_searchable_before_batch_threshold --locked`,
+  `cargo check -p import-pipeline -p resume-cli --locked`, release rebuild plus
+  same-root 100/500/1000 import reruns, `rust-analyzer analysis-stats .
+  --run-all-ide-things`, `python3 scripts/ci/check-performance-contracts.py`,
+  `python3 scripts/ci/check-autonomous-goal.py`, `python3
+  scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and
+  `git diff --check -- crates/import-pipeline/src/lib.rs crates/cli/src/main.rs
+  crates/cli/tests/s9_import_search.rs PROGRESS.md` passed.
+- Boundary: #70 records import milestone observability only. It does not close
+  #37, complete OCR/embedding backlog readiness, claim D10K, D100K, D1M, W1,
+  full baseline, GUI, query optimization, Windows readiness, or goal
+  completion. All private evidence remained aggregate-only and path-free.
+
+### S625
+
+- Scope: issue #69 addressed a bounded project-owned import parse sub-hotspot.
+  The current profile still showed `lopdf::parser` as the dominant import
+  bottleneck, but the top project-owned extractor frame repeatedly rebuilt the
+  same per-document line index across line-oriented extractors.
+- Observe baseline: the release-built import baseline against the authorized
+  private root measured 100 files at 2097 ms wall, 92 searchable, 5
+  OCR-required, 3 failed, scan 168.414 ms, parse 654.452 ms, database
+  99.948 ms, index 615.574 ms, and 47,327,755 content bytes read; 500 files at
+  4780 ms wall, 484 searchable, 6 OCR-required, 10 failed, scan 217.744 ms,
+  parse 3073.168 ms, database 483.691 ms, index 967.185 ms, and 195,489,962
+  content bytes read; and 1000 files at 9204 ms wall, 974 searchable, 8
+  OCR-required, 18 failed, scan 257.173 ms, parse 6148.521 ms, database
+  1028.113 ms, index 1724.983 ms, and 378,611,093 content bytes read. OCR and
+  embedding stage timings remained 0.000 ms.
+- Baseline profile: the 1000-file profile measured 9290 ms wall with the same
+  974 searchable / 8 OCR-required / 18 failed counts, scan 128.350 ms, parse
+  6327.816 ms, database 1087.942 ms, index 1696.467 ms, and public-safe sample
+  hash `ad1f3c1183bee1f79573a697c41b901e0b3bae3fc7ab61e0af5d88f11a0616b5`.
+  Path-free buckets kept `lopdf::parser=1605` dominant, with
+  `extractor_rules=190`, `regex_automata=95`, and `sqlite=661`. A symbol-focused
+  rerun showed the project-owned extractor sub-hotspot
+  `extractor_rules::indexed_lines=22`.
+- RED/GREEN check: the focused unit test first failed with 12 `indexed_lines`
+  calls for one `extract_strong_fields` invocation. The implementation now
+  builds the indexed line slice once per document and passes it to name,
+  WeChat, school, degree, major, company, title, location, skill, and
+  certificate extractors. The same focused test then passed with exactly one
+  `indexed_lines` call, followed by the full `extractor-rules` test suite.
+- Result: same-root after-runs preserved all aggregate counts. The 100-file run
+  reported wall 1487 ms, parse 594.947 ms, database 96.277 ms, index 640.489 ms,
+  92 searchable, 5 OCR-required, 3 failed, and 47,327,755 content bytes read.
+  The 500-file run reported wall 4645 ms, parse 2900.280 ms, database
+  482.121 ms, index 1098.874 ms, 484 searchable, 6 OCR-required, 10 failed, and
+  195,489,962 content bytes read. The 1000-file run reported wall 8918 ms,
+  parse 5913.030 ms, database 1059.858 ms, index 1758.149 ms, 974 searchable,
+  8 OCR-required, 18 failed, and 378,611,093 content bytes read. Versus
+  baseline, 1000-file wall moved `9204 -> 8918ms` (-3.11%) and parse moved
+  `6148.521 -> 5913.030ms` (-3.83%) with counts unchanged.
+- After-profile: the 1000-file sampled run completed successfully with sample
+  hash `3fb8837d2666401b65db864a11df945670edb4aab75a5506fc8b8f4d979ab067`.
+  `extractor_rules::indexed_lines` fell from 22 sampled hits to 0; sampled
+  `extract_strong_fields` was 53 and `normalize_title` was 31. Sampled wall and
+  parse were 9446 ms and 6425.393 ms, within the sampled-run rollback guard
+  against the baseline profile. The bottleneck transferred back to
+  `lopdf::parser`, which remained dominant in the profile.
+- Verification: `cargo fmt --check`, `cargo test -p extractor-rules --locked`,
+  `cargo test -p resume-cli --test s9_import_search --locked`, `cargo check -p
+  extractor-rules -p import-pipeline -p resume-cli --locked`, release rebuild
+  plus same-root 100/500/1000 import reruns, `rust-analyzer analysis-stats .
+  --run-all-ide-things`, `python3 scripts/ci/check-performance-contracts.py`,
+  `python3 scripts/ci/check-autonomous-goal.py`, `python3
+  scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and
+  `git diff --check -- crates/extractor-rules/src/lib.rs PROGRESS.md` passed.
+- Boundary: #69 records an extractor-rules import parse sub-hotspot slice only.
+  It does not close #37, complete OCR/embedding backlog readiness, claim D10K,
+  D100K, D1M, W1, full baseline, GUI, query optimization, Windows readiness, or
+  goal completion. All private evidence remained aggregate-only and path-free.
+
+### S624
+
+- Scope: issue #68 addressed a bounded import evidence gap. The current import
+  lane had stage timings and aggregate counts, but did not report the number of
+  content bytes actually read during import, making throughput and large-file
+  evidence harder to compare without external path-sensitive scans.
+- Observe baseline: the release-built import baseline against the authorized
+  private root measured 100 files at 1582 ms wall, 92 searchable, 5
+  OCR-required, 3 failed, scan 97.443 ms, parse 637.300 ms, database
+  105.003 ms, index 701.962 ms; 500 files at 6684 ms wall, 484 searchable,
+  6 OCR-required, 10 failed, scan 117.053 ms, parse 4096.804 ms, database
+  614.146 ms, index 1804.228 ms; and 1000 files at 9895 ms wall, 974
+  searchable, 8 OCR-required, 18 failed, scan 391.894 ms, parse 6610.123 ms,
+  database 1096.189 ms, index 1749.120 ms. OCR and embedding stage timings
+  remained 0.000 ms.
+- Baseline profile: the 1000-file profile measured 10138 ms wall with the same
+  974 searchable / 8 OCR-required / 18 failed counts, scan 128.419 ms, parse
+  6849.479 ms, database 1206.511 ms, index 1901.360 ms, and public-safe
+  summary hash
+  `7fb2d5fca047d8f7c7750d910729d380905059df879fd2164fbdf16300716794`.
+  Path-free buckets were `lopdf::parser=1910`, `sqlite=689`,
+  `extractor_rules=210`, `regex_automata=204`, `lopdf::encodings=61`,
+  `lopdf::object=49`, `parser_pdf=48`, `import_pipeline::run_import=41`,
+  `lopdf::reader=6`, `tantivy=3`, `index_fulltext=0`, and `zip=0`.
+  A path-free aggregate sizing pass for the first 1000 imported files measured
+  996 PDF, 2 DOC, 2 DOCX, and 378,754,539 total bytes.
+- RED/GREEN check: the focused CLI import test first failed because import
+  stdout did not contain `content bytes read:`. The implementation added
+  `content_bytes_read` to `ImportSummary`, increments it after successful
+  content reads, merges it across multi-root import summaries, and prints the
+  aggregate in the import CLI output. The same focused CLI test then passed,
+  followed by a release rebuild.
+- Result: same-root after-runs preserved all aggregate counts and emitted the
+  new byte evidence. The 100-file run reported 47,327,755 content bytes read,
+  wall 2148 ms, parse 669.549 ms, database 100.413 ms, index 606.863 ms, 92
+  searchable, 5 OCR-required, and 3 failed. The 500-file run reported
+  195,489,962 content bytes read, wall 5091 ms, parse 3211.918 ms, database
+  501.849 ms, index 1118.937 ms, 484 searchable, 6 OCR-required, and 10 failed.
+  The 1000-file run reported 378,611,093 content bytes read, wall 9438 ms,
+  parse 6300.801 ms, database 1085.194 ms, index 1768.333 ms, 974 searchable,
+  8 OCR-required, and 18 failed. Versus baseline, 1000-file wall moved
+  `9895 -> 9438ms` (-4.62%) and parse moved `6610.123 -> 6300.801ms`
+  (-4.68%) with counts unchanged; this is treated as noise/overhead-neutral
+  evidence completeness, not a claimed CPU optimization.
+- Verification: `cargo fmt --check`, `cargo test -p import-pipeline --locked`,
+  `cargo test -p resume-cli --test s9_import_search --locked`, `cargo check -p
+  import-pipeline -p resume-cli --locked`, `rust-analyzer analysis-stats .
+  --run-all-ide-things`, `python3 scripts/ci/check-performance-contracts.py`,
+  `python3 scripts/ci/check-autonomous-goal.py`, `python3
+  scripts/ci/check-loop-state.py`, and `./scripts/ci/guard-public-repo.sh`
+  passed.
+- Boundary: #68 records an import evidence/observability slice only. It does
+  not close #37, complete OCR/embedding backlog readiness, claim D10K, D100K,
+  D1M, W1, full baseline, GUI, query optimization, Windows readiness, or goal
+  completion. All private evidence remained aggregate-only and path-free.
+
+### S623
+
+- Scope: issue #67 tested a bounded L3 dependency-feature hypothesis for the
+  remaining import parse bottleneck after S622. The experiment temporarily
+  disabled `lopdf`'s default `rayon` feature in `parser-pdf` while preserving
+  its non-rayon date/time features, then reverted the change after it missed the
+  rollback guard. No production dependency-feature change is retained.
+- Observe baseline: the release-built import baseline against the authorized
+  private root measured 100 files at 1804.123 ms wall, 92 searchable, 5
+  OCR-required, 3 failed, scan 166.111 ms, parse 658.389 ms, database
+  97.136 ms, index 569.644 ms; 500 files at 4896.696 ms wall, 484 searchable,
+  6 OCR-required, 10 failed, scan 215.804 ms, parse 3167.326 ms, database
+  513.484 ms, index 967.652 ms; and 1000 files at 9343.255 ms wall, 974
+  searchable, 8 OCR-required, 18 failed, scan 257.149 ms, parse 6309.850 ms,
+  database 1084.501 ms, index 1644.673 ms. OCR and embedding stage timings
+  remained 0.000 ms.
+- Baseline profile: the 1000-file profile measured 9657.696 ms wall with the
+  same 974 searchable / 8 OCR-required / 18 failed counts, scan 129.900 ms,
+  parse 6512.388 ms, database 1131.533 ms, index 1748.666 ms, and public-safe
+  summary hash
+  `a5c0b343eef62809f12e9ab7013c39d749140150b1ad629eefc971586ad88d2b`.
+  Path-free buckets were `lopdf::parser=1434`, `sqlite=593`,
+  `extractor_rules=181`, `regex_automata=146`, `lopdf::encodings=56`,
+  `lopdf::object=48`, `parser_pdf=41`, `import_pipeline::run_import=40`,
+  `lopdf::reader=4`, `tantivy=3`, `index_fulltext=0`, and `zip=0`. A longer
+  path-free sample showed `lopdf::parser::_dictionary`,
+  `lopdf::parser::_direct_object`, and rayon bridge/join frames, which made
+  dependency-feature pruning a falsifiable L3 hypothesis.
+- RED/GREEN check: before the change,
+  `cargo tree -p parser-pdf --edges features --locked | rg 'lopdf feature
+  "rayon"'` found the feature. After the temporary dependency-feature change,
+  the same `rg` returned no match and `cargo test -p parser-pdf --locked`
+  passed.
+- Result: same-root after-runs preserved all aggregate counts but regressed the
+  target metrics. The 100-file run measured wall 2119.982 ms and parse
+  702.645 ms; the 500-file run measured wall 5389.989 ms and parse
+  3499.271 ms; and the 1000-file run measured wall 9846.841 ms and parse
+  6721.191 ms. Versus the baseline, 1000-file wall regressed 5.39% and parse
+  regressed 6.52%; 500-file wall regressed 10.07% and parse regressed 10.48%.
+  The after-profile measured wall 9756.161 ms, parse 6692.232 ms, database
+  1104.349 ms, index 1718.104 ms, and summary hash
+  `1f3af8d32b14378678ae146d4632354d2d77514de617e40da958d92f0742c842`.
+- Decision: the hypothesis was rejected and the dependency-feature change was
+  reverted. After rollback, `cargo tree -p parser-pdf --edges features --locked
+  | rg 'lopdf feature "rayon"'` again found the feature, `cargo test -p
+  parser-pdf --locked` passed, and `cargo build -p resume-cli --release
+  --locked` rebuilt the release binary from the restored configuration. Final
+  verification also passed `rust-analyzer analysis-stats .
+  --run-all-ide-things`, `python3 scripts/ci/check-performance-contracts.py`,
+  `python3 scripts/ci/check-autonomous-goal.py`, `python3
+  scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and
+  `git diff --check -- PROGRESS.md crates/parser-pdf/Cargo.toml Cargo.lock`.
+- Boundary: #67 records a failed import parser build-feature hypothesis only.
+  It does not close #37, complete OCR/embedding backlog readiness, claim D10K,
+  D100K, D1M, W1, full baseline, GUI, query optimization, Windows readiness, or
+  goal completion. All private evidence remained aggregate-only and path-free.
+
+### S622
+
+- Scope: issue #66 tested a bounded L2 import fulltext snapshot publication
+  cadence change. The slice preserved the first-searchable immediate publish
+  path and changed only the follow-up searchable-document flush threshold from
+  512 to 1024 docs in `import-pipeline`; it did not change parser, OCR,
+  embedding, storage schema, query hot path, GUI, or release-readiness state.
+- TDD red: the existing
+  `searchable_flush_policy_publishes_first_match_then_batches_followups` test
+  was tightened so the 512th follow-up searchable document no longer flushes
+  and the 1024th follow-up does flush. An initial exact-filter command matched
+  zero tests and was not accepted as the red run; the corrected focused command
+  failed on the old 512 threshold before the implementation change.
+- Observe baseline: private local aggregate-only import runs against the
+  authorized root measured 100 files at 1474.667 ms wall, 92 searchable, 5
+  OCR-required, 3 failed, scan 92.473 ms, parse 617.837 ms, database
+  100.726 ms, index 609.321 ms; 500 files at 5023.806 ms wall, 484
+  searchable, 6 OCR-required, 10 failed, scan 222.180 ms, parse 3187.114 ms,
+  database 496.953 ms, index 1054.184 ms; and 1000 files at 11145.952 ms wall,
+  974 searchable, 8 OCR-required, 18 failed, scan 266.042 ms, parse
+  6545.986 ms, database 1228.826 ms, index 3029.547 ms. OCR and embedding
+  stage timings remained 0.000 ms in these import-only runs.
+- Baseline profile: the 1000-file profile measured 10774.578 ms wall with the
+  same 974 searchable / 8 OCR-required / 18 failed aggregate counts, scan
+  129.784 ms, parse 6429.001 ms, database 1120.746 ms, index 3031.658 ms, and
+  public-safe summary hash
+  `544b714f3982db305203b5b328bbf2d3182d25da39c2c85947d5f12fe2678656`.
+  Symbol buckets were `parser_pdf=42`, `lopdf::parser=1340`,
+  `lopdf::reader=6`, `lopdf::object=42`, `lopdf::encodings=48`,
+  `extractor_rules=140`, `regex_automata=295`, `sqlite=548`, `tantivy=765`,
+  `index_fulltext=72`, and `import_pipeline::run_import=39`.
+- Result: with the 1024 follow-up threshold, the primary 1000-file after run
+  measured 9600.444 ms wall, 974 searchable, 8 OCR-required, 18 failed, scan
+  266.471 ms, parse 6450.649 ms, database 1108.451 ms, and index 1703.888 ms.
+  Versus the matching baseline this is wall 11145.952 -> 9600.444 ms
+  (-13.87%), database 1228.826 -> 1108.451 ms (-9.80%), and index 3029.547 ->
+  1703.888 ms (-43.76%) with unchanged counts. The 100-file and 500-file
+  aggregate counts were unchanged; reruns showed 100-file timing noise was not
+  caused by the threshold change, and a temporary 512-control 1000-file run
+  regressed back to 11290.648 ms wall and 3102.966 ms index time.
+- After profile: the 1000-file profile measured 10521.616 ms wall, 974
+  searchable, 8 OCR-required, 18 failed, scan 391.646 ms, parse 6892.953 ms,
+  database 1114.716 ms, index 1732.282 ms, and public-safe summary hash
+  `649f3bc955579c56e76b3eef0b4cfa3aa60e7559d39bf402546dd59551258ba8`.
+  `tantivy` dropped from 765 to 130 samples and `index_fulltext` from 72 to 22,
+  while `lopdf::parser` remained dominant at 1240 samples; the bottleneck
+  therefore moved back toward PDF parse rather than fulltext snapshot
+  publication.
+- Verification passed: `cargo test -p import-pipeline
+  searchable_flush_policy_publishes_first_match_then_batches_followups
+  --locked`, `cargo test -p import-pipeline --locked`, `cargo fmt --check`,
+  `cargo build -p resume-cli --release --locked`, private 100/500/1000 import
+  reruns, private 1000-file profile, `cargo test -p resume-cli --test
+  s9_import_search --locked`, `rust-analyzer diagnostics .` with no new errors,
+  `python3 scripts/ci/check-performance-contracts.py`, `python3
+  scripts/ci/check-autonomous-goal.py`, `python3
+  scripts/ci/check-loop-state.py`, and `./scripts/ci/guard-public-repo.sh`.
+- Boundary: #66 completes only the import fulltext snapshot publication slice.
+  It does not close #37, complete OCR/embedding backlog readiness, claim D10K,
+  D100K, D1M, W1, full baseline, GUI, query optimization, Windows readiness, or
+  goal completion. All private evidence remained aggregate-only and path-free.
+
+### S621
+
+- Scope: issue #65 tested a bounded L4 PDF parser hypothesis for repeated
+  ToUnicode/font encoding work during import text-layer extraction. The slice
+  changed parser internals only; it did not change import contracts, ranking,
+  OCR, embedding, storage schema, or query semantics.
+- TDD red check: `cargo test -p parser-pdf
+  font_encoding_cache_reuses_shared_font_dictionary_across_pages --locked -- --exact`
+  failed before implementation because the parser had no document-scoped font
+  encoding cache or cache-aware page font helper.
+- Observe: fresh release baseline after S620 measured 100-file wall
+  `2103.309ms`, scan `164.287ms`, parse `696.889ms`, DB `99.623ms`, index
+  `596.479ms`, OCR `0.0ms`, embedding `0.0ms`, 92 searchable, 5 OCR-required,
+  3 failed; 500-file wall `5121.804ms`, scan `216.699ms`, parse `3282.287ms`,
+  DB `492.679ms`, index `1072.079ms`, OCR `0.0ms`, embedding `0.0ms`,
+  484 searchable, 6 OCR-required, 10 failed; and 1000-file wall `11402.510ms`,
+  scan `309.772ms`, parse `6796.711ms`, DB `1103.399ms`, index `3116.593ms`,
+  OCR `0.0ms`, embedding `0.0ms`, 974 searchable, 8 OCR-required, 18 failed.
+- Profile: the 1000-file profile rerun measured wall `11251.361ms`, scan
+  `129.787ms`, parse `6875.170ms`, DB `1132.708ms`, index `3035.842ms`, same
+  974/8/18 counts, sample status `ok`, profile summary hash
+  `be7ea688fbe557b7c9715c40ab7fa646d4e29888b9cde8befd3e1bad41a0c33e`, and
+  path-free symbol counts led by `lopdf::parser=1254`, `tantivy=628`,
+  `sqlite=557`, `regex_automata=260`, `extractor_rules=176`,
+  `lopdf::encodings=61`, and `parser_pdf=46`.
+- Implementation: `crates/parser-pdf/src/lib.rs` now creates a
+  `FontEncodingCache` per loaded PDF document, reuses `Rc<Encoding<'_>>` values
+  by in-memory font dictionary identity across pages, and keeps the existing
+  external parser output shape. The new unit test builds a two-page shared
+  ToUnicode PDF fixture, proves the cache stays at one encoding after reading
+  both pages, and verifies the extracted CJK text still reaches the text layer.
+- Result: same-root after-runs measured 100-file wall `2122.179ms`, scan
+  `169.620ms`, parse `676.711ms`, DB `99.204ms`, index `597.972ms`,
+  92 searchable, 5 OCR-required, 3 failed; 500-file wall `5063.813ms`, scan
+  `222.441ms`, parse `3219.462ms`, DB `502.412ms`, index `1063.252ms`,
+  484 searchable, 6 OCR-required, 10 failed; and 1000-file wall `10858.493ms`,
+  scan `264.950ms`, parse `6377.322ms`, DB `1089.333ms`, index `3053.383ms`,
+  974 searchable, 8 OCR-required, 18 failed. Versus the #65 baseline, 1000-file
+  wall fell `4.77%` and parse fell `6.17%`; 500-file wall fell `1.13%` and
+  parse fell `1.91%`; 100-file parse fell `2.90%` while wall moved up `0.90%`.
+- After-profile: the 1000-file profile measured wall `10938.257ms`, scan
+  `129.131ms`, parse `6475.092ms`, DB `1139.578ms`, index `3131.117ms`,
+  same 974/8/18 counts, profile summary hash
+  `eaa2a9f6ec6d4c87a02ce1c8adce2ec54f875017b0fe0a2f023c4cd79c9dffb8`, and
+  path-free symbol counts still led by `lopdf::parser=1369`, `tantivy=638`,
+  `sqlite=628`, `regex_automata=265`, `extractor_rules=167`,
+  `parser_pdf=48`, and `lopdf::encodings=47`. The bottleneck improved but did
+  not fundamentally move away from `lopdf::parser`; 1000-file index/DB cost is
+  also now material.
+- Verification: `cargo build -p resume-cli --release --locked`, private
+  100/500/1000 before/after/profile import commands, `cargo fmt --check`,
+  `cargo test -p parser-pdf --locked`, `cargo test -p import-pipeline --locked`,
+  `cargo test -p resume-cli --test s9_import_search --locked`,
+  `rust-analyzer diagnostics .`, `python3 scripts/ci/check-performance-contracts.py`,
+  `python3 scripts/ci/check-autonomous-goal.py`,
+  `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`,
+  and `git diff --check -- Cargo.toml PROGRESS.md crates/parser-pdf/src/lib.rs`
+  passed. `rust-analyzer` reported only existing inactive-code weak warnings
+  from platform/test cfg branches, not new errors.
+- Boundary: private local aggregate import evidence only; no raw resume text,
+  filenames, local paths, diagnostics packages, raw queries, candidate results,
+  OCR/embedding worker completion, D10K/W1/full baseline, GUI, query hot-path
+  optimization, Windows weak-host evidence, or `goal_complete` claim.
+
+### S620
+
+- Scope: issue #64 tested a bounded L3 release-profile hypothesis for the
+  parse-dominant import lane, with no parser, index, storage, OCR, embedding, or
+  search semantic changes.
+- TDD red check: a Python TOML guard for `[profile.release] lto = "thin"` and
+  `codegen-units = 1` failed before the change with `AssertionError: {}` because
+  the release profile was empty.
+- Observe: fresh release baseline measured 100-file wall `2514.998ms`, scan
+  `161.323ms`, parse `797.991ms`, DB `102.869ms`, index `591.328ms`, OCR
+  `0.0ms`, embedding `0.0ms`, 92 searchable, 5 OCR-required, 3 failed; and
+  500-file wall `5697.711ms`, scan `212.828ms`, parse `3771.732ms`, DB
+  `520.894ms`, index `1133.395ms`, OCR `0.0ms`, embedding `0.0ms`,
+  484 searchable, 6 OCR-required, 10 failed. The 500-file profile rerun measured
+  wall `5508.017ms`, parse `3743.895ms`, index `1064.823ms`, sample hash
+  `1786085687be967f29d18fdeea13b53e591436a0bb176c5e7198bc87b2e3253b`, and
+  path-free symbol counts led by `lopdf::parser=580`, `lopdf::reader=239`,
+  `parser_pdf=32`, `extractor_rules=122`, `regex_automata=89`, and `sqlite=401`.
+- A/B: a separate thin-LTO release build finished in `1m 41s` and measured
+  100-file wall `2089.693ms`, parse `717.316ms`, index `591.942ms`, with the
+  same 92/5/3 counts; and 500-file wall `5376.539ms`, parse `3492.750ms`, index
+  `1078.442ms`, with the same 484/6/10 counts. That beat the rollback condition
+  without changing aggregate outcomes.
+- Implementation: `Cargo.toml` now sets `[profile.release] lto = "thin"` and
+  `codegen-units = 1`. The normal release rebuild finished in `1m 39s`; the
+  after-run measured 100-file wall `2097.743ms`, scan `132.375ms`, parse
+  `712.655ms`, DB `101.379ms`, index `588.645ms`, 92 searchable, 5 OCR-required,
+  3 failed; and 500-file wall `5250.460ms`, scan `211.839ms`, parse
+  `3398.417ms`, DB `530.178ms`, index `1059.029ms`, 484 searchable,
+  6 OCR-required, 10 failed. Versus the #64 baseline, 100-file wall fell
+  `16.59%`, 100-file parse fell `10.69%`, 500-file wall fell `7.85%`,
+  500-file parse fell `9.90%`, and 500-file index fell `6.56%`.
+- After-profile: the normal-release 500-file profile measured wall `5237.236ms`,
+  parse `3439.290ms`, index `1082.507ms`, sample hash
+  `a5357c511715c33338ed3bedfcb40cee49899a4b5e5f713b50a137dbe1a6caf1`, and
+  path-free symbol counts still led by `lopdf::parser=806`, `extractor_rules=132`,
+  `regex_automata=99`, and `sqlite=388`. The bottleneck improved but did not
+  fundamentally move away from PDF object parsing.
+- Verification: the TOML profile check, `cargo build -p resume-cli --release
+  --locked`, private 100/500 before/A-B/after/profile import commands,
+  `cargo test -p resume-cli --test s9_import_search --locked`, `cargo test -p
+  import-pipeline --locked`, `cargo fmt --check`, `rust-analyzer diagnostics .`,
+  `python3 scripts/ci/check-performance-contracts.py`, `python3
+  scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`,
+  `./scripts/ci/guard-public-repo.sh`, and `git diff --check -- Cargo.toml
+  PROGRESS.md` passed. `rust-analyzer` reported only existing inactive-code
+  weak warnings from platform/test cfg branches, not new errors.
+- Boundary: private local aggregate import evidence only; no raw resume text,
+  filenames, local paths, diagnostics packages, raw queries, candidate results,
+  OCR/embedding worker completion, D10K/W1/full baseline, GUI, query hot-path
+  optimization, Windows weak-host evidence, or `goal_complete` claim.
+
+### S619
+
+- Scope: correct the import performance evidence methodology before the next
+  optimization slice by switching the forward baseline from dev-built
+  `resume-cli` to release-built `target/release/resume-cli`.
+- Observe: the dev-built 500-file same-root import still measured wall
+  `49696.957ms`, parse `38571.261ms`, index `9761.085ms`, 484 searchable,
+  6 OCR-required, and 10 failed. This preserved the #62 shape but violated the
+  current performance-methodology contract for future optimization evidence.
+- Result: after `cargo build -p resume-cli --release --locked`, the same-root
+  release baseline measured 100-file wall `1932.624ms`, parse `675.926ms`,
+  index `591.139ms`, 92 searchable, 5 OCR-required, 3 failed; and 500-file wall
+  `4893.827ms`, parse `3231.556ms`, index `1071.311ms`, 484 searchable,
+  6 OCR-required, 10 failed. A release-profile rerun measured 500-file wall
+  `5187.019ms`, parse `3466.853ms`, index `1074.897ms`, with public-safe symbol
+  counts still led by `lopdf::parser`, `lopdf::reader`, `parser_pdf`, and
+  `extractor_rules`.
+- Decision: issue #63 records that future import optimization issues must use
+  release-built baselines. The dev-built #58-#62 numbers remain useful
+  historical comparisons but are no longer the forward product-performance
+  baseline.
+- Verification: `cargo build -p resume-cli --release --locked`, `python3
+  scripts/ci/check-performance-contracts.py`, `python3
+  scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`,
+  `./scripts/ci/guard-public-repo.sh`, and `git diff --check -- PROGRESS.md`
+  passed.
+- Boundary: private local aggregate import evidence only; no raw resume text,
+  filenames, local paths, diagnostics packages, raw queries, candidate results,
+  D10K/W1/full baseline, GUI, query hot-path optimization, or `goal_complete`
+  claim.
+
+### S599
+
+- Scope: prevent local private `agent_query_replay` query artifacts from being
+  written into a git worktree.
+- TDD red check: `cargo test -p resume-cli --test s304_query_set benchmark_query_set_freeze_agent_replay_rejects_output_inside_git_worktree --locked -- --exact --test-threads=1`
+  first failed because `freeze-agent-replay --out` succeeded inside a synthetic
+  git worktree.
+- Implementation: `benchmark-query-set preflight-agent-replay` and
+  `freeze-agent-replay` now reject `--out` or default local-evidence outputs
+  whose path is inside a `.git`-marked worktree before creating any local
+  private artifact.
+- Verification: the exact red check now passes, and
+  `cargo test -p resume-cli --test s304_query_set benchmark_query_set_preflight_agent_replay_rejects_default_output_inside_git_worktree --locked -- --exact --test-threads=1`
+  proves the same boundary for default local-evidence preflight output.
+  `cargo test -p resume-cli --test s304_query_set --locked -- --test-threads=1`
+  passes with 29 tests.
+- Boundary: synthetic/private-shaped fixtures only; no real trace content,
+  raw query text, real resumes, candidate results, local paths, private
+  benchmark reports, D10K/W1/profile/scale, or `goal_complete` claim.
+
+### S598
+
+- Scope: make #53 trace preflight local evidence use the same owner-only local
+  artifact boundary as frozen private query sets.
+- TDD red check: `cargo test -p resume-cli --test s304_query_set benchmark_query_set_preflight_agent_replay_creates_output_parent --locked -- --exact --test-threads=1`
+  first failed because the generated preflight output parent was `0755`
+  instead of owner-only `0700`.
+- Implementation: `benchmark-query-set preflight-agent-replay` now creates its
+  output parent through the private query artifact directory helper and writes
+  the redacted preflight JSON through the owner-only temporary artifact writer.
+- Boundary: synthetic/private-shaped trace and corpus fixtures only; no real
+  trace content, raw query text, real resumes, candidate results, local paths,
+  private benchmark reports, D10K/W1/profile/scale, or `goal_complete` claim.
+
+### S597
+
+- Scope: reduce duplicate public smoke/loop guard logic and hard-cut stale
+  contract names that conflicted with the current #53 baseline groundwork.
+- Implementation: removed duplicate synthetic-smoke command/self-test checks
+  from the aggregate contract gate, kept `check-loop-state.py` focused on
+  loop-specific synchronization checks, removed redundant smoke shell greps,
+  changed W1 public dataset identity from `dataset_sha256` to
+  `dataset_manifest_sha256`, added a negative fixture for the removed legacy
+  field, and replaced the stale daemon `search-batch-request.v1` example with
+  the current resident batch request stream.
+- Rust cleanup: the unbound resident-batch negative fixture now uses
+  `resume-ir-query-v2` while omitting `request_id`, so the test covers the
+  current missing-binding failure instead of a legacy protocol path.
+- Boundary: public/synthetic fixtures and redacted contract artifacts only; no
+  real trace content, raw query text, real resumes, candidate results, local
+  paths, private benchmark reports, D10K/W1/profile/scale, or `goal_complete`
+  claim.
+
+### S596
+
+- Scope: make `resume-benchmark private-query` consume only frozen canonical
+  static query-set rows.
+- TDD red check: `cargo test -p benchmark-runner --test s17_benchmark_runner private_query_benchmark_rejects_non_canonical_static_query_set_rows --locked -- --exact --test-threads=1`
+  first failed because a non-canonical row with fullwidth text and duplicate
+  logical terms still produced a benchmark report.
+- Implementation: replaced the runner's local semantic-bounds check with the
+  shared `core-domain` canonicalizer and reject rows when
+  `normalize_query_set_query(query) != query`.
+- Boundary: synthetic/private-shaped runner fixture only; no real trace
+  content, raw query text, real resumes, candidate results, local paths,
+  private benchmark reports, D10K/W1/profile/scale, or `goal_complete` claim.
+
+### S595
+
+- Scope: canonicalize `agent_query_replay` trace queries before static
+  freeze/preflight selection.
+- Implementation: moved query-set NFKC, whitespace normalization, semantic
+  bounds, and duplicate logical-term dedupe into `core-domain`; CLI trace
+  freeze/preflight now uses the shared domain canonicalizer before privacy
+  filtering, corpus-hit checks, bucket classification, summary HMAC payloads,
+  and JSONL output.
+- Cleanup: removed the stale `extreme` bucket from the daemon benchmark
+  registration example and aligned `and_3_5` with the current 150-query D10K
+  bucket floor.
+- Boundary: synthetic/private-shaped fixtures only; no real trace content,
+  raw query text, real resumes, candidate results, local paths, private
+  benchmark reports, D10K/W1/profile/scale, or `goal_complete` claim.
+
+### S594
+
+- Scope: tighten #53 resident batch protocol failure classification.
+- Implementation: missing resident batch response records now fail as
+  `private_query_protocol_attestation` instead of generic command stdout,
+  matching duplicate, unknown, and unbound request-id failures.
+- Boundary: synthetic/private-shaped runner fixture only; no real query set,
+  private benchmark, raw query text, W1/D10K/profile/scale, or `goal_complete`
+  claim.
+
+### S593
+
+- Scope: hard-cut future `agent_query_replay` frozen query-set public-safe
+  identifiers to the v2 summary HMAC namespace.
+- Implementation: changed all/tune/holdout/assignment HMAC domains from
+  `resume-ir:query-set-summary:v1:*` to `resume-ir:query-set-summary:v2:*` and
+  added focused coverage that recomputes the v2 identifiers with the local
+  contact HMAC key while proving the old v1 domain no longer matches.
+- Boundary: no private trace, raw query text, real resumes, candidate results,
+  local paths, private benchmark reports, W1/D10K/profile/scale, or
+  `goal_complete` claim.
+
+### S495
+
+- Scope: hard-cut the private static query-set bucket contract to corpus-valid
+  7-bucket D10K baseline semantics.
+- Implementation:
+  - Removed the impossible `extreme` query bucket and moved its D10K floor into
+    `and_3_5`, so the 500-query baseline now requires
+    `50/75/150/50/75/75/25` across
+    `single_term/and_2/and_3_5/and_6_16/field_filter/hybrid/semantic`.
+  - Removed zero-hit query retention from freeze summaries, private benchmark
+    reports, release-readiness intake, schemas, fixtures, and local guards.
+    Full freeze now drops zero-hit trace queries and fails closed on the
+    resulting bucket deficit instead of using them to fill a quota.
+  - Updated `perf/acceptance-matrix.toml`, `perf/current-loop-state.json`,
+    `perf/experiment-report.schema.json`, smoke fixtures, current-stage scripts,
+    release-readiness fixtures, runbook text, and the relevant Rust tests to the
+    same 7-bucket contract.
+
+Verification:
+
+```bash
+cargo test -p resume-cli --test s304_query_set --locked -- --test-threads=1
+cargo test -p core-domain --test s2_domain_model query_set --locked -- --test-threads=1
+cargo test -p benchmark-runner --test s17_benchmark_cli private_query --locked -- --test-threads=1
+cargo test -p benchmark-runner --test s17_benchmark_runner private_query --locked -- --test-threads=1
+cargo test -p resume-cli --test s161_release_readiness --locked -- --test-threads=1
+cargo check -p core-domain -p resume-cli -p benchmark-runner --locked
+cargo fmt --all -- --check
+rust-analyzer diagnostics . --severity warning
+python3 scripts/ci/check-performance-contracts.py
+python3 scripts/ci/check-autonomous-goal.py
+python3 scripts/ci/check-loop-state.py
+./scripts/ci/guard-public-repo.sh
+./scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-current-stage-handoff.sh
+./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-benchmark-smoke.sh
+./scripts/ci/check-runbooks.sh
+```
+
+Output summary:
+
+- All listed checks exited 0 locally. The added regression proves a full
+  freeze with 25 zero-hit queries fails with an `and_3_5` deficit and reports
+  `zero_hit_queries_dropped` instead of producing a benchmarkable query set.
+
+Scope note:
+
+- S495 changes the public contract and local harness for future private D10K
+  baseline capture only. It does not run or claim the truthful private D10K
+  baseline, W1, scale-gate, profile optimization issue, GUI closure, or
+  `goal_complete`.
 
 ### S494
 
@@ -22149,6 +24750,7 @@ Output summary:
 - `cargo metadata --no-deps`: exit 0; workspace contains `core-domain`, `config`, `meta-store`, `resume-daemon`, and `resume-cli` with edition 2021. Cargo emitted the expected compatibility warning about omitting `--format-version`.
 - `cargo fmt --check`: exit 0.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2
@@ -22405,6 +25007,305 @@ Output summary:
 
 - `cargo test --workspace`: exit 0.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+
+## 2026-07-02 - Synthetic private-query smoke evidence claim
+
+Changed the private-query benchmark runner so public synthetic smoke runs can
+emit `dataset_kind = "synthetic-smoke"` and `target_claim = "not_evaluated"`
+without changing the default private real-corpus baseline claim. The smoke
+harness now uses that explicit mode and rejects synthetic private-query smoke
+artifacts that claim private-real-corpus baseline evidence.
+
+Verification:
+
+```bash
+cargo test -p benchmark-runner --test s17_benchmark_cli resume_benchmark_private_query_accepts_partial_corpus_summary_for_explicit_smoke -- --exact
+cargo test -p benchmark-runner --test s17_benchmark_cli private_query -- --test-threads=1
+env RESUME_IR_BENCHMARK_SMOKE_REPORT_OUT=<tmp>/smoke-report.json RESUME_IR_BENCHMARK_SMOKE_MANIFEST_OUT=<tmp>/smoke-manifest.json ./scripts/ci/check-benchmark-smoke.sh
+cargo check -p benchmark-runner --locked
+cargo fmt --all -- --check
+git diff --check
+rust-analyzer diagnostics . --severity warning
+```
+
+## 2026-07-02 - Synthetic smoke batch observation uses multiple requests
+
+Changed the public synthetic smoke harness from a single query-protocol request
+to two synthetic batch requests. The private-query smoke component now samples
+two requests and reports two query embedding command invocations while still
+emitting `dataset_kind = "synthetic-smoke"` and `target_claim = "not_evaluated"`.
+
+Verification:
+
+```bash
+./scripts/ci/check-benchmark-smoke.sh
+env RESUME_IR_BENCHMARK_SMOKE_REPORT_OUT=<tmp>/smoke-report.json RESUME_IR_BENCHMARK_SMOKE_MANIFEST_OUT=<tmp>/smoke-manifest.json ./scripts/ci/check-benchmark-smoke.sh
+```
+
+## 2026-07-02 - Synthetic smoke report records batch request count
+
+Changed the redacted synthetic smoke report contract to record
+`batch_protocol_request_count = 2`. The smoke harness derives the value from
+the observed query-protocol output request ids, so the public smoke evidence
+now exposes the batch observation scale without raw query text or private paths.
+
+Verification:
+
+```bash
+python3 scripts/ci/check-performance-contracts.py
+python3 scripts/ci/check-loop-state.py
+./scripts/ci/check-benchmark-smoke.sh
+```
+
+## 2026-07-02 - Synthetic smoke boundary checks share one helper
+
+Reduced duplicate privacy-boundary shell logic in `check-benchmark-smoke.sh` by
+moving temporary-path and deny-regex checks into one shared helper while keeping
+the existing JSON, evidence, and text deny lists distinct. No smoke evidence
+shape or claim semantics changed.
+
+Verification:
+
+```bash
+./scripts/ci/check-benchmark-smoke.sh
+env RESUME_IR_BENCHMARK_SMOKE_REPORT_OUT=<tmp>/smoke-report.json RESUME_IR_BENCHMARK_SMOKE_MANIFEST_OUT=<tmp>/smoke-manifest.json ./scripts/ci/check-benchmark-smoke.sh
+python3 scripts/ci/check-performance-contracts.py
+```
+
+## 2026-07-02 - Trace preflight writes an explicit redacted artifact
+
+Hard-cut `benchmark-query-set preflight-agent-replay` to require
+`--out <local-preflight-json>` and write the redacted
+`resume-ir.query-set-trace-preflight.v1` aggregate as an explicit local evidence
+artifact. Stdout now only reports schema/privacy status and `queries:
+<redacted>`, while `run-current-stage-validation.sh` consumes the product-owned
+artifact path directly instead of shell-redirecting JSON output.
+
+Also aligned the 03 contract prose with current machine truth: #53 now follows
+synthetic smoke baseline instead of being described as smoke-only, D1M latency
+redlines match `perf/acceptance-matrix.toml`, `benchmark_lane` is documented as
+experiment-report schema-backed rather than absent, and `baseline_validated`
+distinguishes smoke evidence from later W1/D10K resident-daemon evidence.
+
+Verification:
+
+```bash
+cargo test -p resume-cli --test s304_query_set benchmark_query_set_preflight_agent_replay_reports_redacted_trace_shape_without_index --locked -- --exact --test-threads=1
+cargo test -p resume-cli --test s304_query_set preflight_agent_replay --locked -- --test-threads=1
+cargo test -p resume-cli --test s304_query_set --locked -- --test-threads=1
+python3 scripts/ci/check-performance-contracts.py
+python3 scripts/ci/check-loop-state.py
+./scripts/ci/check-runbooks.sh
+```
+
+## S565 - Private Query Source Evidence Threading
+
+Completed:
+
+- Threaded `query_source` through the redacted private query benchmark report as a public-safe scalar derived from the already-loaded static query set summary.
+- Updated benchmark gate, current-stage evidence extraction, handoff summary, issue-comment generation, release-readiness validation, and affected fixtures to require `trace_source_search_v1` for #53/D10K current-stage private query evidence.
+- Added focused regression coverage for report output and fail-closed current-stage evidence rejection when `private_query_observability.query_source` is missing.
+
+Validation:
+
+```bash
+cargo test -p benchmark-runner --test s17_benchmark_runner private_query -- --test-threads=1
+cargo test -p resume-cli --test s161_release_readiness current_stage -- --test-threads=1
+python3 -m py_compile scripts/local/summarize-current-stage-validation.py scripts/ci/validate-current-stage-private-benchmark.py
+./scripts/ci/check-current-stage-validation.sh
+./scripts/ci/check-current-stage-handoff.sh
+./scripts/ci/check-release-readiness.sh
+./scripts/ci/check-benchmark-smoke.sh
+python3 scripts/ci/check-performance-contracts.py
+python3 scripts/ci/check-autonomous-goal.py
+python3 scripts/ci/check-loop-state.py
+./scripts/ci/guard-public-repo.sh
+cargo check -p resume-cli -p benchmark-runner --locked
+cargo fmt --all -- --check
+git diff --check
+rust-analyzer diagnostics . --severity warning
+```
+
+Output summary:
+
+- All commands above exited 0.
+- A parallel rerun of one benchmark-runner exact test hit a transient `private_query_resident_command_timeout`; the same exact test and the full `private_query` filtered test passed when rerun sequentially.
+
+## S566 - Trace Preflight Artifact Parent Creation
+
+Completed:
+
+- `benchmark-query-set preflight-agent-replay --out <path>` now creates the
+  requested artifact parent directory before writing the redacted
+  `resume-ir.query-set-trace-preflight.v1` output. This keeps the preflight
+  artifact usable from fresh local evidence directories without shell-level
+  mkdir setup.
+- Added focused CLI regression coverage proving stdout and the preflight JSON
+  still redact trace roots and raw query text while writing into a new nested
+  output directory.
+
+TDD red check:
+
+```bash
+cargo test -p resume-cli --test s304_query_set benchmark_query_set_preflight_agent_replay_creates_output_parent --locked -- --exact --test-threads=1
+```
+
+Output summary:
+
+- Failed before implementation with `query set blocked: trace preflight output
+  is unavailable`.
+
+Validation:
+
+```bash
+cargo test -p resume-cli --test s304_query_set benchmark_query_set_preflight_agent_replay_creates_output_parent --locked -- --exact --test-threads=1
+cargo test -p resume-cli --test s304_query_set --locked -- --test-threads=1
+cargo check -p resume-cli --locked
+cargo check -p core-domain -p resume-cli -p benchmark-runner --locked
+cargo test -p benchmark-runner --test s17_benchmark_runner private_query --locked -- --test-threads=1
+cargo fmt --all -- --check
+rust-analyzer diagnostics . --severity warning
+python3 scripts/ci/check-performance-contracts.py
+python3 scripts/ci/check-autonomous-goal.py
+python3 scripts/ci/check-loop-state.py
+./scripts/ci/guard-public-repo.sh
+RESUME_IR_BENCHMARK_SMOKE_REPORT_OUT=<tmp-report> RESUME_IR_BENCHMARK_SMOKE_MANIFEST_OUT=<tmp-manifest> ./scripts/ci/check-benchmark-smoke.sh
+git diff --check
+```
+
+Output summary:
+
+- All commands above exited 0.
+- No private D10K baseline, W1, profile issue, scale gate, GUI/manual evidence,
+  or `goal_complete` claim was produced.
+
+## S567 - Private Query Artifact Owner-Only Publish
+
+Completed:
+
+- `benchmark-query-set freeze-agent-replay` now writes the local raw query set
+  and sibling redacted summary through same-directory temp files that are
+  published as owner-only `0600` files on Unix.
+- Added focused CLI regression coverage proving the static private query set
+  freeze still redacts stdout/summary content while the local artifacts are not
+  created with umask-derived broad read permissions.
+
+TDD red check:
+
+```bash
+cargo test -p resume-cli --test s304_query_set benchmark_query_set_freeze_agent_replay_keeps_only_corpus_valid_source_search_queries --locked -- --exact --test-threads=1
+```
+
+Output summary:
+
+- Failed before implementation because `private-query-set.local.jsonl` was
+  created with mode `0644` instead of `0600`.
+
+Validation:
+
+```bash
+cargo test -p resume-cli --test s304_query_set benchmark_query_set_freeze_agent_replay_keeps_only_corpus_valid_source_search_queries --locked -- --exact --test-threads=1
+cargo test -p resume-cli --test s304_query_set --locked -- --test-threads=1
+cargo check -p resume-cli --locked
+cargo check -p core-domain -p resume-cli -p benchmark-runner --locked
+cargo test -p benchmark-runner --test s17_benchmark_runner private_query --locked -- --test-threads=1
+cargo fmt --all -- --check
+rust-analyzer diagnostics . --severity warning
+python3 scripts/ci/check-performance-contracts.py
+python3 scripts/ci/check-autonomous-goal.py
+python3 scripts/ci/check-loop-state.py
+./scripts/ci/guard-public-repo.sh
+RESUME_IR_BENCHMARK_SMOKE_REPORT_OUT=<tmp-report> RESUME_IR_BENCHMARK_SMOKE_MANIFEST_OUT=<tmp-manifest> ./scripts/ci/check-benchmark-smoke.sh
+git diff --check
+```
+
+Output summary:
+
+- All commands above exited 0.
+- No private D10K baseline, W1, profile issue, scale gate, GUI/manual evidence,
+  or `goal_complete` claim was produced.
+
+## S568 - Import Parse Worker Evaluation
+
+Issue: #93, follow-up #94.
+
+Completed:
+
+- Added a bounded import parse-worker path behind `ImportOptions.parse_workers`
+  and `resume-cli import --parse-workers <count>`.
+- Kept the default import path sequential after focused first-searchable tests
+  showed that default-enabling parallel parse can change progress visibility
+  timing before the fairness/default-rollout policy is settled.
+- Preserved a single ordered DB/index writer. Parser workers only parse,
+  normalize, extract rule mentions, and sectionize; OCR enqueue, metadata
+  writes, and full-text publication remain on the main import thread.
+
+TDD red check:
+
+```bash
+cargo test -p import-pipeline parallel_parse_workers_preserve_searchable_and_ocr_counts --locked
+```
+
+Output summary:
+
+- Failed before implementation because `ImportParseWorkers` and
+  `ImportOptions.parse_workers` did not exist.
+
+Private 1200-file aggregate evidence:
+
+- Pass A, `--parse-workers 1`: 1200 discovered, 1172 searchable, 8
+  OCR-required, 8 OCR jobs, 20 failed, full import 11197.164 ms, TTF100
+  1591.845 ms, TTF1000 8802.616 ms, RSS 244056064 bytes.
+- Pass A, `--parse-workers 2`: same counts, full import 6419.107 ms, TTF100
+  829.766 ms, TTF1000 4675.924 ms, RSS 258064384 bytes.
+- Pass B, `--parse-workers 2`: same counts, full import 6709.381 ms, TTF100
+  907.083 ms, TTF1000 4938.455 ms, RSS 276103168 bytes.
+- Pass B, `--parse-workers 1`: same counts, full import 10165.881 ms, TTF100
+  1150.731 ms, TTF1000 7874.983 ms, RSS 222953472 bytes.
+- Result: explicit 2-worker import reduced full-import readiness by 34%-43%
+  across reversed-order repeats while staying below the 512 MiB rollback line.
+  First-searchable remained variable, including one reverse-order repeat where
+  2 workers was slower in absolute first-searchable time; default rollout is
+  therefore deferred to #94.
+
+Sampled profile aggregate, `--parse-workers 2`:
+
+- 1200 discovered, 1172 searchable, 8 OCR-required, 8 OCR jobs, 20 failed,
+  full import 7204.669 ms, TTF1000 5497.356 ms.
+- Public-safe symbol bucket counts: `parser_pdf=3363`, `lopdf_total=3287`,
+  `allocation=3461`, `sqlite_store=1041`, `extractor_rules=823`,
+  `tantivy_index=499`, `text_normalizer=80`, `import_pipeline=80`.
+- Interpretation: the parser/PDF CPU hotspot remains present but is partially
+  overlapped by bounded workers; the next default-rollout bottleneck is
+  fairness/first-searchable policy plus DB/index writer cost.
+
+Validation:
+
+```bash
+cargo test -p import-pipeline --lib --locked
+cargo test -p resume-cli import_parse_workers --locked
+cargo check -p resume-cli -p resume-daemon --locked
+cargo build -p resume-cli --release --locked
+rust-analyzer diagnostics .
+python3 scripts/ci/check-performance-contracts.py
+python3 scripts/ci/check-autonomous-goal.py
+python3 scripts/ci/check-loop-state.py
+./scripts/ci/guard-public-repo.sh
+```
+
+Output summary:
+
+- `import-pipeline` lib tests: 20 passed.
+- CLI import parse-worker focused tests: 2 passed; Cargo also filtered the
+  existing CLI integration test binaries without failures.
+- `cargo check -p resume-cli -p resume-daemon --locked`: exit 0.
+- `cargo build -p resume-cli --release --locked`: exit 0.
+- `rust-analyzer diagnostics .`: exit 0; only weak inactive-code cfg warnings.
+- Contract/privacy gates: all exited 0.
+- Privacy: no raw resumes, raw resume text, local paths, raw traces, candidate
+  results, tokens, model caches, or private artifacts were committed or
+  uploaded. Private evidence above is aggregate counts, timings, RSS, hashes,
+  and conclusions only.
 
 ### S490
 

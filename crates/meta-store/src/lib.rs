@@ -690,6 +690,28 @@ impl fmt::Debug for MetadataEncryptionKeyRotation {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct SearchableImportDocument<'a> {
+    pub document: &'a Document,
+    pub version: &'a ResumeVersion,
+    pub mentions: &'a [EntityMention],
+    pub email_hash: Option<&'a ContactHash>,
+    pub phone_hash: Option<&'a ContactHash>,
+}
+
+impl fmt::Debug for SearchableImportDocument<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SearchableImportDocument")
+            .field("document", self.document)
+            .field("version", self.version)
+            .field("mention_count", &self.mentions.len())
+            .field("email_hash", &self.email_hash.map(|_| "<redacted>"))
+            .field("phone_hash", &self.phone_hash.map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
 pub struct MetaStore {
     connection: RefCell<Connection>,
     metadata_encryption_state: MetadataEncryptionState,
@@ -874,47 +896,7 @@ impl MetaStore {
 
     pub fn upsert_document(&self, document: &Document) -> Result<()> {
         let connection = self.connection.borrow();
-        connection
-            .execute(
-                "\
-                INSERT INTO document (
-                    id, source_uri, normalized_path, file_name, extension, byte_size,
-                    mtime_seconds, content_hash, text_hash, is_deleted, created_at_seconds,
-                    updated_at_seconds, status
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-                ON CONFLICT(id) DO UPDATE SET
-                    source_uri = excluded.source_uri,
-                    normalized_path = excluded.normalized_path,
-                    file_name = excluded.file_name,
-                    extension = excluded.extension,
-                    byte_size = excluded.byte_size,
-                    mtime_seconds = excluded.mtime_seconds,
-                    content_hash = excluded.content_hash,
-                    text_hash = excluded.text_hash,
-                    is_deleted = excluded.is_deleted,
-                    created_at_seconds = excluded.created_at_seconds,
-                    updated_at_seconds = excluded.updated_at_seconds,
-                    status = excluded.status",
-                params![
-                    document.id.as_str(),
-                    document.source_uri,
-                    document.normalized_path,
-                    document.file_name,
-                    file_extension_to_storage(&document.extension),
-                    u64_to_i64(document.byte_size, "document.byte_size")?,
-                    document.mtime.as_unix_seconds(),
-                    document.content_hash,
-                    document.text_hash,
-                    bool_to_i64(document.is_deleted),
-                    document.created_at.as_unix_seconds(),
-                    document.updated_at.as_unix_seconds(),
-                    document_status_to_storage(document.status),
-                ],
-            )
-            .map_err(MetaStoreError::storage)?;
-
-        Ok(())
+        upsert_document_in_connection(&connection, document)
     }
 
     pub fn document_by_id(&self, id: &DocumentId) -> Result<Option<Document>> {
@@ -1357,100 +1339,47 @@ impl MetaStore {
 
         let mut connection = self.connection.borrow_mut();
         let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        let Some(_version) = resume_version_by_id_from_connection(&transaction, version_id)? else {
-            transaction.commit().map_err(MetaStoreError::storage)?;
-            return Ok(None);
-        };
+        let assigned = assign_candidate_from_hashed_contacts_in_connection(
+            &transaction,
+            version_id,
+            email_hash,
+            phone_hash,
+            UnixTimestamp::from_unix_seconds(0),
+        )?;
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(assigned)
+    }
 
-        let candidate =
-            match candidate_contact_match_from_connection(&transaction, email_hash, phone_hash)? {
-                CandidateContactMatch::Conflict {
-                    email_candidate,
-                    phone_candidate,
-                } => {
-                    upsert_candidate_contact_conflict_in_connection(
-                        &transaction,
-                        version_id,
-                        &email_candidate.id,
-                        &phone_candidate.id,
-                        UnixTimestamp::from_unix_seconds(0),
-                    )?;
-                    transaction.commit().map_err(MetaStoreError::storage)?;
-                    return Ok(None);
-                }
-                CandidateContactMatch::Single(candidate) => candidate,
-                CandidateContactMatch::None => {
-                    let candidate = Candidate {
-                        id: CandidateId::from_non_secret_parts(&[
-                            "candidate-assignment-v1",
-                            version_id.as_str(),
-                        ]),
-                        primary_name: None,
-                        phone_hash: phone_hash.cloned(),
-                        email_hash: email_hash.cloned(),
-                        dedupe_key: None,
-                        merge_confidence: Some(1.0),
-                        version_count: 0,
-                    };
-                    upsert_candidate_in_connection(&transaction, &candidate)?;
-                    candidate
-                }
-            };
+    pub fn upsert_searchable_import_document(
+        &self,
+        import: SearchableImportDocument<'_>,
+    ) -> Result<Option<Candidate>> {
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        upsert_document_in_connection(&transaction, import.document)?;
 
-        transaction
-            .execute(
-                "UPDATE resume_version SET candidate_id = ?1 WHERE id = ?2",
-                params![candidate.id.as_str(), version_id.as_str()],
-            )
-            .map_err(MetaStoreError::storage)?;
-        clear_candidate_contact_conflict_in_connection(&transaction, version_id)?;
-        refresh_candidate_version_count_in_connection(&transaction, &candidate.id)?;
-        let assigned = candidate_by_id_from_connection(&transaction, &candidate.id)?;
+        let mut version = import.version.clone();
+        if version.candidate_id.is_none() {
+            version.candidate_id = resume_version_by_id_from_connection(&transaction, &version.id)?
+                .and_then(|existing| existing.candidate_id);
+        }
+        upsert_resume_version_in_connection(&transaction, &version)?;
+        replace_entity_mentions_in_connection(&transaction, &version.id, import.mentions)?;
+        let assigned = assign_candidate_from_hashed_contacts_in_connection(
+            &transaction,
+            &version.id,
+            import.email_hash,
+            import.phone_hash,
+            UnixTimestamp::from_unix_seconds(0),
+        )?;
 
         transaction.commit().map_err(MetaStoreError::storage)?;
         Ok(assigned)
     }
 
     pub fn upsert_resume_version(&self, version: &ResumeVersion) -> Result<()> {
-        let language_set_json = serde_json::to_string(&version.language_set)
-            .map_err(|_| MetaStoreError::invalid_value("resume_version.language_set"))?;
         let connection = self.connection.borrow();
-        connection
-            .execute(
-                "\
-                INSERT INTO resume_version (
-                    id, document_id, candidate_id, parse_version, schema_version,
-                    language_set_json, page_count, raw_text, clean_text, quality_score, visibility
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-                ON CONFLICT(id) DO UPDATE SET
-                    document_id = excluded.document_id,
-                    candidate_id = excluded.candidate_id,
-                    parse_version = excluded.parse_version,
-                    schema_version = excluded.schema_version,
-                    language_set_json = excluded.language_set_json,
-                    page_count = excluded.page_count,
-                    raw_text = excluded.raw_text,
-                    clean_text = excluded.clean_text,
-                    quality_score = excluded.quality_score,
-                    visibility = excluded.visibility",
-                params![
-                    version.id.as_str(),
-                    version.document_id.as_str(),
-                    version.candidate_id.as_ref().map(CandidateId::as_str),
-                    version.parse_version,
-                    version.schema_version,
-                    language_set_json,
-                    version.page_count.map(i64::from),
-                    version.raw_text,
-                    version.clean_text,
-                    version.quality_score.map(f64::from),
-                    resume_visibility_to_storage(version.visibility),
-                ],
-            )
-            .map_err(MetaStoreError::storage)?;
-
-        Ok(())
+        upsert_resume_version_in_connection(&connection, version)
     }
 
     pub fn resume_version_by_id(&self, id: &ResumeVersionId) -> Result<Option<ResumeVersion>> {
@@ -1526,45 +1455,7 @@ impl MetaStore {
     ) -> Result<()> {
         let mut connection = self.connection.borrow_mut();
         let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        transaction
-            .execute(
-                "DELETE FROM entity_mention WHERE resume_version_id = ?1",
-                params![version_id.as_str()],
-            )
-            .map_err(MetaStoreError::storage)?;
-
-        for mention in mentions {
-            validate_entity_mention(version_id, mention)?;
-            transaction
-                .execute(
-                    "\
-                    INSERT INTO entity_mention (
-                        id, resume_version_id, section_id, entity_type, raw_value,
-                        normalized_value, span_start, span_end, confidence, extractor
-                    )
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                    params![
-                        mention.id.as_str(),
-                        mention.resume_version_id.as_str(),
-                        mention.section_id.as_ref().map(SectionId::as_str),
-                        entity_type_to_storage(&mention.entity_type),
-                        entity_mention_raw_value_for_storage(mention),
-                        entity_mention_normalized_value_for_storage(mention),
-                        mention
-                            .span_start
-                            .map(|value| usize_to_i64(value, "entity_mention.span_start"))
-                            .transpose()?,
-                        mention
-                            .span_end
-                            .map(|value| usize_to_i64(value, "entity_mention.span_end"))
-                            .transpose()?,
-                        f64::from(mention.confidence),
-                        mention.extractor.as_str(),
-                    ],
-                )
-                .map_err(MetaStoreError::storage)?;
-        }
-
+        replace_entity_mentions_in_connection(&transaction, version_id, mentions)?;
         transaction.commit().map_err(MetaStoreError::storage)?;
         Ok(())
     }
@@ -5980,6 +5871,201 @@ fn read_import_scan_error(row: &Row<'_>) -> Result<ImportScanError> {
     };
     validate_import_scan_error(&error.import_task_id, &error)?;
     Ok(error)
+}
+
+fn upsert_document_in_connection(connection: &Connection, document: &Document) -> Result<()> {
+    connection
+        .execute(
+            "\
+            INSERT INTO document (
+                id, source_uri, normalized_path, file_name, extension, byte_size,
+                mtime_seconds, content_hash, text_hash, is_deleted, created_at_seconds,
+                updated_at_seconds, status
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            ON CONFLICT(id) DO UPDATE SET
+                source_uri = excluded.source_uri,
+                normalized_path = excluded.normalized_path,
+                file_name = excluded.file_name,
+                extension = excluded.extension,
+                byte_size = excluded.byte_size,
+                mtime_seconds = excluded.mtime_seconds,
+                content_hash = excluded.content_hash,
+                text_hash = excluded.text_hash,
+                is_deleted = excluded.is_deleted,
+                created_at_seconds = excluded.created_at_seconds,
+                updated_at_seconds = excluded.updated_at_seconds,
+                status = excluded.status",
+            params![
+                document.id.as_str(),
+                document.source_uri,
+                document.normalized_path,
+                document.file_name,
+                file_extension_to_storage(&document.extension),
+                u64_to_i64(document.byte_size, "document.byte_size")?,
+                document.mtime.as_unix_seconds(),
+                document.content_hash,
+                document.text_hash,
+                bool_to_i64(document.is_deleted),
+                document.created_at.as_unix_seconds(),
+                document.updated_at.as_unix_seconds(),
+                document_status_to_storage(document.status),
+            ],
+        )
+        .map_err(MetaStoreError::storage)?;
+
+    Ok(())
+}
+
+fn upsert_resume_version_in_connection(
+    connection: &Connection,
+    version: &ResumeVersion,
+) -> Result<()> {
+    let language_set_json = serde_json::to_string(&version.language_set)
+        .map_err(|_| MetaStoreError::invalid_value("resume_version.language_set"))?;
+    connection
+        .execute(
+            "\
+            INSERT INTO resume_version (
+                id, document_id, candidate_id, parse_version, schema_version,
+                language_set_json, page_count, raw_text, clean_text, quality_score, visibility
+            )
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            ON CONFLICT(id) DO UPDATE SET
+                document_id = excluded.document_id,
+                candidate_id = excluded.candidate_id,
+                parse_version = excluded.parse_version,
+                schema_version = excluded.schema_version,
+                language_set_json = excluded.language_set_json,
+                page_count = excluded.page_count,
+                raw_text = excluded.raw_text,
+                clean_text = excluded.clean_text,
+                quality_score = excluded.quality_score,
+                visibility = excluded.visibility",
+            params![
+                version.id.as_str(),
+                version.document_id.as_str(),
+                version.candidate_id.as_ref().map(CandidateId::as_str),
+                version.parse_version,
+                version.schema_version,
+                language_set_json,
+                version.page_count.map(i64::from),
+                version.raw_text,
+                version.clean_text,
+                version.quality_score.map(f64::from),
+                resume_visibility_to_storage(version.visibility),
+            ],
+        )
+        .map_err(MetaStoreError::storage)?;
+
+    Ok(())
+}
+
+fn replace_entity_mentions_in_connection(
+    connection: &Connection,
+    version_id: &ResumeVersionId,
+    mentions: &[EntityMention],
+) -> Result<()> {
+    connection
+        .execute(
+            "DELETE FROM entity_mention WHERE resume_version_id = ?1",
+            params![version_id.as_str()],
+        )
+        .map_err(MetaStoreError::storage)?;
+
+    for mention in mentions {
+        validate_entity_mention(version_id, mention)?;
+        connection
+            .execute(
+                "\
+                INSERT INTO entity_mention (
+                    id, resume_version_id, section_id, entity_type, raw_value,
+                    normalized_value, span_start, span_end, confidence, extractor
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    mention.id.as_str(),
+                    mention.resume_version_id.as_str(),
+                    mention.section_id.as_ref().map(SectionId::as_str),
+                    entity_type_to_storage(&mention.entity_type),
+                    entity_mention_raw_value_for_storage(mention),
+                    entity_mention_normalized_value_for_storage(mention),
+                    mention
+                        .span_start
+                        .map(|value| usize_to_i64(value, "entity_mention.span_start"))
+                        .transpose()?,
+                    mention
+                        .span_end
+                        .map(|value| usize_to_i64(value, "entity_mention.span_end"))
+                        .transpose()?,
+                    f64::from(mention.confidence),
+                    mention.extractor.as_str(),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+    }
+
+    Ok(())
+}
+
+fn assign_candidate_from_hashed_contacts_in_connection(
+    connection: &Connection,
+    version_id: &ResumeVersionId,
+    email_hash: Option<&ContactHash>,
+    phone_hash: Option<&ContactHash>,
+    conflict_updated_at: UnixTimestamp,
+) -> Result<Option<Candidate>> {
+    if email_hash.is_none() && phone_hash.is_none() {
+        return Ok(None);
+    }
+
+    let Some(_version) = resume_version_by_id_from_connection(connection, version_id)? else {
+        return Ok(None);
+    };
+
+    let candidate =
+        match candidate_contact_match_from_connection(connection, email_hash, phone_hash)? {
+            CandidateContactMatch::Conflict {
+                email_candidate,
+                phone_candidate,
+            } => {
+                upsert_candidate_contact_conflict_in_connection(
+                    connection,
+                    version_id,
+                    &email_candidate.id,
+                    &phone_candidate.id,
+                    conflict_updated_at,
+                )?;
+                return Ok(None);
+            }
+            CandidateContactMatch::Single(candidate) => candidate,
+            CandidateContactMatch::None => {
+                let candidate = Candidate {
+                    id: CandidateId::from_non_secret_parts(&[
+                        "candidate-assignment-v1",
+                        version_id.as_str(),
+                    ]),
+                    primary_name: None,
+                    phone_hash: phone_hash.cloned(),
+                    email_hash: email_hash.cloned(),
+                    dedupe_key: None,
+                    merge_confidence: Some(1.0),
+                    version_count: 0,
+                };
+                upsert_candidate_in_connection(connection, &candidate)?;
+                candidate
+            }
+        };
+
+    connection
+        .execute(
+            "UPDATE resume_version SET candidate_id = ?1 WHERE id = ?2",
+            params![candidate.id.as_str(), version_id.as_str()],
+        )
+        .map_err(MetaStoreError::storage)?;
+    clear_candidate_contact_conflict_in_connection(connection, version_id)?;
+    refresh_candidate_version_count_in_connection(connection, &candidate.id)?;
+    candidate_by_id_from_connection(connection, &candidate.id)
 }
 
 fn upsert_candidate_in_connection(connection: &Connection, candidate: &Candidate) -> Result<()> {

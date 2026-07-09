@@ -4,9 +4,17 @@ pub fn crate_name() -> &'static str {
 
 use std::collections::BTreeSet;
 use std::fmt;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use regex::Regex;
+
+#[cfg(test)]
+static INDEXED_LINES_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+type IndexedLine<'a> = (usize, &'a str);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FieldType {
@@ -56,10 +64,11 @@ impl fmt::Debug for RuleMatch {
 
 pub fn extract_strong_fields(text: &str) -> Vec<RuleMatch> {
     let mut matches = Vec::new();
-    extract_names(text, &mut matches);
+    let indexed_lines = indexed_lines(text);
+    extract_names(&indexed_lines, &mut matches);
     extract_emails(text, &mut matches);
     extract_phones(text, &mut matches);
-    extract_wechats(text, &mut matches);
+    extract_wechats(&indexed_lines, &mut matches);
     extract_numeric_date_ranges(text, &mut matches);
     extract_numeric_present_date_ranges(text, &mut matches);
     extract_chinese_year_month_date_ranges(text, &mut matches);
@@ -67,33 +76,251 @@ pub fn extract_strong_fields(text: &str) -> Vec<RuleMatch> {
     extract_named_month_date_ranges(text, &mut matches);
     extract_named_month_present_date_ranges(text, &mut matches);
     derive_years_experience(text, &mut matches);
-    extract_schools(text, &mut matches);
-    extract_school_tiers(text, &mut matches);
-    extract_degrees(text, &mut matches);
-    extract_majors(text, &mut matches);
-    extract_companies(text, &mut matches);
-    extract_titles(text, &mut matches);
-    extract_locations(text, &mut matches);
-    extract_skills(text, &mut matches);
-    extract_certificates(text, &mut matches);
+    extract_schools(&indexed_lines, &mut matches);
+    extract_school_tiers(&indexed_lines, &mut matches);
+    extract_degrees(&indexed_lines, &mut matches);
+    extract_majors(&indexed_lines, &mut matches);
+    extract_companies(&indexed_lines, &mut matches);
+    extract_titles(&indexed_lines, &mut matches);
+    extract_locations(&indexed_lines, &mut matches);
+    extract_skills(&indexed_lines, &mut matches);
+    extract_certificates(&indexed_lines, &mut matches);
     matches.sort_by_key(|field| field.span_start);
     matches
 }
 
-fn extract_names(text: &str, matches: &mut Vec<RuleMatch>) {
-    if extract_labeled_name(text, matches) {
+struct WeightedAliasRegex {
+    normalized: &'static str,
+    confidence: f32,
+    regex: Regex,
+}
+
+struct SkillAliasRegex {
+    canonical: &'static str,
+    regex: Regex,
+}
+
+fn compile_regex(pattern: &'static str) -> Regex {
+    Regex::new(pattern).unwrap()
+}
+
+fn labeled_name_regex() -> &'static Regex {
+    static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        compile_regex(r"(?i)^(?:name|candidate|姓名|候选人)\s*[:：]\s*(?P<name>.+)$")
+    });
+    &REGEX
+}
+
+fn email_regex() -> &'static Regex {
+    static REGEX: LazyLock<Regex> =
+        LazyLock::new(|| compile_regex(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"));
+    &REGEX
+}
+
+fn chinese_mobile_phone_regex() -> &'static Regex {
+    static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        compile_regex(
+            r"(?x)
+        (?:^|[^\d])
+        (?P<phone>(?:(?:\+|00)?86[\s.-]*)?(?P<n>1[3-9]\d[\s.-]*\d{4}[\s.-]*\d{4}))
+        (?:$|[^\d])
+        ",
+        )
+    });
+    &REGEX
+}
+
+fn general_phone_regex() -> &'static Regex {
+    static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        compile_regex(r"(?x)(?:\+\d{1,3}[\s.-]*)?(?:\(\d{3}\)|\d{3,4})[\s.-]+\d{3,4}[\s.-]+\d{4}")
+    });
+    &REGEX
+}
+
+fn wechat_regex() -> &'static Regex {
+    static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        compile_regex(
+            r"(?ix)
+        ^\s*
+        (?:wechat|weixin|wx|微信|微信号)
+        \s*[:：]\s*
+        (?P<wechat>[A-Za-z][A-Za-z0-9_.-]{5,31})
+        \s*$
+        ",
+        )
+    });
+    &REGEX
+}
+
+fn numeric_date_range_regex() -> &'static Regex {
+    static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        compile_regex(
+            r"(?x)
+        \b
+        (?P<y1>19\d{2}|20\d{2})[./-](?P<m1>0?[1-9]|1[0-2])
+        \s*(?:-|–|—|至|到)\s*
+        (?P<y2>19\d{2}|20\d{2})[./-](?P<m2>0?[1-9]|1[0-2])
+        \b",
+        )
+    });
+    &REGEX
+}
+
+fn numeric_present_date_range_regex() -> &'static Regex {
+    static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        compile_regex(
+            r"(?ix)
+        \b
+        (?P<y1>19\d{2}|20\d{2})[./-](?P<m1>0?[1-9]|1[0-2])
+        \s*(?:-|–|—|至|到|to)\s*
+        (?:(?:present|current|now|ongoing)\b|至今|现在|目前|当前)",
+        )
+    });
+    &REGEX
+}
+
+fn chinese_year_month_date_range_regex() -> &'static Regex {
+    static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        compile_regex(
+            r"(?x)
+        (?P<y1>19\d{2}|20\d{2})\s*年\s*(?P<m1>0?[1-9]|1[0-2])\s*月?
+        \s*(?:-|–|—|至|到)\s*
+        (?P<y2>19\d{2}|20\d{2})\s*年\s*(?P<m2>0?[1-9]|1[0-2])\s*月?
+        ",
+        )
+    });
+    &REGEX
+}
+
+fn chinese_present_date_range_regex() -> &'static Regex {
+    static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        compile_regex(
+            r"(?ix)
+        (?P<y1>19\d{2}|20\d{2})\s*年\s*(?P<m1>0?[1-9]|1[0-2])\s*月?
+        \s*(?:-|–|—|至|到)?\s*
+        (?:至今|今|现在|目前|当前|(?:present|current|now|ongoing)\b)
+        ",
+        )
+    });
+    &REGEX
+}
+
+fn named_month_date_range_regex() -> &'static Regex {
+    static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        compile_regex(
+            r"(?ix)
+        \b
+        (?P<m1>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)
+        \s+
+        (?P<y1>19\d{2}|20\d{2})
+        \s*(?:-|–|—|to)\s*
+        (?P<m2>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)
+        \s+
+        (?P<y2>19\d{2}|20\d{2})
+        \b",
+        )
+    });
+    &REGEX
+}
+
+fn named_month_present_date_range_regex() -> &'static Regex {
+    static REGEX: LazyLock<Regex> = LazyLock::new(|| {
+        compile_regex(
+            r"(?ix)
+        \b
+        (?P<m1>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)
+        \s+
+        (?P<y1>19\d{2}|20\d{2})
+        \s*(?:-|–|—|to)\s*
+        (?:present|current|now|ongoing)
+        \b",
+        )
+    });
+    &REGEX
+}
+
+fn school_tier_alias_regexes() -> &'static [WeightedAliasRegex] {
+    static REGEXES: LazyLock<Vec<WeightedAliasRegex>> = LazyLock::new(|| {
+        school_tier_alias_patterns()
+            .into_iter()
+            .map(|(normalized, confidence, pattern)| WeightedAliasRegex {
+                normalized,
+                confidence,
+                regex: compile_regex(pattern),
+            })
+            .collect()
+    });
+    REGEXES.as_slice()
+}
+
+fn degree_alias_regexes() -> &'static [WeightedAliasRegex] {
+    static REGEXES: LazyLock<Vec<WeightedAliasRegex>> = LazyLock::new(|| {
+        degree_alias_patterns()
+            .into_iter()
+            .map(|(normalized, confidence, pattern)| WeightedAliasRegex {
+                normalized,
+                confidence,
+                regex: compile_regex(pattern),
+            })
+            .collect()
+    });
+    REGEXES.as_slice()
+}
+
+fn major_alias_regexes() -> &'static [WeightedAliasRegex] {
+    static REGEXES: LazyLock<Vec<WeightedAliasRegex>> = LazyLock::new(|| {
+        major_alias_patterns()
+            .into_iter()
+            .map(|(normalized, confidence, pattern)| WeightedAliasRegex {
+                normalized,
+                confidence,
+                regex: compile_regex(pattern),
+            })
+            .collect()
+    });
+    REGEXES.as_slice()
+}
+
+fn skill_alias_regexes() -> &'static [SkillAliasRegex] {
+    static REGEXES: LazyLock<Vec<SkillAliasRegex>> = LazyLock::new(|| {
+        skill_alias_patterns()
+            .into_iter()
+            .map(|(canonical, pattern)| SkillAliasRegex {
+                canonical,
+                regex: compile_regex(pattern),
+            })
+            .collect()
+    });
+    REGEXES.as_slice()
+}
+
+fn certificate_alias_regexes() -> &'static [WeightedAliasRegex] {
+    static REGEXES: LazyLock<Vec<WeightedAliasRegex>> = LazyLock::new(|| {
+        certificate_alias_patterns()
+            .into_iter()
+            .map(|(normalized, confidence, pattern)| WeightedAliasRegex {
+                normalized,
+                confidence,
+                regex: compile_regex(pattern),
+            })
+            .collect()
+    });
+    REGEXES.as_slice()
+}
+
+fn extract_names(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+    if extract_labeled_name(lines, matches) {
         return;
     }
 
-    extract_heading_name(text, matches);
+    extract_heading_name(lines, matches);
 }
 
-fn extract_labeled_name(text: &str, matches: &mut Vec<RuleMatch>) -> bool {
-    let regex = Regex::new(r"(?i)^(?:name|candidate|姓名|候选人)\s*[:：]\s*(?P<name>.+)$").unwrap();
-    for (line_start, line) in indexed_lines(text).into_iter().take(12) {
+fn extract_labeled_name(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) -> bool {
+    for &(line_start, line) in lines.iter().take(12) {
         let leading = line.len() - line.trim_start().len();
         let trimmed_line = line.trim();
-        let Some(captures) = regex.captures(trimmed_line) else {
+        let Some(captures) = labeled_name_regex().captures(trimmed_line) else {
             continue;
         };
         let Some(found) = captures.name("name") else {
@@ -112,8 +339,8 @@ fn extract_labeled_name(text: &str, matches: &mut Vec<RuleMatch>) -> bool {
     false
 }
 
-fn extract_heading_name(text: &str, matches: &mut Vec<RuleMatch>) {
-    for (line_start, line) in indexed_lines(text).into_iter().take(5) {
+fn extract_heading_name(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+    for &(line_start, line) in lines.iter().take(5) {
         let leading = line.len() - line.trim_start().len();
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -268,8 +495,7 @@ fn looks_like_contact_line(value: &str) -> bool {
 }
 
 fn extract_emails(text: &str, matches: &mut Vec<RuleMatch>) {
-    let regex = Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b").unwrap();
-    for found in regex.find_iter(text) {
+    for found in email_regex().find_iter(text) {
         matches.push(RuleMatch {
             field_type: FieldType::Email,
             raw_value: found.as_str().to_string(),
@@ -292,16 +518,7 @@ fn extract_chinese_mobile_phones(
     matches: &mut Vec<RuleMatch>,
     claimed_spans: &mut Vec<(usize, usize)>,
 ) {
-    let regex = Regex::new(
-        r"(?x)
-        (?:^|[^\d])
-        (?P<phone>(?:(?:\+|00)?86[\s.-]*)?(?P<n>1[3-9]\d[\s.-]*\d{4}[\s.-]*\d{4}))
-        (?:$|[^\d])
-        ",
-    )
-    .unwrap();
-
-    for captures in regex.captures_iter(text) {
+    for captures in chinese_mobile_phone_regex().captures_iter(text) {
         let Some(found) = captures.name("phone") else {
             continue;
         };
@@ -336,11 +553,7 @@ fn extract_general_phones(
     matches: &mut Vec<RuleMatch>,
     claimed_spans: &mut Vec<(usize, usize)>,
 ) {
-    let regex =
-        Regex::new(r"(?x)(?:\+\d{1,3}[\s.-]*)?(?:\(\d{3}\)|\d{3,4})[\s.-]+\d{3,4}[\s.-]+\d{4}")
-            .unwrap();
-
-    for found in regex.find_iter(text) {
+    for found in general_phone_regex().find_iter(text) {
         let span = (found.start(), found.end());
         if claimed_spans
             .iter()
@@ -385,20 +598,9 @@ fn normalize_international_phone(digits: &str) -> Option<String> {
     }
 }
 
-fn extract_wechats(text: &str, matches: &mut Vec<RuleMatch>) {
-    let regex = Regex::new(
-        r"(?ix)
-        ^\s*
-        (?:wechat|weixin|wx|微信|微信号)
-        \s*[:：]\s*
-        (?P<wechat>[A-Za-z][A-Za-z0-9_.-]{5,31})
-        \s*$
-        ",
-    )
-    .unwrap();
-
-    for (line_start, line) in indexed_lines(text) {
-        let Some(captures) = regex.captures(line) else {
+fn extract_wechats(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+    for &(line_start, line) in lines {
+        let Some(captures) = wechat_regex().captures(line) else {
             continue;
         };
         let Some(found) = captures.name("wechat") else {
@@ -417,17 +619,7 @@ fn extract_wechats(text: &str, matches: &mut Vec<RuleMatch>) {
 }
 
 fn extract_numeric_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
-    let regex = Regex::new(
-        r"(?x)
-        \b
-        (?P<y1>19\d{2}|20\d{2})[./-](?P<m1>0?[1-9]|1[0-2])
-        \s*(?:-|–|—|至|到)\s*
-        (?P<y2>19\d{2}|20\d{2})[./-](?P<m2>0?[1-9]|1[0-2])
-        \b",
-    )
-    .unwrap();
-
-    for captures in regex.captures_iter(text) {
+    for captures in numeric_date_range_regex().captures_iter(text) {
         let Some(found) = captures.get(0) else {
             continue;
         };
@@ -443,16 +635,7 @@ fn extract_numeric_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
 }
 
 fn extract_numeric_present_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
-    let regex = Regex::new(
-        r"(?ix)
-        \b
-        (?P<y1>19\d{2}|20\d{2})[./-](?P<m1>0?[1-9]|1[0-2])
-        \s*(?:-|–|—|至|到|to)\s*
-        (?:(?:present|current|now|ongoing)\b|至今|现在|目前|当前)",
-    )
-    .unwrap();
-
-    for captures in regex.captures_iter(text) {
+    for captures in numeric_present_date_range_regex().captures_iter(text) {
         let Some(found) = captures.get(0) else {
             continue;
         };
@@ -462,16 +645,7 @@ fn extract_numeric_present_date_ranges(text: &str, matches: &mut Vec<RuleMatch>)
 }
 
 fn extract_chinese_year_month_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
-    let regex = Regex::new(
-        r"(?x)
-        (?P<y1>19\d{2}|20\d{2})\s*年\s*(?P<m1>0?[1-9]|1[0-2])\s*月?
-        \s*(?:-|–|—|至|到)\s*
-        (?P<y2>19\d{2}|20\d{2})\s*年\s*(?P<m2>0?[1-9]|1[0-2])\s*月?
-        ",
-    )
-    .unwrap();
-
-    for captures in regex.captures_iter(text) {
+    for captures in chinese_year_month_date_range_regex().captures_iter(text) {
         let Some(found) = captures.get(0) else {
             continue;
         };
@@ -487,16 +661,7 @@ fn extract_chinese_year_month_date_ranges(text: &str, matches: &mut Vec<RuleMatc
 }
 
 fn extract_chinese_present_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
-    let regex = Regex::new(
-        r"(?ix)
-        (?P<y1>19\d{2}|20\d{2})\s*年\s*(?P<m1>0?[1-9]|1[0-2])\s*月?
-        \s*(?:-|–|—|至|到)?\s*
-        (?:至今|今|现在|目前|当前|(?:present|current|now|ongoing)\b)
-        ",
-    )
-    .unwrap();
-
-    for captures in regex.captures_iter(text) {
+    for captures in chinese_present_date_range_regex().captures_iter(text) {
         let Some(found) = captures.get(0) else {
             continue;
         };
@@ -506,21 +671,7 @@ fn extract_chinese_present_date_ranges(text: &str, matches: &mut Vec<RuleMatch>)
 }
 
 fn extract_named_month_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
-    let regex = Regex::new(
-        r"(?ix)
-        \b
-        (?P<m1>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)
-        \s+
-        (?P<y1>19\d{2}|20\d{2})
-        \s*(?:-|–|—|to)\s*
-        (?P<m2>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)
-        \s+
-        (?P<y2>19\d{2}|20\d{2})
-        \b",
-    )
-    .unwrap();
-
-    for captures in regex.captures_iter(text) {
+    for captures in named_month_date_range_regex().captures_iter(text) {
         let Some(found) = captures.get(0) else {
             continue;
         };
@@ -539,19 +690,7 @@ fn extract_named_month_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
 }
 
 fn extract_named_month_present_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
-    let regex = Regex::new(
-        r"(?ix)
-        \b
-        (?P<m1>jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)
-        \s+
-        (?P<y1>19\d{2}|20\d{2})
-        \s*(?:-|–|—|to)\s*
-        (?:present|current|now|ongoing)
-        \b",
-    )
-    .unwrap();
-
-    for captures in regex.captures_iter(text) {
+    for captures in named_month_present_date_range_regex().captures_iter(text) {
         let Some(found) = captures.get(0) else {
             continue;
         };
@@ -646,8 +785,8 @@ fn civil_from_days(days_since_epoch: i64) -> (i32, i32, i32) {
     (year as i32, month as i32, day as i32)
 }
 
-fn extract_schools(text: &str, matches: &mut Vec<RuleMatch>) {
-    for (line_start, line) in indexed_lines(text) {
+fn extract_schools(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+    for &(line_start, line) in lines {
         let trimmed = line.trim();
         if trimmed.len() > 120 {
             continue;
@@ -723,11 +862,11 @@ fn normalize_school(value: &str) -> String {
         .to_lowercase()
 }
 
-fn extract_school_tiers(text: &str, matches: &mut Vec<RuleMatch>) {
+fn extract_school_tiers(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
     let mut education_context_lines = 0_usize;
     let mut seen = BTreeSet::new();
 
-    for (line_start, line) in indexed_lines(text) {
+    for &(line_start, line) in lines {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             education_context_lines = education_context_lines.saturating_sub(1);
@@ -809,22 +948,21 @@ fn push_school_tier_matches(
     matches: &mut Vec<RuleMatch>,
     seen: &mut BTreeSet<String>,
 ) {
-    for (normalized, confidence, pattern) in school_tier_alias_patterns() {
-        let regex = Regex::new(pattern).unwrap();
-        for found in regex.find_iter(segment.text) {
+    for alias in school_tier_alias_regexes() {
+        for found in alias.regex.find_iter(segment.text) {
             if school_tier_digit_has_adjacent_digit(segment.text, found.start(), found.end()) {
                 continue;
             }
-            if !seen.insert(normalized.to_string()) {
+            if !seen.insert(alias.normalized.to_string()) {
                 continue;
             }
             matches.push(RuleMatch {
                 field_type: FieldType::SchoolTier,
                 raw_value: found.as_str().to_string(),
-                normalized_value: Some(normalized.to_string()),
+                normalized_value: Some(alias.normalized.to_string()),
                 span_start: segment.span_start + found.start(),
                 span_end: segment.span_start + found.end(),
-                confidence,
+                confidence: alias.confidence,
             });
         }
     }
@@ -869,11 +1007,11 @@ fn school_tier_digit_has_adjacent_digit(value: &str, start: usize, end: usize) -
     previous_is_digit || value.as_bytes().get(end).is_some_and(u8::is_ascii_digit)
 }
 
-fn extract_degrees(text: &str, matches: &mut Vec<RuleMatch>) {
+fn extract_degrees(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
     let mut claimed_spans = Vec::<(usize, usize)>::new();
     let mut education_context_lines = 0_usize;
 
-    for (line_start, line) in indexed_lines(text) {
+    for &(line_start, line) in lines {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             education_context_lines = education_context_lines.saturating_sub(1);
@@ -994,10 +1132,14 @@ fn is_education_section_header(value: &str) -> bool {
 }
 
 fn first_degree_match(value: &str) -> Option<(&'static str, f32, usize, usize)> {
-    for (normalized, confidence, pattern) in degree_alias_patterns() {
-        let regex = Regex::new(pattern).unwrap();
-        if let Some(found) = regex.find(value) {
-            return Some((normalized, confidence, found.start(), found.end()));
+    for alias in degree_alias_regexes() {
+        if let Some(found) = alias.regex.find(value) {
+            return Some((
+                alias.normalized,
+                alias.confidence,
+                found.start(),
+                found.end(),
+            ));
         }
     }
 
@@ -1030,11 +1172,11 @@ fn degree_alias_patterns() -> [(&'static str, f32, &'static str); 5] {
     ]
 }
 
-fn extract_majors(text: &str, matches: &mut Vec<RuleMatch>) {
+fn extract_majors(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
     let mut education_context_lines = 0_usize;
     let mut seen = BTreeSet::new();
 
-    for (line_start, line) in indexed_lines(text) {
+    for &(line_start, line) in lines {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             education_context_lines = education_context_lines.saturating_sub(1);
@@ -1143,12 +1285,11 @@ fn push_first_major_match(
 }
 
 fn first_major_alias_match(value: &str) -> Option<(String, f32, usize, usize)> {
-    for (normalized, confidence, pattern) in major_alias_patterns() {
-        let regex = Regex::new(pattern).unwrap();
-        if let Some(found) = regex.find(value) {
+    for alias in major_alias_regexes() {
+        if let Some(found) = alias.regex.find(value) {
             return Some((
-                normalized.to_string(),
-                confidence,
+                alias.normalized.to_string(),
+                alias.confidence,
                 found.start(),
                 found.end(),
             ));
@@ -1255,10 +1396,10 @@ fn normalize_freeform_major(value: &str) -> Option<String> {
     (!normalized.is_empty()).then_some(normalized)
 }
 
-fn extract_skills(text: &str, matches: &mut Vec<RuleMatch>) {
+fn extract_skills(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
     let mut skill_context_lines = 0_usize;
     let mut seen = BTreeSet::new();
-    for (line_start, line) in indexed_lines(text) {
+    for &(line_start, line) in lines {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             skill_context_lines = skill_context_lines.saturating_sub(1);
@@ -1339,9 +1480,8 @@ fn push_skill_alias_matches(
     seen: &mut BTreeSet<String>,
 ) {
     let mut claimed_spans = Vec::<(usize, usize)>::new();
-    for (canonical, pattern) in skill_alias_patterns() {
-        let regex = Regex::new(pattern).unwrap();
-        for found in regex.find_iter(text) {
+    for alias in skill_alias_regexes() {
+        for found in alias.regex.find_iter(text) {
             let span = (found.start(), found.end());
             if claimed_spans
                 .iter()
@@ -1349,14 +1489,14 @@ fn push_skill_alias_matches(
             {
                 continue;
             }
-            if !seen.insert(canonical.to_string()) {
+            if !seen.insert(alias.canonical.to_string()) {
                 continue;
             }
             claimed_spans.push(span);
             matches.push(RuleMatch {
                 field_type: FieldType::Skill,
                 raw_value: found.as_str().to_string(),
-                normalized_value: Some(canonical.to_string()),
+                normalized_value: Some(alias.canonical.to_string()),
                 span_start: span_start + found.start(),
                 span_end: span_start + found.end(),
                 confidence: 0.91,
@@ -1411,8 +1551,8 @@ fn skill_alias_patterns() -> [(&'static str, &'static str); 38] {
     ]
 }
 
-fn extract_companies(text: &str, matches: &mut Vec<RuleMatch>) {
-    for (line_start, line) in indexed_lines(text) {
+fn extract_companies(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+    for &(line_start, line) in lines {
         let trimmed = line.trim();
         if trimmed.len() > 120 {
             continue;
@@ -1597,8 +1737,8 @@ fn normalize_company(value: &str) -> Option<String> {
     (!normalized.is_empty()).then_some(normalized)
 }
 
-fn extract_titles(text: &str, matches: &mut Vec<RuleMatch>) {
-    for (line_start, line) in indexed_lines(text) {
+fn extract_titles(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+    for &(line_start, line) in lines {
         let trimmed = line.trim();
         if trimmed.len() > 120 {
             continue;
@@ -1757,9 +1897,9 @@ fn has_engineering_role_marker(lower: &str) -> bool {
         || lower.contains("开发")
 }
 
-fn extract_locations(text: &str, matches: &mut Vec<RuleMatch>) {
+fn extract_locations(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
     let mut seen = BTreeSet::new();
-    for (line_start, line) in indexed_lines(text) {
+    for &(line_start, line) in lines {
         let trimmed = line.trim();
         if trimmed.len() > 120 {
             continue;
@@ -2046,11 +2186,11 @@ fn canonical_location_alias(value: &str) -> Option<&'static str> {
     }
 }
 
-fn extract_certificates(text: &str, matches: &mut Vec<RuleMatch>) {
+fn extract_certificates(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
     let mut certificate_context_lines = 0_usize;
     let mut seen = BTreeSet::new();
 
-    for (line_start, line) in indexed_lines(text) {
+    for &(line_start, line) in lines {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             certificate_context_lines = certificate_context_lines.saturating_sub(1);
@@ -2160,9 +2300,8 @@ fn push_certificate_alias_matches(
 ) -> bool {
     let mut pushed = false;
     let mut claimed_spans = Vec::<(usize, usize)>::new();
-    for (normalized, confidence, pattern) in certificate_alias_patterns() {
-        let regex = Regex::new(pattern).unwrap();
-        for found in regex.find_iter(text) {
+    for alias in certificate_alias_regexes() {
+        for found in alias.regex.find_iter(text) {
             let span = (found.start(), found.end());
             if claimed_spans
                 .iter()
@@ -2170,17 +2309,17 @@ fn push_certificate_alias_matches(
             {
                 continue;
             }
-            if !seen.insert(normalized.to_string()) {
+            if !seen.insert(alias.normalized.to_string()) {
                 continue;
             }
             claimed_spans.push(span);
             matches.push(RuleMatch {
                 field_type: FieldType::Certificate,
                 raw_value: found.as_str().to_string(),
-                normalized_value: Some(normalized.to_string()),
+                normalized_value: Some(alias.normalized.to_string()),
                 span_start: span_start + found.start(),
                 span_end: span_start + found.end(),
-                confidence,
+                confidence: alias.confidence,
             });
             pushed = true;
         }
@@ -2268,9 +2407,9 @@ fn certificate_alias_patterns() -> [(&'static str, f32, &'static str); 18] {
 }
 
 fn looks_like_certificate_alias(value: &str) -> bool {
-    certificate_alias_patterns()
+    certificate_alias_regexes()
         .iter()
-        .any(|(_, _, pattern)| Regex::new(pattern).unwrap().is_match(value))
+        .any(|alias| alias.regex.is_match(value))
 }
 
 fn normalize_certificate_line(value: &str) -> String {
@@ -2334,7 +2473,10 @@ fn is_skill_section_header(line: &str) -> bool {
     )
 }
 
-fn indexed_lines(text: &str) -> Vec<(usize, &str)> {
+fn indexed_lines(text: &str) -> Vec<IndexedLine<'_>> {
+    #[cfg(test)]
+    INDEXED_LINES_CALLS.fetch_add(1, Ordering::Relaxed);
+
     let mut lines = Vec::new();
     let mut cursor = 0_usize;
 
@@ -2387,5 +2529,34 @@ fn month_number(month: &str) -> Option<&'static str> {
         "nov" | "november" => Some("11"),
         "dec" | "december" => Some("12"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_strong_fields_indexes_lines_once_per_document() {
+        INDEXED_LINES_CALLS.store(0, Ordering::Relaxed);
+
+        let _ = extract_strong_fields(
+            "Synthetic Candidate\n\
+             Email: candidate@example.test\n\
+             Phone: +86 138-0013-8000\n\
+             Education\n\
+             Synthetic University\n\
+             Bachelor of Science in Computer Science\n\
+             Skills: Rust, Java, SQLite\n\
+             Experience\n\
+             2020.01 - 2024.03\n",
+        );
+
+        assert_eq!(INDEXED_LINES_CALLS.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn labeled_name_regex_reuses_compiled_instance() {
+        assert!(std::ptr::eq(labeled_name_regex(), labeled_name_regex()));
     }
 }

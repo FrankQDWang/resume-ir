@@ -29,6 +29,10 @@ fn top_level_help_lists_core_operator_workflows_without_data_dir_or_path_leak() 
         assert!(stdout.contains("model preflight"));
         assert!(stdout.contains("doctor"));
         assert!(stdout.contains("export-diagnostics --redact"));
+        assert!(stdout.contains(
+            "benchmark-query-set   Preflight or freeze local private query-set evidence."
+        ));
+        assert!(!stdout.contains("Draft, preflight, or freeze local private query-set evidence."));
         assert!(stdout.contains("release-readiness"));
         assert!(stdout.contains("Performance optimization is deferred"));
         assert!(!stdout.contains("/Users/"));

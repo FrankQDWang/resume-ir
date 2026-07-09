@@ -48,7 +48,7 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("hot-index hybrid"));
     assert!(stdout.contains("available local private corpus"));
     assert!(stdout.contains("current goal can close"));
-    assert!(stdout.contains("8000-document hot-index floor"));
+    assert!(stdout.contains("D10K 10000/8000-document hot-index floor"));
     assert!(stdout.contains("500 query samples"));
     assert!(stdout.contains("P50/P95/P99 metrics"));
     assert!(stdout.contains("follow-up performance-optimization goal"));
@@ -202,7 +202,7 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     let benchmark_detail = benchmark_blocker["detail"].as_str().unwrap();
     assert!(benchmark_detail.contains("hot-index hybrid"));
     assert!(benchmark_detail.contains("current goal can close"));
-    assert!(benchmark_detail.contains("8000-document hot-index floor"));
+    assert!(benchmark_detail.contains("D10K 10000/8000-document hot-index floor"));
     assert!(benchmark_detail.contains("500 query samples"));
     assert!(benchmark_detail.contains("P50/P95/P99 metrics"));
     assert!(benchmark_detail.contains("follow-up performance-optimization goal"));
@@ -2539,6 +2539,296 @@ fn release_readiness_rejects_current_stage_evidence_missing_observability_withou
 }
 
 #[test]
+fn release_readiness_rejects_current_stage_evidence_missing_private_query_observability_without_path_leaks(
+) {
+    let data_dir = temp_path("release-readiness-current-stage-no-query-observability-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-no-query-observability-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    let mut evidence: serde_json::Value =
+        serde_json::from_str(&current_stage_evidence_manifest()).unwrap();
+    evidence
+        .as_object_mut()
+        .unwrap()
+        .remove("private_query_observability");
+    fs::write(
+        &current_stage_evidence,
+        serde_json::to_string(&evidence).unwrap(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject current-stage evidence missing private query observability");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence"));
+    assert!(stderr.contains("private_query_observability"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_current_stage_evidence_missing_private_query_source_without_path_leaks(
+) {
+    let data_dir = temp_path("release-readiness-current-stage-no-query-source-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-no-query-source-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    let mut evidence: serde_json::Value =
+        serde_json::from_str(&current_stage_evidence_manifest()).unwrap();
+    evidence["private_query_observability"]
+        .as_object_mut()
+        .unwrap()
+        .remove("query_source");
+    fs::write(
+        &current_stage_evidence,
+        serde_json::to_string(&evidence).unwrap(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject current-stage evidence missing private query source");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence"));
+    assert!(stderr.contains("query_source"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_current_stage_evidence_without_d10k_scale_gate_without_path_leaks() {
+    let data_dir = temp_path("release-readiness-current-stage-no-d10k-gate-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-no-d10k-gate-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    let mut evidence: serde_json::Value =
+        serde_json::from_str(&current_stage_evidence_manifest()).unwrap();
+    evidence["private_query_observability"]["private_scale_gate"] = serde_json::Value::Null;
+    fs::write(
+        &current_stage_evidence,
+        serde_json::to_string(&evidence).unwrap(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject current-stage evidence without D10K private scale gate");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty());
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence"));
+    assert!(stderr.contains("private_scale_gate"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+    assert!(!stdout.contains("PRIVATE"));
+    assert!(!stderr.contains("PRIVATE"));
+    assert!(!stdout.contains("/Users/"));
+    assert!(!stderr.contains("/Users/"));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_current_stage_evidence_missing_private_query_stage_bucket_observability_without_path_leaks(
+) {
+    let data_dir = temp_path("release-readiness-current-stage-no-query-stage-bucket-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-no-query-stage-bucket-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    let mut evidence: serde_json::Value =
+        serde_json::from_str(&current_stage_evidence_manifest()).unwrap();
+    evidence["private_query_observability"]
+        .as_object_mut()
+        .unwrap()
+        .remove("stage_latency_by_bucket_p95_ms");
+    fs::write(
+        &current_stage_evidence,
+        serde_json::to_string(&evidence).unwrap(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject current-stage evidence missing per-bucket stage observability");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence"));
+    assert!(stderr.contains("stage_latency_by_bucket_p95_ms"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_current_stage_evidence_missing_private_query_stage_histogram_without_path_leaks(
+) {
+    let data_dir = temp_path("release-readiness-current-stage-no-query-stage-histogram-data");
+    let evidence_dir =
+        temp_path("release-readiness-current-stage-no-query-stage-histogram-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    let mut evidence: serde_json::Value =
+        serde_json::from_str(&current_stage_evidence_manifest()).unwrap();
+    evidence["private_query_observability"]
+        .as_object_mut()
+        .unwrap()
+        .remove("stage_histogram_by_bucket_ms");
+    fs::write(
+        &current_stage_evidence,
+        serde_json::to_string(&evidence).unwrap(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject current-stage evidence missing per-bucket stage histograms");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence"));
+    assert!(stderr.contains("stage_histogram_by_bucket_ms"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
+fn release_readiness_rejects_current_stage_evidence_missing_private_query_rss_observability_without_path_leaks(
+) {
+    let data_dir = temp_path("release-readiness-current-stage-no-query-rss-data");
+    let evidence_dir = temp_path("release-readiness-current-stage-no-query-rss-reports");
+    fs::create_dir_all(&evidence_dir).unwrap();
+    let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
+    let mut evidence: serde_json::Value =
+        serde_json::from_str(&current_stage_evidence_manifest()).unwrap();
+    evidence["private_query_observability"]
+        .as_object_mut()
+        .unwrap()
+        .remove("rss_delta_mb_by_bucket");
+    fs::write(
+        &current_stage_evidence,
+        serde_json::to_string(&evidence).unwrap(),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "release-readiness",
+            "--json",
+            "--current-stage-evidence",
+            path_str(&current_stage_evidence),
+        ])
+        .output()
+        .expect("reject current-stage evidence missing per-bucket rss observability");
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("release readiness evidence failed validation"));
+    assert!(stderr.contains("current-stage validation evidence"));
+    assert!(stderr.contains("rss_delta_mb_by_bucket"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&evidence_dir)));
+    assert!(!stdout.contains(path_str(&current_stage_evidence)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&evidence_dir)));
+    assert!(!stderr.contains(path_str(&current_stage_evidence)));
+
+    let _ = fs::remove_dir_all(&data_dir);
+    let _ = fs::remove_dir_all(&evidence_dir);
+}
+
+#[test]
 fn release_readiness_json_accepts_current_stage_blocked_summary_without_clearing_blockers() {
     let data_dir = temp_path("release-readiness-current-stage-blocked-private-data");
     let evidence_dir = temp_path("release-readiness-current-stage-blocked-private-reports");
@@ -2797,9 +3087,7 @@ fn release_readiness_rejects_current_stage_evidence_below_local_baseline_floor_w
     let current_stage_evidence = evidence_dir.join("current-stage-validation-evidence.json");
     fs::write(
         &current_stage_evidence,
-        current_stage_evidence_manifest()
-            .replace("\"max_files\":10000", "\"max_files\":7999")
-            .replace("\"max_queries\":500", "\"max_queries\":499"),
+        current_stage_evidence_manifest().replace("\"max_files\":10000", "\"max_files\":9999"),
     )
     .unwrap();
 
@@ -3960,7 +4248,7 @@ fn actual_hardware_fault_drills_evidence() -> String {
 }
 
 fn current_stage_evidence_manifest() -> String {
-    concat!(
+    let base = concat!(
         "{",
         "\"schema_version\":\"resume-ir.current-stage-validation-evidence.v1\",",
         "\"privacy_boundary\":\"local_only_redacted_evidence_manifest\",",
@@ -3990,14 +4278,114 @@ fn current_stage_evidence_manifest() -> String {
         "},",
         "\"corpus_summary_observability\":{",
         "\"privacy_boundary\":\"redacted_local_aggregate\",",
-        "\"document_count\":8720,",
-        "\"searchable_document_count\":8720,",
-        "\"vector_indexed_document_count\":8720,",
+        "\"document_count\":10000,",
+        "\"searchable_document_count\":8000,",
+        "\"vector_indexed_document_count\":8000,",
         "\"hot_index_fully_covered\":true,",
-        "\"document_status_counts\":{\"searchable\":8720},",
-        "\"ingest_job_status_counts\":{\"completed\":8720},",
-        "\"ingest_job_kind_status_counts\":{\"update_index\":{\"completed\":8720}},",
+        "\"document_status_counts\":{\"ocr_required\":2000,\"searchable\":8000},",
+        "\"ingest_job_status_counts\":{\"completed\":8000,\"queued\":2000},",
+        "\"ingest_job_kind_status_counts\":{\"ocr_document\":{\"queued\":2000},\"update_index\":{\"completed\":8000}},",
         "\"ingest_job_failure_counts\":{}",
+        "},",
+        "\"private_query_observability\":{",
+        "\"privacy_boundary\":\"redacted_local_aggregate\",",
+        "\"dataset_kind\":\"private-real-corpus\",",
+        "\"document_count\":10000,",
+        "\"searchable_document_count\":8000,",
+        "\"vector_indexed_document_count\":8000,",
+        "\"query_count\":500,",
+        "\"request_sample_count\":5000,",
+        "\"query_source\":\"trace_source_search_v1\",",
+        "\"private_scale_gate\":\"D10K_private_calibration\",",
+        "\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+        "\"tune_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",",
+        "\"holdout_sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",",
+        "\"bucket_counts\":{",
+        "\"single_term\":50,",
+        "\"and_2\":75,",
+        "\"and_3_5\":150,",
+        "\"and_6_16\":50,",
+        "\"field_filter\":75,",
+        "\"hybrid\":75,",
+        "\"semantic\":25",        "},",
+        "\"tune_bucket_counts\":{",
+        "\"single_term\":40,",
+        "\"and_2\":60,",
+        "\"and_3_5\":120,",
+        "\"and_6_16\":40,",
+        "\"field_filter\":60,",
+        "\"hybrid\":60,",
+        "\"semantic\":20",        "},",
+        "\"holdout_bucket_counts\":{",
+        "\"single_term\":10,",
+        "\"and_2\":15,",
+        "\"and_3_5\":30,",
+        "\"and_6_16\":10,",
+        "\"field_filter\":15,",
+        "\"hybrid\":15,",
+        "\"semantic\":5",        "},",
+        "\"samples_per_bucket\":{",
+        "\"single_term\":500,",
+        "\"and_2\":625,",
+        "\"and_3_5\":1500,",
+        "\"and_6_16\":500,",
+        "\"field_filter\":625,",
+        "\"hybrid\":625,",
+        "\"semantic\":625",        "},",
+        "\"query_latency_ms\":{\"samples\":5000,\"p50\":5.0,\"p95\":42.0,\"p99\":84.0},",
+        "\"query_latency_by_bucket\":{",
+        "\"single_term\":{\"samples\":500,\"p50\":5.0,\"p95\":42.0,\"p99\":84.0},",
+        "\"and_2\":{\"samples\":625,\"p50\":5.0,\"p95\":42.0,\"p99\":84.0},",
+        "\"and_3_5\":{\"samples\":1500,\"p50\":5.0,\"p95\":42.0,\"p99\":84.0},",
+        "\"and_6_16\":{\"samples\":500,\"p50\":5.0,\"p95\":42.0,\"p99\":84.0},",
+        "\"field_filter\":{\"samples\":625,\"p50\":5.0,\"p95\":42.0,\"p99\":84.0},",
+        "\"hybrid\":{\"samples\":625,\"p50\":5.0,\"p95\":42.0,\"p99\":84.0},",
+        "\"semantic\":{\"samples\":625,\"p50\":5.0,\"p95\":42.0,\"p99\":84.0}",
+        "},",
+        "\"stage_latency_p95_ms\":{",
+        "\"query_parse\":42.0,",
+        "\"prefilter\":42.0,",
+        "\"bm25\":42.0,",
+        "\"ann\":42.0,",
+        "\"fusion\":42.0,",
+        "\"bulk_hydrate\":42.0,",
+        "\"snippet\":42.0",
+        "},",
+        "\"stage_latency_by_bucket_p95_ms\":{",
+        "\"single_term\":{\"query_parse\":42.0,\"prefilter\":42.0,\"bm25\":42.0,\"ann\":42.0,\"fusion\":42.0,\"bulk_hydrate\":42.0,\"snippet\":42.0},",
+        "\"and_2\":{\"query_parse\":42.0,\"prefilter\":42.0,\"bm25\":42.0,\"ann\":42.0,\"fusion\":42.0,\"bulk_hydrate\":42.0,\"snippet\":42.0},",
+        "\"and_3_5\":{\"query_parse\":42.0,\"prefilter\":42.0,\"bm25\":42.0,\"ann\":42.0,\"fusion\":42.0,\"bulk_hydrate\":42.0,\"snippet\":42.0},",
+        "\"and_6_16\":{\"query_parse\":42.0,\"prefilter\":42.0,\"bm25\":42.0,\"ann\":42.0,\"fusion\":42.0,\"bulk_hydrate\":42.0,\"snippet\":42.0},",
+        "\"field_filter\":{\"query_parse\":42.0,\"prefilter\":42.0,\"bm25\":42.0,\"ann\":42.0,\"fusion\":42.0,\"bulk_hydrate\":42.0,\"snippet\":42.0},",
+        "\"hybrid\":{\"query_parse\":42.0,\"prefilter\":42.0,\"bm25\":42.0,\"ann\":42.0,\"fusion\":42.0,\"bulk_hydrate\":42.0,\"snippet\":42.0},",
+        "\"semantic\":{\"query_parse\":42.0,\"prefilter\":42.0,\"bm25\":42.0,\"ann\":42.0,\"fusion\":42.0,\"bulk_hydrate\":42.0,\"snippet\":42.0}",
+        "},",
+        "\"rss_delta_mb\":{\"samples\":5000,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0},",
+        "\"rss_delta_mb_by_bucket\":{",
+        "\"single_term\":{\"samples\":500,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0},",
+        "\"and_2\":{\"samples\":625,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0},",
+        "\"and_3_5\":{\"samples\":1500,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0},",
+        "\"and_6_16\":{\"samples\":500,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0},",
+        "\"field_filter\":{\"samples\":625,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0},",
+        "\"hybrid\":{\"samples\":625,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0},",
+        "\"semantic\":{\"samples\":625,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0}",
+        "},",
+        "",
+        "\"zero_result_queries\":0,",
+        "\"query_runner\":\"resident-batch-command\",",
+        "\"query_mode\":\"hybrid\",",
+        "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
+        "\"warm_or_cold_definition\":\"current_stage_single_resident_batch_no_extra_warmup\",",
+        "\"cache_state\":\"hot_index_fully_covered_resident_batch_os_cache_uncontrolled\",",
+        "\"percentile_confidence\":\"sampled\",",
+        "\"spawn_per_query\":false,",
+        "\"hot_index\":true,",
+        "\"hot_path_ocr\":false,",
+        "\"hot_path_parsing\":false,",
+        "\"hot_path_heavy_model_inference\":false,",
+        "\"contains_raw_resume_text\":false,",
+        "\"contains_resume_paths\":false,",
+        "\"contains_queries\":false",
         "},",
         "\"steps\":[",
         "{\"id\":\"ocr_preflight\",\"status\":\"success\"},",
@@ -4011,7 +4399,7 @@ fn current_stage_evidence_manifest() -> String {
         "{\"id\":\"ocr_worker_bounded_loop\",\"status\":\"success\"},",
         "{\"id\":\"embedding_worker_bounded_loop\",\"status\":\"success\"},",
         "{\"id\":\"corpus_summary\",\"status\":\"success\"},",
-        "{\"id\":\"query_set_draft\",\"status\":\"success\"},",
+        "{\"id\":\"query_set_prepare\",\"status\":\"success\"},",
         "{\"id\":\"private_query_baseline\",\"status\":\"success\"},",
         "{\"id\":\"baseline_shape_gate\",\"status\":\"success\"},",
         "{\"id\":\"private_ocr_throughput_baseline\",\"status\":\"success\"},",
@@ -4038,7 +4426,7 @@ fn current_stage_evidence_manifest() -> String {
         "{\"file\":\"embedding-worker.stdout.txt\",\"sha256\":\"2020202020202020202020202020202020202020202020202020202020202020\"},",
         "{\"file\":\"benchmark-corpus-summary.local.json\",\"sha256\":\"2121212121212121212121212121212121212121212121212121212121212121\"},",
         "{\"file\":\"private-query-set.local.jsonl\",\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},",
-        "{\"file\":\"query-set-draft.stdout.txt\",\"sha256\":\"2323232323232323232323232323232323232323232323232323232323232323\"},",
+        "{\"file\":\"query-set-prepare.stdout.txt\",\"sha256\":\"2323232323232323232323232323232323232323232323232323232323232323\"},",
         "{\"file\":\"private-benchmark-local.json\",\"sha256\":\"2424242424242424242424242424242424242424242424242424242424242424\"},",
         "{\"file\":\"private-benchmark-gate.stdout.txt\",\"sha256\":\"2525252525252525252525252525252525252525252525252525252525252525\"},",
         "{\"file\":\"private-ocr-throughput.json\",\"sha256\":\"2626262626262626262626262626262626262626262626262626262626262626\"},",
@@ -4071,7 +4459,73 @@ fn current_stage_evidence_manifest() -> String {
         "]",
         "}"
     )
-    .to_string()
+    .to_string();
+    insert_current_stage_private_query_stage_histograms(base)
+}
+
+fn insert_current_stage_private_query_stage_histograms(base: String) -> String {
+    let bucket_histograms = current_stage_bucket_stage_histogram_json(&[
+        ("single_term", 500),
+        ("and_2", 625),
+        ("and_3_5", 1500),
+        ("and_6_16", 500),
+        ("field_filter", 625),
+        ("hybrid", 625),
+        ("semantic", 625),
+    ]);
+    let insertion = format!(
+        "\"stage_histogram_ms\":{},\"stage_histogram_by_bucket_ms\":{},",
+        current_stage_stage_histogram_json(5000),
+        bucket_histograms
+    );
+    base.replace(
+        "\"rss_delta_mb\":",
+        &format!("{insertion}\"rss_delta_mb\":"),
+    )
+}
+
+fn current_stage_bucket_stage_histogram_json(buckets: &[(&str, u64)]) -> String {
+    let entries = buckets
+        .iter()
+        .map(|(bucket, samples)| {
+            format!(
+                "\"{}\":{}",
+                bucket,
+                current_stage_stage_histogram_json(*samples)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{{entries}}}")
+}
+
+fn current_stage_stage_histogram_json(samples: u64) -> String {
+    let entries = [
+        "query_parse",
+        "prefilter",
+        "bm25",
+        "ann",
+        "fusion",
+        "bulk_hydrate",
+        "snippet",
+    ]
+    .into_iter()
+    .map(|stage| format!("\"{}\":{}", stage, current_stage_histogram_json(samples)))
+    .collect::<Vec<_>>()
+    .join(",");
+    format!("{{{entries}}}")
+}
+
+fn current_stage_histogram_json(samples: u64) -> String {
+    let bins = [
+        1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1_000.0, 2_500.0, 5_000.0, 10_000.0,
+        60_000.0,
+    ]
+    .into_iter()
+    .map(|bound| format!("{{\"le_ms\":{bound:.1},\"count\":{samples}}}"))
+    .collect::<Vec<_>>()
+    .join(",");
+    format!("{{\"samples\":{samples},\"bins\":[{bins}],\"overflow_count\":0}}")
 }
 
 fn current_stage_blocked_summary() -> String {
@@ -4106,7 +4560,7 @@ fn current_stage_blocked_summary() -> String {
         "\"ocr_worker_ticks\":25,",
         "\"embedding_worker_ticks\":25,",
         "\"query_set_min_queries\":500,",
-        "\"baseline_min_documents\":8000,",
+        "\"baseline_min_documents\":10000,",
         "\"baseline_min_queries\":500",
         "},",
         "\"preflight_probes\":{",
@@ -4115,13 +4569,13 @@ fn current_stage_blocked_summary() -> String {
         "},",
         "\"corpus_summary_observability\":{",
         "\"privacy_boundary\":\"redacted_local_aggregate\",",
-        "\"document_count\":8000,",
+        "\"document_count\":10000,",
         "\"searchable_document_count\":87,",
         "\"vector_indexed_document_count\":87,",
         "\"hot_index_fully_covered\":false,",
-        "\"document_status_counts\":{\"failed_permanent\":15,\"ocr_required\":7898,\"searchable\":87},",
-        "\"ingest_job_status_counts\":{\"queued\":7898,\"completed\":89},",
-        "\"ingest_job_kind_status_counts\":{\"ocr_document\":{\"queued\":7898,\"completed\":2},\"update_index\":{\"completed\":87}},",
+        "\"document_status_counts\":{\"failed_permanent\":15,\"ocr_required\":9898,\"searchable\":87},",
+        "\"ingest_job_status_counts\":{\"queued\":9898,\"completed\":89},",
+        "\"ingest_job_kind_status_counts\":{\"ocr_document\":{\"queued\":9898,\"completed\":2},\"update_index\":{\"completed\":87}},",
         "\"ingest_job_failure_counts\":{}",
         "},",
         "\"steps\":[",
@@ -4231,7 +4685,7 @@ fn current_stage_evidence_manifest_missing_dataset_output() -> String {
         "{\"id\":\"ocr_worker_bounded_loop\",\"status\":\"success\"},",
         "{\"id\":\"embedding_worker_bounded_loop\",\"status\":\"success\"},",
         "{\"id\":\"corpus_summary\",\"status\":\"success\"},",
-        "{\"id\":\"query_set_draft\",\"status\":\"success\"},",
+        "{\"id\":\"query_set_prepare\",\"status\":\"success\"},",
         "{\"id\":\"private_query_baseline\",\"status\":\"success\"},",
         "{\"id\":\"baseline_shape_gate\",\"status\":\"success\"},",
         "{\"id\":\"redacted_diagnostics\",\"status\":\"success\"},",
@@ -4243,7 +4697,7 @@ fn current_stage_evidence_manifest_missing_dataset_output() -> String {
         "{\"file\":\"model-preflight.json\",\"sha256\":\"1212121212121212121212121212121212121212121212121212121212121212\"},",
         "{\"file\":\"benchmark-corpus-summary.local.json\",\"sha256\":\"1313131313131313131313131313131313131313131313131313131313131313\"},",
         "{\"file\":\"private-query-set.local.jsonl\",\"sha256\":\"1414141414141414141414141414141414141414141414141414141414141414\"},",
-        "{\"file\":\"query-set-draft.stdout.txt\",\"sha256\":\"1515151515151515151515151515151515151515151515151515151515151515\"},",
+        "{\"file\":\"query-set-prepare.stdout.txt\",\"sha256\":\"1515151515151515151515151515151515151515151515151515151515151515\"},",
         "{\"file\":\"private-benchmark-local.json\",\"sha256\":\"1616161616161616161616161616161616161616161616161616161616161616\"},",
         "{\"file\":\"private-benchmark-gate.stdout.txt\",\"sha256\":\"1717171717171717171717171717171717171717171717171717171717171717\"},",
         "{\"file\":\"redacted-diagnostics.json\",\"sha256\":\"1818181818181818181818181818181818181818181818181818181818181818\"},",
@@ -4716,7 +5170,7 @@ fn windows_package_manifest() -> String {
 }
 
 fn private_real_benchmark_report() -> String {
-    concat!(
+    let base = concat!(
         "{",
         "\"schema_version\":\"benchmark.v1\",",
         "\"run_id\":\"bench_test\",",
@@ -4725,26 +5179,161 @@ fn private_real_benchmark_report() -> String {
         "\"document_count\":8720,",
         "\"searchable_document_count\":8720,",
         "\"vector_indexed_document_count\":8720,",
+        "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
         "\"query_count\":500,",
+        "\"request_sample_count\":5000,",
+        "\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+        "\"tune_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",",
+        "\"holdout_sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",",
+        "\"query_source\":\"trace_source_search_v1\",",
+        "\"private_scale_gate\":null,",
+        "\"bucket_counts\":{",
+        "\"single_term\":50,",
+        "\"and_2\":75,",
+        "\"and_3_5\":150,",
+        "\"and_6_16\":50,",
+        "\"field_filter\":75,",
+        "\"hybrid\":75,",
+        "\"semantic\":25",        "},",
+        "\"tune_bucket_counts\":{",
+        "\"single_term\":40,",
+        "\"and_2\":60,",
+        "\"and_3_5\":120,",
+        "\"and_6_16\":40,",
+        "\"field_filter\":60,",
+        "\"hybrid\":60,",
+        "\"semantic\":20",        "},",
+        "\"holdout_bucket_counts\":{",
+        "\"single_term\":10,",
+        "\"and_2\":15,",
+        "\"and_3_5\":30,",
+        "\"and_6_16\":10,",
+        "\"field_filter\":15,",
+        "\"hybrid\":15,",
+        "\"semantic\":5",        "},",
+        "\"samples_per_bucket\":{",
+        "\"single_term\":500,",
+        "\"and_2\":625,",
+        "\"and_3_5\":1500,",
+        "\"and_6_16\":500,",
+        "\"field_filter\":625,",
+        "\"hybrid\":625,",
+        "\"semantic\":625",        "},",
         "\"top_k\":10,",
         "\"build_ms\":1.0,",
         "\"query_total_ms\":600000.0,",
-        "\"qps\":0.833333,",
+        "\"qps\":8.333333,",
         "\"index_size_bytes\":1000,",
-        "\"query_latency_ms\":{\"samples\":500,\"min\":10.0,\"mean\":900.0,\"p50\":850.0,\"p95\":2500.0,\"p99\":4000.0,\"max\":5000.0},",
+        "\"query_latency_ms\":{\"samples\":5000,\"min\":10.0,\"mean\":900.0,\"p50\":850.0,\"p95\":2500.0,\"p99\":4000.0,\"max\":5000.0},",
+        "\"query_latency_by_bucket\":{",
+        "\"single_term\":{\"samples\":500,\"min\":10.0,\"mean\":900.0,\"p50\":850.0,\"p95\":2500.0,\"p99\":4000.0,\"max\":5000.0},",
+        "\"and_2\":{\"samples\":625,\"min\":10.0,\"mean\":900.0,\"p50\":850.0,\"p95\":2500.0,\"p99\":4000.0,\"max\":5000.0},",
+        "\"and_3_5\":{\"samples\":1500,\"min\":10.0,\"mean\":900.0,\"p50\":850.0,\"p95\":2500.0,\"p99\":4000.0,\"max\":5000.0},",
+        "\"and_6_16\":{\"samples\":500,\"min\":10.0,\"mean\":900.0,\"p50\":850.0,\"p95\":2500.0,\"p99\":4000.0,\"max\":5000.0},",
+        "\"field_filter\":{\"samples\":625,\"min\":10.0,\"mean\":900.0,\"p50\":850.0,\"p95\":2500.0,\"p99\":4000.0,\"max\":5000.0},",
+        "\"hybrid\":{\"samples\":625,\"min\":10.0,\"mean\":900.0,\"p50\":850.0,\"p95\":2500.0,\"p99\":4000.0,\"max\":5000.0},",
+        "\"semantic\":{\"samples\":625,\"min\":10.0,\"mean\":900.0,\"p50\":850.0,\"p95\":2500.0,\"p99\":4000.0,\"max\":5000.0}",
+        "},",
+        "\"stage_latency_ms\":{",
+        "\"query_parse\":{\"samples\":5000,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"prefilter\":{\"samples\":5000,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bm25\":{\"samples\":5000,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"ann\":{\"samples\":5000,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"fusion\":{\"samples\":5000,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bulk_hydrate\":{\"samples\":5000,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"snippet\":{\"samples\":5000,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0}",
+        "},",
+        "\"stage_latency_by_bucket_ms\":{",
+        "\"single_term\":{",
+        "\"query_parse\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"prefilter\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bm25\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"ann\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"fusion\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bulk_hydrate\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"snippet\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0}",
+        "},",
+        "\"and_2\":{",
+        "\"query_parse\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"prefilter\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bm25\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"ann\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"fusion\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bulk_hydrate\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"snippet\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0}",
+        "},",
+        "\"and_3_5\":{",
+        "\"query_parse\":{\"samples\":1500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"prefilter\":{\"samples\":1500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bm25\":{\"samples\":1500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"ann\":{\"samples\":1500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"fusion\":{\"samples\":1500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bulk_hydrate\":{\"samples\":1500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"snippet\":{\"samples\":1500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0}",
+        "},",
+        "\"and_6_16\":{",
+        "\"query_parse\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"prefilter\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bm25\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"ann\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"fusion\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bulk_hydrate\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"snippet\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0}",
+        "},",
+        "\"field_filter\":{",
+        "\"query_parse\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"prefilter\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bm25\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"ann\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"fusion\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bulk_hydrate\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"snippet\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0}",
+        "},",
+        "\"hybrid\":{",
+        "\"query_parse\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"prefilter\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bm25\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"ann\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"fusion\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bulk_hydrate\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"snippet\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0}",
+        "},",
+        "\"semantic\":{",
+        "\"query_parse\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"prefilter\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bm25\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"ann\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"fusion\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"bulk_hydrate\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0},",
+        "\"snippet\":{\"samples\":625,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":4.0,\"p99\":5.0,\"max\":6.0}",
+        "}",
+        "},",
+        "\"rss_delta_mb\":{\"samples\":5000,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0},",
+        "\"rss_delta_mb_by_bucket\":{",
+        "\"single_term\":{\"samples\":500,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0},",
+        "\"and_2\":{\"samples\":625,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0},",
+        "\"and_3_5\":{\"samples\":1500,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0},",
+        "\"and_6_16\":{\"samples\":500,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0},",
+        "\"field_filter\":{\"samples\":625,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0},",
+        "\"hybrid\":{\"samples\":625,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0},",
+        "\"semantic\":{\"samples\":625,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0}",
+        "},",
         "\"zero_result_queries\":0,",
         "\"total_hits\":100,",
         "\"million_scale_verified\":false,",
         "\"percentile_confidence\":\"sampled\",",
         "\"target_claim\":\"benchmark_baseline_observed\",",
-        "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\",",
         "\"corpus_origin\":\"private_local\",",
         "\"privacy_boundary\":\"redacted_local_aggregate\",",
-        "\"query_protocol\":\"resume-ir-query-v1\",",
+        "\"query_protocol\":\"resume-ir-query-v2\",",
+        "\"query_runner\":\"resident-batch-command\",",
+        "\"spawn_per_query\":false,",
         "\"query_mode\":\"hybrid\",",
         "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
+        "\"warm_or_cold_definition\":\"current_stage_single_resident_batch_no_extra_warmup\",",
+        "\"cache_state\":\"hot_index_fully_covered_resident_batch_os_cache_uncontrolled\",",
         "\"query_embedding_runtime\":\"local-command\",",
-        "\"query_embedding_command_invocations\":500,",
+        "\"query_embedding_command_invocations\":5000,",
         "\"hot_index\":true,",
         "\"hot_path_ocr\":false,",
         "\"hot_path_parsing\":false,",
@@ -4753,12 +5342,12 @@ fn private_real_benchmark_report() -> String {
         "\"contains_resume_paths\":false,",
         "\"contains_queries\":false,",
         "\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",",
-        "\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
         "\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
-        "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"",
+        "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
         "}"
     )
-    .to_string()
+    .to_string();
+    insert_current_stage_private_query_stage_histograms(base)
 }
 
 fn private_business_field_quality_report() -> String {

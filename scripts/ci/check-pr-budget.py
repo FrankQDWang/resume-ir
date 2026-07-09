@@ -107,13 +107,13 @@ def actual_pr_budget(base_ref: str) -> dict[str, int]:
 
 
 def validate_actual_budget(active_goal: dict, pr_budget: dict) -> None:
-    scope_current_pr = active_goal.get("scope", {}).get("current_pr", {})
-    scope_exception = scope_current_pr.get("scope_exception") is True
+    active_slice = active_goal.get("scope", {}).get("active_slice", {})
+    scope_exception = active_slice.get("scope_exception") is True
     if scope_exception:
-        if scope_current_pr.get("scope_exception_auto_merge_allowed") is not False:
-            fail("scope.current_pr.scope_exception_auto_merge_allowed: expected false")
-        if not scope_current_pr.get("scope_exception_reason"):
-            fail("scope.current_pr.scope_exception_reason: required for budget exception")
+        if pr_budget.get("allow_scope_exception_auto_merge") is not False:
+            fail("autonomous_delivery.pr_budget.allow_scope_exception_auto_merge: expected false")
+        if not active_slice.get("scope_exception_reason"):
+            fail("scope.active_slice.scope_exception_reason: required for budget exception")
     base_ref = select_base_ref()
     actual = actual_pr_budget(base_ref)
     violations = []

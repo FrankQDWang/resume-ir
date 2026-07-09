@@ -18,6 +18,7 @@ parser-pdf = { path = "../parser-pdf" }
 parser-text = { path = "../parser-text" }
 privacy = { path = "../privacy" }
 sectionizer = { path = "../sectionizer" }
+sysinfo = { version = "0.39.3", default-features = false, features = ["system"] }
 text-normalizer = { path = "../text-normalizer" }
 
 [lints]

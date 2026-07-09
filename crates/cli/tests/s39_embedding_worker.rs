@@ -822,8 +822,6 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0
 fn benchmark_query_protocol_runs_hybrid_search_without_result_or_query_leaks() {
     let data_dir = temp_dir("benchmark-query-protocol-data");
     let query_dir = temp_dir("benchmark-query-protocol-private-input");
-    let query_file = query_dir.join("query.txt");
-    fs::write(&query_file, "SemanticOnlyToken\n").unwrap();
     let fixture_root = fixture_root();
     let command = write_fixture_executable(
         "fixture-benchmark-query-protocol-embedding",
@@ -862,7 +860,7 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0
         String::from_utf8_lossy(&embed.stderr)
     );
 
-    let protocol = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+    let single_protocol = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -874,34 +872,385 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0
             "--dimension",
             "4",
         ])
-        .env("RESUME_IR_QUERY_INPUT_PATH", path_str(&query_file))
         .env("RESUME_IR_QUERY_TOP_K", "20")
         .env("RESUME_IR_QUERY_MODE", "hybrid")
         .output()
-        .expect("run benchmark query protocol");
+        .expect("run removed single-query benchmark query protocol");
+    assert!(!single_protocol.status.success());
+    assert!(String::from_utf8_lossy(&single_protocol.stderr)
+        .contains("usage: resume-cli benchmark-query-protocol --batch-jsonl"));
+
+    let batch_file = query_dir.join("queries.jsonl");
+    fs::write(
+        &batch_file,
+        "{\"schema_version\":\"resume-ir.query-batch-request.v2\",\"request_id\":\"protocol-test-1\",\"query\":\"SemanticOnlyToken\"}\n",
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(&query_dir).unwrap().permissions();
+        permissions.set_mode(0o500);
+        fs::set_permissions(&query_dir, permissions).unwrap();
+    }
+    let batch_protocol = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "benchmark-query-protocol",
+            "--batch-jsonl",
+            "--embedding-command",
+            path_str(&command),
+            "--model-id",
+            "fixture-local-model",
+            "--dimension",
+            "4",
+        ])
+        .env("RESUME_IR_QUERY_BATCH_INPUT_PATH", path_str(&batch_file))
+        .env("RESUME_IR_QUERY_TOP_K", "20")
+        .env("RESUME_IR_QUERY_MODE", "hybrid")
+        .output()
+        .expect("run resident batch benchmark query protocol");
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(&query_dir).unwrap().permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&query_dir, permissions).unwrap();
+    }
 
     assert!(
-        protocol.status.success(),
+        batch_protocol.status.success(),
         "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&protocol.stdout),
-        String::from_utf8_lossy(&protocol.stderr)
+        String::from_utf8_lossy(&batch_protocol.stdout),
+        String::from_utf8_lossy(&batch_protocol.stderr)
     );
-    assert!(protocol.stderr.is_empty());
-    let stdout = String::from_utf8_lossy(&protocol.stdout);
-    assert_eq!(
-        stdout,
-        "resume-ir-query-v1\nmode=hybrid\nlayers=fulltext+field+vector+rrf\ntop_k=20\nquery_embedding_runtime=local-command\nquery_embedding_invocations=1\nhits=2\n"
-    );
-    assert!(!stdout.contains("SemanticOnlyToken"));
-    assert!(!stdout.contains("synthetic-java-platform.pdf"));
-    assert!(!stdout.contains("synthetic-java-engineer.docx"));
-    assert!(!stdout.contains(path_str(&query_file)));
-    assert!(!stdout.contains(path_str(&query_dir)));
-    assert!(!stdout.contains(path_str(&data_dir)));
-    assert!(!stdout.contains(path_str(&fixture_root)));
+    assert!(batch_protocol.stderr.is_empty());
+    let batch_stdout = String::from_utf8_lossy(&batch_protocol.stdout);
+    assert!(batch_stdout.contains("resume-ir-query-end"));
+    assert_benchmark_query_protocol_output(&batch_stdout, 20, 2);
+    assert!(!batch_stdout.contains("SemanticOnlyToken"));
+    assert!(!batch_stdout.contains("synthetic-java-platform.pdf"));
+    assert!(!batch_stdout.contains("synthetic-java-engineer.docx"));
+    assert!(!batch_stdout.contains(path_str(&batch_file)));
+    assert!(!batch_stdout.contains(path_str(&query_dir)));
+    assert!(!batch_stdout.contains(path_str(&data_dir)));
+    assert!(!batch_stdout.contains(path_str(&fixture_root)));
 
     remove_dir(&query_dir);
     remove_dir(&data_dir);
+}
+
+#[test]
+fn benchmark_query_protocol_rejects_batch_record_outside_query_semantics_without_leaks() {
+    let data_dir = temp_dir("benchmark-query-protocol-semantic-cap-data");
+    let query_dir = temp_dir("benchmark-query-protocol-semantic-cap-input");
+    let batch_file = query_dir.join("queries.jsonl");
+    let too_many_terms = (1..=17)
+        .map(|index| format!("semanticcap{index}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    fs::write(
+        &batch_file,
+        format!(
+            "{{\"schema_version\":\"resume-ir.query-batch-request.v2\",\"request_id\":\"protocol-test-1\",\"query\":\"{too_many_terms}\"}}\n"
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "benchmark-query-protocol",
+            "--batch-jsonl",
+        ])
+        .env("RESUME_IR_QUERY_BATCH_INPUT_PATH", path_str(&batch_file))
+        .env("RESUME_IR_QUERY_TOP_K", "20")
+        .env("RESUME_IR_QUERY_MODE", "fulltext")
+        .output()
+        .expect("reject oversized benchmark query protocol record");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("benchmark query input is unavailable"));
+    assert!(!stderr.contains(&too_many_terms));
+    assert!(!stderr.contains(path_str(&batch_file)));
+    assert!(!stderr.contains(path_str(&query_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+
+    remove_dir(&query_dir);
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn benchmark_query_protocol_rejects_duplicate_batch_request_ids_without_partial_output() {
+    let data_dir = temp_dir("benchmark-query-protocol-duplicate-request-data");
+    let query_dir = temp_dir("benchmark-query-protocol-duplicate-request-input");
+    let batch_file = query_dir.join("queries.jsonl");
+    fs::write(
+        &batch_file,
+        concat!(
+            "{\"schema_version\":\"resume-ir.query-batch-request.v2\",\"request_id\":\"protocol-test-1\",\"query\":\"DuplicateRequestOne\"}\n",
+            "{\"schema_version\":\"resume-ir.query-batch-request.v2\",\"request_id\":\"protocol-test-1\",\"query\":\"DuplicateRequestTwo\"}\n",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "benchmark-query-protocol",
+            "--batch-jsonl",
+        ])
+        .env("RESUME_IR_QUERY_BATCH_INPUT_PATH", path_str(&batch_file))
+        .env("RESUME_IR_QUERY_TOP_K", "20")
+        .env("RESUME_IR_QUERY_MODE", "fulltext")
+        .output()
+        .expect("reject duplicate benchmark query protocol request ids");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("benchmark query input is unavailable"));
+    assert!(!stderr.contains("DuplicateRequestOne"));
+    assert!(!stderr.contains("DuplicateRequestTwo"));
+    assert!(!stderr.contains(path_str(&batch_file)));
+    assert!(!stderr.contains(path_str(&query_dir)));
+    assert!(!stderr.contains(path_str(&data_dir)));
+
+    remove_dir(&query_dir);
+    remove_dir(&data_dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn benchmark_query_protocol_streams_batch_records_before_input_eof() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::process::Stdio;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    let data_dir = temp_dir("benchmark-query-protocol-stream-data");
+    let query_dir = temp_dir("benchmark-query-protocol-stream-input");
+    let fixture_root = fixture_root();
+    let command = write_fixture_executable(
+        "fixture-benchmark-query-protocol-stream-embedding",
+        r#"#!/bin/sh
+printf 'resume-ir-embedding-v1\n'
+printf 'model_id=fixture-local-model\n'
+printf 'dimension=4\n'
+awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0,0\n", id }' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+"#,
+    );
+    import_fixtures(&data_dir, &fixture_root);
+
+    let embed = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "embed-worker",
+            "--once",
+            "--command",
+            path_str(&command),
+            "--model-id",
+            "fixture-local-model",
+            "--dimension",
+            "4",
+            "--max-docs",
+            "8",
+            "--max-text-bytes",
+            "100000",
+        ])
+        .output()
+        .expect("run embed worker before streaming benchmark query protocol");
+    assert!(
+        embed.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&embed.stdout),
+        String::from_utf8_lossy(&embed.stderr)
+    );
+
+    let batch_fifo = query_dir.join("queries.fifo");
+    let mkfifo = Command::new("mkfifo")
+        .arg(&batch_fifo)
+        .status()
+        .expect("create query batch FIFO");
+    assert!(mkfifo.success());
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "benchmark-query-protocol",
+            "--batch-jsonl",
+            "--embedding-command",
+            path_str(&command),
+            "--model-id",
+            "fixture-local-model",
+            "--dimension",
+            "4",
+        ])
+        .env("RESUME_IR_QUERY_BATCH_INPUT_PATH", path_str(&batch_fifo))
+        .env("RESUME_IR_QUERY_TOP_K", "20")
+        .env("RESUME_IR_QUERY_MODE", "hybrid")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn resident batch benchmark query protocol");
+
+    let mut child_stdout = child.stdout.take().expect("child stdout should be piped");
+    let mut child_stderr = child.stderr.take().expect("child stderr should be piped");
+    let (line_tx, line_rx) = mpsc::channel::<String>();
+    let stdout_reader = thread::spawn(move || {
+        let mut reader = BufReader::new(&mut child_stdout);
+        let mut captured = String::new();
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    captured.push_str(&line);
+                    let _ = line_tx.send(captured.clone());
+                }
+                Err(error) => panic!("read benchmark query protocol stdout: {error}"),
+            }
+        }
+        captured
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut captured = String::new();
+        child_stderr
+            .read_to_string(&mut captured)
+            .expect("read benchmark query protocol stderr");
+        captured
+    });
+
+    let (release_writer_tx, release_writer_rx) = mpsc::channel::<()>();
+    let writer_path = batch_fifo.clone();
+    let writer = thread::spawn(move || {
+        let mut pipe = fs::OpenOptions::new()
+            .write(true)
+            .open(&writer_path)
+            .expect("open query batch FIFO writer");
+        pipe.write_all(
+            b"{\"schema_version\":\"resume-ir.query-batch-request.v2\",\"request_id\":\"protocol-test-1\",\"query\":\"SemanticOnlyToken\"}\n",
+        )
+        .expect("write first query batch record");
+        pipe.flush().expect("flush first query batch record");
+        let _ = release_writer_rx.recv_timeout(Duration::from_secs(10));
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut stdout_before_eof = String::new();
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match line_rx.recv_timeout(remaining.min(Duration::from_millis(100))) {
+            Ok(stdout) => {
+                stdout_before_eof = stdout;
+                if stdout_before_eof.contains("resume-ir-query-end") {
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    let _ = release_writer_tx.send(());
+    writer.join().expect("query batch FIFO writer should exit");
+    let status = child.wait().expect("wait for benchmark query protocol");
+    let stdout = stdout_reader
+        .join()
+        .expect("benchmark query protocol stdout reader should exit");
+    let stderr = stderr_reader
+        .join()
+        .expect("benchmark query protocol stderr reader should exit");
+
+    assert!(
+        stdout_before_eof.contains("resume-ir-query-end"),
+        "protocol should emit first redacted record before query batch EOF\nstdout before EOF:\n{stdout_before_eof}\nfinal stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(status.success(), "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert!(stderr.is_empty());
+    assert_benchmark_query_protocol_output(&stdout, 20, 2);
+    assert!(!stdout.contains("SemanticOnlyToken"));
+    assert!(!stdout.contains(path_str(&batch_fifo)));
+    assert!(!stdout.contains(path_str(&query_dir)));
+    assert!(!stdout.contains(path_str(&data_dir)));
+
+    remove_dir(&query_dir);
+    remove_dir(&data_dir);
+}
+
+fn assert_benchmark_query_protocol_output(
+    stdout: &str,
+    expected_top_k: usize,
+    expected_hits: usize,
+) {
+    let lines = stdout
+        .lines()
+        .map(|line| {
+            line.split_once('=')
+                .map_or((line, ""), |(key, value)| (key, value))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(lines.first(), Some(&("resume-ir-query-v2", "")));
+    assert!(lines.contains(&("request_id", "protocol-test-1")));
+    assert!(lines.contains(&("mode", "hybrid")));
+    assert!(lines.contains(&("layers", "fulltext+field+vector+rrf")));
+    let top_k = lines
+        .iter()
+        .find_map(|(key, value)| (*key == "top_k").then_some(*value))
+        .expect("top_k missing from benchmark query protocol output")
+        .parse::<usize>()
+        .expect("top_k should be numeric");
+    assert_eq!(top_k, expected_top_k);
+    assert!(lines.contains(&("query_embedding_runtime", "local-command")));
+    assert!(lines.contains(&("query_embedding_invocations", "1")));
+    let hits = lines
+        .iter()
+        .find_map(|(key, value)| (*key == "hits").then_some(*value))
+        .expect("hits missing from benchmark query protocol output")
+        .parse::<usize>()
+        .expect("hits should be numeric");
+    assert_eq!(hits, expected_hits);
+
+    for stage in [
+        "stage_query_parse_ms",
+        "stage_prefilter_ms",
+        "stage_bm25_ms",
+        "stage_ann_ms",
+        "stage_fusion_ms",
+        "stage_bulk_hydrate_ms",
+        "stage_snippet_ms",
+    ] {
+        let value = lines
+            .iter()
+            .find_map(|(key, value)| (*key == stage).then_some(*value))
+            .unwrap_or_else(|| panic!("{stage} missing from benchmark query protocol output"));
+        let millis = value
+            .parse::<f64>()
+            .unwrap_or_else(|_| panic!("{stage} should be numeric"));
+        assert!(millis >= 0.0, "{stage} should be non-negative");
+    }
+    let elapsed_ms = lines
+        .iter()
+        .find_map(|(key, value)| (*key == "elapsed_ms").then_some(*value))
+        .expect("elapsed_ms missing from benchmark query protocol output")
+        .parse::<f64>()
+        .expect("elapsed_ms should be numeric");
+    assert!(elapsed_ms >= 0.0, "elapsed_ms should be non-negative");
+    let rss_delta_mb = lines
+        .iter()
+        .find_map(|(key, value)| (*key == "rss_delta_mb").then_some(*value))
+        .expect("rss_delta_mb missing from benchmark query protocol output")
+        .parse::<f64>()
+        .expect("rss_delta_mb should be numeric");
+    assert!(rss_delta_mb >= 0.0, "rss_delta_mb should be non-negative");
 }
 
 #[test]

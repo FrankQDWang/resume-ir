@@ -7,10 +7,15 @@
   output before relying on memory or older summaries.
 - When searching code or docs, prefer `rg` and `rg --files` before slower
   alternatives.
-- For long-running active-goal execution, read the full
-  `03_next_goal_高性能本地检索GUI闭环/` directory before implementation work.
-  Treat documents 13, 14, 17, and 18 as the highest-priority loop,
-  autonomous-delivery, and evidence contracts within that directory.
+- For long-running active-goal execution, read the current `GOAL.md`,
+  `ACTIVE_GOAL.toml`, `PROGRESS.md`, `perf/acceptance-matrix.toml`,
+  `perf/current-loop-state.json`, and the goal docs relevant to the current
+  slice before implementation work. For the performance-loop goal, treat
+  documents 13, 14, 17, and 18 in `03_next_goal_高性能本地检索GUI闭环/` as the
+  required startup reads for loop, autonomous-delivery, and evidence contracts.
+  Read the full goal-doc directory only when changing goal contracts,
+  acceptance schemas, cross-module architecture, or when the current slice
+  explicitly depends on multiple goal documents.
 - Use Superpowers as the default engineering workflow. Use only the local
   gstack-lite gates for product, scope, plan, and readiness decisions:
   - Direction: use `office-hours-lite` first; use `ceo-review-lite` only when

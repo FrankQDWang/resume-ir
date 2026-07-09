@@ -1,0 +1,115 @@
+{
+  "schema_version": "resume-ir.experiment-report.v2",
+  "goal_id": "resume-ir.performance-gui-loop.2026-06",
+  "report_kind": "redacted_evidence",
+  "claim": "no_claim",
+  "evidence_lane": "smoke",
+  "contract_pins": {
+    "active_goal_sha256": "f9fa284ec0b52856d6097cfaeaa9321d2e0886f8aa43b60807e55584dcefa288",
+    "acceptance_matrix_sha256": "9404a5502c9a9bdfb48959abe9bcd944fea4bfaeda0417420398a875596ce431",
+    "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
+    "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
+    "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
+    "git_head_sha": "71917e84e865b5aca6667ee30f790aaffd08a6be"
+  },
+  "synthetic_smoke": {
+    "smoke_schema_version": "resume-ir.synthetic-smoke-baseline.v1",
+    "source": "synthetic_public_fixture",
+    "benchmark_command": "resume-benchmark synthetic-query --index-dir <redacted-temp-index> --documents 24 --queries 6 --top-k 5 --json",
+    "document_count": 24,
+    "query_count": 6,
+    "top_k": 5,
+    "percentile_confidence": "smoke",
+    "batch_protocol_request_count": 2,
+    "component_reports": [
+      {
+        "component": "synthetic_query",
+        "schema_version": "benchmark.v1",
+        "report_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "report_size_bytes": 512,
+        "target_claim": "not_evaluated"
+      },
+      {
+        "component": "ocr_throughput",
+        "schema_version": "ocr-throughput.v1",
+        "report_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "report_size_bytes": 448,
+        "target_claim": "not_evaluated"
+      },
+      {
+        "component": "vector_quality",
+        "schema_version": "vector-quality.v1",
+        "report_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "report_size_bytes": 384,
+        "target_claim": "not_evaluated"
+      },
+      {
+        "component": "private_query_runner",
+        "schema_version": "benchmark.v1",
+        "report_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "report_size_bytes": 768,
+        "target_claim": "not_evaluated"
+      }
+    ],
+    "harness_observations": {
+      "uses_private_resume_root": false,
+      "uses_query_artifact_root": false,
+      "uses_synthetic_public_fixtures": true,
+      "resident_daemon_required": false,
+      "resident_daemon_observed": false,
+      "batch_protocol_observed": true,
+      "private_query_runner_query_protocol": "resume-ir-query-v2",
+      "private_query_runner_request_sample_count": 2,
+      "private_query_runner_query_embedding_command_invocations": 2,
+      "spawn_per_query": false
+    },
+    "latency_ms": {
+      "batch_protocol_stage": {
+        "ann": 1.0,
+        "bm25": 1.0,
+        "bulk_hydrate": 1.0,
+        "elapsed": 8.0,
+        "fusion": 1.0,
+        "prefilter": 1.0,
+        "query_parse": 1.0,
+        "snippet": 1.0
+      },
+      "query_p95": 2.1,
+      "ocr_p95": 300.0
+    },
+    "resource_observations": {
+      "batch_protocol_rss_delta_mb": 0.0,
+      "private_query_runner_rss_delta_mb": {
+        "samples": 2,
+        "min": 0.0,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "p99": 0.0,
+        "max": 0.0
+      }
+    },
+    "quality": {
+      "vector_recall_at_k": 1.0,
+      "vector_mrr": 1.0,
+      "vector_ndcg_at_k": 1.0,
+      "zero_result_queries": 0,
+      "zero_recall_queries": 0
+    }
+  },
+  "thresholds": {
+    "matrix": "perf/acceptance-matrix.toml",
+    "matrix_schema_version": "resume-ir.perf.acceptance-matrix.v2",
+    "passed": true,
+    "failed_redlines": []
+  },
+  "privacy": {
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false,
+    "trace_summary_redacted": true
+  }
+}

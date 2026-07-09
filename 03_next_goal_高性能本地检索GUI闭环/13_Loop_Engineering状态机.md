@@ -63,7 +63,7 @@ Terminology map:
 | review-gated workflow state | `workflow_state` | current schema enum in `perf/loop-state.schema.json` | current loop report state machine plus autonomous delivery stages and machine terminal states |
 | performance experiment state | `experiment_state` | `not_started`, `contract_locked`, `baseline_validated`, `profile_captured`, `bottleneck_selected`, `hypothesis_registered`, `optimization_slice_active`, `correctness_passed`, `perf_measured`, `reprofiled`, `cross_os_passed`, `accepted`, `reverted`, `blocked`, `complete` | profiling and hypothesis lifecycle |
 | evidence lane | `evidence_lane` | `smoke`, `w0_docs`, `w1_private`, `soak_fault`, `gui_manual` | evidence cell class; display aliases may be W0, W1, soak/fault, GUI/manual |
-| benchmark lane | not a current schema field until Task 4 | `first_searchable`, `full_import_ocr_backlog`, `query_hot_path`, `agent_query_replay`, `repeat_amplification_control` | workload and measurement category |
+| benchmark lane | `perf/experiment-report.schema.json` field; not a `perf/current-loop-state.json` field | `first_searchable`, `full_import_ocr_backlog`, `query_hot_path`, `agent_query_replay`, `repeat_amplification_control` | workload and measurement category |
 | autonomous delivery stage | no current JSON field | n/a | target issue-led slice-train stage, not a competing state machine |
 
 ## 1. Workflow State
@@ -107,11 +107,15 @@ active_goal_id: resume-ir.performance-gui-loop.2026-06
 spec_path: docs/superpowers/specs/2026-06-22-performance-goal-doc-contract.md
 plan_path: docs/superpowers/plans/2026-06-22-performance-goal-doc-contract.md
 goal_docs_root: 03_next_goal_高性能本地检索GUI闭环
-allowed_paths_for_current_pr: AGENTS.md, GOAL.md, MANIFEST.md, ACTIVE_GOAL.toml, .github/workflows/pr.yml, .github/PULL_REQUEST_TEMPLATE.md, .github/ISSUE_TEMPLATE, 03_next_goal_高性能本地检索GUI闭环, docs/superpowers, perf, scripts/ci/check-performance-contracts.py, scripts/ci/check-autonomous-goal.py, scripts/ci/check-loop-state.py, scripts/ci/check-experiment-report.py, scripts/ci/check-pr-budget.py, scripts/ci/check-benchmark-lanes.py, scripts/ci/check-private-evidence-redaction.py, scripts/ci/check-gate-integrity.py, scripts/ci/check-goal-complete.py
+allowed_paths_source: ACTIVE_GOAL.toml [scope.active_slice].allowed_paths
 privacy_boundary: no raw resume text, raw query, candidate result, path, token, trace, diagnostics package, or model cache in git
 ```
 
-当前 PR 的目标锁以 `ACTIVE_GOAL.toml` 为准。当前允许公开 CI 合同校验脚本和 workflow gate，但不允许生产 Rust、GUI、daemon、benchmark runner 或私有数据执行实现。未来生产实现必须通过新的 linked plan 扩展允许路径，不能复用当前 contract-only 允许范围。
+当前 active slice 的目标锁以 `ACTIVE_GOAL.toml` 的 `[scope.active_slice]`
+为准。#53 当前允许 query-set CLI、benchmark runner、public contract/schema、
+fixtures、runbook 和 CI harness 的 bounded diff；不允许运行或提交私有 D10K
+benchmark 原文、raw query、候选结果、trace、本机路径、profile capture 或
+`goal_complete` 证据。
 
 ## 2.1 Transition Graph And Wake Rule
 
@@ -128,7 +132,7 @@ privacy_boundary: no raw resume text, raw query, candidate result, path, token, 
 
 ## 2.2 Goal Prompt Compiler Contract
 
-Codex `/goal` 注入上限按 4000 chars 处理。Goal Prompt 不是执行状态；它由确定性 compiler 从 policy truth、execution truth 和下一个 allowed transition 编译而来。当前 PR 只锁定协议，后续 runner PR 才实现 `scripts/loop/compile-goal-prompt.py`。
+Codex `/goal` 注入上限按 4000 chars 处理。Goal Prompt 不是执行状态；它由确定性 compiler 从 policy truth、execution truth 和下一个 allowed transition 编译而来。当前 active slice 只依赖该协议，不实现 `scripts/loop/compile-goal-prompt.py`。
 
 Prompt 必须包含：
 
@@ -161,7 +165,7 @@ Workflow state 控制长程任务不漂移；experiment state 控制性能工作
 |---|---|---|---|
 | `not_started` | 尚未选择性能切片 | `contract_locked` | active goal 和 acceptance matrix |
 | `contract_locked` | P0 contract 通过 W0 | `baseline_validated` | query semantics、IPC、matrix、loop schema |
-| `baseline_validated` | baseline 已运行 | `profile_captured` 或 `blocked` | resident daemon baseline、histogram、resource aggregate |
+| `baseline_validated` | 当前 evidence lane 的 baseline 已运行并验证 | `profile_captured` 或 `blocked` | smoke lane 需要 synthetic smoke report/manifest；W1/D10K 仍需要 resident daemon baseline、histogram、resource aggregate |
 | `profile_captured` | profiler summary 已记录 | `bottleneck_selected` | flamegraph/sample summary、stage hotspot |
 | `bottleneck_selected` | 单个 bottleneck 被选择 | `hypothesis_registered` | slice scope、expected red/green check |
 | `hypothesis_registered` | 已记录可证伪假设 | `optimization_slice_active` | hypothesis、expected metric delta、rollback trigger |
@@ -169,7 +173,7 @@ Workflow state 控制长程任务不漂移；experiment state 控制性能工作
 | `correctness_passed` | 语义、隐私和回归检查完成 | `perf_measured` 或 `reverted` | metamorphic checks、privacy flags、focused tests |
 | `perf_measured` | 优化后性能已测 | `reprofiled`、`reverted` 或 `optimization_slice_active` | P95/P99、stage latency、resource aggregate |
 | `reprofiled` | profiler 已确认瓶颈变化 | `accepted`、`reverted` 或 `bottleneck_selected` | before/after profiler refs、overhead <= 3% |
-| `accepted` | 当前 scale cell redlines 通过 | `baseline_validated`、`cross_os_passed` 或 `complete` | accepted_cells、contract pins、redacted report |
+| `accepted` | 当前 scale cell redlines 通过 | `baseline_validated`、`cross_os_passed` 或 `complete` | evidence_cells、contract pins、redacted report |
 | `reverted` | 假设失败或副作用超限 | `bottleneck_selected` 或 `blocked` | revert evidence、failed hypothesis |
 | `cross_os_passed` | macOS/Windows 必需切片通过 | `complete` 或 `baseline_validated` | platform aggregate |
 | `blocked` | 同一 blocker 经过 3 次 distinct `evidence_path` 的 effective retry 后仍复现 | `contract_locked` 或 `bottleneck_selected` | blocked report |
@@ -184,12 +188,12 @@ Workflow state 控制长程任务不漂移；experiment state 控制性能工作
 1. 当前 diff 是否只包含该切片允许路径。
 2. 当前验收命令是否对应该切片。
 3. 当前 `evidence_lane` 是否为 `smoke`、`w0_docs`、`w1_private`、`soak_fault` 或 `gui_manual` 中的一个。
-4. 当前 `benchmark_lane` 是否为 `first_searchable`、`full_import_ocr_backlog`、`query_hot_path`、`agent_query_replay` 或 `repeat_amplification_control` 中的一个；Task 4 前该值只能出现在 issue/report evidence 中，不能写成 `perf/current-loop-state.json` 的机器字段。
+4. 当前 `benchmark_lane` 是否为 `first_searchable`、`full_import_ocr_backlog`、`query_hot_path`、`agent_query_replay` 或 `repeat_amplification_control` 中的一个；该值由 `perf/experiment-report.schema.json` 管理，不能写成 `perf/current-loop-state.json` 的机器字段。
 5. 当前 query 语义是否仍遵守 simple text AND 合同。
 6. 当前 daemon contract 是否仍通过版本化 IPC/diagnostics 暴露。
 7. 当前 Loop state report 是否能通过 `perf/loop-state.schema.json`。
 8. 当前实验报告是否能通过 `perf/experiment-report.schema.json`，除非该切片不是实验切片。
-9. `perf/current-loop-state.json` 是否仍反映当前 PR 的 evidence lane、允许路径和 claim 状态。
+9. `perf/current-loop-state.json` 是否仍反映当前 active slice 的 evidence lane 和 claim 状态；允许路径只在 `ACTIVE_GOAL.toml` 中维护，不能复制进 current snapshot。
 10. 性能 PR 是否声明唯一 `optimization_layer`，且可选 `affected_layers` 没有被当成验收目标。
 11. `optimization_layer` 是否遵守 lower-layer closure rule：L4 不关闭 L1 blocker，L3 不关闭 L2 blocker，L2 不关闭 L1 blocker。
 12. profile issue 是否包含 expected_delta、rollback_condition、negative_controls、workload_manifest、query_set_source、corpus_scale、hardware_class、warm_or_cold_definition、cache_state 和 platform_lane。

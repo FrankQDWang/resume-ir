@@ -3,6 +3,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[path = "support/private_query.rs"]
+mod private_query_support;
+
+use private_query_support::{
+    assert_private_query_stage_latency, private_query_corpus_summary_json, private_query_set_file,
+    private_query_set_file_with_buckets, private_query_set_summary_path,
+};
+
 #[test]
 fn resume_benchmark_outputs_redacted_synthetic_json() {
     let index_dir = temp_dir("synthetic-query-cli");
@@ -172,7 +180,7 @@ fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
             "private-query",
             "--query-set",
             path_str(&query_set),
-            "--command",
+            "--resident-command",
             path_str(&command),
             "--corpus-summary",
             path_str(&corpus_summary),
@@ -186,8 +194,6 @@ fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
             "4096",
             "--dataset-manifest-sha256",
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            "--query-set-sha256",
-            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
             "--model-manifest-sha256",
             "1111111111111111111111111111111111111111111111111111111111111111",
             "--json",
@@ -245,6 +251,168 @@ fn resume_benchmark_private_query_outputs_redacted_gateable_report() {
 }
 
 #[test]
+fn resume_benchmark_private_query_accepts_request_sample_count() {
+    let query_set = private_query_set_file("private-query-cli-request-samples-set", 3);
+    let command = query_fixture_script("private-query-cli-request-samples-command");
+    let corpus_summary =
+        private_query_corpus_summary_file("private-query-cli-request-samples-summary", 8_720, true);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "private-query",
+            "--query-set",
+            path_str(&query_set),
+            "--resident-command",
+            path_str(&command),
+            "--corpus-summary",
+            path_str(&corpus_summary),
+            "--max-queries",
+            "3",
+            "--request-sample-count",
+            "8",
+            "--dataset-manifest-sha256",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "--model-manifest-sha256",
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "--json",
+        ])
+        .output()
+        .expect("run resume-benchmark private-query with request sample count");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let report: serde_json::Value =
+        serde_json::from_str(&stdout).expect("private query report JSON should parse");
+    assert_eq!(report["query_count"], 3);
+    assert_eq!(report["request_sample_count"], 8);
+    assert_eq!(report["samples_per_bucket"]["and_3_5"], 8);
+    assert_eq!(report["query_embedding_command_invocations"], 8);
+    assert_eq!(report["query_latency_ms"]["samples"], 8);
+    assert_private_query_stage_latency(&report, 8);
+    assert!(!stdout.contains(path_str(&query_set)));
+    assert!(!stdout.contains(path_str(&command)));
+    assert!(!stdout.contains(path_str(&corpus_summary)));
+    assert!(!stdout.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+    assert!(!stdout.contains("private-query-sample-"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+    remove_dir(corpus_summary.parent().unwrap());
+}
+
+#[test]
+fn resume_benchmark_private_query_rejects_manual_min_samples_per_bucket() {
+    let query_set = private_query_set_file_with_buckets(
+        "private-query-cli-min-samples-per-bucket-set",
+        &[
+            ("single_term", 4),
+            ("and_2", 1),
+            ("and_3_5", 1),
+            ("and_6_16", 1),
+            ("field_filter", 1),
+            ("hybrid", 1),
+            ("semantic", 1),
+        ],
+    );
+    let command = query_fixture_script("private-query-cli-min-samples-per-bucket-command");
+    let corpus_summary = private_query_corpus_summary_file(
+        "private-query-cli-min-samples-per-bucket-summary",
+        8_720,
+        true,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "private-query",
+            "--query-set",
+            path_str(&query_set),
+            "--resident-command",
+            path_str(&command),
+            "--corpus-summary",
+            path_str(&corpus_summary),
+            "--max-queries",
+            "11",
+            "--request-sample-count",
+            "18",
+            "--min-samples-per-bucket",
+            "2",
+            "--dataset-manifest-sha256",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "--model-manifest-sha256",
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "--json",
+        ])
+        .output()
+        .expect("run resume-benchmark private-query with manual bucket floor");
+
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("usage:"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+    remove_dir(corpus_summary.parent().unwrap());
+}
+
+#[test]
+fn resume_benchmark_private_query_reads_query_set_sha256_from_redacted_summary() {
+    let query_set = private_query_set_file("private-query-cli-summary-digest-set", 1);
+    let command = query_fixture_script("private-query-cli-summary-digest-command");
+    let corpus_summary =
+        private_query_corpus_summary_file("private-query-cli-summary-digest-summary", 8_720, true);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "private-query",
+            "--query-set",
+            path_str(&query_set),
+            "--resident-command",
+            path_str(&command),
+            "--corpus-summary",
+            path_str(&corpus_summary),
+            "--max-queries",
+            "1",
+            "--request-sample-count",
+            "1",
+            "--allow-partial-hot-index-for-smoke",
+            "--synthetic-smoke-evidence",
+            "--dataset-manifest-sha256",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "--model-manifest-sha256",
+            "1111111111111111111111111111111111111111111111111111111111111111",
+            "--json",
+        ])
+        .output()
+        .expect("run resume-benchmark private-query with summary-derived query set digest");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(
+        "\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\""
+    ));
+    assert!(!stdout.contains(path_str(&query_set)));
+    assert!(!stdout.contains(path_str(&private_query_set_summary_path(&query_set))));
+    assert!(!stdout.contains(path_str(&command)));
+    assert!(!stdout.contains(path_str(&corpus_summary)));
+    assert!(!stdout.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+    remove_dir(corpus_summary.parent().unwrap());
+}
+
+#[test]
 fn resume_benchmark_private_query_rejects_partial_corpus_summary_without_path_leaks() {
     let query_set = private_query_set_file("private-query-cli-partial-set", 1);
     let command = query_fixture_script("private-query-cli-partial-command");
@@ -256,14 +424,12 @@ fn resume_benchmark_private_query_rejects_partial_corpus_summary_without_path_le
             "private-query",
             "--query-set",
             path_str(&query_set),
-            "--command",
+            "--resident-command",
             path_str(&command),
             "--corpus-summary",
             path_str(&corpus_summary),
             "--dataset-manifest-sha256",
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            "--query-set-sha256",
-            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
             "--model-manifest-sha256",
             "1111111111111111111111111111111111111111111111111111111111111111",
             "--json",
@@ -291,19 +457,18 @@ fn resume_benchmark_private_query_accepts_partial_corpus_summary_for_explicit_sm
             "private-query",
             "--query-set",
             path_str(&query_set),
-            "--command",
+            "--resident-command",
             path_str(&command),
             "--corpus-summary",
             path_str(&corpus_summary),
             "--dataset-manifest-sha256",
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            "--query-set-sha256",
-            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
             "--model-manifest-sha256",
             "1111111111111111111111111111111111111111111111111111111111111111",
             "--max-queries",
             "1",
             "--allow-partial-hot-index-for-smoke",
+            "--synthetic-smoke-evidence",
             "--json",
         ])
         .output()
@@ -320,8 +485,13 @@ fn resume_benchmark_private_query_accepts_partial_corpus_summary_for_explicit_sm
     assert!(stdout.contains("\"document_count\":6"));
     assert!(stdout.contains("\"searchable_document_count\":5"));
     assert!(stdout.contains("\"vector_indexed_document_count\":4"));
+    assert!(stdout.contains("\"dataset_kind\":\"synthetic-smoke\""));
+    assert!(stdout.contains("\"target_claim\":\"not_evaluated\""));
+    assert!(stdout.contains("\"corpus_origin\":\"synthetic_public_fixture\""));
     assert!(stdout.contains("\"percentile_confidence\":\"smoke\""));
     assert!(stdout.contains("\"privacy_boundary\":\"redacted_local_aggregate\""));
+    assert!(!stdout.contains("\"dataset_kind\":\"private-real-corpus\""));
+    assert!(!stdout.contains("\"target_claim\":\"benchmark_baseline_observed\""));
     assert!(!stdout.contains(path_str(&corpus_summary)));
     assert!(!stdout.contains(path_str(&query_set)));
     assert!(!stdout.contains(path_str(&command)));
@@ -344,11 +514,11 @@ fn resume_benchmark_private_query_passes_command_args_without_leaking_them() {
             "private-query",
             "--query-set",
             path_str(&query_set),
-            "--command",
+            "--resident-command",
             path_str(&command),
-            "--command-arg",
+            "--resident-command-arg",
             "resume-cli",
-            "--command-arg",
+            "--resident-command-arg",
             "benchmark-query-protocol",
             "--corpus-summary",
             path_str(&corpus_summary),
@@ -360,8 +530,6 @@ fn resume_benchmark_private_query_passes_command_args_without_leaking_them() {
             "5000",
             "--dataset-manifest-sha256",
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            "--query-set-sha256",
-            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
             "--model-manifest-sha256",
             "1111111111111111111111111111111111111111111111111111111111111111",
             "--json",
@@ -404,14 +572,12 @@ fn resume_benchmark_private_query_requires_model_manifest_digest() {
             "private-query",
             "--query-set",
             path_str(&query_set),
-            "--command",
+            "--resident-command",
             path_str(&command),
             "--corpus-summary",
             path_str(&corpus_summary),
             "--dataset-manifest-sha256",
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-            "--query-set-sha256",
-            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         ])
         .output()
         .expect("run resume-benchmark private-query without model manifest digest");
@@ -435,7 +601,8 @@ fn resume_benchmark_gate_accepts_private_real_corpus_release_report() {
     let report_path = report_dir.join("benchmark-report.json");
     fs::write(
         &report_path,
-        concat!(
+        private_real_gate_report_with_stage_histograms(
+            concat!(
             "{\"schema_version\":\"benchmark.v1\",",
             "\"run_id\":\"bench_private\",",
             "\"platform\":\"test/test\",",
@@ -444,6 +611,13 @@ fn resume_benchmark_gate_accepts_private_real_corpus_release_report() {
             "\"searchable_document_count\":1000000,",
             "\"vector_indexed_document_count\":1000000,",
             "\"query_count\":500,",
+            "\"request_sample_count\":500,",
+            "\"bucket_counts\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":500,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"samples_per_bucket\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":500,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"tune_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",",
+            "\"holdout_sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",",
+            "\"tune_bucket_counts\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":400,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"holdout_bucket_counts\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":100,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
             "\"top_k\":10,",
             "\"build_ms\":1.0,",
             "\"query_total_ms\":5000.0,",
@@ -458,6 +632,11 @@ fn resume_benchmark_gate_accepts_private_real_corpus_release_report() {
             "\"p99\":180.0,",
             "\"max\":190.0",
             "},",
+            "\"query_latency_by_bucket\":{\"and_3_5\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0}},",
+            "\"stage_latency_ms\":{\"query_parse\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"prefilter\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bm25\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"ann\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"fusion\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bulk_hydrate\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"snippet\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0}},",
+            "\"stage_latency_by_bucket_ms\":{\"and_3_5\":{\"query_parse\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"prefilter\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bm25\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"ann\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"fusion\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bulk_hydrate\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"snippet\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0}}},",
+            "\"rss_delta_mb\":{\"samples\":500,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0},",
+            "\"rss_delta_mb_by_bucket\":{\"and_3_5\":{\"samples\":500,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0}},",
             "\"zero_result_queries\":0,",
             "\"total_hits\":5000,",
             "\"million_scale_verified\":true,",
@@ -465,7 +644,9 @@ fn resume_benchmark_gate_accepts_private_real_corpus_release_report() {
             "\"target_claim\":\"query_latency_target_met\",",
             "\"corpus_origin\":\"private_local\",",
             "\"privacy_boundary\":\"redacted_local_aggregate\",",
-            "\"query_protocol\":\"resume-ir-query-v1\",",
+            "\"query_protocol\":\"resume-ir-query-v2\",",
+            "\"query_runner\":\"resident-batch-command\",",
+            "\"spawn_per_query\":false,",
             "\"query_mode\":\"hybrid\",",
             "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
             "\"query_embedding_runtime\":\"local-command\",",
@@ -483,6 +664,8 @@ fn resume_benchmark_gate_accepts_private_real_corpus_release_report() {
             "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
             "}"
+            ),
+            500,
         ),
     )
     .unwrap();
@@ -525,7 +708,8 @@ fn resume_benchmark_gate_accepts_private_real_smoke_report_with_explicit_allowan
     let report_path = report_dir.join("benchmark-report.json");
     fs::write(
         &report_path,
-        concat!(
+        private_real_gate_report_with_stage_histograms(
+            concat!(
             "{\"schema_version\":\"benchmark.v1\",",
             "\"run_id\":\"bench_private_smoke\",",
             "\"platform\":\"test/test\",",
@@ -534,6 +718,13 @@ fn resume_benchmark_gate_accepts_private_real_smoke_report_with_explicit_allowan
             "\"searchable_document_count\":1,",
             "\"vector_indexed_document_count\":1,",
             "\"query_count\":1,",
+            "\"request_sample_count\":1,",
+            "\"bucket_counts\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":1,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"samples_per_bucket\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":1,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"tune_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",",
+            "\"holdout_sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",",
+            "\"tune_bucket_counts\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":1,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"holdout_bucket_counts\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":0,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
             "\"top_k\":10,",
             "\"build_ms\":1.0,",
             "\"query_total_ms\":10.0,",
@@ -548,6 +739,11 @@ fn resume_benchmark_gate_accepts_private_real_smoke_report_with_explicit_allowan
             "\"p99\":180.0,",
             "\"max\":190.0",
             "},",
+            "\"query_latency_by_bucket\":{\"and_3_5\":{\"samples\":1,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0}},",
+            "\"stage_latency_ms\":{\"query_parse\":{\"samples\":1,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"prefilter\":{\"samples\":1,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bm25\":{\"samples\":1,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"ann\":{\"samples\":1,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"fusion\":{\"samples\":1,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bulk_hydrate\":{\"samples\":1,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"snippet\":{\"samples\":1,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0}},",
+            "\"stage_latency_by_bucket_ms\":{\"and_3_5\":{\"query_parse\":{\"samples\":1,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"prefilter\":{\"samples\":1,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bm25\":{\"samples\":1,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"ann\":{\"samples\":1,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"fusion\":{\"samples\":1,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bulk_hydrate\":{\"samples\":1,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"snippet\":{\"samples\":1,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0}}},",
+            "\"rss_delta_mb\":{\"samples\":1,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0},",
+            "\"rss_delta_mb_by_bucket\":{\"and_3_5\":{\"samples\":1,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0}},",
             "\"zero_result_queries\":0,",
             "\"total_hits\":1,",
             "\"million_scale_verified\":false,",
@@ -555,7 +751,9 @@ fn resume_benchmark_gate_accepts_private_real_smoke_report_with_explicit_allowan
             "\"target_claim\":\"benchmark_baseline_observed\",",
             "\"corpus_origin\":\"private_local\",",
             "\"privacy_boundary\":\"redacted_local_aggregate\",",
-            "\"query_protocol\":\"resume-ir-query-v1\",",
+            "\"query_protocol\":\"resume-ir-query-v2\",",
+            "\"query_runner\":\"resident-batch-command\",",
+            "\"spawn_per_query\":false,",
             "\"query_mode\":\"hybrid\",",
             "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
             "\"query_embedding_runtime\":\"local-command\",",
@@ -573,6 +771,8 @@ fn resume_benchmark_gate_accepts_private_real_smoke_report_with_explicit_allowan
             "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
             "}"
+            ),
+            1,
         ),
     )
     .unwrap();
@@ -615,7 +815,8 @@ fn resume_benchmark_gate_rejects_private_real_corpus_inconsistent_qps() {
     let report_path = report_dir.join("benchmark-report.json");
     fs::write(
         &report_path,
-        concat!(
+        private_real_gate_report_with_stage_histograms(
+            concat!(
             "{\"schema_version\":\"benchmark.v1\",",
             "\"run_id\":\"bench_private\",",
             "\"platform\":\"test/test\",",
@@ -624,6 +825,13 @@ fn resume_benchmark_gate_rejects_private_real_corpus_inconsistent_qps() {
             "\"searchable_document_count\":1000000,",
             "\"vector_indexed_document_count\":1000000,",
             "\"query_count\":500,",
+            "\"request_sample_count\":500,",
+            "\"bucket_counts\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":500,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"samples_per_bucket\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":500,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"tune_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",",
+            "\"holdout_sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",",
+            "\"tune_bucket_counts\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":400,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"holdout_bucket_counts\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":100,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
             "\"top_k\":10,",
             "\"build_ms\":1.0,",
             "\"query_total_ms\":5000.0,",
@@ -638,6 +846,11 @@ fn resume_benchmark_gate_rejects_private_real_corpus_inconsistent_qps() {
             "\"p99\":180.0,",
             "\"max\":190.0",
             "},",
+            "\"query_latency_by_bucket\":{\"and_3_5\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0}},",
+            "\"stage_latency_ms\":{\"query_parse\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"prefilter\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bm25\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"ann\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"fusion\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bulk_hydrate\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"snippet\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0}},",
+            "\"stage_latency_by_bucket_ms\":{\"and_3_5\":{\"query_parse\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"prefilter\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bm25\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"ann\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"fusion\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bulk_hydrate\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"snippet\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0}}},",
+            "\"rss_delta_mb\":{\"samples\":500,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0},",
+            "\"rss_delta_mb_by_bucket\":{\"and_3_5\":{\"samples\":500,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0}},",
             "\"zero_result_queries\":0,",
             "\"total_hits\":5000,",
             "\"million_scale_verified\":true,",
@@ -645,7 +858,9 @@ fn resume_benchmark_gate_rejects_private_real_corpus_inconsistent_qps() {
             "\"target_claim\":\"query_latency_target_met\",",
             "\"corpus_origin\":\"private_local\",",
             "\"privacy_boundary\":\"redacted_local_aggregate\",",
-            "\"query_protocol\":\"resume-ir-query-v1\",",
+            "\"query_protocol\":\"resume-ir-query-v2\",",
+            "\"query_runner\":\"resident-batch-command\",",
+            "\"spawn_per_query\":false,",
             "\"query_mode\":\"hybrid\",",
             "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
             "\"query_embedding_runtime\":\"local-command\",",
@@ -663,6 +878,8 @@ fn resume_benchmark_gate_rejects_private_real_corpus_inconsistent_qps() {
             "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
             "}"
+            ),
+            500,
         ),
     )
     .unwrap();
@@ -697,7 +914,8 @@ fn resume_benchmark_gate_rejects_million_release_sampled_confidence() {
     let report_path = report_dir.join("benchmark-report.json");
     fs::write(
         &report_path,
-        concat!(
+        private_real_gate_report_with_stage_histograms(
+            concat!(
             "{\"schema_version\":\"benchmark.v1\",",
             "\"run_id\":\"bench_private\",",
             "\"platform\":\"test/test\",",
@@ -706,6 +924,13 @@ fn resume_benchmark_gate_rejects_million_release_sampled_confidence() {
             "\"searchable_document_count\":1000000,",
             "\"vector_indexed_document_count\":1000000,",
             "\"query_count\":500,",
+            "\"request_sample_count\":500,",
+            "\"bucket_counts\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":500,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"samples_per_bucket\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":500,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"tune_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",",
+            "\"holdout_sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",",
+            "\"tune_bucket_counts\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":400,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"holdout_bucket_counts\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":100,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
             "\"top_k\":10,",
             "\"build_ms\":1.0,",
             "\"query_total_ms\":5000.0,",
@@ -720,6 +945,11 @@ fn resume_benchmark_gate_rejects_million_release_sampled_confidence() {
             "\"p99\":180.0,",
             "\"max\":190.0",
             "},",
+            "\"query_latency_by_bucket\":{\"and_3_5\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0}},",
+            "\"stage_latency_ms\":{\"query_parse\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"prefilter\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bm25\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"ann\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"fusion\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bulk_hydrate\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"snippet\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0}},",
+            "\"stage_latency_by_bucket_ms\":{\"and_3_5\":{\"query_parse\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"prefilter\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bm25\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"ann\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"fusion\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bulk_hydrate\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"snippet\":{\"samples\":500,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0}}},",
+            "\"rss_delta_mb\":{\"samples\":500,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0},",
+            "\"rss_delta_mb_by_bucket\":{\"and_3_5\":{\"samples\":500,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0}},",
             "\"zero_result_queries\":0,",
             "\"total_hits\":5000,",
             "\"million_scale_verified\":true,",
@@ -727,7 +957,9 @@ fn resume_benchmark_gate_rejects_million_release_sampled_confidence() {
             "\"target_claim\":\"query_latency_target_met\",",
             "\"corpus_origin\":\"private_local\",",
             "\"privacy_boundary\":\"redacted_local_aggregate\",",
-            "\"query_protocol\":\"resume-ir-query-v1\",",
+            "\"query_protocol\":\"resume-ir-query-v2\",",
+            "\"query_runner\":\"resident-batch-command\",",
+            "\"spawn_per_query\":false,",
             "\"query_mode\":\"hybrid\",",
             "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
             "\"query_embedding_runtime\":\"local-command\",",
@@ -745,6 +977,8 @@ fn resume_benchmark_gate_rejects_million_release_sampled_confidence() {
             "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
             "}"
+            ),
+            500,
         ),
     )
     .unwrap();
@@ -779,7 +1013,8 @@ fn resume_benchmark_gate_rejects_private_real_too_few_query_samples() {
     let report_path = report_dir.join("benchmark-report.json");
     fs::write(
         &report_path,
-        concat!(
+        private_real_gate_report_with_stage_histograms(
+            concat!(
             "{\"schema_version\":\"benchmark.v1\",",
             "\"run_id\":\"bench_private\",",
             "\"platform\":\"test/test\",",
@@ -788,6 +1023,13 @@ fn resume_benchmark_gate_rejects_private_real_too_few_query_samples() {
             "\"searchable_document_count\":100000,",
             "\"vector_indexed_document_count\":100000,",
             "\"query_count\":200,",
+            "\"request_sample_count\":200,",
+            "\"bucket_counts\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":200,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"samples_per_bucket\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":200,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"tune_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",",
+            "\"holdout_sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",",
+            "\"tune_bucket_counts\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":160,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"holdout_bucket_counts\":{\"single_term\":0,\"and_2\":0,\"and_3_5\":40,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
             "\"top_k\":10,",
             "\"build_ms\":1.0,",
             "\"query_total_ms\":2000.0,",
@@ -802,6 +1044,11 @@ fn resume_benchmark_gate_rejects_private_real_too_few_query_samples() {
             "\"p99\":180.0,",
             "\"max\":190.0",
             "},",
+            "\"query_latency_by_bucket\":{\"and_3_5\":{\"samples\":200,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0}},",
+            "\"stage_latency_ms\":{\"query_parse\":{\"samples\":200,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"prefilter\":{\"samples\":200,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bm25\":{\"samples\":200,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"ann\":{\"samples\":200,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"fusion\":{\"samples\":200,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bulk_hydrate\":{\"samples\":200,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"snippet\":{\"samples\":200,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0}},",
+            "\"stage_latency_by_bucket_ms\":{\"and_3_5\":{\"query_parse\":{\"samples\":200,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"prefilter\":{\"samples\":200,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bm25\":{\"samples\":200,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"ann\":{\"samples\":200,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"fusion\":{\"samples\":200,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"bulk_hydrate\":{\"samples\":200,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0},\"snippet\":{\"samples\":200,\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":150.0,\"p99\":180.0,\"max\":190.0}}},",
+            "\"rss_delta_mb\":{\"samples\":200,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0},",
+            "\"rss_delta_mb_by_bucket\":{\"and_3_5\":{\"samples\":200,\"min\":0.0,\"mean\":0.0,\"p50\":0.0,\"p95\":0.0,\"p99\":0.0,\"max\":0.0}},",
             "\"zero_result_queries\":0,",
             "\"total_hits\":2000,",
             "\"million_scale_verified\":false,",
@@ -809,7 +1056,9 @@ fn resume_benchmark_gate_rejects_private_real_too_few_query_samples() {
             "\"target_claim\":\"query_latency_target_met\",",
             "\"corpus_origin\":\"private_local\",",
             "\"privacy_boundary\":\"redacted_local_aggregate\",",
-            "\"query_protocol\":\"resume-ir-query-v1\",",
+            "\"query_protocol\":\"resume-ir-query-v2\",",
+            "\"query_runner\":\"resident-batch-command\",",
+            "\"spawn_per_query\":false,",
             "\"query_mode\":\"hybrid\",",
             "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
             "\"query_embedding_runtime\":\"local-command\",",
@@ -827,6 +1076,8 @@ fn resume_benchmark_gate_rejects_private_real_too_few_query_samples() {
             "\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\",",
             "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
             "}"
+            ),
+            200,
         ),
     )
     .unwrap();
@@ -2650,6 +2901,78 @@ fn resume_benchmark_vector_gate_rejects_private_business_impossible_top_k() {
     remove_dir(&report_dir);
 }
 
+fn private_real_gate_report_with_stage_histograms(report: &str, samples: usize) -> String {
+    let mut report: serde_json::Value =
+        serde_json::from_str(report).expect("private real fixture JSON should parse");
+    let object = report
+        .as_object_mut()
+        .expect("private real fixture should be a JSON object");
+    object
+        .entry("query_source".to_string())
+        .or_insert_with(|| serde_json::json!("trace_source_search_v1"));
+    object
+        .entry("private_scale_gate".to_string())
+        .or_insert(serde_json::Value::Null);
+    object.entry("tune_sha256".to_string()).or_insert_with(|| {
+        serde_json::json!("2222222222222222222222222222222222222222222222222222222222222222")
+    });
+    object
+        .entry("holdout_sha256".to_string())
+        .or_insert_with(|| {
+            serde_json::json!("3333333333333333333333333333333333333333333333333333333333333333")
+        });
+    object.insert(
+        "stage_histogram_ms".to_string(),
+        private_real_gate_stage_histogram(samples),
+    );
+    object.insert(
+        "stage_histogram_by_bucket_ms".to_string(),
+        serde_json::json!({
+            "and_3_5": private_real_gate_stage_histogram(samples),
+        }),
+    );
+    object.insert(
+        "warm_or_cold_definition".to_string(),
+        serde_json::json!("current_stage_single_resident_batch_no_extra_warmup"),
+    );
+    object.insert(
+        "cache_state".to_string(),
+        serde_json::json!("hot_index_fully_covered_resident_batch_os_cache_uncontrolled"),
+    );
+    report.to_string()
+}
+
+fn private_real_gate_stage_histogram(samples: usize) -> serde_json::Value {
+    let histogram = serde_json::json!({
+        "samples": samples,
+        "bins": [
+            {"le_ms": 1.0, "count": samples},
+            {"le_ms": 5.0, "count": samples},
+            {"le_ms": 10.0, "count": samples},
+            {"le_ms": 25.0, "count": samples},
+            {"le_ms": 50.0, "count": samples},
+            {"le_ms": 100.0, "count": samples},
+            {"le_ms": 250.0, "count": samples},
+            {"le_ms": 500.0, "count": samples},
+            {"le_ms": 1000.0, "count": samples},
+            {"le_ms": 2500.0, "count": samples},
+            {"le_ms": 5000.0, "count": samples},
+            {"le_ms": 10000.0, "count": samples},
+            {"le_ms": 60000.0, "count": samples},
+        ],
+        "overflow_count": 0,
+    });
+    serde_json::json!({
+        "query_parse": histogram.clone(),
+        "prefilter": histogram.clone(),
+        "bm25": histogram.clone(),
+        "ann": histogram.clone(),
+        "fusion": histogram.clone(),
+        "bulk_hydrate": histogram.clone(),
+        "snippet": histogram,
+    })
+}
+
 fn ocr_fixture_script(label: &str) -> PathBuf {
     let path = temp_dir(label).join(ocr_fixture_file_name());
     fs::write(&path, ocr_fixture_script_body()).unwrap();
@@ -2723,58 +3046,15 @@ fn embedding_fixture_script(label: &str) -> PathBuf {
     path
 }
 
-fn private_query_set_file(label: &str, query_count: usize) -> PathBuf {
-    let path = temp_dir(label).join("private-query-set.jsonl");
-    let mut lines = String::new();
-    for index in 0..query_count {
-        lines.push_str(&format!(
-            "{{\"sample_id\":\"private-query-sample-{index:06}\",\"query\":\"REDACTION_SENTINEL_PRIVATE_QUERY backend search {index}\"}}\n"
-        ));
-    }
-    fs::write(&path, lines).unwrap();
-    path
-}
-
 fn private_query_corpus_summary_file(
     label: &str,
     document_count: usize,
     hot_index: bool,
 ) -> PathBuf {
     let path = temp_dir(label).join("benchmark-corpus-summary.json");
-    let searchable_count = if hot_index {
-        document_count
-    } else {
-        document_count.saturating_sub(1)
-    };
-    let vector_count = if hot_index {
-        document_count
-    } else {
-        document_count.saturating_sub(2)
-    };
     fs::write(
         &path,
-        format!(
-            concat!(
-                "{{",
-                "\"schema_version\":\"benchmark-corpus-summary.v1\",",
-                "\"privacy_boundary\":\"redacted_local_aggregate\",",
-                "\"document_count\":{},",
-                "\"searchable_document_count\":{},",
-                "\"vector_indexed_document_count\":{},",
-                "\"active_vector_document_count\":{},",
-                "\"vector_count\":{},",
-                "\"vector_deleted_count\":0,",
-                "\"vector_index_state\":\"available\",",
-                "\"vector_search_backend\":\"hnsw_ann\",",
-                "\"hot_index_fully_covered\":{},",
-                "\"contains_raw_resume_text\":false,",
-                "\"contains_resume_paths\":false,",
-                "\"contains_queries\":false,",
-                "\"contains_sample_ids\":false",
-                "}}"
-            ),
-            document_count, searchable_count, vector_count, vector_count, vector_count, hot_index
-        ),
+        private_query_corpus_summary_json(document_count, hot_index),
     )
     .unwrap();
     path
@@ -2786,7 +3066,9 @@ fn assert_private_query_report_semantics(json: &str, expected_document_count: us
     assert_eq!(report["schema_version"], "benchmark.v1");
     assert_eq!(report["dataset_kind"], "private-real-corpus");
     assert_eq!(report["target_claim"], "benchmark_baseline_observed");
-    assert_eq!(report["query_protocol"], "resume-ir-query-v1");
+    assert_eq!(report["query_protocol"], "resume-ir-query-v2");
+    assert_eq!(report["query_runner"], "resident-batch-command");
+    assert_eq!(report["spawn_per_query"], false);
     assert_eq!(report["query_mode"], "hybrid");
     assert_eq!(report["retrieval_layers"], "fulltext+field+vector+rrf");
     assert_eq!(report["query_embedding_runtime"], "local-command");
@@ -2805,6 +3087,29 @@ fn assert_private_query_report_semantics(json: &str, expected_document_count: us
     assert!(searchable_count <= document_count);
     assert!(vector_count <= searchable_count);
     assert_eq!(report["query_count"], 500);
+    assert_eq!(report["request_sample_count"], 500);
+    assert_eq!(report["bucket_counts"]["and_3_5"], 500);
+    assert_eq!(report["bucket_counts"]["single_term"], 0);
+    assert_eq!(report["bucket_counts"]["field_filter"], 0);
+    assert_eq!(
+        report["query_set_sha256"],
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    );
+    assert_eq!(
+        report["tune_sha256"],
+        "2222222222222222222222222222222222222222222222222222222222222222"
+    );
+    assert_eq!(
+        report["holdout_sha256"],
+        "3333333333333333333333333333333333333333333333333333333333333333"
+    );
+    assert_eq!(report["tune_bucket_counts"]["and_3_5"], 400);
+    assert_eq!(report["tune_bucket_counts"]["single_term"], 0);
+    assert_eq!(report["holdout_bucket_counts"]["and_3_5"], 100);
+    assert_eq!(report["holdout_bucket_counts"]["single_term"], 0);
+    assert_eq!(report["samples_per_bucket"]["and_3_5"], 500);
+    assert_eq!(report["samples_per_bucket"]["single_term"], 0);
+    assert_eq!(report["samples_per_bucket"]["field_filter"], 0);
     assert_eq!(report["query_embedding_command_invocations"], 500);
     assert_eq!(report["hot_index"], true);
     assert_eq!(report["contains_raw_resume_text"], false);
@@ -2817,6 +3122,7 @@ fn assert_private_query_report_semantics(json: &str, expected_document_count: us
     assert!(report["corpus_summary_sha256"]
         .as_str()
         .is_some_and(|value| value.len() == 64));
+    assert_private_query_stage_latency(&report, 500);
 }
 
 fn private_business_field_quality_dataset() -> String {
@@ -2946,11 +3252,14 @@ fn pdf_render_fixture_script_body() -> &'static str {
 fn query_fixture_script_body() -> &'static str {
     concat!(
         "#!/bin/sh\n",
-        "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\" \"$RESUME_IR_QUERY_TOP_K\"\n",
-        "else\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=0\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
-        "fi\n",
+        "test -n \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 42\n",
+        "request_index=1\n",
+        "while IFS= read -r line; do\n",
+        "  request_id=\"private-query-request-$request_index\"\n",
+        "  case \"$line\" in *REDACTION_SENTINEL_PRIVATE_QUERY*) hits=\"$RESUME_IR_QUERY_TOP_K\" ;; *) hits=0 ;; esac\n",
+        "  printf 'resume-ir-query-v2\\nrequest_id=%s\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nstage_query_parse_ms=1.0\\nstage_prefilter_ms=2.0\\nstage_bm25_ms=3.0\\nstage_ann_ms=4.0\\nstage_fusion_ms=5.0\\nstage_bulk_hydrate_ms=6.0\\nstage_snippet_ms=7.0\\nrss_delta_mb=0.0\\nelapsed_ms=8.0\\nhits=%s\\nresume-ir-query-end\\n' \"$request_id\" \"$RESUME_IR_QUERY_TOP_K\" \"$hits\"\n",
+        "  request_index=$((request_index + 1))\n",
+        "done < \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\"\n",
     )
 }
 
@@ -2959,13 +3268,16 @@ fn query_fixture_script_requiring_args_body() -> &'static str {
     concat!(
         "#!/bin/sh\n",
         "if [ \"$1\" != \"resume-cli\" ] || [ \"$2\" != \"benchmark-query-protocol\" ]; then\n",
-        "  exit 7\n",
+          "  exit 7\n",
         "fi\n",
-        "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\" \"$RESUME_IR_QUERY_TOP_K\"\n",
-        "else\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=0\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
-        "fi\n",
+        "test -n \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 42\n",
+        "request_index=1\n",
+        "while IFS= read -r line; do\n",
+        "  request_id=\"private-query-request-$request_index\"\n",
+        "  case \"$line\" in *REDACTION_SENTINEL_PRIVATE_QUERY*) hits=\"$RESUME_IR_QUERY_TOP_K\" ;; *) hits=0 ;; esac\n",
+        "  printf 'resume-ir-query-v2\\nrequest_id=%s\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nstage_query_parse_ms=1.0\\nstage_prefilter_ms=2.0\\nstage_bm25_ms=3.0\\nstage_ann_ms=4.0\\nstage_fusion_ms=5.0\\nstage_bulk_hydrate_ms=6.0\\nstage_snippet_ms=7.0\\nrss_delta_mb=0.0\\nelapsed_ms=8.0\\nhits=%s\\nresume-ir-query-end\\n' \"$request_id\" \"$RESUME_IR_QUERY_TOP_K\" \"$hits\"\n",
+        "  request_index=$((request_index + 1))\n",
+        "done < \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\"\n",
     )
 }
 
@@ -3007,23 +3319,32 @@ fn pdf_render_fixture_script_body() -> &'static str {
 fn query_fixture_script_body() -> &'static str {
     concat!(
         "@echo off\r\n",
-        "findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" \"%RESUME_IR_QUERY_INPUT_PATH%\" >nul\r\n",
-        "if errorlevel 1 (\r\n",
-        "  echo resume-ir-query-v1\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "set /a request_index=1\r\n",
+        "for /f \"usebackq delims=\" %%L in (\"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\") do (\r\n",
+        "  set \"request_id=private-query-request-!request_index!\"\r\n",
+        "  echo %%L | findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" >nul\r\n",
+        "  if errorlevel 1 (set \"hits=0\") else (set \"hits=%RESUME_IR_QUERY_TOP_K%\")\r\n",
+        "  echo resume-ir-query-v2\r\n",
+        "  echo request_id=!request_id!\r\n",
         "  echo mode=hybrid\r\n",
         "  echo layers=fulltext+field+vector+rrf\r\n",
         "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
         "  echo query_embedding_runtime=local-command\r\n",
         "  echo query_embedding_invocations=1\r\n",
-        "  echo hits=0\r\n",
-        ") else (\r\n",
-        "  echo resume-ir-query-v1\r\n",
-        "  echo mode=hybrid\r\n",
-        "  echo layers=fulltext+field+vector+rrf\r\n",
-        "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
-        "  echo query_embedding_runtime=local-command\r\n",
-        "  echo query_embedding_invocations=1\r\n",
-        "  echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo stage_query_parse_ms=1.0\r\n",
+        "  echo stage_prefilter_ms=2.0\r\n",
+        "  echo stage_bm25_ms=3.0\r\n",
+        "  echo stage_ann_ms=4.0\r\n",
+        "  echo stage_fusion_ms=5.0\r\n",
+        "  echo stage_bulk_hydrate_ms=6.0\r\n",
+        "  echo stage_snippet_ms=7.0\r\n",
+        "  echo rss_delta_mb=0.0\r\n",
+        "  echo elapsed_ms=8.0\r\n",
+        "  echo hits=!hits!\r\n",
+        "  echo resume-ir-query-end\r\n",
+        "  set /a request_index+=1\r\n",
         ")\r\n",
         "exit /b 0\r\n",
     )
@@ -3183,25 +3504,34 @@ fn minimal_private_business_dedupe_quality_json() -> String {
 fn query_fixture_script_requiring_args_body() -> &'static str {
     concat!(
         "@echo off\r\n",
+        "setlocal enabledelayedexpansion\r\n",
         "if not \"%1\"==\"resume-cli\" exit /b 7\r\n",
         "if not \"%2\"==\"benchmark-query-protocol\" exit /b 7\r\n",
-        "findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" \"%RESUME_IR_QUERY_INPUT_PATH%\" >nul\r\n",
-        "if %ERRORLEVEL%==0 (\r\n",
-        "  echo resume-ir-query-v1\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "set /a request_index=1\r\n",
+        "for /f \"usebackq delims=\" %%L in (\"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\") do (\r\n",
+        "  set \"request_id=private-query-request-!request_index!\"\r\n",
+        "  echo %%L | findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" >nul\r\n",
+        "  if errorlevel 1 (set \"hits=0\") else (set \"hits=%RESUME_IR_QUERY_TOP_K%\")\r\n",
+        "  echo resume-ir-query-v2\r\n",
+        "  echo request_id=!request_id!\r\n",
         "  echo mode=hybrid\r\n",
         "  echo layers=fulltext+field+vector+rrf\r\n",
         "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
         "  echo query_embedding_runtime=local-command\r\n",
         "  echo query_embedding_invocations=1\r\n",
-        "  echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
-        ") else (\r\n",
-        "  echo resume-ir-query-v1\r\n",
-        "  echo mode=hybrid\r\n",
-        "  echo layers=fulltext+field+vector+rrf\r\n",
-        "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
-        "  echo query_embedding_runtime=local-command\r\n",
-        "  echo query_embedding_invocations=1\r\n",
-        "  echo hits=0\r\n",
+        "  echo stage_query_parse_ms=1.0\r\n",
+        "  echo stage_prefilter_ms=2.0\r\n",
+        "  echo stage_bm25_ms=3.0\r\n",
+        "  echo stage_ann_ms=4.0\r\n",
+        "  echo stage_fusion_ms=5.0\r\n",
+        "  echo stage_bulk_hydrate_ms=6.0\r\n",
+        "  echo stage_snippet_ms=7.0\r\n",
+        "  echo rss_delta_mb=0.0\r\n",
+        "  echo elapsed_ms=8.0\r\n",
+        "  echo hits=!hits!\r\n",
+        "  echo resume-ir-query-end\r\n",
+        "  set /a request_index+=1\r\n",
         ")\r\n",
         "exit /b 0\r\n",
     )

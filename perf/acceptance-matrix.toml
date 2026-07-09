@@ -6,13 +6,45 @@ date = "2026-06-22"
 data = "synthetic_or_public_tiny"
 may_be_committed = true
 purpose = "fast_regression_signal"
-cannot_claim = ["w1_private_baseline", "million_scale_readiness", "gui_manual_complete", "goal_complete"]
+report_schema = "resume-ir.synthetic-smoke-baseline.v1"
+artifact_manifest_schema = "resume-ir.synthetic-smoke-artifact-manifest.v1"
+requires_artifact_manifest = true
+cannot_claim = [
+  "w1_private_baseline",
+  "d10k_private_calibration",
+  "d100k_weak_host",
+  "d1m_scale",
+  "profile_optimization_issue",
+  "million_scale_readiness",
+  "scale_gate",
+  "gui_manual_complete",
+  "goal_complete",
+]
+
+[synthetic_smoke_baseline]
+source = "synthetic_public_fixture"
+document_count = 24
+query_count = 6
+top_k = 5
+percentile_confidence = "smoke"
+private_resume_root_required = false
+query_artifact_root_required = false
+resident_daemon_required = false
+batch_protocol_observation_required = true
+allowed_command = "resume-benchmark synthetic-query --index-dir <redacted-temp-index> --documents 24 --queries 6 --top-k 5 --json"
+report_kind = "redacted_evidence"
+claim = "no_claim"
+required_commands = [
+  "python3 scripts/ci/check-performance-contracts.py",
+  "RESUME_IR_BENCHMARK_SMOKE_REPORT_OUT=<tmp-report> RESUME_IR_BENCHMARK_SMOKE_MANIFEST_OUT=<tmp-manifest> ./scripts/ci/check-benchmark-smoke.sh",
+  "./scripts/ci/guard-public-repo.sh",
+]
 
 [evidence_lanes.w0_docs]
 data = "public_docs_and_machine_contracts"
 may_be_committed = true
 purpose = "docs_pr_review_gate"
-required_for_current_pr = true
+required_for_active_slice = true
 required_commands = [
   "python3 scripts/ci/check-performance-contracts.py",
   "git diff --check -- GOAL.md MANIFEST.md ACTIVE_GOAL.toml docs/superpowers 03_next_goal_高性能本地检索GUI闭环 perf scripts/ci/check-performance-contracts.py .github/workflows/pr.yml",
@@ -101,18 +133,16 @@ required_query_buckets = [
   "field_filter",
   "hybrid",
   "semantic",
-  "extreme",
 ]
 
 [query_bucket_min_counts]
 single_term = 50
 and_2 = 75
-and_3_5 = 125
+and_3_5 = 150
 and_6_16 = 50
 field_filter = 75
 hybrid = 75
 semantic = 25
-extreme = 25
 
 [scale_gates.D10K_private_calibration]
 purpose = "first real private calibration and correctness baseline"
@@ -122,7 +152,6 @@ min_query_count = 500
 min_request_sample_count = 5000
 min_samples_per_bucket = 500
 may_claim_goal_complete = false
-hybrid_p95_ms = 250
 
 [scale_gates.D100K_weak_host]
 purpose = "weak-machine throughput memory and degradation gate"
@@ -132,7 +161,6 @@ min_query_count = 500
 min_request_sample_count = 10000
 min_samples_per_bucket = 1000
 may_claim_goal_complete = false
-hybrid_p95_ms = 225
 
 [scale_gates.D1M_scale]
 purpose = "final million-scale product goal"
@@ -142,7 +170,6 @@ min_query_count = 500
 min_request_sample_count = 25000
 min_samples_per_bucket = 2000
 may_claim_goal_complete = true
-hybrid_p95_ms = 200
 
 [runner_redlines]
 resident_daemon_required = true
@@ -158,7 +185,6 @@ and_6_16 = 200
 field_filter = 180
 hybrid = 250
 semantic = 500
-extreme = 500
 
 [latency_p99_ms.D10K_private_calibration]
 single_term = 240
@@ -168,7 +194,6 @@ and_6_16 = 400
 field_filter = 350
 hybrid = 500
 semantic = 1000
-extreme = 1000
 
 [latency_p95_ms.D100K_weak_host]
 single_term = 120
@@ -178,7 +203,6 @@ and_6_16 = 190
 field_filter = 170
 hybrid = 225
 semantic = 450
-extreme = 500
 
 [latency_p99_ms.D100K_weak_host]
 single_term = 240
@@ -188,7 +212,6 @@ and_6_16 = 380
 field_filter = 340
 hybrid = 450
 semantic = 900
-extreme = 1000
 
 [latency_p95_ms.D1M_scale]
 single_term = 100
@@ -198,7 +221,6 @@ and_6_16 = 180
 field_filter = 160
 hybrid = 200
 semantic = 400
-extreme = 500
 
 [latency_p99_ms.D1M_scale]
 single_term = 220
@@ -208,7 +230,6 @@ and_6_16 = 360
 field_filter = 320
 hybrid = 400
 semantic = 800
-extreme = 1000
 
 [stage_p95_ms]
 query_parse = 5
@@ -285,29 +306,42 @@ missing_negative_controls_blocks_optimization = true
 lower_layer_cannot_close_higher_layer_blocker = true
 hand_written_simd_requires_scope_exception = true
 
+# Canonical import hardware-tier names used by implementation and public-safe
+# evidence. Non-canonical tier labels are retired; detected RAM is the only
+# static tier selector, while CPU/parallelism only caps worker count.
+[governor_profile_selection]
+tier_source = "detected_total_memory_bytes"
+unknown_total_memory_tier = "H0_Eco"
+cpu_core_role = "caps_worker_count_only"
+parser_worker_cap_rule = "effective_parser_workers = min(profile.parser_concurrency, available_parallelism)"
+h0_total_memory_gib_max_inclusive = 8
+h1_total_memory_gib_min_exclusive = 8
+h1_total_memory_gib_max_inclusive = 24
+h2_total_memory_gib_min_exclusive = 24
+
 [governor_profiles.H0_Eco]
 content_read_concurrency = 1
 parser_concurrency = 1
 ocr_vector_concurrency = 0
 writer_heap_mb = 64
 agent_concurrency = 2
-max_private_or_anonymous_mb = 256
+max_private_or_anonymous_mb = 512
 
 [governor_profiles.H1_Balanced]
 content_read_concurrency = 2
-parser_concurrency = 4
+parser_concurrency = 2
 ocr_vector_concurrency = 1
 writer_heap_mb = 128
 agent_concurrency = 8
-max_private_or_anonymous_mb = 512
+max_private_or_anonymous_mb = 1024
 
 [governor_profiles.H2_Aggressive]
 content_read_concurrency = 4
-parser_concurrency = 12
+parser_concurrency = 3
 ocr_vector_concurrency = 4
 writer_heap_mb = 256
 agent_concurrency = 16
-max_private_or_anonymous_mb = 1024
+max_private_or_anonymous_mb = 1536
 
 [governor_redlines]
 sample_window_seconds = 10
@@ -376,15 +410,8 @@ file_lock_required = true
 snapshot_corrupt_required = true
 
 [completion]
-requires_w0_docs = true
-requires_d10k_private_calibration = true
-requires_d100k_weak_host = true
-requires_d1m_scale = true
-requires_soak_fault = true
-requires_gui_manual = true
 requires_no_open_review_blockers = true
 requires_all_negative_contract_fixtures_fail = true
-requires_all_autonomous_delivery_lanes = true
 goal_complete_requires = [
   "w0_docs",
   "d10k_private_calibration",

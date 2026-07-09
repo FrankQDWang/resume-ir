@@ -23,6 +23,22 @@ fn exposes_index_fulltext_crate_identity() {
 }
 
 #[test]
+fn schema_omits_redundant_all_sections_body_field() {
+    let index_dir = temp_dir("schema-no-all-sections");
+    let _index = FullTextIndex::open_or_create(&index_dir).unwrap();
+    let schema = Index::open_in_dir(&index_dir).unwrap().schema();
+
+    for field in ["all_sections", "section_type", "section_text"] {
+        assert!(
+            schema.get_field(field).is_err(),
+            "fulltext snapshots should not duplicate the resume body into {field}"
+        );
+    }
+
+    remove_dir(&index_dir);
+}
+
+#[test]
 fn committed_documents_are_searchable_after_reader_reload() {
     let index_dir = temp_dir("commit-searchable");
     let index = FullTextIndex::open_or_create(&index_dir).unwrap();
@@ -698,8 +714,6 @@ fn stored_text_dump(index_dir: &Path) -> String {
     let fields = [
         schema.get_field("file_name").unwrap(),
         schema.get_field("clean_text").unwrap(),
-        schema.get_field("all_sections").unwrap(),
-        schema.get_field("section_text").unwrap(),
     ];
 
     let mut values = Vec::new();

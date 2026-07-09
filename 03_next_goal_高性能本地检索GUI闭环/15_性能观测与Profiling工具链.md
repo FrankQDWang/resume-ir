@@ -196,6 +196,21 @@ Methodology hard rules:
 6. 记录可证伪 hypothesis：预期改善的 stage、预期幅度、正确性风险和 rollback trigger。
 7. 按 hotspot 优先级选择单个优化切片。
 
+Synthetic smoke baseline 是第 2 步的公开 harness baseline。它必须输出
+`resume-ir.synthetic-smoke-baseline.v1` redacted report 和
+`resume-ir.synthetic-smoke-artifact-manifest.v1` manifest，并记录 query/OCR/vector
+和 private-query runner 四个 component artifact 的 hash、size、schema_version 和
+`target_claim = not_evaluated`。它还必须在 synthetic fixture 上实际观察 product
+batch query protocol 和 stage timing 字段，并把 redacted `batch_protocol_stage`
+timing 写入 smoke report。公开 smoke report 的 `harness_observations`
+还必须记录 private-query runner 观察到的 `resume-ir-query-v2`、
+`request_sample_count` 和 query embedding invocation count，证明 smoke
+实际经过 batch runner 形状。公开 smoke report 还必须把 product query protocol
+的 `rss_delta_mb` 和 private-query runner 的 redacted `rss_delta_mb` summary
+写入 `resource_observations`，作为后续 D10K private baseline 的资源观测对齐点。
+它不捕获 profiler，不打开 profile optimization issue，
+不声明 resident daemon、D10K、W1、scale gate 或 goal completion。
+
 ## 5. Completion Redlines
 
 任何性能切片满足以下任一条件时不得标为 complete：

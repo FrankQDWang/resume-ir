@@ -69,6 +69,73 @@ fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
     assert!(import_stdout.contains("files discovered: 3"));
     assert!(import_stdout.contains("searchable documents: 2"));
     assert!(import_stdout.contains("ocr required documents: 1"));
+    assert!(import_stdout.contains("content bytes read: "));
+    for throughput in ["docs per second:", "MiB per second:", "scan complete ms:"] {
+        assert!(
+            import_stdout.contains(throughput),
+            "missing import throughput evidence {throughput}: {import_stdout}"
+        );
+    }
+    for milestone in [
+        "first searchable ms:",
+        "ttf100 searchable ms:",
+        "ttf1000 searchable ms:",
+        "full import ready ms:",
+        "full index ready ms:",
+    ] {
+        assert!(
+            import_stdout.contains(milestone),
+            "missing import milestone timing {milestone}: {import_stdout}"
+        );
+    }
+    for stage in ["scan", "parse", "db", "index", "ocr", "embedding"] {
+        assert!(
+            import_stdout.contains(&format!("stage {stage} ms:")),
+            "missing import stage timing for {stage}: {import_stdout}"
+        );
+    }
+    for worker_evidence in [
+        "import hardware tier:",
+        "import private/anonymous budget MiB:",
+        "parse worker count:",
+        "parse jobs queued:",
+        "parse prepare ms:",
+        "parse worker wall ms:",
+        "parse worker active ms:",
+        "parse queue full events:",
+        "parse queue wait ms:",
+        "parse result wait ms:",
+        "cancel check count:",
+        "cancel check max gap ms:",
+        "cancel check max gap phase:",
+        "index publication setup ms:",
+        "index publication documents ms:",
+        "index publication commit ms:",
+        "index publication plaintext validation ms:",
+        "index publication encrypted publication ms:",
+        "index publication encrypted validation ms:",
+        "index publication active snapshot ms:",
+        "pdf parse document load ms:",
+        "pdf parse page content fetch ms:",
+        "pdf parse text operator prefilter ms:",
+        "pdf parse font encoding ms:",
+        "pdf parse content decode ms:",
+        "pdf parse content string parse sampled ms:",
+        "pdf parse text collection ms:",
+        "pdf parse text byte decode sampled ms:",
+        "pdf parse text accumulation sampled ms:",
+        "pdf parse content string operands:",
+        "pdf parse content string bytes:",
+        "pdf parse text decode runs:",
+        "pdf parse text decode input bytes:",
+        "import post-parser normalization ms:",
+        "import post-parser sectionization ms:",
+    ] {
+        assert!(
+            import_stdout.contains(worker_evidence),
+            "missing import worker evidence {worker_evidence}: {import_stdout}"
+        );
+    }
     assert!(!import_stdout.contains(path_str(&fixture_root)));
     assert!(!import_stdout.contains(path_str(&canonical_fixture_root)));
 

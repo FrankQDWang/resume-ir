@@ -2,11 +2,13 @@ use std::any::TypeId;
 use std::str::FromStr;
 
 use core_domain::{
-    Candidate, CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
-    EntityMentionId, EntityType, ErrorKind, FileExtension, IdParseError, RedactionLevel,
-    ResumeIrError, ResumeVersion, ResumeVersionId, ResumeVisibility, Section, SectionId,
-    SectionType, SourceComponent, UnixTimestamp, VectorQuantization, VectorRecord, VectorRecordId,
-    VectorScope,
+    normalize_query_set_query, query_set_query_in_semantic_bounds, Candidate, CandidateId,
+    ContactHash, Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId, EntityType,
+    ErrorKind, FileExtension, IdParseError, QuerySetSampleShape, QuerySetSampleShapeMetadata,
+    QuerySetSourceKind, RedactionLevel, ResumeIrError, ResumeVersion, ResumeVersionId,
+    ResumeVisibility, Section, SectionId, SectionType, SourceComponent, UnixTimestamp,
+    VectorQuantization, VectorRecord, VectorRecordId, VectorScope, QUERY_SET_MAX_QUERY_BYTES,
+    QUERY_SET_MAX_TERMS,
 };
 
 #[test]
@@ -66,6 +68,101 @@ fn contact_hash_only_hydrates_external_keyed_digests() {
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdez"
     )
     .is_err());
+}
+
+#[test]
+fn query_set_sample_shape_is_the_shared_freeze_and_runner_bucket_semantics() {
+    let field_filter = QuerySetSampleShape::from_query("rust backend shanghai");
+    assert_eq!(field_filter.term_count(), 3);
+    assert_eq!(field_filter.bucket(), "field_filter");
+    assert!(field_filter.has_location());
+    assert!(field_filter.has_skill());
+    assert!(!field_filter.has_boolean());
+
+    let hybrid = QuerySetSampleShape::from_query("rust AND backend");
+    assert_eq!(hybrid.bucket(), "hybrid");
+    assert!(hybrid.has_boolean());
+
+    let semantic = QuerySetSampleShape::from_query("\"distributed systems\"");
+    assert_eq!(semantic.term_count(), 1);
+    assert_eq!(semantic.bucket(), "semantic");
+    assert!(semantic.has_phrase());
+
+    assert_eq!(
+        QuerySetSampleShape::from_query("rust backend").bucket(),
+        "and_2"
+    );
+    assert_eq!(
+        QuerySetSampleShape::from_query("rust backend search ranking index systems storage")
+            .bucket(),
+        "and_6_16"
+    );
+
+    let declared = QuerySetSampleShape::from_metadata(QuerySetSampleShapeMetadata {
+        term_count: 3,
+        has_boolean: false,
+        has_location: true,
+        has_years: false,
+        has_degree: false,
+        has_skill: true,
+        has_phrase: false,
+    });
+    assert_eq!(declared, field_filter);
+}
+
+#[test]
+fn query_set_query_semantics_are_shared_execution_caps() {
+    let max_term_query = (1..=QUERY_SET_MAX_TERMS)
+        .map(|index| format!("term{index}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(query_set_query_in_semantic_bounds(&max_term_query));
+
+    let too_many_terms = format!("{max_term_query} overflow");
+    assert!(!query_set_query_in_semantic_bounds(&too_many_terms));
+    assert!(!query_set_query_in_semantic_bounds(""));
+
+    let max_bytes = "a".repeat(QUERY_SET_MAX_QUERY_BYTES);
+    assert!(query_set_query_in_semantic_bounds(&max_bytes));
+
+    let too_many_bytes = "a".repeat(QUERY_SET_MAX_QUERY_BYTES + 1);
+    assert!(!query_set_query_in_semantic_bounds(&too_many_bytes));
+}
+
+#[test]
+fn query_set_query_normalization_dedupes_normalized_logical_terms() {
+    assert_eq!(
+        normalize_query_set_query("  ｒｕｓｔ   backend   rust backend  ").as_deref(),
+        Some("rust backend")
+    );
+    assert_eq!(
+        normalize_query_set_query("“distributed   systems” \"distributed systems\"").as_deref(),
+        Some("\"distributed systems\"")
+    );
+    assert_eq!(normalize_query_set_query("").as_deref(), None);
+
+    let too_many_terms = (0..=QUERY_SET_MAX_TERMS)
+        .map(|index| format!("term{index}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert_eq!(normalize_query_set_query(&too_many_terms).as_deref(), None);
+}
+
+#[test]
+fn query_set_source_kind_is_shared_agent_replay_boundary() {
+    assert_eq!(
+        QuerySetSourceKind::from_str("trace_source_search_v1").unwrap(),
+        QuerySetSourceKind::TraceSourceSearchV1
+    );
+    assert!(QuerySetSourceKind::TraceSourceSearchV1.is_agent_query_replay());
+    assert_eq!(
+        QuerySetSourceKind::TraceSourceSearchV1.as_str(),
+        "trace_source_search_v1"
+    );
+
+    assert!(QuerySetSourceKind::from_str("local_field").is_err());
+    assert!(QuerySetSourceKind::from_str("local_field_or_keyword_fallback").is_err());
+    assert!(QuerySetSourceKind::from_str("query_history").is_err());
 }
 
 #[test]

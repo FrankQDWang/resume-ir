@@ -221,7 +221,7 @@ source_root = $RESUME_IR_QUERY_ARTIFACT_ROOT
 source_glob = **/runtime/trace.log
 event_filter = tool_called
 tool_filter = source_search
-query_source = source_search invocation argument only
+query_source = source_search keyword query segment only
 query_extraction_version = trace_source_search_v1
 ```
 
@@ -239,12 +239,12 @@ file path
 URL
 provider payload
 token
-raw log line outside the source_search invocation
+raw log line outside the source_search keyword query segment
 debug blob
 screenshot OCR
 ```
 
-Query set 必须先从真实 `source_search` 调用中抽取候选，再筛选一组在 D10K 私有库上可用于稳定比较的固定集合。少量 zero-result query 可以保留为单独 bucket；benchmark 不能被大量搜不到人的 query 主导。冻结后以 `query_set_sha256` 锁定。修改 extraction/redaction 规则必须生成新的 `query_set_sha256`，旧结果不得直接做 before/after 对比。
+Query set 必须先从真实 `source_search` 调用中抽取候选，再筛选一组在 D10K 私有库上可用于稳定比较的固定集合。冻结时必须用当前本地 searchable corpus 校验候选并丢弃 zero-hit query；baseline gate 对冻结后的 benchmark 执行 `--max-zero-result-queries 0`。冻结后以 `query_set_sha256` 锁定。修改 extraction/redaction 规则必须生成新的 `query_set_sha256`，旧结果不得直接做 before/after 对比。
 ````
 
 - [ ] **Step 2: Update privacy boundary**
@@ -668,9 +668,9 @@ Add at least these fixtures:
 ```text
 perf/fixtures/valid/autonomous-loop-slice-complete.json
 perf/fixtures/valid/agent-query-replay-report.json
-perf/fixtures/invalid/agent-query-replay-without-query-set-hash.json
-perf/fixtures/invalid/goal-complete-with-unmerged-evidence.json
-perf/fixtures/invalid/performance-implementation-without-hypothesis.json
+perf/fixtures/invalid/agent-query-replay-without-query-set-sha256.json
+perf/fixtures/invalid/loop-goal-complete-with-unmerged-evidence.json
+perf/fixtures/invalid/loop-performance-implementation-without-hypothesis.json
 ```
 
 Each invalid fixture must fail `scripts/ci/check-performance-contracts.py` after Task 6. Each valid fixture must pass.

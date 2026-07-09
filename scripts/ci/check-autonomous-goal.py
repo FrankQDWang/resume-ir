@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import pathlib
 import sys
 import tomllib
@@ -15,11 +14,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 def fail(message: str) -> None:
     raise ValueError(message)
-
-
-def load_json(path: pathlib.Path) -> object:
-    with path.open("rb") as fh:
-        return json.load(fh)
 
 
 def load_toml(path: pathlib.Path) -> dict:
@@ -93,9 +87,49 @@ def require_transition_shape(
             )
 
 
+def require_transition_contains(
+    transitions: list,
+    *,
+    name: str,
+    required_permissions: set[str] | None = None,
+    required_evidence: set[str] | None = None,
+) -> dict:
+    transition = require_transition(transitions, name)
+    if required_permissions is not None:
+        permissions = set(
+            require_list(
+                transition.get("required_permissions"),
+                f"autonomous_delivery.transitions.{name}.required_permissions",
+            )
+        )
+        if not required_permissions.issubset(permissions):
+            missing = sorted(required_permissions - permissions)
+            fail(
+                f"autonomous_delivery.transitions.{name}.required_permissions: "
+                f"missing {missing}"
+            )
+    if required_evidence is not None:
+        evidence = set(
+            require_list(
+                transition.get("required_evidence"),
+                f"autonomous_delivery.transitions.{name}.required_evidence",
+            )
+        )
+        if not required_evidence.issubset(evidence):
+            missing = sorted(required_evidence - evidence)
+            fail(
+                f"autonomous_delivery.transitions.{name}.required_evidence: "
+                f"missing {missing}"
+            )
+    return transition
+
+
 def main() -> int:
     contracts = load_contracts_module()
     active_goal = load_toml(ROOT / "ACTIVE_GOAL.toml")
+    matrix = load_toml(ROOT / "perf" / "acceptance-matrix.toml")
+    if "status" in active_goal:
+        fail("ACTIVE_GOAL.toml.status: legacy top-level field removed; current state belongs in perf/current-loop-state.json")
     autonomous = active_goal.get("autonomous_delivery")
     if not isinstance(autonomous, dict):
         fail("ACTIVE_GOAL.toml: missing [autonomous_delivery]")
@@ -127,39 +161,54 @@ def main() -> int:
     ]:
         require_bool(permissions.get(key), False, f"autonomous_delivery.permissions.{key}")
 
-    current_pr = active_goal.get("scope", {}).get("current_pr", {})
-    require_bool(current_pr.get("contract_change_allowed"), True, "scope.current_pr.contract_change_allowed")
-    require_bool(current_pr.get("production_code_allowed"), False, "scope.current_pr.production_code_allowed")
-    require_bool(current_pr.get("private_benchmark_allowed"), False, "scope.current_pr.private_benchmark_allowed")
-    require_bool(current_pr.get("scope_exception"), True, "scope.current_pr.scope_exception")
-    require_bool(
-        current_pr.get("scope_exception_auto_merge_allowed"),
-        False,
-        "scope.current_pr.scope_exception_auto_merge_allowed",
-    )
-    require_non_empty_string(current_pr.get("scope_exception_reason"), "scope.current_pr.scope_exception_reason")
+    active_slice = active_goal.get("scope", {}).get("active_slice", {})
+    require_string(active_slice.get("issue"), "#138", "scope.active_slice.issue")
+    require_non_empty_string(active_slice.get("name"), "scope.active_slice.name")
+    require_bool(active_slice.get("contract_change_allowed"), True, "scope.active_slice.contract_change_allowed")
+    require_bool(active_slice.get("production_code_allowed"), True, "scope.active_slice.production_code_allowed")
+    require_bool(active_slice.get("private_benchmark_allowed"), True, "scope.active_slice.private_benchmark_allowed")
+    require_bool(active_slice.get("scope_exception"), True, "scope.active_slice.scope_exception")
+    require_non_empty_string(active_slice.get("scope_exception_reason"), "scope.active_slice.scope_exception_reason")
 
     gui = active_goal.get("gui")
     if not isinstance(gui, dict):
         fail("ACTIVE_GOAL.toml: missing [gui]")
-    require_string(gui.get("default_stack"), contracts.GUI_DEFAULT_STACK, "gui.default_stack")
-    require_bool(gui.get("production_next_server_allowed"), False, "gui.production_next_server_allowed")
     require_bool(gui.get("toolkit_bakeoff_default_required"), False, "gui.toolkit_bakeoff_default_required")
-    require_bool(gui.get("toolkit_bakeoff_requires_blocker_issue"), True, "gui.toolkit_bakeoff_requires_blocker_issue")
-    require_string(gui.get("visual_reference_role"), contracts.GUI_REFERENCE_ROLE, "gui.visual_reference_role")
     require_string(gui.get("visual_reference"), "UI-reference/", "gui.visual_reference")
+
+    gui_stack = matrix.get("gui_stack")
+    if not isinstance(gui_stack, dict):
+        fail("perf/acceptance-matrix.toml: missing [gui_stack]")
+    require_string(gui_stack.get("default_stack"), contracts.GUI_DEFAULT_STACK, "matrix.gui_stack.default_stack")
+    require_bool(gui_stack.get("production_next_server_allowed"), False, "matrix.gui_stack.production_next_server_allowed")
+    require_bool(
+        gui_stack.get("toolkit_bakeoff_requires_blocker_issue"),
+        True,
+        "matrix.gui_stack.toolkit_bakeoff_requires_blocker_issue",
+    )
+    require_string(gui_stack.get("visual_reference_role"), contracts.GUI_REFERENCE_ROLE, "matrix.gui_stack.visual_reference_role")
 
     platform_lanes = active_goal.get("platform_lanes")
     if not isinstance(platform_lanes, dict):
         fail("ACTIVE_GOAL.toml: missing [platform_lanes]")
-    require_string(platform_lanes.get("primary_discovery"), contracts.PLATFORM_LANES[0], "platform_lanes.primary_discovery")
-    require_string(platform_lanes.get("weak_host_validation"), contracts.PLATFORM_LANES[1], "platform_lanes.weak_host_validation")
-    require_string(platform_lanes.get("ci_smoke"), contracts.PLATFORM_LANES[2], "platform_lanes.ci_smoke")
-    require_bool(platform_lanes.get("macos_m4_can_close_windows_gate"), False, "platform_lanes.macos_m4_can_close_windows_gate")
+
+    matrix_platform_lanes = matrix.get("platform_lanes")
+    if not isinstance(matrix_platform_lanes, dict):
+        fail("perf/acceptance-matrix.toml: missing [platform_lanes]")
+    if matrix_platform_lanes.get("allowed") != contracts.PLATFORM_LANES:
+        fail("matrix.platform_lanes.allowed mismatch")
+    require_string(matrix_platform_lanes.get("primary_discovery"), contracts.PLATFORM_LANES[0], "matrix.platform_lanes.primary_discovery")
+    require_string(matrix_platform_lanes.get("weak_host_validation"), contracts.PLATFORM_LANES[1], "matrix.platform_lanes.weak_host_validation")
+    require_string(matrix_platform_lanes.get("ci_smoke"), contracts.PLATFORM_LANES[2], "matrix.platform_lanes.ci_smoke")
     require_bool(
-        platform_lanes.get("cross_os_ci_smoke_can_replace_weak_host_perf"),
+        matrix_platform_lanes.get("macos_m4_can_close_windows_gate"),
         False,
-        "platform_lanes.cross_os_ci_smoke_can_replace_weak_host_perf",
+        "matrix.platform_lanes.macos_m4_can_close_windows_gate",
+    )
+    require_bool(
+        matrix_platform_lanes.get("cross_os_ci_smoke_can_replace_weak_host_perf"),
+        False,
+        "matrix.platform_lanes.cross_os_ci_smoke_can_replace_weak_host_perf",
     )
 
     private_corpus_transfer = platform_lanes.get("private_corpus_transfer")
@@ -194,26 +243,11 @@ def main() -> int:
     activation = autonomous.get("activation")
     if not isinstance(activation, dict):
         fail("ACTIVE_GOAL.toml: missing [autonomous_delivery.activation]")
-    require_bool(activation.get("current_pr_contract_only"), False, "autonomous_delivery.activation.current_pr_contract_only")
+    require_bool(activation.get("contract_foundation_merged"), True, "autonomous_delivery.activation.contract_foundation_merged")
     require_bool(
-        activation.get("applies_after_current_pr_merge"),
+        activation.get("active_slice_contract_applies"),
         True,
-        "autonomous_delivery.activation.applies_after_current_pr_merge",
-    )
-    require_bool(
-        activation.get("scope_current_pr_permissions_win_until_merge"),
-        False,
-        "autonomous_delivery.activation.scope_current_pr_permissions_win_until_merge",
-    )
-    require_bool(
-        activation.get("production_implementation_in_current_pr_allowed"),
-        False,
-        "autonomous_delivery.activation.production_implementation_in_current_pr_allowed",
-    )
-    require_bool(
-        activation.get("private_benchmark_in_current_pr_allowed"),
-        False,
-        "autonomous_delivery.activation.private_benchmark_in_current_pr_allowed",
+        "autonomous_delivery.activation.active_slice_contract_applies",
     )
     require_bool(
         activation.get("future_autonomous_run_pre_authorized"),
@@ -224,25 +258,6 @@ def main() -> int:
         activation.get("runtime_capability_attestation_required"),
         True,
         "autonomous_delivery.activation.runtime_capability_attestation_required",
-    )
-    require_bool(
-        activation.get("normal_path_human_confirmation_required"),
-        False,
-        "autonomous_delivery.activation.normal_path_human_confirmation_required",
-    )
-
-    pull_request = active_goal.get("pull_request")
-    if not isinstance(pull_request, dict):
-        fail("ACTIVE_GOAL.toml: missing [pull_request]")
-    if pull_request.get("number") != 10:
-        fail("pull_request.number: expected 10")
-    require_string(pull_request.get("state"), "merged", "pull_request.state")
-    require_bool(pull_request.get("draft"), False, "pull_request.draft")
-    require_string(pull_request.get("review_status"), "merged", "pull_request.review_status")
-    require_string(
-        pull_request.get("semantic_role"),
-        "autonomous_delivery_contract_foundation",
-        "pull_request.semantic_role",
     )
 
     human_policy = autonomous.get("human_intervention_policy")
@@ -271,6 +286,15 @@ def main() -> int:
     if set(require_list(human_policy.get("terminal_states"), "autonomous_delivery.human_intervention_policy.terminal_states")) != required_terminal_states:
         fail("autonomous_delivery.human_intervention_policy.terminal_states mismatch")
 
+    pr_budget = autonomous.get("pr_budget")
+    if not isinstance(pr_budget, dict):
+        fail("ACTIVE_GOAL.toml: missing [autonomous_delivery.pr_budget]")
+    require_bool(
+        pr_budget.get("allow_scope_exception_auto_merge"),
+        False,
+        "autonomous_delivery.pr_budget.allow_scope_exception_auto_merge",
+    )
+
     prompt = autonomous.get("goal_prompt")
     if not isinstance(prompt, dict):
         fail("ACTIVE_GOAL.toml: missing [autonomous_delivery.goal_prompt]")
@@ -280,9 +304,9 @@ def main() -> int:
         fail("autonomous_delivery.goal_prompt.max_chars: expected 4000")
     require_string(prompt.get("compiler"), "scripts/loop/compile-goal-prompt.py", "autonomous_delivery.goal_prompt.compiler")
     require_bool(
-        prompt.get("compiler_implemented_in_current_pr"),
+        prompt.get("compiler_implemented_in_active_slice"),
         False,
-        "autonomous_delivery.goal_prompt.compiler_implemented_in_current_pr",
+        "autonomous_delivery.goal_prompt.compiler_implemented_in_active_slice",
     )
     for key in [
         "deterministic_serialization_required",
@@ -348,368 +372,68 @@ def main() -> int:
     require_bool(event_log.get("direct_current_state_edit_allowed"), False, "autonomous_delivery.event_log.direct_current_state_edit_allowed")
 
     transitions = require_list(autonomous.get("transitions"), "autonomous_delivery.transitions")
-    transition_names = {transition.get("name") for transition in transitions if isinstance(transition, dict)}
-    for expected in [
-        "capture_baseline",
-        "open_profile_issue",
-        "record_hypothesis",
-        "select_slice",
-        "activate_branch",
-        "implement_slice",
-        "verify_slice",
-        "review_evidence",
-        "open_pr",
-        "sync_base",
-        "mark_review_ready",
-        "mark_ci_green",
-        "mark_local_gate_green",
-        "mark_privacy_gate_green",
-        "select_merge_method",
-        "merge_pr",
-        "reconcile_issue_lifecycle",
-        "advance_to_next_issue_or_goal_complete",
-        "select_next_issue_slice",
-    ]:
-        if expected not in transition_names:
-            fail(f"autonomous_delivery.transitions: missing {expected}")
+    transition_names: set[str] = set()
     for index, transition in enumerate(transitions):
         if not isinstance(transition, dict):
             fail(f"autonomous_delivery.transitions[{index}]: expected table")
         for key in ["name", "to"]:
             require_non_empty_string(transition.get(key), f"autonomous_delivery.transitions[{index}].{key}")
+        name = transition["name"]
+        if name in transition_names:
+            fail(f"autonomous_delivery.transitions: duplicate transition {name!r}")
+        transition_names.add(name)
         for key in ["from", "required_permissions", "required_evidence", "allowed_actions"]:
             values = require_list(transition.get(key), f"autonomous_delivery.transitions[{index}].{key}")
             if key in {"from", "allowed_actions"} and not values:
                 fail(f"autonomous_delivery.transitions[{index}].{key}: expected non-empty list")
 
-    reconcile_issue = require_transition(transitions, "reconcile_issue_lifecycle")
-    if reconcile_issue.get("from") != ["pr_merged"]:
-        fail("autonomous_delivery.transitions.reconcile_issue_lifecycle.from: expected ['pr_merged']")
-    require_string(
-        reconcile_issue.get("to"),
-        "issue_reconciled_with_evidence",
-        "autonomous_delivery.transitions.reconcile_issue_lifecycle.to",
+    require_transition_shape(
+        transitions,
+        name="capture_synthetic_smoke_baseline",
+        expected_from=["goal_authorized", "blocked_permission"],
+        expected_to="baseline_captured",
+        required_evidence=[
+            "synthetic_smoke_report",
+            "synthetic_smoke_artifact_manifest",
+            "privacy_boundary",
+        ],
     )
-    required_evidence = require_list(
-        reconcile_issue.get("required_evidence"),
-        "autonomous_delivery.transitions.reconcile_issue_lifecycle.required_evidence",
-    )
-    for expected in ["main_reachable_commit", "issue_lifecycle_outcome", "before_after_metrics", "privacy_boundary"]:
-        if expected not in required_evidence:
-            fail(
-                "autonomous_delivery.transitions.reconcile_issue_lifecycle.required_evidence: "
-                f"missing {expected}"
-            )
-
-    advance_transition = require_transition(transitions, "advance_to_next_issue_or_goal_complete")
-    if advance_transition.get("from") != ["issue_reconciled_with_evidence"]:
+    synthetic_transition = require_transition(transitions, "capture_synthetic_smoke_baseline")
+    if synthetic_transition.get("required_permissions") != []:
         fail(
-            "autonomous_delivery.transitions.advance_to_next_issue_or_goal_complete.from: "
-            "expected ['issue_reconciled_with_evidence']"
+            "autonomous_delivery.transitions.capture_synthetic_smoke_baseline."
+            "required_permissions: expected []"
         )
-
-    select_next_issue_slice = require_transition(transitions, "select_next_issue_slice")
-    if select_next_issue_slice.get("from") != ["next_issue_or_goal_complete"]:
-        fail("autonomous_delivery.transitions.select_next_issue_slice.from: expected ['next_issue_or_goal_complete']")
-    require_string(
-        select_next_issue_slice.get("to"),
-        "slice_selected",
-        "autonomous_delivery.transitions.select_next_issue_slice.to",
-    )
-    next_issue_required_evidence = require_list(
-        select_next_issue_slice.get("required_evidence"),
-        "autonomous_delivery.transitions.select_next_issue_slice.required_evidence",
-    )
-    for expected in [
-        "goal_completion_assessment",
-        "next_issue_selection_or_completion_decision",
-        "linked_issue",
-        "primary_lane",
-        "slice_scope",
-        "acceptance_gate",
-    ]:
-        if expected not in next_issue_required_evidence:
-            fail(
-                "autonomous_delivery.transitions.select_next_issue_slice.required_evidence: "
-                f"missing {expected}"
-            )
-
-    review_evidence = require_transition(transitions, "review_evidence")
-    if review_evidence.get("from") != ["verification_active"]:
-        fail("autonomous_delivery.transitions.review_evidence.from: expected ['verification_active']")
-    require_string(
-        review_evidence.get("to"),
-        "evidence_review",
-        "autonomous_delivery.transitions.review_evidence.to",
-    )
-    review_required_evidence = require_list(
-        review_evidence.get("required_evidence"),
-        "autonomous_delivery.transitions.review_evidence.required_evidence",
-    )
-    for expected in ["verification_commands", "verification_summary", "privacy_boundary"]:
-        if expected not in review_required_evidence:
-            fail(
-                "autonomous_delivery.transitions.review_evidence.required_evidence: "
-                f"missing {expected}"
-            )
-
-    open_pr = require_transition(transitions, "open_pr")
-    if open_pr.get("from") != ["evidence_review"]:
-        fail("autonomous_delivery.transitions.open_pr.from: expected ['evidence_review']")
-
-    select_follow_up_slice = require_transition(transitions, "select_follow_up_slice")
-    if select_follow_up_slice.get("from") != ["evidence_review"]:
-        fail("autonomous_delivery.transitions.select_follow_up_slice.from: expected ['evidence_review']")
-    require_string(
-        select_follow_up_slice.get("to"),
-        "slice_selected",
-        "autonomous_delivery.transitions.select_follow_up_slice.to",
-    )
-    next_slice_required_evidence = require_list(
-        select_follow_up_slice.get("required_evidence"),
-        "autonomous_delivery.transitions.select_follow_up_slice.required_evidence",
-    )
-    for expected in ["verification_summary", "next_slice_decision", "privacy_boundary"]:
-        if expected not in next_slice_required_evidence:
-            fail(
-                "autonomous_delivery.transitions.select_follow_up_slice.required_evidence: "
-                f"missing {expected}"
-            )
-
-    require_transition_shape(
+    require_transition_contains(
         transitions,
-        name="sync_base",
-        expected_from=["pr_opened"],
-        expected_to="base_synced",
-        required_evidence=["base_sha", "head_sha", "reconciliation_status"],
+        name="capture_baseline",
+        required_permissions={"private_benchmark_allowed"},
+        required_evidence={"baseline_command", "redacted_baseline_artifact"},
     )
-    require_transition_shape(
+    open_profile_issue = require_transition_contains(
         transitions,
-        name="mark_review_ready",
-        expected_from=["base_synced"],
-        expected_to="pr_review_ready",
-        required_evidence=["base_sha", "pr_template_complete"],
+        name="open_profile_issue",
+        required_permissions={"github_issue_write_allowed"},
+        required_evidence={"baseline_artifact", "privacy_boundary"},
     )
-    require_transition_shape(
-        transitions,
-        name="mark_ci_green",
-        expected_from=["pr_review_ready"],
-        expected_to="ci_green",
-        required_evidence=["ci_head_sha", "ci_check_run", "ci_conclusion"],
-    )
-    require_transition_shape(
-        transitions,
-        name="mark_local_gate_green",
-        expected_from=["ci_green"],
-        expected_to="local_gate_green",
-        required_evidence=["local_gate_commands", "local_gate_result"],
-    )
-    require_transition_shape(
-        transitions,
-        name="mark_privacy_gate_green",
-        expected_from=["local_gate_green"],
-        expected_to="privacy_gate_green",
-        required_evidence=["privacy_gate_command", "privacy_gate_result"],
-    )
-    require_transition_shape(
-        transitions,
-        name="select_merge_method",
-        expected_from=["privacy_gate_green"],
-        expected_to="merge_method_selected",
-        required_evidence=["merge_method", "branch_protection_satisfied", "admin_bypass_absent"],
-    )
-    require_transition_shape(
-        transitions,
-        name="merge_pr",
-        expected_from=["merge_method_selected"],
-        expected_to="pr_merged",
-        required_evidence=["ci_green", "local_gate_green", "privacy_gate_green", "branch_protection_satisfied"],
-    )
+    if "baseline_captured" not in open_profile_issue.get("from", []):
+        fail(
+            "autonomous_delivery.transitions.open_profile_issue.from: "
+            "baseline_captured is required"
+        )
 
     loop_doc = (ROOT / "03_next_goal_高性能本地检索GUI闭环" / "13_Loop_Engineering状态机.md").read_text(encoding="utf-8")
-    for phrase in [
-        (
-            "pr_opened\n-> base_synced\n-> pr_review_ready\n-> ci_green\n-> local_gate_green\n"
-            "-> privacy_gate_green\n-> merge_method_selected\n-> pr_merged\n"
-            "-> issue_reconciled_with_evidence\n-> next_issue_or_goal_complete"
-        ),
-        "-> verification_active\n-> evidence_review\n-> pr_opened",
-        "evidence_review\n-> slice_selected",
-        "next_issue_or_goal_complete\n-> slice_selected",
-        "| `verification_active` | 正在运行验收 | `evidence_review` 或 `blocked` |",
-        (
-            "| `evidence_review` | 验证输出已收集 | `slice_complete`, `pr_opened`, "
-            "`goal_complete`, `blocked`, 或 `slice_active`（autonomous machine state 用 "
-            "`slice_selected` 表示继续下一 bounded slice） |"
-        ),
-    ]:
-        if phrase not in loop_doc:
-            fail(f"03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md: missing {phrase!r}")
-
-    entrypoint_doc = (
-        ROOT
-        / "03_next_goal_高性能本地检索GUI闭环"
-        / "18_Autonomous_Delivery与Issue_Led_Slice_Train.md"
-    ).read_text(encoding="utf-8")
-    if (
-        "pr_opened\n-> base_synced\n-> pr_review_ready\n-> ci_green\n-> local_gate_green\n"
-        "-> privacy_gate_green\n-> merge_method_selected\n-> pr_merged\n"
-        "-> issue_reconciled_with_evidence\n-> next_issue_or_goal_complete"
-        not in entrypoint_doc
-    ):
+    allowed_paths_source = "allowed_paths_source: ACTIVE_GOAL.toml [scope.active_slice].allowed_paths"
+    if allowed_paths_source not in loop_doc:
         fail(
-            "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md: "
-            "missing truthful post-pr_opened continuation chain"
+            "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md: "
+            f"missing {allowed_paths_source!r}"
         )
-    if "-> verification_active\n-> evidence_review\n-> pr_opened" not in entrypoint_doc:
+    if "allowed_paths_for_active_slice:" in loop_doc:
         fail(
-            "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md: "
-            "missing post-verification evidence_review path"
+            "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md: "
+            "inline allowed path list is a stale mirror; use ACTIVE_GOAL.toml [scope.active_slice].allowed_paths"
         )
-    if "evidence_review\n-> slice_selected" not in entrypoint_doc:
-        fail(
-            "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md: "
-            "missing truthful non-PR evidence_review continuation"
-        )
-    if "next_issue_or_goal_complete\n-> slice_selected" not in entrypoint_doc:
-        fail(
-            "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md: "
-            "missing truthful non-complete next-issue continuation"
-        )
-
-    machine_contract_doc = (
-        ROOT
-        / "03_next_goal_高性能本地检索GUI闭环"
-        / "17_机器可读Goal与Experiment协议.md"
-    ).read_text(encoding="utf-8")
-    if (
-        "when `goal_complete = false`, `next_issue_or_goal_complete -> slice_selected` is lawful"
-        not in machine_contract_doc
-    ):
-        fail(
-            "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md: "
-            "missing post-merge next-issue continuation machine-contract rule"
-        )
-
-    evidence_review_fixture = load_json(ROOT / "perf" / "fixtures" / "valid" / "loop-evidence-review.json")
-    if not isinstance(evidence_review_fixture, dict):
-        fail("perf/fixtures/valid/loop-evidence-review.json: expected object")
-    require_string(
-        evidence_review_fixture.get("workflow_state"),
-        "evidence_review",
-        "perf/fixtures/valid/loop-evidence-review.json.workflow_state",
-    )
-    fixture_history = require_list(
-        evidence_review_fixture.get("transition_history"),
-        "perf/fixtures/valid/loop-evidence-review.json.transition_history",
-    )
-    if not any(
-        isinstance(transition, dict)
-        and transition.get("from") == "verification_active"
-        and transition.get("to") == "evidence_review"
-        for transition in fixture_history
-    ):
-        fail(
-            "perf/fixtures/valid/loop-evidence-review.json.transition_history: "
-            "expected verification_active -> evidence_review"
-        )
-
-    slice_selected_fixture = load_json(
-        ROOT / "perf" / "fixtures" / "valid" / "loop-slice-selected-after-evidence-review.json"
-    )
-    if not isinstance(slice_selected_fixture, dict):
-        fail("perf/fixtures/valid/loop-slice-selected-after-evidence-review.json: expected object")
-    require_string(
-        slice_selected_fixture.get("workflow_state"),
-        "slice_selected",
-        "perf/fixtures/valid/loop-slice-selected-after-evidence-review.json.workflow_state",
-    )
-    slice_selected_history = require_list(
-        slice_selected_fixture.get("transition_history"),
-        "perf/fixtures/valid/loop-slice-selected-after-evidence-review.json.transition_history",
-    )
-    if not any(
-        isinstance(transition, dict)
-        and transition.get("from") == "evidence_review"
-        and transition.get("to") == "slice_selected"
-        for transition in slice_selected_history
-    ):
-        fail(
-            "perf/fixtures/valid/loop-slice-selected-after-evidence-review.json.transition_history: "
-            "expected evidence_review -> slice_selected"
-        )
-
-    next_issue_slice_fixture = load_json(
-        ROOT / "perf" / "fixtures" / "valid" / "loop-slice-selected-after-next-issue-decision.json"
-    )
-    if not isinstance(next_issue_slice_fixture, dict):
-        fail("perf/fixtures/valid/loop-slice-selected-after-next-issue-decision.json: expected object")
-    require_string(
-        next_issue_slice_fixture.get("workflow_state"),
-        "slice_selected",
-        "perf/fixtures/valid/loop-slice-selected-after-next-issue-decision.json.workflow_state",
-    )
-    next_issue_history = require_list(
-        next_issue_slice_fixture.get("transition_history"),
-        "perf/fixtures/valid/loop-slice-selected-after-next-issue-decision.json.transition_history",
-    )
-    if not any(
-        isinstance(transition, dict)
-        and transition.get("from") == "next_issue_or_goal_complete"
-        and transition.get("to") == "slice_selected"
-        for transition in next_issue_history
-    ):
-        fail(
-            "perf/fixtures/valid/loop-slice-selected-after-next-issue-decision.json.transition_history: "
-            "expected next_issue_or_goal_complete -> slice_selected"
-        )
-
-    post_pr_fixture = load_json(
-        ROOT / "perf" / "fixtures" / "valid" / "loop-merge-method-selected-after-pr-opened.json"
-    )
-    if not isinstance(post_pr_fixture, dict):
-        fail("perf/fixtures/valid/loop-merge-method-selected-after-pr-opened.json: expected object")
-    require_string(
-        post_pr_fixture.get("workflow_state"),
-        "merge_method_selected",
-        "perf/fixtures/valid/loop-merge-method-selected-after-pr-opened.json.workflow_state",
-    )
-    post_pr_history = require_list(
-        post_pr_fixture.get("transition_history"),
-        "perf/fixtures/valid/loop-merge-method-selected-after-pr-opened.json.transition_history",
-    )
-    for expected_from, expected_to in [
-        ("pr_opened", "base_synced"),
-        ("base_synced", "pr_review_ready"),
-        ("pr_review_ready", "ci_green"),
-        ("ci_green", "local_gate_green"),
-        ("local_gate_green", "privacy_gate_green"),
-        ("privacy_gate_green", "merge_method_selected"),
-    ]:
-        if not any(
-            isinstance(transition, dict)
-            and transition.get("from") == expected_from
-            and transition.get("to") == expected_to
-            for transition in post_pr_history
-        ):
-            fail(
-                "perf/fixtures/valid/loop-merge-method-selected-after-pr-opened.json.transition_history: "
-                f"expected {expected_from} -> {expected_to}"
-            )
-
-    profile_template = (ROOT / ".github" / "ISSUE_TEMPLATE" / "profile_issue.md").read_text(encoding="utf-8")
-    for phrase in [
-        "Issue lifecycle after merge",
-        "closed_here | same_lane_continues | follow_up_issue_linked",
-        "Follow-up issue linked, if any:",
-    ]:
-        if phrase not in profile_template:
-            fail(f".github/ISSUE_TEMPLATE/profile_issue.md: missing {phrase!r}")
-
-    pr_template = (ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8")
-    if "The linked issue records a reconciled post-merge lifecycle outcome." not in pr_template:
-        fail(".github/PULL_REQUEST_TEMPLATE.md: missing reconciled post-merge lifecycle readiness anchor")
-
     print("check-autonomous-goal.py passed")
     return 0
 

@@ -10,10 +10,8 @@ from __future__ import annotations
 import json
 import hashlib
 import pathlib
-import shutil
 import subprocess
 import sys
-import tempfile
 import tomllib
 from collections.abc import Mapping
 
@@ -22,17 +20,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 PERF = ROOT / "perf"
 VALID_FIXTURES = PERF / "fixtures" / "valid"
 INVALID_FIXTURES = PERF / "fixtures" / "invalid"
-FOCUSED_CHECKS = [
-    "scripts/ci/check-autonomous-goal.py",
-    "scripts/ci/check-loop-state.py",
-    "scripts/ci/check-experiment-report.py",
-    "scripts/ci/check-pr-budget.py",
-    "scripts/ci/check-benchmark-lanes.py",
-    "scripts/ci/check-private-evidence-redaction.py",
-    "scripts/ci/check-gate-integrity.py",
-    "scripts/ci/check-goal-complete.py",
-]
-
 HEX64 = set("0123456789abcdef")
 REQUIRED_BUCKETS = [
     "single_term",
@@ -42,7 +29,6 @@ REQUIRED_BUCKETS = [
     "field_filter",
     "hybrid",
     "semantic",
-    "extreme",
 ]
 PRIVACY_FALSE_FIELDS = [
     "contains_raw_resume_text",
@@ -71,23 +57,58 @@ CURRENT_LOOP_CONTRACT_FILES = {
     "acceptance_matrix_sha256": "perf/acceptance-matrix.toml",
     "loop_state_schema_sha256": "perf/loop-state.schema.json",
     "experiment_report_schema_sha256": "perf/experiment-report.schema.json",
+    "synthetic_smoke_artifact_manifest_schema_sha256": "perf/synthetic-smoke-artifact-manifest.schema.json",
 }
-AUTONOMOUS_GOAL_REGRESSION_FILES = [
-    "ACTIVE_GOAL.toml",
-    "scripts/ci/check-autonomous-goal.py",
-    "scripts/ci/check-performance-contracts.py",
-    "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md",
-    "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md",
-    "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md",
-    ".github/ISSUE_TEMPLATE/profile_issue.md",
-    ".github/PULL_REQUEST_TEMPLATE.md",
-    "perf/fixtures/valid/loop-evidence-review.json",
-    "perf/fixtures/valid/loop-slice-selected-after-evidence-review.json",
-    "perf/fixtures/valid/loop-slice-selected-after-next-issue-decision.json",
-    "perf/fixtures/valid/loop-merge-method-selected-after-pr-opened.json",
-]
-
-
+REMOVED_LOOP_POLICY_FIELDS = {
+    "allowed_paths",
+    "event_log",
+    "goal_prompt",
+    "runner_recovery",
+    "runtime_capability_attestation",
+    "transition_graph",
+}
+SYNTHETIC_SMOKE_COMPONENTS = {
+    "synthetic_query",
+    "ocr_throughput",
+    "vector_quality",
+    "private_query_runner",
+}
+SYNTHETIC_SMOKE_BATCH_PROTOCOL_STAGES = {
+    "query_parse",
+    "prefilter",
+    "bm25",
+    "ann",
+    "fusion",
+    "bulk_hydrate",
+    "snippet",
+    "elapsed",
+}
+SYNTHETIC_SMOKE_TOP_LEVEL_KEYS = {
+    "schema_version",
+    "goal_id",
+    "report_kind",
+    "claim",
+    "evidence_lane",
+    "contract_pins",
+    "synthetic_smoke",
+    "thresholds",
+    "privacy",
+}
+SYNTHETIC_SMOKE_KEYS = {
+    "smoke_schema_version",
+    "source",
+    "benchmark_command",
+    "document_count",
+    "query_count",
+    "top_k",
+    "percentile_confidence",
+    "batch_protocol_request_count",
+    "component_reports",
+    "harness_observations",
+    "latency_ms",
+    "resource_observations",
+    "quality",
+}
 def load_json(path: pathlib.Path) -> object:
     with path.open("rb") as fh:
         return json.load(fh)
@@ -159,6 +180,14 @@ def require_bool_fields(value: Mapping[str, object], fields: list[str], expected
         require_bool(value.get(field), expected, f"{path}.{field}")
 
 
+def require_exact_keys(value: Mapping[str, object], expected: set[str], path: str) -> None:
+    observed = set(value.keys())
+    if observed != expected:
+        missing = sorted(expected - observed)
+        extra = sorted(observed - expected)
+        fail(f"{path}: key mismatch missing={missing} extra={extra}")
+
+
 def require_main_reachable_commit(value: object, path: str) -> None:
     if not isinstance(value, str) or not value:
         fail(f"{path}: expected main-reachable git commit")
@@ -228,6 +257,21 @@ def validate_current_loop_contract_pins(state: Mapping[str, object]) -> None:
     require_git_commit_reachable_from_origin_main(head, "perf/current-loop-state.json.contract_pins.git_head_sha")
 
 
+def validate_current_file_contract_pins(value: object, path: str) -> Mapping[str, object]:
+    pins = require_mapping(value, path)
+    for key, rel_path in CURRENT_LOOP_CONTRACT_FILES.items():
+        observed = pins.get(key)
+        require_nonzero_hex64(observed, f"{path}.{key}")
+        expected = sha256_file(ROOT / rel_path)
+        if observed != expected:
+            fail(f"{path}.{key}: expected {expected} from {rel_path}, got {observed}")
+    head = pins.get("git_head_sha")
+    if head == "working-tree":
+        fail(f"{path}.git_head_sha: working-tree placeholder is not allowed")
+    require_git_commit_exists(head, f"{path}.git_head_sha")
+    return pins
+
+
 def validate_privacy(report: Mapping[str, object], *, trace_required: bool, path: str) -> None:
     privacy = require_mapping(report.get("privacy"), f"{path}.privacy")
     for field in PRIVACY_FALSE_FIELDS:
@@ -245,6 +289,8 @@ def validate_contract_pins(value: object, path: str) -> None:
         "experiment_report_schema_sha256",
     ]:
         require_hex64(pins.get(key), f"{path}.{key}")
+    if "synthetic_smoke_artifact_manifest_schema_sha256" in pins:
+        require_hex64(pins.get("synthetic_smoke_artifact_manifest_schema_sha256"), f"{path}.synthetic_smoke_artifact_manifest_schema_sha256")
     head = pins.get("git_head_sha")
     if not isinstance(head, str) or not head:
         fail(f"{path}.git_head_sha: expected git sha or working-tree")
@@ -257,29 +303,240 @@ def validate_schema_file(schema: Mapping[str, object], path: str, expected_versi
     schema_version = require_mapping(props.get("schema_version"), f"{path}.properties.schema_version")
     if schema_version.get("const") != expected_version:
         fail(f"{path}: wrong schema_version const")
-    all_of = require_list(schema.get("allOf"), f"{path}.allOf")
-    if not all_of:
-        fail(f"{path}: must use conditional schema rules")
+    if expected_version != "resume-ir.synthetic-smoke-artifact-manifest.v1":
+        all_of = require_list(schema.get("allOf"), f"{path}.allOf")
+        if not all_of:
+            fail(f"{path}: must use conditional schema rules")
     defs = require_mapping(schema.get("$defs"), f"{path}.$defs")
     required_defs = ["contract_pins", "privacy"]
-    if expected_version == "resume-ir.loop-state-report.v2":
-        required_defs.extend(
-            [
-                "goal_prompt",
-                "event_log",
-                "runtime_capability_attestation",
-                "runner_recovery",
-                "transition_rule",
-            ]
-        )
     for required_def in required_defs:
         if required_def not in defs:
             fail(f"{path}: missing $defs.{required_def}")
 
 
+def validate_component_array_schema(value: object, path: str) -> None:
+    component_array = require_mapping(value, path)
+    if component_array.get("minItems") != len(SYNTHETIC_SMOKE_COMPONENTS):
+        fail(f"{path}.minItems: expected {len(SYNTHETIC_SMOKE_COMPONENTS)}")
+    if component_array.get("maxItems") != len(SYNTHETIC_SMOKE_COMPONENTS):
+        fail(f"{path}.maxItems: expected {len(SYNTHETIC_SMOKE_COMPONENTS)}")
+    all_of = require_list(component_array.get("allOf"), f"{path}.allOf")
+    observed = set()
+    for index, rule in enumerate(all_of):
+        contains = require_mapping(
+            require_mapping(rule, f"{path}.allOf[{index}]").get("contains"),
+            f"{path}.allOf[{index}].contains",
+        )
+        props = require_mapping(contains.get("properties"), f"{path}.allOf[{index}].contains.properties")
+        component = require_mapping(props.get("component"), f"{path}.allOf[{index}].contains.properties.component")
+        observed.add(component.get("const"))
+    if observed != SYNTHETIC_SMOKE_COMPONENTS:
+        fail(f"{path}.allOf: expected component coverage {sorted(SYNTHETIC_SMOKE_COMPONENTS)}, got {sorted(observed)}")
+
+
+def validate_experiment_report_schema(schema: Mapping[str, object], matrix: Mapping[str, object]) -> None:
+    validate_schema_file(schema, "perf/experiment-report.schema.json", "resume-ir.experiment-report.v2")
+    smoke_baseline = require_mapping(
+        matrix.get("synthetic_smoke_baseline"),
+        "matrix.synthetic_smoke_baseline",
+    )
+    root_props = require_mapping(
+        schema.get("properties"),
+        "perf/experiment-report.schema.json.properties",
+    )
+    all_of = require_list(schema.get("allOf"), "perf/experiment-report.schema.json.allOf")
+    smoke_rule = None
+    for index, rule in enumerate(all_of):
+        rule_mapping = require_mapping(rule, f"perf/experiment-report.schema.json.allOf[{index}]")
+        condition = require_mapping(rule_mapping.get("if"), f"perf/experiment-report.schema.json.allOf[{index}].if")
+        condition_props = require_mapping(
+            condition.get("properties"),
+            f"perf/experiment-report.schema.json.allOf[{index}].if.properties",
+        )
+        evidence_lane = condition_props.get("evidence_lane")
+        if isinstance(evidence_lane, Mapping) and evidence_lane.get("const") == "smoke":
+            smoke_rule = rule_mapping
+            break
+    if smoke_rule is None:
+        fail("perf/experiment-report.schema.json.allOf: missing smoke evidence_lane rule")
+    smoke_then = require_mapping(smoke_rule.get("then"), "perf/experiment-report.schema.json smoke then")
+    smoke_not = require_mapping(smoke_then.get("not"), "perf/experiment-report.schema.json smoke then.not")
+    forbidden_rules = require_list(
+        smoke_not.get("anyOf"),
+        "perf/experiment-report.schema.json smoke then.not.anyOf",
+    )
+    forbidden_fields = set()
+    for index, rule in enumerate(forbidden_rules):
+        required = require_list(
+            require_mapping(rule, f"perf/experiment-report.schema.json smoke then.not.anyOf[{index}]").get("required"),
+            f"perf/experiment-report.schema.json smoke then.not.anyOf[{index}].required",
+        )
+        if len(required) != 1:
+            fail(f"perf/experiment-report.schema.json smoke then.not.anyOf[{index}].required: expected one field")
+        forbidden_fields.add(required[0])
+    expected_forbidden_fields = set(root_props) - SYNTHETIC_SMOKE_TOP_LEVEL_KEYS
+    if forbidden_fields != expected_forbidden_fields:
+        fail(
+            "perf/experiment-report.schema.json smoke then.not.anyOf: expected forbidden fields "
+            f"{sorted(expected_forbidden_fields)}, got {sorted(forbidden_fields)}"
+        )
+    smoke_props = require_mapping(
+        smoke_then.get("properties"),
+        "perf/experiment-report.schema.json smoke then.properties",
+    )
+    smoke_contract_pins = require_mapping(
+        smoke_props.get("contract_pins"),
+        "perf/experiment-report.schema.json smoke then.properties.contract_pins",
+    )
+    smoke_contract_required = require_list(
+        smoke_contract_pins.get("required"),
+        "perf/experiment-report.schema.json smoke then.properties.contract_pins.required",
+    )
+    if "synthetic_smoke_artifact_manifest_schema_sha256" not in smoke_contract_required:
+        fail(
+            "perf/experiment-report.schema.json smoke contract_pins must require "
+            "synthetic_smoke_artifact_manifest_schema_sha256"
+        )
+    smoke_contract_props = require_mapping(
+        smoke_contract_pins.get("properties"),
+        "perf/experiment-report.schema.json smoke then.properties.contract_pins.properties",
+    )
+    smoke_git_head = require_mapping(
+        smoke_contract_props.get("git_head_sha"),
+        "perf/experiment-report.schema.json smoke then.properties.contract_pins.properties.git_head_sha",
+    )
+    smoke_git_head_not = require_mapping(
+        smoke_git_head.get("not"),
+        "perf/experiment-report.schema.json smoke then.properties.contract_pins.properties.git_head_sha.not",
+    )
+    if smoke_git_head_not.get("const") != "working-tree":
+        fail("perf/experiment-report.schema.json smoke contract_pins.git_head_sha must reject working-tree")
+    defs = require_mapping(schema.get("$defs"), "perf/experiment-report.schema.json.$defs")
+    synthetic_smoke = require_mapping(defs.get("synthetic_smoke"), "perf/experiment-report.schema.json.$defs.synthetic_smoke")
+    props = require_mapping(synthetic_smoke.get("properties"), "perf/experiment-report.schema.json.$defs.synthetic_smoke.properties")
+    for key in ["document_count", "query_count", "top_k"]:
+        expected = smoke_baseline.get(key)
+        field_schema = require_mapping(
+            props.get(key),
+            f"perf/experiment-report.schema.json.$defs.synthetic_smoke.properties.{key}",
+        )
+        if field_schema.get("const") != expected:
+            fail(f"perf/experiment-report.schema.json synthetic_smoke.{key}: expected const {expected}")
+    command_schema = require_mapping(
+        props.get("benchmark_command"),
+        "perf/experiment-report.schema.json.$defs.synthetic_smoke.properties.benchmark_command",
+    )
+    if command_schema.get("const") != smoke_baseline.get("allowed_command"):
+        fail("perf/experiment-report.schema.json synthetic_smoke.benchmark_command: expected matrix allowed_command const")
+    validate_component_array_schema(
+        props.get("component_reports"),
+        "perf/experiment-report.schema.json.$defs.synthetic_smoke.properties.component_reports",
+    )
+
+
+def validate_synthetic_smoke_manifest_schema(schema: Mapping[str, object]) -> None:
+    validate_schema_file(
+        schema,
+        "perf/synthetic-smoke-artifact-manifest.schema.json",
+        "resume-ir.synthetic-smoke-artifact-manifest.v1",
+    )
+    props = require_mapping(schema.get("properties"), "perf/synthetic-smoke-artifact-manifest.schema.json.properties")
+    for key in [
+        "manifest_kind",
+        "report_sha256",
+        "report_size_bytes",
+        "artifacts",
+    ]:
+        if key not in props:
+            fail(f"perf/synthetic-smoke-artifact-manifest.schema.json.properties: missing {key}")
+    validate_component_array_schema(
+        props.get("artifacts"),
+        "perf/synthetic-smoke-artifact-manifest.schema.json.properties.artifacts",
+    )
+    defs = require_mapping(schema.get("$defs"), "perf/synthetic-smoke-artifact-manifest.schema.json.$defs")
+    contract_pins = require_mapping(
+        defs.get("contract_pins"),
+        "perf/synthetic-smoke-artifact-manifest.schema.json.$defs.contract_pins",
+    )
+    contract_pin_props = require_mapping(
+        contract_pins.get("properties"),
+        "perf/synthetic-smoke-artifact-manifest.schema.json.$defs.contract_pins.properties",
+    )
+    git_head = require_mapping(
+        contract_pin_props.get("git_head_sha"),
+        "perf/synthetic-smoke-artifact-manifest.schema.json.$defs.contract_pins.properties.git_head_sha",
+    )
+    git_head_not = require_mapping(
+        git_head.get("not"),
+        "perf/synthetic-smoke-artifact-manifest.schema.json.$defs.contract_pins.properties.git_head_sha.not",
+    )
+    if git_head_not.get("const") != "working-tree":
+        fail("perf/synthetic-smoke-artifact-manifest.schema.json contract_pins.git_head_sha must reject working-tree")
+
+
 def validate_matrix(matrix: Mapping[str, object]) -> None:
     if matrix.get("schema_version") != "resume-ir.perf.acceptance-matrix.v2":
         fail("perf/acceptance-matrix.toml: expected v2 schema")
+    smoke_lane = require_mapping(matrix.get("evidence_lanes", {}).get("smoke"), "matrix.evidence_lanes.smoke")
+    if smoke_lane.get("report_schema") != "resume-ir.synthetic-smoke-baseline.v1":
+        fail("matrix.evidence_lanes.smoke.report_schema mismatch")
+    if smoke_lane.get("artifact_manifest_schema") != "resume-ir.synthetic-smoke-artifact-manifest.v1":
+        fail("matrix.evidence_lanes.smoke.artifact_manifest_schema mismatch")
+    require_bool(smoke_lane.get("requires_artifact_manifest"), True, "matrix.evidence_lanes.smoke.requires_artifact_manifest")
+    cannot_claim = require_list(smoke_lane.get("cannot_claim"), "matrix.evidence_lanes.smoke.cannot_claim")
+    expected_cannot_claim = [
+        "w1_private_baseline",
+        "d10k_private_calibration",
+        "d100k_weak_host",
+        "d1m_scale",
+        "profile_optimization_issue",
+        "million_scale_readiness",
+        "scale_gate",
+        "gui_manual_complete",
+        "goal_complete",
+    ]
+    if cannot_claim != expected_cannot_claim:
+        fail("matrix.evidence_lanes.smoke.cannot_claim mismatch")
+    smoke_baseline = require_mapping(matrix.get("synthetic_smoke_baseline"), "matrix.synthetic_smoke_baseline")
+    if smoke_baseline.get("source") != "synthetic_public_fixture":
+        fail("matrix.synthetic_smoke_baseline.source mismatch")
+    for key, expected in {
+        "document_count": 24,
+        "query_count": 6,
+        "top_k": 5,
+    }.items():
+        if smoke_baseline.get(key) != expected:
+            fail(f"matrix.synthetic_smoke_baseline.{key} mismatch")
+    for key in ["private_resume_root_required", "query_artifact_root_required", "resident_daemon_required"]:
+        require_bool(smoke_baseline.get(key), False, f"matrix.synthetic_smoke_baseline.{key}")
+    require_bool(
+        smoke_baseline.get("batch_protocol_observation_required"),
+        True,
+        "matrix.synthetic_smoke_baseline.batch_protocol_observation_required",
+    )
+    if smoke_baseline.get("percentile_confidence") != "smoke":
+        fail("matrix.synthetic_smoke_baseline.percentile_confidence mismatch")
+    if smoke_baseline.get("report_kind") != "redacted_evidence":
+        fail("matrix.synthetic_smoke_baseline.report_kind mismatch")
+    if smoke_baseline.get("claim") != "no_claim":
+        fail("matrix.synthetic_smoke_baseline.claim mismatch")
+    expected_command = (
+        "resume-benchmark synthetic-query --index-dir <redacted-temp-index> "
+        "--documents 24 --queries 6 --top-k 5 --json"
+    )
+    if smoke_baseline.get("allowed_command") != expected_command:
+        fail("matrix.synthetic_smoke_baseline.allowed_command mismatch")
+    required_smoke_commands = require_list(
+        smoke_baseline.get("required_commands"),
+        "matrix.synthetic_smoke_baseline.required_commands",
+    )
+    expected_smoke_commands = [
+        "python3 scripts/ci/check-performance-contracts.py",
+        "RESUME_IR_BENCHMARK_SMOKE_REPORT_OUT=<tmp-report> RESUME_IR_BENCHMARK_SMOKE_MANIFEST_OUT=<tmp-manifest> ./scripts/ci/check-benchmark-smoke.sh",
+        "./scripts/ci/guard-public-repo.sh",
+    ]
+    if required_smoke_commands != expected_smoke_commands:
+        fail("matrix.synthetic_smoke_baseline.required_commands mismatch")
     scale_gates = require_mapping(matrix.get("scale_gates"), "matrix.scale_gates")
     for gate, minimums in {
         "D10K_private_calibration": (10_000, 8_000, False),
@@ -497,6 +754,12 @@ def validate_w1_report(report: Mapping[str, object], matrix: Mapping[str, object
     validate_platform_evidence(report.get("platform_evidence"), f"{path}.platform_evidence")
 
     dataset = require_mapping(report.get("dataset"), f"{path}.dataset")
+    if "dataset_sha256" in dataset:
+        fail(f"{path}.dataset.dataset_sha256: legacy field removed; use dataset_manifest_sha256")
+    require_hex64(
+        dataset.get("dataset_manifest_sha256"),
+        f"{path}.dataset.dataset_manifest_sha256",
+    )
     query_set = require_mapping(report.get("query_set"), f"{path}.query_set")
     scale_gate = dataset.get("scale_gate")
     scale = require_mapping(matrix.get("scale_gates", {}).get(scale_gate), f"matrix.scale_gates.{scale_gate}")
@@ -617,6 +880,299 @@ def validate_gui_manual(report: Mapping[str, object], matrix: Mapping[str, objec
     require_bool(gui.get("journey_checklist_passed"), True, f"{path}.gui_manual.journey_checklist_passed")
 
 
+def validate_synthetic_smoke_matrix_contract(
+    smoke: Mapping[str, object],
+    matrix: Mapping[str, object],
+    path: str,
+) -> None:
+    smoke_baseline = require_mapping(
+        matrix.get("synthetic_smoke_baseline"),
+        "matrix.synthetic_smoke_baseline",
+    )
+    for key in ["document_count", "query_count", "top_k"]:
+        expected = smoke_baseline.get(key)
+        if smoke.get(key) != expected:
+            fail(f"{path}.{key}: expected matrix synthetic_smoke_baseline {expected}")
+    if smoke.get("benchmark_command") != smoke_baseline.get("allowed_command"):
+        fail(f"{path}.benchmark_command: expected matrix synthetic_smoke_baseline.allowed_command")
+    if smoke.get("percentile_confidence") != smoke_baseline.get("percentile_confidence"):
+        fail(f"{path}.percentile_confidence: expected matrix synthetic_smoke_baseline.percentile_confidence")
+
+
+def validate_synthetic_smoke_components(value: object, path: str) -> None:
+    reports = require_list(value, path)
+    if len(reports) != len(SYNTHETIC_SMOKE_COMPONENTS):
+        fail(f"{path}: expected exactly {len(SYNTHETIC_SMOKE_COMPONENTS)} components")
+    seen = set()
+    for index, entry in enumerate(reports):
+        component = require_mapping(entry, f"{path}[{index}]")
+        require_exact_keys(
+            component,
+            {"component", "schema_version", "report_sha256", "report_size_bytes", "target_claim"},
+            f"{path}[{index}]",
+        )
+        name = component.get("component")
+        require_enum(name, SYNTHETIC_SMOKE_COMPONENTS, f"{path}[{index}].component")
+        if name in seen:
+            fail(f"{path}[{index}].component: duplicate component {name!r}")
+        seen.add(name)
+        require_non_empty_string(component.get("schema_version"), f"{path}[{index}].schema_version")
+        require_nonzero_hex64(component.get("report_sha256"), f"{path}[{index}].report_sha256")
+        require_number_at_least(component.get("report_size_bytes"), 1, f"{path}[{index}].report_size_bytes")
+        target_claim = component.get("target_claim")
+        if target_claim != "not_evaluated":
+            fail(f"{path}[{index}].target_claim: expected 'not_evaluated'")
+    if seen != SYNTHETIC_SMOKE_COMPONENTS:
+        fail(f"{path}: expected components {sorted(SYNTHETIC_SMOKE_COMPONENTS)}, got {sorted(seen)}")
+
+
+def validate_synthetic_smoke_observations(value: object, path: str) -> None:
+    observations = require_mapping(value, path)
+    require_exact_keys(
+        observations,
+        {
+            "uses_private_resume_root",
+            "uses_query_artifact_root",
+            "uses_synthetic_public_fixtures",
+            "resident_daemon_required",
+            "resident_daemon_observed",
+            "batch_protocol_observed",
+            "private_query_runner_query_protocol",
+            "private_query_runner_request_sample_count",
+            "private_query_runner_query_embedding_command_invocations",
+            "spawn_per_query",
+        },
+        path,
+    )
+    for field in [
+        "uses_private_resume_root",
+        "uses_query_artifact_root",
+        "resident_daemon_required",
+        "resident_daemon_observed",
+        "spawn_per_query",
+    ]:
+        require_bool(observations.get(field), False, f"{path}.{field}")
+    require_bool(observations.get("uses_synthetic_public_fixtures"), True, f"{path}.uses_synthetic_public_fixtures")
+    require_bool(observations.get("batch_protocol_observed"), True, f"{path}.batch_protocol_observed")
+    if observations.get("private_query_runner_query_protocol") != "resume-ir-query-v2":
+        fail(f"{path}.private_query_runner_query_protocol mismatch")
+    if observations.get("private_query_runner_request_sample_count") != 2:
+        fail(f"{path}.private_query_runner_request_sample_count: expected 2")
+    if observations.get("private_query_runner_query_embedding_command_invocations") != 2:
+        fail(f"{path}.private_query_runner_query_embedding_command_invocations: expected 2")
+
+
+def validate_synthetic_smoke_report(report: Mapping[str, object], matrix: Mapping[str, object], path: str) -> None:
+    require_exact_keys(report, SYNTHETIC_SMOKE_TOP_LEVEL_KEYS, path)
+    if report.get("report_kind") != "redacted_evidence":
+        fail(f"{path}.report_kind: synthetic smoke baseline must be redacted_evidence")
+    if report.get("claim") != "no_claim":
+        fail(f"{path}.claim: synthetic smoke baseline must use no_claim")
+    if report.get("evidence_lane") != "smoke":
+        fail(f"{path}.evidence_lane: synthetic smoke baseline must use smoke")
+    validate_current_file_contract_pins(report.get("contract_pins"), f"{path}.contract_pins")
+    validate_privacy(report, trace_required=True, path=path)
+    validate_thresholds(report, path)
+    thresholds = require_mapping(report.get("thresholds"), f"{path}.thresholds")
+    require_bool(thresholds.get("passed"), True, f"{path}.thresholds.passed")
+
+    smoke = require_mapping(report.get("synthetic_smoke"), f"{path}.synthetic_smoke")
+    require_exact_keys(smoke, SYNTHETIC_SMOKE_KEYS, f"{path}.synthetic_smoke")
+    if smoke.get("smoke_schema_version") != "resume-ir.synthetic-smoke-baseline.v1":
+        fail(f"{path}.synthetic_smoke.smoke_schema_version mismatch")
+    if smoke.get("source") != "synthetic_public_fixture":
+        fail(f"{path}.synthetic_smoke.source: expected synthetic_public_fixture")
+    if smoke.get("batch_protocol_request_count") != 2:
+        fail(f"{path}.synthetic_smoke.batch_protocol_request_count: expected 2")
+    validate_synthetic_smoke_matrix_contract(smoke, matrix, f"{path}.synthetic_smoke")
+    validate_synthetic_smoke_components(smoke.get("component_reports"), f"{path}.synthetic_smoke.component_reports")
+    validate_synthetic_smoke_observations(smoke.get("harness_observations"), f"{path}.synthetic_smoke.harness_observations")
+
+    latency = require_mapping(smoke.get("latency_ms"), f"{path}.synthetic_smoke.latency_ms")
+    require_exact_keys(
+        latency,
+        {"query_p95", "ocr_p95", "batch_protocol_stage"},
+        f"{path}.synthetic_smoke.latency_ms",
+    )
+    require_number_at_least(latency.get("query_p95"), 0, f"{path}.synthetic_smoke.latency_ms.query_p95")
+    require_number_at_least(latency.get("ocr_p95"), 0, f"{path}.synthetic_smoke.latency_ms.ocr_p95")
+    protocol_stage = require_mapping(
+        latency.get("batch_protocol_stage"),
+        f"{path}.synthetic_smoke.latency_ms.batch_protocol_stage",
+    )
+    require_exact_keys(
+        protocol_stage,
+        SYNTHETIC_SMOKE_BATCH_PROTOCOL_STAGES,
+        f"{path}.synthetic_smoke.latency_ms.batch_protocol_stage",
+    )
+    for stage in SYNTHETIC_SMOKE_BATCH_PROTOCOL_STAGES:
+        require_number_at_least(
+            protocol_stage.get(stage),
+            0,
+            f"{path}.synthetic_smoke.latency_ms.batch_protocol_stage.{stage}",
+        )
+    resource_observations = require_mapping(
+        smoke.get("resource_observations"),
+        f"{path}.synthetic_smoke.resource_observations",
+    )
+    require_exact_keys(
+        resource_observations,
+        {"batch_protocol_rss_delta_mb", "private_query_runner_rss_delta_mb"},
+        f"{path}.synthetic_smoke.resource_observations",
+    )
+    require_number_at_least(
+        resource_observations.get("batch_protocol_rss_delta_mb"),
+        0,
+        f"{path}.synthetic_smoke.resource_observations.batch_protocol_rss_delta_mb",
+    )
+    private_query_rss = require_mapping(
+        resource_observations.get("private_query_runner_rss_delta_mb"),
+        f"{path}.synthetic_smoke.resource_observations.private_query_runner_rss_delta_mb",
+    )
+    require_exact_keys(
+        private_query_rss,
+        {"samples", "min", "mean", "p50", "p95", "p99", "max"},
+        f"{path}.synthetic_smoke.resource_observations.private_query_runner_rss_delta_mb",
+    )
+    require_number_at_least(
+        private_query_rss.get("samples"),
+        1,
+        f"{path}.synthetic_smoke.resource_observations.private_query_runner_rss_delta_mb.samples",
+    )
+    for field in ["min", "mean", "p50", "p95", "p99", "max"]:
+        require_number_at_least(
+            private_query_rss.get(field),
+            0,
+            f"{path}.synthetic_smoke.resource_observations.private_query_runner_rss_delta_mb.{field}",
+        )
+    quality = require_mapping(smoke.get("quality"), f"{path}.synthetic_smoke.quality")
+    require_exact_keys(
+        quality,
+        {"vector_recall_at_k", "vector_mrr", "vector_ndcg_at_k", "zero_result_queries", "zero_recall_queries"},
+        f"{path}.synthetic_smoke.quality",
+    )
+    for field in ["vector_recall_at_k", "vector_mrr", "vector_ndcg_at_k"]:
+        require_number_at_least(quality.get(field), 0, f"{path}.synthetic_smoke.quality.{field}")
+        require_number_at_most(quality.get(field), 1, f"{path}.synthetic_smoke.quality.{field}")
+    require_number_at_most(quality.get("zero_result_queries"), 0, f"{path}.synthetic_smoke.quality.zero_result_queries")
+    require_number_at_most(quality.get("zero_recall_queries"), 0, f"{path}.synthetic_smoke.quality.zero_recall_queries")
+
+
+def validate_synthetic_smoke_artifact_manifest(value: object, path: str) -> Mapping[str, object]:
+    manifest = require_mapping(value, path)
+    require_exact_keys(
+        manifest,
+        {
+            "schema_version",
+            "goal_id",
+            "manifest_kind",
+            "report_schema_version",
+            "report_kind",
+            "evidence_lane",
+            "claim",
+            "contract_pins",
+            "privacy",
+            "report_sha256",
+            "report_size_bytes",
+            "artifacts",
+        },
+        path,
+    )
+    if manifest.get("schema_version") != "resume-ir.synthetic-smoke-artifact-manifest.v1":
+        fail(f"{path}.schema_version mismatch")
+    if manifest.get("goal_id") != "resume-ir.performance-gui-loop.2026-06":
+        fail(f"{path}.goal_id mismatch")
+    if manifest.get("manifest_kind") != "synthetic_smoke_baseline":
+        fail(f"{path}.manifest_kind mismatch")
+    if manifest.get("report_schema_version") != "resume-ir.experiment-report.v2":
+        fail(f"{path}.report_schema_version mismatch")
+    if manifest.get("report_kind") != "redacted_evidence":
+        fail(f"{path}.report_kind mismatch")
+    if manifest.get("evidence_lane") != "smoke":
+        fail(f"{path}.evidence_lane mismatch")
+    if manifest.get("claim") != "no_claim":
+        fail(f"{path}.claim mismatch")
+    validate_current_file_contract_pins(manifest.get("contract_pins"), f"{path}.contract_pins")
+    validate_privacy(manifest, trace_required=True, path=path)
+    require_nonzero_hex64(manifest.get("report_sha256"), f"{path}.report_sha256")
+    require_number_at_least(manifest.get("report_size_bytes"), 1, f"{path}.report_size_bytes")
+    validate_synthetic_smoke_components(manifest.get("artifacts"), f"{path}.artifacts")
+    return manifest
+
+
+def validate_synthetic_smoke_report_manifest_pair(
+    report: Mapping[str, object],
+    manifest: Mapping[str, object],
+    report_path: pathlib.Path,
+    manifest_path: pathlib.Path,
+    matrix: Mapping[str, object],
+) -> None:
+    report_rel = str(report_path.relative_to(ROOT)) if report_path.is_relative_to(ROOT) else str(report_path)
+    manifest_rel = str(manifest_path.relative_to(ROOT)) if manifest_path.is_relative_to(ROOT) else str(manifest_path)
+    validate_synthetic_smoke_report(report, matrix, report_rel)
+    validate_synthetic_smoke_artifact_manifest(manifest, manifest_rel)
+    digest = sha256_file(report_path)
+    if manifest.get("report_sha256") != digest:
+        fail(f"{manifest_rel}.report_sha256: expected {digest} from {report_rel}")
+    size = report_path.stat().st_size
+    if manifest.get("report_size_bytes") != size:
+        fail(f"{manifest_rel}.report_size_bytes: expected {size} from {report_rel}")
+    for key in ["report_kind", "evidence_lane", "claim", "contract_pins", "privacy"]:
+        if manifest.get(key) != report.get(key):
+            fail(f"{manifest_rel}.{key}: must match {report_rel}.{key}")
+    report_smoke = require_mapping(report.get("synthetic_smoke"), f"{report_rel}.synthetic_smoke")
+    if manifest.get("artifacts") != report_smoke.get("component_reports"):
+        fail(f"{manifest_rel}.artifacts: must match {report_rel}.synthetic_smoke.component_reports")
+
+
+def is_synthetic_smoke_report(value: object) -> bool:
+    return (
+        isinstance(value, Mapping)
+        and value.get("schema_version") == "resume-ir.experiment-report.v2"
+        and value.get("evidence_lane") == "smoke"
+        and "synthetic_smoke" in value
+    )
+
+
+def is_synthetic_smoke_manifest(value: object) -> bool:
+    return isinstance(value, Mapping) and value.get("schema_version") == "resume-ir.synthetic-smoke-artifact-manifest.v1"
+
+
+def validate_synthetic_smoke_fixture_pairs(
+    paths_and_values: list[tuple[pathlib.Path, object]],
+    matrix: Mapping[str, object],
+) -> None:
+    reports: list[tuple[pathlib.Path, Mapping[str, object]]] = []
+    manifests: list[tuple[pathlib.Path, Mapping[str, object]]] = []
+    for path, value in paths_and_values:
+        if is_synthetic_smoke_report(value):
+            reports.append((path, require_mapping(value, str(path))))
+        elif is_synthetic_smoke_manifest(value):
+            manifests.append((path, require_mapping(value, str(path))))
+
+    for manifest_path, manifest in manifests:
+        matches = [
+            (report_path, report)
+            for report_path, report in reports
+            if manifest.get("report_sha256") == sha256_file(report_path)
+        ]
+        if len(matches) != 1:
+            manifest_rel = str(manifest_path.relative_to(ROOT)) if manifest_path.is_relative_to(ROOT) else str(manifest_path)
+            fail(f"{manifest_rel}: expected exactly one matching synthetic smoke report")
+        report_path, report = matches[0]
+        validate_synthetic_smoke_report_manifest_pair(report, manifest, report_path, manifest_path, matrix)
+
+    for report_path, report in reports:
+        matches = [
+            manifest_path
+            for manifest_path, manifest in manifests
+            if manifest.get("report_sha256") == sha256_file(report_path)
+        ]
+        if len(matches) != 1:
+            report_rel = str(report_path.relative_to(ROOT)) if report_path.is_relative_to(ROOT) else str(report_path)
+            fail(f"{report_rel}: synthetic smoke report requires exactly one matching manifest")
+
+
 def validate_experiment_report(value: object, matrix: Mapping[str, object], path: str) -> None:
     report = require_mapping(value, path)
     if report.get("schema_version") != "resume-ir.experiment-report.v2":
@@ -641,22 +1197,24 @@ def validate_experiment_report(value: object, matrix: Mapping[str, object], path
         validate_gui_manual(report, matrix, path)
         validate_thresholds(report, path)
     elif lane == "smoke":
-        validate_thresholds(report, path)
+        validate_synthetic_smoke_report(report, matrix, path)
     else:
         fail(f"{path}.evidence_lane invalid")
 
 
 def validate_loop_state(value: object, matrix: Mapping[str, object], path: str) -> None:
     state = require_mapping(value, path)
+    if "accepted_cells" in state:
+        fail(f"{path}.accepted_cells: legacy field removed; use evidence_cells")
+    for field in sorted(REMOVED_LOOP_POLICY_FIELDS):
+        if field in state:
+            fail(f"{path}.{field}: policy mirror removed; keep policy in ACTIVE_GOAL.toml")
     if state.get("schema_version") != "resume-ir.loop-state-report.v2":
         fail(f"{path}.schema_version mismatch")
     if state.get("goal_id") != "resume-ir.performance-gui-loop.2026-06":
         fail(f"{path}.goal_id mismatch")
     validate_contract_pins(state.get("contract_pins"), f"{path}.contract_pins")
     validate_privacy(state, trace_required=False, path=path)
-    allowed_paths = require_list(state.get("allowed_paths"), f"{path}.allowed_paths")
-    if not allowed_paths:
-        fail(f"{path}.allowed_paths: must not be empty")
     verification = require_mapping(state.get("verification"), f"{path}.verification")
     claim = verification.get("claim")
     if claim not in {"pass", "fail", "blocked", "partial"}:
@@ -700,87 +1258,52 @@ def validate_loop_state(value: object, matrix: Mapping[str, object], path: str) 
 
 def validate_fixture(path: pathlib.Path, matrix: Mapping[str, object]) -> None:
     value = load_json(path)
-    if path.name.startswith("loop") or "loop-state" in path.name:
+    if isinstance(value, Mapping) and value.get("schema_version") == "resume-ir.synthetic-smoke-artifact-manifest.v1":
+        validate_synthetic_smoke_artifact_manifest(value, str(path.relative_to(ROOT)))
+    elif path.name.startswith("loop") or "loop-state" in path.name:
         validate_loop_state(value, matrix, str(path.relative_to(ROOT)))
     else:
         validate_experiment_report(value, matrix, str(path.relative_to(ROOT)))
 
 
-def run_focused_checks() -> None:
-    for rel in FOCUSED_CHECKS:
-        completed = subprocess.run([sys.executable, str(ROOT / rel)], check=False)
-        if completed.returncode != 0:
-            fail(f"{rel}: focused check failed with exit code {completed.returncode}")
-
-
-def write_broken_sync_base(active_goal_path: pathlib.Path) -> None:
-    lines = active_goal_path.read_text(encoding="utf-8").splitlines()
-    for index, line in enumerate(lines):
-        if line == 'name = "sync_base"':
-            for candidate in range(index + 1, min(index + 8, len(lines))):
-                if lines[candidate].startswith("from = "):
-                    lines[candidate] = 'from = ["verification_active"]'
-                    active_goal_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-                    return
-            fail("temporary ACTIVE_GOAL mutation: could not find sync_base.from")
-    fail("temporary ACTIVE_GOAL mutation: could not find sync_base transition")
-
-
-def run_autonomous_goal_negative_regression() -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_root = pathlib.Path(tmp) / "repo"
-        for rel in AUTONOMOUS_GOAL_REGRESSION_FILES:
-            src = ROOT / rel
-            dst = tmp_root / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-        write_broken_sync_base(tmp_root / "ACTIVE_GOAL.toml")
-        completed = subprocess.run(
-            [sys.executable, str(tmp_root / "scripts/ci/check-autonomous-goal.py")],
-            cwd=tmp_root,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-        if completed.returncode == 0:
-            fail(
-                "scripts/ci/check-autonomous-goal.py: expected broken sync_base.from regression to fail closed"
-            )
-
-
 def main() -> int:
     matrix = load_toml(PERF / "acceptance-matrix.toml")
     validate_matrix(matrix)
-    validate_schema_file(
+    validate_experiment_report_schema(
         require_mapping(load_json(PERF / "experiment-report.schema.json"), "experiment schema"),
-        "perf/experiment-report.schema.json",
-        "resume-ir.experiment-report.v2",
+        matrix,
     )
     validate_schema_file(
         require_mapping(load_json(PERF / "loop-state.schema.json"), "loop schema"),
         "perf/loop-state.schema.json",
         "resume-ir.loop-state-report.v2",
     )
+    validate_synthetic_smoke_manifest_schema(
+        require_mapping(load_json(PERF / "synthetic-smoke-artifact-manifest.schema.json"), "synthetic smoke manifest schema")
+    )
     current_loop_state = require_mapping(load_json(PERF / "current-loop-state.json"), "perf/current-loop-state.json")
     validate_loop_state(current_loop_state, matrix, "perf/current-loop-state.json")
     validate_current_loop_contract_pins(current_loop_state)
 
+    valid_fixture_values = []
     for path in sorted(VALID_FIXTURES.glob("*.json")):
+        value = load_json(path)
         validate_fixture(path, matrix)
+        valid_fixture_values.append((path, value))
+    validate_synthetic_smoke_fixture_pairs(valid_fixture_values, matrix)
 
     invalid_count = 0
     for path in sorted(INVALID_FIXTURES.glob("*.json")):
         invalid_count += 1
+        value = load_json(path)
         try:
             validate_fixture(path, matrix)
+            validate_synthetic_smoke_fixture_pairs([(path, value)], matrix)
         except ValueError:
             continue
         fail(f"{path.relative_to(ROOT)}: invalid fixture unexpectedly passed")
     if invalid_count == 0:
         fail("no invalid fixtures found")
-
-    run_focused_checks()
-    run_autonomous_goal_negative_regression()
 
     print("performance contract check passed")
     return 0

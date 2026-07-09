@@ -11,7 +11,7 @@ use meta_store::{
     ImportTaskStatus, IndexState, IndexStateStatus, IngestJob, IngestJobFailureKind, IngestJobId,
     IngestJobKind, IngestJobStatus, MetaStore, MetadataEncryptionState, OcrPageCacheEntry,
     OcrPageCacheKey, OcrPageCacheStatus, OcrWordBox, ResumeVersion, ResumeVersionId,
-    ResumeVisibility, UnixTimestamp, WorkerTaskControl, WorkerTaskKind,
+    ResumeVisibility, SearchableImportDocument, UnixTimestamp, WorkerTaskControl, WorkerTaskKind,
 };
 use rusqlite::{params, Connection};
 
@@ -728,6 +728,110 @@ fn hashed_contact_assignment_reuses_candidate_and_updates_version_count() {
             .assign_candidate_from_hashed_contacts(&first_version.id, None, None)
             .unwrap(),
         None
+    );
+}
+
+#[test]
+fn searchable_import_document_upsert_reuses_candidate_and_replaces_mentions() {
+    let store = migrated_store();
+    let email_hash = contact_hash('c');
+    let first_document = document("searchable-import-first", false, DocumentStatus::Searchable);
+    let second_document = document(
+        "searchable-import-second",
+        false,
+        DocumentStatus::TextCleaned,
+    );
+    let first_version =
+        resume_version("searchable-import-first-version", first_document.id.clone());
+    let second_version = resume_version(
+        "searchable-import-second-version",
+        second_document.id.clone(),
+    );
+
+    store.upsert_document(&first_document).unwrap();
+    store.upsert_resume_version(&first_version).unwrap();
+    let first_assignment = store
+        .assign_candidate_from_hashed_contacts(&first_version.id, Some(&email_hash), None)
+        .unwrap()
+        .expect("first candidate assignment from contact hash");
+
+    let skill = entity_mention(
+        "searchable-import-skill",
+        &second_version.id,
+        EntityType::Skill,
+        "Rust",
+        Some("Rust"),
+        20..24,
+        0.93,
+    );
+    let second_assignment = store
+        .upsert_searchable_import_document(SearchableImportDocument {
+            document: &second_document,
+            version: &second_version,
+            mentions: std::slice::from_ref(&skill),
+            email_hash: Some(&email_hash),
+            phone_hash: None,
+        })
+        .unwrap()
+        .expect("candidate assignment reused during searchable import upsert");
+
+    assert_eq!(second_assignment.id, first_assignment.id);
+    assert_eq!(second_assignment.version_count, 2);
+    assert_eq!(
+        store
+            .resume_version_by_id(&second_version.id)
+            .unwrap()
+            .unwrap()
+            .candidate_id,
+        Some(first_assignment.id.clone())
+    );
+    assert_eq!(
+        store
+            .entity_mentions_for_version(&second_version.id)
+            .unwrap(),
+        vec![skill]
+    );
+
+    let title = entity_mention(
+        "searchable-import-title",
+        &second_version.id,
+        EntityType::Title,
+        "Backend Engineer",
+        Some("backend_engineer"),
+        30..46,
+        0.88,
+    );
+    store
+        .upsert_searchable_import_document(SearchableImportDocument {
+            document: &second_document,
+            version: &second_version,
+            mentions: std::slice::from_ref(&title),
+            email_hash: None,
+            phone_hash: None,
+        })
+        .unwrap();
+
+    assert_eq!(
+        store
+            .resume_version_by_id(&second_version.id)
+            .unwrap()
+            .unwrap()
+            .candidate_id,
+        Some(first_assignment.id.clone())
+    );
+    assert_eq!(
+        store
+            .entity_mentions_for_version(&second_version.id)
+            .unwrap(),
+        vec![title]
+    );
+    assert_eq!(
+        store
+            .candidate_by_id(&first_assignment.id)
+            .unwrap()
+            .unwrap()
+            .version_count,
+        2
     );
 }
 

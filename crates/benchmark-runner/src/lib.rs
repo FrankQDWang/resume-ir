@@ -1,12 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use core_domain::{
+    normalize_query_set_query, QuerySetSampleShape, QuerySetSampleShapeMetadata, QuerySetSourceKind,
+};
 use embedder::{
     Embedder, EmbeddingBudget, EmbeddingInput, LocalEmbeddingCommandEmbedder,
     LocalEmbeddingCommandSpec,
@@ -38,7 +42,56 @@ const DEFAULT_PRIVATE_QUERY_MAX_QUERIES: usize = PRIVATE_REAL_RELEASE_QUERY_SAMP
 const DEFAULT_PRIVATE_QUERY_TIMEOUT_MS: u64 = 5_000;
 const DEFAULT_VECTOR_QUALITY_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_VECTOR_QUALITY_TEXT_BYTES: usize = 128 * 1024;
+const PRIVATE_QUERY_SET_SCHEMA_VERSION: &str = "resume-ir.query-set.jsonl.v2";
+const PRIVATE_QUERY_SET_SUMMARY_SCHEMA_VERSION: &str = "resume-ir.query-set-summary.v2";
+const PRIVATE_QUERY_BATCH_REQUEST_SCHEMA_VERSION: &str = "resume-ir.query-batch-request.v2";
+const PRIVATE_QUERY_PROTOCOL_VERSION: &str = "resume-ir-query-v2";
+const PRIVATE_QUERY_WARM_OR_COLD_DEFINITION: &str =
+    "current_stage_single_resident_batch_no_extra_warmup";
+const PRIVATE_QUERY_CACHE_STATE: &str =
+    "hot_index_fully_covered_resident_batch_os_cache_uncontrolled";
+const PRIVATE_QUERY_BUCKETS: [&str; 7] = [
+    "single_term",
+    "and_2",
+    "and_3_5",
+    "and_6_16",
+    "field_filter",
+    "hybrid",
+    "semantic",
+];
+const PRIVATE_QUERY_D10K_BUCKET_MIN_COUNTS: [(&str, usize); 7] = [
+    ("single_term", 50),
+    ("and_2", 75),
+    ("and_3_5", 150),
+    ("and_6_16", 50),
+    ("field_filter", 75),
+    ("hybrid", 75),
+    ("semantic", 25),
+];
+const PRIVATE_QUERY_D10K_DOCUMENT_MIN: usize = 10_000;
+const PRIVATE_QUERY_D10K_REQUEST_SAMPLE_MIN: usize = 5_000;
+const PRIVATE_QUERY_D10K_SAMPLES_PER_BUCKET_MIN: usize = 500;
+const PRIVATE_QUERY_D100K_DOCUMENT_MIN: usize = 100_000;
+const PRIVATE_QUERY_D100K_REQUEST_SAMPLE_MIN: usize = 10_000;
+const PRIVATE_QUERY_D100K_SAMPLES_PER_BUCKET_MIN: usize = 1_000;
+const PRIVATE_QUERY_D1M_DOCUMENT_MIN: usize = 1_000_000;
+const PRIVATE_QUERY_D1M_REQUEST_SAMPLE_MIN: usize = 25_000;
+const PRIVATE_QUERY_D1M_SAMPLES_PER_BUCKET_MIN: usize = 2_000;
+const PRIVATE_QUERY_RESIDENT_COMMAND_PIPE_MAX_BYTES: usize = 8 * 1024 * 1024;
+const PRIVATE_QUERY_STAGE_NAMES: [&str; 7] = [
+    "query_parse",
+    "prefilter",
+    "bm25",
+    "ann",
+    "fusion",
+    "bulk_hydrate",
+    "snippet",
+];
+const PRIVATE_QUERY_STAGE_HISTOGRAM_BOUNDS_MS: [f64; 13] = [
+    1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1_000.0, 2_500.0, 5_000.0, 10_000.0, 60_000.0,
+];
 const PRIVATE_REAL_RELEASE_QUERY_SAMPLE_MIN: usize = 500;
+static PRIVATE_QUERY_SCRATCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub type Result<T> = std::result::Result<T, BenchmarkError>;
 
@@ -101,24 +154,28 @@ pub struct PrivateQueryBenchmarkCommand {
 }
 
 impl PrivateQueryBenchmarkCommand {
-    pub fn local_command(command: impl AsRef<Path>) -> Result<Self> {
-        Self::local_command_with_args(command, Vec::<String>::new())
+    pub fn resident_batch_command(command: impl AsRef<Path>) -> Result<Self> {
+        Self::resident_batch_command_with_args(command, Vec::<String>::new())
     }
 
-    pub fn local_command_with_args(
+    pub fn resident_batch_command_with_args(
         command: impl AsRef<Path>,
         args: impl IntoIterator<Item = impl Into<String>>,
     ) -> Result<Self> {
         let command = command.as_ref().to_path_buf();
         if command.as_os_str().is_empty() {
-            return Err(BenchmarkError::invalid_config("private_query_command"));
+            return Err(BenchmarkError::invalid_config(
+                "private_query_resident_command",
+            ));
         }
         let args = args
             .into_iter()
             .map(Into::into)
             .map(|arg| {
                 if arg.is_empty() {
-                    return Err(BenchmarkError::invalid_config("private_query_command_arg"));
+                    return Err(BenchmarkError::invalid_config(
+                        "private_query_resident_command_arg",
+                    ));
                 }
                 Ok(arg)
             })
@@ -131,6 +188,7 @@ impl fmt::Debug for PrivateQueryBenchmarkCommand {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PrivateQueryBenchmarkCommand")
+            .field("runner", &"resident-batch-command")
             .field("command", &"<redacted>")
             .finish()
     }
@@ -139,23 +197,19 @@ impl fmt::Debug for PrivateQueryBenchmarkCommand {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrivateQueryManifestDigests {
     dataset_manifest_sha256: String,
-    query_set_sha256: String,
     model_manifest_sha256: String,
 }
 
 impl PrivateQueryManifestDigests {
     pub fn new(
         dataset_manifest_sha256: impl Into<String>,
-        query_set_sha256: impl Into<String>,
         model_manifest_sha256: impl Into<String>,
     ) -> Result<Self> {
         let digests = Self {
             dataset_manifest_sha256: dataset_manifest_sha256.into(),
-            query_set_sha256: query_set_sha256.into(),
             model_manifest_sha256: model_manifest_sha256.into(),
         };
         if !is_sha256_hex(&digests.dataset_manifest_sha256)
-            || !is_sha256_hex(&digests.query_set_sha256)
             || !is_sha256_hex(&digests.model_manifest_sha256)
         {
             return Err(BenchmarkError::invalid_config(
@@ -355,10 +409,12 @@ pub struct PrivateQueryBenchmarkConfig {
     command: PrivateQueryBenchmarkCommand,
     corpus_summary: PrivateQueryCorpusSummary,
     max_queries: usize,
+    request_sample_count: Option<usize>,
     top_k: usize,
     timeout_ms: u64,
     index_size_bytes: u64,
     manifests: PrivateQueryManifestDigests,
+    synthetic_smoke_evidence: bool,
 }
 
 impl PrivateQueryBenchmarkConfig {
@@ -377,10 +433,12 @@ impl PrivateQueryBenchmarkConfig {
             command,
             corpus_summary,
             max_queries: DEFAULT_PRIVATE_QUERY_MAX_QUERIES,
+            request_sample_count: None,
             top_k: DEFAULT_TOP_K,
             timeout_ms: DEFAULT_PRIVATE_QUERY_TIMEOUT_MS,
             index_size_bytes: 0,
             manifests,
+            synthetic_smoke_evidence: false,
         })
     }
 
@@ -389,6 +447,16 @@ impl PrivateQueryBenchmarkConfig {
             return Err(BenchmarkError::invalid_config("private_query_max_queries"));
         }
         self.max_queries = max_queries;
+        Ok(self)
+    }
+
+    pub fn with_request_sample_count(mut self, request_sample_count: usize) -> Result<Self> {
+        if request_sample_count == 0 {
+            return Err(BenchmarkError::invalid_config(
+                "private_query_request_sample_count",
+            ));
+        }
+        self.request_sample_count = Some(request_sample_count);
         Ok(self)
     }
 
@@ -410,6 +478,11 @@ impl PrivateQueryBenchmarkConfig {
 
     pub fn with_index_size_bytes(mut self, index_size_bytes: u64) -> Self {
         self.index_size_bytes = index_size_bytes;
+        self
+    }
+
+    pub fn with_synthetic_smoke_evidence(mut self) -> Self {
+        self.synthetic_smoke_evidence = true;
         self
     }
 }
@@ -965,17 +1038,36 @@ pub struct PrivateQueryBenchmarkReport {
     searchable_document_count: usize,
     vector_indexed_document_count: usize,
     corpus_summary_sha256: String,
+    query_set_sha256: String,
+    tune_sha256: String,
+    holdout_sha256: String,
+    query_source: QuerySetSourceKind,
+    private_scale_gate: Option<PrivateQueryScaleGate>,
     query_count: usize,
+    request_sample_count: usize,
+    bucket_counts: BTreeMap<&'static str, usize>,
+    tune_bucket_counts: BTreeMap<&'static str, usize>,
+    holdout_bucket_counts: BTreeMap<&'static str, usize>,
+    samples_per_bucket: BTreeMap<&'static str, usize>,
     top_k: usize,
     query_total_ms: f64,
     index_size_bytes: u64,
     zero_result_queries: usize,
     total_hits: usize,
     latency: LatencySummary,
+    query_latency_by_bucket: BTreeMap<&'static str, LatencySummary>,
+    stage_latency: PrivateQueryStageLatencySummary,
+    stage_latency_by_bucket: BTreeMap<&'static str, PrivateQueryStageLatencySummary>,
+    stage_histogram: PrivateQueryStageHistogramSummary,
+    stage_histogram_by_bucket: BTreeMap<&'static str, PrivateQueryStageHistogramSummary>,
+    rss_delta_mb: LatencySummary,
+    rss_delta_mb_by_bucket: BTreeMap<&'static str, LatencySummary>,
     million_scale_verified: bool,
     percentile_confidence: &'static str,
     query_embedding_command_invocations: usize,
+    spawn_per_query: bool,
     manifests: PrivateQueryManifestDigests,
+    synthetic_smoke_evidence: bool,
 }
 
 impl PrivateQueryBenchmarkReport {
@@ -1004,7 +1096,7 @@ impl PrivateQueryBenchmarkReport {
             return 0.0;
         }
 
-        self.query_count as f64 / (self.query_total_ms / 1000.0)
+        self.request_sample_count as f64 / (self.query_total_ms / 1000.0)
     }
 
     pub fn zero_result_queries(&self) -> usize {
@@ -1016,18 +1108,48 @@ impl PrivateQueryBenchmarkReport {
     }
 
     pub fn to_redacted_json(&self) -> String {
+        let dataset_kind = if self.synthetic_smoke_evidence {
+            "synthetic-smoke"
+        } else {
+            "private-real-corpus"
+        };
+        let target_claim = if self.synthetic_smoke_evidence {
+            "not_evaluated"
+        } else {
+            "benchmark_baseline_observed"
+        };
+        let corpus_origin = if self.synthetic_smoke_evidence {
+            "synthetic_public_fixture"
+        } else {
+            "private_local"
+        };
+        let scope = if self.synthetic_smoke_evidence {
+            "synthetic private-query runner smoke; aggregate redacted report only"
+        } else {
+            "private local real-corpus query benchmark; aggregate redacted report only"
+        };
         format!(
             concat!(
                 "{{",
                 "\"schema_version\":\"benchmark.v1\",",
                 "\"run_id\":\"{}\",",
                 "\"platform\":\"{}\",",
-                "\"dataset_kind\":\"private-real-corpus\",",
+                "\"dataset_kind\":\"{}\",",
                 "\"document_count\":{},",
                 "\"searchable_document_count\":{},",
                 "\"vector_indexed_document_count\":{},",
                 "\"corpus_summary_sha256\":\"{}\",",
+                "\"query_set_sha256\":\"{}\",",
+                "\"tune_sha256\":\"{}\",",
+                "\"holdout_sha256\":\"{}\",",
+                "\"query_source\":\"{}\",",
+                "\"private_scale_gate\":{},",
                 "\"query_count\":{},",
+                "\"request_sample_count\":{},",
+                "\"bucket_counts\":{},",
+                "\"tune_bucket_counts\":{},",
+                "\"holdout_bucket_counts\":{},",
+                "\"samples_per_bucket\":{},",
                 "\"top_k\":{},",
                 "\"build_ms\":0.000,",
                 "\"query_total_ms\":{},",
@@ -1042,16 +1164,27 @@ impl PrivateQueryBenchmarkReport {
                 "\"p99\":{},",
                 "\"max\":{}",
                 "}},",
+                "\"query_latency_by_bucket\":{},",
+                "\"stage_latency_ms\":{},",
+                "\"stage_latency_by_bucket_ms\":{},",
+                "\"stage_histogram_ms\":{},",
+                "\"stage_histogram_by_bucket_ms\":{},",
+                "\"rss_delta_mb\":{},",
+                "\"rss_delta_mb_by_bucket\":{},",
                 "\"zero_result_queries\":{},",
                 "\"total_hits\":{},",
                 "\"million_scale_verified\":{},",
                 "\"percentile_confidence\":\"{}\",",
-                "\"target_claim\":\"benchmark_baseline_observed\",",
-                "\"corpus_origin\":\"private_local\",",
+                "\"target_claim\":\"{}\",",
+                "\"corpus_origin\":\"{}\",",
                 "\"privacy_boundary\":\"redacted_local_aggregate\",",
-                "\"query_protocol\":\"resume-ir-query-v1\",",
+                "\"query_protocol\":\"{}\",",
+                "\"query_runner\":\"resident-batch-command\",",
+                "\"spawn_per_query\":false,",
                 "\"query_mode\":\"hybrid\",",
                 "\"retrieval_layers\":\"fulltext+field+vector+rrf\",",
+                "\"warm_or_cold_definition\":\"{}\",",
+                "\"cache_state\":\"{}\",",
                 "\"query_embedding_runtime\":\"local-command\",",
                 "\"query_embedding_command_invocations\":{},",
                 "\"hot_index\":true,",
@@ -1062,18 +1195,28 @@ impl PrivateQueryBenchmarkReport {
                 "\"contains_resume_paths\":false,",
                 "\"contains_queries\":false,",
                 "\"dataset_manifest_sha256\":\"{}\",",
-                "\"query_set_sha256\":\"{}\",",
                 "\"model_manifest_sha256\":\"{}\",",
-                "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
+                "\"scope\":\"{}\"",
                 "}}"
             ),
             self.run_id,
             self.platform,
+            dataset_kind,
             self.document_count,
             self.searchable_document_count,
             self.vector_indexed_document_count,
             self.corpus_summary_sha256,
+            self.query_set_sha256,
+            self.tune_sha256,
+            self.holdout_sha256,
+            self.query_source.as_str(),
+            format_private_query_scale_gate_json(self.private_scale_gate),
             self.query_count,
+            self.request_sample_count,
+            format_private_query_bucket_counts(&self.bucket_counts),
+            format_private_query_bucket_counts(&self.tune_bucket_counts),
+            format_private_query_bucket_counts(&self.holdout_bucket_counts),
+            format_private_query_bucket_counts(&self.samples_per_bucket),
             self.top_k,
             format_consistency_number(self.query_total_ms),
             format_consistency_number(self.qps()),
@@ -1085,14 +1228,26 @@ impl PrivateQueryBenchmarkReport {
             format_ms(self.latency.p95_ms),
             format_ms(self.latency.p99_ms),
             format_ms(self.latency.max_ms),
+            format_private_query_bucket_latency_json(&self.query_latency_by_bucket),
+            self.stage_latency.to_redacted_json(),
+            format_private_query_bucket_stage_latency_json(&self.stage_latency_by_bucket),
+            self.stage_histogram.to_redacted_json(),
+            format_private_query_bucket_stage_histogram_json(&self.stage_histogram_by_bucket),
+            format_latency_summary_json(&self.rss_delta_mb),
+            format_private_query_bucket_latency_json(&self.rss_delta_mb_by_bucket),
             self.zero_result_queries,
             self.total_hits,
             self.million_scale_verified,
             self.percentile_confidence,
+            target_claim,
+            corpus_origin,
+            PRIVATE_QUERY_PROTOCOL_VERSION,
+            PRIVATE_QUERY_WARM_OR_COLD_DEFINITION,
+            PRIVATE_QUERY_CACHE_STATE,
             self.query_embedding_command_invocations,
             self.manifests.dataset_manifest_sha256,
-            self.manifests.query_set_sha256,
             self.manifests.model_manifest_sha256,
+            scope,
         )
     }
 }
@@ -1103,7 +1258,14 @@ impl fmt::Debug for PrivateQueryBenchmarkReport {
             .debug_struct("PrivateQueryBenchmarkReport")
             .field("run_id", &self.run_id)
             .field("platform", &self.platform)
-            .field("dataset_kind", &"private-real-corpus")
+            .field(
+                "dataset_kind",
+                &if self.synthetic_smoke_evidence {
+                    "synthetic-smoke"
+                } else {
+                    "private-real-corpus"
+                },
+            )
             .field("document_count", &self.document_count)
             .field("searchable_document_count", &self.searchable_document_count)
             .field(
@@ -1111,19 +1273,40 @@ impl fmt::Debug for PrivateQueryBenchmarkReport {
                 &self.vector_indexed_document_count,
             )
             .field("corpus_summary_sha256", &self.corpus_summary_sha256)
+            .field("query_set_sha256", &self.query_set_sha256)
+            .field("tune_sha256", &self.tune_sha256)
+            .field("holdout_sha256", &self.holdout_sha256)
+            .field("query_source", &self.query_source.as_str())
+            .field(
+                "private_scale_gate",
+                &self.private_scale_gate.map(PrivateQueryScaleGate::as_str),
+            )
             .field("query_count", &self.query_count)
+            .field("request_sample_count", &self.request_sample_count)
+            .field("bucket_counts", &self.bucket_counts)
+            .field("tune_bucket_counts", &self.tune_bucket_counts)
+            .field("holdout_bucket_counts", &self.holdout_bucket_counts)
+            .field("samples_per_bucket", &self.samples_per_bucket)
             .field("top_k", &self.top_k)
             .field("query_total_ms", &self.query_total_ms)
             .field("index_size_bytes", &self.index_size_bytes)
             .field("zero_result_queries", &self.zero_result_queries)
             .field("total_hits", &self.total_hits)
             .field("latency", &self.latency)
+            .field("query_latency_by_bucket", &self.query_latency_by_bucket)
+            .field("stage_latency", &self.stage_latency)
+            .field("stage_latency_by_bucket", &self.stage_latency_by_bucket)
+            .field("stage_histogram", &self.stage_histogram)
+            .field("stage_histogram_by_bucket", &self.stage_histogram_by_bucket)
+            .field("rss_delta_mb", &self.rss_delta_mb)
+            .field("rss_delta_mb_by_bucket", &self.rss_delta_mb_by_bucket)
             .field("million_scale_verified", &self.million_scale_verified)
             .field("percentile_confidence", &self.percentile_confidence)
             .field(
                 "query_embedding_command_invocations",
                 &self.query_embedding_command_invocations,
             )
+            .field("spawn_per_query", &self.spawn_per_query)
             .finish()
     }
 }
@@ -1588,6 +1771,340 @@ pub struct LatencySummary {
     max_ms: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PrivateQueryStageTimings {
+    query_parse_ms: f64,
+    prefilter_ms: f64,
+    bm25_ms: f64,
+    ann_ms: f64,
+    fusion_ms: f64,
+    bulk_hydrate_ms: f64,
+    snippet_ms: f64,
+}
+
+#[derive(Default)]
+struct PrivateQueryStageTimingBuilder {
+    query_parse_ms: Option<f64>,
+    prefilter_ms: Option<f64>,
+    bm25_ms: Option<f64>,
+    ann_ms: Option<f64>,
+    fusion_ms: Option<f64>,
+    bulk_hydrate_ms: Option<f64>,
+    snippet_ms: Option<f64>,
+}
+
+impl PrivateQueryStageTimingBuilder {
+    fn observe(&mut self, line: &str) -> Result<bool> {
+        let Some(stage_line) = line.strip_prefix("stage_") else {
+            return Ok(false);
+        };
+        let Some((stage, value)) = stage_line.split_once("_ms=") else {
+            return Err(BenchmarkError::invalid_config(
+                "private_query_stage_latency_attestation",
+            ));
+        };
+        match stage {
+            "query_parse" => set_private_query_stage_ms(&mut self.query_parse_ms, value)?,
+            "prefilter" => set_private_query_stage_ms(&mut self.prefilter_ms, value)?,
+            "bm25" => set_private_query_stage_ms(&mut self.bm25_ms, value)?,
+            "ann" => set_private_query_stage_ms(&mut self.ann_ms, value)?,
+            "fusion" => set_private_query_stage_ms(&mut self.fusion_ms, value)?,
+            "bulk_hydrate" => set_private_query_stage_ms(&mut self.bulk_hydrate_ms, value)?,
+            "snippet" => set_private_query_stage_ms(&mut self.snippet_ms, value)?,
+            _ => {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_stage_latency_attestation",
+                ));
+            }
+        }
+        Ok(true)
+    }
+
+    fn finish(self) -> Result<PrivateQueryStageTimings> {
+        Ok(PrivateQueryStageTimings {
+            query_parse_ms: self.query_parse_ms.ok_or_else(|| {
+                BenchmarkError::invalid_config("private_query_stage_latency_attestation")
+            })?,
+            prefilter_ms: self.prefilter_ms.ok_or_else(|| {
+                BenchmarkError::invalid_config("private_query_stage_latency_attestation")
+            })?,
+            bm25_ms: self.bm25_ms.ok_or_else(|| {
+                BenchmarkError::invalid_config("private_query_stage_latency_attestation")
+            })?,
+            ann_ms: self.ann_ms.ok_or_else(|| {
+                BenchmarkError::invalid_config("private_query_stage_latency_attestation")
+            })?,
+            fusion_ms: self.fusion_ms.ok_or_else(|| {
+                BenchmarkError::invalid_config("private_query_stage_latency_attestation")
+            })?,
+            bulk_hydrate_ms: self.bulk_hydrate_ms.ok_or_else(|| {
+                BenchmarkError::invalid_config("private_query_stage_latency_attestation")
+            })?,
+            snippet_ms: self.snippet_ms.ok_or_else(|| {
+                BenchmarkError::invalid_config("private_query_stage_latency_attestation")
+            })?,
+        })
+    }
+}
+
+fn set_private_query_stage_ms(slot: &mut Option<f64>, value: &str) -> Result<()> {
+    if slot.is_some() {
+        return Err(BenchmarkError::invalid_config(
+            "private_query_stage_latency_attestation",
+        ));
+    }
+    let parsed = value
+        .parse::<f64>()
+        .map_err(|_| BenchmarkError::invalid_config("private_query_stage_latency_attestation"))?;
+    if !parsed.is_finite() || parsed < 0.0 {
+        return Err(BenchmarkError::invalid_config(
+            "private_query_stage_latency_attestation",
+        ));
+    }
+    *slot = Some(parsed);
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PrivateQueryStageLatencySummary {
+    query_parse: LatencySummary,
+    prefilter: LatencySummary,
+    bm25: LatencySummary,
+    ann: LatencySummary,
+    fusion: LatencySummary,
+    bulk_hydrate: LatencySummary,
+    snippet: LatencySummary,
+}
+
+impl PrivateQueryStageLatencySummary {
+    fn from_samples(samples: Vec<PrivateQueryStageTimings>) -> Result<Self> {
+        let mut query_parse = Vec::with_capacity(samples.len());
+        let mut prefilter = Vec::with_capacity(samples.len());
+        let mut bm25 = Vec::with_capacity(samples.len());
+        let mut ann = Vec::with_capacity(samples.len());
+        let mut fusion = Vec::with_capacity(samples.len());
+        let mut bulk_hydrate = Vec::with_capacity(samples.len());
+        let mut snippet = Vec::with_capacity(samples.len());
+        for sample in samples {
+            query_parse.push(sample.query_parse_ms);
+            prefilter.push(sample.prefilter_ms);
+            bm25.push(sample.bm25_ms);
+            ann.push(sample.ann_ms);
+            fusion.push(sample.fusion_ms);
+            bulk_hydrate.push(sample.bulk_hydrate_ms);
+            snippet.push(sample.snippet_ms);
+        }
+        Ok(Self {
+            query_parse: LatencySummary::from_samples(query_parse)?,
+            prefilter: LatencySummary::from_samples(prefilter)?,
+            bm25: LatencySummary::from_samples(bm25)?,
+            ann: LatencySummary::from_samples(ann)?,
+            fusion: LatencySummary::from_samples(fusion)?,
+            bulk_hydrate: LatencySummary::from_samples(bulk_hydrate)?,
+            snippet: LatencySummary::from_samples(snippet)?,
+        })
+    }
+
+    fn to_redacted_json(&self) -> String {
+        format!(
+            concat!(
+                "{{",
+                "\"query_parse\":{},",
+                "\"prefilter\":{},",
+                "\"bm25\":{},",
+                "\"ann\":{},",
+                "\"fusion\":{},",
+                "\"bulk_hydrate\":{},",
+                "\"snippet\":{}",
+                "}}"
+            ),
+            format_latency_summary_json(&self.query_parse),
+            format_latency_summary_json(&self.prefilter),
+            format_latency_summary_json(&self.bm25),
+            format_latency_summary_json(&self.ann),
+            format_latency_summary_json(&self.fusion),
+            format_latency_summary_json(&self.bulk_hydrate),
+            format_latency_summary_json(&self.snippet),
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct LatencyHistogram {
+    samples: usize,
+    bin_counts: Vec<usize>,
+    overflow_count: usize,
+}
+
+impl LatencyHistogram {
+    fn from_samples(samples: Vec<f64>) -> Result<Self> {
+        if samples.is_empty() {
+            return Err(BenchmarkError::invalid_config(
+                "private_query_stage_histogram",
+            ));
+        }
+        for sample in &samples {
+            if !sample.is_finite() || *sample < 0.0 {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_stage_histogram",
+                ));
+            }
+        }
+        let bin_counts = PRIVATE_QUERY_STAGE_HISTOGRAM_BOUNDS_MS
+            .into_iter()
+            .map(|bound| samples.iter().filter(|sample| **sample <= bound).count())
+            .collect::<Vec<_>>();
+        let covered_count = bin_counts.last().copied().unwrap_or_default();
+        Ok(Self {
+            samples: samples.len(),
+            bin_counts,
+            overflow_count: samples.len().saturating_sub(covered_count),
+        })
+    }
+
+    fn to_redacted_json(&self) -> String {
+        let bins = PRIVATE_QUERY_STAGE_HISTOGRAM_BOUNDS_MS
+            .into_iter()
+            .zip(self.bin_counts.iter().copied())
+            .map(|(bound, count)| format!("{{\"le_ms\":{},\"count\":{}}}", format_ms(bound), count))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "{{\"samples\":{},\"bins\":[{}],\"overflow_count\":{}}}",
+            self.samples, bins, self.overflow_count
+        )
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PrivateQueryStageHistogramSummary {
+    query_parse: LatencyHistogram,
+    prefilter: LatencyHistogram,
+    bm25: LatencyHistogram,
+    ann: LatencyHistogram,
+    fusion: LatencyHistogram,
+    bulk_hydrate: LatencyHistogram,
+    snippet: LatencyHistogram,
+}
+
+impl PrivateQueryStageHistogramSummary {
+    fn from_samples(samples: &[PrivateQueryStageTimings]) -> Result<Self> {
+        let mut query_parse = Vec::with_capacity(samples.len());
+        let mut prefilter = Vec::with_capacity(samples.len());
+        let mut bm25 = Vec::with_capacity(samples.len());
+        let mut ann = Vec::with_capacity(samples.len());
+        let mut fusion = Vec::with_capacity(samples.len());
+        let mut bulk_hydrate = Vec::with_capacity(samples.len());
+        let mut snippet = Vec::with_capacity(samples.len());
+        for sample in samples {
+            query_parse.push(sample.query_parse_ms);
+            prefilter.push(sample.prefilter_ms);
+            bm25.push(sample.bm25_ms);
+            ann.push(sample.ann_ms);
+            fusion.push(sample.fusion_ms);
+            bulk_hydrate.push(sample.bulk_hydrate_ms);
+            snippet.push(sample.snippet_ms);
+        }
+        Ok(Self {
+            query_parse: LatencyHistogram::from_samples(query_parse)?,
+            prefilter: LatencyHistogram::from_samples(prefilter)?,
+            bm25: LatencyHistogram::from_samples(bm25)?,
+            ann: LatencyHistogram::from_samples(ann)?,
+            fusion: LatencyHistogram::from_samples(fusion)?,
+            bulk_hydrate: LatencyHistogram::from_samples(bulk_hydrate)?,
+            snippet: LatencyHistogram::from_samples(snippet)?,
+        })
+    }
+
+    fn to_redacted_json(&self) -> String {
+        format!(
+            concat!(
+                "{{",
+                "\"query_parse\":{},",
+                "\"prefilter\":{},",
+                "\"bm25\":{},",
+                "\"ann\":{},",
+                "\"fusion\":{},",
+                "\"bulk_hydrate\":{},",
+                "\"snippet\":{}",
+                "}}"
+            ),
+            self.query_parse.to_redacted_json(),
+            self.prefilter.to_redacted_json(),
+            self.bm25.to_redacted_json(),
+            self.ann.to_redacted_json(),
+            self.fusion.to_redacted_json(),
+            self.bulk_hydrate.to_redacted_json(),
+            self.snippet.to_redacted_json(),
+        )
+    }
+}
+
+fn format_latency_summary_json(summary: &LatencySummary) -> String {
+    format!(
+        concat!(
+            "{{",
+            "\"samples\":{},",
+            "\"min\":{},",
+            "\"mean\":{},",
+            "\"p50\":{},",
+            "\"p95\":{},",
+            "\"p99\":{},",
+            "\"max\":{}",
+            "}}"
+        ),
+        summary.samples,
+        format_ms(summary.min_ms),
+        format_ms(summary.mean_ms),
+        format_ms(summary.p50_ms),
+        format_ms(summary.p95_ms),
+        format_ms(summary.p99_ms),
+        format_ms(summary.max_ms),
+    )
+}
+
+fn format_private_query_bucket_latency_json(
+    summaries: &BTreeMap<&'static str, LatencySummary>,
+) -> String {
+    let fields = PRIVATE_QUERY_BUCKETS
+        .into_iter()
+        .filter_map(|bucket| {
+            summaries
+                .get(bucket)
+                .map(|summary| format!("\"{bucket}\":{}", format_latency_summary_json(summary)))
+        })
+        .collect::<Vec<_>>();
+    format!("{{{}}}", fields.join(","))
+}
+
+fn format_private_query_bucket_stage_latency_json(
+    summaries: &BTreeMap<&'static str, PrivateQueryStageLatencySummary>,
+) -> String {
+    let fields = PRIVATE_QUERY_BUCKETS
+        .into_iter()
+        .filter_map(|bucket| {
+            summaries
+                .get(bucket)
+                .map(|summary| format!("\"{bucket}\":{}", summary.to_redacted_json()))
+        })
+        .collect::<Vec<_>>();
+    format!("{{{}}}", fields.join(","))
+}
+
+fn format_private_query_bucket_stage_histogram_json(
+    summaries: &BTreeMap<&'static str, PrivateQueryStageHistogramSummary>,
+) -> String {
+    let fields = PRIVATE_QUERY_BUCKETS
+        .into_iter()
+        .filter_map(|bucket| {
+            summaries
+                .get(bucket)
+                .map(|summary| format!("\"{bucket}\":{}", summary.to_redacted_json()))
+        })
+        .collect::<Vec<_>>();
+    format!("{{{}}}", fields.join(","))
+}
+
 impl LatencySummary {
     pub fn samples(&self) -> usize {
         self.samples
@@ -1669,26 +2186,68 @@ pub fn run_synthetic_query_benchmark(
 pub fn run_private_query_benchmark(
     config: PrivateQueryBenchmarkConfig,
 ) -> Result<PrivateQueryBenchmarkReport> {
-    let queries = load_private_query_set(&config.query_set, config.max_queries)?;
+    let PrivateQuerySet {
+        samples,
+        bucket_counts,
+        query_source,
+        summary,
+    } = load_private_query_set(&config.query_set, config.max_queries)?;
+    let request_sample_count = config.request_sample_count.unwrap_or(samples.len());
+    if request_sample_count < samples.len() {
+        return Err(BenchmarkError::invalid_config(
+            "private_query_request_sample_count",
+        ));
+    }
+    let private_scale_gate = private_query_scale_gate(&config, request_sample_count);
+    let min_samples_per_bucket =
+        private_scale_gate.map(PrivateQueryScaleGate::min_samples_per_bucket);
+    validate_private_query_scale_gate_bucket_min_counts(
+        &config,
+        request_sample_count,
+        &bucket_counts,
+    )?;
+    let execution_samples =
+        build_private_query_execution_plan(&samples, request_sample_count, min_samples_per_bucket)?;
     let scratch = create_private_query_scratch_dir()?;
     let _scratch_guard = PrivateQueryScratchGuard(scratch.clone());
-    let query_file = scratch.join("query.txt");
+    let query_batch_file = scratch.join("queries.jsonl");
 
-    let mut latencies = Vec::with_capacity(queries.len());
+    let mut latencies = Vec::with_capacity(request_sample_count);
+    let mut latencies_by_bucket = empty_private_query_bucket_latency_samples();
+    let mut stage_timings = Vec::with_capacity(request_sample_count);
+    let mut stage_timings_by_bucket = empty_private_query_bucket_stage_samples();
+    let mut rss_deltas = Vec::with_capacity(request_sample_count);
+    let mut rss_deltas_by_bucket = empty_private_query_bucket_latency_samples();
+    let mut samples_per_bucket = empty_private_query_bucket_counts();
     let query_batch_started = Instant::now();
     let mut total_hits = 0_usize;
     let mut zero_result_queries = 0_usize;
     let mut query_embedding_command_invocations = 0_usize;
-    for query in &queries {
-        write_private_query_file(&query_file, query)?;
-        let query_started = Instant::now();
-        let command_output = run_private_query_command(
-            &config.command,
-            &query_file,
-            config.top_k,
-            config.timeout_ms,
-        )?;
-        latencies.push(elapsed_ms(query_started));
+    write_private_query_batch_file(&query_batch_file, &execution_samples)?;
+    let command_outputs = run_private_query_resident_batch_command(
+        &config.command,
+        &query_batch_file,
+        execution_samples.len(),
+        config.top_k,
+        config.timeout_ms,
+    )?;
+    for (sample, command_output) in execution_samples.iter().zip(command_outputs) {
+        if let Some(count) = samples_per_bucket.get_mut(sample.bucket) {
+            *count += 1;
+        }
+        latencies.push(command_output.elapsed_ms);
+        if let Some(bucket_latencies) = latencies_by_bucket.get_mut(sample.bucket) {
+            bucket_latencies.push(command_output.elapsed_ms);
+        }
+        rss_deltas.push(command_output.rss_delta_mb);
+        if let Some(bucket_rss_deltas) = rss_deltas_by_bucket.get_mut(sample.bucket) {
+            bucket_rss_deltas.push(command_output.rss_delta_mb);
+        }
+        let stage_timing = command_output.stage_timings;
+        stage_timings.push(stage_timing);
+        if let Some(bucket_stage_timings) = stage_timings_by_bucket.get_mut(sample.bucket) {
+            bucket_stage_timings.push(stage_timing);
+        }
         let hits = command_output.hits;
         if hits == 0 {
             zero_result_queries += 1;
@@ -1706,20 +2265,43 @@ pub fn run_private_query_benchmark(
         searchable_document_count: config.corpus_summary.searchable_document_count(),
         vector_indexed_document_count: config.corpus_summary.vector_indexed_document_count(),
         corpus_summary_sha256: config.corpus_summary.sha256().to_string(),
-        query_count: queries.len(),
+        query_set_sha256: summary.query_set_sha256,
+        tune_sha256: summary.tune_sha256,
+        holdout_sha256: summary.holdout_sha256,
+        query_source,
+        private_scale_gate,
+        query_count: samples.len(),
+        request_sample_count,
+        bucket_counts,
+        tune_bucket_counts: summary.tune_bucket_counts,
+        holdout_bucket_counts: summary.holdout_bucket_counts,
+        samples_per_bucket,
         top_k: config.top_k,
         query_total_ms,
         index_size_bytes: config.index_size_bytes,
         zero_result_queries,
         total_hits,
         latency: LatencySummary::from_samples(latencies)?,
+        query_latency_by_bucket: summarize_private_query_bucket_latencies(latencies_by_bucket)?,
+        stage_latency: PrivateQueryStageLatencySummary::from_samples(stage_timings.clone())?,
+        stage_latency_by_bucket: summarize_private_query_bucket_stage_latencies(
+            stage_timings_by_bucket.clone(),
+        )?,
+        stage_histogram: PrivateQueryStageHistogramSummary::from_samples(&stage_timings)?,
+        stage_histogram_by_bucket: summarize_private_query_bucket_stage_histograms(
+            &stage_timings_by_bucket,
+        )?,
+        rss_delta_mb: LatencySummary::from_samples(rss_deltas)?,
+        rss_delta_mb_by_bucket: summarize_private_query_bucket_latencies(rss_deltas_by_bucket)?,
         million_scale_verified: config.corpus_summary.document_count() >= 1_000_000,
         percentile_confidence: private_query_percentile_confidence(
             config.corpus_summary.document_count(),
-            queries.len(),
+            request_sample_count,
         ),
         query_embedding_command_invocations,
+        spawn_per_query: false,
         manifests: config.manifests,
+        synthetic_smoke_evidence: config.synthetic_smoke_evidence,
     })
 }
 
@@ -4222,8 +4804,12 @@ fn validate_private_real_benchmark_boundary(
         || private_real_bool(report, "contains_queries")?
         || !is_sha256_hex(private_real_str(report, "dataset_manifest_sha256")?)
         || !is_sha256_hex(private_real_str(report, "query_set_sha256")?)
+        || !is_sha256_hex(private_real_str(report, "tune_sha256")?)
+        || !is_sha256_hex(private_real_str(report, "holdout_sha256")?)
         || !is_sha256_hex(private_real_str(report, "model_manifest_sha256")?)
         || !is_sha256_hex(private_real_str(report, "corpus_summary_sha256")?)
+        || private_real_str(report, "query_source")?
+            != QuerySetSourceKind::TraceSourceSearchV1.as_str()
         || private_real_str(report, "scope")?
             != "private local real-corpus query benchmark; aggregate redacted report only"
     {
@@ -4262,6 +4848,7 @@ fn validate_private_real_benchmark_consistency(
 ) -> std::result::Result<(), BenchmarkGateError> {
     let document_count = private_real_usize(report, "document_count")?;
     let query_count = private_real_usize(report, "query_count")?;
+    let request_sample_count = private_real_usize(report, "request_sample_count")?;
     let top_k = private_real_usize(report, "top_k")?;
     let query_total_ms = private_real_number(report, "query_total_ms")?;
     let qps = private_real_number(report, "qps")?;
@@ -4269,34 +4856,37 @@ fn validate_private_real_benchmark_consistency(
     let total_hits = private_real_usize(report, "total_hits")?;
     let query_embedding_command_invocations =
         private_real_usize(report, "query_embedding_command_invocations")?;
+    validate_private_real_query_bucket_counts(report, query_count)?;
+    validate_private_real_query_split_counts(report, query_count)?;
+    validate_private_real_samples_per_bucket(report, request_sample_count)?;
     let latency = report
         .get("query_latency_ms")
         .ok_or_else(private_real_boundary_error)?;
-    let samples = private_real_usize(latency, "samples")?;
-    let min = private_real_number(latency, "min")?;
-    let mean = private_real_number(latency, "mean")?;
-    let p50 = private_real_number(latency, "p50")?;
-    let p95 = private_real_number(latency, "p95")?;
-    let p99 = private_real_number(latency, "p99")?;
-    let max = private_real_number(latency, "max")?;
-    let max_hits = query_count
+    validate_private_real_latency_consistency(latency, request_sample_count)?;
+    validate_private_real_query_latency_by_bucket_consistency(report)?;
+    validate_private_real_stage_latency_consistency(report, request_sample_count)?;
+    validate_private_real_stage_latency_by_bucket_consistency(report)?;
+    validate_private_real_stage_histogram_consistency(report, request_sample_count)?;
+    validate_private_real_stage_histogram_by_bucket_consistency(report)?;
+    validate_private_real_rss_delta_consistency(report, request_sample_count)?;
+    validate_private_real_rss_delta_by_bucket_consistency(report)?;
+    let max_hits = request_sample_count
         .checked_mul(top_k)
         .ok_or_else(private_real_counts_error)?;
 
     if document_count == 0
         || query_count == 0
+        || request_sample_count < query_count
         || top_k == 0
-        || samples != query_count
-        || zero_result_queries > query_count
+        || zero_result_queries > request_sample_count
         || total_hits > max_hits
-        || query_embedding_command_invocations != query_count
+        || query_embedding_command_invocations != request_sample_count
         || query_total_ms <= 0.0
-        || !latency_summary_is_ordered(min, mean, p50, p95, p99, max)
     {
         return Err(private_real_counts_error());
     }
 
-    let expected_qps = query_count as f64 / (query_total_ms / 1000.0);
+    let expected_qps = request_sample_count as f64 / (query_total_ms / 1000.0);
     if (qps - expected_qps).abs() > PRIVATE_REAL_BENCHMARK_SCORE_TOLERANCE {
         return Err(private_real_metric_error());
     }
@@ -4306,6 +4896,44 @@ fn validate_private_real_benchmark_consistency(
 
 fn latency_summary_is_ordered(min: f64, mean: f64, p50: f64, p95: f64, p99: f64, max: f64) -> bool {
     min <= mean && mean <= max && min <= p50 && p50 <= p95 && p95 <= p99 && p99 <= max
+}
+
+fn validate_private_real_latency_consistency(
+    latency: &serde_json::Value,
+    expected_samples: usize,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let samples = private_real_usize(latency, "samples")?;
+    let min = private_real_number(latency, "min")?;
+    let mean = private_real_number(latency, "mean")?;
+    let p50 = private_real_number(latency, "p50")?;
+    let p95 = private_real_number(latency, "p95")?;
+    let p99 = private_real_number(latency, "p99")?;
+    let max = private_real_number(latency, "max")?;
+    if samples != expected_samples || !latency_summary_is_ordered(min, mean, p50, p95, p99, max) {
+        return Err(private_real_counts_error());
+    }
+    Ok(())
+}
+
+fn validate_private_real_stage_latency_consistency(
+    report: &serde_json::Value,
+    expected_samples: usize,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let stages = report
+        .get("stage_latency_ms")
+        .ok_or_else(private_real_boundary_error)?;
+    validate_private_real_stage_latency_summary_consistency(stages, expected_samples)
+}
+
+fn validate_private_real_stage_latency_summary_consistency(
+    stages: &serde_json::Value,
+    expected_samples: usize,
+) -> std::result::Result<(), BenchmarkGateError> {
+    for stage in PRIVATE_QUERY_STAGE_NAMES {
+        let latency = stages.get(stage).ok_or_else(private_real_boundary_error)?;
+        validate_private_real_latency_consistency(latency, expected_samples)?;
+    }
+    Ok(())
 }
 
 fn validate_private_real_report_shape(
@@ -4323,6 +4951,27 @@ fn validate_private_real_report_shape(
         if key == "query_latency_ms" {
             validate_private_real_latency_shape(value)?;
         }
+        if key == "query_latency_by_bucket" {
+            validate_private_real_query_latency_by_bucket_shape(value)?;
+        }
+        if key == "stage_latency_ms" {
+            validate_private_real_stage_latency_shape(value)?;
+        }
+        if key == "stage_latency_by_bucket_ms" {
+            validate_private_real_stage_latency_by_bucket_shape(value)?;
+        }
+        if key == "stage_histogram_ms" {
+            validate_private_real_stage_histogram_shape(value)?;
+        }
+        if key == "stage_histogram_by_bucket_ms" {
+            validate_private_real_stage_histogram_by_bucket_shape(value)?;
+        }
+        if key == "rss_delta_mb" {
+            validate_private_real_latency_shape(value)?;
+        }
+        if key == "rss_delta_mb_by_bucket" {
+            validate_private_real_query_latency_by_bucket_shape(value)?;
+        }
     }
     private_real_str(report, "schema_version")?;
     private_real_str(report, "run_id")?;
@@ -4330,6 +4979,7 @@ fn validate_private_real_report_shape(
     private_real_str(report, "dataset_kind")?;
     private_real_usize(report, "document_count")?;
     private_real_usize(report, "query_count")?;
+    private_real_usize(report, "request_sample_count")?;
     private_real_usize(report, "top_k")?;
     private_real_number(report, "build_ms")?;
     private_real_number(report, "query_total_ms")?;
@@ -4347,14 +4997,419 @@ fn validate_private_real_report_shape(
     private_real_bool(report, "contains_queries")?;
     private_real_str(report, "dataset_manifest_sha256")?;
     private_real_str(report, "query_set_sha256")?;
+    private_real_str(report, "tune_sha256")?;
+    private_real_str(report, "holdout_sha256")?;
+    private_real_str(report, "query_source")?;
     private_real_str(report, "model_manifest_sha256").map_err(|_| {
         BenchmarkGateError::failed("private real-corpus benchmark requires model manifest digest")
     })?;
     private_real_str(report, "corpus_summary_sha256")?;
+    private_real_str(report, "query_runner")?;
+    private_real_bool(report, "spawn_per_query")?;
+    if private_real_str(report, "warm_or_cold_definition")? != PRIVATE_QUERY_WARM_OR_COLD_DEFINITION
+        || private_real_str(report, "cache_state")? != PRIVATE_QUERY_CACHE_STATE
+    {
+        return Err(private_real_boundary_error());
+    }
     private_real_str(report, "query_embedding_runtime")?;
     private_real_usize(report, "query_embedding_command_invocations")?;
+    validate_private_real_query_bucket_counts(report, private_real_usize(report, "query_count")?)?;
+    validate_private_real_query_split_counts(report, private_real_usize(report, "query_count")?)?;
+    validate_private_real_samples_per_bucket(
+        report,
+        private_real_usize(report, "request_sample_count")?,
+    )?;
+    validate_private_real_stage_latency_shape(
+        report
+            .get("stage_latency_ms")
+            .ok_or_else(private_real_boundary_error)?,
+    )?;
+    validate_private_real_stage_latency_by_bucket_shape(
+        report
+            .get("stage_latency_by_bucket_ms")
+            .ok_or_else(private_real_boundary_error)?,
+    )?;
+    validate_private_real_stage_histogram_shape(
+        report
+            .get("stage_histogram_ms")
+            .ok_or_else(private_real_boundary_error)?,
+    )?;
+    validate_private_real_stage_histogram_by_bucket_shape(
+        report
+            .get("stage_histogram_by_bucket_ms")
+            .ok_or_else(private_real_boundary_error)?,
+    )?;
+    validate_private_real_query_latency_by_bucket_shape(
+        report
+            .get("query_latency_by_bucket")
+            .ok_or_else(private_real_boundary_error)?,
+    )?;
+    validate_private_real_latency_shape(
+        report
+            .get("rss_delta_mb")
+            .ok_or_else(private_real_boundary_error)?,
+    )?;
+    validate_private_real_query_latency_by_bucket_shape(
+        report
+            .get("rss_delta_mb_by_bucket")
+            .ok_or_else(private_real_boundary_error)?,
+    )?;
     private_real_str(report, "scope")?;
     validate_private_real_hot_hybrid_evidence(report)?;
+    Ok(())
+}
+
+fn validate_private_real_query_bucket_counts(
+    report: &serde_json::Value,
+    expected_query_count: usize,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let (_, total) = private_real_query_bucket_count_map(report, "bucket_counts")?;
+    if total != expected_query_count {
+        return Err(private_real_counts_error());
+    }
+    Ok(())
+}
+
+fn validate_private_real_query_split_counts(
+    report: &serde_json::Value,
+    expected_query_count: usize,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let (bucket_counts, bucket_total) =
+        private_real_query_bucket_count_map(report, "bucket_counts")?;
+    let (tune_counts, tune_total) =
+        private_real_query_bucket_count_map(report, "tune_bucket_counts")?;
+    let (holdout_counts, holdout_total) =
+        private_real_query_bucket_count_map(report, "holdout_bucket_counts")?;
+    if bucket_total != expected_query_count
+        || tune_total
+            .checked_add(holdout_total)
+            .ok_or_else(private_real_counts_error)?
+            != expected_query_count
+    {
+        return Err(private_real_counts_error());
+    }
+    for bucket in PRIVATE_QUERY_BUCKETS {
+        let tune_count = tune_counts.get(bucket).copied().unwrap_or(0);
+        let holdout_count = holdout_counts.get(bucket).copied().unwrap_or(0);
+        let bucket_count = bucket_counts.get(bucket).copied().unwrap_or(0);
+        if tune_count
+            .checked_add(holdout_count)
+            .ok_or_else(private_real_counts_error)?
+            != bucket_count
+        {
+            return Err(private_real_counts_error());
+        }
+    }
+    Ok(())
+}
+
+fn private_real_query_bucket_count_map(
+    report: &serde_json::Value,
+    field: &'static str,
+) -> std::result::Result<(BTreeMap<&'static str, usize>, usize), BenchmarkGateError> {
+    let value = report.get(field).ok_or_else(private_real_boundary_error)?;
+    let Some(object) = value.as_object() else {
+        return Err(private_real_boundary_error());
+    };
+    for key in object.keys() {
+        if !PRIVATE_QUERY_BUCKETS.contains(&key.as_str()) {
+            return Err(private_real_boundary_error());
+        }
+    }
+    let mut total = 0_usize;
+    let mut counts = BTreeMap::new();
+    for bucket in PRIVATE_QUERY_BUCKETS {
+        let count = private_real_usize(value, bucket)?;
+        total = total
+            .checked_add(count)
+            .ok_or_else(private_real_counts_error)?;
+        counts.insert(bucket, count);
+    }
+    Ok((counts, total))
+}
+
+fn validate_private_real_samples_per_bucket(
+    report: &serde_json::Value,
+    expected_request_sample_count: usize,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let value = report
+        .get("samples_per_bucket")
+        .ok_or_else(private_real_boundary_error)?;
+    let Some(object) = value.as_object() else {
+        return Err(private_real_boundary_error());
+    };
+    for key in object.keys() {
+        if !PRIVATE_QUERY_BUCKETS.contains(&key.as_str()) {
+            return Err(private_real_boundary_error());
+        }
+    }
+    let mut total = 0_usize;
+    for bucket in PRIVATE_QUERY_BUCKETS {
+        total = total
+            .checked_add(private_real_usize(value, bucket)?)
+            .ok_or_else(private_real_counts_error)?;
+    }
+    if total != expected_request_sample_count {
+        return Err(private_real_counts_error());
+    }
+    Ok(())
+}
+
+fn validate_private_real_query_latency_by_bucket_consistency(
+    report: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let value = report
+        .get("query_latency_by_bucket")
+        .ok_or_else(private_real_boundary_error)?;
+    let samples_per_bucket = report
+        .get("samples_per_bucket")
+        .ok_or_else(private_real_boundary_error)?;
+    for bucket in PRIVATE_QUERY_BUCKETS {
+        let sample_count = private_real_usize(samples_per_bucket, bucket)?;
+        match (sample_count, value.get(bucket)) {
+            (0, None) => {}
+            (0, Some(_)) => return Err(private_real_counts_error()),
+            (_, Some(latency)) => validate_private_real_latency_consistency(latency, sample_count)?,
+            (_, None) => return Err(private_real_counts_error()),
+        }
+    }
+    Ok(())
+}
+
+fn validate_private_real_stage_latency_by_bucket_consistency(
+    report: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let value = report
+        .get("stage_latency_by_bucket_ms")
+        .ok_or_else(private_real_boundary_error)?;
+    let samples_per_bucket = report
+        .get("samples_per_bucket")
+        .ok_or_else(private_real_boundary_error)?;
+    for bucket in PRIVATE_QUERY_BUCKETS {
+        let sample_count = private_real_usize(samples_per_bucket, bucket)?;
+        match (sample_count, value.get(bucket)) {
+            (0, None) => {}
+            (0, Some(_)) => return Err(private_real_counts_error()),
+            (_, Some(stages)) => {
+                validate_private_real_stage_latency_summary_consistency(stages, sample_count)?
+            }
+            (_, None) => return Err(private_real_counts_error()),
+        }
+    }
+    Ok(())
+}
+
+fn validate_private_real_stage_histogram_consistency(
+    report: &serde_json::Value,
+    expected_samples: usize,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let stages = report
+        .get("stage_histogram_ms")
+        .ok_or_else(private_real_boundary_error)?;
+    validate_private_real_stage_histogram_summary_consistency(stages, expected_samples)
+}
+
+fn validate_private_real_stage_histogram_summary_consistency(
+    stages: &serde_json::Value,
+    expected_samples: usize,
+) -> std::result::Result<(), BenchmarkGateError> {
+    for stage in PRIVATE_QUERY_STAGE_NAMES {
+        let histogram = stages.get(stage).ok_or_else(private_real_boundary_error)?;
+        validate_private_real_histogram_shape(histogram)?;
+        if private_real_usize(histogram, "samples")? != expected_samples {
+            return Err(private_real_counts_error());
+        }
+    }
+    Ok(())
+}
+
+fn validate_private_real_stage_histogram_by_bucket_consistency(
+    report: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let value = report
+        .get("stage_histogram_by_bucket_ms")
+        .ok_or_else(private_real_boundary_error)?;
+    let samples_per_bucket = report
+        .get("samples_per_bucket")
+        .ok_or_else(private_real_boundary_error)?;
+    for bucket in PRIVATE_QUERY_BUCKETS {
+        let sample_count = private_real_usize(samples_per_bucket, bucket)?;
+        match (sample_count, value.get(bucket)) {
+            (0, None) => {}
+            (0, Some(_)) => return Err(private_real_counts_error()),
+            (_, Some(stages)) => {
+                validate_private_real_stage_histogram_summary_consistency(stages, sample_count)?
+            }
+            (_, None) => return Err(private_real_counts_error()),
+        }
+    }
+    Ok(())
+}
+
+fn validate_private_real_rss_delta_consistency(
+    report: &serde_json::Value,
+    expected_samples: usize,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let rss_delta = report
+        .get("rss_delta_mb")
+        .ok_or_else(private_real_boundary_error)?;
+    validate_private_real_latency_consistency(rss_delta, expected_samples)
+}
+
+fn validate_private_real_rss_delta_by_bucket_consistency(
+    report: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let value = report
+        .get("rss_delta_mb_by_bucket")
+        .ok_or_else(private_real_boundary_error)?;
+    let samples_per_bucket = report
+        .get("samples_per_bucket")
+        .ok_or_else(private_real_boundary_error)?;
+    for bucket in PRIVATE_QUERY_BUCKETS {
+        let sample_count = private_real_usize(samples_per_bucket, bucket)?;
+        match (sample_count, value.get(bucket)) {
+            (0, None) => {}
+            (0, Some(_)) => return Err(private_real_counts_error()),
+            (_, Some(delta)) => validate_private_real_latency_consistency(delta, sample_count)?,
+            (_, None) => return Err(private_real_counts_error()),
+        }
+    }
+    Ok(())
+}
+
+fn validate_private_real_query_latency_by_bucket_shape(
+    value: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let Some(object) = value.as_object() else {
+        return Err(private_real_boundary_error());
+    };
+    for (key, latency) in object {
+        if !PRIVATE_QUERY_BUCKETS.contains(&key.as_str()) {
+            return Err(private_real_boundary_error());
+        }
+        validate_private_real_latency_shape(latency)?;
+    }
+    Ok(())
+}
+
+fn validate_private_real_stage_latency_by_bucket_shape(
+    value: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let Some(object) = value.as_object() else {
+        return Err(private_real_boundary_error());
+    };
+    for (key, stages) in object {
+        if !PRIVATE_QUERY_BUCKETS.contains(&key.as_str()) {
+            return Err(private_real_boundary_error());
+        }
+        validate_private_real_stage_latency_shape(stages)?;
+    }
+    Ok(())
+}
+
+fn validate_private_real_stage_latency_shape(
+    value: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let Some(object) = value.as_object() else {
+        return Err(private_real_boundary_error());
+    };
+    for key in object.keys() {
+        if !PRIVATE_QUERY_STAGE_NAMES.contains(&key.as_str()) {
+            return Err(private_real_boundary_error());
+        }
+    }
+    for stage in PRIVATE_QUERY_STAGE_NAMES {
+        let latency = value.get(stage).ok_or_else(private_real_boundary_error)?;
+        validate_private_real_latency_shape(latency)?;
+    }
+    Ok(())
+}
+
+fn validate_private_real_stage_histogram_by_bucket_shape(
+    value: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let Some(object) = value.as_object() else {
+        return Err(private_real_boundary_error());
+    };
+    for (key, stages) in object {
+        if !PRIVATE_QUERY_BUCKETS.contains(&key.as_str()) {
+            return Err(private_real_boundary_error());
+        }
+        validate_private_real_stage_histogram_shape(stages)?;
+    }
+    Ok(())
+}
+
+fn validate_private_real_stage_histogram_shape(
+    value: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let Some(object) = value.as_object() else {
+        return Err(private_real_boundary_error());
+    };
+    for key in object.keys() {
+        if !PRIVATE_QUERY_STAGE_NAMES.contains(&key.as_str()) {
+            return Err(private_real_boundary_error());
+        }
+    }
+    for stage in PRIVATE_QUERY_STAGE_NAMES {
+        let histogram = value.get(stage).ok_or_else(private_real_boundary_error)?;
+        validate_private_real_histogram_shape(histogram)?;
+    }
+    Ok(())
+}
+
+fn validate_private_real_histogram_shape(
+    value: &serde_json::Value,
+) -> std::result::Result<(), BenchmarkGateError> {
+    let Some(object) = value.as_object() else {
+        return Err(private_real_boundary_error());
+    };
+    for key in object.keys() {
+        if !matches!(key.as_str(), "samples" | "bins" | "overflow_count") {
+            return Err(private_real_boundary_error());
+        }
+    }
+    let samples = private_real_usize(value, "samples")?;
+    let overflow_count = private_real_usize(value, "overflow_count")?;
+    let bins = value
+        .get("bins")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(private_real_boundary_error)?;
+    if bins.len() != PRIVATE_QUERY_STAGE_HISTOGRAM_BOUNDS_MS.len() {
+        return Err(private_real_boundary_error());
+    }
+    let mut previous_count = 0_usize;
+    for (index, (bin, expected_bound)) in bins
+        .iter()
+        .zip(PRIVATE_QUERY_STAGE_HISTOGRAM_BOUNDS_MS)
+        .enumerate()
+    {
+        let Some(bin_object) = bin.as_object() else {
+            return Err(private_real_boundary_error());
+        };
+        for key in bin_object.keys() {
+            if !matches!(key.as_str(), "le_ms" | "count") {
+                return Err(private_real_boundary_error());
+            }
+        }
+        let le_ms = private_real_number(bin, "le_ms")?;
+        let count = private_real_usize(bin, "count")?;
+        if (le_ms - expected_bound).abs() > PRIVATE_REAL_BENCHMARK_SCORE_TOLERANCE
+            || count < previous_count
+            || count > samples
+        {
+            return Err(private_real_counts_error());
+        }
+        if index == bins.len() - 1
+            && count
+                .checked_add(overflow_count)
+                .ok_or_else(private_real_counts_error)?
+                != samples
+        {
+            return Err(private_real_counts_error());
+        }
+        previous_count = count;
+    }
     Ok(())
 }
 
@@ -4402,12 +5457,20 @@ fn validate_private_real_hot_hybrid_evidence(
         .get("query_embedding_runtime")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(error)?;
+    let query_runner = report
+        .get("query_runner")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(error)?;
+    let spawn_per_query = report
+        .get("spawn_per_query")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(error)?;
     let query_embedding_command_invocations = report
         .get("query_embedding_command_invocations")
         .and_then(serde_json::Value::as_u64)
         .ok_or_else(error)?;
 
-    if query_protocol != "resume-ir-query-v1" {
+    if query_protocol != PRIVATE_QUERY_PROTOCOL_VERSION {
         return Err(BenchmarkGateError::failed(
             "private real-corpus benchmark requires query protocol attestation",
         ));
@@ -4420,6 +5483,8 @@ fn validate_private_real_hot_hybrid_evidence(
         || hot_path_parsing
         || hot_path_heavy_model_inference
         || query_embedding_runtime != "local-command"
+        || query_runner != "resident-batch-command"
+        || spawn_per_query
         || query_embedding_command_invocations == 0
     {
         return Err(error());
@@ -5141,20 +6206,38 @@ fn is_allowed_private_real_report_key(key: &str) -> bool {
             | "searchable_document_count"
             | "vector_indexed_document_count"
             | "query_count"
+            | "request_sample_count"
+            | "bucket_counts"
+            | "tune_bucket_counts"
+            | "holdout_bucket_counts"
+            | "samples_per_bucket"
+            | "query_source"
+            | "private_scale_gate"
             | "top_k"
             | "build_ms"
             | "query_total_ms"
             | "qps"
             | "index_size_bytes"
             | "query_latency_ms"
+            | "query_latency_by_bucket"
+            | "stage_latency_ms"
+            | "stage_latency_by_bucket_ms"
+            | "stage_histogram_ms"
+            | "stage_histogram_by_bucket_ms"
+            | "rss_delta_mb"
+            | "rss_delta_mb_by_bucket"
             | "zero_result_queries"
             | "total_hits"
             | "million_scale_verified"
             | "percentile_confidence"
             | "target_claim"
             | "query_protocol"
+            | "query_runner"
+            | "spawn_per_query"
             | "query_mode"
             | "retrieval_layers"
+            | "warm_or_cold_definition"
+            | "cache_state"
             | "query_embedding_runtime"
             | "query_embedding_command_invocations"
             | "hot_index"
@@ -5168,6 +6251,8 @@ fn is_allowed_private_real_report_key(key: &str) -> bool {
             | "contains_queries"
             | "dataset_manifest_sha256"
             | "query_set_sha256"
+            | "tune_sha256"
+            | "holdout_sha256"
             | "model_manifest_sha256"
             | "corpus_summary_sha256"
             | "scope"
@@ -5408,31 +6493,595 @@ fn private_query_percentile_confidence(document_count: usize, query_count: usize
     }
 }
 
-fn load_private_query_set(path: &Path, max_queries: usize) -> Result<Vec<String>> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PrivateQuerySet {
+    samples: Vec<PrivateQuerySample>,
+    bucket_counts: BTreeMap<&'static str, usize>,
+    query_source: QuerySetSourceKind,
+    summary: PrivateQuerySetSummary,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PrivateQuerySetSummary {
+    query_set_sha256: String,
+    tune_sha256: String,
+    holdout_sha256: String,
+    tune_bucket_counts: BTreeMap<&'static str, usize>,
+    holdout_bucket_counts: BTreeMap<&'static str, usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PrivateQuerySample {
+    bucket: &'static str,
+    query: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrivateQueryScaleGate {
+    D10K,
+    D100K,
+    D1M,
+}
+
+impl PrivateQueryScaleGate {
+    fn as_str(self) -> &'static str {
+        match self {
+            PrivateQueryScaleGate::D10K => "D10K_private_calibration",
+            PrivateQueryScaleGate::D100K => "D100K_weak_host",
+            PrivateQueryScaleGate::D1M => "D1M_scale",
+        }
+    }
+
+    fn min_samples_per_bucket(self) -> usize {
+        match self {
+            PrivateQueryScaleGate::D10K => PRIVATE_QUERY_D10K_SAMPLES_PER_BUCKET_MIN,
+            PrivateQueryScaleGate::D100K => PRIVATE_QUERY_D100K_SAMPLES_PER_BUCKET_MIN,
+            PrivateQueryScaleGate::D1M => PRIVATE_QUERY_D1M_SAMPLES_PER_BUCKET_MIN,
+        }
+    }
+
+    fn matches(self, config: &PrivateQueryBenchmarkConfig, request_sample_count: usize) -> bool {
+        let document_count = config.corpus_summary.document_count();
+        match self {
+            PrivateQueryScaleGate::D10K => {
+                document_count >= PRIVATE_QUERY_D10K_DOCUMENT_MIN
+                    && request_sample_count >= PRIVATE_QUERY_D10K_REQUEST_SAMPLE_MIN
+            }
+            PrivateQueryScaleGate::D100K => {
+                document_count >= PRIVATE_QUERY_D100K_DOCUMENT_MIN
+                    && request_sample_count >= PRIVATE_QUERY_D100K_REQUEST_SAMPLE_MIN
+            }
+            PrivateQueryScaleGate::D1M => {
+                document_count >= PRIVATE_QUERY_D1M_DOCUMENT_MIN
+                    && request_sample_count >= PRIVATE_QUERY_D1M_REQUEST_SAMPLE_MIN
+            }
+        }
+    }
+}
+
+fn validate_private_query_scale_gate_bucket_min_counts(
+    config: &PrivateQueryBenchmarkConfig,
+    request_sample_count: usize,
+    bucket_counts: &BTreeMap<&'static str, usize>,
+) -> Result<()> {
+    if private_query_scale_gate(config, request_sample_count).is_none() {
+        return Ok(());
+    }
+
+    for (bucket, min_count) in PRIVATE_QUERY_D10K_BUCKET_MIN_COUNTS {
+        if bucket_counts.get(bucket).copied().unwrap_or(0) < min_count {
+            return Err(BenchmarkError::invalid_config(
+                "private_query_bucket_min_counts",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn format_private_query_scale_gate_json(scale_gate: Option<PrivateQueryScaleGate>) -> &'static str {
+    match scale_gate {
+        Some(scale_gate) => match scale_gate {
+            PrivateQueryScaleGate::D10K => "\"D10K_private_calibration\"",
+            PrivateQueryScaleGate::D100K => "\"D100K_weak_host\"",
+            PrivateQueryScaleGate::D1M => "\"D1M_scale\"",
+        },
+        None => "null",
+    }
+}
+
+fn private_query_scale_gate(
+    config: &PrivateQueryBenchmarkConfig,
+    request_sample_count: usize,
+) -> Option<PrivateQueryScaleGate> {
+    if config.synthetic_smoke_evidence {
+        return None;
+    }
+    [
+        PrivateQueryScaleGate::D1M,
+        PrivateQueryScaleGate::D100K,
+        PrivateQueryScaleGate::D10K,
+    ]
+    .into_iter()
+    .find(|scale_gate| scale_gate.matches(config, request_sample_count))
+}
+
+fn build_private_query_execution_plan(
+    samples: &[PrivateQuerySample],
+    request_sample_count: usize,
+    min_samples_per_bucket: Option<usize>,
+) -> Result<Vec<&PrivateQuerySample>> {
+    let mut execution_samples = Vec::with_capacity(request_sample_count);
+    let mut samples_per_bucket = empty_private_query_bucket_counts();
+    for sample in samples {
+        execution_samples.push(sample);
+        increment_private_query_bucket_count(&mut samples_per_bucket, sample.bucket);
+    }
+    if let Some(min_samples_per_bucket) = min_samples_per_bucket {
+        for bucket in PRIVATE_QUERY_BUCKETS {
+            let bucket_samples = samples
+                .iter()
+                .filter(|sample| sample.bucket == bucket)
+                .collect::<Vec<_>>();
+            if bucket_samples.is_empty() {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_min_samples_per_bucket",
+                ));
+            }
+            let mut bucket_sample_index = 0_usize;
+            while samples_per_bucket.get(bucket).copied().unwrap_or(0) < min_samples_per_bucket {
+                execution_samples.push(bucket_samples[bucket_sample_index % bucket_samples.len()]);
+                increment_private_query_bucket_count(&mut samples_per_bucket, bucket);
+                bucket_sample_index += 1;
+            }
+        }
+        if execution_samples.len() > request_sample_count {
+            return Err(BenchmarkError::invalid_config(
+                "private_query_min_samples_per_bucket",
+            ));
+        }
+    }
+    let mut sample_index = 0_usize;
+    while execution_samples.len() < request_sample_count {
+        let sample = &samples[sample_index % samples.len()];
+        execution_samples.push(sample);
+        sample_index += 1;
+    }
+    Ok(execution_samples)
+}
+
+fn increment_private_query_bucket_count(
+    samples_per_bucket: &mut BTreeMap<&'static str, usize>,
+    bucket: &'static str,
+) {
+    if let Some(count) = samples_per_bucket.get_mut(bucket) {
+        *count += 1;
+    }
+}
+
+fn load_private_query_set(path: &Path, max_queries: usize) -> Result<PrivateQuerySet> {
     let content = fs::read_to_string(path).map_err(BenchmarkError::io)?;
-    let mut queries = Vec::new();
+    let mut samples = Vec::new();
+    let mut bucket_counts = empty_private_query_bucket_counts();
+    let mut query_source = None;
+    let mut seen_sample_ids = BTreeSet::new();
+    let mut seen_queries = BTreeSet::new();
     for line in content
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
     {
-        if queries.len() >= max_queries {
-            break;
+        if samples.len() >= max_queries {
+            return Err(BenchmarkError::invalid_config("private_query_max_queries"));
         }
         let value = serde_json::from_str::<serde_json::Value>(line)
             .map_err(|_| BenchmarkError::invalid_config("private_query_jsonl"))?;
+        let schema_version = value
+            .get("schema_version")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| BenchmarkError::invalid_config("private_query.schema_version"))?;
+        if schema_version != PRIVATE_QUERY_SET_SCHEMA_VERSION {
+            return Err(BenchmarkError::invalid_config(
+                "private_query.schema_version",
+            ));
+        }
+        let sample_id = private_query_sample_str(&value, "sample_id")?;
+        if !seen_sample_ids.insert(sample_id.to_string()) {
+            return Err(BenchmarkError::invalid_config(
+                "private_query.duplicate_sample_id",
+            ));
+        }
+        let source_kind =
+            private_query_source_kind(private_query_sample_str(&value, "source_kind")?)?;
+        match query_source {
+            Some(query_source) if query_source != source_kind => {
+                return Err(BenchmarkError::invalid_config("private_query.source_kind"));
+            }
+            Some(_) => {}
+            None => query_source = Some(source_kind),
+        }
+        let bucket = private_query_bucket(private_query_sample_str(&value, "bucket")?)?;
         let query = value
             .get("query")
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|query| !query.is_empty())
             .ok_or_else(|| BenchmarkError::invalid_config("private_query.query"))?;
-        queries.push(query.to_string());
+        if !seen_queries.insert(query.to_string()) {
+            return Err(BenchmarkError::invalid_config(
+                "private_query.duplicate_query",
+            ));
+        }
+        validate_private_query_sample_shape(&value, query, bucket)?;
+        if let Some(count) = bucket_counts.get_mut(bucket) {
+            *count += 1;
+        }
+        samples.push(PrivateQuerySample {
+            bucket,
+            query: query.to_string(),
+        });
     }
-    if queries.is_empty() {
+    if samples.is_empty() {
         return Err(BenchmarkError::invalid_config("private_query_count"));
     }
-    Ok(queries)
+    let query_source =
+        query_source.ok_or_else(|| BenchmarkError::invalid_config("private_query.source_kind"))?;
+    let summary =
+        load_private_query_set_summary(path, samples.len(), &bucket_counts, query_source)?;
+    Ok(PrivateQuerySet {
+        samples,
+        bucket_counts,
+        query_source,
+        summary,
+    })
+}
+
+fn load_private_query_set_summary(
+    path: &Path,
+    loaded_query_count: usize,
+    loaded_bucket_counts: &BTreeMap<&'static str, usize>,
+    loaded_query_source: QuerySetSourceKind,
+) -> Result<PrivateQuerySetSummary> {
+    let content = fs::read_to_string(private_query_set_summary_path(path))
+        .map_err(|_| BenchmarkError::invalid_config("private_query_set_summary"))?;
+    let value = serde_json::from_str::<serde_json::Value>(&content)
+        .map_err(|_| BenchmarkError::invalid_config("private_query_set_summary"))?;
+    let summary_query_source =
+        private_query_source_kind(private_query_set_summary_str(&value, "query_source")?)?;
+    let summary_bucket_counts = private_query_set_summary_bucket_counts(&value)?;
+    let tune_bucket_counts =
+        private_query_set_summary_bucket_counts_field(&value, "tune_bucket_counts")?;
+    let holdout_bucket_counts =
+        private_query_set_summary_bucket_counts_field(&value, "holdout_bucket_counts")?;
+    if private_query_set_summary_str(&value, "schema_version")?
+        != PRIVATE_QUERY_SET_SUMMARY_SCHEMA_VERSION
+        || private_query_set_summary_str(&value, "privacy_boundary")? != "redacted_local_aggregate"
+        || summary_query_source != loaded_query_source
+        || !private_query_set_summary_bool(&value, "hmac_split")?
+        || private_query_set_summary_bool(&value, "contains_raw_query_text")?
+        || private_query_set_summary_bool(&value, "contains_raw_resume_text")?
+        || private_query_set_summary_bool(&value, "contains_candidate_results")?
+        || private_query_set_summary_bool(&value, "contains_local_paths")?
+        || private_query_set_summary_usize(&value, "query_count")? != loaded_query_count
+        || summary_bucket_counts != *loaded_bucket_counts
+    {
+        return Err(BenchmarkError::invalid_config("private_query_set_summary"));
+    }
+    validate_private_query_set_summary_split(
+        &value,
+        loaded_query_count,
+        loaded_bucket_counts,
+        &tune_bucket_counts,
+        &holdout_bucket_counts,
+    )?;
+    let query_set_sha256 = private_query_set_summary_str(&value, "query_set_sha256")?;
+    let tune_sha256 = private_query_set_summary_str(&value, "tune_sha256")?;
+    let holdout_sha256 = private_query_set_summary_str(&value, "holdout_sha256")?;
+    if !is_sha256_hex(query_set_sha256)
+        || !is_sha256_hex(tune_sha256)
+        || !is_sha256_hex(holdout_sha256)
+    {
+        return Err(BenchmarkError::invalid_config("private_query_set_summary"));
+    }
+    Ok(PrivateQuerySetSummary {
+        query_set_sha256: query_set_sha256.to_string(),
+        tune_sha256: tune_sha256.to_string(),
+        holdout_sha256: holdout_sha256.to_string(),
+        tune_bucket_counts,
+        holdout_bucket_counts,
+    })
+}
+
+fn validate_private_query_set_summary_split(
+    value: &serde_json::Value,
+    loaded_query_count: usize,
+    loaded_bucket_counts: &BTreeMap<&'static str, usize>,
+    tune_bucket_counts: &BTreeMap<&'static str, usize>,
+    holdout_bucket_counts: &BTreeMap<&'static str, usize>,
+) -> Result<()> {
+    let tune_query_count = private_query_set_summary_usize(value, "tune_query_count")?;
+    let holdout_query_count = private_query_set_summary_usize(value, "holdout_query_count")?;
+    if tune_query_count.checked_add(holdout_query_count) != Some(loaded_query_count)
+        || (loaded_query_count > 1 && (tune_query_count == 0 || holdout_query_count == 0))
+    {
+        return Err(BenchmarkError::invalid_config("private_query_set_summary"));
+    }
+    let tune_total = tune_bucket_counts.values().sum::<usize>();
+    let holdout_total = holdout_bucket_counts.values().sum::<usize>();
+    if tune_total != tune_query_count || holdout_total != holdout_query_count {
+        return Err(BenchmarkError::invalid_config("private_query_set_summary"));
+    }
+    for bucket in PRIVATE_QUERY_BUCKETS {
+        let tune_count = tune_bucket_counts.get(bucket).copied().unwrap_or(0);
+        let holdout_count = holdout_bucket_counts.get(bucket).copied().unwrap_or(0);
+        let loaded_count = loaded_bucket_counts.get(bucket).copied().unwrap_or(0);
+        if tune_count.checked_add(holdout_count) != Some(loaded_count)
+            || (loaded_count > 1 && (tune_count == 0 || holdout_count == 0))
+        {
+            return Err(BenchmarkError::invalid_config("private_query_set_summary"));
+        }
+    }
+    Ok(())
+}
+
+fn private_query_set_summary_path(query_set_path: &Path) -> PathBuf {
+    let file_name = query_set_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("query-set");
+    let base_name = file_name.strip_suffix(".local.jsonl").unwrap_or(file_name);
+    query_set_path.with_file_name(format!("{base_name}.summary.json"))
+}
+
+fn private_query_set_summary_str<'a>(value: &'a serde_json::Value, field: &str) -> Result<&'a str> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query_set_summary"))
+}
+
+fn private_query_set_summary_bool(value: &serde_json::Value, field: &str) -> Result<bool> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query_set_summary"))
+}
+
+fn private_query_set_summary_usize(value: &serde_json::Value, field: &str) -> Result<usize> {
+    let count = value
+        .get(field)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query_set_summary"))?;
+    usize::try_from(count).map_err(|_| BenchmarkError::invalid_config("private_query_set_summary"))
+}
+
+fn private_query_set_summary_bucket_counts(
+    value: &serde_json::Value,
+) -> Result<BTreeMap<&'static str, usize>> {
+    private_query_set_summary_bucket_counts_field(value, "bucket_counts")
+}
+
+fn private_query_set_summary_bucket_counts_field(
+    value: &serde_json::Value,
+    field: &str,
+) -> Result<BTreeMap<&'static str, usize>> {
+    let counts = value
+        .get(field)
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query_set_summary"))?;
+    if counts.len() != PRIVATE_QUERY_BUCKETS.len() {
+        return Err(BenchmarkError::invalid_config("private_query_set_summary"));
+    }
+    let mut bucket_counts = empty_private_query_bucket_counts();
+    for bucket in PRIVATE_QUERY_BUCKETS {
+        let count = counts
+            .get(bucket)
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| BenchmarkError::invalid_config("private_query_set_summary"))?;
+        let count = usize::try_from(count)
+            .map_err(|_| BenchmarkError::invalid_config("private_query_set_summary"))?;
+        if let Some(bucket_count) = bucket_counts.get_mut(bucket) {
+            *bucket_count = count;
+        }
+    }
+    for key in counts.keys() {
+        if !PRIVATE_QUERY_BUCKETS.contains(&key.as_str()) {
+            return Err(BenchmarkError::invalid_config("private_query_set_summary"));
+        }
+    }
+    Ok(bucket_counts)
+}
+
+fn validate_private_query_sample_shape(
+    value: &serde_json::Value,
+    query: &str,
+    bucket: &str,
+) -> Result<()> {
+    let Some(object) = value.as_object() else {
+        return Err(BenchmarkError::invalid_config("private_query_jsonl"));
+    };
+    for key in object.keys() {
+        if !matches!(
+            key.as_str(),
+            "schema_version" | "sample_id" | "bucket" | "query" | "source_kind" | "query_shape"
+        ) {
+            return Err(BenchmarkError::invalid_config("private_query.field"));
+        }
+    }
+    private_query_sample_str(value, "sample_id")?;
+    private_query_sample_str(value, "query")?;
+    private_query_sample_str(value, "source_kind")?;
+    private_query_sample_str(value, "bucket")?;
+    let shape = value
+        .get("query_shape")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query.query_shape"))?;
+    for key in shape.keys() {
+        if !matches!(
+            key.as_str(),
+            "term_count"
+                | "has_boolean"
+                | "has_location"
+                | "has_years"
+                | "has_degree"
+                | "has_skill"
+                | "has_phrase"
+        ) {
+            return Err(BenchmarkError::invalid_config(
+                "private_query.query_shape.field",
+            ));
+        }
+    }
+    let term_count = shape
+        .get("term_count")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query.query_shape.term_count"))?;
+    let declared_shape = QuerySetSampleShape::from_metadata(QuerySetSampleShapeMetadata {
+        term_count,
+        has_boolean: private_query_sample_shape_bool(shape, "has_boolean")?,
+        has_location: private_query_sample_shape_bool(shape, "has_location")?,
+        has_years: private_query_sample_shape_bool(shape, "has_years")?,
+        has_degree: private_query_sample_shape_bool(shape, "has_degree")?,
+        has_skill: private_query_sample_shape_bool(shape, "has_skill")?,
+        has_phrase: private_query_sample_shape_bool(shape, "has_phrase")?,
+    });
+    let actual_shape = QuerySetSampleShape::from_query(query);
+    if declared_shape != actual_shape {
+        return Err(BenchmarkError::invalid_config("private_query.query_shape"));
+    }
+    let canonical_query = normalize_query_set_query(query)
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query.query"))?;
+    if canonical_query != query {
+        return Err(BenchmarkError::invalid_config(
+            "private_query.canonical_query",
+        ));
+    }
+    if actual_shape.bucket() != bucket {
+        return Err(BenchmarkError::invalid_config("private_query.bucket"));
+    }
+    Ok(())
+}
+
+fn private_query_sample_shape_bool(
+    shape: &serde_json::Map<String, serde_json::Value>,
+    field: &'static str,
+) -> Result<bool> {
+    shape
+        .get(field)
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query.query_shape.bool"))
+}
+
+fn private_query_sample_str<'a>(
+    value: &'a serde_json::Value,
+    field: &'static str,
+) -> Result<&'a str> {
+    value
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| BenchmarkError::invalid_config(field))
+}
+
+fn private_query_source_kind(source_kind: &str) -> Result<QuerySetSourceKind> {
+    source_kind
+        .parse::<QuerySetSourceKind>()
+        .map_err(|_| BenchmarkError::invalid_config("private_query.source_kind"))
+}
+
+fn private_query_bucket(bucket: &str) -> Result<&'static str> {
+    PRIVATE_QUERY_BUCKETS
+        .iter()
+        .copied()
+        .find(|candidate| *candidate == bucket)
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query.bucket"))
+}
+
+fn empty_private_query_bucket_counts() -> BTreeMap<&'static str, usize> {
+    PRIVATE_QUERY_BUCKETS
+        .into_iter()
+        .map(|bucket| (bucket, 0_usize))
+        .collect()
+}
+
+fn empty_private_query_bucket_latency_samples() -> BTreeMap<&'static str, Vec<f64>> {
+    PRIVATE_QUERY_BUCKETS
+        .into_iter()
+        .map(|bucket| (bucket, Vec::new()))
+        .collect()
+}
+
+fn empty_private_query_bucket_stage_samples(
+) -> BTreeMap<&'static str, Vec<PrivateQueryStageTimings>> {
+    PRIVATE_QUERY_BUCKETS
+        .into_iter()
+        .map(|bucket| (bucket, Vec::new()))
+        .collect()
+}
+
+fn summarize_private_query_bucket_latencies(
+    samples_by_bucket: BTreeMap<&'static str, Vec<f64>>,
+) -> Result<BTreeMap<&'static str, LatencySummary>> {
+    let mut summaries = BTreeMap::new();
+    for bucket in PRIVATE_QUERY_BUCKETS {
+        let samples = samples_by_bucket.get(bucket).cloned().unwrap_or_default();
+        if !samples.is_empty() {
+            summaries.insert(bucket, LatencySummary::from_samples(samples)?);
+        }
+    }
+    Ok(summaries)
+}
+
+fn summarize_private_query_bucket_stage_latencies(
+    samples_by_bucket: BTreeMap<&'static str, Vec<PrivateQueryStageTimings>>,
+) -> Result<BTreeMap<&'static str, PrivateQueryStageLatencySummary>> {
+    let mut summaries = BTreeMap::new();
+    for bucket in PRIVATE_QUERY_BUCKETS {
+        let samples = samples_by_bucket.get(bucket).cloned().unwrap_or_default();
+        if !samples.is_empty() {
+            summaries.insert(
+                bucket,
+                PrivateQueryStageLatencySummary::from_samples(samples)?,
+            );
+        }
+    }
+    Ok(summaries)
+}
+
+fn summarize_private_query_bucket_stage_histograms(
+    samples_by_bucket: &BTreeMap<&'static str, Vec<PrivateQueryStageTimings>>,
+) -> Result<BTreeMap<&'static str, PrivateQueryStageHistogramSummary>> {
+    let mut summaries = BTreeMap::new();
+    for bucket in PRIVATE_QUERY_BUCKETS {
+        let samples = samples_by_bucket.get(bucket).cloned().unwrap_or_default();
+        if !samples.is_empty() {
+            summaries.insert(
+                bucket,
+                PrivateQueryStageHistogramSummary::from_samples(&samples)?,
+            );
+        }
+    }
+    Ok(summaries)
+}
+
+fn format_private_query_bucket_counts(counts: &BTreeMap<&'static str, usize>) -> String {
+    let mut output = String::from("{");
+    for (index, bucket) in PRIVATE_QUERY_BUCKETS.iter().enumerate() {
+        if index > 0 {
+            output.push(',');
+        }
+        output.push('"');
+        output.push_str(bucket);
+        output.push_str("\":");
+        output.push_str(&counts.get(bucket).copied().unwrap_or_default().to_string());
+    }
+    output.push('}');
+    output
 }
 
 fn create_private_query_scratch_dir() -> Result<PathBuf> {
@@ -5440,8 +7089,9 @@ fn create_private_query_scratch_dir() -> Result<PathBuf> {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
+    let sequence = PRIVATE_QUERY_SCRATCH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
-        "resume-ir-private-query-{}-{unique}",
+        "resume-ir-private-query-{}-{sequence}-{unique}",
         std::process::id()
     ));
     fs::create_dir_all(&path).map_err(BenchmarkError::io)?;
@@ -5449,7 +7099,7 @@ fn create_private_query_scratch_dir() -> Result<PathBuf> {
     Ok(path)
 }
 
-fn write_private_query_file(path: &Path, query: &str) -> Result<()> {
+fn write_private_query_batch_file(path: &Path, samples: &[&PrivateQuerySample]) -> Result<()> {
     let mut file = fs::OpenOptions::new()
         .create(true)
         .truncate(true)
@@ -5457,9 +7107,17 @@ fn write_private_query_file(path: &Path, query: &str) -> Result<()> {
         .open(path)
         .map_err(BenchmarkError::io)?;
     set_owner_only_file(path)?;
-    file.write_all(query.as_bytes())
-        .map_err(BenchmarkError::io)?;
-    file.write_all(b"\n").map_err(BenchmarkError::io)?;
+    for (index, sample) in samples.iter().enumerate() {
+        let line = serde_json::to_string(&serde_json::json!({
+            "schema_version": PRIVATE_QUERY_BATCH_REQUEST_SCHEMA_VERSION,
+            "request_id": private_query_batch_request_id(index),
+            "query": sample.query.as_str(),
+        }))
+        .map_err(|_| BenchmarkError::invalid_config("private_query_batch_request"))?;
+        file.write_all(line.as_bytes())
+            .map_err(BenchmarkError::io)?;
+        file.write_all(b"\n").map_err(BenchmarkError::io)?;
+    }
     Ok(())
 }
 
@@ -5493,16 +7151,18 @@ fn set_owner_only_file(_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn run_private_query_command(
+fn run_private_query_resident_batch_command(
     command: &PrivateQueryBenchmarkCommand,
-    query_file: &Path,
+    query_batch_file: &Path,
+    expected_count: usize,
     top_k: usize,
     timeout_ms: u64,
-) -> Result<PrivateQueryCommandOutput> {
+) -> Result<Vec<PrivateQueryCommandOutput>> {
+    let expected_request_ids = private_query_batch_request_ids(expected_count);
     let started = Instant::now();
     let mut child = Command::new(&command.command)
         .args(&command.args)
-        .env("RESUME_IR_QUERY_INPUT_PATH", query_file)
+        .env("RESUME_IR_QUERY_BATCH_INPUT_PATH", query_batch_file)
         .env("RESUME_IR_QUERY_TOP_K", top_k.to_string())
         .env("RESUME_IR_QUERY_MODE", "hybrid")
         .stdin(Stdio::null())
@@ -5510,58 +7170,202 @@ fn run_private_query_command(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(BenchmarkError::io)?;
-    let timeout = Duration::from_millis(timeout_ms);
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query_resident_command_status"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query_resident_command_status"))?;
+    let mut stdout_reader = Some(read_private_query_command_pipe(stdout));
+    let mut stderr_reader = Some(read_private_query_command_pipe(stderr));
+    let request_count = u64::try_from(expected_count)
+        .map_err(|_| BenchmarkError::invalid_config("private_query_count"))?;
+    let timeout = Duration::from_millis(timeout_ms.saturating_mul(request_count));
     loop {
-        if child.try_wait().map_err(BenchmarkError::io)?.is_some() {
-            let output = child.wait_with_output().map_err(BenchmarkError::io)?;
-            if !output.status.success() {
+        if let Some(status) = child.try_wait().map_err(BenchmarkError::io)? {
+            let stdout =
+                join_private_query_command_pipe(stdout_reader.take().ok_or_else(|| {
+                    BenchmarkError::invalid_config("private_query_resident_command_status")
+                })?)?;
+            let _stderr =
+                join_private_query_command_pipe(stderr_reader.take().ok_or_else(|| {
+                    BenchmarkError::invalid_config("private_query_resident_command_status")
+                })?)?;
+            if !status.success() {
                 return Err(BenchmarkError::invalid_config(
-                    "private_query_command_status",
+                    "private_query_resident_command_status",
                 ));
             }
-            return parse_private_query_command_stdout(&output.stdout, top_k);
+            return parse_private_query_batch_command_stdout(&stdout, top_k, &expected_request_ids);
         }
         if started.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
+            if let Some(reader) = stdout_reader.take() {
+                let _ = join_private_query_command_pipe(reader);
+            }
+            if let Some(reader) = stderr_reader.take() {
+                let _ = join_private_query_command_pipe(reader);
+            }
             return Err(BenchmarkError::invalid_config(
-                "private_query_command_timeout",
+                "private_query_resident_command_timeout",
             ));
         }
         thread::sleep(Duration::from_millis(10));
     }
 }
 
-struct PrivateQueryCommandOutput {
-    hits: usize,
-    query_embedding_invocations: usize,
+fn read_private_query_command_pipe<R>(
+    mut reader: R,
+) -> thread::JoinHandle<std::result::Result<Vec<u8>, PrivateQueryPipeReadError>>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut output = Vec::new();
+        let mut buffer = [0_u8; 8192];
+        loop {
+            let read = reader
+                .read(&mut buffer)
+                .map_err(PrivateQueryPipeReadError::Io)?;
+            if read == 0 {
+                break;
+            }
+            if output.len().saturating_add(read) > PRIVATE_QUERY_RESIDENT_COMMAND_PIPE_MAX_BYTES {
+                return Err(PrivateQueryPipeReadError::TooLarge);
+            }
+            output.extend_from_slice(&buffer[..read]);
+        }
+        Ok(output)
+    })
 }
 
-fn parse_private_query_command_stdout(
+enum PrivateQueryPipeReadError {
+    TooLarge,
+    Io(std::io::Error),
+}
+
+fn join_private_query_command_pipe(
+    handle: thread::JoinHandle<std::result::Result<Vec<u8>, PrivateQueryPipeReadError>>,
+) -> Result<Vec<u8>> {
+    match handle
+        .join()
+        .map_err(|_| BenchmarkError::invalid_config("private_query_resident_command_status"))?
+    {
+        Ok(output) => Ok(output),
+        Err(PrivateQueryPipeReadError::TooLarge) => Err(BenchmarkError::invalid_config(
+            "private_query_resident_command_output",
+        )),
+        Err(PrivateQueryPipeReadError::Io(error)) => Err(BenchmarkError::io(error)),
+    }
+}
+
+struct PrivateQueryCommandOutput {
+    elapsed_ms: f64,
+    rss_delta_mb: f64,
+    hits: usize,
+    query_embedding_invocations: usize,
+    stage_timings: PrivateQueryStageTimings,
+}
+
+struct PrivateQueryCommandRecord {
+    request_id: String,
+    output: PrivateQueryCommandOutput,
+}
+
+fn parse_private_query_batch_command_stdout(
     stdout: &[u8],
     top_k: usize,
-) -> Result<PrivateQueryCommandOutput> {
+    expected_request_ids: &[String],
+) -> Result<Vec<PrivateQueryCommandOutput>> {
     let stdout = std::str::from_utf8(stdout)
         .map_err(|_| BenchmarkError::invalid_config("private_query_command_stdout"))?;
-    let mut saw_header = false;
-    let mut saw_hybrid_mode = false;
-    let mut saw_hybrid_layers = false;
-    let mut attested_top_k = None;
-    let mut saw_query_embedding_runtime = false;
-    let mut query_embedding_invocations = None;
-    let mut hits = None;
+    let expected_request_id_set = expected_request_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let mut records_by_request_id = BTreeMap::new();
+    let mut current = Vec::new();
     for line in stdout
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
     {
-        if !saw_header {
-            if line != "resume-ir-query-v1" {
+        if line == "resume-ir-query-end" {
+            if current.is_empty() {
                 return Err(BenchmarkError::invalid_config(
                     "private_query_command_stdout",
                 ));
             }
+            let record = parse_private_query_command_record(&current, top_k)?;
+            if !expected_request_id_set.contains(record.request_id.as_str())
+                || records_by_request_id
+                    .insert(record.request_id, record.output)
+                    .is_some()
+            {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_protocol_attestation",
+                ));
+            }
+            current.clear();
+            continue;
+        }
+        current.push(line);
+    }
+    if !current.is_empty() {
+        return Err(BenchmarkError::invalid_config(
+            "private_query_command_stdout",
+        ));
+    }
+    if records_by_request_id.len() != expected_request_id_set.len() {
+        return Err(BenchmarkError::invalid_config(
+            "private_query_protocol_attestation",
+        ));
+    }
+    expected_request_ids
+        .iter()
+        .map(|request_id| {
+            records_by_request_id
+                .remove(request_id.as_str())
+                .ok_or_else(|| BenchmarkError::invalid_config("private_query_protocol_attestation"))
+        })
+        .collect()
+}
+
+fn parse_private_query_command_record(
+    lines: &[&str],
+    top_k: usize,
+) -> Result<PrivateQueryCommandRecord> {
+    let mut saw_header = false;
+    let mut request_id = None;
+    let mut saw_hybrid_mode = false;
+    let mut saw_hybrid_layers = false;
+    let mut attested_top_k = None;
+    let mut saw_query_embedding_runtime = false;
+    let mut query_embedding_invocations = None;
+    let mut stage_timings = PrivateQueryStageTimingBuilder::default();
+    let mut elapsed_ms = None;
+    let mut rss_delta_mb = None;
+    let mut hits = None;
+    for line in lines {
+        if !saw_header {
+            if *line != PRIVATE_QUERY_PROTOCOL_VERSION {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_protocol_attestation",
+                ));
+            }
             saw_header = true;
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("request_id=") {
+            if request_id.is_some() || value.is_empty() {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_protocol_attestation",
+                ));
+            }
+            request_id = Some(value.to_string());
             continue;
         }
         if let Some(value) = line.strip_prefix("mode=") {
@@ -5625,6 +7429,27 @@ fn parse_private_query_command_stdout(
             query_embedding_invocations = Some(parsed);
             continue;
         }
+        if stage_timings.observe(line)? {
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("elapsed_ms=") {
+            if elapsed_ms.is_some() {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_elapsed_ms_attestation",
+                ));
+            }
+            elapsed_ms = Some(parse_private_query_elapsed_ms(value)?);
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("rss_delta_mb=") {
+            if rss_delta_mb.is_some() {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_rss_delta_attestation",
+                ));
+            }
+            rss_delta_mb = Some(parse_private_query_rss_delta_mb(value)?);
+            continue;
+        }
         if let Some(value) = line.strip_prefix("hits=") {
             if hits.is_some() {
                 return Err(BenchmarkError::invalid_config(
@@ -5649,6 +7474,8 @@ fn parse_private_query_command_stdout(
             "private_query_command_stdout",
         ));
     }
+    let request_id = request_id
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query_protocol_attestation"))?;
     if !saw_hybrid_mode || !saw_hybrid_layers {
         return Err(BenchmarkError::invalid_config(
             "private_query_protocol_attestation",
@@ -5664,11 +7491,54 @@ fn parse_private_query_command_stdout(
             "private_query_embedding_attestation",
         ));
     }
+    let elapsed_ms = elapsed_ms
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query_elapsed_ms_attestation"))?;
+    let rss_delta_mb = rss_delta_mb
+        .ok_or_else(|| BenchmarkError::invalid_config("private_query_rss_delta_attestation"))?;
     let hits = hits.ok_or_else(|| BenchmarkError::invalid_config("private_query_hits"))?;
-    Ok(PrivateQueryCommandOutput {
-        hits,
-        query_embedding_invocations: 1,
+    let stage_timings = stage_timings.finish()?;
+    Ok(PrivateQueryCommandRecord {
+        request_id,
+        output: PrivateQueryCommandOutput {
+            elapsed_ms,
+            rss_delta_mb,
+            hits,
+            query_embedding_invocations: 1,
+            stage_timings,
+        },
     })
+}
+
+fn private_query_batch_request_ids(count: usize) -> Vec<String> {
+    (0..count).map(private_query_batch_request_id).collect()
+}
+
+fn private_query_batch_request_id(index: usize) -> String {
+    format!("private-query-request-{}", index + 1)
+}
+
+fn parse_private_query_elapsed_ms(value: &str) -> Result<f64> {
+    let parsed = value
+        .parse::<f64>()
+        .map_err(|_| BenchmarkError::invalid_config("private_query_elapsed_ms_attestation"))?;
+    if !parsed.is_finite() || parsed < 0.0 {
+        return Err(BenchmarkError::invalid_config(
+            "private_query_elapsed_ms_attestation",
+        ));
+    }
+    Ok(parsed)
+}
+
+fn parse_private_query_rss_delta_mb(value: &str) -> Result<f64> {
+    let parsed = value
+        .parse::<f64>()
+        .map_err(|_| BenchmarkError::invalid_config("private_query_rss_delta_attestation"))?;
+    if !parsed.is_finite() || parsed < 0.0 {
+        return Err(BenchmarkError::invalid_config(
+            "private_query_rss_delta_attestation",
+        ));
+    }
+    Ok(parsed)
 }
 
 fn directory_size_bytes(path: &Path) -> Result<u64> {

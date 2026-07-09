@@ -241,6 +241,86 @@ weights, print command paths, print model bytes, print embedding vectors, print
 synthetic probe text, or include model caches, indexes, or local data
 directories.
 
+### Local lightweight hash adapter
+
+The repository includes `scripts/local/embedding-runtime-hash.py` as the
+lightweight local smoke fallback for operator bring-up. It has no third party
+dependency, reads the private input file from
+`RESUME_IR_EMBEDDING_INPUT_PATH`, verifies `RESUME_IR_EMBEDDING_MODEL_ID` and
+`RESUME_IR_EMBEDDING_DIMENSION`, and writes only the
+`resume-ir-embedding-v1` stdout protocol. It is a lexical hashing vectorizer,
+not a semantic model and not a production-representative embedding baseline.
+
+Use `resume-ir-hash-embedding-v1` with a fixed dimension such as `256` when the
+goal is protocol smoke or local import/query harness observation before a real
+reviewed local model is available. Do not use hash output to make vector
+quality, semantic search, D10K/W1, profile optimization, scale, or
+`goal_complete` claims. The model artifact can be the executable adapter script
+itself, recorded with the repository license in a local-only reviewed model
+manifest. Generated manifests contain local artifact paths and must stay local.
+
+### Local multilingual E5 ONNX adapter
+
+The recommended lightweight semantic runtime for the next local private
+baseline is `scripts/local/embedding-runtime-e5-onnx.py` with
+`intfloat/multilingual-e5-small`. The model is MIT licensed, multilingual,
+384-dimensional, and capped at 512 tokens. It is a real embedding model; model
+files and tokenizer files still remain external local runtime artifacts and
+must not be committed or uploaded.
+
+The adapter requires a local model directory in `RESUME_IR_E5_MODEL_DIR` with
+tokenizer files and an ONNX file at `onnx/model.onnx` by default. To use another
+repo-local ONNX filename such as an optimized export, set
+`RESUME_IR_E5_ONNX_FILE=<relative-onnx-file>`. The command loads with
+local-files-only behavior, forces CPU ONNX Runtime by default, prefixes the
+input whose id is exactly `query` with `query: `, prefixes all document inputs
+with `passage: `, average-pools the ONNX hidden states, L2-normalizes the
+vectors, and writes only `resume-ir-embedding-v1`.
+
+Prepare the Python runtime in a private local environment:
+
+```bash
+uv venv .cache/resume-ir-e5-onnx-py312 --python <python-3.12>
+uv pip install --python .cache/resume-ir-e5-onnx-py312/bin/python \
+  numpy onnxruntime transformers
+PATH=<repo>/.cache/resume-ir-e5-onnx-py312/bin:$PATH
+```
+
+Create the reviewed local model manifest from the exact local ONNX artifact:
+
+```bash
+resume-cli --data-dir <local-data-dir> model draft-manifest \
+  --out <local-model-manifest.json> \
+  --model-pack-id intfloat-multilingual-e5-small-onnx-local \
+  --model-id intfloat/multilingual-e5-small \
+  --model-type embedding \
+  --dimension 384 \
+  --format onnx \
+  --artifact <local-e5-model-dir>/onnx/model.onnx \
+  --license MIT \
+  --reviewed
+
+resume-cli --data-dir <local-data-dir> model validate-manifest \
+  --manifest <local-model-manifest.json>
+```
+
+Then preflight the local command without downloading at runtime:
+
+```bash
+RESUME_IR_E5_MODEL_DIR=<local-e5-model-dir> \
+resume-cli --data-dir <local-data-dir> model preflight --json \
+  --manifest <local-model-manifest.json> \
+  --embedding-command scripts/local/embedding-runtime-e5-onnx.py \
+  --model-id intfloat/multilingual-e5-small \
+  --dimension 384
+```
+
+If `transformers`, `onnxruntime`, `numpy`, tokenizer files, the ONNX artifact,
+or reviewed manifest evidence are unavailable, the embedding runtime remains
+external/legal/runtime BLOCKED. The failure path must not print local model
+paths, model bytes, raw resume text, raw query text, vectors, cache locations,
+or diagnostics payloads.
+
 ### Local sentence-transformers adapter
 
 The repository includes
@@ -252,7 +332,7 @@ locally cached sentence-transformers model, and writes only the
 `resume-ir-embedding-v1` stdout protocol. It must not print local paths, raw
 resume text, model bytes, cache locations, or embedding input payloads.
 
-Current-stage smoke validation may use
+Current-stage smoke validation may alternatively use
 `sentence-transformers/all-MiniLM-L6-v2` with dimension `384` after the
 operator has reviewed the current model card/license and recorded a local model
 manifest. The model remains an external local runtime artifact; do not commit or

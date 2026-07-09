@@ -1,0 +1,56 @@
+{
+  "schema_version": "resume-ir.experiment-report.v2",
+  "goal_id": "resume-ir.performance-gui-loop.2026-06",
+  "report_kind": "schema_fixture",
+  "claim": "slice_complete",
+  "evidence_lane": "w1_private",
+  "contract_pins": {
+    "active_goal_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "acceptance_matrix_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "loop_state_schema_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "experiment_report_schema_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "git_head_sha": "working-tree"
+  },
+  "privacy": {
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false,
+    "trace_summary_redacted": true
+  },
+  "optimization": {
+    "optimization_layer": "L1",
+    "baseline_artifact": "fixture-baseline",
+    "profiler_summary": "fixture-profiler",
+    "stage_histogram": "fixture-histogram",
+    "bottleneck_statement": "fixture-bottleneck",
+    "hypothesis": "fixture-hypothesis",
+    "expected_delta": "fixture-delta",
+    "rollback_condition": "fixture-rollback",
+    "negative_controls": ["fixture-control"],
+    "acceptance_gate": "D10K_private_calibration",
+    "lower_layer_closes_higher_layer_blocker": false
+  },
+  "workload_manifest": {
+    "query_set_source": "trace_source_search_v1",
+    "corpus_scale": "D10K_private_calibration",
+    "hardware_class": "fixture-hardware",
+    "warm_or_cold_definition": "fixture-warm",
+    "cache_state": "fixture-cache"
+  },
+  "platform_evidence": {
+    "platform_lane": "macos_m4_discovery",
+    "hardware_class": "fixture-hardware",
+    "os_build_class": "fixture-os",
+    "power_mode": "plugged",
+    "runner_version": "fixture-runner"
+  },
+  "dataset": {
+    "dataset_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "scale_gate": "D10K_private_calibration",
+    "document_count": 10000,
+    "searchable_document_count": 8000
+  }
+}

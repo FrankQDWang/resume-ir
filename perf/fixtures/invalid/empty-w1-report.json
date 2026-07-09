@@ -12,7 +12,7 @@
     "git_head_sha": "working-tree"
   },
   "dataset": {
-    "dataset_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "dataset_manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "scale_gate": "D10K_private_calibration",
     "document_count": 0,
     "searchable_document_count": 0
@@ -30,8 +30,7 @@
       "and_6_16": 0,
       "field_filter": 0,
       "hybrid": 0,
-      "semantic": 0,
-      "extreme": 0
+      "semantic": 0
     },
     "samples_per_bucket": {
       "single_term": 0,
@@ -40,8 +39,7 @@
       "and_6_16": 0,
       "field_filter": 0,
       "hybrid": 0,
-      "semantic": 0,
-      "extreme": 0
+      "semantic": 0
     }
   },
   "thresholds": {

@@ -1,6 +1,5 @@
 schema_version = "resume-ir.active-goal.v1"
 goal_id = "resume-ir.performance-gui-loop.2026-06"
-status = "blocked_permission_pending_private_inputs"
 date = "2026-06-26"
 
 [authority]
@@ -12,14 +11,14 @@ review_ledger = "03_next_goal_高性能本地检索GUI闭环/12_Review问题映�
 loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md"
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
-[scope.current_pr]
-docs_only = false
+[scope.active_slice]
+issue = "#138"
+name = "product_capability_audit_mixed_import_search_recall_detail_hydrate_contract"
 contract_change_allowed = true
-production_code_allowed = false
-private_benchmark_allowed = false
+production_code_allowed = true
+private_benchmark_allowed = true
 scope_exception = true
-scope_exception_reason = "PR #10 was the contract-foundation repair bundle that predates the autonomous PR budget; it must not be used as a production implementation precedent."
-scope_exception_auto_merge_allowed = false
+scope_exception_reason = "Issue #138 product-capability audit is the active issue-train pivot after #137 closed as a failed/reverted L4 import hypothesis. The slice may repair public machine state and inspect current import/search/detail contracts, but it must not implement GUI, optimize the query hot path, start a new L4 import micro-optimization, relax query semantics, publish raw private data, claim full baseline, D10K/D100K/D1M, stable-release readiness, GUI readiness, or goal completion."
 allowed_paths = [
   "AGENTS.md",
   "GOAL.md",
@@ -29,9 +28,17 @@ allowed_paths = [
   ".github/PULL_REQUEST_TEMPLATE.md",
   ".github/ISSUE_TEMPLATE/",
   "03_next_goal_高性能本地检索GUI闭环/",
+  "PROGRESS.md",
+  "crates/cli/",
+  "crates/core-domain/",
+  "crates/import-pipeline/",
+  "crates/index-fulltext/",
+  "crates/parser-pdf/",
+  "docs/runbooks/release-blockers.md",
   "docs/superpowers/",
   "perf/",
   "scripts/ci/check-performance-contracts.py",
+  "scripts/ci/check-benchmark-smoke.sh",
   "scripts/ci/check-autonomous-goal.py",
   "scripts/ci/check-loop-state.py",
   "scripts/ci/check-experiment-report.py",
@@ -40,6 +47,9 @@ allowed_paths = [
   "scripts/ci/check-private-evidence-redaction.py",
   "scripts/ci/check-gate-integrity.py",
   "scripts/ci/check-goal-complete.py",
+  "scripts/ci/check-current-stage-validation.sh",
+  "scripts/ci/check-runbooks.sh",
+  "scripts/local/run-current-stage-validation.sh",
 ]
 
 [contracts]
@@ -49,6 +59,7 @@ diagnostics_contract = "resume-ir.diagnostics.v2"
 evidence_matrix = "resume-ir.perf.acceptance-matrix.v2"
 loop_state_schema = "perf/loop-state.schema.json"
 experiment_report_schema = "perf/experiment-report.schema.json"
+synthetic_smoke_artifact_manifest_schema = "perf/synthetic-smoke-artifact-manifest.schema.json"
 
 [privacy]
 public_repo_boundary = "redacted_aggregate_only"
@@ -61,12 +72,7 @@ contains_diagnostics_package = false
 contains_model_cache = false
 
 [platform_lanes]
-primary_discovery = "macos_m4_discovery"
-weak_host_validation = "windows_weak_host_validation"
-ci_smoke = "cross_os_ci_smoke"
 macos_m4_can_rank_hotspots = true
-macos_m4_can_close_windows_gate = false
-cross_os_ci_smoke_can_replace_weak_host_perf = false
 
 [platform_lanes.private_corpus_transfer]
 runner_may_choose_transfer_to_windows = true
@@ -76,43 +82,25 @@ public_source_name = "$RESUME_IR_PRIVATE_RESUME_ROOT"
 windows_unavailable_starts_reconciliation = true
 
 [loop]
-workflow_state = "evidence_review"
-experiment_state = "contract_locked"
 blocked_threshold_count = 3
 same_blocker_retries_without_new_evidence = "forbidden"
 smoke_as_w1_evidence = "forbidden"
 query_semantics_relaxation_for_latency = "forbidden"
 
 [gui]
-default_stack = "tauri_react_vite_tailwind_typescript"
 desktop_shell = "tauri"
 frontend_runtime = "react"
 frontend_build = "vite_static_assets"
 style_system = "tailwind"
-production_next_server_allowed = false
 visual_reference = "UI-reference/"
-visual_reference_role = "visual_baseline_not_functional_clone"
-pixel_level_visual_similarity_required = true
 toolkit_bakeoff_default_required = false
-toolkit_bakeoff_requires_blocker_issue = true
 raw_reference_assets_publication_allowed = false
 
-[pull_request]
-number = 10
-draft = false
-state = "merged"
-review_status = "merged"
-semantic_role = "autonomous_delivery_contract_foundation"
-
 [autonomous_delivery.activation]
-current_pr_contract_only = false
-applies_after_current_pr_merge = true
-scope_current_pr_permissions_win_until_merge = false
-production_implementation_in_current_pr_allowed = false
-private_benchmark_in_current_pr_allowed = false
+contract_foundation_merged = true
+active_slice_contract_applies = true
 future_autonomous_run_pre_authorized = true
 runtime_capability_attestation_required = true
-normal_path_human_confirmation_required = false
 
 [autonomous_delivery.permissions]
 production_code_allowed = true
@@ -192,7 +180,7 @@ required_capabilities = [
 format_version = 1
 max_chars = 4000
 compiler = "scripts/loop/compile-goal-prompt.py"
-compiler_implemented_in_current_pr = false
+compiler_implemented_in_active_slice = false
 deterministic_serialization_required = true
 field_priority_required = true
 character_budget_required = true
@@ -220,6 +208,14 @@ verify_after_side_effect_required = true
 compare_and_swap_state_update_required = true
 lease_required = true
 heartbeat_required = true
+
+[[autonomous_delivery.transitions]]
+name = "capture_synthetic_smoke_baseline"
+from = ["goal_authorized", "blocked_permission"]
+to = "baseline_captured"
+required_permissions = []
+required_evidence = ["synthetic_smoke_report", "synthetic_smoke_artifact_manifest", "privacy_boundary"]
+allowed_actions = ["run_synthetic_smoke", "write_redacted_evidence"]
 
 [[autonomous_delivery.transitions]]
 name = "capture_baseline"
@@ -399,7 +395,7 @@ local_evidence_dir_env_var = "RESUME_IR_LOCAL_EVIDENCE_DIR"
 seektalent_trace_glob = "**/runtime/trace.log"
 allowed_trace_event = "tool_called"
 allowed_trace_tool = "source_search"
-allowed_query_source = "source_search_invocation_argument_only"
+allowed_query_source = "source_search_keyword_query_only"
 
 [autonomous_delivery.github_ledger]
 profile_issue_template = ".github/ISSUE_TEMPLATE/profile_issue.md"

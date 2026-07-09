@@ -1970,6 +1970,7 @@ fn import_options_from_scope(scope: &ImportScanScope) -> Result<ImportOptions> {
                 ))
             }
         },
+        ..ImportOptions::default()
     })
 }
 

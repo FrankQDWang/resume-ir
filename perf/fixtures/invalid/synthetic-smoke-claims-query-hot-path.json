@@ -1,0 +1,40 @@
+{
+  "schema_version": "resume-ir.experiment-report.v2",
+  "goal_id": "resume-ir.performance-gui-loop.2026-06",
+  "report_kind": "redacted_evidence",
+  "claim": "no_claim",
+  "evidence_lane": "smoke",
+  "benchmark_lane": "query_hot_path",
+  "contract_pins": {
+    "active_goal_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "acceptance_matrix_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "loop_state_schema_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "experiment_report_schema_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "git_head_sha": "working-tree"
+  },
+  "dataset": {
+    "dataset_manifest_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "scale_gate": "D10K_private_calibration",
+    "document_count": 10000,
+    "searchable_document_count": 8000
+  },
+  "query_hot_path": {
+    "resident_daemon_batch_id": "synthetic-smoke",
+    "benchmark_report_hash": "6666666666666666666666666666666666666666666666666666666666666666"
+  },
+  "thresholds": {
+    "matrix": "perf/acceptance-matrix.toml",
+    "matrix_schema_version": "resume-ir.perf.acceptance-matrix.v2",
+    "passed": true,
+    "failed_redlines": []
+  },
+  "privacy": {
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false,
+    "trace_summary_redacted": true
+  }
+}

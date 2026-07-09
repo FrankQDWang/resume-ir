@@ -63,3 +63,23 @@ fn repairs_ocr_spacing_noise_but_preserves_bullets_and_date_ranges() {
     assert!(normalized.text().contains("Experience"));
     assert!(normalized.text().contains("• 2020 - 2022 Rust 平台"));
 }
+
+#[test]
+fn text_only_normalization_matches_origin_preserving_output() {
+    use text_normalizer::TextNormalizer;
+
+    let sources = [
+        " 张三  Zhang\tSan\r\n技能：Rust  \t Python\r\n\r\n\r\n项目  | 角色  | 时间\r\n A | Owner | 2020 - 2022 ",
+        "Confidential Resume\nAlice Synthetic\nPage 1 of 2\n\u{000c}Confidential Resume\nExperience\nPage 2 of 2",
+        "E x p e r i e n c e\n• 2020 - 2022  Rust 平台",
+        "",
+        "  Single\tline  ",
+    ];
+
+    for source in sources {
+        assert_eq!(
+            TextNormalizer::normalize_text_only(source),
+            TextNormalizer::normalize(source).text()
+        );
+    }
+}

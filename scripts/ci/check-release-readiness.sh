@@ -136,7 +136,7 @@ require_text "$stdout_file" '"label": "private real-corpus performance evidence"
 require_text "$stdout_file" "stable-release private real-corpus hot-index hybrid benchmark evidence is not available"
 require_text "$stdout_file" "available local private corpus"
 require_text "$stdout_file" "current goal can close"
-require_text "$stdout_file" "8000-document hot-index floor"
+require_text "$stdout_file" "D10K 10000/8000-document hot-index floor"
 require_text "$stdout_file" "500 query samples"
 require_text "$stdout_file" "P50/P95/P99 metrics"
 require_text "$stdout_file" "follow-up performance-optimization goal"
@@ -319,7 +319,7 @@ cat > "$current_stage_evidence" <<'JSON'
     {"id": "ocr_worker_bounded_loop", "status": "success"},
     {"id": "embedding_worker_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
-    {"id": "query_set_draft", "status": "success"},
+    {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
     {"id": "baseline_shape_gate", "status": "success"},
     {"id": "private_ocr_throughput_baseline", "status": "success"},
@@ -346,7 +346,7 @@ cat > "$current_stage_evidence" <<'JSON'
     {"file": "embedding-worker.stdout.txt", "sha256": "2020202020202020202020202020202020202020202020202020202020202020"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "2121212121212121212121212121212121212121212121212121212121212121"},
     {"file": "private-query-set.local.jsonl", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
-    {"file": "query-set-draft.stdout.txt", "sha256": "2323232323232323232323232323232323232323232323232323232323232323"},
+    {"file": "query-set-prepare.stdout.txt", "sha256": "2323232323232323232323232323232323232323232323232323232323232323"},
     {"file": "private-benchmark-local.json", "sha256": "2424242424242424242424242424242424242424242424242424242424242424"},
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "2525252525252525252525252525252525252525252525252525252525252525"},
     {"file": "private-ocr-throughput.json", "sha256": "2626262626262626262626262626262626262626262626262626262626262626"},
@@ -360,14 +360,117 @@ cat > "$current_stage_evidence" <<'JSON'
   ],
   "corpus_summary_observability": {
     "privacy_boundary": "redacted_local_aggregate",
-    "document_count": 9000,
-    "searchable_document_count": 9000,
-    "vector_indexed_document_count": 9000,
+    "document_count": 10000,
+    "searchable_document_count": 8000,
+    "vector_indexed_document_count": 8000,
     "hot_index_fully_covered": true,
-    "document_status_counts": {"searchable": 9000},
-    "ingest_job_status_counts": {"completed": 9000},
-    "ingest_job_kind_status_counts": {"update_index": {"completed": 9000}},
+    "document_status_counts": {"ocr_required": 2000, "searchable": 8000},
+    "ingest_job_status_counts": {"completed": 8000, "queued": 2000},
+    "ingest_job_kind_status_counts": {"ocr_document": {"queued": 2000}, "update_index": {"completed": 8000}},
     "ingest_job_failure_counts": {}
+  },
+  "private_query_observability": {
+    "privacy_boundary": "redacted_local_aggregate",
+    "dataset_kind": "private-real-corpus",
+    "document_count": 10000,
+    "searchable_document_count": 8000,
+    "vector_indexed_document_count": 8000,
+    "query_count": 500,
+    "request_sample_count": 5000,
+    "query_source": "trace_source_search_v1",
+    "private_scale_gate": "D10K_private_calibration",
+    "query_set_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+    "tune_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "holdout_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "bucket_counts": {
+      "single_term": 50,
+      "and_2": 75,
+      "and_3_5":150,
+      "and_6_16": 50,
+      "field_filter": 75,
+      "hybrid": 75,
+      "semantic": 25
+    },
+    "tune_bucket_counts": {
+      "single_term": 40,
+      "and_2": 60,
+      "and_3_5":120,
+      "and_6_16": 40,
+      "field_filter": 60,
+      "hybrid": 60,
+      "semantic": 20
+    },
+    "holdout_bucket_counts": {
+      "single_term": 10,
+      "and_2": 15,
+      "and_3_5":30,
+      "and_6_16": 10,
+      "field_filter": 15,
+      "hybrid": 15,
+      "semantic": 5
+    },
+    "samples_per_bucket": {
+      "single_term": 500,
+      "and_2": 625,
+      "and_3_5":1500,
+      "and_6_16": 500,
+      "field_filter": 625,
+      "hybrid": 625,
+      "semantic": 625
+    },
+    "query_latency_ms": {"samples": 5000, "p50": 5.0, "p95": 42.0, "p99": 84.0},
+    "query_latency_by_bucket": {
+      "single_term": {"samples": 500, "p50": 5.0, "p95": 42.0, "p99": 84.0},
+      "and_2": {"samples": 625, "p50": 5.0, "p95": 42.0, "p99": 84.0},
+      "and_3_5": {"samples": 1500, "p50": 5.0, "p95": 42.0, "p99": 84.0},
+      "and_6_16": {"samples": 500, "p50": 5.0, "p95": 42.0, "p99": 84.0},
+      "field_filter": {"samples": 625, "p50": 5.0, "p95": 42.0, "p99": 84.0},
+      "hybrid": {"samples": 625, "p50": 5.0, "p95": 42.0, "p99": 84.0},
+      "semantic": {"samples": 625, "p50": 5.0, "p95": 42.0, "p99": 84.0}
+    },
+    "stage_latency_p95_ms": {
+      "query_parse": 42.0,
+      "prefilter": 42.0,
+      "bm25": 42.0,
+      "ann": 42.0,
+      "fusion": 42.0,
+      "bulk_hydrate": 42.0,
+      "snippet": 42.0
+    },
+    "stage_latency_by_bucket_p95_ms": {
+      "single_term": {"query_parse": 42.0, "prefilter": 42.0, "bm25": 42.0, "ann": 42.0, "fusion": 42.0, "bulk_hydrate": 42.0, "snippet": 42.0},
+      "and_2": {"query_parse": 42.0, "prefilter": 42.0, "bm25": 42.0, "ann": 42.0, "fusion": 42.0, "bulk_hydrate": 42.0, "snippet": 42.0},
+      "and_3_5": {"query_parse": 42.0, "prefilter": 42.0, "bm25": 42.0, "ann": 42.0, "fusion": 42.0, "bulk_hydrate": 42.0, "snippet": 42.0},
+      "and_6_16": {"query_parse": 42.0, "prefilter": 42.0, "bm25": 42.0, "ann": 42.0, "fusion": 42.0, "bulk_hydrate": 42.0, "snippet": 42.0},
+      "field_filter": {"query_parse": 42.0, "prefilter": 42.0, "bm25": 42.0, "ann": 42.0, "fusion": 42.0, "bulk_hydrate": 42.0, "snippet": 42.0},
+      "hybrid": {"query_parse": 42.0, "prefilter": 42.0, "bm25": 42.0, "ann": 42.0, "fusion": 42.0, "bulk_hydrate": 42.0, "snippet": 42.0},
+      "semantic": {"query_parse": 42.0, "prefilter": 42.0, "bm25": 42.0, "ann": 42.0, "fusion": 42.0, "bulk_hydrate": 42.0, "snippet": 42.0}
+    },
+    "rss_delta_mb": {"samples": 5000, "p50": 0.0, "p95": 0.0, "p99": 0.0},
+    "rss_delta_mb_by_bucket": {
+      "single_term": {"samples": 500, "p50": 0.0, "p95": 0.0, "p99": 0.0},
+      "and_2": {"samples": 625, "p50": 0.0, "p95": 0.0, "p99": 0.0},
+      "and_3_5": {"samples": 1500, "p50": 0.0, "p95": 0.0, "p99": 0.0},
+      "and_6_16": {"samples": 500, "p50": 0.0, "p95": 0.0, "p99": 0.0},
+      "field_filter": {"samples": 625, "p50": 0.0, "p95": 0.0, "p99": 0.0},
+      "hybrid": {"samples": 625, "p50": 0.0, "p95": 0.0, "p99": 0.0},
+      "semantic": {"samples": 625, "p50": 0.0, "p95": 0.0, "p99": 0.0}
+    },
+    "zero_result_queries": 0,
+    "query_runner": "resident-batch-command",
+    "query_mode": "hybrid",
+    "retrieval_layers": "fulltext+field+vector+rrf",
+    "warm_or_cold_definition": "current_stage_single_resident_batch_no_extra_warmup",
+    "cache_state": "hot_index_fully_covered_resident_batch_os_cache_uncontrolled",
+    "percentile_confidence": "sampled",
+    "spawn_per_query": false,
+    "hot_index": true,
+    "hot_path_ocr": false,
+    "hot_path_parsing": false,
+    "hot_path_heavy_model_inference": false,
+    "contains_raw_resume_text": false,
+    "contains_resume_paths": false,
+    "contains_queries": false
   },
   "privacy_sentinels": {
     "local_paths_included": false,
@@ -390,6 +493,63 @@ cat > "$current_stage_evidence" <<'JSON'
   ]
 }
 JSON
+python3 - "$current_stage_evidence" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    evidence = json.load(handle)
+
+stages = (
+    "query_parse",
+    "prefilter",
+    "bm25",
+    "ann",
+    "fusion",
+    "bulk_hydrate",
+    "snippet",
+)
+bounds = (
+    1.0,
+    5.0,
+    10.0,
+    25.0,
+    50.0,
+    100.0,
+    250.0,
+    500.0,
+    1000.0,
+    2500.0,
+    5000.0,
+    10000.0,
+    60000.0,
+)
+
+
+def histogram(samples):
+    return {
+        "samples": samples,
+        "bins": [{"le_ms": bound, "count": samples} for bound in bounds],
+        "overflow_count": 0,
+    }
+
+
+def stage_histogram(samples):
+    return {stage: histogram(samples) for stage in stages}
+
+
+query = evidence["private_query_observability"]
+query["stage_histogram_ms"] = stage_histogram(query["request_sample_count"])
+query["stage_histogram_by_bucket_ms"] = {
+    bucket: stage_histogram(samples)
+    for bucket, samples in query["samples_per_bucket"].items()
+}
+
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(evidence, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
 cat > "$current_stage_blocked_summary" <<'JSON'
 {
   "schema_version": "resume-ir.current-stage-blocked-summary.v1",
@@ -421,7 +581,7 @@ cat > "$current_stage_blocked_summary" <<'JSON'
     "ocr_worker_ticks": 25,
     "embedding_worker_ticks": 25,
     "query_set_min_queries": 500,
-    "baseline_min_documents": 8000,
+    "baseline_min_documents": 10000,
     "baseline_min_queries": 500
   },
   "preflight_probes": {
@@ -430,7 +590,7 @@ cat > "$current_stage_blocked_summary" <<'JSON'
   },
   "corpus_summary_observability": {
     "privacy_boundary": "redacted_local_aggregate",
-    "document_count": 9000,
+    "document_count": 10000,
     "searchable_document_count": 7800,
     "vector_indexed_document_count": 7800,
     "hot_index_fully_covered": false,
@@ -631,9 +791,10 @@ require_text "$release_workflow" "./scripts/ci/check-release-readiness.sh"
 require_text "$runbook" "resume-cli --data-dir <local-data-dir> release-readiness --json"
 require_text "$runbook" "--benchmark-report private-benchmark-local.json"
 require_text "$runbook" "resume-cli benchmark-query-protocol"
-require_text "$runbook" "--command-arg --data-dir"
-require_text "$runbook" 'resume-cli search --query-file "$RESUME_IR_QUERY_INPUT_PATH" --mode hybrid'
-require_text "$runbook" "--min-documents 8000 --min-queries 500"
+require_text "$runbook" "--resident-command-arg --data-dir"
+require_text "$runbook" "--resident-command-arg --batch-jsonl"
+require_text "$runbook" "RESUME_IR_QUERY_BATCH_INPUT_PATH"
+require_text "$runbook" "--min-documents 10000 --min-queries 500"
 require_text "$runbook" "--field-quality-report private-field-quality.json"
 require_text "$runbook" "--dedupe-quality-report private-dedupe-quality.json"
 require_text "$runbook" "--vector-quality-report private-vector-quality.json"

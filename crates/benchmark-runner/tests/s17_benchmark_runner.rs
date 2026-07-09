@@ -2,6 +2,23 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[path = "support/private_query_runner.rs"]
+mod private_query_runner_support;
+#[path = "support/private_query.rs"]
+mod private_query_support;
+
+use private_query_runner_support::{
+    legacy_private_query_set_file, private_query_set_file_with_bucket_queries,
+    private_query_set_file_with_custom_shape_query, private_query_set_file_without_summary,
+    write_private_query_set_summary, write_private_query_set_summary_with_split,
+};
+use private_query_support::{
+    assert_private_query_stage_latency, private_query_corpus_summary_json, private_query_set_file,
+    private_query_set_file_with_buckets, private_query_set_file_with_buckets_and_source_kind,
+    private_query_set_summary_path, private_query_test_alpha_id, private_query_test_buckets,
+    private_query_test_shape, private_query_test_shape_for_bucket,
+};
+
 use benchmark_runner::{
     evaluate_benchmark_gate_json, evaluate_dedupe_quality_gate_json,
     evaluate_field_quality_gate_json, evaluate_ocr_throughput_gate_json,
@@ -71,13 +88,12 @@ fn private_query_benchmark_outputs_redacted_gateable_report() {
     .unwrap();
     let manifests = PrivateQueryManifestDigests::new(
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "1111111111111111111111111111111111111111111111111111111111111111",
     )
     .unwrap();
     let config = PrivateQueryBenchmarkConfig::new(
         &query_set,
-        PrivateQueryBenchmarkCommand::local_command(&command).unwrap(),
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
         corpus_summary,
         manifests,
     )
@@ -121,6 +137,1518 @@ fn private_query_benchmark_outputs_redacted_gateable_report() {
 }
 
 #[test]
+fn private_query_benchmark_uses_single_resident_batch_command() {
+    let query_set = private_query_set_file("private-query-resident-batch-set", 3);
+    let command = query_fixture_script_with_body(
+        "private-query-resident-batch-command",
+        resident_batch_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(3)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap();
+
+    let report = run_private_query_benchmark(config).unwrap();
+    let json = report.to_redacted_json();
+    let report: serde_json::Value =
+        serde_json::from_str(&json).expect("private query report JSON should parse");
+
+    assert_eq!(report["query_runner"], "resident-batch-command");
+    assert_eq!(report["spawn_per_query"], false);
+    assert_eq!(report["query_embedding_command_invocations"], 3);
+    assert_eq!(report["query_count"], 3);
+    assert!(!json.contains(path_str(&query_set)));
+    assert!(!json.contains(path_str(&command)));
+    assert!(!json.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+fn private_query_benchmark_writes_valid_json_batch_for_quoted_queries() {
+    let query_set = private_query_set_file_with_bucket_queries(
+        "private-query-resident-batch-quoted-json-set",
+        &[(
+            "semantic",
+            "\"REDACTION_SENTINEL_PRIVATE_QUERY semantic quoted\"",
+        )],
+    );
+    let command = query_fixture_script_with_body(
+        "private-query-resident-batch-quoted-json-command",
+        json_parsing_resident_batch_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(1)
+    .unwrap()
+    .with_top_k(5)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap();
+
+    let report = run_private_query_benchmark(config).unwrap();
+
+    assert_eq!(report.query_count(), 1);
+    assert_eq!(report.zero_result_queries(), 0);
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_repeats_query_set_to_request_sample_count() {
+    let query_set = private_query_set_file("private-query-request-samples-set", 3);
+    let command = query_fixture_script_with_body(
+        "private-query-request-samples-command",
+        resident_batch_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(3)
+    .unwrap()
+    .with_request_sample_count(8)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap();
+
+    let report = run_private_query_benchmark(config).unwrap();
+    let json = report.to_redacted_json();
+    let report: serde_json::Value =
+        serde_json::from_str(&json).expect("private query report JSON should parse");
+
+    assert_eq!(report["query_count"], 3);
+    assert_eq!(report["request_sample_count"], 8);
+    assert_eq!(report["samples_per_bucket"]["and_3_5"], 8);
+    assert_eq!(report["samples_per_bucket"]["single_term"], 0);
+    assert_eq!(report["query_embedding_command_invocations"], 8);
+    assert_eq!(report["query_latency_ms"]["samples"], 8);
+    assert_private_query_stage_latency(&report, 8);
+    assert!(!json.contains(path_str(&query_set)));
+    assert!(!json.contains(path_str(&command)));
+    assert!(!json.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_repeated_request_samples_use_one_resident_batch_invocation() {
+    let query_set = private_query_set_file("private-query-request-samples-one-batch-set", 3);
+    let command = query_fixture_script_with_body(
+        "private-query-request-samples-one-batch-command",
+        resident_batch_invocation_count_query_fixture_script_body(),
+    );
+    let counter_dir = temp_dir("private-query-resident-batch-invocation-count");
+    let counter_path = counter_dir.join("invocations.txt");
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command_with_args(
+            &command,
+            vec![counter_path.to_string_lossy().into_owned()],
+        )
+        .unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(3)
+    .unwrap()
+    .with_request_sample_count(8)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap();
+
+    let report = run_private_query_benchmark(config).unwrap();
+    let invocation_count = fs::read_to_string(&counter_path)
+        .expect("resident batch counter should be written")
+        .trim()
+        .parse::<usize>()
+        .expect("resident batch counter should parse");
+    let json = report.to_redacted_json();
+    let report: serde_json::Value =
+        serde_json::from_str(&json).expect("private query report JSON should parse");
+
+    assert_eq!(invocation_count, 1);
+    assert_eq!(report["query_runner"], "resident-batch-command");
+    assert_eq!(report["spawn_per_query"], false);
+    assert_eq!(report["request_sample_count"], 8);
+    assert_eq!(report["query_embedding_command_invocations"], 8);
+    assert_eq!(report["query_latency_ms"]["samples"], 8);
+    assert!(!json.contains(path_str(&query_set)));
+    assert!(!json.contains(path_str(&command)));
+    assert!(!json.contains(path_str(&counter_path)));
+    assert!(!json.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+    remove_dir(&counter_dir);
+}
+
+#[test]
+fn private_query_benchmark_stratifies_d10k_request_samples_from_scale_gate() {
+    let query_set = private_query_set_file_with_buckets(
+        "private-query-d10k-stratified-request-samples-set",
+        &[
+            ("single_term", 50),
+            ("and_2", 75),
+            ("and_3_5", 150),
+            ("and_6_16", 50),
+            ("field_filter", 75),
+            ("hybrid", 75),
+            ("semantic", 25),
+        ],
+    );
+    let command = query_fixture_script_with_body(
+        "private-query-d10k-stratified-request-samples-command",
+        resident_batch_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(10_000, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(500)
+    .unwrap()
+    .with_request_sample_count(5_000)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap();
+
+    let report = run_private_query_benchmark(config).unwrap();
+    let json = report.to_redacted_json();
+    let report: serde_json::Value =
+        serde_json::from_str(&json).expect("private query report JSON should parse");
+
+    assert_eq!(report["query_count"], 500);
+    assert_eq!(report["request_sample_count"], 5_000);
+    assert_eq!(report["private_scale_gate"], "D10K_private_calibration");
+    let mut total_samples = 0_u64;
+    for bucket in private_query_test_buckets().iter().copied() {
+        let samples = report["samples_per_bucket"][bucket]
+            .as_u64()
+            .expect("bucket sample count should be numeric");
+        assert!(samples >= 500, "{bucket} should satisfy the D10K floor");
+        total_samples += samples;
+    }
+    assert_eq!(total_samples, 5_000);
+    assert_eq!(report["query_embedding_command_invocations"], 5_000);
+    assert_private_query_stage_latency(&report, 5_000);
+    assert!(!json.contains(path_str(&query_set)));
+    assert!(!json.contains(path_str(&command)));
+    assert!(!json.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_synthetic_smoke_does_not_claim_scale_gate() {
+    let query_set = private_query_set_file_with_buckets(
+        "private-query-smoke-no-scale-gate-set",
+        &[("and_3_5", 3)],
+    );
+    let command = query_fixture_script_with_body(
+        "private-query-smoke-no-scale-gate-command",
+        resident_batch_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(10_000, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_request_sample_count(3)
+    .unwrap()
+    .with_synthetic_smoke_evidence();
+
+    let report = run_private_query_benchmark(config).unwrap();
+    let json = report.to_redacted_json();
+    let report: serde_json::Value =
+        serde_json::from_str(&json).expect("private query report JSON should parse");
+
+    assert_eq!(report["dataset_kind"], "synthetic-smoke");
+    assert!(report.get("private_scale_gate").is_some());
+    assert_eq!(report["private_scale_gate"], serde_json::Value::Null);
+    assert_eq!(report["target_claim"], "not_evaluated");
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_reports_query_latency_by_bucket() {
+    let query_set = private_query_set_file_with_buckets(
+        "private-query-bucket-latency-set",
+        &[("single_term", 2), ("and_3_5", 2)],
+    );
+    let command = query_fixture_script_with_body(
+        "private-query-bucket-latency-command",
+        elapsed_ms_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(4)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap();
+
+    let report = run_private_query_benchmark(config).unwrap();
+    let json = report.to_redacted_json();
+    let report: serde_json::Value =
+        serde_json::from_str(&json).expect("private query report JSON should parse");
+
+    assert_eq!(
+        report["query_latency_by_bucket"]["single_term"]["samples"],
+        2
+    );
+    assert_eq!(report["query_latency_by_bucket"]["single_term"]["p95"], 4.0);
+    assert_eq!(report["query_latency_by_bucket"]["and_3_5"]["samples"], 2);
+    assert_eq!(report["query_latency_by_bucket"]["and_3_5"]["p95"], 64.0);
+    assert!(report["query_latency_by_bucket"]
+        .get("field_filter")
+        .is_none());
+    assert!(!json.contains(path_str(&query_set)));
+    assert!(!json.contains(path_str(&command)));
+    assert!(!json.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_accepts_out_of_order_request_bound_batch_records() {
+    let query_set = private_query_set_file_with_bucket_queries(
+        "private-query-out-of-order-request-set",
+        &[
+            ("single_term", "REDACTION_SENTINEL_PRIVATE_QUERY_SINGLE"),
+            (
+                "and_3_5",
+                "REDACTION_SENTINEL_PRIVATE_QUERY_AND backend search alpha",
+            ),
+        ],
+    );
+    let command = query_fixture_script_with_body(
+        "private-query-out-of-order-request-command",
+        out_of_order_request_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(2)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap();
+
+    let report = run_private_query_benchmark(config).unwrap();
+    let json = report.to_redacted_json();
+    let report: serde_json::Value =
+        serde_json::from_str(&json).expect("private query report JSON should parse");
+
+    assert_eq!(
+        report["query_latency_by_bucket"]["single_term"]["p95"],
+        11.0
+    );
+    assert_eq!(report["query_latency_by_bucket"]["and_3_5"]["p95"], 44.0);
+    assert_eq!(report["zero_result_queries"], 0);
+    assert!(!json.contains(path_str(&query_set)));
+    assert!(!json.contains(path_str(&command)));
+    assert!(!json.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_reports_stage_latency_by_bucket() {
+    let query_set = private_query_set_file_with_bucket_queries(
+        "private-query-bucket-stage-set",
+        &[
+            ("single_term", "REDACTION_SENTINEL_PRIVATE_QUERY_SINGLE"),
+            (
+                "and_3_5",
+                "REDACTION_SENTINEL_PRIVATE_QUERY_AND backend search alpha",
+            ),
+        ],
+    );
+    let command = query_fixture_script_with_body(
+        "private-query-bucket-stage-command",
+        bucket_stage_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(2)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap();
+
+    let report = run_private_query_benchmark(config).unwrap();
+    let json = report.to_redacted_json();
+    let report: serde_json::Value =
+        serde_json::from_str(&json).expect("private query report JSON should parse");
+
+    assert_eq!(
+        report["stage_latency_by_bucket_ms"]["single_term"]["query_parse"]["samples"],
+        1
+    );
+    assert_eq!(
+        report["stage_latency_by_bucket_ms"]["single_term"]["query_parse"]["p95"],
+        1.0
+    );
+    assert_eq!(
+        report["stage_latency_by_bucket_ms"]["and_3_5"]["query_parse"]["samples"],
+        1
+    );
+    assert_eq!(
+        report["stage_latency_by_bucket_ms"]["and_3_5"]["query_parse"]["p95"],
+        21.0
+    );
+    assert!(report["stage_latency_by_bucket_ms"]
+        .get("field_filter")
+        .is_none());
+    assert!(!json.contains(path_str(&query_set)));
+    assert!(!json.contains(path_str(&command)));
+    assert!(!json.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_reports_bounded_stage_histograms_by_bucket() {
+    let query_set = private_query_set_file_with_bucket_queries(
+        "private-query-bucket-stage-histogram-set",
+        &[
+            ("single_term", "REDACTION_SENTINEL_PRIVATE_QUERY_SINGLE"),
+            (
+                "and_3_5",
+                "REDACTION_SENTINEL_PRIVATE_QUERY_AND backend search alpha",
+            ),
+        ],
+    );
+    let command = query_fixture_script_with_body(
+        "private-query-bucket-stage-histogram-command",
+        bucket_stage_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(2)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap();
+
+    let report = run_private_query_benchmark(config).unwrap();
+    let json = report.to_redacted_json();
+    let report: serde_json::Value =
+        serde_json::from_str(&json).expect("private query report JSON should parse");
+
+    let global_query_parse = &report["stage_histogram_ms"]["query_parse"];
+    assert_eq!(global_query_parse["samples"], 2);
+    assert_eq!(global_query_parse["bins"].as_array().unwrap().len(), 13);
+    assert_eq!(stage_histogram_bin_count(global_query_parse, 10.0), 1);
+    assert_eq!(stage_histogram_bin_count(global_query_parse, 25.0), 2);
+    assert_eq!(global_query_parse["overflow_count"], 0);
+
+    let single_query_parse = &report["stage_histogram_by_bucket_ms"]["single_term"]["query_parse"];
+    assert_eq!(single_query_parse["samples"], 1);
+    assert_eq!(stage_histogram_bin_count(single_query_parse, 1.0), 1);
+    assert_eq!(single_query_parse["overflow_count"], 0);
+
+    let and_query_parse = &report["stage_histogram_by_bucket_ms"]["and_3_5"]["query_parse"];
+    assert_eq!(and_query_parse["samples"], 1);
+    assert_eq!(stage_histogram_bin_count(and_query_parse, 10.0), 0);
+    assert_eq!(stage_histogram_bin_count(and_query_parse, 25.0), 1);
+    assert_eq!(and_query_parse["overflow_count"], 0);
+    assert!(report["stage_histogram_by_bucket_ms"]
+        .get("field_filter")
+        .is_none());
+    assert!(!json.contains(path_str(&query_set)));
+    assert!(!json.contains(path_str(&command)));
+    assert!(!json.contains("REDACTION_SENTINEL_PRIVATE_QUERY"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_d10k_static_query_set_below_unique_bucket_minimums() {
+    let query_set = private_query_set_file_with_buckets(
+        "private-query-d10k-undercovered-static-buckets-set",
+        &[
+            ("single_term", 493),
+            ("and_2", 1),
+            ("and_3_5", 1),
+            ("and_6_16", 1),
+            ("field_filter", 1),
+            ("hybrid", 1),
+            ("semantic", 1),
+        ],
+    );
+    let command = query_fixture_script_with_body(
+        "private-query-d10k-undercovered-static-buckets-command",
+        resident_batch_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(10_000, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(500)
+    .unwrap()
+    .with_request_sample_count(5_000)
+    .unwrap();
+
+    let error = run_private_query_benchmark(config)
+        .expect_err("D10K private calibration should require static bucket coverage");
+
+    assert!(error
+        .to_string()
+        .contains("private_query_bucket_min_counts"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_defaults_d10k_request_bucket_floor() {
+    let query_set = private_query_set_file_with_buckets(
+        "private-query-d10k-default-bucket-floor-set",
+        &[
+            ("single_term", 493),
+            ("and_2", 1),
+            ("and_3_5", 1),
+            ("and_6_16", 1),
+            ("field_filter", 1),
+            ("hybrid", 1),
+            ("semantic", 1),
+        ],
+    );
+    let command = query_set
+        .parent()
+        .unwrap()
+        .join("resident-command-must-not-run");
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(10_000, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(500)
+    .unwrap()
+    .with_request_sample_count(5_000)
+    .unwrap();
+
+    let error = run_private_query_benchmark(config)
+        .expect_err("D10K private calibration should default to the bucket request floor");
+
+    assert!(error
+        .to_string()
+        .contains("private_query_bucket_min_counts"));
+
+    remove_dir(query_set.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_d10k_query_set_not_derived_from_trace_source_search() {
+    let query_set = private_query_set_file_with_buckets_and_source_kind(
+        "private-query-d10k-local-field-source-set",
+        &[
+            ("single_term", 50),
+            ("and_2", 75),
+            ("and_3_5", 150),
+            ("and_6_16", 50),
+            ("field_filter", 75),
+            ("hybrid", 75),
+            ("semantic", 25),
+        ],
+        "local_field",
+    );
+    let command = query_fixture_script_with_body(
+        "private-query-d10k-local-field-source-command",
+        resident_batch_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(10_000, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(500)
+    .unwrap()
+    .with_request_sample_count(5_000)
+    .unwrap();
+
+    let error = run_private_query_benchmark(config)
+        .expect_err("D10K agent replay should require trace-derived query source");
+
+    assert!(error.to_string().contains("private_query.source_kind"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_uses_record_elapsed_ms_for_latency_summary() {
+    let query_set = private_query_set_file("private-query-record-elapsed-set", 4);
+    let command = query_fixture_script_with_body(
+        "private-query-record-elapsed-command",
+        elapsed_ms_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(4)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap();
+
+    let report = run_private_query_benchmark(config).unwrap();
+
+    assert_eq!(report.query_count(), 4);
+    assert_eq!(report.latency().samples(), 4);
+    assert_eq!(report.latency().p50_ms(), 4.0);
+    assert_eq!(report.latency().p95_ms(), 64.0);
+    let json = report.to_redacted_json();
+    let report: serde_json::Value =
+        serde_json::from_str(&json).expect("private query report JSON should parse");
+    assert_eq!(
+        report["query_set_sha256"],
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    );
+    assert_eq!(
+        report["tune_sha256"],
+        "2222222222222222222222222222222222222222222222222222222222222222"
+    );
+    assert_eq!(
+        report["holdout_sha256"],
+        "3333333333333333333333333333333333333333333333333333333333333333"
+    );
+    assert_eq!(report["query_source"], "trace_source_search_v1");
+    assert_eq!(report["tune_bucket_counts"]["and_3_5"], 3);
+    assert_eq!(report["holdout_bucket_counts"]["and_3_5"], 1);
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_reports_rss_delta_observability_by_bucket() {
+    let query_set =
+        private_query_set_file_with_buckets("private-query-rss-delta-set", &[("and_3_5", 3)]);
+    let command = query_fixture_script_with_body(
+        "private-query-rss-delta-command",
+        rss_delta_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(3)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap();
+
+    let report = run_private_query_benchmark(config).unwrap();
+    let json = report.to_redacted_json();
+    let report: serde_json::Value =
+        serde_json::from_str(&json).expect("private query report JSON should parse");
+
+    assert_eq!(report["rss_delta_mb"]["samples"], 3);
+    assert_eq!(report["rss_delta_mb"]["p50"], 2.0);
+    assert_eq!(report["rss_delta_mb"]["p95"], 4.0);
+    assert_eq!(report["rss_delta_mb_by_bucket"]["and_3_5"]["samples"], 3);
+    assert_eq!(report["rss_delta_mb_by_bucket"]["and_3_5"]["p95"], 4.0);
+    assert!(report["rss_delta_mb_by_bucket"]
+        .get("single_term")
+        .is_none());
+    assert!(report["rss_delta_mb_by_bucket"]
+        .get("field_filter")
+        .is_none());
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_query_set_without_v2_schema() {
+    let query_set = legacy_private_query_set_file("private-query-legacy-set", 1);
+    let command = query_fixture_script("private-query-legacy-command");
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "benchmark configuration is invalid for private_query.schema_version"
+    );
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_query_set_metadata_that_does_not_match_query_text() {
+    let query_set = private_query_set_file_with_bucket_queries(
+        "private-query-stale-metadata-set",
+        &[("and_3_5", "rust backend")],
+    );
+    let command = query_fixture_script("private-query-stale-metadata-command");
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert!(error.to_string().contains("private_query.query_shape"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_non_canonical_static_query_set_rows() {
+    let query_set = private_query_set_file_with_bucket_queries(
+        "private-query-non-canonical-row-set",
+        &[(
+            "and_3_5",
+            "ＲＥＤＡＣＴＩＯＮ_SENTINEL_PRIVATE_QUERY backend backend search",
+        )],
+    );
+    let command = query_fixture_script("private-query-non-canonical-row-command");
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert!(error.to_string().contains("private_query.canonical_query"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_query_set_query_outside_semantic_caps() {
+    let too_many_terms = (1..=17)
+        .map(|index| format!("semanticcap{}", private_query_test_alpha_id(index)))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let query_set = private_query_set_file_with_custom_shape_query(
+        "private-query-semantic-cap-set",
+        "and_6_16",
+        &too_many_terms,
+        private_query_test_shape(17, false, false, false, false, true, false),
+    );
+    let command = query_fixture_script("private-query-semantic-cap-command");
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert!(error.to_string().contains("private_query.query"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_query_set_without_redacted_summary() {
+    let query_set = private_query_set_file_without_summary("private-query-missing-summary-set", 1);
+    let command = query_fixture_script("private-query-missing-summary-command");
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    let error = error.to_string();
+    assert!(
+        error.contains("private_query_set_summary"),
+        "unexpected error: {error}"
+    );
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_query_set_tail_beyond_configured_max() {
+    let query_set = private_query_set_file("private-query-tail-beyond-max-set", 2);
+    write_private_query_set_summary(&query_set, 1, &[("and_3_5", 1)]);
+    let command = query_fixture_script("private-query-tail-beyond-max-command");
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(1)
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert!(error.to_string().contains("private_query_max_queries"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_duplicate_static_queries() {
+    let query_set = private_query_set_file_with_bucket_queries(
+        "private-query-duplicate-query-set",
+        &[
+            (
+                "and_3_5",
+                "REDACTION_SENTINEL_PRIVATE_QUERY backend search a",
+            ),
+            (
+                "and_3_5",
+                "REDACTION_SENTINEL_PRIVATE_QUERY backend search a",
+            ),
+        ],
+    );
+    let command = query_fixture_script("private-query-duplicate-query-command");
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert!(error.to_string().contains("private_query.duplicate_query"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_duplicate_static_sample_ids() {
+    let query_set =
+        temp_dir("private-query-duplicate-sample-id-set").join("private-query-set.jsonl");
+    fs::write(
+        &query_set,
+        format!(
+            "{}\n{}\n",
+            serde_json::json!({
+                "schema_version": "resume-ir.query-set.jsonl.v2",
+                "sample_id": "private-query-sample-000001",
+                "bucket": "and_3_5",
+                "query": "REDACTION_SENTINEL_PRIVATE_QUERY backend search a",
+                "source_kind": "trace_source_search_v1",
+                "query_shape": private_query_test_shape_for_bucket("and_3_5"),
+            }),
+            serde_json::json!({
+                "schema_version": "resume-ir.query-set.jsonl.v2",
+                "sample_id": "private-query-sample-000001",
+                "bucket": "and_3_5",
+                "query": "REDACTION_SENTINEL_PRIVATE_QUERY backend search b",
+                "source_kind": "trace_source_search_v1",
+                "query_shape": private_query_test_shape_for_bucket("and_3_5"),
+            }),
+        ),
+    )
+    .unwrap();
+    write_private_query_set_summary(&query_set, 2, &[("and_3_5", 2)]);
+    let command = query_fixture_script("private-query-duplicate-sample-id-command");
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private_query.duplicate_sample_id"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_summary_query_count_mismatch() {
+    let query_set = private_query_set_file("private-query-summary-count-mismatch-set", 3);
+    write_private_query_set_summary(&query_set, 4, &[("and_3_5", 4)]);
+    let command = query_fixture_script("private-query-summary-count-mismatch-command");
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    let error = error.to_string();
+    assert!(
+        error.contains("private_query_set_summary"),
+        "unexpected error: {error}"
+    );
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_summary_bucket_mismatch() {
+    let query_set = private_query_set_file_with_buckets(
+        "private-query-summary-bucket-mismatch-set",
+        &[("single_term", 1), ("and_2", 1)],
+    );
+    write_private_query_set_summary(&query_set, 2, &[("and_3_5", 2)]);
+    let command = query_fixture_script("private-query-summary-bucket-mismatch-command");
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert!(error.to_string().contains("private_query_set_summary"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_summary_without_holdout_split() {
+    let query_set = private_query_set_file("private-query-summary-no-holdout-set", 3);
+    write_private_query_set_summary_with_split(&query_set, 3, 3, 0, &[("and_3_5", 3)]);
+    let command = query_fixture_script("private-query-summary-no-holdout-command");
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert!(error.to_string().contains("private_query_set_summary"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_summary_bucket_split_mismatch() {
+    let query_set = private_query_set_file_with_buckets(
+        "private-query-summary-bucket-split-mismatch-set",
+        &[("single_term", 1), ("and_2", 1)],
+    );
+    fs::write(
+        private_query_set_summary_path(&query_set),
+        concat!(
+            "{",
+            "\"schema_version\":\"resume-ir.query-set-summary.v2\",",
+            "\"privacy_boundary\":\"redacted_local_aggregate\",",
+            "\"query_source\":\"trace_source_search_v1\",",
+            "\"query_count\":2,",
+            "\"tune_query_count\":1,",
+            "\"holdout_query_count\":1,",
+            "\"bucket_counts\":{\"single_term\":1,\"and_2\":1,\"and_3_5\":0,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"tune_bucket_counts\":{\"single_term\":0,\"and_2\":1,\"and_3_5\":0,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"holdout_bucket_counts\":{\"single_term\":0,\"and_2\":1,\"and_3_5\":0,\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0},",
+            "\"candidate_queries_sampled\":2,",
+            "\"zero_hit_queries_dropped\":0,",
+            "",
+            "\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",",
+            "\"tune_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\",",
+            "\"holdout_sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\",",
+            "\"hmac_split\":true,",
+            "\"contains_raw_query_text\":false,",
+            "\"contains_raw_resume_text\":false,",
+            "\"contains_candidate_results\":false,",
+            "\"contains_local_paths\":false",
+            "}\n"
+        ),
+    )
+    .unwrap();
+    let command = query_fixture_script("private-query-summary-bucket-split-mismatch-command");
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert!(error.to_string().contains("private_query_set_summary"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_missing_stage_latency_attestation() {
+    let query_set = private_query_set_file("private-query-missing-stage-set", 1);
+    let command = query_fixture_script_with_body(
+        "private-query-missing-stage-command",
+        missing_stage_latency_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "benchmark configuration is invalid for private_query_stage_latency_attestation"
+    );
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_unbound_resident_batch_records() {
+    let query_set = private_query_set_file("private-query-unbound-record-set", 2);
+    let command = query_fixture_script_with_body(
+        "private-query-unbound-record-command",
+        unbound_resident_batch_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private_query_protocol_attestation"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_duplicate_resident_batch_request_ids() {
+    let query_set = private_query_set_file("private-query-duplicate-record-set", 2);
+    let command = query_fixture_script_with_body(
+        "private-query-duplicate-record-command",
+        duplicate_resident_batch_request_id_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private_query_protocol_attestation"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_missing_resident_batch_response_as_protocol_failure() {
+    let query_set = private_query_set_file("private-query-missing-response-set", 2);
+    let command = query_fixture_script_with_body(
+        "private-query-missing-response-command",
+        missing_resident_batch_response_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "benchmark configuration is invalid for private_query_protocol_attestation"
+    );
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_oversized_resident_batch_stdout() {
+    let query_set = private_query_set_file("private-query-oversized-stdout-set", 1);
+    let command = query_fixture_script_with_body(
+        "private-query-oversized-stdout-command",
+        oversized_stdout_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(1)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private_query_resident_command_output"));
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
+fn private_query_benchmark_rejects_missing_elapsed_ms_attestation() {
+    let query_set = private_query_set_file("private-query-missing-elapsed-set", 1);
+    let command = query_fixture_script_with_body(
+        "private-query-missing-elapsed-command",
+        missing_elapsed_ms_query_fixture_script_body(),
+    );
+    let corpus_summary = PrivateQueryCorpusSummary::from_redacted_json_bytes(
+        private_query_corpus_summary_json(8_720, true),
+    )
+    .unwrap();
+    let manifests = PrivateQueryManifestDigests::new(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "1111111111111111111111111111111111111111111111111111111111111111",
+    )
+    .unwrap();
+    let config = PrivateQueryBenchmarkConfig::new(
+        &query_set,
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
+        corpus_summary,
+        manifests,
+    )
+    .unwrap()
+    .with_max_queries(1)
+    .unwrap()
+    .with_top_k(10)
+    .unwrap()
+    .with_timeout_ms(5_000)
+    .unwrap();
+
+    let error = run_private_query_benchmark(config).unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "benchmark configuration is invalid for private_query_elapsed_ms_attestation"
+    );
+
+    remove_dir(query_set.parent().unwrap());
+    remove_dir(command.parent().unwrap());
+}
+
+#[test]
 fn private_query_benchmark_rejects_missing_hybrid_protocol_attestation() {
     let query_set = private_query_set_file("private-query-missing-attestation-set", 1);
     let command = legacy_query_fixture_script("private-query-missing-attestation-command");
@@ -130,13 +1658,12 @@ fn private_query_benchmark_rejects_missing_hybrid_protocol_attestation() {
     .unwrap();
     let manifests = PrivateQueryManifestDigests::new(
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "1111111111111111111111111111111111111111111111111111111111111111",
     )
     .unwrap();
     let config = PrivateQueryBenchmarkConfig::new(
         &query_set,
-        PrivateQueryBenchmarkCommand::local_command(&command).unwrap(),
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
         corpus_summary,
         manifests,
     )
@@ -171,13 +1698,12 @@ fn private_query_benchmark_rejects_missing_top_k_protocol_attestation() {
     .unwrap();
     let manifests = PrivateQueryManifestDigests::new(
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "1111111111111111111111111111111111111111111111111111111111111111",
     )
     .unwrap();
     let config = PrivateQueryBenchmarkConfig::new(
         &query_set,
-        PrivateQueryBenchmarkCommand::local_command(&command).unwrap(),
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
         corpus_summary,
         manifests,
     )
@@ -212,13 +1738,12 @@ fn private_query_benchmark_rejects_mismatched_top_k_protocol_attestation() {
     .unwrap();
     let manifests = PrivateQueryManifestDigests::new(
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "1111111111111111111111111111111111111111111111111111111111111111",
     )
     .unwrap();
     let config = PrivateQueryBenchmarkConfig::new(
         &query_set,
-        PrivateQueryBenchmarkCommand::local_command(&command).unwrap(),
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
         corpus_summary,
         manifests,
     )
@@ -253,13 +1778,12 @@ fn private_query_benchmark_reports_query_embedding_runtime_attestation() {
     .unwrap();
     let manifests = PrivateQueryManifestDigests::new(
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "1111111111111111111111111111111111111111111111111111111111111111",
     )
     .unwrap();
     let config = PrivateQueryBenchmarkConfig::new(
         &query_set,
-        PrivateQueryBenchmarkCommand::local_command(&command).unwrap(),
+        PrivateQueryBenchmarkCommand::resident_batch_command(&command).unwrap(),
         corpus_summary,
         manifests,
     )
@@ -435,7 +1959,7 @@ fn benchmark_gate_requires_private_real_corpus_metadata_for_release_evidence() {
 #[test]
 fn benchmark_gate_rejects_private_real_report_without_query_protocol_attestation() {
     let report = minimal_private_real_benchmark_json(100_000, 500, 150.0, false)
-        .replace(",\"query_protocol\":\"resume-ir-query-v1\"", "");
+        .replace(",\"query_protocol\":\"resume-ir-query-v2\"", "");
     let config = BenchmarkGateConfig::new(100_000, 500, 200.0).require_private_real_corpus();
 
     let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
@@ -483,6 +2007,56 @@ fn benchmark_gate_rejects_private_real_report_with_inconsistent_query_counts() {
 }
 
 #[test]
+fn benchmark_gate_rejects_private_real_report_without_stage_latency() {
+    let mut report: serde_json::Value = serde_json::from_str(&minimal_private_real_benchmark_json(
+        100_000, 200, 150.0, false,
+    ))
+    .unwrap();
+    report.as_object_mut().unwrap().remove("stage_latency_ms");
+    let config = BenchmarkGateConfig::new(100_000, 200, 200.0).require_private_real_corpus();
+
+    let error = evaluate_benchmark_gate_json(&report.to_string(), config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus benchmark requires redacted local boundary"));
+}
+
+#[test]
+fn benchmark_gate_rejects_private_real_report_without_query_latency_by_bucket() {
+    let mut report: serde_json::Value = serde_json::from_str(&minimal_private_real_benchmark_json(
+        100_000, 200, 150.0, false,
+    ))
+    .unwrap();
+    report
+        .as_object_mut()
+        .unwrap()
+        .remove("query_latency_by_bucket");
+    let config = BenchmarkGateConfig::new(100_000, 200, 200.0).require_private_real_corpus();
+
+    let error = evaluate_benchmark_gate_json(&report.to_string(), config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus benchmark requires redacted local boundary"));
+}
+
+#[test]
+fn benchmark_gate_rejects_private_real_report_with_bucket_latency_sample_mismatch() {
+    let report = minimal_private_real_benchmark_json(100_000, 200, 150.0, false).replace(
+        "\"and_3_5\":{\"samples\":200",
+        "\"and_3_5\":{\"samples\":199",
+    );
+    let config = BenchmarkGateConfig::new(100_000, 200, 200.0).require_private_real_corpus();
+
+    let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("private real-corpus benchmark counts are inconsistent"));
+}
+
+#[test]
 fn benchmark_gate_rejects_private_real_report_with_inconsistent_qps() {
     let report = minimal_private_real_benchmark_json(100_000, 200, 150.0, false)
         .replace("\"qps\":100.0", "\"qps\":999.0");
@@ -510,30 +2084,8 @@ fn benchmark_gate_rejects_private_real_report_with_impossible_total_hits() {
 
 #[test]
 fn benchmark_gate_rejects_private_real_report_without_hot_hybrid_evidence() {
-    let mut report = minimal_benchmark_json("private-real-corpus", 100_000, 200, 150.0, 0, false)
-        .replace(
-            "\"target_claim\":\"not_evaluated\"",
-            "\"target_claim\":\"query_latency_target_met\"",
-        )
-        .replace(
-            "\"scope\":\"synthetic query benchmark; no raw resume text, paths, or queries included\"",
-            "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
-        );
-    report.pop();
-    report.push_str(concat!(
-        ",\"corpus_origin\":\"private_local\"",
-        ",\"privacy_boundary\":\"redacted_local_aggregate\"",
-        ",\"contains_raw_resume_text\":false",
-        ",\"contains_resume_paths\":false",
-        ",\"contains_queries\":false",
-        ",\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"",
-        ",\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\"",
-        ",\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"",
-        ",\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"",
-        ",\"query_embedding_runtime\":\"local-command\"",
-        ",\"query_embedding_command_invocations\":200"
-    ));
-    report.push('}');
+    let report = minimal_private_real_benchmark_json(100_000, 200, 150.0, false)
+        .replace("\"hot_index\":true", "\"hot_index\":false");
     let config = BenchmarkGateConfig::new(100_000, 200, 200.0).require_private_real_corpus();
 
     let error = evaluate_benchmark_gate_json(&report, config).unwrap_err();
@@ -1514,9 +3066,9 @@ fn private_ocr_throughput_benchmark_outputs_redacted_diagnostic_report() {
     let ocr = ocr_fixture_script("private-ocr-throughput-ocr");
     let manifests = PrivateOcrManifestDigests::new(
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "1111111111111111111111111111111111111111111111111111111111111111",
         "2222222222222222222222222222222222222222222222222222222222222222",
+        "3333333333333333333333333333333333333333333333333333333333333333",
     )
     .unwrap();
     let config = PrivateOcrThroughputConfig::new(
@@ -1593,9 +3145,9 @@ fn private_ocr_throughput_benchmark_skips_failed_documents_with_redacted_aggrega
     let ocr = ocr_fixture_script("private-ocr-throughput-flaky-ocr");
     let manifests = PrivateOcrManifestDigests::new(
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "1111111111111111111111111111111111111111111111111111111111111111",
         "2222222222222222222222222222222222222222222222222222222222222222",
+        "3333333333333333333333333333333333333333333333333333333333333333",
     )
     .unwrap();
     let config = PrivateOcrThroughputConfig::new(
@@ -1652,9 +3204,9 @@ fn private_ocr_throughput_benchmark_reports_run_budget_exhaustion_without_gate_c
     let ocr = slow_ocr_fixture_script("private-ocr-throughput-budget-ocr");
     let manifests = PrivateOcrManifestDigests::new(
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
         "1111111111111111111111111111111111111111111111111111111111111111",
         "2222222222222222222222222222222222222222222222222222222222222222",
+        "3333333333333333333333333333333333333333333333333333333333333333",
     )
     .unwrap();
     let config = PrivateOcrThroughputConfig::new(
@@ -2061,16 +3613,47 @@ fn minimal_private_real_benchmark_json_without_hot_coverage(
         "\"target_claim\":\"query_latency_target_met\"",
     )
     .replace(
+        "\"query_count\":",
+        &format!("\"request_sample_count\":{query_count},\"query_count\":"),
+    )
+    .replace(
         "\"scope\":\"synthetic query benchmark; no raw resume text, paths, or queries included\"",
         "\"scope\":\"private local real-corpus query benchmark; aggregate redacted report only\"",
+    )
+    .replace(
+        "\"top_k\":10,",
+        &format!(
+            "\"query_source\":\"trace_source_search_v1\",\"private_scale_gate\":null,\"bucket_counts\":{},\"tune_bucket_counts\":{},\"holdout_bucket_counts\":{},\"samples_per_bucket\":{},\"top_k\":10,",
+            private_query_bucket_counts_json(query_count),
+            private_query_bucket_counts_json(query_count),
+            private_query_bucket_counts_json(0),
+            private_query_bucket_counts_json(query_count)
+        ),
+    )
+    .replace(
+        "\"zero_result_queries\":",
+        &format!(
+            "\"query_latency_by_bucket\":{},\"stage_latency_ms\":{},\"stage_latency_by_bucket_ms\":{},\"stage_histogram_ms\":{},\"stage_histogram_by_bucket_ms\":{},\"rss_delta_mb\":{},\"rss_delta_mb_by_bucket\":{},\"zero_result_queries\":",
+            private_query_bucket_latency_json(query_count, p95_ms),
+            private_query_stage_latency_json(query_count, p95_ms),
+            private_query_bucket_stage_latency_json(query_count, p95_ms),
+            private_query_stage_histogram_json(query_count),
+            private_query_bucket_stage_histogram_json(query_count),
+            private_query_latency_json(query_count, p95_ms),
+            private_query_bucket_latency_json(query_count, p95_ms)
+        ),
     );
     report.pop();
     report.push_str(concat!(
         ",\"corpus_origin\":\"private_local\"",
         ",\"privacy_boundary\":\"redacted_local_aggregate\"",
-        ",\"query_protocol\":\"resume-ir-query-v1\"",
+        ",\"query_protocol\":\"resume-ir-query-v2\"",
+        ",\"query_runner\":\"resident-batch-command\"",
+        ",\"spawn_per_query\":false",
         ",\"query_mode\":\"hybrid\"",
         ",\"retrieval_layers\":\"fulltext+field+vector+rrf\"",
+        ",\"warm_or_cold_definition\":\"current_stage_single_resident_batch_no_extra_warmup\"",
+        ",\"cache_state\":\"hot_index_fully_covered_resident_batch_os_cache_uncontrolled\"",
         ",\"query_embedding_runtime\":\"local-command\"",
     ));
     report.push_str(&format!(
@@ -2086,11 +3669,72 @@ fn minimal_private_real_benchmark_json_without_hot_coverage(
         ",\"contains_queries\":false",
         ",\"dataset_manifest_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"",
         ",\"query_set_sha256\":\"abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\"",
+        ",\"tune_sha256\":\"2222222222222222222222222222222222222222222222222222222222222222\"",
+        ",\"holdout_sha256\":\"3333333333333333333333333333333333333333333333333333333333333333\"",
         ",\"model_manifest_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\"",
         ",\"corpus_summary_sha256\":\"1111111111111111111111111111111111111111111111111111111111111111\""
     ));
     report.push('}');
     report
+}
+
+fn private_query_bucket_counts_json(query_count: usize) -> String {
+    format!(
+        "{{\"single_term\":0,\"and_2\":0,\"and_3_5\":{query_count},\"and_6_16\":0,\"field_filter\":0,\"hybrid\":0,\"semantic\":0}}"
+    )
+}
+
+fn private_query_stage_latency_json(query_count: usize, p95_ms: f64) -> String {
+    let summary = format!(
+        "{{\"samples\":{query_count},\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":{p95_ms},\"p99\":{p95_ms},\"max\":{p95_ms}}}"
+    );
+    format!(
+        "{{\"query_parse\":{summary},\"prefilter\":{summary},\"bm25\":{summary},\"ann\":{summary},\"fusion\":{summary},\"bulk_hydrate\":{summary},\"snippet\":{summary}}}"
+    )
+}
+
+fn private_query_bucket_stage_latency_json(query_count: usize, p95_ms: f64) -> String {
+    format!(
+        "{{\"and_3_5\":{}}}",
+        private_query_stage_latency_json(query_count, p95_ms)
+    )
+}
+
+fn private_query_stage_histogram_json(query_count: usize) -> String {
+    let histogram = private_query_histogram_json(query_count);
+    format!(
+        "{{\"query_parse\":{histogram},\"prefilter\":{histogram},\"bm25\":{histogram},\"ann\":{histogram},\"fusion\":{histogram},\"bulk_hydrate\":{histogram},\"snippet\":{histogram}}}"
+    )
+}
+
+fn private_query_bucket_stage_histogram_json(query_count: usize) -> String {
+    format!(
+        "{{\"and_3_5\":{}}}",
+        private_query_stage_histogram_json(query_count)
+    )
+}
+
+fn private_query_histogram_json(query_count: usize) -> String {
+    let bins = [
+        1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1_000.0, 2_500.0, 5_000.0, 10_000.0,
+        60_000.0,
+    ]
+    .into_iter()
+    .map(|le_ms| format!("{{\"le_ms\":{le_ms},\"count\":{query_count}}}"))
+    .collect::<Vec<_>>()
+    .join(",");
+    format!("{{\"samples\":{query_count},\"bins\":[{bins}],\"overflow_count\":0}}")
+}
+
+fn private_query_latency_json(query_count: usize, p95_ms: f64) -> String {
+    format!(
+        "{{\"samples\":{query_count},\"min\":1.0,\"mean\":2.0,\"p50\":2.0,\"p95\":{p95_ms},\"p99\":{p95_ms},\"max\":{p95_ms}}}"
+    )
+}
+
+fn private_query_bucket_latency_json(query_count: usize, p95_ms: f64) -> String {
+    let summary = private_query_latency_json(query_count, p95_ms);
+    format!("{{\"and_3_5\":{summary}}}")
 }
 
 fn minimal_private_business_field_quality_json() -> String {
@@ -2430,64 +4074,26 @@ fn embedding_fixture_script(label: &str) -> PathBuf {
     path
 }
 
-fn private_query_set_file(label: &str, query_count: usize) -> PathBuf {
-    let path = temp_dir(label).join("private-query-set.jsonl");
-    let mut lines = String::new();
-    for index in 0..query_count {
-        lines.push_str(&format!(
-            "{{\"sample_id\":\"private-query-sample-{index:06}\",\"query\":\"REDACTION_SENTINEL_PRIVATE_QUERY backend search {index}\"}}\n"
-        ));
-    }
-    fs::write(&path, lines).unwrap();
-    path
-}
-
-fn private_query_corpus_summary_json(document_count: usize, hot_index: bool) -> Vec<u8> {
-    let searchable_count = if hot_index {
-        document_count
-    } else {
-        document_count.saturating_sub(1)
-    };
-    let vector_count = if hot_index {
-        document_count
-    } else {
-        document_count.saturating_sub(2)
-    };
-    format!(
-        concat!(
-            "{{",
-            "\"schema_version\":\"benchmark-corpus-summary.v1\",",
-            "\"privacy_boundary\":\"redacted_local_aggregate\",",
-            "\"document_count\":{},",
-            "\"searchable_document_count\":{},",
-            "\"vector_indexed_document_count\":{},",
-            "\"active_vector_document_count\":{},",
-            "\"vector_count\":{},",
-            "\"vector_deleted_count\":0,",
-            "\"vector_index_state\":\"available\",",
-            "\"vector_search_backend\":\"hnsw_ann\",",
-            "\"hot_index_fully_covered\":{},",
-            "\"contains_raw_resume_text\":false,",
-            "\"contains_resume_paths\":false,",
-            "\"contains_queries\":false,",
-            "\"contains_sample_ids\":false",
-            "}}"
-        ),
-        document_count, searchable_count, vector_count, vector_count, vector_count, hot_index
-    )
-    .into_bytes()
-}
-
 fn assert_private_query_report_semantics(json: &str, expected_document_count: usize) {
     let report: serde_json::Value =
         serde_json::from_str(json).expect("private query report JSON should parse");
     assert_eq!(report["schema_version"], "benchmark.v1");
     assert_eq!(report["dataset_kind"], "private-real-corpus");
     assert_eq!(report["target_claim"], "benchmark_baseline_observed");
-    assert_eq!(report["query_protocol"], "resume-ir-query-v1");
+    assert_eq!(report["query_protocol"], "resume-ir-query-v2");
+    assert_eq!(report["query_runner"], "resident-batch-command");
+    assert_eq!(report["spawn_per_query"], false);
     assert_eq!(report["query_mode"], "hybrid");
     assert_eq!(report["retrieval_layers"], "fulltext+field+vector+rrf");
     assert_eq!(report["query_embedding_runtime"], "local-command");
+    assert_eq!(
+        report["warm_or_cold_definition"],
+        "current_stage_single_resident_batch_no_extra_warmup"
+    );
+    assert_eq!(
+        report["cache_state"],
+        "hot_index_fully_covered_resident_batch_os_cache_uncontrolled"
+    );
     assert_eq!(
         report["scope"],
         "private local real-corpus query benchmark; aggregate redacted report only"
@@ -2507,6 +4113,37 @@ fn assert_private_query_report_semantics(json: &str, expected_document_count: us
     assert!(searchable_count <= document_count);
     assert!(vector_count <= searchable_count);
     assert_eq!(report["query_count"], 500);
+    assert_eq!(report["request_sample_count"], 500);
+    assert_eq!(report["bucket_counts"]["and_3_5"], 500);
+    assert_eq!(report["bucket_counts"]["single_term"], 0);
+    assert_eq!(report["bucket_counts"]["field_filter"], 0);
+    assert_eq!(
+        report["query_set_sha256"],
+        "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+    );
+    assert_eq!(
+        report["tune_sha256"],
+        "2222222222222222222222222222222222222222222222222222222222222222"
+    );
+    assert_eq!(
+        report["holdout_sha256"],
+        "3333333333333333333333333333333333333333333333333333333333333333"
+    );
+    assert_eq!(report["query_source"], "trace_source_search_v1");
+    assert_eq!(report["tune_bucket_counts"]["and_3_5"], 400);
+    assert_eq!(report["tune_bucket_counts"]["single_term"], 0);
+    assert_eq!(report["holdout_bucket_counts"]["and_3_5"], 100);
+    assert_eq!(report["holdout_bucket_counts"]["single_term"], 0);
+    assert_eq!(report["samples_per_bucket"]["and_3_5"], 500);
+    assert_eq!(report["samples_per_bucket"]["single_term"], 0);
+    assert_eq!(report["samples_per_bucket"]["field_filter"], 0);
+    assert_eq!(report["query_latency_by_bucket"]["and_3_5"]["samples"], 500);
+    assert!(report["query_latency_by_bucket"]
+        .get("single_term")
+        .is_none());
+    assert!(report["query_latency_by_bucket"]
+        .get("field_filter")
+        .is_none());
     assert_eq!(report["query_embedding_command_invocations"], 500);
     assert_eq!(report["hot_index"], true);
     assert_eq!(report["hot_path_ocr"], false);
@@ -2522,6 +4159,22 @@ fn assert_private_query_report_semantics(json: &str, expected_document_count: us
     assert!(report["corpus_summary_sha256"]
         .as_str()
         .is_some_and(|value| value.len() == 64));
+    assert_private_query_stage_latency(&report, 500);
+}
+
+fn stage_histogram_bin_count(histogram: &serde_json::Value, le_ms: f64) -> u64 {
+    histogram["bins"]
+        .as_array()
+        .expect("stage histogram bins should be an array")
+        .iter()
+        .find(|bin| {
+            bin["le_ms"]
+                .as_f64()
+                .is_some_and(|value| (value - le_ms).abs() < f64::EPSILON)
+        })
+        .unwrap_or_else(|| panic!("stage histogram should include <= {le_ms}ms bin"))["count"]
+        .as_u64()
+        .expect("stage histogram bin count should be numeric")
 }
 
 fn private_business_field_quality_dataset() -> String {
@@ -2660,13 +4313,212 @@ fn flaky_pdf_render_fixture_script_body() -> &'static str {
 
 #[cfg(unix)]
 fn query_fixture_script_body() -> &'static str {
+    resident_batch_query_fixture_script_body()
+}
+
+#[cfg(unix)]
+fn resident_batch_query_fixture_script_body() -> &'static str {
     concat!(
         "#!/bin/sh\n",
-        "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\" \"$RESUME_IR_QUERY_TOP_K\"\n",
-        "else\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=0\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
-        "fi\n",
+        "test -n \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 42\n",
+        "test -f \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 43\n",
+        "request_index=1\n",
+        "while IFS= read -r line; do\n",
+        "  request_id=\"private-query-request-$request_index\"\n",
+        "  case \"$line\" in *REDACTION_SENTINEL_PRIVATE_QUERY*) hits=\"$RESUME_IR_QUERY_TOP_K\" ;; *) hits=0 ;; esac\n",
+        "  printf 'resume-ir-query-v2\\nrequest_id=%s\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nstage_query_parse_ms=1.0\\nstage_prefilter_ms=2.0\\nstage_bm25_ms=3.0\\nstage_ann_ms=4.0\\nstage_fusion_ms=5.0\\nstage_bulk_hydrate_ms=6.0\\nstage_snippet_ms=7.0\\nrss_delta_mb=0.0\\nelapsed_ms=8.0\\nhits=%s\\nresume-ir-query-end\\n' \"$request_id\" \"$RESUME_IR_QUERY_TOP_K\" \"$hits\"\n",
+        "  request_index=$((request_index + 1))\n",
+        "done < \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\"\n",
+    )
+}
+
+#[cfg(unix)]
+fn json_parsing_resident_batch_query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "test -n \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 42\n",
+        "test -f \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 43\n",
+        "python3 - \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" \"$RESUME_IR_QUERY_TOP_K\" <<'PY'\n",
+        "import json\n",
+        "import sys\n",
+        "path = sys.argv[1]\n",
+        "top_k = sys.argv[2]\n",
+        "with open(path, encoding='utf-8') as handle:\n",
+        "    for line in handle:\n",
+        "        record = json.loads(line)\n",
+        "        request_id = record['request_id']\n",
+        "        query = record['query']\n",
+        "        hits = top_k if 'REDACTION_SENTINEL_PRIVATE_QUERY' in query else '0'\n",
+        "        print('resume-ir-query-v2')\n",
+        "        print(f'request_id={request_id}')\n",
+        "        print('mode=hybrid')\n",
+        "        print('layers=fulltext+field+vector+rrf')\n",
+        "        print(f'top_k={top_k}')\n",
+        "        print('query_embedding_runtime=local-command')\n",
+        "        print('query_embedding_invocations=1')\n",
+        "        print('stage_query_parse_ms=1.0')\n",
+        "        print('stage_prefilter_ms=2.0')\n",
+        "        print('stage_bm25_ms=3.0')\n",
+        "        print('stage_ann_ms=4.0')\n",
+        "        print('stage_fusion_ms=5.0')\n",
+        "        print('stage_bulk_hydrate_ms=6.0')\n",
+        "        print('stage_snippet_ms=7.0')\n",
+        "        print('rss_delta_mb=0.0')\n",
+        "        print('elapsed_ms=8.0')\n",
+        "        print(f'hits={hits}')\n",
+        "        print('resume-ir-query-end')\n",
+        "PY\n",
+    )
+}
+
+#[cfg(unix)]
+fn unbound_resident_batch_query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "test -n \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 42\n",
+        "test -f \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 43\n",
+        "while IFS= read -r line; do\n",
+        "  case \"$line\" in *REDACTION_SENTINEL_PRIVATE_QUERY*) hits=\"$RESUME_IR_QUERY_TOP_K\" ;; *) hits=0 ;; esac\n",
+        "  printf 'resume-ir-query-v2\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nstage_query_parse_ms=1.0\\nstage_prefilter_ms=2.0\\nstage_bm25_ms=3.0\\nstage_ann_ms=4.0\\nstage_fusion_ms=5.0\\nstage_bulk_hydrate_ms=6.0\\nstage_snippet_ms=7.0\\nrss_delta_mb=0.0\\nelapsed_ms=8.0\\nhits=%s\\nresume-ir-query-end\\n' \"$RESUME_IR_QUERY_TOP_K\" \"$hits\"\n",
+        "done < \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\"\n",
+    )
+}
+
+#[cfg(unix)]
+fn duplicate_resident_batch_request_id_query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "test -n \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 42\n",
+        "test -f \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 43\n",
+        "while IFS= read -r line; do\n",
+        "  case \"$line\" in *REDACTION_SENTINEL_PRIVATE_QUERY*) hits=\"$RESUME_IR_QUERY_TOP_K\" ;; *) hits=0 ;; esac\n",
+        "  printf 'resume-ir-query-v2\\nrequest_id=private-query-request-1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nstage_query_parse_ms=1.0\\nstage_prefilter_ms=2.0\\nstage_bm25_ms=3.0\\nstage_ann_ms=4.0\\nstage_fusion_ms=5.0\\nstage_bulk_hydrate_ms=6.0\\nstage_snippet_ms=7.0\\nrss_delta_mb=0.0\\nelapsed_ms=8.0\\nhits=%s\\nresume-ir-query-end\\n' \"$RESUME_IR_QUERY_TOP_K\" \"$hits\"\n",
+        "done < \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\"\n",
+    )
+}
+
+#[cfg(unix)]
+fn missing_resident_batch_response_query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "test -n \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 42\n",
+        "test -f \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 43\n",
+        "printf 'resume-ir-query-v2\\nrequest_id=private-query-request-1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nstage_query_parse_ms=1.0\\nstage_prefilter_ms=2.0\\nstage_bm25_ms=3.0\\nstage_ann_ms=4.0\\nstage_fusion_ms=5.0\\nstage_bulk_hydrate_ms=6.0\\nstage_snippet_ms=7.0\\nrss_delta_mb=0.0\\nelapsed_ms=8.0\\nhits=%s\\nresume-ir-query-end\\n' \"$RESUME_IR_QUERY_TOP_K\" \"$RESUME_IR_QUERY_TOP_K\"\n",
+    )
+}
+
+#[cfg(unix)]
+fn resident_batch_invocation_count_query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "counter=\"$1\"\n",
+        "test -n \"$counter\" || exit 41\n",
+        "count=0\n",
+        "if test -f \"$counter\"; then count=$(cat \"$counter\"); fi\n",
+        "count=$((count + 1))\n",
+        "printf '%s\\n' \"$count\" > \"$counter\"\n",
+        "test -n \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 42\n",
+        "test -f \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 43\n",
+        "request_index=1\n",
+        "while IFS= read -r line; do\n",
+        "  request_id=\"private-query-request-$request_index\"\n",
+        "  case \"$line\" in *REDACTION_SENTINEL_PRIVATE_QUERY*) hits=\"$RESUME_IR_QUERY_TOP_K\" ;; *) hits=0 ;; esac\n",
+        "  printf 'resume-ir-query-v2\\nrequest_id=%s\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nstage_query_parse_ms=1.0\\nstage_prefilter_ms=2.0\\nstage_bm25_ms=3.0\\nstage_ann_ms=4.0\\nstage_fusion_ms=5.0\\nstage_bulk_hydrate_ms=6.0\\nstage_snippet_ms=7.0\\nrss_delta_mb=0.0\\nelapsed_ms=8.0\\nhits=%s\\nresume-ir-query-end\\n' \"$request_id\" \"$RESUME_IR_QUERY_TOP_K\" \"$hits\"\n",
+        "  request_index=$((request_index + 1))\n",
+        "done < \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\"\n",
+    )
+}
+
+#[cfg(unix)]
+fn elapsed_ms_query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "elapsed=1\n",
+        "request_index=1\n",
+        "while IFS= read -r line; do\n",
+        "  request_id=\"private-query-request-$request_index\"\n",
+        "  case \"$line\" in *REDACTION_SENTINEL_PRIVATE_QUERY*) hits=\"$RESUME_IR_QUERY_TOP_K\" ;; *) hits=0 ;; esac\n",
+        "  printf 'resume-ir-query-v2\\nrequest_id=%s\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nstage_query_parse_ms=1.0\\nstage_prefilter_ms=2.0\\nstage_bm25_ms=3.0\\nstage_ann_ms=4.0\\nstage_fusion_ms=5.0\\nstage_bulk_hydrate_ms=6.0\\nstage_snippet_ms=7.0\\nrss_delta_mb=0.0\\nelapsed_ms=%s\\nhits=%s\\nresume-ir-query-end\\n' \"$request_id\" \"$RESUME_IR_QUERY_TOP_K\" \"$elapsed\" \"$hits\"\n",
+        "  elapsed=$((elapsed * 4))\n",
+        "  request_index=$((request_index + 1))\n",
+        "done < \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\"\n",
+    )
+}
+
+#[cfg(unix)]
+fn bucket_stage_query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "request_index=1\n",
+        "while IFS= read -r line; do\n",
+        "  request_id=\"private-query-request-$request_index\"\n",
+        "  case \"$line\" in *REDACTION_SENTINEL_PRIVATE_QUERY_SINGLE*) parse=1.0; prefilter=2.0; bm25=3.0; ann=4.0; fusion=5.0; hydrate=6.0; snippet=7.0; elapsed=8.0; hits=\"$RESUME_IR_QUERY_TOP_K\" ;; *REDACTION_SENTINEL_PRIVATE_QUERY_AND*) parse=21.0; prefilter=22.0; bm25=23.0; ann=24.0; fusion=25.0; hydrate=26.0; snippet=27.0; elapsed=28.0; hits=\"$RESUME_IR_QUERY_TOP_K\" ;; *) parse=1.0; prefilter=1.0; bm25=1.0; ann=1.0; fusion=1.0; hydrate=1.0; snippet=1.0; elapsed=1.0; hits=0 ;; esac\n",
+        "  printf 'resume-ir-query-v2\\nrequest_id=%s\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nstage_query_parse_ms=%s\\nstage_prefilter_ms=%s\\nstage_bm25_ms=%s\\nstage_ann_ms=%s\\nstage_fusion_ms=%s\\nstage_bulk_hydrate_ms=%s\\nstage_snippet_ms=%s\\nrss_delta_mb=0.0\\nelapsed_ms=%s\\nhits=%s\\nresume-ir-query-end\\n' \"$request_id\" \"$RESUME_IR_QUERY_TOP_K\" \"$parse\" \"$prefilter\" \"$bm25\" \"$ann\" \"$fusion\" \"$hydrate\" \"$snippet\" \"$elapsed\" \"$hits\"\n",
+        "  request_index=$((request_index + 1))\n",
+        "done < \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\"\n",
+    )
+}
+
+#[cfg(unix)]
+fn rss_delta_query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "rss=1\n",
+        "request_index=1\n",
+        "while IFS= read -r line; do\n",
+        "  request_id=\"private-query-request-$request_index\"\n",
+        "  case \"$line\" in *REDACTION_SENTINEL_PRIVATE_QUERY*) hits=\"$RESUME_IR_QUERY_TOP_K\" ;; *) hits=0 ;; esac\n",
+        "  printf 'resume-ir-query-v2\\nrequest_id=%s\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nstage_query_parse_ms=1.0\\nstage_prefilter_ms=2.0\\nstage_bm25_ms=3.0\\nstage_ann_ms=4.0\\nstage_fusion_ms=5.0\\nstage_bulk_hydrate_ms=6.0\\nstage_snippet_ms=7.0\\nrss_delta_mb=%s\\nelapsed_ms=8.0\\nhits=%s\\nresume-ir-query-end\\n' \"$request_id\" \"$RESUME_IR_QUERY_TOP_K\" \"$rss\" \"$hits\"\n",
+        "  rss=$((rss * 2))\n",
+        "  request_index=$((request_index + 1))\n",
+        "done < \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\"\n",
+    )
+}
+
+#[cfg(unix)]
+fn out_of_order_request_query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "test -n \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 42\n",
+        "test -f \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\" || exit 43\n",
+        "printf 'resume-ir-query-v2\\nrequest_id=private-query-request-2\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nstage_query_parse_ms=1.0\\nstage_prefilter_ms=2.0\\nstage_bm25_ms=3.0\\nstage_ann_ms=4.0\\nstage_fusion_ms=5.0\\nstage_bulk_hydrate_ms=6.0\\nstage_snippet_ms=7.0\\nrss_delta_mb=0.0\\nelapsed_ms=44.0\\nhits=2\\nresume-ir-query-end\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
+        "printf 'resume-ir-query-v2\\nrequest_id=private-query-request-1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nstage_query_parse_ms=1.0\\nstage_prefilter_ms=2.0\\nstage_bm25_ms=3.0\\nstage_ann_ms=4.0\\nstage_fusion_ms=5.0\\nstage_bulk_hydrate_ms=6.0\\nstage_snippet_ms=7.0\\nrss_delta_mb=0.0\\nelapsed_ms=11.0\\nhits=1\\nresume-ir-query-end\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
+    )
+}
+
+#[cfg(unix)]
+fn missing_stage_latency_query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "request_index=1\n",
+        "while IFS= read -r line; do\n",
+        "  request_id=\"private-query-request-$request_index\"\n",
+        "  case \"$line\" in *REDACTION_SENTINEL_PRIVATE_QUERY*) hits=\"$RESUME_IR_QUERY_TOP_K\" ;; *) hits=0 ;; esac\n",
+        "  printf 'resume-ir-query-v2\\nrequest_id=%s\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nrss_delta_mb=0.0\\nelapsed_ms=8.0\\nhits=%s\\nresume-ir-query-end\\n' \"$request_id\" \"$RESUME_IR_QUERY_TOP_K\" \"$hits\"\n",
+        "  request_index=$((request_index + 1))\n",
+        "done < \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\"\n",
+    )
+}
+
+#[cfg(unix)]
+fn oversized_stdout_query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "dd if=/dev/zero bs=1048576 count=9 2>/dev/null\n",
+    )
+}
+
+#[cfg(unix)]
+fn missing_elapsed_ms_query_fixture_script_body() -> &'static str {
+    concat!(
+        "#!/bin/sh\n",
+        "request_index=1\n",
+        "while IFS= read -r line; do\n",
+        "  request_id=\"private-query-request-$request_index\"\n",
+        "  case \"$line\" in *REDACTION_SENTINEL_PRIVATE_QUERY*) hits=\"$RESUME_IR_QUERY_TOP_K\" ;; *) hits=0 ;; esac\n",
+        "  printf 'resume-ir-query-v2\\nrequest_id=%s\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nstage_query_parse_ms=1.0\\nstage_prefilter_ms=2.0\\nstage_bm25_ms=3.0\\nstage_ann_ms=4.0\\nstage_fusion_ms=5.0\\nstage_bulk_hydrate_ms=6.0\\nstage_snippet_ms=7.0\\nrss_delta_mb=0.0\\nhits=%s\\nresume-ir-query-end\\n' \"$request_id\" \"$RESUME_IR_QUERY_TOP_K\" \"$hits\"\n",
+        "  request_index=$((request_index + 1))\n",
+        "done < \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\"\n",
     )
 }
 
@@ -2674,11 +4526,13 @@ fn query_fixture_script_body() -> &'static str {
 fn missing_top_k_query_fixture_script_body() -> &'static str {
     concat!(
         "#!/bin/sh\n",
-        "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
-        "else\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\nhits=0\\n'\n",
-        "fi\n",
+        "request_index=1\n",
+        "while IFS= read -r line; do\n",
+        "  request_id=\"private-query-request-$request_index\"\n",
+        "  case \"$line\" in *REDACTION_SENTINEL_PRIVATE_QUERY*) hits=\"$RESUME_IR_QUERY_TOP_K\" ;; *) hits=0 ;; esac\n",
+        "  printf 'resume-ir-query-v2\\nrequest_id=%s\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\nelapsed_ms=8.0\\nhits=%s\\nresume-ir-query-end\\n' \"$request_id\" \"$hits\"\n",
+        "  request_index=$((request_index + 1))\n",
+        "done < \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\"\n",
     )
 }
 
@@ -2686,35 +4540,29 @@ fn missing_top_k_query_fixture_script_body() -> &'static str {
 fn mismatched_top_k_query_fixture_script_body() -> &'static str {
     concat!(
         "#!/bin/sh\n",
-        "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=5\\nhits=5\\n'\n",
-        "else\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=5\\nhits=0\\n'\n",
-        "fi\n",
+        "request_index=1\n",
+        "while IFS= read -r line; do\n",
+        "  request_id=\"private-query-request-$request_index\"\n",
+        "  case \"$line\" in *REDACTION_SENTINEL_PRIVATE_QUERY*) hits=5 ;; *) hits=0 ;; esac\n",
+        "  printf 'resume-ir-query-v2\\nrequest_id=%s\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=5\\nelapsed_ms=8.0\\nhits=%s\\nresume-ir-query-end\\n' \"$request_id\" \"$hits\"\n",
+        "  request_index=$((request_index + 1))\n",
+        "done < \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\"\n",
     )
 }
 
 #[cfg(unix)]
 fn query_embedding_attestation_query_fixture_script_body() -> &'static str {
-    concat!(
-        "#!/bin/sh\n",
-        "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\" \"$RESUME_IR_QUERY_TOP_K\"\n",
-        "else\n",
-        "  printf 'resume-ir-query-v1\\nmode=hybrid\\nlayers=fulltext+field+vector+rrf\\ntop_k=%s\\nquery_embedding_runtime=local-command\\nquery_embedding_invocations=1\\nhits=0\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
-        "fi\n",
-    )
+    resident_batch_query_fixture_script_body()
 }
 
 #[cfg(unix)]
 fn legacy_query_fixture_script_body() -> &'static str {
     concat!(
         "#!/bin/sh\n",
-        "if grep -q REDACTION_SENTINEL_PRIVATE_QUERY \"$RESUME_IR_QUERY_INPUT_PATH\"; then\n",
-        "  printf 'resume-ir-query-v1\\nhits=%s\\n' \"$RESUME_IR_QUERY_TOP_K\"\n",
-        "else\n",
-        "  printf 'resume-ir-query-v1\\nhits=0\\n'\n",
-        "fi\n",
+        "while IFS= read -r line; do\n",
+        "  case \"$line\" in *REDACTION_SENTINEL_PRIVATE_QUERY*) hits=\"$RESUME_IR_QUERY_TOP_K\" ;; *) hits=0 ;; esac\n",
+        "  printf 'resume-ir-query-v1\\nhits=%s\\nresume-ir-query-end\\n' \"$hits\"\n",
+        "done < \"$RESUME_IR_QUERY_BATCH_INPUT_PATH\"\n",
     )
 }
 
@@ -2722,6 +4570,7 @@ fn legacy_query_fixture_script_body() -> &'static str {
 fn ocr_fixture_script_body() -> &'static str {
     concat!(
         "@echo off\r\n",
+        "setlocal enabledelayedexpansion\r\n",
         "echo resume-ir-ocr-v1\r\n",
         "echo confidence=0.97\r\n",
         "echo text:\r\n",
@@ -2767,23 +4616,361 @@ fn flaky_pdf_render_fixture_script_body() -> &'static str {
 fn query_fixture_script_body() -> &'static str {
     concat!(
         "@echo off\r\n",
-        "findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" \"%RESUME_IR_QUERY_INPUT_PATH%\" >nul\r\n",
-        "if errorlevel 1 (\r\n",
-        "  echo resume-ir-query-v1\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "set /a request_index=1\r\n",
+        "for /f \"usebackq delims=\" %%L in (\"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\") do (\r\n",
+        "  set \"request_id=private-query-request-!request_index!\"\r\n",
+        "  echo %%L | findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" >nul\r\n",
+        "  if errorlevel 1 (set \"hits=0\") else (set \"hits=%RESUME_IR_QUERY_TOP_K%\")\r\n",
+        "  echo resume-ir-query-v2\r\n",
+        "  echo request_id=!request_id!\r\n",
         "  echo mode=hybrid\r\n",
         "  echo layers=fulltext+field+vector+rrf\r\n",
         "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
         "  echo query_embedding_runtime=local-command\r\n",
         "  echo query_embedding_invocations=1\r\n",
-        "  echo hits=0\r\n",
-        ") else (\r\n",
-        "  echo resume-ir-query-v1\r\n",
+        "  echo stage_query_parse_ms=1.0\r\n",
+        "  echo stage_prefilter_ms=2.0\r\n",
+        "  echo stage_bm25_ms=3.0\r\n",
+        "  echo stage_ann_ms=4.0\r\n",
+        "  echo stage_fusion_ms=5.0\r\n",
+        "  echo stage_bulk_hydrate_ms=6.0\r\n",
+        "  echo stage_snippet_ms=7.0\r\n",
+        "  echo rss_delta_mb=0.0\r\n",
+        "  echo elapsed_ms=8.0\r\n",
+        "  echo hits=!hits!\r\n",
+        "  echo resume-ir-query-end\r\n",
+        "  set /a request_index+=1\r\n",
+        ")\r\n",
+        "exit /b 0\r\n",
+    )
+}
+
+#[cfg(windows)]
+fn unbound_resident_batch_query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "for /f \"usebackq delims=\" %%L in (\"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\") do (\r\n",
+        "  echo %%L | findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" >nul\r\n",
+        "  if errorlevel 1 (set \"hits=0\") else (set \"hits=%RESUME_IR_QUERY_TOP_K%\")\r\n",
+        "  echo resume-ir-query-v2\r\n",
         "  echo mode=hybrid\r\n",
         "  echo layers=fulltext+field+vector+rrf\r\n",
         "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
         "  echo query_embedding_runtime=local-command\r\n",
         "  echo query_embedding_invocations=1\r\n",
-        "  echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo stage_query_parse_ms=1.0\r\n",
+        "  echo stage_prefilter_ms=2.0\r\n",
+        "  echo stage_bm25_ms=3.0\r\n",
+        "  echo stage_ann_ms=4.0\r\n",
+        "  echo stage_fusion_ms=5.0\r\n",
+        "  echo stage_bulk_hydrate_ms=6.0\r\n",
+        "  echo stage_snippet_ms=7.0\r\n",
+        "  echo rss_delta_mb=0.0\r\n",
+        "  echo elapsed_ms=8.0\r\n",
+        "  echo hits=!hits!\r\n",
+        "  echo resume-ir-query-end\r\n",
+        ")\r\n",
+        "exit /b 0\r\n",
+    )
+}
+
+#[cfg(windows)]
+fn duplicate_resident_batch_request_id_query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "for /f \"usebackq delims=\" %%L in (\"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\") do (\r\n",
+        "  echo %%L | findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" >nul\r\n",
+        "  if errorlevel 1 (set \"hits=0\") else (set \"hits=%RESUME_IR_QUERY_TOP_K%\")\r\n",
+        "  echo resume-ir-query-v2\r\n",
+        "  echo request_id=private-query-request-1\r\n",
+        "  echo mode=hybrid\r\n",
+        "  echo layers=fulltext+field+vector+rrf\r\n",
+        "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo query_embedding_runtime=local-command\r\n",
+        "  echo query_embedding_invocations=1\r\n",
+        "  echo stage_query_parse_ms=1.0\r\n",
+        "  echo stage_prefilter_ms=2.0\r\n",
+        "  echo stage_bm25_ms=3.0\r\n",
+        "  echo stage_ann_ms=4.0\r\n",
+        "  echo stage_fusion_ms=5.0\r\n",
+        "  echo stage_bulk_hydrate_ms=6.0\r\n",
+        "  echo stage_snippet_ms=7.0\r\n",
+        "  echo rss_delta_mb=0.0\r\n",
+        "  echo elapsed_ms=8.0\r\n",
+        "  echo hits=!hits!\r\n",
+        "  echo resume-ir-query-end\r\n",
+        ")\r\n",
+        "exit /b 0\r\n",
+    )
+}
+
+#[cfg(windows)]
+fn missing_resident_batch_response_query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "echo resume-ir-query-v2\r\n",
+        "echo request_id=private-query-request-1\r\n",
+        "echo mode=hybrid\r\n",
+        "echo layers=fulltext+field+vector+rrf\r\n",
+        "echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "echo query_embedding_runtime=local-command\r\n",
+        "echo query_embedding_invocations=1\r\n",
+        "echo stage_query_parse_ms=1.0\r\n",
+        "echo stage_prefilter_ms=2.0\r\n",
+        "echo stage_bm25_ms=3.0\r\n",
+        "echo stage_ann_ms=4.0\r\n",
+        "echo stage_fusion_ms=5.0\r\n",
+        "echo stage_bulk_hydrate_ms=6.0\r\n",
+        "echo stage_snippet_ms=7.0\r\n",
+        "echo rss_delta_mb=0.0\r\n",
+        "echo elapsed_ms=8.0\r\n",
+        "echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "echo resume-ir-query-end\r\n",
+        "exit /b 0\r\n",
+    )
+}
+
+#[cfg(windows)]
+fn bucket_stage_query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "set /a request_index=1\r\n",
+        "for /f \"usebackq delims=\" %%L in (\"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\") do (\r\n",
+        "  set \"request_id=private-query-request-!request_index!\"\r\n",
+        "  echo %%L | findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY_SINGLE\" >nul\r\n",
+        "  if errorlevel 1 (\r\n",
+        "    echo %%L | findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY_AND\" >nul\r\n",
+        "    if errorlevel 1 (\r\n",
+        "      set \"parse=1.0\" & set \"prefilter=1.0\" & set \"bm25=1.0\" & set \"ann=1.0\" & set \"fusion=1.0\" & set \"hydrate=1.0\" & set \"snippet=1.0\" & set \"elapsed=1.0\" & set \"hits=0\"\r\n",
+        "    ) else (\r\n",
+        "      set \"parse=21.0\" & set \"prefilter=22.0\" & set \"bm25=23.0\" & set \"ann=24.0\" & set \"fusion=25.0\" & set \"hydrate=26.0\" & set \"snippet=27.0\" & set \"elapsed=28.0\" & set \"hits=%RESUME_IR_QUERY_TOP_K%\"\r\n",
+        "    )\r\n",
+        "  ) else (\r\n",
+        "    set \"parse=1.0\" & set \"prefilter=2.0\" & set \"bm25=3.0\" & set \"ann=4.0\" & set \"fusion=5.0\" & set \"hydrate=6.0\" & set \"snippet=7.0\" & set \"elapsed=8.0\" & set \"hits=%RESUME_IR_QUERY_TOP_K%\"\r\n",
+        "  )\r\n",
+        "  echo resume-ir-query-v2\r\n",
+        "  echo request_id=!request_id!\r\n",
+        "  echo mode=hybrid\r\n",
+        "  echo layers=fulltext+field+vector+rrf\r\n",
+        "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo query_embedding_runtime=local-command\r\n",
+        "  echo query_embedding_invocations=1\r\n",
+        "  echo stage_query_parse_ms=!parse!\r\n",
+        "  echo stage_prefilter_ms=!prefilter!\r\n",
+        "  echo stage_bm25_ms=!bm25!\r\n",
+        "  echo stage_ann_ms=!ann!\r\n",
+        "  echo stage_fusion_ms=!fusion!\r\n",
+        "  echo stage_bulk_hydrate_ms=!hydrate!\r\n",
+        "  echo stage_snippet_ms=!snippet!\r\n",
+        "  echo rss_delta_mb=0.0\r\n",
+        "  echo elapsed_ms=!elapsed!\r\n",
+        "  echo hits=!hits!\r\n",
+        "  echo resume-ir-query-end\r\n",
+        "  set /a request_index+=1\r\n",
+        ")\r\n",
+        "exit /b 0\r\n",
+    )
+}
+
+#[cfg(windows)]
+fn rss_delta_query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "set /a rss=1\r\n",
+        "set /a request_index=1\r\n",
+        "for /f \"usebackq delims=\" %%L in (\"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\") do (\r\n",
+        "  set \"request_id=private-query-request-!request_index!\"\r\n",
+        "  echo %%L | findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" >nul\r\n",
+        "  if errorlevel 1 (set \"hits=0\") else (set \"hits=%RESUME_IR_QUERY_TOP_K%\")\r\n",
+        "  echo resume-ir-query-v2\r\n",
+        "  echo request_id=!request_id!\r\n",
+        "  echo mode=hybrid\r\n",
+        "  echo layers=fulltext+field+vector+rrf\r\n",
+        "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo query_embedding_runtime=local-command\r\n",
+        "  echo query_embedding_invocations=1\r\n",
+        "  echo stage_query_parse_ms=1.0\r\n",
+        "  echo stage_prefilter_ms=2.0\r\n",
+        "  echo stage_bm25_ms=3.0\r\n",
+        "  echo stage_ann_ms=4.0\r\n",
+        "  echo stage_fusion_ms=5.0\r\n",
+        "  echo stage_bulk_hydrate_ms=6.0\r\n",
+        "  echo stage_snippet_ms=7.0\r\n",
+        "  echo rss_delta_mb=!rss!\r\n",
+        "  echo elapsed_ms=8.0\r\n",
+        "  echo hits=!hits!\r\n",
+        "  echo resume-ir-query-end\r\n",
+        "  set /a rss*=2\r\n",
+        "  set /a request_index+=1\r\n",
+        ")\r\n",
+        "exit /b 0\r\n",
+    )
+}
+
+#[cfg(windows)]
+fn resident_batch_invocation_count_query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "set \"counter=%~1\"\r\n",
+        "if \"%counter%\"==\"\" exit /b 41\r\n",
+        "set /a count=0\r\n",
+        "if exist \"%counter%\" set /p count=<\"%counter%\"\r\n",
+        "set /a count+=1\r\n",
+        "echo !count!>\"%counter%\"\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "set /a request_index=1\r\n",
+        "for /f \"usebackq delims=\" %%L in (\"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\") do (\r\n",
+        "  set \"request_id=private-query-request-!request_index!\"\r\n",
+        "  echo %%L | findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" >nul\r\n",
+        "  if errorlevel 1 (set \"hits=0\") else (set \"hits=%RESUME_IR_QUERY_TOP_K%\")\r\n",
+        "  echo resume-ir-query-v2\r\n",
+        "  echo request_id=!request_id!\r\n",
+        "  echo mode=hybrid\r\n",
+        "  echo layers=fulltext+field+vector+rrf\r\n",
+        "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo query_embedding_runtime=local-command\r\n",
+        "  echo query_embedding_invocations=1\r\n",
+        "  echo stage_query_parse_ms=1.0\r\n",
+        "  echo stage_prefilter_ms=2.0\r\n",
+        "  echo stage_bm25_ms=3.0\r\n",
+        "  echo stage_ann_ms=4.0\r\n",
+        "  echo stage_fusion_ms=5.0\r\n",
+        "  echo stage_bulk_hydrate_ms=6.0\r\n",
+        "  echo stage_snippet_ms=7.0\r\n",
+        "  echo rss_delta_mb=0.0\r\n",
+        "  echo elapsed_ms=8.0\r\n",
+        "  echo hits=!hits!\r\n",
+        "  echo resume-ir-query-end\r\n",
+        "  set /a request_index+=1\r\n",
+        ")\r\n",
+        "exit /b 0\r\n",
+    )
+}
+
+#[cfg(windows)]
+fn out_of_order_request_query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "echo resume-ir-query-v2\r\n",
+        "echo request_id=private-query-request-2\r\n",
+        "echo mode=hybrid\r\n",
+        "echo layers=fulltext+field+vector+rrf\r\n",
+        "echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "echo query_embedding_runtime=local-command\r\n",
+        "echo query_embedding_invocations=1\r\n",
+        "echo stage_query_parse_ms=1.0\r\n",
+        "echo stage_prefilter_ms=2.0\r\n",
+        "echo stage_bm25_ms=3.0\r\n",
+        "echo stage_ann_ms=4.0\r\n",
+        "echo stage_fusion_ms=5.0\r\n",
+        "echo stage_bulk_hydrate_ms=6.0\r\n",
+        "echo stage_snippet_ms=7.0\r\n",
+        "echo rss_delta_mb=0.0\r\n",
+        "echo elapsed_ms=44.0\r\n",
+        "echo hits=2\r\n",
+        "echo resume-ir-query-end\r\n",
+        "echo resume-ir-query-v2\r\n",
+        "echo request_id=private-query-request-1\r\n",
+        "echo mode=hybrid\r\n",
+        "echo layers=fulltext+field+vector+rrf\r\n",
+        "echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "echo query_embedding_runtime=local-command\r\n",
+        "echo query_embedding_invocations=1\r\n",
+        "echo stage_query_parse_ms=1.0\r\n",
+        "echo stage_prefilter_ms=2.0\r\n",
+        "echo stage_bm25_ms=3.0\r\n",
+        "echo stage_ann_ms=4.0\r\n",
+        "echo stage_fusion_ms=5.0\r\n",
+        "echo stage_bulk_hydrate_ms=6.0\r\n",
+        "echo stage_snippet_ms=7.0\r\n",
+        "echo rss_delta_mb=0.0\r\n",
+        "echo elapsed_ms=11.0\r\n",
+        "echo hits=1\r\n",
+        "echo resume-ir-query-end\r\n",
+        "exit /b 0\r\n",
+    )
+}
+
+#[cfg(windows)]
+fn missing_stage_latency_query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "set /a request_index=1\r\n",
+        "for /f \"usebackq delims=\" %%L in (\"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\") do (\r\n",
+        "  set \"request_id=private-query-request-!request_index!\"\r\n",
+        "  echo %%L | findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" >nul\r\n",
+        "  if errorlevel 1 (set \"hits=0\") else (set \"hits=%RESUME_IR_QUERY_TOP_K%\")\r\n",
+        "  echo resume-ir-query-v2\r\n",
+        "  echo request_id=!request_id!\r\n",
+        "  echo mode=hybrid\r\n",
+        "  echo layers=fulltext+field+vector+rrf\r\n",
+        "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo query_embedding_runtime=local-command\r\n",
+        "  echo query_embedding_invocations=1\r\n",
+        "  echo rss_delta_mb=0.0\r\n",
+        "  echo elapsed_ms=8.0\r\n",
+        "  echo hits=!hits!\r\n",
+        "  echo resume-ir-query-end\r\n",
+        "  set /a request_index+=1\r\n",
+        ")\r\n",
+        "exit /b 0\r\n",
+    )
+}
+
+#[cfg(windows)]
+fn oversized_stdout_query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "powershell -NoProfile -Command \"$s='x'*9437184; [Console]::Out.Write($s)\"\r\n",
+    )
+}
+
+#[cfg(windows)]
+fn missing_elapsed_ms_query_fixture_script_body() -> &'static str {
+    concat!(
+        "@echo off\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "set /a request_index=1\r\n",
+        "for /f \"usebackq delims=\" %%L in (\"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\") do (\r\n",
+        "  set \"request_id=private-query-request-!request_index!\"\r\n",
+        "  echo %%L | findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" >nul\r\n",
+        "  if errorlevel 1 (set \"hits=0\") else (set \"hits=%RESUME_IR_QUERY_TOP_K%\")\r\n",
+        "  echo resume-ir-query-v2\r\n",
+        "  echo request_id=!request_id!\r\n",
+        "  echo mode=hybrid\r\n",
+        "  echo layers=fulltext+field+vector+rrf\r\n",
+        "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo query_embedding_runtime=local-command\r\n",
+        "  echo query_embedding_invocations=1\r\n",
+        "  echo stage_query_parse_ms=1.0\r\n",
+        "  echo stage_prefilter_ms=2.0\r\n",
+        "  echo stage_bm25_ms=3.0\r\n",
+        "  echo stage_ann_ms=4.0\r\n",
+        "  echo stage_fusion_ms=5.0\r\n",
+        "  echo stage_bulk_hydrate_ms=6.0\r\n",
+        "  echo stage_snippet_ms=7.0\r\n",
+        "  echo rss_delta_mb=0.0\r\n",
+        "  echo hits=!hits!\r\n",
+        "  echo resume-ir-query-end\r\n",
+        "  set /a request_index+=1\r\n",
         ")\r\n",
         "exit /b 0\r\n",
     )
@@ -2793,17 +4980,21 @@ fn query_fixture_script_body() -> &'static str {
 fn missing_top_k_query_fixture_script_body() -> &'static str {
     concat!(
         "@echo off\r\n",
-        "findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" \"%RESUME_IR_QUERY_INPUT_PATH%\" >nul\r\n",
-        "if errorlevel 1 (\r\n",
-        "  echo resume-ir-query-v1\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "set /a request_index=1\r\n",
+        "for /f \"usebackq delims=\" %%L in (\"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\") do (\r\n",
+        "  set \"request_id=private-query-request-!request_index!\"\r\n",
+        "  echo %%L | findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" >nul\r\n",
+        "  if errorlevel 1 (set \"hits=0\") else (set \"hits=%RESUME_IR_QUERY_TOP_K%\")\r\n",
+        "  echo resume-ir-query-v2\r\n",
+        "  echo request_id=!request_id!\r\n",
         "  echo mode=hybrid\r\n",
         "  echo layers=fulltext+field+vector+rrf\r\n",
-        "  echo hits=0\r\n",
-        ") else (\r\n",
-        "  echo resume-ir-query-v1\r\n",
-        "  echo mode=hybrid\r\n",
-        "  echo layers=fulltext+field+vector+rrf\r\n",
-        "  echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo elapsed_ms=8.0\r\n",
+        "  echo hits=!hits!\r\n",
+        "  echo resume-ir-query-end\r\n",
+        "  set /a request_index+=1\r\n",
         ")\r\n",
         "exit /b 0\r\n",
     )
@@ -2813,19 +5004,22 @@ fn missing_top_k_query_fixture_script_body() -> &'static str {
 fn mismatched_top_k_query_fixture_script_body() -> &'static str {
     concat!(
         "@echo off\r\n",
-        "findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" \"%RESUME_IR_QUERY_INPUT_PATH%\" >nul\r\n",
-        "if errorlevel 1 (\r\n",
-        "  echo resume-ir-query-v1\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "set /a request_index=1\r\n",
+        "for /f \"usebackq delims=\" %%L in (\"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\") do (\r\n",
+        "  set \"request_id=private-query-request-!request_index!\"\r\n",
+        "  echo %%L | findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" >nul\r\n",
+        "  if errorlevel 1 (set \"hits=0\") else (set \"hits=5\")\r\n",
+        "  echo resume-ir-query-v2\r\n",
+        "  echo request_id=!request_id!\r\n",
         "  echo mode=hybrid\r\n",
         "  echo layers=fulltext+field+vector+rrf\r\n",
         "  echo top_k=5\r\n",
-        "  echo hits=0\r\n",
-        ") else (\r\n",
-        "  echo resume-ir-query-v1\r\n",
-        "  echo mode=hybrid\r\n",
-        "  echo layers=fulltext+field+vector+rrf\r\n",
-        "  echo top_k=5\r\n",
-        "  echo hits=5\r\n",
+        "  echo elapsed_ms=8.0\r\n",
+        "  echo hits=!hits!\r\n",
+        "  echo resume-ir-query-end\r\n",
+        "  set /a request_index+=1\r\n",
         ")\r\n",
         "exit /b 0\r\n",
     )
@@ -2833,41 +5027,21 @@ fn mismatched_top_k_query_fixture_script_body() -> &'static str {
 
 #[cfg(windows)]
 fn query_embedding_attestation_query_fixture_script_body() -> &'static str {
-    concat!(
-        "@echo off\r\n",
-        "findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" \"%RESUME_IR_QUERY_INPUT_PATH%\" >nul\r\n",
-        "if errorlevel 1 (\r\n",
-        "  echo resume-ir-query-v1\r\n",
-        "  echo mode=hybrid\r\n",
-        "  echo layers=fulltext+field+vector+rrf\r\n",
-        "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
-        "  echo query_embedding_runtime=local-command\r\n",
-        "  echo query_embedding_invocations=1\r\n",
-        "  echo hits=0\r\n",
-        ") else (\r\n",
-        "  echo resume-ir-query-v1\r\n",
-        "  echo mode=hybrid\r\n",
-        "  echo layers=fulltext+field+vector+rrf\r\n",
-        "  echo top_k=%RESUME_IR_QUERY_TOP_K%\r\n",
-        "  echo query_embedding_runtime=local-command\r\n",
-        "  echo query_embedding_invocations=1\r\n",
-        "  echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
-        ")\r\n",
-        "exit /b 0\r\n",
-    )
+    query_fixture_script_body()
 }
 
 #[cfg(windows)]
 fn legacy_query_fixture_script_body() -> &'static str {
     concat!(
         "@echo off\r\n",
-        "findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" \"%RESUME_IR_QUERY_INPUT_PATH%\" >nul\r\n",
-        "if errorlevel 1 (\r\n",
+        "setlocal enabledelayedexpansion\r\n",
+        "if \"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\"==\"\" exit /b 42\r\n",
+        "for /f \"usebackq delims=\" %%L in (\"%RESUME_IR_QUERY_BATCH_INPUT_PATH%\") do (\r\n",
+        "  echo %%L | findstr /C:\"REDACTION_SENTINEL_PRIVATE_QUERY\" >nul\r\n",
+        "  if errorlevel 1 (set \"hits=0\") else (set \"hits=%RESUME_IR_QUERY_TOP_K%\")\r\n",
         "  echo resume-ir-query-v1\r\n",
-        "  echo hits=0\r\n",
-        ") else (\r\n",
-        "  echo resume-ir-query-v1\r\n",
-        "  echo hits=%RESUME_IR_QUERY_TOP_K%\r\n",
+        "  echo hits=!hits!\r\n",
+        "  echo resume-ir-query-end\r\n",
         ")\r\n",
         "exit /b 0\r\n",
     )

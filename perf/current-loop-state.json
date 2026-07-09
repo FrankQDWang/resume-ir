@@ -1,69 +1,50 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "blocked_permission",
+  "workflow_state": "slice_selected",
   "experiment_state": "contract_locked",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "423d9e6de97b539ee9cdd1c024734a5a05eaf92c036468c90efcb3212ca4dc94",
-    "acceptance_matrix_sha256": "d88b77243fa8ead7852c27d5232fb07e2986d67d119860189e356525c6dbff49",
-    "loop_state_schema_sha256": "fa388542b2fb60eea85f7c47049dcc4b64b38ea283cee329e7016e6b20af57f5",
-    "experiment_report_schema_sha256": "13c35f207fe1b5a6a0da23c0e11c5857210ee03b2cfbb243e694238a38f8f446",
-    "git_head_sha": "1b12351f614f277459a3980a456ef70e340a85de"
+    "active_goal_sha256": "546c808d3c412add0bfa07ffcc3186a1c01b7209dde9e829edcfe9b59009145c",
+    "acceptance_matrix_sha256": "caa9e458d39a20964f46b81ae0aee3604f893dfd783410b88a58af53b9020d30",
+    "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
+    "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
+    "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
+    "git_head_sha": "71917e84e865b5aca6667ee30f790aaffd08a6be"
   },
-  "allowed_paths": [
-    "AGENTS.md",
-    "GOAL.md",
-    "MANIFEST.md",
-    "ACTIVE_GOAL.toml",
-    ".github/PULL_REQUEST_TEMPLATE.md",
-    ".github/ISSUE_TEMPLATE/",
-    "03_next_goal_高性能本地检索GUI闭环/",
-    "docs/superpowers/",
-    "perf/",
-    "scripts/ci/check-performance-contracts.py",
-    "scripts/ci/check-autonomous-goal.py",
-    "scripts/ci/check-loop-state.py",
-    "scripts/ci/check-experiment-report.py",
-    "scripts/ci/check-pr-budget.py",
-    "scripts/ci/check-benchmark-lanes.py",
-    "scripts/ci/check-private-evidence-redaction.py",
-    "scripts/ci/check-gate-integrity.py",
-    "scripts/ci/check-goal-complete.py",
-    ".github/workflows/pr.yml"
-  ],
-  "current_slice": "post-merge autonomous baseline blocked on private inputs",
-  "blocked_count": 1,
+  "current_slice": "#138 product capability audit for mixed import, search recall, and detail hydrate contract",
   "transition_history": [
     {
-      "from": "plan_ready",
-      "to": "evidence_review",
-      "evidence_ref": "Task 4 autonomous delivery contract planning"
+      "from": "evidence_review",
+      "to": "next_issue_or_goal_complete",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/137#issuecomment-4924947742"
     },
     {
-      "from": "goal_authorized",
-      "to": "blocked_permission",
-      "evidence_ref": "GitHub issue #18 path-redacted runtime capability attestation on main d8d54f64"
+      "from": "next_issue_or_goal_complete",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/138"
     }
-  ],
-  "accepted_cells": [
-    "w0_docs"
   ],
   "verification": {
     "commands": [
       {
-        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "command": "gh issue create #138",
         "exit_code": 0,
-        "evidence_ref": "main workflow run 28214795674 and local contract gate pass"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/138"
       },
       {
-        "command": "zsh -lc '<path-redacted private input capability attestation>'",
+        "command": "gh issue close #137 --reason not planned",
         "exit_code": 0,
-        "evidence_ref": "GitHub issue #18 capability attestation"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/137#issuecomment-4924947742"
+      },
+      {
+        "command": "gh issue comment #37",
+        "exit_code": 0,
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4924950431"
       }
     ],
-    "all_required_commands_ran": false,
-    "claim": "blocked"
+    "all_required_commands_ran": true,
+    "claim": "partial"
   },
   "privacy": {
     "contains_raw_resume_text": false,
@@ -73,85 +54,12 @@
     "contains_tokens": false,
     "contains_diagnostics_package": false
   },
-  "platform_lane": "cross_os_ci_smoke",
-  "visual_reference": {
-    "reference_role": "visual_baseline_not_functional_clone",
-    "default_stack": "tauri_react_vite_tailwind_typescript",
-    "visual_reference_path": "UI-reference/",
-    "production_next_server_allowed": false,
-    "pixel_level_visual_similarity_required": true
-  },
   "github_ledger": {
-    "primary_issue": "#18",
+    "primary_issue": "#138",
     "active_prs": [],
     "open_blockers": [
-      "#18"
+      "#37",
+      "#138"
     ]
-  },
-  "goal_prompt": {
-    "format_version": 1,
-    "max_chars": 4000,
-    "compiler": "scripts/loop/compile-goal-prompt.py",
-    "compiler_implemented_in_current_pr": false,
-    "deterministic_serialization_required": true,
-    "field_priority_required": true,
-    "character_budget_required": true,
-    "state_version_required": true,
-    "state_hash_required": true,
-    "policy_hash_required": true,
-    "prompt_hash_required": true,
-    "fail_on_over_budget": true,
-    "silent_truncation_allowed": false,
-    "untrusted_external_text_is_data": true,
-    "one_transition_per_wake": true,
-    "historical_details_in_prompt_allowed": false,
-    "minimal_next_transition_only": true
-  },
-  "event_log": {
-    "required_for_runner_implementation": true,
-    "append_only": true,
-    "events_path_template": "perf/runs/<run_id>/events/<state_version>.json",
-    "derived_current_state_only": true,
-    "direct_current_state_edit_allowed": false,
-    "previous_event_hash_required": true,
-    "idempotency_key_required": true,
-    "intent_before_side_effect_required": true,
-    "verify_after_side_effect_required": true,
-    "compare_and_swap_state_update_required": true,
-    "lease_required": true,
-    "heartbeat_required": true
-  },
-  "runtime_capability_attestation": {
-    "required": true,
-    "permissions_are_policy_not_capability": true,
-    "observe_before_act": true,
-    "record_unavailable_capability": true,
-    "missing_capability_terminal_states": [
-      "blocked_external_retryable",
-      "blocked_permission",
-      "aborted_by_policy"
-    ],
-    "required_capabilities": [
-      "workspace_write",
-      "network",
-      "github_read",
-      "github_write",
-      "git_push",
-      "git_merge_or_auto_merge",
-      "branch_protection_compatible",
-      "private_resume_root_read",
-      "seektalent_artifacts_query_read",
-      "automation_scheduler"
-    ]
-  },
-  "runner_recovery": {
-    "lease_required": true,
-    "heartbeat_required": true,
-    "cas_required": true,
-    "idempotency_key_required": true,
-    "intent_before_side_effect_required": true,
-    "verify_after_side_effect_required": true,
-    "one_transition_per_wake": true,
-    "capability_attestation_required": true
   }
 }

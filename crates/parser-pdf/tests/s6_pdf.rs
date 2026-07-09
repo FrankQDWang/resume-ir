@@ -26,6 +26,10 @@ fn text_layer_pdf_returns_text_layer_status_and_extracted_signal() {
     assert_eq!(output.document_status(), DocumentStatus::TextExtracted);
     assert!(output.text().contains("Synthetic PDF Text Layer"));
     assert_eq!(output.page_count(), Some(1));
+    assert!(
+        output.pages().is_empty(),
+        "import parse should not retain duplicate per-page text copies"
+    );
     assert!(!format!("{output:?}").contains("Synthetic PDF Text Layer"));
 }
 

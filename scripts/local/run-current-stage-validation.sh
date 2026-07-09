@@ -4,7 +4,7 @@ set -eu
 usage() {
   cat >&2 <<'EOF'
 usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
-  --resume-root DIR --data-dir DIR --out-dir DIR [--query-set FILE]
+  [--resume-root DIR] [--data-dir DIR] [--out-dir DIR] [--query-set FILE]
   [--query-set-trace-root DIR]
   [--validation-profile full|smoke]
   --model-manifest FILE --ocr-runtime-manifest FILE
@@ -15,7 +15,7 @@ usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
   [--runtime-distribution-mode bundled|external]
   --language LANG --language-pack FILE|LANG=FILE [--language-pack LANG=FILE ...]
   --engine-license ID --renderer-license ID --language-license ID
-  [--dataset-manifest-sha256 SHA256] [--query-set-sha256 SHA256]
+  [--dataset-manifest-sha256 SHA256]
   [--reuse-imported-corpus --reuse-dataset-manifest FILE]
   [--model-manifest-sha256 SHA256]
   [--ocr-runtime-manifest-sha256 SHA256]
@@ -24,6 +24,7 @@ usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
   [--resume-cli PATH] [--resume-daemon PATH] [--resume-benchmark PATH]
   [--reviewed-model] [--reviewed-ocr-runtime]
   [--max-files N] [--max-queries N] [--top-k N]
+  [--private-query-request-sample-count N]
   [--private-query-timeout-ms N]
   [--worker-interval-ms N] [--ocr-worker-ticks N] [--ocr-jobs-per-tick N]
   [--embedding-worker-ticks N]
@@ -33,11 +34,13 @@ usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
 
 Default mode is --dry-run and default validation profile is full. Dry-run prints
 a redacted JSON plan and never reads the private resume root. Execute mode runs
-local-only commands and writes local evidence under --out-dir. The smoke profile
-proves wiring only; it does not produce release-readiness evidence. Execute
-mode may explicitly reuse an already imported data-dir and a prior redacted
-dataset manifest to continue bounded local validation without rescanning the
-private corpus.
+local-only commands and writes local evidence under --out-dir. --resume-root
+defaults to RESUME_IR_PRIVATE_RESUME_ROOT, --data-dir defaults to
+RESUME_IR_DATA_DIR, and --out-dir defaults to RESUME_IR_LOCAL_EVIDENCE_DIR when
+omitted. The smoke profile proves wiring only; it does not produce
+release-readiness evidence. Execute mode may explicitly reuse an already
+imported data-dir and a prior redacted dataset manifest to continue bounded
+local validation without rescanning the private corpus.
 EOF
   exit 2
 }
@@ -102,6 +105,77 @@ sha256_file() {
   fi
 }
 
+query_set_summary_path() {
+  file_name=$(basename "$1")
+  dir_name=$(dirname "$1")
+  case "$file_name" in
+    *.local.jsonl) base_name=${file_name%.local.jsonl} ;;
+    *) base_name=$file_name ;;
+  esac
+  printf '%s/%s.summary.json\n' "$dir_name" "$base_name"
+}
+
+query_set_summary_sha256() {
+  path="$1"
+  expected_query_source="${2:-}"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for query-set summary validation"
+python3 - "$path" "$expected_query_source" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    summary = json.load(handle)
+
+query_source = summary.get("query_source")
+if (
+    summary.get("schema_version") != "resume-ir.query-set-summary.v2"
+    or summary.get("privacy_boundary") != "redacted_local_aggregate"
+    or query_source != "trace_source_search_v1"
+    or summary.get("hmac_split") is not True
+    or summary.get("contains_raw_query_text") is not False
+    or summary.get("contains_raw_resume_text") is not False
+    or summary.get("contains_candidate_results") is not False
+    or summary.get("contains_local_paths") is not False
+):
+    raise SystemExit("query set summary boundary invalid")
+
+expected_query_source = sys.argv[2]
+if expected_query_source and query_source != expected_query_source:
+    raise SystemExit("query set summary source invalid")
+
+digest = summary.get("query_set_sha256")
+if not isinstance(digest, str) or not digest:
+    raise SystemExit("query set summary digest missing")
+
+print(digest.lower())
+PY
+}
+
+append_query_set_prepare_summary_stdout() {
+  path="$1"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for query-set summary output"
+python3 - "$path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    summary = json.load(handle)
+
+for label, key in (
+    ("query source", "query_source"),
+    ("queries", "query_count"),
+    ("query set sha256", "query_set_sha256"),
+    ("tune sha256", "tune_sha256"),
+    ("holdout sha256", "holdout_sha256"),
+):
+    value = summary.get(key)
+    if not isinstance(value, (str, int)) or value == "":
+        raise SystemExit(f"query set summary output missing {key}")
+    print(f"{label}: {value}")
+print("hmac split: true")
+PY
+}
+
 sha256_file_json_or_null() {
   path="$1"
   if [ -e "$path" ]; then
@@ -111,6 +185,59 @@ sha256_file_json_or_null() {
   fi
 }
 
+query_set_prepare_blocked_reason() {
+  stderr_path="$out_dir/query-set-prepare.stderr.txt"
+  if [ -f "$stderr_path" ] && grep -Fq "query set blocked: local search index is unavailable" "$stderr_path"; then
+    printf '%s\n' "query_set_index_unavailable"
+    return
+  fi
+  if [ -s "$out_dir/query-set-trace-preflight.local.json" ]; then
+    python3 - "$out_dir/query-set-trace-preflight.local.json" <<'PY' && return
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    report = json.load(handle)
+
+def positive_int(value: object) -> bool:
+    return isinstance(value, int) and value > 0
+
+target_query_count = report.get("target_query_count")
+d10k_corpus_deficits = report.get("d10k_corpus_deficits")
+if (
+    target_query_count == 500
+    and report.get("d10k_corpus_ready") is False
+    and isinstance(d10k_corpus_deficits, dict)
+    and any(positive_int(value) for value in d10k_corpus_deficits.values())
+):
+    print("query_set_corpus_or_trace_coverage_insufficient")
+    raise SystemExit(0)
+
+deficits = report.get("corpus_valid_bucket_deficits")
+if isinstance(deficits, dict) and any(positive_int(value) for value in deficits.values()):
+    print("query_set_corpus_or_trace_coverage_insufficient")
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+  fi
+  printf '%s\n' "query_set_prepare_failed"
+}
+
+query_set_prepare_blocked_message() {
+  reason="$1"
+  case "$reason" in
+    query_set_index_unavailable)
+      printf '%s\n' "current-stage validation blocked: query-set index unavailable"
+      ;;
+    query_set_corpus_or_trace_coverage_insufficient)
+      printf '%s\n' "current-stage validation blocked: query-set corpus or trace coverage insufficient"
+      ;;
+    *)
+      printf '%s\n' "current-stage validation blocked: query-set prepare failed"
+      ;;
+  esac
+}
+
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd -P)
 handoff_summarizer="$script_dir/summarize-current-stage-validation.py"
 
@@ -118,16 +245,27 @@ write_current_stage_handoff() {
   source_json="$1"
   command -v python3 >/dev/null 2>&1 || fail "python3 is required for current-stage handoff"
   [ -f "$handoff_summarizer" ] || fail "current-stage handoff summarizer is unavailable"
-  python3 "$handoff_summarizer" \
-    --input "$source_json" \
-    --out "$out_dir/current-stage-handoff.json" \
-    >/dev/null || fail "current-stage handoff generation failed"
+  case "$(basename "$source_json")" in
+    current-stage-validation-evidence.json|current-stage-blocked-summary.json)
+      python3 "$handoff_summarizer" \
+        --input "$source_json" \
+        --out "$out_dir/current-stage-handoff.json" \
+        --issue-comment-out "$out_dir/current-stage-issue-comment.md" \
+        >/dev/null || fail "current-stage handoff generation failed"
+      ;;
+    *)
+      python3 "$handoff_summarizer" \
+        --input "$source_json" \
+        --out "$out_dir/current-stage-handoff.json" \
+        >/dev/null || fail "current-stage handoff generation failed"
+      ;;
+  esac
 }
 
 corpus_summary_observability_json() {
   path="$1"
   command -v python3 >/dev/null 2>&1 || fail "python3 is required for redacted corpus summary observability"
-  python3 - "$path" <<'PY'
+python3 - "$path" <<'PY'
 import json
 import sys
 
@@ -187,6 +325,116 @@ observability = {
 
 json.dump(observability, sys.stdout, ensure_ascii=True, sort_keys=True, indent=2)
 sys.stdout.write("\n")
+PY
+}
+
+private_query_observability_json() {
+  path="$1"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for redacted private query observability"
+python3 - "$path" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    report = json.load(handle)
+
+STAGE_LATENCY_FIELDS = (
+    "query_parse",
+    "prefilter",
+    "bm25",
+    "ann",
+    "fusion",
+    "bulk_hydrate",
+    "snippet",
+)
+
+COPY_FIELDS = (
+    "privacy_boundary",
+    "dataset_kind",
+    "document_count",
+    "searchable_document_count",
+    "vector_indexed_document_count",
+    "query_count",
+    "request_sample_count",
+    "query_set_sha256",
+    "tune_sha256",
+    "holdout_sha256",
+    "query_source",
+    "private_scale_gate",
+    "bucket_counts",
+    "tune_bucket_counts",
+    "holdout_bucket_counts",
+    "samples_per_bucket",
+    "query_latency_ms",
+    "query_latency_by_bucket",
+    "rss_delta_mb",
+    "rss_delta_mb_by_bucket",
+    "zero_result_queries",
+    "query_runner",
+    "query_mode",
+    "retrieval_layers",
+    "warm_or_cold_definition",
+    "cache_state",
+    "percentile_confidence",
+    "spawn_per_query",
+    "hot_index",
+    "hot_path_ocr",
+    "hot_path_parsing",
+    "hot_path_heavy_model_inference",
+    "contains_raw_resume_text",
+    "contains_resume_paths",
+    "contains_queries",
+)
+
+
+def field(mapping, name):
+    try:
+        return mapping[name]
+    except KeyError as error:
+        raise SystemExit(f"private query observability missing field: {name}") from error
+
+
+def stage_p95(stages):
+    return {
+        stage: field(field(stages, stage), "p95")
+        for stage in STAGE_LATENCY_FIELDS
+    }
+
+
+observability = {
+    key: field(report, key)
+    for key in COPY_FIELDS
+}
+observability["stage_latency_p95_ms"] = stage_p95(field(report, "stage_latency_ms"))
+observability["stage_latency_by_bucket_p95_ms"] = {
+    bucket: stage_p95(stages)
+    for bucket, stages in field(report, "stage_latency_by_bucket_ms").items()
+}
+observability["stage_histogram_ms"] = field(report, "stage_histogram_ms")
+observability["stage_histogram_by_bucket_ms"] = field(report, "stage_histogram_by_bucket_ms")
+
+json.dump(observability, sys.stdout, ensure_ascii=True, sort_keys=True, indent=2)
+sys.stdout.write("\n")
+PY
+}
+
+private_benchmark_query_set_sha256() {
+  path="$1"
+  command -v python3 >/dev/null 2>&1 || fail "python3 is required for private benchmark digest extraction"
+python3 - "$path" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as handle:
+    report = json.load(handle)
+
+digest = report.get("query_set_sha256")
+if not isinstance(digest, str):
+    raise SystemExit("private benchmark missing query_set_sha256")
+
+print(digest.lower())
 PY
 }
 
@@ -424,6 +672,110 @@ validate_no_private_markers_in_file() {
     fi
   done
   return 0
+}
+
+write_query_set_trace_preflight() {
+  [ -n "$query_set_trace_root" ] || return 0
+  set +e
+  RESUME_IR_LOCAL_EVIDENCE_DIR="$out_dir" \
+    RESUME_IR_QUERY_ARTIFACT_ROOT="$query_set_trace_root" \
+    "$resume_cli" --data-dir "$data_dir" benchmark-query-set preflight-agent-replay \
+    --max-queries "$max_queries" \
+    > "$out_dir/query-set-trace-preflight.stdout.txt" \
+    2> "$out_dir/query-set-trace-preflight.stderr.txt"
+  preflight_status=$?
+  set -e
+  if [ "$preflight_status" -ne 0 ]; then
+    rm -f "$out_dir/query-set-trace-preflight.local.json"
+    return 0
+  fi
+  if ! validate_no_private_markers_in_file "$out_dir/query-set-trace-preflight.local.json" "query set trace preflight"; then
+    rm -f "$out_dir/query-set-trace-preflight.local.json"
+    return 0
+  fi
+  return 0
+}
+
+query_set_trace_preflight_json() {
+  path="$out_dir/query-set-trace-preflight.local.json"
+  if [ ! -s "$path" ]; then
+    printf 'null'
+    return
+  fi
+  python3 - "$path" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as handle:
+    report = json.load(handle)
+if report.get("schema_version") != "resume-ir.query-set-trace-preflight.v1":
+    raise SystemExit("query set trace preflight schema invalid")
+if report.get("privacy_boundary") != "redacted_local_aggregate":
+    raise SystemExit("query set trace preflight privacy boundary invalid")
+for flag in (
+    "contains_raw_query_text",
+    "contains_raw_resume_text",
+    "contains_candidate_results",
+    "contains_local_paths",
+):
+    if report.get(flag) is not False:
+        raise SystemExit(f"query set trace preflight {flag} must be false")
+int_fields = (
+    "target_query_count",
+    "document_count",
+    "searchable_document_count",
+    "vector_indexed_document_count",
+    "d10k_min_document_count",
+    "d10k_min_searchable_document_count",
+    "d10k_min_vector_indexed_document_count",
+    "trace_logs",
+    "trace_lines",
+    "source_search_lines",
+    "extracted_queries",
+    "normalization_rejected",
+    "duplicate_queries_dropped",
+    "candidate_queries_sampled",
+    "zero_hit_queries_dropped",
+    "corpus_valid_queries",
+)
+object_fields = (
+    "d10k_corpus_deficits",
+    "candidate_bucket_counts",
+    "candidate_bucket_deficits",
+    "corpus_valid_bucket_counts",
+    "required_bucket_counts",
+    "corpus_valid_bucket_deficits",
+)
+out = {
+    "schema_version": "resume-ir.query-set-trace-preflight.v1",
+    "query_source": report.get("query_source"),
+}
+query_index_available = report.get("query_index_available")
+if not isinstance(query_index_available, bool):
+    raise SystemExit("query set trace preflight query_index_available invalid")
+out["query_index_available"] = query_index_available
+d10k_corpus_ready = report.get("d10k_corpus_ready")
+if not isinstance(d10k_corpus_ready, bool):
+    raise SystemExit("query set trace preflight d10k_corpus_ready invalid")
+out["d10k_corpus_ready"] = d10k_corpus_ready
+for field in int_fields:
+    value = report.get(field)
+    if not isinstance(value, int) or value < 0:
+        raise SystemExit(f"query set trace preflight {field} invalid")
+    out[field] = value
+for field in object_fields:
+    value = report.get(field)
+    if not isinstance(value, dict) or not value:
+        raise SystemExit(f"query set trace preflight {field} invalid")
+    checked = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key or not isinstance(item, int) or item < 0:
+            raise SystemExit(f"query set trace preflight {field} entry invalid")
+        checked[key] = item
+    out[field] = checked
+print(json.dumps(out, sort_keys=True))
+PY
 }
 
 status_count_or_empty() {
@@ -727,7 +1079,7 @@ $steps_json
     "OCR worker bounded run",
     "embedding worker bounded run",
     "corpus summary",
-    "query-set draft",
+    "query-set prepare",
     "private query baseline",
     "redacted diagnostics",
     "release-readiness current-stage evidence",
@@ -752,13 +1104,14 @@ EOF
 write_query_set_blocked_summary() {
   blocked_exit="$1"
   blocked_reason="$2"
-  [ -e "$out_dir/query-set-draft.stdout.txt" ] || {
+  [ -e "$out_dir/query-set-prepare.stderr.txt" ] || : > "$out_dir/query-set-prepare.stderr.txt"
+  [ -e "$out_dir/query-set-prepare.stdout.txt" ] || {
     printf '%s\n' "query set: blocked"
-    printf '%s\n' "schema: resume-ir.query-set.jsonl.v1"
+    printf '%s\n' "schema: resume-ir.query-set.jsonl.v2"
     printf '%s\n' "privacy boundary: local_only_private_query_set"
     printf '%s\n' "queries: <redacted>"
     printf '%s\n' "paths: <redacted>"
-  } > "$out_dir/query-set-draft.stdout.txt"
+  } > "$out_dir/query-set-prepare.stdout.txt"
 
   ocr_preflight_sha256=$(sha256_file "$out_dir/ocr-preflight.json")
   ocr_draft_stdout_sha256=$(sha256_file "$out_dir/ocr-draft-manifest.stdout.txt")
@@ -771,9 +1124,19 @@ write_query_set_blocked_summary() {
   embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
-  query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
+  query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
+  query_set_prepare_stderr_sha256=$(sha256_file "$out_dir/query-set-prepare.stderr.txt")
   dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
   dataset_manifest_stdout_sha256=$(sha256_file "$out_dir/dataset-manifest.stdout.txt")
+  query_set_trace_preflight_json_output=$(query_set_trace_preflight_json)
+  query_set_trace_preflight_redacted_output=""
+  if [ -e "$out_dir/query-set-trace-preflight.local.json" ]; then
+    query_set_trace_preflight_sha256=$(sha256_file "$out_dir/query-set-trace-preflight.local.json")
+    query_set_trace_preflight_redacted_output=$(cat <<EOF_PREFLIGHT_OUTPUT
+    {"file": "query-set-trace-preflight.local.json", "sha256": "$query_set_trace_preflight_sha256"},
+EOF_PREFLIGHT_OUTPUT
+)
+  fi
 
   cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
 {
@@ -787,7 +1150,7 @@ write_query_set_blocked_summary() {
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
   "performance_optimization_deferred": true,
-  "blocked_step": "query_set_draft",
+  "blocked_step": "query_set_prepare",
   "blocked_category": "query-set",
   "blocked_reason": "$blocked_reason",
   "blocked_exit": $blocked_exit,
@@ -817,6 +1180,7 @@ write_query_set_blocked_summary() {
     "embedding_protocol": "passed"
   },
   "corpus_summary_observability": $corpus_summary_observability,
+  "query_set_trace_preflight": $query_set_trace_preflight_json_output,
   "steps": [
     {"id": "ocr_preflight", "status": "success"},
     {"id": "ocr_manifest_draft", "status": "success"},
@@ -829,7 +1193,7 @@ write_query_set_blocked_summary() {
     {"id": "ocr_worker_bounded_loop", "status": "success"},
     {"id": "embedding_worker_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
-    {"id": "query_set_draft", "status": "blocked", "exit_code": $blocked_exit}
+    {"id": "query_set_prepare", "status": "blocked", "exit_code": $blocked_exit}
   ],
   "redacted_outputs": [
     {"file": "dataset-manifest.local.json", "sha256": "$dataset_manifest_sha256_output"},
@@ -846,7 +1210,9 @@ write_query_set_blocked_summary() {
     {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
     {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
-    {"file": "query-set-draft.stdout.txt", "sha256": "$query_set_draft_stdout_sha256"}
+${query_set_trace_preflight_redacted_output}
+    {"file": "query-set-prepare.stdout.txt", "sha256": "$query_set_prepare_stdout_sha256"},
+    {"file": "query-set-prepare.stderr.txt", "sha256": "$query_set_prepare_stderr_sha256"}
   ],
   "privacy_sentinels": {
     "local_paths_included": false,
@@ -899,7 +1265,7 @@ write_private_query_blocked_summary() {
   embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
-  query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
+  query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
   private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
   dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
   dataset_manifest_stdout_sha256=$(sha256_file "$out_dir/dataset-manifest.stdout.txt")
@@ -958,7 +1324,7 @@ write_private_query_blocked_summary() {
     {"id": "ocr_worker_bounded_loop", "status": "success"},
     {"id": "embedding_worker_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
-    {"id": "query_set_draft", "status": "success"},
+    {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "blocked", "exit_code": $blocked_exit}
   ],
   "redacted_outputs": [
@@ -977,7 +1343,8 @@ write_private_query_blocked_summary() {
     {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
-    {"file": "query-set-draft.stdout.txt", "sha256": "$query_set_draft_stdout_sha256"},
+    {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},
+    {"file": "query-set-prepare.stdout.txt", "sha256": "$query_set_prepare_stdout_sha256"},
     {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"}
   ],
   "privacy_sentinels": {
@@ -1032,7 +1399,7 @@ write_ocr_throughput_blocked_summary() {
   embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
-  query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
+  query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
   private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
   private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
   private_ocr_throughput_sha256=$(sha256_file "$out_dir/private-ocr-throughput.json")
@@ -1108,7 +1475,7 @@ EOF_STEPS
     {"id": "ocr_worker_bounded_loop", "status": "success"},
     {"id": "embedding_worker_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
-    {"id": "query_set_draft", "status": "success"},
+    {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
     {"id": "baseline_shape_gate", "status": "success"},
 $ocr_throughput_steps
@@ -1129,7 +1496,8 @@ $ocr_throughput_steps
     {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
-    {"file": "query-set-draft.stdout.txt", "sha256": "$query_set_draft_stdout_sha256"},
+    {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},
+    {"file": "query-set-prepare.stdout.txt", "sha256": "$query_set_prepare_stdout_sha256"},
     {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
     {"file": "private-ocr-throughput.json", "sha256": "$private_ocr_throughput_sha256"},
@@ -1286,7 +1654,7 @@ $doctor_step_json
   },
   "not_completed": [
     "full OCR backlog drain",
-    "private query-set draft",
+    "private query-set prepare",
     "full 10k/8000-document current-stage baseline",
     "500-query private baseline gate",
     "private real-corpus OCR throughput baseline",
@@ -1329,7 +1697,7 @@ write_redacted_diagnostics_blocked_summary() {
   embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
-  query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
+  query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
   private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
   private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
   private_ocr_throughput_sha256=$(sha256_file "$out_dir/private-ocr-throughput.json")
@@ -1392,7 +1760,7 @@ write_redacted_diagnostics_blocked_summary() {
     {"id": "ocr_worker_bounded_loop", "status": "success"},
     {"id": "embedding_worker_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
-    {"id": "query_set_draft", "status": "success"},
+    {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
     {"id": "baseline_shape_gate", "status": "success"},
     {"id": "private_ocr_throughput_baseline", "status": "success"},
@@ -1415,7 +1783,8 @@ write_redacted_diagnostics_blocked_summary() {
     {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
-    {"file": "query-set-draft.stdout.txt", "sha256": "$query_set_draft_stdout_sha256"},
+    {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},
+    {"file": "query-set-prepare.stdout.txt", "sha256": "$query_set_prepare_stdout_sha256"},
     {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
     {"file": "private-ocr-throughput.json", "sha256": "$private_ocr_throughput_sha256"},
@@ -1471,7 +1840,7 @@ write_release_readiness_blocked_summary() {
   embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
-  query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
+  query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
   private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
   private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
   private_ocr_throughput_sha256=$(sha256_file "$out_dir/private-ocr-throughput.json")
@@ -1539,7 +1908,7 @@ write_release_readiness_blocked_summary() {
     {"id": "ocr_worker_bounded_loop", "status": "success"},
     {"id": "embedding_worker_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
-    {"id": "query_set_draft", "status": "success"},
+    {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
     {"id": "baseline_shape_gate", "status": "success"},
     {"id": "private_ocr_throughput_baseline", "status": "success"},
@@ -1566,7 +1935,8 @@ write_release_readiness_blocked_summary() {
     {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
-    {"file": "query-set-draft.stdout.txt", "sha256": "$query_set_draft_stdout_sha256"},
+    {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},
+    {"file": "query-set-prepare.stdout.txt", "sha256": "$query_set_prepare_stdout_sha256"},
     {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
     {"file": "private-ocr-throughput.json", "sha256": "$private_ocr_throughput_sha256"},
@@ -1625,7 +1995,7 @@ write_fault_simulation_blocked_summary() {
   embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
-  query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
+  query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
   private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
   private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
   private_ocr_throughput_sha256=$(sha256_file_json_or_null "$out_dir/private-ocr-throughput.json")
@@ -1726,7 +2096,7 @@ EOF_STEPS
     {"id": "ocr_worker_bounded_loop", "status": "success"},
     {"id": "embedding_worker_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
-    {"id": "query_set_draft", "status": "success"},
+    {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
     {"id": "baseline_shape_gate", "status": "success"},
 $fault_prior_throughput_steps
@@ -1749,7 +2119,8 @@ $fault_step_statuses
     {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
-    {"file": "query-set-draft.stdout.txt", "sha256": "$query_set_draft_stdout_sha256"},
+    {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},
+    {"file": "query-set-prepare.stdout.txt", "sha256": "$query_set_prepare_stdout_sha256"},
     {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
 $fault_prior_throughput_outputs
@@ -1841,6 +2212,7 @@ reviewed_model="false"
 reviewed_ocr_runtime="false"
 max_files="10000"
 max_queries="500"
+private_query_request_sample_count=""
 top_k="10"
 private_query_timeout_ms="30000"
 worker_interval_ms="1"
@@ -1964,9 +2336,6 @@ $2"
     --dataset-manifest-sha256)
       need_value "$@"; dataset_manifest_sha256="$2"; shift 2
       ;;
-    --query-set-sha256)
-      need_value "$@"; query_set_sha256="$2"; shift 2
-      ;;
     --reuse-imported-corpus)
       reuse_imported_corpus="true"
       shift
@@ -2002,6 +2371,9 @@ $2"
       ;;
     --top-k)
       need_value "$@"; top_k="$2"; shift 2
+      ;;
+    --private-query-request-sample-count)
+      need_value "$@"; private_query_request_sample_count="$2"; shift 2
       ;;
     --private-query-timeout-ms)
       need_value "$@"; private_query_timeout_ms="$2"; shift 2
@@ -2060,6 +2432,15 @@ $2"
   esac
 done
 
+if [ -z "$resume_root" ] && [ -n "${RESUME_IR_PRIVATE_RESUME_ROOT:-}" ]; then
+  resume_root="$RESUME_IR_PRIVATE_RESUME_ROOT"
+fi
+if [ -z "$data_dir" ] && [ -n "${RESUME_IR_DATA_DIR:-}" ]; then
+  data_dir="$RESUME_IR_DATA_DIR"
+fi
+if [ -z "$out_dir" ] && [ -n "${RESUME_IR_LOCAL_EVIDENCE_DIR:-}" ]; then
+  out_dir="$RESUME_IR_LOCAL_EVIDENCE_DIR"
+fi
 require_arg "--resume-root" "$resume_root"
 require_arg "--data-dir" "$data_dir"
 require_arg "--out-dir" "$out_dir"
@@ -2084,6 +2465,9 @@ require_positive_int "--dimension" "$dimension"
 require_positive_int "--max-files" "$max_files"
 require_positive_int "--max-queries" "$max_queries"
 require_positive_int "--top-k" "$top_k"
+if [ -n "$private_query_request_sample_count" ]; then
+  require_positive_int "--private-query-request-sample-count" "$private_query_request_sample_count"
+fi
 require_positive_int "--private-query-timeout-ms" "$private_query_timeout_ms"
 require_positive_int "--worker-interval-ms" "$worker_interval_ms"
 require_positive_int "--ocr-worker-ticks" "$ocr_worker_ticks"
@@ -2101,7 +2485,6 @@ require_positive_int "--ocr-throughput-pages-per-document" "$ocr_throughput_page
 require_positive_int "--ocr-throughput-max-run-ms" "$ocr_throughput_max_run_ms"
 require_positive_int "--ocr-throughput-min-pages" "$ocr_throughput_min_pages"
 [ -z "$dataset_manifest_sha256" ] || require_sha256 "--dataset-manifest-sha256" "$dataset_manifest_sha256"
-[ -z "$query_set_sha256" ] || require_sha256 "--query-set-sha256" "$query_set_sha256"
 if [ -n "$query_set" ] && [ -n "$query_set_trace_root" ]; then
   fail "--query-set-trace-root cannot be combined with --query-set"
 fi
@@ -2117,21 +2500,17 @@ fi
 if [ -n "$embedding_runtime_bin_dir" ]; then
   embedding_runtime_bin_dir_configured="true"
 fi
-query_set_trace_root_plan=""
-if [ -n "$query_set_trace_root" ]; then
-  query_set_trace_root_plan=' --trace-root $RESUME_IR_QUERY_ARTIFACT_ROOT'
-fi
-
 case "$validation_profile" in
   full)
     current_stage_target="reproducible_local_10k_baseline"
     query_set_min_queries="$max_queries"
-    baseline_min_documents="8000"
+    baseline_min_documents="10000"
     baseline_min_queries="500"
+    if [ -z "$private_query_request_sample_count" ]; then
+      private_query_request_sample_count="5000"
+    fi
     benchmark_gate_smoke_arg=""
     benchmark_gate_smoke_plan=""
-    query_set_keyword_fallback_arg=""
-    query_set_keyword_fallback_plan=""
     private_query_partial_hot_index_arg=""
     private_query_partial_hot_index_plan=""
     full_baseline_satisfied="false"
@@ -2158,6 +2537,10 @@ EOF_STEPS
     {
       "id": "current_stage_handoff",
       "command": "write <local-evidence-dir>/current-stage-handoff.json with schema resume-ir.current-stage-handoff.v1 from redacted current-stage evidence"
+    },
+    {
+      "id": "redacted_issue_comment_body",
+      "command": "write <local-evidence-dir>/current-stage-issue-comment.md from current-stage-handoff.json for redacted #53 comment drafting"
     }'
     ;;
   smoke)
@@ -2165,10 +2548,11 @@ EOF_STEPS
     query_set_min_queries="1"
     baseline_min_documents="1"
     baseline_min_queries="1"
+    if [ -z "$private_query_request_sample_count" ]; then
+      private_query_request_sample_count="$max_queries"
+    fi
     benchmark_gate_smoke_arg="--allow-smoke-confidence"
     benchmark_gate_smoke_plan=" --allow-smoke-confidence"
-    query_set_keyword_fallback_arg="--allow-keyword-fallback"
-    query_set_keyword_fallback_plan=" --allow-keyword-fallback"
     private_query_partial_hot_index_arg="--allow-partial-hot-index-for-smoke"
     private_query_partial_hot_index_plan=" --allow-partial-hot-index-for-smoke"
     full_baseline_satisfied="false"
@@ -2187,6 +2571,13 @@ EOF_STEPS
     fail "--validation-profile must be full or smoke"
     ;;
 esac
+if [ -z "$query_set" ] && [ -z "$query_set_trace_root" ] && [ -n "${RESUME_IR_QUERY_ARTIFACT_ROOT:-}" ]; then
+  query_set_trace_root="$RESUME_IR_QUERY_ARTIFACT_ROOT"
+fi
+if [ -z "$query_set" ] && [ -z "$query_set_trace_root" ]; then
+  fail "current-stage validation requires --query-set-trace-root or --query-set"
+fi
+require_positive_int "--private-query-request-sample-count" "$private_query_request_sample_count"
 
 case "$runtime_distribution_mode" in
   bundled)
@@ -2206,6 +2597,13 @@ if [ "$reuse_imported_corpus" = "true" ]; then
 else
   dataset_manifest_plan_command="resume-cli --data-dir <local-data-dir> privacy dataset-manifest --root <local-resume-root> --out <local-evidence-dir>/dataset-manifest.local.json --profile explicit --max-files $max_files"
   import_private_corpus_plan_command="resume-cli --data-dir <local-data-dir> import --root <local-resume-root> --profile explicit --max-files $max_files"
+fi
+if [ -n "$query_set" ]; then
+  query_set_plan_command="copy <local-query-set> and its paired summary to <local-evidence-dir>/private-query-set.local.jsonl, then validate resume-ir.query-set.jsonl.v2 and resume-ir.query-set-summary.v2, and write <local-evidence-dir>/query-set-prepare.stdout.txt with query_source, query_count, query_set_sha256, tune_sha256, holdout_sha256, and redacted query/path markers"
+elif [ -n "$query_set_trace_root" ]; then
+  query_set_plan_command="RESUME_IR_LOCAL_EVIDENCE_DIR=<local-evidence-dir> RESUME_IR_QUERY_ARTIFACT_ROOT=\$RESUME_IR_QUERY_ARTIFACT_ROOT resume-cli --data-dir <local-data-dir> benchmark-query-set freeze-agent-replay --max-queries $max_queries --min-queries $query_set_min_queries"
+else
+  fail "current-stage validation requires --query-set-trace-root or --query-set"
 fi
 
 if [ "$mode" = "dry-run" ]; then
@@ -2299,16 +2697,16 @@ if [ "$mode" = "dry-run" ]; then
       "command": "resume-cli --data-dir <local-data-dir> benchmark-corpus-summary --json > <local-evidence-dir>/benchmark-corpus-summary.local.json"
     },
     {
-      "id": "query_set_draft",
-      "command": "resume-cli --data-dir <local-data-dir> benchmark-query-set draft --out <local-evidence-dir>/private-query-set.local.jsonl$query_set_trace_root_plan --max-queries $max_queries --min-queries $query_set_min_queries$query_set_keyword_fallback_plan"
+      "id": "query_set_prepare",
+      "command": "$query_set_plan_command"
     },
     {
       "id": "private_query_baseline",
-      "command": "resume-benchmark private-query --query-set <local-query-set> --command resume-cli --command-arg --data-dir --command-arg <local-data-dir> --command-arg benchmark-query-protocol --command-arg --embedding-command --command-arg <local-embedding-command> --command-arg --model-id --command-arg <reviewed-local-model-id> --command-arg --dimension --command-arg <dimension> --corpus-summary <local-evidence-dir>/benchmark-corpus-summary.local.json$private_query_partial_hot_index_plan --max-queries $max_queries --top-k $top_k --timeout-ms $private_query_timeout_ms --dataset-manifest-sha256 <dataset-manifest-sha256> --query-set-sha256 <query-set-sha256> --model-manifest-sha256 <model-manifest-sha256> --json > <local-evidence-dir>/private-benchmark-local.json"
+      "command": "resume-benchmark private-query --query-set <local-query-set> --resident-command resume-cli --resident-command-arg --data-dir --resident-command-arg <local-data-dir> --resident-command-arg benchmark-query-protocol --resident-command-arg --batch-jsonl --resident-command-arg --embedding-command --resident-command-arg <local-embedding-command> --resident-command-arg --model-id --resident-command-arg <reviewed-local-model-id> --resident-command-arg --dimension --resident-command-arg <dimension> --corpus-summary <local-evidence-dir>/benchmark-corpus-summary.local.json$private_query_partial_hot_index_plan --max-queries $max_queries --request-sample-count $private_query_request_sample_count --top-k $top_k --timeout-ms $private_query_timeout_ms --dataset-manifest-sha256 <dataset-manifest-sha256> --model-manifest-sha256 <model-manifest-sha256> --json > <local-evidence-dir>/private-benchmark-local.json"
     },
     {
       "id": "baseline_shape_gate",
-      "command": "resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus$benchmark_gate_smoke_plan --min-documents $baseline_min_documents --min-queries $baseline_min_queries --max-p95-ms 86400000 --max-zero-result-queries 500"
+      "command": "resume-benchmark gate --report <local-evidence-dir>/private-benchmark-local.json --require-private-real-corpus$benchmark_gate_smoke_plan --min-documents $baseline_min_documents --min-queries $baseline_min_queries --max-p95-ms 86400000 --max-zero-result-queries 0"
     },
 $ocr_throughput_plan_steps
     {
@@ -2340,9 +2738,9 @@ $terminal_plan_steps
     "Execute mode validates OCR and embedding runtime manifests/preflight before reading the private resume root.",
     "Optional --embedding-runtime-bin-dir prepends a local runtime bin directory to child-command PATH in execute mode; dry-run and redacted evidence record only whether it was configured, never the local path.",
     "Optional --reuse-imported-corpus with --reuse-dataset-manifest continues from an already imported local data-dir and a prior redacted dataset manifest; it skips dataset scanning and private import but still validates the manifest digest and writes status-backed aggregate import evidence.",
-    "Optional --query-set-trace-root pins generated local query sets to trace_source_search_v1 extraction from \$RESUME_IR_QUERY_ARTIFACT_ROOT without exposing the local path in dry-run or redacted evidence.",
+    "Optional --query-set-trace-root pins generated local query sets to trace_source_search_v1 extraction through the RESUME_IR_QUERY_ARTIFACT_ROOT env default without exposing the local path in dry-run or redacted evidence.",
     "After runtime preflight succeeds, execute mode writes resume-ir.dataset-manifest.v1 under <local-evidence-dir> with privacy boundary local_only_redacted_dataset_manifest, then uses its sha256 as the dataset digest unless --dataset-manifest-sha256 is provided for consistency checking.",
-    "If --query-set is omitted, execute mode writes resume-ir.query-set.jsonl.v1 under <local-evidence-dir> with privacy boundary local_only_private_query_set, then uses its sha256 as the query-set digest.",
+    "If --query-set is omitted, execute mode freezes resume-ir.query-set.jsonl.v2 from --query-set-trace-root under <local-evidence-dir> with privacy boundary local_only_private_query_set, then uses the sibling redacted summary query_set_sha256 as the public-safe query-set digest.",
     "Execute mode writes resume-ir.current-stage-handoff.v1 under <local-evidence-dir> after writing a smoke summary, blocked summary, or full current-stage evidence manifest.",
     "Execute mode runs safe synthetic fault-simulation.v1 disk-space-low smoke plus fault-simulation-suite.v1 local-safe evidence after redacted diagnostics; this proves local diagnostic wiring only and does not clear hardware fault-drill release blockers.",
     "Execute mode keeps all evidence local under <local-evidence-dir>.",
@@ -2715,65 +3113,78 @@ fi
 printf '%s\n' "current-stage validation: query set"
 if [ "$query_set_generated" = "true" ]; then
   set +e
-  if [ -n "$query_set_trace_root" ]; then
-    "$resume_cli" --data-dir "$data_dir" benchmark-query-set draft \
-      --out "$query_set" \
-      --trace-root "$query_set_trace_root" \
-      --max-queries "$max_queries" \
-      --min-queries "$query_set_min_queries" \
-      $query_set_keyword_fallback_arg \
-      > "$out_dir/query-set-draft.stdout.txt"
-  else
-    "$resume_cli" --data-dir "$data_dir" benchmark-query-set draft \
-      --out "$query_set" \
-      --max-queries "$max_queries" \
-      --min-queries "$query_set_min_queries" \
-      $query_set_keyword_fallback_arg \
-      > "$out_dir/query-set-draft.stdout.txt"
-  fi
-  query_set_draft_status=$?
-  set -e
-  if [ "$query_set_draft_status" -ne 0 ]; then
-    write_query_set_blocked_summary "$query_set_draft_status" "query_set_draft_failed"
-    printf '%s\n' "current-stage validation blocked: query-set draft failed" >&2
-    exit "$query_set_draft_status"
-  fi
+	  RESUME_IR_LOCAL_EVIDENCE_DIR="$out_dir" \
+	    RESUME_IR_QUERY_ARTIFACT_ROOT="$query_set_trace_root" \
+	    "$resume_cli" --data-dir "$data_dir" benchmark-query-set freeze-agent-replay \
+	    --max-queries "$max_queries" \
+	    --min-queries "$query_set_min_queries" \
+	    > "$out_dir/query-set-prepare.stdout.txt" \
+	    2> "$out_dir/query-set-prepare.stderr.txt"
+	  query_set_prepare_status=$?
+	  set -e
+	  if [ "$query_set_prepare_status" -ne 0 ]; then
+	    write_query_set_trace_preflight
+	    query_set_blocked_reason=$(query_set_prepare_blocked_reason)
+	    write_query_set_blocked_summary "$query_set_prepare_status" "$query_set_blocked_reason"
+	    query_set_prepare_blocked_message "$query_set_blocked_reason" >&2
+	    exit "$query_set_prepare_status"
+	  fi
 else
   [ -f "$provided_query_set" ] || fail "query set must exist and stay local"
+  provided_query_set_summary=$(query_set_summary_path "$provided_query_set")
+  query_set_summary=$(query_set_summary_path "$query_set")
+  [ -f "$provided_query_set_summary" ] || fail "query set summary must exist and stay local"
   if [ "$provided_query_set" != "$query_set" ]; then
     cp "$provided_query_set" "$query_set" || fail "query set must stay local and readable"
+    cp "$provided_query_set_summary" "$query_set_summary" || fail "query set summary must stay local and readable"
   fi
   {
     printf '%s\n' "query set: provided"
-    printf '%s\n' "schema: resume-ir.query-set.jsonl.v1"
+    printf '%s\n' "schema: resume-ir.query-set.jsonl.v2"
     printf '%s\n' "privacy boundary: local_only_private_query_set"
     printf '%s\n' "queries: <redacted>"
     printf '%s\n' "paths: <redacted>"
-  } > "$out_dir/query-set-draft.stdout.txt"
+  } > "$out_dir/query-set-prepare.stdout.txt"
 fi
+query_set_summary=$(query_set_summary_path "$query_set")
+[ -f "$query_set_summary" ] || fail "query set summary must exist and stay local"
 query_set_output_sha256=$(sha256_file "$query_set")
-if [ -n "$query_set_sha256" ] && [ "$query_set_sha256" != "$query_set_output_sha256" ]; then
-  fail "query set digest mismatch"
+query_set_summary_sha256_output=$(sha256_file "$query_set_summary")
+if [ "$validation_profile" = "full" ]; then
+  set +e
+  query_set_sha256=$(query_set_summary_sha256 "$query_set_summary" "trace_source_search_v1")
+  query_set_summary_status=$?
+  set -e
+  if [ "$query_set_summary_status" -ne 0 ]; then
+    write_query_set_blocked_summary "$query_set_summary_status" "query_set_source_invalid"
+    printf '%s\n' "current-stage validation blocked: query-set source invalid" >&2
+    exit "$query_set_summary_status"
+  fi
+else
+  query_set_sha256=$(query_set_summary_sha256 "$query_set_summary")
 fi
-query_set_sha256="$query_set_output_sha256"
+if [ "$query_set_generated" != "true" ]; then
+  append_query_set_prepare_summary_stdout "$query_set_summary" >> "$out_dir/query-set-prepare.stdout.txt"
+fi
 
 printf '%s\n' "current-stage validation: private query baseline"
 set +e
 "$resume_benchmark" private-query \
   --query-set "$query_set" \
-  --command "$resume_cli" \
-  --command-arg --data-dir --command-arg "$data_dir" \
-  --command-arg benchmark-query-protocol \
-  --command-arg --embedding-command --command-arg "$embedding_command" \
-  --command-arg --model-id --command-arg "$model_id" \
-  --command-arg --dimension --command-arg "$dimension" \
+  --resident-command "$resume_cli" \
+  --resident-command-arg --data-dir --resident-command-arg "$data_dir" \
+  --resident-command-arg benchmark-query-protocol \
+  --resident-command-arg --batch-jsonl \
+  --resident-command-arg --embedding-command --resident-command-arg "$embedding_command" \
+  --resident-command-arg --model-id --resident-command-arg "$model_id" \
+  --resident-command-arg --dimension --resident-command-arg "$dimension" \
   --corpus-summary "$out_dir/benchmark-corpus-summary.local.json" \
   $private_query_partial_hot_index_arg \
   --max-queries "$max_queries" \
+  --request-sample-count "$private_query_request_sample_count" \
   --top-k "$top_k" \
   --timeout-ms "$private_query_timeout_ms" \
   --dataset-manifest-sha256 "$dataset_manifest_sha256" \
-  --query-set-sha256 "$query_set_sha256" \
   --model-manifest-sha256 "$model_manifest_sha256" \
   --json \
   > "$out_dir/private-benchmark-local.json"
@@ -2789,6 +3200,12 @@ if ! validate_private_benchmark_report "$out_dir/private-benchmark-local.json"; 
   printf '%s\n' "current-stage validation blocked: private query baseline evidence failed validation" >&2
   exit 1
 fi
+private_benchmark_query_set_sha256_value=$(private_benchmark_query_set_sha256 "$out_dir/private-benchmark-local.json")
+if [ "$private_benchmark_query_set_sha256_value" != "$query_set_sha256" ]; then
+  write_private_query_blocked_summary 1 "private_query_baseline_query_set_mismatch"
+  printf '%s\n' "current-stage validation blocked: private query report query_set_sha256 mismatch" >&2
+  exit 1
+fi
 
 printf '%s\n' "current-stage validation: baseline shape gate"
 set +e
@@ -2799,7 +3216,7 @@ set +e
   --min-documents "$baseline_min_documents" \
   --min-queries "$baseline_min_queries" \
   --max-p95-ms 86400000 \
-  --max-zero-result-queries 500 \
+  --max-zero-result-queries 0 \
   > "$out_dir/private-benchmark-gate.stdout.txt"
 baseline_gate_status=$?
 set -e
@@ -2815,7 +3232,7 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
   embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
-  query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
+  query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
   private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
   private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
   dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
@@ -2875,7 +3292,7 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
     {"id": "ocr_worker_bounded_loop", "status": "success"},
     {"id": "embedding_worker_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
-    {"id": "query_set_draft", "status": "success"},
+    {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
     {"id": "baseline_shape_gate", "status": "blocked", "exit_code": $baseline_gate_status}
   ],
@@ -2895,7 +3312,8 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
     {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
-    {"file": "query-set-draft.stdout.txt", "sha256": "$query_set_draft_stdout_sha256"},
+    {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},
+    {"file": "query-set-prepare.stdout.txt", "sha256": "$query_set_prepare_stdout_sha256"},
     {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"}
   ],
@@ -3094,7 +3512,7 @@ if [ "$validation_profile" = "smoke" ]; then
   embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
-  query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
+  query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
   private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
   private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
   redacted_diagnostics_sha256=$(sha256_file "$out_dir/redacted-diagnostics.json")
@@ -3154,7 +3572,7 @@ if [ "$validation_profile" = "smoke" ]; then
     {"id": "ocr_worker_bounded_loop", "status": "success"},
     {"id": "embedding_worker_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
-    {"id": "query_set_draft", "status": "success"},
+    {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
     {"id": "baseline_shape_gate", "status": "smoke_success"},
     {"id": "redacted_diagnostics", "status": "success"},
@@ -3178,7 +3596,8 @@ if [ "$validation_profile" = "smoke" ]; then
     {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
-    {"file": "query-set-draft.stdout.txt", "sha256": "$query_set_draft_stdout_sha256"},
+    {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},
+    {"file": "query-set-prepare.stdout.txt", "sha256": "$query_set_prepare_stdout_sha256"},
     {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
     {"file": "redacted-diagnostics.json", "sha256": "$redacted_diagnostics_sha256"},
@@ -3267,7 +3686,7 @@ import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
 ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
 embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
 corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
-query_set_draft_stdout_sha256=$(sha256_file "$out_dir/query-set-draft.stdout.txt")
+query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
 private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
 private_benchmark_gate_sha256=$(sha256_file "$out_dir/private-benchmark-gate.stdout.txt")
 private_ocr_throughput_sha256=$(sha256_file "$out_dir/private-ocr-throughput.json")
@@ -3281,6 +3700,7 @@ release_readiness_stderr_sha256=$(sha256_file "$out_dir/release-readiness.stderr
 dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
 dataset_manifest_stdout_sha256=$(sha256_file "$out_dir/dataset-manifest.stdout.txt")
 corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
+private_query_observability=$(private_query_observability_json "$out_dir/private-benchmark-local.json")
 
 cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
 {
@@ -3317,6 +3737,7 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     "embedding_protocol": "passed"
   },
   "corpus_summary_observability": $corpus_summary_observability,
+  "private_query_observability": $private_query_observability,
   "steps": [
     {"id": "ocr_preflight", "status": "success"},
     {"id": "ocr_manifest_draft", "status": "success"},
@@ -3329,7 +3750,7 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     {"id": "ocr_worker_bounded_loop", "status": "success"},
     {"id": "embedding_worker_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
-    {"id": "query_set_draft", "status": "success"},
+    {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
     {"id": "baseline_shape_gate", "status": "success"},
     {"id": "private_ocr_throughput_baseline", "status": "success"},
@@ -3356,7 +3777,8 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
-    {"file": "query-set-draft.stdout.txt", "sha256": "$query_set_draft_stdout_sha256"},
+    {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},
+    {"file": "query-set-prepare.stdout.txt", "sha256": "$query_set_prepare_stdout_sha256"},
     {"file": "private-benchmark-local.json", "sha256": "$private_benchmark_sha256"},
     {"file": "private-benchmark-gate.stdout.txt", "sha256": "$private_benchmark_gate_sha256"},
     {"file": "private-ocr-throughput.json", "sha256": "$private_ocr_throughput_sha256"},

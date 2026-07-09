@@ -123,7 +123,7 @@ pub fn crawl_with_fs_options_and_control(
             report.scanned_directories.push(normalized_directory);
         }
 
-        entries.sort_by_key(|entry| path_sort_key(&entry.path));
+        order_directory_entries_for_scan(&mut entries, options.max_files);
 
         for entry in entries {
             ensure_scan_not_cancelled(control)?;
@@ -179,6 +179,12 @@ fn scan_file_budget_reached(report: &mut ScanReport, max_files: Option<usize>) -
         observed: report.files.len(),
     });
     true
+}
+
+fn order_directory_entries_for_scan(entries: &mut [FsEntry], max_files: Option<usize>) {
+    if max_files.is_some() {
+        entries.sort_by_key(|entry| path_sort_key(&entry.path));
+    }
 }
 
 pub fn normalize_path(
@@ -991,6 +997,137 @@ impl StableHash {
             self.first = self.first.wrapping_mul(FNV_PRIME);
             self.second ^= u64::from(byte);
             self.second = self.second.wrapping_mul(FNV_PRIME);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::io::{self, Cursor};
+
+    #[test]
+    fn unbudgeted_scan_processes_directory_entries_in_file_system_order() {
+        let file_system = MemoryFileSystem::new()
+            .with_dir(
+                "/root",
+                vec![file_entry("/root/b.pdf"), file_entry("/root/a.pdf")],
+            )
+            .with_file("/root/a.pdf", b"a")
+            .with_file("/root/b.pdf", b"b");
+
+        let report =
+            crawl_with_fs_options(&file_system, Path::new("/root"), ScanOptions::default())
+                .unwrap();
+
+        assert_eq!(file_system.opened_file_names(), ["b.pdf", "a.pdf"]);
+        assert_eq!(report_file_names(&report), ["a.pdf", "b.pdf"]);
+        assert!(report.budget_exhausted.is_none());
+    }
+
+    #[test]
+    fn budgeted_scan_sorts_directory_entries_before_file_limit() {
+        let file_system = MemoryFileSystem::new()
+            .with_dir(
+                "/root",
+                vec![file_entry("/root/b.pdf"), file_entry("/root/a.pdf")],
+            )
+            .with_file("/root/a.pdf", b"a")
+            .with_file("/root/b.pdf", b"b");
+
+        let report = crawl_with_fs_options(
+            &file_system,
+            Path::new("/root"),
+            ScanOptions {
+                max_files: Some(1),
+                ..ScanOptions::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(file_system.opened_file_names(), ["a.pdf"]);
+        assert_eq!(report_file_names(&report), ["a.pdf"]);
+        assert_eq!(
+            report.budget_exhausted,
+            Some(ScanBudgetExhausted {
+                kind: ScanBudgetKind::Files,
+                limit: 1,
+                observed: 1,
+            })
+        );
+    }
+
+    fn file_entry(path: &str) -> FsEntry {
+        FsEntry::new(PathBuf::from(path), FsEntryKind::File)
+    }
+
+    fn report_file_names(report: &ScanReport) -> Vec<String> {
+        report
+            .files
+            .iter()
+            .map(|file| file.file_name.clone())
+            .collect()
+    }
+
+    #[derive(Default)]
+    struct MemoryFileSystem {
+        directories: BTreeMap<PathBuf, Vec<FsEntry>>,
+        files: BTreeMap<PathBuf, Vec<u8>>,
+        opened_paths: RefCell<Vec<String>>,
+    }
+
+    impl MemoryFileSystem {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn with_dir(mut self, path: &str, entries: Vec<FsEntry>) -> Self {
+            self.directories.insert(PathBuf::from(path), entries);
+            self
+        }
+
+        fn with_file(mut self, path: &str, bytes: &[u8]) -> Self {
+            self.files.insert(PathBuf::from(path), bytes.to_vec());
+            self
+        }
+
+        fn opened_file_names(&self) -> Vec<String> {
+            self.opened_paths.borrow().clone()
+        }
+    }
+
+    impl FileSystem for MemoryFileSystem {
+        fn read_dir(&self, path: &Path) -> io::Result<Vec<FsEntry>> {
+            self.directories
+                .get(path)
+                .cloned()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing directory"))
+        }
+
+        fn metadata(&self, path: &Path) -> io::Result<FsMetadata> {
+            if self.directories.contains_key(path) {
+                return Ok(FsMetadata::new(FsEntryKind::Directory, 0, UNIX_EPOCH));
+            }
+            let bytes = self
+                .files
+                .get(path)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing file"))?;
+            Ok(FsMetadata::new(
+                FsEntryKind::File,
+                bytes.len() as u64,
+                UNIX_EPOCH,
+            ))
+        }
+
+        fn open(&self, path: &Path) -> io::Result<Box<dyn ReadSeek>> {
+            let bytes = self
+                .files
+                .get(path)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "missing file"))?;
+            self.opened_paths.borrow_mut().push(path_file_name(path));
+            Ok(Box::new(Cursor::new(bytes.clone())))
         }
     }
 }
