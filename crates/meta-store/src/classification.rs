@@ -8,6 +8,9 @@ use super::{
     Result, UnixTimestamp,
 };
 
+const DOCUMENT_CLASSIFICATION_REASON_LIMIT: usize = 8;
+const _: [(); DOCUMENT_CLASSIFICATION_REASON_LIMIT] = [(); resume_classifier::MAX_REASON_CODES];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReviewDisposition {
     NotRequired,
@@ -204,7 +207,7 @@ fn validate_record(record: &DocumentClassificationRecord) -> Result<()> {
         ));
     }
     if record.reason_codes.is_empty()
-        || record.reason_codes.len() > resume_classifier::MAX_REASON_CODES
+        || record.reason_codes.len() > DOCUMENT_CLASSIFICATION_REASON_LIMIT
         || record
             .reason_codes
             .iter()
