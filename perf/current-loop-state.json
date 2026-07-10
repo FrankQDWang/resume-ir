@@ -61,7 +61,9 @@
   },
   "github_ledger": {
     "primary_issue": "#140",
-    "active_prs": [],
+    "active_prs": [
+      "#141"
+    ],
     "open_blockers": [
       "#37",
       "#140"
