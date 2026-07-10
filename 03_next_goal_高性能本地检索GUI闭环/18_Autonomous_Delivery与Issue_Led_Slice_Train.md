@@ -10,13 +10,16 @@ If it conflicts with older goal documents, `ACTIVE_GOAL.toml` and this document 
 P1 的公开起点是 `Synthetic Smoke Baseline Contract`：它只实现
 synthetic/public fixture 上的 benchmark harness、redacted report、artifact manifest
 和 fail-closed public contract checks。#138 product-capability audit 已在 #137
-failed/reverted L4 hypothesis 后完成；当前 linked issue #140 只冻结 mixed nested
-benchmark 和 anti-overfit evidence layers，后续新 issue 才实现 precision-first
-classifier。#140 仍不执行或声明
+failed/reverted L4 hypothesis 后完成；#140 仍冻结 mixed nested benchmark 和
+anti-overfit evidence layers。PR #144 的 #143 authorization 已冻结；PR #146
+又在 macOS 重现 parse-result cancel-poll failure。当前临时 active slice #145
+以 pinned issue-centric atomic PR 同时提交 contract transition 与 deterministic
+test-only handshake，保持在正常 PR budget 内且不使用 scope exception。#145 main-reachable
+后必须恢复 #140、刷新 PR #144，再继续 #143/#142；后续新 issue 才实现 precision-first classifier。#140 仍不执行或声明
 私有 D10K calibration，不实现 Tauri GUI，不优化 query hot path，不启动新的 L4
 import 微优化，也不打开 profile optimization issue。后续真实 D10K private
 calibration、resident daemon benchmark、热查询路径优化和 GUI/manual 实现必须从
-本文件和 `ACTIVE_GOAL.toml` 派生新的 linked plan。
+本文件、`ACTIVE_GOAL.toml` 和 linked GitHub issue 派生。
 
 ## 2. Policy Truth
 
