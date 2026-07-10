@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import hashlib
 import pathlib
+import runpy
 import subprocess
 import sys
 import tomllib
@@ -1384,15 +1385,14 @@ def validate_fixture(path: pathlib.Path, matrix: Mapping[str, object]) -> None:
 def main() -> int:
     matrix = load_toml(PERF / "acceptance-matrix.toml")
     validate_matrix(matrix)
-    mixed_check = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "ci" / "check-mixed-import-contracts.py")],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if mixed_check.returncode != 0:
-        fail(f"mixed-import contract check failed: {mixed_check.stderr.strip()}")
+    mixed_module = runpy.run_path(str(ROOT / "scripts" / "ci" / "check-mixed-import-contracts.py"))
+    mixed_main = mixed_module.get("main")
+    if not callable(mixed_main):
+        fail("mixed-import contract check: missing callable main")
+    try:
+        mixed_main()
+    except (OSError, ValueError) as exc:
+        fail(f"mixed-import contract check failed: {exc}")
     validate_experiment_report_schema(
         require_mapping(load_json(PERF / "experiment-report.schema.json"), "experiment schema"),
         matrix,
