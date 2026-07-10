@@ -12,31 +12,31 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#157"
-name = "persist_durable_local_classification_audit_records"
+issue = "#159"
+name = "enforce_classifier_gated_admission"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = false
 configured_private_roots_required = false
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = true
-unconfigured_private_run_terminal = "not_applicable_synthetic_storage_only"
+unconfigured_private_run_terminal = "not_applicable_public_synthetic_admission_only"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #157 stays within the 15-file, 800-line, five-commit, and single-issue budgets while completing typed audit persistence and the exact schema-version regression updates."
+scope_exception_reason = "No exception is used. Issue #159 stays within the 15-file, 800-line, five-commit, and single-issue budgets while closing parse, OCR, rebuild, rerun, and legacy admission bypasses without private benchmark access."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
   "Cargo.lock",
   "crates/cli/tests/s146_metadata_key_cli.rs",
   "crates/cli/tests/s147_metadata_key_rotation_cli.rs",
-  "crates/meta-store/Cargo.toml",
-  "crates/meta-store/src/classification.rs",
+  "crates/import-pipeline/Cargo.toml",
+  "crates/import-pipeline/src/classification.rs",
+  "crates/import-pipeline/src/lib.rs",
   "crates/meta-store/src/lib.rs",
   "crates/meta-store/tests/s3_sqlite.rs",
   "perf/current-loop-state.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-  "scripts/ci/check-autonomous-goal.py",
   "scripts/ci/check-gate-integrity.py",
 ]
 

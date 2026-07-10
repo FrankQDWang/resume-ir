@@ -84,6 +84,22 @@ CLASSIFICATION_AUDIT_PATHS = {
     "scripts/ci/check-autonomous-goal.py",
     "scripts/ci/check-gate-integrity.py",
 }
+CLASSIFIER_ADMISSION_PATHS = {
+    "ACTIVE_GOAL.toml",
+    "PROGRESS.md",
+    "Cargo.lock",
+    "crates/cli/tests/s146_metadata_key_cli.rs",
+    "crates/cli/tests/s147_metadata_key_rotation_cli.rs",
+    "crates/import-pipeline/Cargo.toml",
+    "crates/import-pipeline/src/classification.rs",
+    "crates/import-pipeline/src/lib.rs",
+    "crates/meta-store/src/lib.rs",
+    "crates/meta-store/tests/s3_sqlite.rs",
+    "perf/current-loop-state.json",
+    "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
+    "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+    "scripts/ci/check-gate-integrity.py",
+}
 
 
 def fail(message: str) -> None:
@@ -339,6 +355,17 @@ def validate_transition_scope(base_goal: dict, head_goal: dict, merge_base: str,
             fail(
                 "#155 -> #157 path mismatch: expected "
                 f"{sorted(CLASSIFICATION_AUDIT_PATHS)!r}, found {sorted(changed)!r}"
+            )
+        return
+
+    if (base_issue, head_issue) == ("#157", "#159"):
+        require_bool(head_slice.get("production_code_allowed"), True, "head.scope.active_slice.production_code_allowed")
+        require_bool(head_slice.get("private_benchmark_allowed"), False, "head.scope.active_slice.private_benchmark_allowed")
+        require_bool(head_slice.get("scope_exception"), False, "head.scope.active_slice.scope_exception")
+        if changed != CLASSIFIER_ADMISSION_PATHS:
+            fail(
+                "#157 -> #159 path mismatch: expected "
+                f"{sorted(CLASSIFIER_ADMISSION_PATHS)!r}, found {sorted(changed)!r}"
             )
         return
 
