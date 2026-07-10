@@ -6,11 +6,11 @@
   "evidence_lane": "w0_docs",
   "contract_pins": {
     "active_goal_sha256": "07cba3670294625aaee873ef1889008308051f14545904d09132edcf025d8214",
-    "acceptance_matrix_sha256": "caa9e458d39a20964f46b81ae0aee3604f893dfd783410b88a58af53b9020d30",
+    "acceptance_matrix_sha256": "11de204cd274d45623e5590483f1076b3a832d5f7d1b0e15243a71c3ed00eee1",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "36d510a94ce062a4a4245f784a2ae0f21782f85e"
+    "git_head_sha": "4afd254d9b7989108d726a737a3cc939c9f45deb"
   },
   "current_slice": "#140 freeze mixed-directory benchmark contract and anti-overfit evidence layers",
   "transition_history": [
@@ -61,9 +61,7 @@
   },
   "github_ledger": {
     "primary_issue": "#140",
-    "active_prs": [
-      "#141"
-    ],
+    "active_prs": [],
     "open_blockers": [
       "#37",
       "#140"
