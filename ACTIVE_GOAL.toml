@@ -37,6 +37,7 @@ allowed_paths = [
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
   "scripts/ci/check-cli-closed-loop.sh",
   "scripts/ci/check-daemon-closed-loop.sh",
+  "scripts/ci/check-daemon-incremental-import.sh",
 ]
 
 [contracts]
