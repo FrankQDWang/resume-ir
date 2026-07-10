@@ -42,7 +42,7 @@
 
 ## 当前活跃后续目标
 
-当前活跃后续目标是 `03_next_goal_高性能本地检索GUI闭环/`：在本地隐私边界内完成高性能检索、GUI、手工/Codex 结对闭环验证的执行合同和后续实现。
+当前活跃后续目标是 `03_next_goal_高性能本地检索GUI闭环/`：在本地隐私边界内完成高性能检索、GUI、手工/Codex 结对闭环验证的执行合同和后续实现。经过 #132-#137 import L4 优化收口后，当前优先级先转向 mixed-directory import product correctness：用户授权混合嵌套目录时，系统必须只把高置信简历纳入 resume search index，并把 non-resume、needs-review、OCR backlog 和 failed 文件保留为本地 audit/review 记录。GUI、大规模 query hot-path 和新的 L4 import 微优化必须等该产品语义合同和证据闭环稳定后再推进。
 
 机器可读目标锁是 `ACTIVE_GOAL.toml`；性能验收红线是 `perf/acceptance-matrix.toml`。两者只定义公开可提交的合同与 redacted aggregate 证据形状，不授权提交私有 benchmark 数据。公开合同必须由 `python3 scripts/ci/check-performance-contracts.py` 和 PR CI 校验，不能只依赖 prose review。
 
@@ -62,3 +62,4 @@
 4. benchmark 证据必须区分 smoke、W0、W1、本机私有、soak/fault 和 GUI/manual，不得混用。
 5. 真实简历、raw query、候选结果、路径、token、trace、diagnostics package 和模型缓存不得提交。
 6. 10k 私有导入/查询只能作为 D10K calibration；完整 `goal_complete` 必须同时有 D10K、D100K、D1M、soak/fault 和 GUI/manual 证据。
+7. mixed import correctness 采用 precision-first：只有 `resume_candidate` 进入 resume search index；`non_resume`、`needs_review`、`ocr_backlog` 和 `failed` 不索引但保留本地逐文件记录。公开证据只能是脱敏聚合。

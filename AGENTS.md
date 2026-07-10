@@ -13,6 +13,9 @@
   slice before implementation work. For the performance-loop goal, treat
   documents 13, 14, 17, and 18 in `03_next_goal_高性能本地检索GUI闭环/` as the
   required startup reads for loop, autonomous-delivery, and evidence contracts.
+  For the mixed-directory import product-correctness train inside the same
+  goal, also read documents 01, 03, 04, 09, and 10 before changing benchmark,
+  classification, import pipeline, storage, privacy, or issue-train contracts.
   Read the full goal-doc directory only when changing goal contracts,
   acceptance schemas, cross-module architecture, or when the current slice
   explicitly depends on multiple goal documents.
@@ -74,6 +77,13 @@
   authorization for the configured private roots only. Keep witnesses temporary
   and local, and commit only redacted aggregate summaries or schemas that pass
   the public boundary checks.
+- For mixed-directory benchmark construction, `$RESUME_IR_MIXED_SOURCE_ROOT`
+  may point under `$HOME` only when the user explicitly authorizes it. Exclude
+  secrets, credentials, system, browser profile, model/cache, build, VCS, and
+  runtime-state directories by default. Commit only synthetic fixtures,
+  schemas, and redacted aggregate manifests; never commit sampled files, raw
+  labels with paths, filenames, text, direct raw file hashes, or private
+  manifests.
 - Keep smoke, W0/W1, private local benchmark, soak/fault, GUI/manual, and
   release-readiness evidence distinct. Do not treat smoke output or dry-run
   plans as stable-release evidence.
