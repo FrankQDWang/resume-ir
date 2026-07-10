@@ -585,12 +585,15 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
         "phase": "product_contract_precondition",
         "must_complete_after_issue": "#138",
         "contract_owner_issue": "#140",
-        "report_schema": "resume-ir.mixed-import-report.v1",
-        "contract_checker": "scripts/ci/check-mixed-import-contracts.py",
+        "report_schema_target": "resume-ir.mixed-import-report.v1",
+        "contract_checker_target": "scripts/ci/check-mixed-import-contracts.py",
         "freeze_identity_scheme": "hmac_sha256_opaque_manifest_v1",
-        "public_synthetic_visibility": "committed_synthetic_exact",
+        "public_synthetic_source_visibility": "committed_synthetic_exact",
+        "public_synthetic_output_visibility": "bounded_aggregate_only",
         "private_calibration_visibility": "local_tuning_redacted_aggregate_public",
         "blind_holdout_visibility": "acceptance_only_redacted_aggregate_public",
+        "indexed_resume_precision_formula": "indexed_true_resumes / indexed_total",
+        "resume_completeness_formula": "indexed_true_resumes / expected_true_resumes",
         "classifier_position": "after_parse_text_extraction_before_searchable_indexing",
         "fs_crawler_role": "cheap_source_discovery_only",
         "public_evidence": "redacted_aggregate_only",
@@ -606,6 +609,8 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
             "benchmark_must_be_frozen_before_classifier",
             "precision_first",
             "local_per_file_audit_required",
+            "completeness_improvement_requires_precision_non_regression",
+            "completeness_improvement_requires_contamination_within_limit",
         ],
         True,
         "matrix.mixed_import_correctness",
@@ -614,6 +619,7 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
         mixed_import,
         [
             "mutation_after_freeze_allowed",
+            "report_contract_implemented",
             "blind_holdout_visible_during_calibration",
             "synthetic_fixture_ids_classifier_features_allowed",
             "labels_classifier_features_allowed",
@@ -625,6 +631,12 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
         False,
         "matrix.mixed_import_correctness",
     )
+    if mixed_import.get("indexed_resume_precision_min") != 1.0:
+        fail("matrix.mixed_import_correctness.indexed_resume_precision_min mismatch")
+    if mixed_import.get("contamination_count_max") != 0:
+        fail("matrix.mixed_import_correctness.contamination_count_max mismatch")
+    if mixed_import.get("precision_non_regression_tolerance") != 0.0:
+        fail("matrix.mixed_import_correctness.precision_non_regression_tolerance mismatch")
     if mixed_import.get("benchmark_layers") != MIXED_IMPORT_BENCHMARK_LAYERS:
         fail("matrix.mixed_import_correctness.benchmark_layers mismatch")
     if mixed_import.get("status_values") != MIXED_IMPORT_STATUSES:
