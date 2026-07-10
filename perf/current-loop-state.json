@@ -5,14 +5,14 @@
   "experiment_state": "contract_locked",
   "evidence_lane": "smoke",
   "contract_pins": {
-    "active_goal_sha256": "eddb124cf43561f9ece3b9cfb502015305ca109450cd21cc6a00afe336863ce5",
+    "active_goal_sha256": "19e26a0cea5df38fc3e15b82465c389c44a42f76dc98c3fc2a7a47d4a1d165e9",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "95ddd43b4e0946bf3b18febac56b38e046c454d9"
+    "git_head_sha": "562ec19ace0a914dbdabb03c1fc865d33c40fd57"
   },
-  "current_slice": "#159 prepare classifier-admission synthetic fixtures",
+  "current_slice": "#159 enforce core classifier admission",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -143,10 +143,41 @@
       "from": "evidence_review",
       "to": "pr_opened",
       "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/160"
-    }
+    },
+    {
+      "from": "pr_opened",
+      "to": "pr_merged",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/160"
+    },
+    {
+      "from": "pr_merged",
+      "to": "issue_reconciled_with_evidence",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4936423868"
+    },
+    {
+      "from": "issue_reconciled_with_evidence",
+      "to": "next_issue_or_goal_complete",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4936423868"
+    },
+    {
+      "from": "next_issue_or_goal_complete",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4936472781"
+    },
+    {
+      "from": "slice_selected",
+      "to": "branch_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/159"
+    },
+    {"from":"branch_active","to":"verification_active","evidence_ref":"PROGRESS.md#s707"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s707"},
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/161"},
+    {"from":"pr_opened","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/161"},
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/162"}
   ],
   "verification": {
     "commands": [
+      {"command":"cargo test -p import-pipeline --locked -- --test-threads=1 && cargo test -p meta-store --locked --test s3_sqlite -- --test-threads=1 && cargo test -p ocr-client --locked -- --test-threads=1","exit_code":0,"evidence_ref":"PROGRESS.md#s707"},
       {
         "command": "cargo test -p resume-cli --locked --test s9_import_search --test s10_search_filters --test s15_ocr_handoff --test s16_persisted_fields --test s21_import_candidate_assignment",
         "exit_code": 0,
@@ -211,9 +242,7 @@
   },
   "github_ledger": {
     "primary_issue": "#159",
-    "active_prs": [
-      "#160"
-    ],
+    "active_prs": ["#162"],
     "open_blockers": [
       "#37",
       "#159"

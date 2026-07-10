@@ -85,7 +85,8 @@ import sys
 import zipfile
 
 output_path = sys.argv[1]
-text = html.escape(sys.argv[2])
+text = sys.argv[2]
+paragraphs = "".join(f"<w:p><w:r><w:t>{html.escape(line)}</w:t></w:r></w:p>" for line in ("SUMMARY", "Synthetic incremental profile.", "EXPERIENCE", f"Built {text}", "SKILLS", "Rust Java"))
 content_types = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
@@ -101,7 +102,7 @@ rels = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 document = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
-    <w:p><w:r><w:t>{text}</w:t></w:r></w:p>
+    {paragraphs}
   </w:body>
 </w:document>
 """

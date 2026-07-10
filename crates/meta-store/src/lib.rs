@@ -26,6 +26,9 @@ pub use classification::{
     ClassificationStatus, DocumentClassificationCounts, DocumentClassificationRecord, ReasonCode,
     ReviewDisposition,
 };
+pub use resume_classifier::{
+    classify as classify_resume, ClassificationResult, ClassifierInput, CLASSIFIER_EPOCH,
+};
 
 const SCHEMA_VERSION_V1: u32 = 1;
 const SCHEMA_VERSION_V2: u32 = 2;
@@ -1032,6 +1035,41 @@ impl MetaStore {
     pub fn deleted_document_ids(&self) -> Result<Vec<DocumentId>> {
         let connection = self.connection.borrow();
         deleted_document_ids_from_connection(&connection)
+    }
+
+    pub fn quarantine_document_searchability(&self, document_id: &DocumentId) -> Result<()> {
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        for table in ["candidate_contact_conflict", "entity_mention"] {
+            transaction
+                .execute(
+                    &format!(
+                        "DELETE FROM {table} WHERE resume_version_id IN (
+                            SELECT id FROM resume_version WHERE document_id = ?1
+                         )"
+                    ),
+                    params![document_id.as_str()],
+                )
+                .map_err(MetaStoreError::storage)?;
+        }
+        transaction
+            .execute(
+                "UPDATE resume_version
+                 SET visibility = 'hidden', candidate_id = NULL
+                 WHERE document_id = ?1",
+                params![document_id.as_str()],
+            )
+            .map_err(MetaStoreError::storage)?;
+        transaction
+            .execute_batch(
+                "UPDATE candidate SET version_count = (
+                    SELECT COUNT(*) FROM resume_version
+                    WHERE resume_version.candidate_id = candidate.id
+                 );
+                 DELETE FROM candidate WHERE version_count = 0;",
+            )
+            .map_err(MetaStoreError::storage)?;
+        transaction.commit().map_err(MetaStoreError::storage)
     }
 
     pub fn purge_deleted_documents(&self) -> Result<usize> {
