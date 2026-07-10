@@ -38,6 +38,19 @@ FORWARD_CONTRACT_PATHS = {
 REVERSE_CONTRACT_PATHS = FORWARD_CONTRACT_PATHS - {
     "scripts/ci/check-gate-integrity.py", INDEX_FULLTEXT_SOURCE,
 }
+NEXT_ISSUE_CONTRACT_PATHS = {
+    "ACTIVE_GOAL.toml",
+    "PROGRESS.md",
+    "scripts/ci/check-autonomous-goal.py",
+    "scripts/ci/check-gate-integrity.py",
+    "perf/current-loop-state.json",
+    "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+    "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
+    "03_next_goal_高性能本地检索GUI闭环/10_实施切片与验收门槛.md",
+    "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md",
+    "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md",
+    "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md",
+}
 
 
 def fail(message: str) -> None:
@@ -253,6 +266,29 @@ def validate_transition_scope(base_goal: dict, head_goal: dict, merge_base: str,
             fail("#143 contract does not authorize return to #140")
         if changed != REVERSE_CONTRACT_PATHS:
             fail(f"#143 -> #140 path mismatch: expected {sorted(REVERSE_CONTRACT_PATHS)!r}, found {sorted(changed)!r}")
+        return
+
+    if (base_issue, head_issue) == ("#140", "#152"):
+        require_bool(
+            base_slice.get("contract_change_allowed"),
+            True,
+            "base.scope.active_slice.contract_change_allowed",
+        )
+        require_bool(
+            head_slice.get("production_code_allowed"),
+            False,
+            "head.scope.active_slice.production_code_allowed",
+        )
+        require_bool(
+            head_slice.get("private_benchmark_allowed"),
+            True,
+            "head.scope.active_slice.private_benchmark_allowed",
+        )
+        if changed != NEXT_ISSUE_CONTRACT_PATHS:
+            fail(
+                "#140 -> #152 path mismatch: expected "
+                f"{sorted(NEXT_ISSUE_CONTRACT_PATHS)!r}, found {sorted(changed)!r}"
+            )
         return
 
     fail(f"unauthorized active-slice transition: {base_issue!r} -> {head_issue!r}")

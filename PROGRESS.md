@@ -2702,11 +2702,20 @@ guards, local runtime discovery, and PR #9 CI state.
   public synthetic samples with opaque HMAC identity, validates one bounded
   aggregate report, and rejects 15 leakage/layer/precision mutations. No private
   root, classifier, production, GUI/query/L4, or readiness claim is included.
+- S702 reconciles execution truth from completed #140 to linked issue #152.
+  PR #151 merged all hosted checks green as
+  `ce5b17e400b675c7dd81f6174c3eb8f337fdefad`, #140 closed, and #152 opened as
+  the local read-only calibration/blind-holdout freezer slice. Fresh capability
+  attestation found the private resume, mixed source, and local evidence env
+  roots unconfigured, so no private file was read and `$HOME` was not inferred.
+  This bounded transition changes machine state only; classifier and production
+  behavior remain out of scope.
 
 ## Slice Status
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S702 | #152 local benchmark freezer selected | #151 merged all-green as `ce5b17e400b675c7dd81f6174c3eb8f337fdefad`; #140 closed; #152 opened; fresh configured-root attestation is false for all three private inputs. | #37/#152 remain open. Implement synthetic smoke next; private freeze must end `blocked_permission` while roots remain unconfigured. No classifier/production/GUI work or completion claim. |
 | S701 | #140 frozen public benchmark contract candidate | PR #142 merged all-green. RED: schema/checker absent. GREEN: 9 frozen synthetic samples, 15 negative cases, precision 1.0, contamination 0, completeness 0.75; required gates pass. | #37/#140 remain open until hosted acceptance. No private/classifier/production/GUI work or completion claim. |
 | S700 | #140 issue-centric restoration candidate prepared | PR #149 merged all-green; #143 closed; intent: https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4933072676. Merged-main focused tests and required gates pass before the exact ten-path reverse. | #37/#140 and PR #142 remain open. No production/private/classifier/GUI work, gate weakening, bypass, or completion claim. |
 | S699 | #143 atomic redaction-counter repair candidate | Intent: https://github.com/FrankQDWang/resume-ir/issues/143#issuecomment-4932928934. RED observed worker leakage; GREEN regression, three existing assertions, 20/20 parallel lib runs, full crate, Rust checks, and required gates pass. PR #144 closed. | #37/#140/#143 and PR #142 remain open. No production/private/classifier/GUI work, serialization, or bypass. |
@@ -3293,6 +3302,18 @@ guards, local runtime discovery, and PR #9 CI state.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S702
+
+- Fresh GitHub truth: PR #151 is merged at `ce5b17e400b675c7dd81f6174c3eb8f337fdefad`,
+  #140 is closed, #152 and parent #37 are open, and no mixed-import train PR is
+  open before this transition.
+- Fresh capability attestation reports no configured private resume root, mixed
+  source root, or local evidence directory. No private read occurred and `$HOME`
+  remains unauthorized.
+- Boundary: exact #140 -> #152 machine-state transition only; no classifier,
+  production index change, private evidence, GUI/query/L4 work, bypass, or
+  readiness/completion claim.
 
 ### S701
 
