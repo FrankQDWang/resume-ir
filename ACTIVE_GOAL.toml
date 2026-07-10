@@ -19,10 +19,10 @@ production_code_allowed = false
 private_benchmark_allowed = true
 configured_private_roots_required = true
 home_mixed_root_requires_explicit_user_authorization = true
-home_mixed_root_authorized = false
+home_mixed_root_authorized = true
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #152 may implement only the local read-only calibration and sealed blind-holdout freezer plus synthetic smoke. Private reads require all configured roots; HOME is not authorized or inferred. Classifier and production indexing remain out of scope."
+scope_exception_reason = "No exception is used. Issue #152 may implement only the local read-only calibration and sealed blind-holdout freezer plus synthetic smoke. The user explicitly authorized read-only HOME sampling with required exclusions; private outputs remain local-only. Classifier and production indexing remain out of scope."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "03_next_goal_高性能本地检索GUI闭环/",

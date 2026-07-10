@@ -2710,11 +2710,18 @@ guards, local runtime discovery, and PR #9 CI state.
   roots unconfigured, so no private file was read and `$HOME` was not inferred.
   This bounded transition changes machine state only; classifier and production
   behavior remain out of scope.
+- S703 implements #152's local freezer after public-safe `$HOME` authorization;
+  cross-platform smoke covers scope, VCS, immutable content, layers, and privacy.
+  Final v2 used all 14,439 eligible files: depth 3611/3610/3609/3609;
+  clean/ordinary source 8,721/5,718; calibration/holdout 11,551/2,888; 7
+  resume-only and 15 mixed directories. Exclusions left fewer than 20,000, so
+  no filler was added. Modes are 0700/0600; verify passed; no private artifact is public.
 
 ## Slice Status
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S703 | #152 local freezer implemented and private corpus frozen | Synthetic freezer smoke passes, including Git-worktree exclusion and large-file middle mutation. Final v2 aggregate: 14,439 files, 0-3 depth nearly equal, 11,551 calibration, 2,888 sealed holdout, 7 resume-only and 15 mixed directories, keyed full-content HMAC manifests, aggregate-only public output with all leakage flags false, local permissions 0700/0600. | 20,000 was not reachable after required exclusions, so the authorized maximum was used. Ordinary-source labels are provenance-based; no classifier/index/readiness claim. |
 | S702 | #152 local benchmark freezer selected | #151 merged all-green as `ce5b17e400b675c7dd81f6174c3eb8f337fdefad`; #140 closed; #152 opened; fresh configured-root attestation is false for all three private inputs. | #37/#152 remain open. Implement synthetic smoke next; private freeze must end `blocked_permission` while roots remain unconfigured. No classifier/production/GUI work or completion claim. |
 | S701 | #140 frozen public benchmark contract candidate | PR #142 merged all-green. RED: schema/checker absent. GREEN: 9 frozen synthetic samples, 15 negative cases, precision 1.0, contamination 0, completeness 0.75; required gates pass. | #37/#140 remain open until hosted acceptance. No private/classifier/production/GUI work or completion claim. |
 | S700 | #140 issue-centric restoration candidate prepared | PR #149 merged all-green; #143 closed; intent: https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4933072676. Merged-main focused tests and required gates pass before the exact ten-path reverse. | #37/#140 and PR #142 remain open. No production/private/classifier/GUI work, gate weakening, bypass, or completion claim. |

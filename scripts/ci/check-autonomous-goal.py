@@ -184,7 +184,7 @@ def main() -> int:
     )
     require_bool(
         active_slice.get("home_mixed_root_authorized"),
-        False,
+        True,
         "scope.active_slice.home_mixed_root_authorized",
     )
     require_string(
