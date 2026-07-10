@@ -2716,11 +2716,24 @@ guards, local runtime discovery, and PR #9 CI state.
   clean/ordinary source 8,721/5,718; calibration/holdout 11,551/2,888; 7
   resume-only and 15 mixed directories. Exclusions left fewer than 20,000, so
   no filler was added. Modes are 0700/0600; verify passed; no private artifact is public.
+- S704 implements #155's deterministic precision-first classifier core without
+  storage or index admission wiring. The unchanged frozen public synthetic set
+  produces 3 `resume_candidate`, 3 `non_resume`, 1 `needs_review`, 1
+  `ocr_backlog`, and 1 `failed`; only the three synthetic true resumes are
+  admitted, yielding synthetic precision 1.0, contamination 0, and completeness
+  0.75 with `claim=no_claim`. Admission requires two exact heading families
+  including experience plus in-section career-history evidence; non-resume
+  requires a coherent genre/evidence pair, and conflicts,
+  weak evidence, or a single signal fail closed. Pre-OCR backlog is explicit;
+  an empty post-extraction body fails terminally. No private layer, real searchable index, stage timing,
+  clean-vs-mixed overhead, H-tier/resource benchmark, or product-level metric is
+  claimed; public evidence is synthetic aggregate only.
 
 ## Slice Status
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S704 | #155 deterministic classifier core implemented | RED: the workspace had no `resume-classifier` package. GREEN: 7 Rust tests run the unchanged 9-sample frozen public fixture through the production API and cover five states, precision-first admission, corroborated rejection, JD/template/weak/metadata independence, bounded reasons, deterministic output, and debug redaction. Aggregate: candidate/non-resume/review/OCR/failed = 3/3/1/1/1; synthetic precision 1.0, contamination 0, completeness 0.75; privacy flags remain false. | #37/#155 remain open until hosted acceptance. This slice does not persist audit state, gate full-text/field/vector admission, reclassify OCR output, read calibration/holdout, measure timings or overhead, or claim product correctness/readiness. |
 | S703 | #152 local freezer implemented and private corpus frozen | Synthetic freezer smoke passes, including Git-worktree exclusion and large-file middle mutation. Final v2 aggregate: 14,439 files, 0-3 depth nearly equal, 11,551 calibration, 2,888 sealed holdout, 7 resume-only and 15 mixed directories, keyed full-content HMAC manifests, aggregate-only public output with all leakage flags false, local permissions 0700/0600. | 20,000 was not reachable after required exclusions, so the authorized maximum was used. Ordinary-source labels are provenance-based; no classifier/index/readiness claim. |
 | S702 | #152 local benchmark freezer selected | #151 merged all-green as `ce5b17e400b675c7dd81f6174c3eb8f337fdefad`; #140 closed; #152 opened; fresh configured-root attestation is false for all three private inputs. | #37/#152 remain open. Implement synthetic smoke next; private freeze must end `blocked_permission` while roots remain unconfigured. No classifier/production/GUI work or completion claim. |
 | S701 | #140 frozen public benchmark contract candidate | PR #142 merged all-green. RED: schema/checker absent. GREEN: 9 frozen synthetic samples, 15 negative cases, precision 1.0, contamination 0, completeness 0.75; required gates pass. | #37/#140 remain open until hosted acceptance. No private/classifier/production/GUI work or completion claim. |
@@ -3309,6 +3322,29 @@ guards, local runtime discovery, and PR #9 CI state.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S704
+
+- Fresh merged-main and #155 truth confirmed that parser-success/non-empty text
+  still becomes searchable and no production classifier/storage record exists.
+- RED: `cargo test -p resume-classifier --locked` exited 101 because the package
+  did not exist. GREEN adds a zero-production-dependency crate; its 7 tests pass
+  against the unchanged frozen public fixture and precision-first negative
+  controls. `cargo clippy -p resume-classifier --all-targets --locked -- -D
+  warnings`, focused `cargo check`, formatting, diff checks, and rust-analyzer
+  diagnostics pass; rust-analyzer reports only existing cfg inactive-code weak
+  warnings.
+- Public synthetic sample size is 9. Classification/admission counts are
+  3 candidate/searchable-intent, 3 non-resume, 1 review, 1 OCR backlog, and 1
+  failed. Synthetic indexed precision is 1.0, contamination is 0, and resume
+  completeness is 0.75. No actual searchable index, private calibration or
+  blind holdout is run, so import stage timings, clean-vs-mixed overhead,
+  throughput, and H-tier/resource budget are not applicable and not claimed.
+- Privacy: only committed synthetic text is read. No real file, filename, path,
+  label detail, hash, query, result, private manifest, diagnostic package,
+  token, or raw matched value enters output or git. Scope excludes persistence,
+  parse/OCR/index admission, GUI/query/L2/L4 work, private tuning, and
+  readiness/completion claims.
 
 ### S702
 

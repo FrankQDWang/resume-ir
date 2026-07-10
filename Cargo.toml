@@ -14,6 +14,7 @@ members = [
     "crates/privacy",
     "crates/text-normalizer",
     "crates/sectionizer",
+    "crates/resume-classifier",
     "crates/extractor-rules",
     "crates/embedder",
     "crates/index-fulltext",

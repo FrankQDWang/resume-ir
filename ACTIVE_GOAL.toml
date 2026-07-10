@@ -12,31 +12,27 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#152"
-name = "freeze_private_mixed_calibration_and_blind_holdout_locally"
+issue = "#155"
+name = "implement_deterministic_precision_first_classifier_core"
 contract_change_allowed = true
-production_code_allowed = false
-private_benchmark_allowed = true
-configured_private_roots_required = true
+production_code_allowed = true
+private_benchmark_allowed = false
+configured_private_roots_required = false
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = true
-unconfigured_private_run_terminal = "blocked_permission"
+unconfigured_private_run_terminal = "not_applicable_public_synthetic_only"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #152 may implement only the local read-only calibration and sealed blind-holdout freezer plus synthetic smoke. The user explicitly authorized read-only HOME sampling with required exclusions; private outputs remain local-only. Classifier and production indexing remain out of scope."
+scope_exception_reason = "No exception is used. Issue #155 may add only the deterministic classifier core and frozen public-synthetic tests. Storage, index admission, OCR wiring, private calibration, GUI, query, and performance work remain out of scope."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "03_next_goal_高性能本地检索GUI闭环/",
   "PROGRESS.md",
   "perf/",
-  "scripts/ci/check-performance-contracts.py",
-  "scripts/ci/check-mixed-import-contracts.py",
-  "scripts/ci/check-mixed-import-benchmark.sh",
+  "Cargo.toml",
+  "Cargo.lock",
+  "crates/resume-classifier/",
   "scripts/ci/check-autonomous-goal.py",
-  "scripts/ci/check-loop-state.py",
-  "scripts/ci/check-pr-budget.py",
-  "scripts/ci/check-private-evidence-redaction.py",
   "scripts/ci/check-gate-integrity.py",
-  "scripts/local/prepare-mixed-import-benchmark.py",
 ]
 
 [contracts]

@@ -3,16 +3,16 @@
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
   "workflow_state": "pr_opened",
   "experiment_state": "contract_locked",
-  "evidence_lane": "w1_private",
+  "evidence_lane": "smoke",
   "contract_pins": {
-    "active_goal_sha256": "19d89d161066140efa1eb386efe80df5d13af146a7287cdc6b30837a0258cd34",
+    "active_goal_sha256": "1486fc814a9c59a72e007caa6ed00a29a7d055d34f06aa7ed2e0832062ff800d",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "d49fb4b52124bdab5e30a80789367632f179ad57"
+    "git_head_sha": "70355cc97832ca20f25e7c7df55afbc0dc950fa2"
   },
-  "current_slice": "#152 freeze local mixed calibration and sealed blind holdout benchmark",
+  "current_slice": "#155 implement deterministic precision-first classifier core",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -68,24 +68,44 @@
       "from": "evidence_review",
       "to": "pr_opened",
       "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/154"
+    },
+    {
+      "from": "pr_opened",
+      "to": "next_issue_or_goal_complete",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/152#issuecomment-4934117569"
+    },
+    {
+      "from": "next_issue_or_goal_complete",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/155"
+    },
+    {
+      "from": "slice_selected",
+      "to": "evidence_review",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/155#issuecomment-4935093199"
+    },
+    {
+      "from": "evidence_review",
+      "to": "pr_opened",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/156"
     }
   ],
   "verification": {
     "commands": [
       {
-        "command": "gh pr view #154",
+        "command": "cargo check --workspace --all-targets --all-features --locked",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/154"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/155"
       },
       {
-        "command": "gh issue view #152",
+        "command": "gh issue view #155",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/152"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/155"
       },
       {
-        "command": "python3 scripts/ci/check-mixed-import-contracts.py && python3 scripts/local/prepare-mixed-import-benchmark.py verify >/dev/null && python3 scripts/ci/check-performance-contracts.py && python3 scripts/ci/check-autonomous-goal.py && python3 scripts/ci/check-loop-state.py && ./scripts/ci/guard-public-repo.sh",
+        "command": "cargo test -p resume-classifier --locked",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/152#issuecomment-4933964443"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/155"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
@@ -110,13 +130,13 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#152",
+    "primary_issue": "#155",
     "active_prs": [
-      "#154"
+      "#156"
     ],
     "open_blockers": [
       "#37",
-      "#152"
+      "#155"
     ]
   }
 }

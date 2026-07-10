@@ -7,14 +7,12 @@ If it conflicts with older goal documents, `ACTIVE_GOAL.toml` and this document 
 
 本文件定义高性能本地检索、GUI、私有 benchmark 和 Codex 闭环验证阶段的无人值守交付合同。运行中不再依赖中途人类确认；所有权限、边界、证据和停止条件必须在启动前写入机器合同。
 
-P1 的公开起点是 `Synthetic Smoke Baseline Contract`：它只实现
-synthetic/public fixture 上的 benchmark harness、redacted report、artifact manifest
-和 fail-closed public contract checks。#138 product-capability audit 已在 #137
-failed/reverted L4 hypothesis 后完成，#140 已冻结 public mixed benchmark contract
-并关闭。当前 linked issue #152 只实现显式配置 roots 下的本地 read-only
-calibration/blind-holdout freezer 和 synthetic smoke；它不推断 `$HOME`，roots
-缺失时记录 `blocked_permission`，且不实现 precision-first classifier、Tauri GUI、
-query hot path 或新的 L4 import 微优化。后续真实 D10K private
+P1 的公开起点是 `Synthetic Smoke Baseline Contract`。#138/#140 已完成 audit
+和 public contract，#152 已在授权根下冻结 local calibration/blind holdout 并
+关闭。当前 linked issue #155 只实现 deterministic precision-first classifier
+core 和 frozen public-synthetic tests；storage/index admission、OCR wiring、
+private calibration、Tauri GUI、query hot path 和 L4 import 优化仍在范围外。
+后续真实 D10K private
 calibration、resident daemon benchmark、热查询路径优化和 GUI/manual 实现必须从
 本文件、`ACTIVE_GOAL.toml` 和 linked GitHub issue 派生。
 

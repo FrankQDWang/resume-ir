@@ -163,18 +163,18 @@ def main() -> int:
         require_bool(permissions.get(key), False, f"autonomous_delivery.permissions.{key}")
 
     active_slice = active_goal.get("scope", {}).get("active_slice", {})
-    require_string(active_slice.get("issue"), "#152", "scope.active_slice.issue")
+    require_string(active_slice.get("issue"), "#155", "scope.active_slice.issue")
     require_string(
         active_slice.get("name"),
-        "freeze_private_mixed_calibration_and_blind_holdout_locally",
+        "implement_deterministic_precision_first_classifier_core",
         "scope.active_slice.name",
     )
     require_bool(active_slice.get("contract_change_allowed"), True, "scope.active_slice.contract_change_allowed")
-    require_bool(active_slice.get("production_code_allowed"), False, "scope.active_slice.production_code_allowed")
-    require_bool(active_slice.get("private_benchmark_allowed"), True, "scope.active_slice.private_benchmark_allowed")
+    require_bool(active_slice.get("production_code_allowed"), True, "scope.active_slice.production_code_allowed")
+    require_bool(active_slice.get("private_benchmark_allowed"), False, "scope.active_slice.private_benchmark_allowed")
     require_bool(
         active_slice.get("configured_private_roots_required"),
-        True,
+        False,
         "scope.active_slice.configured_private_roots_required",
     )
     require_bool(
@@ -189,29 +189,25 @@ def main() -> int:
     )
     require_string(
         active_slice.get("unconfigured_private_run_terminal"),
-        "blocked_permission",
+        "not_applicable_public_synthetic_only",
         "scope.active_slice.unconfigured_private_run_terminal",
     )
     require_bool(active_slice.get("scope_exception"), False, "scope.active_slice.scope_exception")
     require_non_empty_string(active_slice.get("scope_exception_reason"), "scope.active_slice.scope_exception_reason")
     allowed_paths = require_list(active_slice.get("allowed_paths"), "scope.active_slice.allowed_paths")
-    for required_path in [
-        "scripts/local/prepare-mixed-import-benchmark.py",
-        "scripts/ci/check-mixed-import-benchmark.sh",
-        "perf/",
-    ]:
+    for required_path in ["Cargo.toml", "Cargo.lock", "crates/resume-classifier/", "perf/"]:
         if required_path not in allowed_paths:
-            fail(f"scope.active_slice.allowed_paths: missing #152 path {required_path!r}")
+            fail(f"scope.active_slice.allowed_paths: missing #155 path {required_path!r}")
     production_prefixes = ("crates/", "src/", "app/", "apps/")
     production_paths = [
         path
         for path in allowed_paths
         if isinstance(path, str) and path.startswith(production_prefixes)
     ]
-    if production_paths:
+    if production_paths != ["crates/resume-classifier/"]:
         fail(
-            "scope.active_slice.allowed_paths: #152 local-freeze slice must not allow "
-            f"production paths {production_paths!r}"
+            "scope.active_slice.allowed_paths: #155 classifier-core slice must allow only "
+            f"crates/resume-classifier/, found {production_paths!r}"
         )
 
     gui = active_goal.get("gui")
