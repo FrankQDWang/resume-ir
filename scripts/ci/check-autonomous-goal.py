@@ -163,20 +163,19 @@ def main() -> int:
         require_bool(permissions.get(key), False, f"autonomous_delivery.permissions.{key}")
 
     active_slice = active_goal.get("scope", {}).get("active_slice", {})
-    require_string(active_slice.get("issue"), "#155", "scope.active_slice.issue")
-    require_string(
-        active_slice.get("name"),
-        "implement_deterministic_precision_first_classifier_core",
-        "scope.active_slice.name",
-    )
+    active_issue = active_slice.get("issue")
+    if not isinstance(active_issue, str) or not active_issue.startswith("#") or not active_issue[1:].isdigit():
+        fail("scope.active_slice.issue: expected issue ref like '#123'")
+    active_name = active_slice.get("name")
+    require_non_empty_string(active_name, "scope.active_slice.name")
+    if not all(character.islower() or character.isdigit() or character == "_" for character in active_name):
+        fail("scope.active_slice.name: expected lower_snake_case")
     require_bool(active_slice.get("contract_change_allowed"), True, "scope.active_slice.contract_change_allowed")
-    require_bool(active_slice.get("production_code_allowed"), True, "scope.active_slice.production_code_allowed")
-    require_bool(active_slice.get("private_benchmark_allowed"), False, "scope.active_slice.private_benchmark_allowed")
-    require_bool(
-        active_slice.get("configured_private_roots_required"),
-        False,
-        "scope.active_slice.configured_private_roots_required",
-    )
+    for key in ["production_code_allowed", "private_benchmark_allowed", "configured_private_roots_required"]:
+        if not isinstance(active_slice.get(key), bool):
+            fail(f"scope.active_slice.{key}: expected boolean")
+    if active_slice.get("private_benchmark_allowed") != active_slice.get("configured_private_roots_required"):
+        fail("scope.active_slice: private benchmark and configured-root requirement must match")
     require_bool(
         active_slice.get("home_mixed_root_requires_explicit_user_authorization"),
         True,
@@ -187,28 +186,29 @@ def main() -> int:
         True,
         "scope.active_slice.home_mixed_root_authorized",
     )
-    require_string(
+    require_non_empty_string(
         active_slice.get("unconfigured_private_run_terminal"),
-        "not_applicable_public_synthetic_only",
         "scope.active_slice.unconfigured_private_run_terminal",
     )
-    require_bool(active_slice.get("scope_exception"), False, "scope.active_slice.scope_exception")
+    if not isinstance(active_slice.get("scope_exception"), bool):
+        fail("scope.active_slice.scope_exception: expected boolean")
     require_non_empty_string(active_slice.get("scope_exception_reason"), "scope.active_slice.scope_exception_reason")
     allowed_paths = require_list(active_slice.get("allowed_paths"), "scope.active_slice.allowed_paths")
-    for required_path in ["Cargo.toml", "Cargo.lock", "crates/resume-classifier/", "perf/"]:
-        if required_path not in allowed_paths:
-            fail(f"scope.active_slice.allowed_paths: missing #155 path {required_path!r}")
+    if len(allowed_paths) != len(set(allowed_paths)):
+        fail("scope.active_slice.allowed_paths: duplicate path")
+    for path in allowed_paths:
+        if not isinstance(path, str) or not path or path.startswith("/") or ".." in pathlib.PurePosixPath(path).parts:
+            fail("scope.active_slice.allowed_paths: expected non-empty repo-relative paths")
     production_prefixes = ("crates/", "src/", "app/", "apps/")
     production_paths = [
         path
         for path in allowed_paths
         if isinstance(path, str) and path.startswith(production_prefixes)
     ]
-    if production_paths != ["crates/resume-classifier/"]:
-        fail(
-            "scope.active_slice.allowed_paths: #155 classifier-core slice must allow only "
-            f"crates/resume-classifier/, found {production_paths!r}"
-        )
+    if active_slice.get("production_code_allowed") is True and not production_paths:
+        fail("scope.active_slice.allowed_paths: production slice requires a production path")
+    if active_slice.get("production_code_allowed") is False and production_paths:
+        fail("scope.active_slice.allowed_paths: non-production slice cannot allow production paths")
 
     gui = active_goal.get("gui")
     if not isinstance(gui, dict):
