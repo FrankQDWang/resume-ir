@@ -5,14 +5,14 @@
   "experiment_state": "contract_locked",
   "evidence_lane": "smoke",
   "contract_pins": {
-    "active_goal_sha256": "1486fc814a9c59a72e007caa6ed00a29a7d055d34f06aa7ed2e0832062ff800d",
+    "active_goal_sha256": "b116cebc4c1203fd65e2e2f6701c40f645f2563272eda648b45bee10bd85ed36",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "70355cc97832ca20f25e7c7df55afbc0dc950fa2"
+    "git_head_sha": "a017bf827d95ff021afd0ae4dcd0b7ceb7e076dc"
   },
-  "current_slice": "#155 implement deterministic precision-first classifier core",
+  "current_slice": "#157 persist durable typed classification audit records",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -88,24 +88,49 @@
       "from": "evidence_review",
       "to": "pr_opened",
       "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/156"
+    },
+    {
+      "from": "pr_opened",
+      "to": "next_issue_or_goal_complete",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/155#issuecomment-4935253115"
+    },
+    {
+      "from": "next_issue_or_goal_complete",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/157"
+    },
+    {
+      "from": "slice_selected",
+      "to": "pr_opened",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/158"
     }
   ],
   "verification": {
     "commands": [
       {
-        "command": "cargo check --workspace --all-targets --all-features --locked",
+        "command": "python3 scripts/ci/check-loop-state.py",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/155"
+        "evidence_ref": "perf/current-loop-state.json"
       },
       {
-        "command": "gh issue view #155",
+        "command": "./scripts/ci/guard-public-repo.sh",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/155"
+        "evidence_ref": "scripts/ci/guard-public-repo.sh"
       },
       {
-        "command": "cargo test -p resume-classifier --locked",
+        "command": "cargo test -p meta-store --test s3_sqlite migrations_are_idempotent_and_schema_v1_is_queryable --locked -- --exact",
+        "exit_code": 101,
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/157"
+      },
+      {
+        "command": "cargo test -p meta-store classification::tests::five_states_round_trip_and_visible_counts_exclude_soft_deleted_records --locked -- --exact",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/155"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/157"
+      },
+      {
+        "command": "cargo test --workspace --locked",
+        "exit_code": 0,
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/157"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
@@ -130,13 +155,13 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#155",
+    "primary_issue": "#157",
     "active_prs": [
-      "#156"
+      "#158"
     ],
     "open_blockers": [
       "#37",
-      "#155"
+      "#157"
     ]
   }
 }

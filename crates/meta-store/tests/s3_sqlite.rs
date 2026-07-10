@@ -4,14 +4,15 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    Candidate, CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
-    EntityMentionId, EntityType, FileExtension, ImportRootKind, ImportRootPreset,
-    ImportScanBudgetKind, ImportScanError, ImportScanErrorKind, ImportScanErrorOperation,
-    ImportScanErrorSummary, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
-    ImportTaskStatus, IndexState, IndexStateStatus, IngestJob, IngestJobFailureKind, IngestJobId,
-    IngestJobKind, IngestJobStatus, MetaStore, MetadataEncryptionState, OcrPageCacheEntry,
-    OcrPageCacheKey, OcrPageCacheStatus, OcrWordBox, ResumeVersion, ResumeVersionId,
-    ResumeVisibility, SearchableImportDocument, UnixTimestamp, WorkerTaskControl, WorkerTaskKind,
+    Candidate, CandidateId, ClassificationStatus, ContactHash, Document,
+    DocumentClassificationRecord, DocumentId, DocumentStatus, EntityMention, EntityMentionId,
+    EntityType, FileExtension, ImportRootKind, ImportRootPreset, ImportScanBudgetKind,
+    ImportScanError, ImportScanErrorKind, ImportScanErrorOperation, ImportScanErrorSummary,
+    ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexState,
+    IndexStateStatus, IngestJob, IngestJobFailureKind, IngestJobId, IngestJobKind, IngestJobStatus,
+    MetaStore, MetadataEncryptionState, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus,
+    OcrWordBox, ReasonCode, ResumeVersion, ResumeVersionId, ResumeVisibility, ReviewDisposition,
+    SearchableImportDocument, UnixTimestamp, WorkerTaskControl, WorkerTaskKind,
 };
 use rusqlite::{params, Connection};
 
@@ -24,9 +25,9 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     let first = store.run_migrations().unwrap();
     assert_eq!(
         first.applied_versions(),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,]
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,]
     );
-    assert_eq!(store.schema_version().unwrap(), 21);
+    assert_eq!(store.schema_version().unwrap(), 22);
 
     for table_name in [
         "candidate",
@@ -44,13 +45,15 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
         "import_task_cancellation",
         "query_observation",
         "candidate_contact_conflict",
+        "document_classification",
+        "document_classification_reason",
     ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 21);
+    assert_eq!(store.schema_version().unwrap(), 22);
 }
 
 #[test]
@@ -84,7 +87,7 @@ fn encrypted_metadata_store_requires_key_and_survives_reopen_without_plaintext_h
         assert_eq!(store.metadata_encryption_state().label(), "sqlcipher");
         store.run_migrations().unwrap();
         store.upsert_document(&document).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 21);
+        assert_eq!(store.schema_version().unwrap(), 22);
     }
 
     let encrypted_bytes = fs::read(&db_path).unwrap();
@@ -131,7 +134,7 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         plaintext.run_migrations().unwrap();
         plaintext.upsert_document(&document).unwrap();
         plaintext.upsert_resume_version(&version).unwrap();
-        assert_eq!(plaintext.schema_version().unwrap(), 21);
+        assert_eq!(plaintext.schema_version().unwrap(), 22);
         assert_eq!(
             plaintext.metadata_encryption_state(),
             MetadataEncryptionState::Plaintext
@@ -146,7 +149,7 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         migrated.metadata_encryption_state(),
         MetadataEncryptionState::SqlCipher
     );
-    assert_eq!(migrated.schema_version().unwrap(), 21);
+    assert_eq!(migrated.schema_version().unwrap(), 22);
     assert_eq!(
         migrated.document_by_id(&document.id).unwrap().unwrap().id,
         document.id
@@ -2259,7 +2262,7 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
         assert_eq!(report.applied_versions(), &[6, 7, 15]);
-        assert_eq!(reopened.schema_version().unwrap(), 21);
+        assert_eq!(reopened.schema_version().unwrap(), 22);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -2696,7 +2699,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 21);
+        assert_eq!(reopened.schema_version().unwrap(), 22);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -3226,10 +3229,16 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             report.applied_versions(),
             &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15]
         );
-        assert_eq!(reopened.schema_version().unwrap(), 21);
+        assert_eq!(reopened.schema_version().unwrap(), 22);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
-            Some(document)
+            Some(document.clone())
+        );
+        assert_eq!(
+            reopened
+                .document_classification_by_id(&document.id)
+                .unwrap(),
+            None
         );
 
         reopened.insert_import_task(&task).unwrap();
@@ -3260,7 +3269,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 21);
+        assert_eq!(reopened.schema_version().unwrap(), 22);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 
@@ -3441,6 +3450,14 @@ fn foreign_keys_reject_missing_parents_and_delete_cascades_children() {
         3,
     )
     .resume_version_id(version.id.clone());
+    let classification = DocumentClassificationRecord {
+        document_id: document.id.clone(),
+        status: ClassificationStatus::ResumeCandidate,
+        classifier_epoch: "precision_first_v1".to_string(),
+        reason_codes: vec![ReasonCode::CorroboratedResumeSignals],
+        classified_at: UnixTimestamp::from_unix_seconds(1_800_000_001),
+        review_disposition: ReviewDisposition::NotRequired,
+    };
 
     {
         let store = MetaStore::open(&db_path).unwrap();
@@ -3454,10 +3471,20 @@ fn foreign_keys_reject_missing_parents_and_delete_cascades_children() {
         store.upsert_document(&document).unwrap();
         store.upsert_resume_version(&version).unwrap();
         store.insert_ingest_job(&ingest_job).unwrap();
+        store
+            .upsert_document_classification(&classification)
+            .unwrap();
     }
 
     {
         let connection = open_raw_connection(&db_path);
+        for statement in [
+            "UPDATE document_classification SET classifier_epoch = 'Invalid-Epoch'",
+            "UPDATE document_classification SET status = 'needs_review'",
+            "INSERT INTO document_classification_reason SELECT document_id, 1, 'unknown_reason' FROM document_classification",
+        ] {
+            assert!(connection.execute(statement, []).is_err());
+        }
         connection
             .execute(
                 "DELETE FROM document WHERE id = ?1",
@@ -3471,6 +3498,12 @@ fn foreign_keys_reject_missing_parents_and_delete_cascades_children() {
         assert_eq!(reopened.document_by_id(&document.id).unwrap(), None);
         assert_eq!(reopened.resume_version_by_id(&version.id).unwrap(), None);
         assert_eq!(reopened.ingest_job_by_id(&ingest_job.id).unwrap(), None);
+        assert_eq!(
+            reopened
+                .document_classification_by_id(&document.id)
+                .unwrap(),
+            None
+        );
     }
 
     remove_temp_db(&db_path);

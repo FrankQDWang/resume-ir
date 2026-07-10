@@ -20,6 +20,13 @@ pub use core_domain::{
 };
 use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension, Row};
 
+mod classification;
+
+pub use classification::{
+    ClassificationStatus, DocumentClassificationCounts, DocumentClassificationRecord, ReasonCode,
+    ReviewDisposition,
+};
+
 const SCHEMA_VERSION_V1: u32 = 1;
 const SCHEMA_VERSION_V2: u32 = 2;
 const SCHEMA_VERSION_V3: u32 = 3;
@@ -41,6 +48,7 @@ const SCHEMA_VERSION_V18: u32 = 18;
 const SCHEMA_VERSION_V19: u32 = 19;
 const SCHEMA_VERSION_V20: u32 = 20;
 const SCHEMA_VERSION_V21: u32 = 21;
+const SCHEMA_VERSION_V22: u32 = 22;
 const QUERY_OBSERVATION_RETENTION_ROWS: i64 = 10_000;
 const METADATA_STORE_FILE: &str = "metadata.sqlite3";
 const METADATA_ENCRYPTION_KEY_LEN: usize = 32;
@@ -811,6 +819,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V19, SCHEMA_V19),
             (SCHEMA_VERSION_V20, SCHEMA_V20),
             (SCHEMA_VERSION_V21, SCHEMA_V21),
+            (SCHEMA_VERSION_V22, SCHEMA_V22),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -5365,6 +5374,45 @@ ALTER TABLE index_state
 
 ALTER TABLE index_state
     ADD COLUMN manifest_document_count INTEGER NOT NULL DEFAULT 0 CHECK (manifest_document_count >= 0);
+"#;
+
+const SCHEMA_V22: &str = r#"
+CREATE TABLE document_classification (
+    document_id TEXT PRIMARY KEY NOT NULL,
+    status TEXT NOT NULL CHECK (status IN (
+        'resume_candidate', 'non_resume', 'needs_review', 'ocr_backlog', 'failed'
+    )),
+    classifier_epoch TEXT NOT NULL CHECK (
+        length(classifier_epoch) BETWEEN 1 AND 64
+        AND classifier_epoch NOT GLOB '*[^a-z0-9_]*'
+    ),
+    classified_at_seconds INTEGER NOT NULL CHECK (classified_at_seconds >= 0),
+    review_disposition TEXT NOT NULL CHECK (review_disposition IN ('not_required', 'pending')),
+    CHECK (
+        (status = 'needs_review' AND review_disposition = 'pending')
+        OR (status != 'needs_review' AND review_disposition = 'not_required')
+    ),
+    FOREIGN KEY (document_id) REFERENCES document(id) ON DELETE CASCADE
+);
+
+CREATE TABLE document_classification_reason (
+    document_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL CHECK (ordinal BETWEEN 0 AND 7),
+    reason_code TEXT NOT NULL CHECK (reason_code IN (
+        'profile_heading', 'experience_heading', 'education_heading', 'skills_heading',
+        'career_history_detail', 'invoice_heading', 'invoice_terms', 'meeting_heading',
+        'meeting_workflow', 'manual_heading', 'manual_instructions',
+        'corroborated_resume_signals', 'corroborated_non_resume_signals',
+        'conflicting_signal_families', 'insufficient_signal_families',
+        'empty_normalized_text', 'ocr_required', 'parser_failed'
+    )),
+    PRIMARY KEY (document_id, ordinal),
+    UNIQUE (document_id, reason_code),
+    FOREIGN KEY (document_id) REFERENCES document_classification(document_id) ON DELETE CASCADE
+);
+
+CREATE INDEX document_classification_review_idx
+    ON document_classification(review_disposition, status);
 "#;
 
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
