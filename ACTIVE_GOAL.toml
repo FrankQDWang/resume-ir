@@ -38,6 +38,7 @@ allowed_paths = [
   "perf/current-loop-state.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+  "scripts/ci/check-cli-closed-loop.sh",
 ]
 
 [contracts]
