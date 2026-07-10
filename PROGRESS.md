@@ -2690,11 +2690,18 @@ guards, local runtime discovery, and PR #9 CI state.
   (1 != 0); GREEN isolates worker increments without production changes or
   global serialization. Twenty normal-parallel lib runs, the full crate, Rust
   checks, and required machine gates pass. Restore #140 after merge.
+- S700 restores #140 after PR #149 merged all 14 hosted checks green as
+  `510b6a225e8ed8ce3dc7dc778797ca7a885d3491` and #143 closed. Intent
+  https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4933072676
+  limits this slice to the exact ten-path contract reverse. The #145 cancel-poll
+  and #143 redaction-counter Rust fixes remain unchanged; focused tests and
+  required machine gates pass before PR #142 refresh.
 
 ## Slice Status
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S700 | #140 issue-centric restoration candidate prepared | PR #149 merged all-green; #143 closed; intent: https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4933072676. Merged-main focused tests and required gates pass before the exact ten-path reverse. | #37/#140 and PR #142 remain open. No production/private/classifier/GUI work, gate weakening, bypass, or completion claim. |
 | S699 | #143 atomic redaction-counter repair candidate | Intent: https://github.com/FrankQDWang/resume-ir/issues/143#issuecomment-4932928934. RED observed worker leakage; GREEN regression, three existing assertions, 20/20 parallel lib runs, full crate, Rust checks, and required gates pass. PR #144 closed. | #37/#140/#143 and PR #142 remain open. No production/private/classifier/GUI work, serialization, or bypass. |
 | S698 | #140 issue-centric restoration candidate prepared | PR #147 merged all-green; intent: https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4932743665. Merged-main focused test and required gates passed before the exact ten-path reverse. | #37/#140/#143 and PR #142/#144 remain open. No production/private/classifier/GUI work or bypass. |
 | S697 | #145 issue-centric atomic recovery candidate prepared | Corrected intent: https://github.com/FrankQDWang/resume-ir/issues/145#issuecomment-4932578248. Hosted RED failed only the target test with 31 passing; local gate RED rejected missing/altered Rust; 50/50 focused, 32/32 crate tests, Rust checks, and required gates passed. | #37/#140/#143/#145 and PR #142/#144 remain open. No production semantics, private-data read, classifier/GUI/release claim, or bypass. |
@@ -3279,6 +3286,17 @@ guards, local runtime discovery, and PR #9 CI state.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S700
+
+- PR #149 merged all 14 hosted checks green as
+  `510b6a225e8ed8ce3dc7dc778797ca7a885d3491`; #143 closed and #140 intent is
+  https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4933072676.
+- Exact ten-path reverse restores #140 machine truth. Both merged Rust fixes stay
+  unchanged; focused tests and contract, loop, budget, privacy, workflow, and
+  public guards pass.
+- Boundary: no production/private/classifier/GUI work, raw data, threshold or
+  required-check change, bypass, or readiness/completion claim.
 
 ### S699
 
