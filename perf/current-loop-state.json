@@ -1,7 +1,7 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
+  "workflow_state": "pr_opened",
   "experiment_state": "contract_locked",
   "evidence_lane": "smoke",
   "contract_pins": {
@@ -180,7 +180,8 @@
     {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4937473387"},
     {"from":"slice_selected","to":"branch_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4937473387"},
     {"from":"branch_active","to":"verification_active","evidence_ref":"PROGRESS.md#s708"},
-    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s708"}
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s708"},
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/163"}
   ],
   "verification": {
     "commands": [
@@ -238,7 +239,7 @@
   },
   "github_ledger": {
     "primary_issue": "#159",
-    "active_prs": [],
+    "active_prs": ["#163"],
     "open_blockers": [
       "#37",
       "#159"
