@@ -919,7 +919,7 @@ fn write_resume(path: impl AsRef<Path>, body: impl AsRef<str>) {
     fs::write(
         path,
         format!(
-            "{}\nSUMMARY\nSynthetic search profile.\nEXPERIENCE\nBuilt deterministic local search systems.\n",
+            "SUMMARY\nSynthetic search profile.\nEXPERIENCE\nBuilt deterministic local search systems.\n{}\n",
             body.as_ref().trim_end()
         ),
     )

@@ -3340,6 +3340,11 @@ guards, local runtime discovery, and PR #9 CI state.
 
 ## Command Log
 
+### S707
+
+- #159 now gates parse/OCR completion after normalization/sectionization; exact rerun/rebuild require current `resume_candidate`, V23 quarantines legacy missing/stale rows, and rejected/OCR-backlog rows clear searchable DB/fulltext visibility.
+- Public synthetic production sample n=5 under both sequential/parallel workers: resume/non-resume/review/OCR/failed=1/1/1/1/1; searchable=1, contamination=0, indexed precision=1.0 for this bounded fixture only. Completeness/timing/overhead/budgets were not evaluated; OCR generation/failure requeue and physical vector residue remain open, so #159/readiness stay open. Fresh focused/sequential-workspace/clippy/rust-analyzer/fmt/four-gate evidence passed; only public synthetic data was read and all leakage flags remain false.
+
 ### S706
 
 - Fresh #159 impact audit found that a default production gate would invalidate

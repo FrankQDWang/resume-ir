@@ -26,6 +26,9 @@ pub use classification::{
     ClassificationStatus, DocumentClassificationCounts, DocumentClassificationRecord, ReasonCode,
     ReviewDisposition,
 };
+pub use resume_classifier::{
+    classify as classify_resume, ClassificationResult, ClassifierInput, CLASSIFIER_EPOCH,
+};
 
 const SCHEMA_VERSION_V1: u32 = 1;
 const SCHEMA_VERSION_V2: u32 = 2;
@@ -49,6 +52,7 @@ const SCHEMA_VERSION_V19: u32 = 19;
 const SCHEMA_VERSION_V20: u32 = 20;
 const SCHEMA_VERSION_V21: u32 = 21;
 const SCHEMA_VERSION_V22: u32 = 22;
+const SCHEMA_VERSION_V23: u32 = 23;
 const QUERY_OBSERVATION_RETENTION_ROWS: i64 = 10_000;
 const METADATA_STORE_FILE: &str = "metadata.sqlite3";
 const METADATA_ENCRYPTION_KEY_LEN: usize = 32;
@@ -820,6 +824,7 @@ impl MetaStore {
             (SCHEMA_VERSION_V20, SCHEMA_V20),
             (SCHEMA_VERSION_V21, SCHEMA_V21),
             (SCHEMA_VERSION_V22, SCHEMA_V22),
+            (SCHEMA_VERSION_V23, SCHEMA_V23),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -1032,6 +1037,41 @@ impl MetaStore {
     pub fn deleted_document_ids(&self) -> Result<Vec<DocumentId>> {
         let connection = self.connection.borrow();
         deleted_document_ids_from_connection(&connection)
+    }
+
+    pub fn quarantine_document_searchability(&self, document_id: &DocumentId) -> Result<()> {
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        for table in ["candidate_contact_conflict", "entity_mention"] {
+            transaction
+                .execute(
+                    &format!(
+                        "DELETE FROM {table} WHERE resume_version_id IN (
+                            SELECT id FROM resume_version WHERE document_id = ?1
+                         )"
+                    ),
+                    params![document_id.as_str()],
+                )
+                .map_err(MetaStoreError::storage)?;
+        }
+        transaction
+            .execute(
+                "UPDATE resume_version
+                 SET visibility = 'hidden', candidate_id = NULL
+                 WHERE document_id = ?1",
+                params![document_id.as_str()],
+            )
+            .map_err(MetaStoreError::storage)?;
+        transaction
+            .execute_batch(
+                "UPDATE candidate SET version_count = (
+                    SELECT COUNT(*) FROM resume_version
+                    WHERE resume_version.candidate_id = candidate.id
+                 );
+                 DELETE FROM candidate WHERE version_count = 0;",
+            )
+            .map_err(MetaStoreError::storage)?;
+        transaction.commit().map_err(MetaStoreError::storage)
     }
 
     pub fn purge_deleted_documents(&self) -> Result<usize> {
@@ -5413,6 +5453,59 @@ CREATE TABLE document_classification_reason (
 
 CREATE INDEX document_classification_review_idx
     ON document_classification(review_disposition, status);
+"#;
+
+const SCHEMA_V23: &str = r#"
+CREATE TEMP TABLE classifier_quarantine_document AS
+SELECT document.id
+FROM document AS document
+WHERE document.is_deleted = 0
+  AND document.status IN (
+    'fields_extracted', 'embedding_done', 'indexed_partial', 'searchable'
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM document_classification AS classification
+    WHERE classification.document_id = document.id
+      AND classification.status = 'resume_candidate'
+      AND classification.classifier_epoch = 'precision_first_v1'
+  );
+
+UPDATE index_state
+SET snapshot_token = NULL,
+    status = CASE WHEN status = 'empty' THEN 'empty' ELSE 'stale' END,
+    manifest_document_count = 0
+WHERE state_key = 'default'
+  AND EXISTS (SELECT 1 FROM classifier_quarantine_document);
+
+DELETE FROM candidate_contact_conflict
+WHERE resume_version_id IN (
+  SELECT id FROM resume_version
+  WHERE document_id IN (SELECT id FROM classifier_quarantine_document)
+);
+
+DELETE FROM entity_mention
+WHERE resume_version_id IN (
+  SELECT id FROM resume_version
+  WHERE document_id IN (SELECT id FROM classifier_quarantine_document)
+);
+
+UPDATE resume_version
+SET visibility = 'hidden', candidate_id = NULL
+WHERE document_id IN (SELECT id FROM classifier_quarantine_document);
+
+UPDATE candidate
+SET version_count = (
+  SELECT COUNT(*) FROM resume_version
+  WHERE resume_version.candidate_id = candidate.id
+);
+DELETE FROM candidate WHERE version_count = 0;
+
+UPDATE document
+SET status = 'text_cleaned'
+WHERE id IN (SELECT id FROM classifier_quarantine_document);
+
+DROP TABLE classifier_quarantine_document;
 "#;
 
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {

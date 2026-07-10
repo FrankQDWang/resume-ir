@@ -2,6 +2,8 @@
 // these shape lints for the crate.
 #![allow(clippy::too_many_arguments, clippy::large_enum_variant)]
 
+mod classification;
+
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -25,10 +27,10 @@ use index_fulltext::{
     IndexSection, SnapshotPublishControl, SnapshotPublishPhase,
 };
 use meta_store::{
-    ContactHash, Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
-    ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanError, ImportScanErrorKind,
-    ImportScanErrorOperation, ImportTask, ImportTaskId, ImportTaskStatus, IndexState,
-    IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility,
+    ClassificationStatus, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
+    EntityType, FileExtension, ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanError,
+    ImportScanErrorKind, ImportScanErrorOperation, ImportTask, ImportTaskId, ImportTaskStatus,
+    IndexState, IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility,
     SearchableImportDocument, UnixTimestamp,
 };
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
@@ -40,6 +42,8 @@ use privacy::{ContactHasher, ContactKind};
 use sectionizer::{SectionChunk, Sectionizer};
 use sysinfo::System;
 use text_normalizer::TextNormalizer;
+
+use classification::{is_current, AdmissionDecision};
 
 const PARSE_VERSION: &str = "parser-v1";
 const OCR_PARSE_VERSION: &str = "ocr-v1";
@@ -749,10 +753,14 @@ fn finish_import_file(
             summary.failed_documents += 1;
             summary.failure_counts.increment(kind);
         }
+        ProcessedFile::Excluded
+        | ProcessedFile::UnchangedExcluded
+        | ProcessedFile::UnchangedOcrRequired => {
+            pending_excluded_doc_ids.insert(file.document_id.as_str().to_string());
+        }
         ProcessedFile::UnchangedSearchable => {
             summary.searchable_documents += 1;
         }
-        ProcessedFile::UnchangedOcrRequired => {}
     }
 
     let flushed_searchables = if should_flush_searchable_documents(
@@ -1277,8 +1285,46 @@ pub fn index_ocr_text(
     };
 
     let clean_text = TextNormalizer::normalize_text_only(ocr_text);
+    let sectionizer = Sectionizer::default();
+    let sections = sectionizer.sectionize(&clean_text);
+    let decision = AdmissionDecision::after_sectionization(&clean_text, &sections);
+    let admitted = decision.admits_search_index();
     let pending_doc_ids = BTreeSet::from([document.id.as_str().to_string()]);
-    if clean_text.trim().is_empty() {
+    let version_id = ResumeVersionId::from_non_secret_parts(&[
+        "ocr",
+        document.id.as_str(),
+        OCR_PARSE_VERSION,
+        SCHEMA_VERSION,
+    ]);
+    let existing_candidate_id = store
+        .resume_version_by_id(&version_id)
+        .map_err(ImportPipelineError::store)?
+        .and_then(|version| version.candidate_id);
+    let version = (!clean_text.trim().is_empty()).then(|| ResumeVersion {
+        id: version_id.clone(),
+        document_id: document.id.clone(),
+        candidate_id: if admitted {
+            existing_candidate_id
+        } else {
+            None
+        },
+        parse_version: OCR_PARSE_VERSION.to_string(),
+        schema_version: SCHEMA_VERSION.to_string(),
+        language_set: language_set(&clean_text),
+        page_count,
+        raw_text: None,
+        clean_text: Some(clean_text.clone()),
+        quality_score: Some(confidence.unwrap_or(0.5)),
+        visibility: if admitted {
+            ResumeVisibility::Searchable
+        } else {
+            ResumeVisibility::Hidden
+        },
+    });
+    document.status = DocumentStatus::OcrDone;
+    document.updated_at = now;
+    if !admitted {
+        persist_non_searchable(store, &document, version.as_ref(), decision, now)?;
         let (snapshot_token, indexed_documents) = write_incremental_full_text_index(
             data_dir,
             store,
@@ -1294,11 +1340,6 @@ pub fn index_ocr_text(
             None,
             ImportResourcePolicy::detect().index_writer_heap_bytes,
         )?;
-        document.status = DocumentStatus::OcrDone;
-        document.updated_at = now;
-        store
-            .upsert_document(&document)
-            .map_err(ImportPipelineError::store)?;
         update_index_state(store, now, snapshot_token, indexed_documents)?;
         return Ok(OcrTextIndexSummary {
             searchable: false,
@@ -1306,30 +1347,13 @@ pub fn index_ocr_text(
         });
     }
 
-    let version_id = ResumeVersionId::from_non_secret_parts(&[
-        "ocr",
-        document.id.as_str(),
-        OCR_PARSE_VERSION,
-        SCHEMA_VERSION,
-    ]);
-    let existing_candidate_id = store
-        .resume_version_by_id(&version_id)
-        .map_err(ImportPipelineError::store)?
-        .and_then(|version| version.candidate_id);
     store
-        .upsert_resume_version(&ResumeVersion {
-            id: version_id.clone(),
-            document_id: document.id.clone(),
-            candidate_id: existing_candidate_id,
-            parse_version: OCR_PARSE_VERSION.to_string(),
-            schema_version: SCHEMA_VERSION.to_string(),
-            language_set: language_set(&clean_text),
-            page_count,
-            raw_text: None,
-            clean_text: Some(clean_text.clone()),
-            quality_score: Some(confidence.unwrap_or(0.5)),
-            visibility: ResumeVisibility::Searchable,
-        })
+        .upsert_document(&document)
+        .map_err(ImportPipelineError::store)?;
+    persist_classification(store, &document.id, decision, now)?;
+    let version = version.expect("admitted normalized text is non-empty");
+    store
+        .upsert_resume_version(&version)
         .map_err(ImportPipelineError::store)?;
     let mentions = entity_mentions_from_rules(&version_id, &clean_text);
     store
@@ -1337,13 +1361,12 @@ pub fn index_ocr_text(
         .map_err(ImportPipelineError::store)?;
     assign_candidate_from_contact_mentions(data_dir, store, &version_id, &mentions)?;
 
-    let sectionizer = Sectionizer::default();
     let pending_index_document = IndexDocument {
         doc_id: document.id.to_string(),
         version_id: version_id.to_string(),
         file_name: document.file_name.clone(),
         clean_text: clean_text.clone(),
-        sections: sections_to_index(sectionizer.sectionize(&clean_text)),
+        sections: sections_to_index(sections),
         is_deleted: document.is_deleted,
     };
     let (snapshot_token, indexed_documents) = write_incremental_full_text_index(
@@ -1672,12 +1695,23 @@ fn incremental_snapshot_documents_with_fallback(
     replacement_documents: Vec<IndexDocument>,
     excluded_doc_ids: &BTreeSet<String>,
 ) -> Result<Vec<IndexDocument>> {
+    let replacement_doc_ids = replacement_documents
+        .iter()
+        .map(|document| document.doc_id.clone())
+        .collect::<BTreeSet<_>>();
     match incremental_snapshot_documents(
         index_root,
         replacement_documents.clone(),
         excluded_doc_ids,
     ) {
-        Ok(index_documents) => Ok(index_documents),
+        Ok(mut index_documents) => {
+            let admitted_doc_ids = current_candidate_document_ids(store)?;
+            index_documents.retain(|document| {
+                replacement_doc_ids.contains(&document.doc_id)
+                    || admitted_doc_ids.contains(&document.doc_id)
+            });
+            Ok(index_documents)
+        }
         Err(_) => {
             let sectionizer = Sectionizer::default();
             let mut rebuilt_documents =
@@ -1691,6 +1725,30 @@ fn incremental_snapshot_documents_with_fallback(
             Ok(rebuilt_documents)
         }
     }
+}
+
+fn current_candidate_document_ids(store: &MetaStore) -> Result<BTreeSet<String>> {
+    let mut admitted = BTreeSet::new();
+    for document in store
+        .visible_documents()
+        .map_err(ImportPipelineError::store)?
+    {
+        if !matches!(
+            document.status,
+            DocumentStatus::Searchable | DocumentStatus::IndexedPartial
+        ) {
+            continue;
+        }
+        let classification = store
+            .document_classification_by_id(&document.id)
+            .map_err(ImportPipelineError::store)?;
+        if classification.as_ref().is_some_and(|record| {
+            is_current(record) && record.status == ClassificationStatus::ResumeCandidate
+        }) {
+            admitted.insert(document.id.to_string());
+        }
+    }
+    Ok(admitted)
 }
 
 fn apply_index_document_delta(
@@ -1940,6 +1998,15 @@ fn persisted_index_documents(
             continue;
         }
 
+        let classification = store
+            .document_classification_by_id(&document.id)
+            .map_err(ImportPipelineError::store)?;
+        if !classification.as_ref().is_some_and(|record| {
+            is_current(record) && record.status == ClassificationStatus::ResumeCandidate
+        }) {
+            continue;
+        }
+
         let versions = store
             .resume_versions_for_document(&document.id)
             .map_err(ImportPipelineError::store)?;
@@ -1959,7 +2026,7 @@ fn index_document_from_resume_version(
     version: &ResumeVersion,
     sectionizer: &Sectionizer,
 ) -> Option<IndexDocument> {
-    if version.visibility == ResumeVisibility::Hidden {
+    if version.visibility != ResumeVisibility::Searchable {
         return None;
     }
 
@@ -2020,6 +2087,7 @@ fn prepare_file_for_parse_inner(
         let processed = match noop_kind {
             ExactRerunNoopKind::Searchable => ProcessedFile::UnchangedSearchable,
             ExactRerunNoopKind::OcrRequired => ProcessedFile::UnchangedOcrRequired,
+            ExactRerunNoopKind::Excluded => ProcessedFile::UnchangedExcluded,
         };
         return Ok(PreparedFile::Ready(ProcessedImportFile { file, processed }));
     }
@@ -2034,8 +2102,7 @@ fn prepare_file_for_parse_inner(
     {
         document.status = DocumentStatus::FailedPermanent;
         document.updated_at = now;
-        measure_result_stage(db_elapsed, || store.upsert_document(&document))
-            .map_err(ImportPipelineError::store)?;
+        measure_result_stage(db_elapsed, || persist_failed(store, &document, now))?;
         return Ok(PreparedFile::Ready(ProcessedImportFile {
             file,
             processed: ProcessedFile::Failed {
@@ -2050,8 +2117,8 @@ fn prepare_file_for_parse_inner(
         Ok(bytes) => bytes,
         Err(_) => {
             document.status = DocumentStatus::FailedRetryable;
-            measure_result_stage(db_elapsed, || store.upsert_document(&document))
-                .map_err(ImportPipelineError::store)?;
+            document.updated_at = now;
+            measure_result_stage(db_elapsed, || persist_failed(store, &document, now))?;
             return Ok(PreparedFile::Ready(ProcessedImportFile {
                 file,
                 processed: ProcessedFile::Failed {
@@ -2217,6 +2284,11 @@ fn parse_work_item_inner(
         PARSE_VERSION,
         SCHEMA_VERSION,
     ]);
+    let sections = measure_stage(&mut post_parser_timings.sectionization, || {
+        Sectionizer::default().sectionize(&clean_text)
+    });
+    let decision = AdmissionDecision::after_sectionization(&clean_text, &sections);
+    let admitted = decision.admits_search_index();
     let version = ResumeVersion {
         id: version_id.clone(),
         document_id: document.id.clone(),
@@ -2230,17 +2302,17 @@ fn parse_work_item_inner(
         raw_text: None,
         clean_text: Some(clean_text.clone()),
         quality_score: Some(0.8),
-        visibility: ResumeVisibility::Searchable,
+        visibility: if admitted {
+            ResumeVisibility::Searchable
+        } else {
+            ResumeVisibility::Hidden
+        },
     };
-    let mentions = entity_mentions_from_rules(&version_id, &clean_text);
-    let sections = measure_stage(&mut post_parser_timings.sectionization, || {
-        Sectionizer::default().sectionize(&clean_text)
-    });
-
-    ParseWorkItemOutput {
-        outcome: ParseWorkOutcome::Searchable {
+    let outcome = if admitted {
+        ParseWorkOutcome::Searchable {
+            decision,
             version: Box::new(version),
-            mentions,
+            mentions: entity_mentions_from_rules(&version_id, &clean_text),
             index_document: Box::new(IndexDocument {
                 doc_id: document.id.to_string(),
                 version_id: version_id.to_string(),
@@ -2249,7 +2321,16 @@ fn parse_work_item_inner(
                 sections: sections_to_index(sections),
                 is_deleted: false,
             }),
-        },
+        }
+    } else {
+        ParseWorkOutcome::Excluded {
+            decision,
+            version: Box::new(version),
+        }
+    };
+
+    ParseWorkItemOutput {
+        outcome,
         pdf_parse_timings,
         post_parser_timings,
     }
@@ -2424,6 +2505,7 @@ fn commit_parse_work_result(
 
     let processed = match outcome {
         ParseWorkOutcome::Searchable {
+            decision,
             version,
             mentions,
             index_document,
@@ -2432,6 +2514,7 @@ fn commit_parse_work_result(
             document.updated_at = now;
             let version = *version;
             measure_result_stage(db_timing, || {
+                persist_classification(store, &document.id, decision, now)?;
                 let (email_hash, phone_hash) = contact_hashes_from_mentions(data_dir, &mentions)?;
                 store
                     .upsert_searchable_import_document(SearchableImportDocument {
@@ -2449,6 +2532,16 @@ fn commit_parse_work_result(
                 index_document,
             }
         }
+        ParseWorkOutcome::Excluded { decision, version } => {
+            document.status = DocumentStatus::TextCleaned;
+            document.updated_at = now;
+            let mut version = *version;
+            version.visibility = ResumeVisibility::Hidden;
+            measure_result_stage(db_timing, || {
+                persist_non_searchable(store, &document, Some(&version), decision, now)
+            })?;
+            ProcessedFile::Excluded
+        }
         ParseWorkOutcome::OcrRequired => ProcessedFile::OcrRequired {
             ocr_job_queued: measure_result_stage(db_timing, || {
                 mark_ocr_required_and_enqueue(store, &mut document, now)
@@ -2457,8 +2550,7 @@ fn commit_parse_work_result(
         ParseWorkOutcome::Failed { status, kind } => {
             document.status = status;
             document.updated_at = now;
-            measure_result_stage(db_timing, || store.upsert_document(&document))
-                .map_err(ImportPipelineError::store)?;
+            measure_result_stage(db_timing, || persist_failed(store, &document, now))?;
             ProcessedFile::Failed { kind }
         }
     };
@@ -2520,6 +2612,7 @@ fn process_file_inner(
         return Ok(match noop_kind {
             ExactRerunNoopKind::Searchable => ProcessedFile::UnchangedSearchable,
             ExactRerunNoopKind::OcrRequired => ProcessedFile::UnchangedOcrRequired,
+            ExactRerunNoopKind::Excluded => ProcessedFile::UnchangedExcluded,
         });
     }
 
@@ -2533,8 +2626,7 @@ fn process_file_inner(
     {
         document.status = DocumentStatus::FailedPermanent;
         document.updated_at = now;
-        measure_result_stage(db_elapsed, || store.upsert_document(&document))
-            .map_err(ImportPipelineError::store)?;
+        measure_result_stage(db_elapsed, || persist_failed(store, &document, now))?;
         return Ok(ProcessedFile::Failed {
             kind: ImportFailureKind::TextTooLarge,
         });
@@ -2546,8 +2638,8 @@ fn process_file_inner(
         Ok(bytes) => bytes,
         Err(_) => {
             document.status = DocumentStatus::FailedRetryable;
-            measure_result_stage(db_elapsed, || store.upsert_document(&document))
-                .map_err(ImportPipelineError::store)?;
+            document.updated_at = now;
+            measure_result_stage(db_elapsed, || persist_failed(store, &document, now))?;
             return Ok(ProcessedFile::Failed {
                 kind: ImportFailureKind::ReadError,
             });
@@ -2591,8 +2683,8 @@ fn process_file_inner(
             .map_err(|error| (error, document.clone())),
         _ => {
             document.status = DocumentStatus::FailedPermanent;
-            measure_result_stage(db_elapsed, || store.upsert_document(&document))
-                .map_err(ImportPipelineError::store)?;
+            document.updated_at = now;
+            measure_result_stage(db_elapsed, || persist_failed(store, &document, now))?;
             return Ok(ProcessedFile::Failed {
                 kind: ImportFailureKind::UnsupportedExtension,
             });
@@ -2620,8 +2712,7 @@ fn process_file_inner(
                     })?,
                 }
             } else {
-                measure_result_stage(db_elapsed, || store.upsert_document(&document))
-                    .map_err(ImportPipelineError::store)?;
+                measure_result_stage(db_elapsed, || persist_failed(store, &document, now))?;
                 ProcessedFile::Failed {
                     kind: ImportFailureKind::from_parser_error(error.kind()),
                 }
@@ -2649,8 +2740,7 @@ fn process_file_inner(
         if file.extension == FileExtension::Txt {
             document.status = DocumentStatus::FailedPermanent;
             document.updated_at = now;
-            measure_result_stage(db_elapsed, || store.upsert_document(&document))
-                .map_err(ImportPipelineError::store)?;
+            measure_result_stage(db_elapsed, || persist_failed(store, &document, now))?;
             return Ok(ProcessedFile::Failed {
                 kind: ImportFailureKind::EmptyText,
             });
@@ -2672,6 +2762,12 @@ fn process_file_inner(
         PARSE_VERSION,
         SCHEMA_VERSION,
     ]);
+    let sections = measure_stage(&mut post_parser_timings.sectionization, || {
+        sectionizer.sectionize(&clean_text)
+    });
+    worker_metrics.post_parser_timings.sectionization += post_parser_timings.sectionization;
+    let decision = AdmissionDecision::after_sectionization(&clean_text, &sections);
+    let admitted = decision.admits_search_index();
     let version = ResumeVersion {
         id: version_id.clone(),
         document_id: document.id.clone(),
@@ -2685,11 +2781,22 @@ fn process_file_inner(
         raw_text: None,
         clean_text: Some(clean_text.clone()),
         quality_score: Some(0.8),
-        visibility: ResumeVisibility::Searchable,
+        visibility: if admitted {
+            ResumeVisibility::Searchable
+        } else {
+            ResumeVisibility::Hidden
+        },
     };
+    if !admitted {
+        measure_result_stage(db_elapsed, || {
+            persist_non_searchable(store, &document, Some(&version), decision, now)
+        })?;
+        return Ok(ProcessedFile::Excluded);
+    }
     let mentions = entity_mentions_from_rules(&version_id, &clean_text);
     ensure_not_cancelled()?;
     measure_result_stage(db_elapsed, || {
+        persist_classification(store, &document.id, decision, now)?;
         let (email_hash, phone_hash) = contact_hashes_from_mentions(data_dir, &mentions)?;
         store
             .upsert_searchable_import_document(SearchableImportDocument {
@@ -2704,10 +2811,6 @@ fn process_file_inner(
     })?;
 
     ensure_not_cancelled()?;
-    let sections = measure_stage(&mut post_parser_timings.sectionization, || {
-        sectionizer.sectionize(&clean_text)
-    });
-    worker_metrics.post_parser_timings.sectionization += post_parser_timings.sectionization;
     Ok(ProcessedFile::Searchable {
         document: Box::new(document.clone()),
         index_document: Box::new(IndexDocument {
@@ -2786,6 +2889,42 @@ fn best_normalized_contact(mentions: &[EntityMention], entity_type: EntityType) 
     candidates.first().map(|candidate| candidate.0)
 }
 
+fn persist_classification(
+    store: &MetaStore,
+    document_id: &DocumentId,
+    decision: AdmissionDecision,
+    now: UnixTimestamp,
+) -> Result<()> {
+    store
+        .upsert_document_classification(&decision.into_record(document_id.clone(), now))
+        .map_err(ImportPipelineError::store)
+}
+
+fn persist_non_searchable(
+    store: &MetaStore,
+    document: &Document,
+    version: Option<&ResumeVersion>,
+    decision: AdmissionDecision,
+    now: UnixTimestamp,
+) -> Result<()> {
+    store
+        .upsert_document(document)
+        .map_err(ImportPipelineError::store)?;
+    store
+        .quarantine_document_searchability(&document.id)
+        .map_err(ImportPipelineError::store)?;
+    if let Some(version) = version {
+        store
+            .upsert_resume_version(version)
+            .map_err(ImportPipelineError::store)?;
+    }
+    persist_classification(store, &document.id, decision, now)
+}
+
+fn persist_failed(store: &MetaStore, document: &Document, now: UnixTimestamp) -> Result<()> {
+    persist_non_searchable(store, document, None, AdmissionDecision::failed(), now)
+}
+
 fn mark_ocr_required_and_enqueue(
     store: &MetaStore,
     document: &mut Document,
@@ -2796,6 +2935,10 @@ fn mark_ocr_required_and_enqueue(
     store
         .upsert_document(document)
         .map_err(ImportPipelineError::store)?;
+    store
+        .quarantine_document_searchability(&document.id)
+        .map_err(ImportPipelineError::store)?;
+    persist_classification(store, &document.id, AdmissionDecision::ocr_backlog(), now)?;
     let enqueue = store
         .enqueue_ocr_job_for_document(&document.id, now)
         .map_err(ImportPipelineError::store)?;
@@ -2879,12 +3022,40 @@ fn exact_rerun_noop_kind(
         return Ok(None);
     }
 
+    let Some(classification) = store
+        .document_classification_by_id(&document.id)
+        .map_err(ImportPipelineError::store)?
+    else {
+        return Ok(None);
+    };
+
     match document.status {
-        DocumentStatus::Searchable | DocumentStatus::IndexedPartial => store
-            .latest_visible_resume_version_for_document(&document.id)
-            .map_err(ImportPipelineError::store)
-            .map(|version| version.map(|_| ExactRerunNoopKind::Searchable)),
-        DocumentStatus::OcrRequired => Ok(Some(ExactRerunNoopKind::OcrRequired)),
+        DocumentStatus::Searchable | DocumentStatus::IndexedPartial
+            if is_current(&classification)
+                && classification.status == ClassificationStatus::ResumeCandidate =>
+        {
+            let has_searchable_version = store
+                .resume_versions_for_document(&document.id)
+                .map_err(ImportPipelineError::store)?
+                .iter()
+                .any(|version| version.visibility == ResumeVisibility::Searchable);
+            Ok(has_searchable_version.then_some(ExactRerunNoopKind::Searchable))
+        }
+        DocumentStatus::OcrRequired
+            if is_current(&classification)
+                && classification.status == ClassificationStatus::OcrBacklog =>
+        {
+            Ok(Some(ExactRerunNoopKind::OcrRequired))
+        }
+        DocumentStatus::TextCleaned | DocumentStatus::OcrDone
+            if is_current(&classification)
+                && matches!(
+                    classification.status,
+                    ClassificationStatus::NonResume | ClassificationStatus::NeedsReview
+                ) =>
+        {
+            Ok(Some(ExactRerunNoopKind::Excluded))
+        }
         _ => Ok(None),
     }
 }
@@ -2987,6 +3158,8 @@ enum ProcessedFile {
     },
     UnchangedSearchable,
     UnchangedOcrRequired,
+    UnchangedExcluded,
+    Excluded,
     OcrRequired {
         ocr_job_queued: bool,
     },
@@ -3037,9 +3210,14 @@ struct ParseWorkItemOutput {
 
 enum ParseWorkOutcome {
     Searchable {
+        decision: AdmissionDecision,
         version: Box<ResumeVersion>,
         mentions: Vec<EntityMention>,
         index_document: Box<IndexDocument>,
+    },
+    Excluded {
+        decision: AdmissionDecision,
+        version: Box<ResumeVersion>,
     },
     OcrRequired,
     Failed {
@@ -3079,6 +3257,7 @@ impl ParseWorkerClock {
 enum ExactRerunNoopKind {
     Searchable,
     OcrRequired,
+    Excluded,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -3982,7 +4161,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("synthetic-resume.txt"),
-            "Synthetic Candidate\nEmail: synthetic@example.test\nSkills: Rust Search",
+            synthetic_resume_text("Synthetic Candidate", "Rust Search"),
         )
         .unwrap();
 
@@ -4014,6 +4193,73 @@ mod tests {
             .unwrap()
             .contains("Rust Search"));
         assert_eq!(version.raw_text, None);
+        let rejected = index_ocr_text(
+            &data_dir,
+            &store,
+            &document.id,
+            "INVOICE\nSubtotal 10\nPayment terms net 30",
+            None,
+            Some(1),
+            UnixTimestamp::from_unix_seconds(1_700_000_077),
+        )
+        .unwrap();
+        assert!(!rejected.searchable);
+        assert_eq!(
+            store.document_classification_counts().unwrap().non_resume,
+            1
+        );
+        assert!(store
+            .latest_visible_resume_version_for_document(&document.id)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn classifier_gate_persists_all_five_states_before_search_admission() {
+        let temp = TestDir::new("classifier-gate-five-states");
+        let root = temp.path().join("mixed");
+        fs::create_dir_all(&root).unwrap();
+        for (name, body) in [
+            (
+                "resume.txt",
+                synthetic_resume_text("Synthetic Candidate", "Rust Search"),
+            ),
+            (
+                "invoice.txt",
+                "INVOICE\nInvoice number 7\nSubtotal 10\nPayment terms net 30".to_string(),
+            ),
+            (
+                "review.txt",
+                "Project notes\nUnstructured material".to_string(),
+            ),
+            ("empty.txt", String::new()),
+        ] {
+            fs::write(root.join(name), body).unwrap();
+        }
+        fs::write(root.join("scan.pdf"), scanned_pdf_bytes()).unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_078);
+        for workers in [1, 2] {
+            let data_dir = temp.path().join(format!("data-{workers}"));
+            fs::create_dir_all(&data_dir).unwrap();
+            let store = MetaStore::open_in_memory().unwrap();
+            store.run_migrations().unwrap();
+            let task = import_task(&format!("gate-{workers}"), root.to_str().unwrap(), now);
+            store.insert_import_task(&task).unwrap();
+            let options = ImportOptions::low_memory_default_for_available_parallelism(workers);
+            import_root_with_options(&data_dir, &store, &task, &root, now, options).unwrap();
+            let counts = store.document_classification_counts().unwrap();
+            assert_eq!(
+                (
+                    counts.resume_candidate,
+                    counts.non_resume,
+                    counts.needs_review,
+                    counts.ocr_backlog,
+                    counts.failed
+                ),
+                (1, 1, 1, 1, 1)
+            );
+            assert_eq!(store.searchable_document_ids().unwrap().len(), 1);
+        }
     }
 
     #[test]
@@ -4025,13 +4271,13 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("00-alpha.txt"),
-            "Alpha Candidate\nEmail: alpha@example.test\nSkills: Rust Search",
+            synthetic_resume_text("Alpha Candidate", "Rust Search"),
         )
         .unwrap();
         fs::write(root.join("01-scanned.pdf"), scanned_pdf_bytes()).unwrap();
         fs::write(
             root.join("02-beta.txt"),
-            "Beta Candidate\nEmail: beta@example.test\nSkills: PDF Search",
+            synthetic_resume_text("Beta Candidate", "PDF Search"),
         )
         .unwrap();
 
@@ -4089,13 +4335,13 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("00-alpha.txt"),
-            "Alpha Candidate\nEmail: alpha@example.test\nSkills: Rust Search",
+            synthetic_resume_text("Alpha Candidate", "Rust Search"),
         )
         .unwrap();
         fs::write(root.join("01-scanned.pdf"), scanned_pdf_bytes()).unwrap();
         fs::write(
             root.join("02-beta.txt"),
-            "Beta Candidate\nEmail: beta@example.test\nSkills: PDF Search",
+            synthetic_resume_text("Beta Candidate", "PDF Search"),
         )
         .unwrap();
 
@@ -4148,12 +4394,12 @@ mod tests {
         fs::write(root.join("01-alpha.pdf"), tounicode_cmap_pdf_bytes()).unwrap();
         fs::write(
             root.join("02-beta.txt"),
-            "Beta Candidate\nEmail: beta@example.test\nSkills: Rust Search",
+            synthetic_resume_text("Beta Candidate", "Rust Search"),
         )
         .unwrap();
         fs::write(
             root.join("03-gamma.txt"),
-            "Gamma Candidate\nEmail: gamma@example.test\nSkills: PDF Search",
+            synthetic_resume_text("Gamma Candidate", "PDF Search"),
         )
         .unwrap();
 
@@ -4274,7 +4520,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("clock.txt"),
-            "Clock Candidate\nEmail: clock@example.test\nSkills: Rust Search",
+            synthetic_resume_text("Clock Candidate", "Rust Search"),
         )
         .unwrap();
         let file = crawl_directory(&root).unwrap().files.remove(0);
@@ -4381,7 +4627,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("wait.txt"),
-            "Wait Candidate\nEmail: wait@example.test\nSkills: Rust Search",
+            synthetic_resume_text("Wait Candidate", "Rust Search"),
         )
         .unwrap();
         let file = crawl_directory(&root).unwrap().files.remove(0);
@@ -4439,7 +4685,7 @@ mod tests {
             &data_dir,
             &store,
             &document.id,
-            "OCR Candidate\nSkills: Rust Search",
+            &synthetic_resume_text("OCR Candidate", "Rust Search"),
             Some(0.91),
             Some(1),
             UnixTimestamp::from_unix_seconds(1_700_000_076),
@@ -4506,6 +4752,10 @@ mod tests {
         }
     }
 
+    fn synthetic_resume_text(candidate: &str, skills: &str) -> String {
+        format!("SUMMARY\n{candidate}\nEXPERIENCE\nBuilt {skills} systems\nSKILLS\n{skills}")
+    }
+
     fn normalized_path(path: &str) -> NormalizedPath {
         normalize_path(path).unwrap()
     }
@@ -4519,7 +4769,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("synthetic-resume.txt"),
-            b"Synthetic Candidate\nEmail: synthetic@example.test\nSkills: Rust",
+            synthetic_resume_text("Synthetic Candidate", "Rust"),
         )
         .unwrap();
 
@@ -4557,7 +4807,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("synthetic-resume.txt"),
-            b"Synthetic Candidate\nEmail: synthetic@example.test\nSkills: Rust",
+            synthetic_resume_text("Synthetic Candidate", "Rust"),
         )
         .unwrap();
 
@@ -4710,7 +4960,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("synthetic-resume.txt"),
-            b"Synthetic Candidate\nEmail: synthetic@example.test\nSkills: Rust",
+            synthetic_resume_text("Synthetic Candidate", "Rust"),
         )
         .unwrap();
 
@@ -4870,15 +5120,12 @@ mod tests {
                 .len(),
             0
         );
-        assert_eq!(
-            second_index_state.visible_epoch,
-            first_index_state.visible_epoch
-        );
+        assert!(second_index_state.visible_epoch > first_index_state.visible_epoch);
         assert_eq!(
             second_index_state.manifest_document_count,
             first_index_state.manifest_document_count
         );
-        assert_eq!(
+        assert_ne!(
             second_index_state.snapshot_token,
             first_index_state.snapshot_token
         );
@@ -4948,7 +5195,7 @@ mod tests {
             fs::write(
                 root.join(format!("{index:02}-fast.txt")),
                 format!(
-                    "Synthetic Candidate {index}\nEmail: candidate{index}@example.test\nSkills: Rust"
+                    "SUMMARY\nSynthetic Candidate {index}\nEXPERIENCE\nBuilt Rust systems\nSKILLS\nRust"
                 ),
             )
             .unwrap();
@@ -5064,7 +5311,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("00-fast.txt"),
-            b"Synthetic Candidate\nEmail: fast@example.test\nSkills: Rust",
+            synthetic_resume_text("Synthetic Candidate", "Rust"),
         )
         .unwrap();
         fs::write(root.join("zz-slow.doc"), synthetic_ole_doc()).unwrap();
@@ -5185,7 +5432,7 @@ mod tests {
     }
 
     fn utf16be_literal_text_layer_pdf_bytes() -> Vec<u8> {
-        let mut content = b"BT /F1 12 Tf 72 720 Td (".to_vec();
+        let mut content = b"BT /F1 12 Tf 72 720 Td (SUMMARY) Tj T* (EXPERIENCE) Tj T* (Built systems) Tj T* (SKILLS) Tj T* (".to_vec();
         content.extend_from_slice(b"\xFE\xFF\x4E\x2D\x65\x87\x7B\x80\x53\x86");
         content.extend_from_slice(b") Tj ET\n");
 
@@ -5224,12 +5471,12 @@ CMapName currentdict /CMap defineresource pop
 end
 end
 ";
-        let content = b"BT /F1 12 Tf 72 720 Td <0001000200030004> Tj ET\n";
+        let content = b"BT /F2 12 Tf 72 720 Td (SUMMARY) Tj T* (EXPERIENCE) Tj T* (Built systems) Tj T* (SKILLS) Tj T* /F1 12 Tf <0001000200030004> Tj ET\n";
 
         build_valid_pdf(vec![
             b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
             b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
-            b"<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 7 0 R >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R /F2 9 0 R >> >> /MediaBox [0 0 612 792] /Contents 7 0 R >>".to_vec(),
             b"<< /Type /Font /Subtype /Type0 /BaseFont /TestFont /Encoding /Identity-H /DescendantFonts [5 0 R] /ToUnicode 6 0 R >>".to_vec(),
             b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /TestFont /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 8 0 R /DW 1000 /W [1 [1000 1000]] >>".to_vec(),
             [
@@ -5245,6 +5492,7 @@ end
             ]
             .concat(),
             b"<< /Type /FontDescriptor /FontName /TestFont /Flags 4 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80 >>".to_vec(),
+            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
         ])
     }
 
@@ -5309,7 +5557,7 @@ done
 if [ -z "$out" ]; then
   exit 9
 fi
-printf 'Synthetic Legacy Candidate\nRust Search\n' > "$out"
+printf 'SUMMARY\nSynthetic Legacy Candidate\nEXPERIENCE\nBuilt Rust Search systems\nSKILLS\nRust Search\n' > "$out"
 "#,
         )
         .unwrap();
@@ -5345,7 +5593,7 @@ fi
 while [ ! -f "$release" ]; do
   sleep 0.01
 done
-printf 'Slow Synthetic Legacy Candidate\nRust Search\n' > "$out"
+printf 'SUMMARY\nSlow Synthetic Legacy Candidate\nEXPERIENCE\nBuilt Rust Search systems\nSKILLS\nRust Search\n' > "$out"
 "#,
         )
         .unwrap();

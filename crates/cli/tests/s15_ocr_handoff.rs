@@ -361,9 +361,8 @@ input_bytes="$(cat "$RESUME_IR_OCR_INPUT_PATH")"
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.82\n'
 printf 'text:\n'
-printf 'SUMMARY\nSynthetic OCR fixture.\nEXPERIENCE\nBuilt systems.\nSKILLS\nSearch.\n'
 case "$input_bytes:$RESUME_IR_OCR_PAGE_NO" in
-  S89_RENDERED_PAGE_1_BYTES:1) printf 'S89PageOneToken first page text\n' ;;
+  S89_RENDERED_PAGE_1_BYTES:1) printf 'SUMMARY\nSynthetic OCR fixture.\nEXPERIENCE\nBuilt systems.\nSKILLS\nSearch.\nS89PageOneToken first page text\n' ;;
   S89_RENDERED_PAGE_2_BYTES:2) printf 'S89PageTwoToken second page text\n' ;;
   *) printf 'PRIVATE_UNEXPECTED_OCR_INPUT_%s_PAGE_%s\n' "$input_bytes" "$RESUME_IR_OCR_PAGE_NO"; exit 19 ;;
 esac
