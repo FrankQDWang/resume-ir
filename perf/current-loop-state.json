@@ -1,7 +1,7 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
+  "workflow_state": "pr_opened",
   "experiment_state": "contract_locked",
   "evidence_lane": "smoke",
   "contract_pins": {
@@ -138,6 +138,11 @@
       "from": "verification_active",
       "to": "evidence_review",
       "evidence_ref": "PROGRESS.md#s706"
+    },
+    {
+      "from": "evidence_review",
+      "to": "pr_opened",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/160"
     }
   ],
   "verification": {
@@ -206,7 +211,9 @@
   },
   "github_ledger": {
     "primary_issue": "#159",
-    "active_prs": [],
+    "active_prs": [
+      "#160"
+    ],
     "open_blockers": [
       "#37",
       "#159"
