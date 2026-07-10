@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pathlib
@@ -12,6 +13,38 @@ import tomllib
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+INDEX_FULLTEXT_SOURCE = "crates/index-fulltext/src/lib.rs"
+INDEX_FULLTEXT_BASE_SHA256 = "2cb94fa78593ea1d9af343031d7f7e3f19698ab2c295e7b1e037dde40114afe9"
+INDEX_FULLTEXT_FIX_SHA256 = "24a94cfea5246db37f0dd71531f8acbfbc88a06a9e9dc7f63b812ef1ccf7f3fb"
+FORWARD_CONTRACT_PATHS = {
+    "ACTIVE_GOAL.toml",
+    "MANIFEST.md",
+    "PROGRESS.md",
+    "scripts/ci/check-autonomous-goal.py",
+    "scripts/ci/check-loop-state.py",
+    "scripts/ci/check-gate-integrity.py",
+    "perf/current-loop-state.json",
+    "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+    "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
+    "03_next_goal_高性能本地检索GUI闭环/10_实施切片与验收门槛.md",
+    "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md",
+    "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md",
+    "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md",
+    "docs/superpowers/specs/2026-07-10-redaction-counter-test-isolation.md",
+    "docs/superpowers/plans/2026-07-10-redaction-counter-test-isolation.md",
+}
+REVERSE_CONTRACT_PATHS = {
+    "ACTIVE_GOAL.toml",
+    "PROGRESS.md",
+    "scripts/ci/check-autonomous-goal.py",
+    "perf/current-loop-state.json",
+    "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+    "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
+    "03_next_goal_高性能本地检索GUI闭环/10_实施切片与验收门槛.md",
+    "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md",
+    "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md",
+    "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md",
+}
 
 
 def fail(message: str) -> None:
@@ -35,7 +68,7 @@ def require_bool(value: object, expected: bool, path: str) -> None:
 
 def git(args: list[str]) -> str:
     completed = subprocess.run(
-        ["git", *args],
+        ["git", "-c", "core.quotePath=false", *args],
         cwd=ROOT,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -81,11 +114,89 @@ def select_base_ref() -> str:
     fail("unable to find base ref for gate integrity check")
 
 
-def changed_paths() -> list[str]:
+def merge_base_and_changed_paths() -> tuple[str, set[str]]:
     base_ref = select_base_ref()
     merge_base = git(["merge-base", base_ref, "HEAD"])
-    output = git(["diff", "--name-only", f"{merge_base}...HEAD"])
-    return [] if not output else output.splitlines()
+    outputs = [
+        git(["diff", "--name-only", f"{merge_base}...HEAD"]),
+        git(["diff", "--name-only", "--cached"]),
+        git(["diff", "--name-only"]),
+        git(["ls-files", "--others", "--exclude-standard"]),
+    ]
+    paths = {
+        path
+        for output in outputs
+        for path in output.splitlines()
+        if path
+    }
+    return merge_base, paths
+
+
+def load_toml_at_revision(revision: str, path: str) -> dict:
+    return tomllib.loads(git(["show", f"{revision}:{path}"]))
+
+
+def source_sha256(source: bytes) -> str:
+    return hashlib.sha256(source.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def require_exact_index_fulltext_fix(merge_base: str, changed: set[str]) -> None:
+    if INDEX_FULLTEXT_SOURCE not in changed:
+        return
+    base_source = subprocess.check_output(
+        ["git", "show", f"{merge_base}:{INDEX_FULLTEXT_SOURCE}"], cwd=ROOT
+    )
+    head_source = (ROOT / INDEX_FULLTEXT_SOURCE).read_bytes()
+    actual = tuple(source_sha256(source) for source in (base_source, head_source))
+    expected = (INDEX_FULLTEXT_BASE_SHA256, INDEX_FULLTEXT_FIX_SHA256)
+    if actual != expected:
+        fail(f"{INDEX_FULLTEXT_SOURCE}: #143 Rust change must match the exact approved test-only repair")
+
+
+def validate_transition_scope(base_goal: dict, head_goal: dict, merge_base: str, changed: set[str]) -> None:
+    base_slice = base_goal.get("scope", {}).get("active_slice", {})
+    head_slice = head_goal.get("scope", {}).get("active_slice", {})
+    base_issue = base_slice.get("issue")
+    head_issue = head_slice.get("issue")
+    if base_issue == head_issue:
+        allowed_paths = base_slice.get("allowed_paths")
+        if not isinstance(allowed_paths, list) or not changed.issubset(set(allowed_paths)):
+            fail("same-issue diff exceeds scope.active_slice.allowed_paths")
+        if any(is_gate_path(path) for path in changed):
+            require_bool(
+                base_slice.get("contract_change_allowed"),
+                True,
+                "base.scope.active_slice.contract_change_allowed",
+            )
+        if head_issue == "#143":
+            require_exact_index_fulltext_fix(merge_base, changed)
+        return
+
+    if (base_issue, head_issue) == ("#140", "#143"):
+        require_bool(
+            base_slice.get("contract_change_allowed"),
+            True,
+            "base.scope.active_slice.contract_change_allowed",
+        )
+        if changed != FORWARD_CONTRACT_PATHS:
+            fail(
+                "#140 -> #143 contract transition path mismatch: "
+                f"expected {sorted(FORWARD_CONTRACT_PATHS)!r}, found {sorted(changed)!r}"
+            )
+        return
+
+    if (base_issue, head_issue) == ("#143", "#140"):
+        targets = base_slice.get("allowed_contract_transition_targets")
+        if not isinstance(targets, list) or "#140" not in targets:
+            fail("#143 contract does not authorize return to #140")
+        if changed != REVERSE_CONTRACT_PATHS:
+            fail(
+                "#143 -> #140 contract transition path mismatch: "
+                f"expected {sorted(REVERSE_CONTRACT_PATHS)!r}, found {sorted(changed)!r}"
+            )
+        return
+
+    fail(f"unauthorized active-slice transition: {base_issue!r} -> {head_issue!r}")
 
 
 def is_gate_path(path: str) -> bool:
@@ -104,6 +215,9 @@ def is_gate_path(path: str) -> bool:
 
 def main() -> int:
     active_goal = load_toml(ROOT / "ACTIVE_GOAL.toml")
+    merge_base, paths = merge_base_and_changed_paths()
+    base_goal = load_toml_at_revision(merge_base, "ACTIVE_GOAL.toml")
+    validate_transition_scope(base_goal, active_goal, merge_base, paths)
     autonomous = active_goal.get("autonomous_delivery", {})
     permissions = autonomous.get("permissions")
     if not isinstance(permissions, dict):
@@ -122,9 +236,7 @@ def main() -> int:
     require_bool(merge_policy.get("require_no_direct_main_push"), True, "autonomous_delivery.merge_policy.require_no_direct_main_push")
 
     active_slice = active_goal.get("scope", {}).get("active_slice", {})
-    gate_changes = [path for path in changed_paths() if is_gate_path(path)]
-    if gate_changes and active_slice.get("contract_change_allowed") is not True:
-        fail("gate-changing diff requires scope.active_slice.contract_change_allowed=true: " + ", ".join(gate_changes))
+    gate_changes = sorted(path for path in paths if is_gate_path(path))
     if gate_changes and not active_slice.get("scope_exception_reason"):
         fail("gate-changing diff requires scope.active_slice.scope_exception_reason")
 

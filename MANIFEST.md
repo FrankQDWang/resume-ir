@@ -42,8 +42,11 @@
 - `03_next_goal_高性能本地检索GUI闭环/15_性能观测与Profiling工具链.md`
 - `03_next_goal_高性能本地检索GUI闭环/16_跨平台全盘发现与增量Journal契约.md`
 - `03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md`
+- `03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md`
 - `docs/superpowers/specs/2026-06-22-performance-goal-doc-contract.md`
 - `docs/superpowers/plans/2026-06-22-performance-goal-doc-contract.md`
+- `docs/superpowers/specs/2026-07-10-redaction-counter-test-isolation.md`
+- `docs/superpowers/plans/2026-07-10-redaction-counter-test-isolation.md`
 - `.github/workflows/pr.yml`
 - `ACTIVE_GOAL.toml`
 - `perf/README.md`

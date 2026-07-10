@@ -163,28 +163,59 @@ def main() -> int:
         require_bool(permissions.get(key), False, f"autonomous_delivery.permissions.{key}")
 
     active_slice = active_goal.get("scope", {}).get("active_slice", {})
-    require_string(active_slice.get("issue"), "#140", "scope.active_slice.issue")
+    require_string(active_slice.get("issue"), "#143", "scope.active_slice.issue")
     require_string(
         active_slice.get("name"),
-        "freeze_mixed_import_benchmark_contract_and_anti_overfit_evidence_layers",
+        "remove_parallel_redaction_counter_test_race",
         "scope.active_slice.name",
     )
-    require_bool(active_slice.get("contract_change_allowed"), True, "scope.active_slice.contract_change_allowed")
-    require_bool(active_slice.get("production_code_allowed"), False, "scope.active_slice.production_code_allowed")
+    linked_spec = "docs/superpowers/specs/2026-07-10-redaction-counter-test-isolation.md"
+    linked_plan = "docs/superpowers/plans/2026-07-10-redaction-counter-test-isolation.md"
+    require_string(active_slice.get("linked_spec"), linked_spec, "scope.active_slice.linked_spec")
+    require_string(active_slice.get("linked_plan"), linked_plan, "scope.active_slice.linked_plan")
+    for linked_path in (linked_spec, linked_plan):
+        if not (ROOT / linked_path).is_file():
+            fail(f"scope.active_slice: linked contract file does not exist: {linked_path}")
+    authority = active_goal.get("authority")
+    if not isinstance(authority, dict):
+        fail("ACTIVE_GOAL.toml: missing [authority]")
+    require_string(authority.get("spec"), linked_spec, "authority.spec")
+    require_string(authority.get("plan"), linked_plan, "authority.plan")
+    require_bool(active_slice.get("contract_change_allowed"), False, "scope.active_slice.contract_change_allowed")
+    require_bool(active_slice.get("production_code_allowed"), True, "scope.active_slice.production_code_allowed")
+    require_bool(
+        active_slice.get("production_semantics_change_allowed"),
+        False,
+        "scope.active_slice.production_semantics_change_allowed",
+    )
+    require_bool(
+        active_slice.get("test_only_change_required"),
+        True,
+        "scope.active_slice.test_only_change_required",
+    )
+    require_bool(
+        active_slice.get("global_test_serialization_allowed"),
+        False,
+        "scope.active_slice.global_test_serialization_allowed",
+    )
     require_bool(active_slice.get("private_benchmark_allowed"), False, "scope.active_slice.private_benchmark_allowed")
     require_bool(active_slice.get("scope_exception"), False, "scope.active_slice.scope_exception")
     require_non_empty_string(active_slice.get("scope_exception_reason"), "scope.active_slice.scope_exception_reason")
     allowed_paths = require_list(active_slice.get("allowed_paths"), "scope.active_slice.allowed_paths")
-    production_prefixes = ("crates/", "src/", "app/", "apps/")
-    production_paths = [
-        path
-        for path in allowed_paths
-        if isinstance(path, str) and path.startswith(production_prefixes)
-    ]
-    if production_paths:
+    expected_allowed_paths = ["crates/index-fulltext/src/lib.rs", "PROGRESS.md"]
+    if allowed_paths != expected_allowed_paths:
         fail(
-            "scope.active_slice.allowed_paths: #140 contract-only slice must not allow "
-            f"production paths {production_paths!r}"
+            "scope.active_slice.allowed_paths: expected "
+            f"{expected_allowed_paths!r}"
+        )
+    allowed_transition_targets = require_list(
+        active_slice.get("allowed_contract_transition_targets"),
+        "scope.active_slice.allowed_contract_transition_targets",
+    )
+    if allowed_transition_targets != ["#140"]:
+        fail(
+            "scope.active_slice.allowed_contract_transition_targets: "
+            "expected ['#140']"
         )
 
     gui = active_goal.get("gui")
@@ -420,6 +451,31 @@ def main() -> int:
         fail(
             "autonomous_delivery.transitions.capture_synthetic_smoke_baseline."
             "required_permissions: expected []"
+        )
+    require_transition_shape(
+        transitions,
+        name="reconcile_contract_conflict",
+        expected_from=["contract_conflict"],
+        expected_to="slice_selected",
+        required_evidence=[
+            "contract_conflict_evidence",
+            "linked_issue",
+            "reviewed_spec",
+            "reviewed_plan",
+            "privacy_boundary",
+        ],
+    )
+    conflict_transition = require_transition(transitions, "reconcile_contract_conflict")
+    if conflict_transition.get("required_permissions") != []:
+        fail(
+            "autonomous_delivery.transitions.reconcile_contract_conflict."
+            "required_permissions: expected []"
+        )
+    expected_conflict_actions = ["edit_contract", "update_issue", "select_slice"]
+    if conflict_transition.get("allowed_actions") != expected_conflict_actions:
+        fail(
+            "autonomous_delivery.transitions.reconcile_contract_conflict.allowed_actions: "
+            f"expected {expected_conflict_actions!r}"
         )
     require_transition_contains(
         transitions,

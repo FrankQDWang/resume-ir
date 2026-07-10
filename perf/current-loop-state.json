@@ -5,14 +5,14 @@
   "experiment_state": "contract_locked",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "07cba3670294625aaee873ef1889008308051f14545904d09132edcf025d8214",
+    "active_goal_sha256": "e41059da1171c28383a229df7b434fdb8ab62216915ff0fb2860d8df52cfa30d",
     "acceptance_matrix_sha256": "caa9e458d39a20964f46b81ae0aee3604f893dfd783410b88a58af53b9020d30",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "36d510a94ce062a4a4245f784a2ae0f21782f85e"
+    "git_head_sha": "4afd254d9b7989108d726a737a3cc939c9f45deb"
   },
-  "current_slice": "#140 freeze mixed-directory benchmark contract and anti-overfit evidence layers",
+  "current_slice": "#143 remove parallel redaction-counter test race",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -28,24 +28,34 @@
       "from": "evidence_review",
       "to": "slice_selected",
       "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/138#issuecomment-4931222189"
+    },
+    {
+      "from": "contract_conflict",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4931626373"
     }
   ],
   "verification": {
     "commands": [
       {
-        "command": "gh issue create #140",
+        "command": "gh issue view #143",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/140"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/143"
       },
       {
-        "command": "gh issue comment #138",
-        "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/138#issuecomment-4931222189"
+        "command": "gh pr checks #142",
+        "exit_code": 1,
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/actions/runs/29065468529/job/86277712741"
       },
       {
-        "command": "gh issue close #138 --reason completed",
+        "command": "cargo test -p index-fulltext --lib --locked",
+        "exit_code": 101,
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/143"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/138"
+        "evidence_ref": "perf/current-loop-state.json"
       }
     ],
     "all_required_commands_ran": true,
@@ -60,13 +70,14 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#140",
+    "primary_issue": "#143",
     "active_prs": [
-      "#141"
+      "#142"
     ],
     "open_blockers": [
       "#37",
-      "#140"
+      "#140",
+      "#143"
     ]
   }
 }

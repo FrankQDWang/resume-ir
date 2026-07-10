@@ -2674,11 +2674,25 @@ guards, local runtime discovery, and PR #9 CI state.
   loop-state pins, and paired synthetic-smoke pins were reconciled. No mixed
   benchmark, classifier, Rust behavior, private root read, GUI/query work, or
   performance/readiness completion claim is included.
+- S695 reconciles the #140 `contract_conflict` to the bounded #143 test-fix
+  contract without changing Rust. Fresh GitHub truth kept #142 open and
+  unmerged with 13 green checks and one failing Windows Platform CI check;
+  #143 remained open with no implementation PR. Fresh local normal-parallel
+  `index-fulltext` testing reproduced the shared-counter race in the sibling
+  zero-pass assertion, while the required performance/autonomous/loop/privacy
+  gates passed before the contract edit. Independent plan review required a
+  separate contract PR and Rust PR, exact #143 allowed paths, merge-base-aware
+  transition scope, an exact approved Rust source digest, and an explicit later
+  return to #140. The target contract therefore forbids arbitrary contract
+  changes, production semantics, global test serialization, private benchmark
+  work, and every ordinary path except `crates/index-fulltext/src/lib.rs` and
+  `PROGRESS.md`. This authorization slice does not fix #143 or modify #142.
 
 ## Slice Status
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S695 | #143 contract authorization prepared; Rust fix remains separate | Fresh machine terminal: https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4931626373. Root-cause issue: https://github.com/FrankQDWang/resume-ir/issues/143. Fresh local parallel suite reproduced the shared-counter race; contract RED failed on stale #140 before the #143 policy update. Independent plan review opened only the contract build gate. | #140 and #143 remain open; PR #142 remains open/unmerged. This PR contains no Rust and cannot claim the race fixed. The #143 Rust PR may begin only after this contract is main-reachable. |
 | S693 | #138 audit complete; #140 selected as frozen mixed benchmark contract slice | Fresh audit evidence: https://github.com/FrankQDWang/resume-ir/issues/138#issuecomment-4931222189. #138 closed completed; linked #140 opened at https://github.com/FrankQDWang/resume-ir/issues/140. Focused full-text, import/search, and redacted detail IPC tests passed. RED contract checks failed on the stale `#138` issue expectation and active-goal hash; GREEN passed after `ACTIVE_GOAL.toml`, `perf/current-loop-state.json`, `scripts/ci/check-autonomous-goal.py`, and paired synthetic-smoke pins were advanced to #140. | #37 remains open. #140 is contract/harness only: production code and private benchmark execution are disabled, and no production crate path is allowed. Classifier implementation remains blocked until the three-layer benchmark and leakage guards are frozen. |
 | S692 | Issue train pivots from #137 L4 import tail to #138 product-capability audit | #138 opened for read-only mixed-directory import, query/search recall, and detail/hydrate contract audit: https://github.com/FrankQDWang/resume-ir/issues/138. #137 closed not planned as failed/reverted: https://github.com/FrankQDWang/resume-ir/issues/137#issuecomment-4924947742. #37 updated to keep the parent ledger open and point at #138: https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4924950431. Local state now points at #138 with `workflow_state=slice_selected`, `experiment_state=contract_locked`, and `primary_issue=#138`; synthetic-smoke fixture pins were updated after the ACTIVE_GOAL hash changed. Verification passed `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and focused `git diff --check`. | #37 remains open as the parent import/searchability ledger. #33 and #53 remain open downstream query ledgers and were not mutated in this first pivot slice. #138 must start from fresh repo/GitHub/contract observation and produce a product contract gap list before any GUI, query-hot-path, or classifier implementation. |
 | S691 | Issue #137 records fresh evidence and rejects/reverts append-only empty-staging delete-skip | Fresh #137 before-clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on H2 with 1536 MiB aggregate budget and 256 MiB writer heap, measuring full-import/full-index 36777.282ms, stage index 12615.227ms, RSS 694779904, index_publication_commit 5020.928ms, PDF content decode 4422.550ms, text-operator prefilter 4187.266ms, document load 3903.482ms, text collection 3311.240ms, stdout hash `b8c92798437eefb09c58b4856ed23593e4221e2041fceb0177f7a28fbbfec0e9`, status hash `463e09f86f07f9704391908f8a7d3a78a62d5d944baee88bad61ad20868dbafd`, and empty stderr. Fresh before-profile preserved counts/content bytes and measured full-import/full-index 37900.230ms, stage index 13063.207ms, RSS 727760896, index_publication_commit 5166.442ms, PDF content decode 5173.375ms, document load 4685.988ms, text-operator prefilter 4468.307ms, text collection 3863.687ms, stdout hash `e6fd38628c74f64c457ba9371440f96752dfacfa4db8c879fd201a8dae2e029a`, status hash `d9498ee6d53c693c9d03d9539a2792f92840b37ccfa386d761ab78c0c061ae1f`, empty stderr, and sanitized buckets allocation=14302, rayon=26331, lopdf=16748, tantivy_index=1339, sqlite_db=2216, regex=1112, parser_pdf=1052, import_pipeline=204, sectionizer=162, text_normalizer=65, filesystem_io=45, sync_write=313. The fresh-staging append-only/delete-skip hypothesis was tested and rejected: attempted after-clean was effectively flat (commit 5020.928ms -> 5014.275ms), and attempted after-profile regressed full-import/full-index 37900.230ms -> 38502.891ms (+1.6%), stage index 13063.207ms -> 13322.573ms (+2.0%), and commit 5166.442ms -> 5326.811ms (+3.1%). The code was reverted; no #137 production code is retained. Verification after rollback passed fmt, index-fulltext single-thread focused suite, CLI import/search fixture, release build, rust-analyzer diagnostics with existing cfg inactive-code WeakWarnings only, performance/autonomous/loop-state checks, public repo guard, and `git diff --check`. GitHub comments succeeded: #137 https://github.com/FrankQDWang/resume-ir/issues/137#issuecomment-4924778583 and #37 https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4924778760. | #137 remains open. This is a failed/reverted import index-tail hypothesis only. It does not close #37 or #137, retain production code, claim full baseline, D10K/D100K/D1M, stable release readiness, GUI readiness, query hot-path tuning, OCR/embedding completion, semantic resume classification, original-path/detail contract completion, or `goal_complete`. Next bounded step should not retry empty-staging append-only/delete-skip without new evidence; choose fresh commit sub-attribution or the comparable PDF content-decode/document-load tail from new observe-before-act evidence. |
@@ -3260,6 +3274,41 @@ guards, local runtime discovery, and PR #9 CI state.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S695
+
+- Scope: repair the machine contract from #140 `contract_conflict` to #143 in
+  one independent 15-file contract PR. No Rust, Cargo, workflow, acceptance
+  matrix, doc-14, or performance-checker change is included.
+- Fresh evidence: `origin/main` was
+  `4afd254d9b7989108d726a737a3cc939c9f45deb`; #142 remained
+  `OPEN/MERGEABLE/UNSTABLE` at head
+  `9bf9674c68211ac8ce6b0b43393de659eab98d81`; Windows job `86277712741`
+  remained the sole red check. #143 had no comments or implementation PR.
+- RED: normal-parallel `cargo test -p index-fulltext --lib --locked` failed
+  `trusted_redacted_snapshot_publish_skips_redundant_redaction_passes` with
+  observed count 3 instead of 0. After checker expectations selected #143,
+  `check-autonomous-goal.py` failed on the still-#140 active contract.
+- Negative control: the full local pre-PR verifier reached the normal-parallel
+  workspace tests and failed only the same #143 assertion, this time observing
+  4 instead of 0 after 21 of 22 `index-fulltext` lib tests passed. No no-change
+  rerun is allowed; the W0 contract/privacy/workflow gates remain the local
+  acceptance surface for this no-Rust authorization PR.
+- Contract: target #143 has `contract_change_allowed=false`, test-only and
+  no-production-semantics flags, no private benchmark authority, exact ordinary
+  paths `crates/index-fulltext/src/lib.rs` and `PROGRESS.md`, and only an
+  explicit later transition target back to #140. Gate integrity reads the
+  merge-base contract, checks the exact transition file set, covers working
+  tree/index/untracked files, and pins the exact approved before/after source
+  digests for the future Rust PR.
+- GREEN: performance-contract, autonomous-goal, loop-state, gate-integrity,
+  private-evidence, workflow, public-repo, Python compile, and diff checks all
+  passed before commit; post-commit budget/scope checks remain required.
+- Boundary: public contract, test names, job identifiers, and aggregate
+  pass/fail evidence only. No private roots, paths, filenames, resume text,
+  labels, raw hashes, queries, candidate results, diagnostics packages, tokens,
+  or private manifests were read or published. This slice does not fix #143,
+  complete #140, or claim classifier/scale/GUI/release/goal readiness.
 
 ### S693
 
