@@ -113,8 +113,9 @@ privacy_boundary: no raw resume text, raw query, candidate result, path, token, 
 
 当前 active slice 的目标锁以 `ACTIVE_GOAL.toml` 的 `[scope.active_slice]`
 为准，不在本文件复制 allowed scope。#138 product-capability audit 已完成，
-当前 linked issue #140 只冻结 mixed-directory benchmark 和 anti-overfit evidence
-contract；后续 correctness work 必须从 linked GitHub issue、`ACTIVE_GOAL.toml`
+当前临时 #143 slice 只允许一个 issue-centric atomic contract-plus-test PR 修复
+parallel redaction-counter race；合并后必须恢复 #140，再刷新 PR #142。后续
+correctness work 必须从 linked GitHub issue、`ACTIVE_GOAL.toml`
 和 `perf/current-loop-state.json` 重新 observe。除非对应 evidence lane 已满足，
 本目标仍不允许运行或提交私有 D10K
 benchmark 原文、raw query、候选结果、trace、本机路径、profile capture、GUI

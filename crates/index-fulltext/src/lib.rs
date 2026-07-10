@@ -3,6 +3,8 @@ pub fn crate_name() -> &'static str {
 }
 
 use std::borrow::{Borrow, Cow};
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
@@ -55,11 +57,23 @@ const SINGLE_WORKER_SNAPSHOT_DOCUMENT_LIMIT: usize = 10_000;
 const SNAPSHOT_PUBLISH_CONTROL_DOCUMENT_INTERVAL: usize = 8;
 
 #[cfg(test)]
-static REDACTION_REGEX_PASSES: AtomicUsize = AtomicUsize::new(0);
+std::thread_local! {
+    static REDACTION_REGEX_PASSES: Cell<usize> = const { Cell::new(0) };
+}
 
 #[cfg(test)]
 fn record_redaction_regex_pass() {
-    REDACTION_REGEX_PASSES.fetch_add(1, Ordering::Relaxed);
+    REDACTION_REGEX_PASSES.with(|passes| passes.set(passes.get() + 1));
+}
+
+#[cfg(test)]
+fn reset_redaction_regex_passes() {
+    REDACTION_REGEX_PASSES.with(|passes| passes.set(0));
+}
+
+#[cfg(test)]
+fn redaction_regex_passes() -> usize {
+    REDACTION_REGEX_PASSES.with(Cell::get)
 }
 
 #[cfg(not(test))]
@@ -2323,7 +2337,7 @@ mod tests {
 
     #[test]
     fn contact_redaction_skips_regex_passes_when_text_has_no_match_signals() {
-        REDACTION_REGEX_PASSES.store(0, Ordering::Relaxed);
+        reset_redaction_regex_passes();
 
         let redacted = redact_contact_values("Synthetic candidate summary without contact markers");
 
@@ -2332,10 +2346,24 @@ mod tests {
             "Synthetic candidate summary without contact markers"
         );
         assert_eq!(
-            REDACTION_REGEX_PASSES.load(Ordering::Relaxed),
+            redaction_regex_passes(),
             0,
             "no-match text should not run full regex replacement passes"
         );
+    }
+
+    #[test]
+    fn redaction_regex_pass_observation_is_thread_local() {
+        reset_redaction_regex_passes();
+
+        let worker = thread::spawn(|| {
+            reset_redaction_regex_passes();
+            record_redaction_regex_pass();
+            assert_eq!(redaction_regex_passes(), 1);
+        });
+        worker.join().unwrap();
+
+        assert_eq!(redaction_regex_passes(), 0);
     }
 
     #[test]
@@ -2367,7 +2395,7 @@ mod tests {
 
     #[test]
     fn contact_redaction_skips_phone_regexes_for_date_only_numbers() {
-        REDACTION_REGEX_PASSES.store(0, Ordering::Relaxed);
+        reset_redaction_regex_passes();
 
         let redacted =
             redact_contact_values("Experience 2020-01 to 2024-12; led 3 projects and 2 teams");
@@ -2377,7 +2405,7 @@ mod tests {
             "Experience 2020-01 to 2024-12; led 3 projects and 2 teams"
         );
         assert_eq!(
-            REDACTION_REGEX_PASSES.load(Ordering::Relaxed),
+            redaction_regex_passes(),
             0,
             "date-like numeric text should not run phone redaction regexes"
         );
@@ -2558,7 +2586,7 @@ mod tests {
             sections: Vec::new(),
             is_deleted: false,
         }];
-        REDACTION_REGEX_PASSES.store(0, Ordering::Relaxed);
+        reset_redaction_regex_passes();
 
         publish_trusted_redacted_snapshot_with_control(
             &index_root,
@@ -2569,7 +2597,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            REDACTION_REGEX_PASSES.load(Ordering::Relaxed),
+            redaction_regex_passes(),
             0,
             "trusted-redacted snapshot publish should not rerun contact redaction regexes"
         );

@@ -2684,11 +2684,18 @@ guards, local runtime discovery, and PR #9 CI state.
   `ba9166ab9ded2780cc6db199b9c41ee3399d8bfa`. Intent https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4932743665
   limits this slice to the exact ten-path contract reverse; the deterministic
   Rust fix remains unchanged and its focused test plus required gates pass.
+- S699 replaces stale PR #144 with one 12-file issue-centric #143 atomic repair.
+  Intent https://github.com/FrankQDWang/resume-ir/issues/143#issuecomment-4932928934
+  pins thread-local test observation only. RED observed the parent counter leak
+  (1 != 0); GREEN isolates worker increments without production changes or
+  global serialization. Twenty normal-parallel lib runs, the full crate, Rust
+  checks, and required machine gates pass. Restore #140 after merge.
 
 ## Slice Status
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S699 | #143 atomic redaction-counter repair candidate | Intent: https://github.com/FrankQDWang/resume-ir/issues/143#issuecomment-4932928934. RED observed worker leakage; GREEN regression, three existing assertions, 20/20 parallel lib runs, full crate, Rust checks, and required gates pass. PR #144 closed. | #37/#140/#143 and PR #142 remain open. No production/private/classifier/GUI work, serialization, or bypass. |
 | S698 | #140 issue-centric restoration candidate prepared | PR #147 merged all-green; intent: https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4932743665. Merged-main focused test and required gates passed before the exact ten-path reverse. | #37/#140/#143 and PR #142/#144 remain open. No production/private/classifier/GUI work or bypass. |
 | S697 | #145 issue-centric atomic recovery candidate prepared | Corrected intent: https://github.com/FrankQDWang/resume-ir/issues/145#issuecomment-4932578248. Hosted RED failed only the target test with 31 passing; local gate RED rejected missing/altered Rust; 50/50 focused, 32/32 crate tests, Rust checks, and required gates passed. | #37/#140/#143/#145 and PR #142/#144 remain open. No production semantics, private-data read, classifier/GUI/release claim, or bypass. |
 | S693 | #138 audit complete; #140 selected as frozen mixed benchmark contract slice | Fresh audit evidence: https://github.com/FrankQDWang/resume-ir/issues/138#issuecomment-4931222189. #138 closed completed; linked #140 opened at https://github.com/FrankQDWang/resume-ir/issues/140. Focused full-text, import/search, and redacted detail IPC tests passed. RED contract checks failed on the stale `#138` issue expectation and active-goal hash; GREEN passed after `ACTIVE_GOAL.toml`, `perf/current-loop-state.json`, `scripts/ci/check-autonomous-goal.py`, and paired synthetic-smoke pins were advanced to #140. | #37 remains open. #140 is contract/harness only: production code and private benchmark execution are disabled, and no production crate path is allowed. Classifier implementation remains blocked until the three-layer benchmark and leakage guards are frozen. |
@@ -3272,6 +3279,15 @@ guards, local runtime discovery, and PR #9 CI state.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S699
+
+- PR #144 closed superseded; https://github.com/FrankQDWang/resume-ir/issues/143#issuecomment-4932928934 authorizes one atomic #143 PR.
+- RED redaction_regex_pass_observation_is_thread_local failed with parent count
+  1; GREEN, all three existing assertions, 20/20 parallel lib runs, 23 unit and
+  16 integration tests, fmt, clippy, rust-analyzer, and required gates pass.
+- Boundary: test-only thread-local Cell; no private data, production semantics,
+  global serialization, workflow/Cargo/threshold change, or readiness claim.
 
 ### S698
 
