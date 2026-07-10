@@ -113,9 +113,11 @@ privacy_boundary: no raw resume text, raw query, candidate result, path, token, 
 
 当前 active slice 的目标锁以 `ACTIVE_GOAL.toml` 的 `[scope.active_slice]`
 为准，不在本文件复制 allowed scope。#138 product-capability audit 已完成，
-当前 linked issue #140 只冻结 mixed-directory benchmark 和 anti-overfit evidence
-contract；后续 correctness work 必须从 linked GitHub issue、`ACTIVE_GOAL.toml`
-和 `perf/current-loop-state.json` 重新 observe。除非对应 evidence lane 已满足，
+且 #140 已冻结 public synthetic contract 并关闭。当前 linked issue #152 只实现
+显式配置 roots 下的本地 calibration/blind-holdout freezer 和 synthetic smoke；
+roots 未配置时完成公开 smoke 后进入 `blocked_permission`，不得推断 `$HOME`。
+后续 classifier 必须从新的 linked GitHub issue、`ACTIVE_GOAL.toml` 和
+`perf/current-loop-state.json` 重新 observe。除非对应 evidence lane 已满足，
 本目标仍不允许运行或提交私有 D10K
 benchmark 原文、raw query、候选结果、trace、本机路径、profile capture、GUI
 readiness、query hot-path success 或 `goal_complete` 证据。

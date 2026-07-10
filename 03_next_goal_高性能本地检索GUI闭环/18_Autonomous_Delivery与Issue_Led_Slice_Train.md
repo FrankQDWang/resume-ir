@@ -10,11 +10,11 @@ If it conflicts with older goal documents, `ACTIVE_GOAL.toml` and this document 
 P1 的公开起点是 `Synthetic Smoke Baseline Contract`：它只实现
 synthetic/public fixture 上的 benchmark harness、redacted report、artifact manifest
 和 fail-closed public contract checks。#138 product-capability audit 已在 #137
-failed/reverted L4 hypothesis 后完成；当前 linked issue #140 只冻结 mixed nested
-benchmark 和 anti-overfit evidence layers，后续新 issue 才实现 precision-first
-classifier。#140 仍不执行或声明
-私有 D10K calibration，不实现 Tauri GUI，不优化 query hot path，不启动新的 L4
-import 微优化，也不打开 profile optimization issue。后续真实 D10K private
+failed/reverted L4 hypothesis 后完成，#140 已冻结 public mixed benchmark contract
+并关闭。当前 linked issue #152 只实现显式配置 roots 下的本地 read-only
+calibration/blind-holdout freezer 和 synthetic smoke；它不推断 `$HOME`，roots
+缺失时记录 `blocked_permission`，且不实现 precision-first classifier、Tauri GUI、
+query hot path 或新的 L4 import 微优化。后续真实 D10K private
 calibration、resident daemon benchmark、热查询路径优化和 GUI/manual 实现必须从
 本文件、`ACTIVE_GOAL.toml` 和 linked GitHub issue 派生。
 
