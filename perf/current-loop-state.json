@@ -1,18 +1,18 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "pr_opened",
+  "workflow_state": "branch_active",
   "experiment_state": "contract_locked",
   "evidence_lane": "smoke",
   "contract_pins": {
-    "active_goal_sha256": "b4529e0763e633ab33a4b561ee1c8d4fb5a621f498e4e524d0e42e8f0cf4da7c",
+    "active_goal_sha256": "594dbd63868ffe47973806621c8ac601db2f010728efb9ee0a904cf11e77021f",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "a22bb5c2f3121b04e79ffc3f6be47aa4ac32df1e"
+    "git_head_sha": "69596288835ada21c755a749dbe84740947e69cc"
   },
-  "current_slice": "#159 make OCR terminal failure recoverable",
+  "current_slice": "#159 bind OCR attempt to persisted generation",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -181,52 +181,16 @@
     {"from":"slice_selected","to":"branch_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4937473387"},
     {"from":"branch_active","to":"verification_active","evidence_ref":"PROGRESS.md#s708"},
     {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s708"},
-    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/163"}
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/163"},
+    {"from":"pr_opened","to":"pr_merged","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/163"},
+    {"from":"pr_merged","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4937912235"},
+    {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4937912235"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4937997963"},
+    {"from":"slice_selected","to":"branch_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4937997963"}
   ],
   "verification": {
-    "commands": [
-      {
-        "command": "cargo fmt --all -- --check && focused meta-store/import-pipeline/resume-cli/resume-daemon tests and clippy",
-        "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s708"
-      },
-      {
-        "command": "cargo test --workspace --locked -- --test-threads=1",
-        "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s708"
-      },
-      {
-        "command": "rust-analyzer diagnostics .",
-        "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s708"
-      },
-      {
-        "command": "public synthetic n=3 import plus three failing OCR attempts and aggregate status",
-        "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s708"
-      },
-      {
-        "command": "python3 scripts/ci/check-performance-contracts.py",
-        "exit_code": 0,
-        "evidence_ref": "perf/current-loop-state.json"
-      },
-      {
-        "command": "python3 scripts/ci/check-autonomous-goal.py",
-        "exit_code": 0,
-        "evidence_ref": "perf/current-loop-state.json"
-      },
-      {
-        "command": "python3 scripts/ci/check-loop-state.py",
-        "exit_code": 0,
-        "evidence_ref": "perf/current-loop-state.json"
-      },
-      {
-        "command": "./scripts/ci/guard-public-repo.sh",
-        "exit_code": 0,
-        "evidence_ref": "scripts/ci/guard-public-repo.sh"
-      }
-    ],
-    "all_required_commands_ran": true,
+    "commands": [],
+    "all_required_commands_ran": false,
     "claim": "partial"
   },
   "privacy": {
@@ -239,7 +203,7 @@
   },
   "github_ledger": {
     "primary_issue": "#159",
-    "active_prs": ["#163"],
+    "active_prs": [],
     "open_blockers": [
       "#37",
       "#159"

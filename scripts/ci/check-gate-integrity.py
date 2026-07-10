@@ -301,13 +301,13 @@ def validate_transition_scope(base_goal: dict, head_goal: dict, merge_base: str,
             base_name = base_slice.get("name")
             head_name = head_slice.get("name")
             expected_names = (
-                "enforce_classifier_gated_admission",
                 "make_ocr_terminal_failure_recoverable",
+                "bind_ocr_attempt_to_persisted_generation",
             )
             if (base_name, head_name) != expected_names:
                 fail(
-                    "same-issue #159 changes require the exact core-admission -> "
-                    "terminal-OCR-lifecycle slice transition"
+                    "same-issue #159 changes require the exact terminal-OCR-lifecycle -> "
+                    "generation-bound-attempt slice transition"
                 )
             require_bool(
                 head_slice.get("production_code_allowed"),
