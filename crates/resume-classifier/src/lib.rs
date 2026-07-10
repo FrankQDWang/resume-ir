@@ -79,7 +79,7 @@ pub enum ReasonCode {
 pub struct ClassificationResult {
     status: ClassificationStatus,
     reason_codes: Vec<ReasonCode>,
-    positive_signal_families: u8,
+    positive_signal_components: u8,
     negative_signal_components: u8,
     classifier_epoch: &'static str,
 }
@@ -93,8 +93,8 @@ impl ClassificationResult {
         &self.reason_codes
     }
 
-    pub fn positive_signal_families(&self) -> u8 {
-        self.positive_signal_families
+    pub fn positive_signal_components(&self) -> u8 {
+        self.positive_signal_components
     }
 
     pub fn negative_signal_components(&self) -> u8 {
@@ -265,14 +265,14 @@ fn classify_normalized_text(text: &str) -> ClassificationResult {
 fn result(
     status: ClassificationStatus,
     mut reason_codes: Vec<ReasonCode>,
-    positive_signal_families: u8,
+    positive_signal_components: u8,
     negative_signal_components: u8,
 ) -> ClassificationResult {
     reason_codes.truncate(MAX_REASON_CODES);
     ClassificationResult {
         status,
         reason_codes,
-        positive_signal_families,
+        positive_signal_components,
         negative_signal_components,
         classifier_epoch: CLASSIFIER_EPOCH,
     }
@@ -414,7 +414,7 @@ mod tests {
             assert_eq!(classification.status().as_str(), expected);
             assert!(classification.reason_codes().len() <= MAX_REASON_CODES);
             if classification.status() == ClassificationStatus::ResumeCandidate {
-                assert!(classification.positive_signal_families() > MIN_RESUME_HEADING_FAMILIES);
+                assert!(classification.positive_signal_components() > MIN_RESUME_HEADING_FAMILIES);
                 indexed += 1;
             }
             if sample["ground_truth"] == "resume" {
@@ -495,7 +495,7 @@ mod tests {
             result.reason_codes().first(),
             Some(&ReasonCode::ConflictingSignalFamilies)
         );
-        assert!(result.positive_signal_families() >= 2);
+        assert!(result.positive_signal_components() >= 2);
         assert!(result.negative_signal_components() >= 2);
     }
 
