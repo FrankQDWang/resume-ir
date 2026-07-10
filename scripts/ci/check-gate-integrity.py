@@ -51,6 +51,23 @@ NEXT_ISSUE_CONTRACT_PATHS = {
     "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md",
     "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md",
 }
+CLASSIFIER_CORE_PATHS = {
+    "ACTIVE_GOAL.toml",
+    "03_next_goal_高性能本地检索GUI闭环/10_实施切片与验收门槛.md",
+    "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md",
+    "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md",
+    "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md",
+    "Cargo.lock",
+    "Cargo.toml",
+    "PROGRESS.md",
+    "crates/resume-classifier/Cargo.toml",
+    "crates/resume-classifier/src/lib.rs",
+    "perf/current-loop-state.json",
+    "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
+    "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+    "scripts/ci/check-autonomous-goal.py",
+    "scripts/ci/check-gate-integrity.py",
+}
 
 
 def fail(message: str) -> None:
@@ -289,6 +306,13 @@ def validate_transition_scope(base_goal: dict, head_goal: dict, merge_base: str,
                 "#140 -> #152 path mismatch: expected "
                 f"{sorted(NEXT_ISSUE_CONTRACT_PATHS)!r}, found {sorted(changed)!r}"
             )
+        return
+
+    if (base_issue, head_issue) == ("#152", "#155"):
+        require_bool(head_slice.get("production_code_allowed"), True, "head.scope.active_slice.production_code_allowed")
+        require_bool(head_slice.get("private_benchmark_allowed"), False, "head.scope.active_slice.private_benchmark_allowed")
+        if changed != CLASSIFIER_CORE_PATHS:
+            fail(f"#152 -> #155 path mismatch: expected {sorted(CLASSIFIER_CORE_PATHS)!r}, found {sorted(changed)!r}")
         return
 
     fail(f"unauthorized active-slice transition: {base_issue!r} -> {head_issue!r}")
