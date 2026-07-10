@@ -10,7 +10,7 @@
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "4afd254d9b7989108d726a737a3cc939c9f45deb"
+    "git_head_sha": "89fd539e952a910d65a6d9f66836312d7f461d2b"
   },
   "current_slice": "#140 freeze mixed-directory benchmark contract and anti-overfit evidence layers",
   "transition_history": [
@@ -28,24 +28,54 @@
       "from": "evidence_review",
       "to": "slice_selected",
       "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/138#issuecomment-4931222189"
+    },
+    {
+      "from": "contract_conflict",
+      "to": "pr_opened",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/145#issuecomment-4932578248"
+    },
+    {
+      "from": "pr_opened",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4932743665"
+    },
+    {
+      "from": "slice_selected",
+      "to": "pr_opened",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/143#issuecomment-4932928934"
+    },
+    {
+      "from": "pr_opened",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4933072676"
     }
   ],
   "verification": {
     "commands": [
       {
-        "command": "gh issue create #140",
+        "command": "gh pr view #149",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/140"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/149"
       },
       {
-        "command": "gh issue comment #138",
+        "command": "gh issue view #140",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/138#issuecomment-4931222189"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4933072676"
       },
       {
-        "command": "gh issue close #138 --reason completed",
+        "command": "cargo test -p index-fulltext tests::redaction_regex_pass_observation_is_thread_local --locked -- --exact",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/138"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/149"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "perf/current-loop-state.json"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "perf/current-loop-state.json"
       }
     ],
     "all_required_commands_ran": true,

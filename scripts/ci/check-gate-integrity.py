@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import pathlib
@@ -12,6 +13,31 @@ import tomllib
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+ATOMIC_BASE_REF = "origin/main"
+ATOMIC_BASE_SHA = "7eb3b155358ff91d5a3e4b900182980b28ec8b6d"
+ATOMIC_BASE_GOAL_SHA256 = "07cba3670294625aaee873ef1889008308051f14545904d09132edcf025d8214"
+INDEX_FULLTEXT_SOURCE = "crates/index-fulltext/src/lib.rs"
+INDEX_FULLTEXT_BASE_BLOB = "37f3b8c10dc51c2d4fc5f24282d3e1d74c4aad89"
+INDEX_FULLTEXT_BASE_SHA256 = "2cb94fa78593ea1d9af343031d7f7e3f19698ab2c295e7b1e037dde40114afe9"
+INDEX_FULLTEXT_FIX_BLOB = "16b465c68dcb7504b5b6d4e196d7c00ca59e22f3"
+INDEX_FULLTEXT_FIX_SHA256 = "cfcbee72af9fe60ad0ca781602567c62b834110dbbc4a942bcac7eaf0e37cb02"
+FORWARD_CONTRACT_PATHS = {
+    "ACTIVE_GOAL.toml",
+    "PROGRESS.md",
+    "scripts/ci/check-autonomous-goal.py",
+    "scripts/ci/check-gate-integrity.py",
+    "perf/current-loop-state.json",
+    "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+    "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
+    "03_next_goal_高性能本地检索GUI闭环/10_实施切片与验收门槛.md",
+    "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md",
+    "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md",
+    "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md",
+    INDEX_FULLTEXT_SOURCE,
+}
+REVERSE_CONTRACT_PATHS = FORWARD_CONTRACT_PATHS - {
+    "scripts/ci/check-gate-integrity.py", INDEX_FULLTEXT_SOURCE,
+}
 
 
 def fail(message: str) -> None:
@@ -35,7 +61,7 @@ def require_bool(value: object, expected: bool, path: str) -> None:
 
 def git(args: list[str]) -> str:
     completed = subprocess.run(
-        ["git", *args],
+        ["git", "-c", "core.quotePath=false", *args],
         cwd=ROOT,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -81,11 +107,155 @@ def select_base_ref() -> str:
     fail("unable to find base ref for gate integrity check")
 
 
-def changed_paths() -> list[str]:
+def merge_base_and_changed_paths() -> tuple[str, set[str]]:
     base_ref = select_base_ref()
     merge_base = git(["merge-base", base_ref, "HEAD"])
-    output = git(["diff", "--name-only", f"{merge_base}...HEAD"])
-    return [] if not output else output.splitlines()
+    if git(["diff", "--name-only"]) or git(["ls-files", "--others", "--exclude-standard"]):
+        fail("gate integrity requires the index and working tree to match with no untracked files")
+    output = git(["diff", "--cached", "--name-only", merge_base])
+    paths = {path for path in output.splitlines() if path}
+    return merge_base, paths
+
+
+def load_toml_at_revision(revision: str, path: str) -> dict:
+    return tomllib.loads(git(["show", f"{revision}:{path}"]))
+
+
+def source_sha256(source: bytes) -> str:
+    return hashlib.sha256(source.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def git_blob_id(source: bytes) -> str:
+    source = source.replace(b"\r\n", b"\n")
+    return hashlib.sha1(b"blob " + str(len(source)).encode() + b"\0" + source, usedforsecurity=False).hexdigest()
+
+
+def approved_index_fulltext_source(base_source: bytes) -> bytes:
+    source = base_source.replace(b"\r\n", b"\n").decode("utf-8")
+    replacements = [
+        (
+            "use std::borrow::{Borrow, Cow};\nuse std::collections::BTreeSet;",
+            "use std::borrow::{Borrow, Cow};\n#[cfg(test)]\n"
+            "use std::cell::Cell;\nuse std::collections::BTreeSet;",
+        ),
+        (
+            "#[cfg(test)]\nstatic REDACTION_REGEX_PASSES: AtomicUsize = AtomicUsize::new(0);\n\n"
+            "#[cfg(test)]\nfn record_redaction_regex_pass() {\n"
+            "    REDACTION_REGEX_PASSES.fetch_add(1, Ordering::Relaxed);\n}",
+            "#[cfg(test)]\nstd::thread_local! {\n"
+            "    static REDACTION_REGEX_PASSES: Cell<usize> = const { Cell::new(0) };\n}\n\n"
+            "#[cfg(test)]\nfn record_redaction_regex_pass() {\n"
+            "    REDACTION_REGEX_PASSES.with(|passes| passes.set(passes.get() + 1));\n}\n\n"
+            "#[cfg(test)]\nfn reset_redaction_regex_passes() {\n"
+            "    REDACTION_REGEX_PASSES.with(|passes| passes.set(0));\n}\n\n"
+            "#[cfg(test)]\nfn redaction_regex_passes() -> usize {\n"
+            "    REDACTION_REGEX_PASSES.with(Cell::get)\n}",
+        ),
+    ]
+    for old, new in replacements:
+        if source.count(old) != 1:
+            fail(f"{INDEX_FULLTEXT_SOURCE}: approved test-only source anchor mismatch")
+        source = source.replace(old, new)
+    for old, new in [
+        ("REDACTION_REGEX_PASSES.store(0, Ordering::Relaxed);", "reset_redaction_regex_passes();"),
+        ("REDACTION_REGEX_PASSES.load(Ordering::Relaxed)", "redaction_regex_passes()"),
+    ]:
+        if source.count(old) != 3:
+            fail(f"{INDEX_FULLTEXT_SOURCE}: approved counter call-site count mismatch")
+        source = source.replace(old, new)
+    anchor = "    #[test]\n    fn contact_redaction_borrows_text_when_no_redaction_is_needed() {"
+    regression = (
+        "    #[test]\n    fn redaction_regex_pass_observation_is_thread_local() {\n"
+        "        reset_redaction_regex_passes();\n\n"
+        "        let worker = thread::spawn(|| {\n"
+        "            reset_redaction_regex_passes();\n"
+        "            record_redaction_regex_pass();\n"
+        "            assert_eq!(redaction_regex_passes(), 1);\n"
+        "        });\n"
+        "        worker.join().unwrap();\n\n"
+        "        assert_eq!(redaction_regex_passes(), 0);\n"
+        "    }\n\n"
+    )
+    if source.count(anchor) != 1:
+        fail(f"{INDEX_FULLTEXT_SOURCE}: approved regression-test anchor mismatch")
+    return source.replace(anchor, regression + anchor).encode()
+
+
+def require_exact_index_fulltext_fix(merge_base: str, changed: set[str]) -> None:
+    if INDEX_FULLTEXT_SOURCE not in changed:
+        fail(f"{INDEX_FULLTEXT_SOURCE}: exact forward transition is missing the Rust repair")
+    base_source = subprocess.check_output(
+        ["git", "show", f"{merge_base}:{INDEX_FULLTEXT_SOURCE}"], cwd=ROOT
+    )
+    head_source = (ROOT / INDEX_FULLTEXT_SOURCE).read_bytes()
+    approved_source = approved_index_fulltext_source(base_source)
+    actual = (git(["rev-parse", f"{merge_base}:{INDEX_FULLTEXT_SOURCE}"]), source_sha256(base_source), git_blob_id(approved_source), source_sha256(approved_source), git_blob_id(head_source), source_sha256(head_source))
+    expected = (INDEX_FULLTEXT_BASE_BLOB, INDEX_FULLTEXT_BASE_SHA256, INDEX_FULLTEXT_FIX_BLOB, INDEX_FULLTEXT_FIX_SHA256, INDEX_FULLTEXT_FIX_BLOB, INDEX_FULLTEXT_FIX_SHA256)
+    if actual != expected or head_source.replace(b"\r\n", b"\n") != approved_source:
+        fail(f"{INDEX_FULLTEXT_SOURCE}: #143 Rust change must match the exact approved test-only repair")
+
+
+def require_atomic_forward_candidate(merge_base: str, changed: set[str]) -> None:
+    if not ref_exists(ATOMIC_BASE_REF) or merge_base != ATOMIC_BASE_SHA or git(["rev-parse", ATOMIC_BASE_REF]) != ATOMIC_BASE_SHA:
+        fail(f"atomic #143 base/ref must both equal {ATOMIC_BASE_SHA}")
+    base_goal = subprocess.check_output(["git", "show", f"{merge_base}:ACTIVE_GOAL.toml"], cwd=ROOT)
+    if source_sha256(base_goal) != ATOMIC_BASE_GOAL_SHA256:
+        fail("atomic #143 base ACTIVE_GOAL.toml SHA-256 mismatch")
+
+    expected_entries = {path: "M" for path in changed}
+    actual_entries: dict[str, str] = {}
+    for line in git(["diff", "--cached", "--raw", "--no-abbrev", merge_base]).splitlines():
+        header, path = line.split("\t", 1)
+        old_mode, new_mode, _old_oid, _new_oid, status = header[1:].split()
+        expected_old_mode = "000000" if status == "A" else "100644"
+        if status not in {"A", "M"} or old_mode != expected_old_mode or new_mode != "100644":
+            fail(f"atomic #143 path {path!r} has invalid status/mode")
+        actual_entries[path] = status
+    if actual_entries != expected_entries:
+        fail(f"atomic #143 status/path set mismatch: {actual_entries!r}")
+
+    commit_count = int(git(["rev-list", "--count", f"{merge_base}..HEAD"]) or "0")
+    if commit_count > 5:
+        fail(f"atomic #143 commit budget exceeded: {commit_count} > 5")
+    stats = [line.split("\t", 2) for line in git(["diff", "--cached", "--numstat", merge_base]).splitlines()]
+    if any(added == "-" or deleted == "-" for added, deleted, _path in stats):
+        fail("atomic #143 candidate must contain only text files")
+    changed_lines = sum(int(added) + int(deleted) for added, deleted, _path in stats)
+    if changed_lines > 800:
+        fail(f"atomic #143 changed-line budget exceeded: {changed_lines} > 800")
+    require_exact_index_fulltext_fix(merge_base, changed)
+
+
+def validate_transition_scope(base_goal: dict, head_goal: dict, merge_base: str, changed: set[str]) -> None:
+    base_slice = base_goal.get("scope", {}).get("active_slice", {})
+    head_slice = head_goal.get("scope", {}).get("active_slice", {})
+    base_issue = base_slice.get("issue")
+    head_issue = head_slice.get("issue")
+    if base_issue == head_issue:
+        if head_issue == "#143" and changed:
+            fail("same-issue #143 changes are forbidden; use the exact #143 -> #140 restoration")
+        return
+
+    if (base_issue, head_issue) == ("#140", "#143"):
+        require_bool(
+            base_slice.get("contract_change_allowed"),
+            True,
+            "base.scope.active_slice.contract_change_allowed",
+        )
+        if changed != FORWARD_CONTRACT_PATHS:
+            fail(f"#140 -> #143 path mismatch: expected {sorted(FORWARD_CONTRACT_PATHS)!r}, found {sorted(changed)!r}")
+        require_atomic_forward_candidate(merge_base, changed)
+        return
+
+    if (base_issue, head_issue) == ("#143", "#140"):
+        targets = base_slice.get("allowed_contract_transition_targets")
+        if not isinstance(targets, list) or "#140" not in targets:
+            fail("#143 contract does not authorize return to #140")
+        if changed != REVERSE_CONTRACT_PATHS:
+            fail(f"#143 -> #140 path mismatch: expected {sorted(REVERSE_CONTRACT_PATHS)!r}, found {sorted(changed)!r}")
+        return
+
+    fail(f"unauthorized active-slice transition: {base_issue!r} -> {head_issue!r}")
 
 
 def is_gate_path(path: str) -> bool:
@@ -104,6 +274,9 @@ def is_gate_path(path: str) -> bool:
 
 def main() -> int:
     active_goal = load_toml(ROOT / "ACTIVE_GOAL.toml")
+    merge_base, paths = merge_base_and_changed_paths()
+    base_goal = load_toml_at_revision(merge_base, "ACTIVE_GOAL.toml")
+    validate_transition_scope(base_goal, active_goal, merge_base, paths)
     autonomous = active_goal.get("autonomous_delivery", {})
     permissions = autonomous.get("permissions")
     if not isinstance(permissions, dict):
@@ -122,9 +295,7 @@ def main() -> int:
     require_bool(merge_policy.get("require_no_direct_main_push"), True, "autonomous_delivery.merge_policy.require_no_direct_main_push")
 
     active_slice = active_goal.get("scope", {}).get("active_slice", {})
-    gate_changes = [path for path in changed_paths() if is_gate_path(path)]
-    if gate_changes and active_slice.get("contract_change_allowed") is not True:
-        fail("gate-changing diff requires scope.active_slice.contract_change_allowed=true: " + ", ".join(gate_changes))
+    gate_changes = sorted(path for path in paths if is_gate_path(path))
     if gate_changes and not active_slice.get("scope_exception_reason"):
         fail("gate-changing diff requires scope.active_slice.scope_exception_reason")
 

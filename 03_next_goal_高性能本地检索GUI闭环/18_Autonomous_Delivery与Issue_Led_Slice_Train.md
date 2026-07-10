@@ -16,7 +16,7 @@ classifier。#140 仍不执行或声明
 私有 D10K calibration，不实现 Tauri GUI，不优化 query hot path，不启动新的 L4
 import 微优化，也不打开 profile optimization issue。后续真实 D10K private
 calibration、resident daemon benchmark、热查询路径优化和 GUI/manual 实现必须从
-本文件和 `ACTIVE_GOAL.toml` 派生新的 linked plan。
+本文件、`ACTIVE_GOAL.toml` 和 linked GitHub issue 派生。
 
 ## 2. Policy Truth
 
