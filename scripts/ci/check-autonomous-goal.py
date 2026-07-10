@@ -163,47 +163,28 @@ def main() -> int:
         require_bool(permissions.get(key), False, f"autonomous_delivery.permissions.{key}")
 
     active_slice = active_goal.get("scope", {}).get("active_slice", {})
-    require_string(active_slice.get("issue"), "#145", "scope.active_slice.issue")
+    require_string(active_slice.get("issue"), "#140", "scope.active_slice.issue")
     require_string(
         active_slice.get("name"),
-        "atomic_bootstrap_parse_result_cancel_poll_recovery",
+        "freeze_mixed_import_benchmark_contract_and_anti_overfit_evidence_layers",
         "scope.active_slice.name",
     )
-    require_bool(active_slice.get("contract_change_allowed"), False, "scope.active_slice.contract_change_allowed")
-    require_bool(active_slice.get("production_code_allowed"), True, "scope.active_slice.production_code_allowed")
-    require_bool(
-        active_slice.get("production_semantics_change_allowed"),
-        False,
-        "scope.active_slice.production_semantics_change_allowed",
-    )
-    require_bool(
-        active_slice.get("test_only_change_required"),
-        True,
-        "scope.active_slice.test_only_change_required",
-    )
-    require_bool(
-        active_slice.get("global_test_serialization_allowed"),
-        False,
-        "scope.active_slice.global_test_serialization_allowed",
-    )
+    require_bool(active_slice.get("contract_change_allowed"), True, "scope.active_slice.contract_change_allowed")
+    require_bool(active_slice.get("production_code_allowed"), False, "scope.active_slice.production_code_allowed")
     require_bool(active_slice.get("private_benchmark_allowed"), False, "scope.active_slice.private_benchmark_allowed")
     require_bool(active_slice.get("scope_exception"), False, "scope.active_slice.scope_exception")
     require_non_empty_string(active_slice.get("scope_exception_reason"), "scope.active_slice.scope_exception_reason")
     allowed_paths = require_list(active_slice.get("allowed_paths"), "scope.active_slice.allowed_paths")
-    expected_allowed_paths = ["crates/import-pipeline/src/lib.rs", "PROGRESS.md"]
-    if allowed_paths != expected_allowed_paths:
+    production_prefixes = ("crates/", "src/", "app/", "apps/")
+    production_paths = [
+        path
+        for path in allowed_paths
+        if isinstance(path, str) and path.startswith(production_prefixes)
+    ]
+    if production_paths:
         fail(
-            "scope.active_slice.allowed_paths: expected "
-            f"{expected_allowed_paths!r}"
-        )
-    allowed_transition_targets = require_list(
-        active_slice.get("allowed_contract_transition_targets"),
-        "scope.active_slice.allowed_contract_transition_targets",
-    )
-    if allowed_transition_targets != ["#140"]:
-        fail(
-            "scope.active_slice.allowed_contract_transition_targets: "
-            "expected ['#140']"
+            "scope.active_slice.allowed_paths: #140 contract-only slice must not allow "
+            f"production paths {production_paths!r}"
         )
 
     gui = active_goal.get("gui")
@@ -440,20 +421,6 @@ def main() -> int:
             "autonomous_delivery.transitions.capture_synthetic_smoke_baseline."
             "required_permissions: expected []"
         )
-    bootstrap_transition = require_transition(transitions, "bootstrap_contract_and_test_fix")
-    expected_bootstrap = {
-        "from": ["contract_conflict"],
-        "to": "pr_opened",
-        "required_permissions": ["production_code_allowed", "commit_push_allowed", "github_pr_write_allowed", "github_issue_write_allowed"],
-        "required_evidence": ["explicit_user_authorization", "contract_conflict_evidence", "linked_issue", "issue_intent_comment", "exact_test_only_patch", "local_tests", "privacy_boundary"],
-        "allowed_actions": ["edit_contract", "edit_exact_test", "run_tests", "commit", "push_branch", "create_pr", "update_issue"],
-    }
-    for key, expected in expected_bootstrap.items():
-        if bootstrap_transition.get(key) != expected:
-            fail(
-                "autonomous_delivery.transitions.bootstrap_contract_and_test_fix."
-                f"{key}: expected {expected!r}"
-            )
     require_transition_contains(
         transitions,
         name="capture_baseline",

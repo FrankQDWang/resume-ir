@@ -1,18 +1,18 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "pr_opened",
+  "workflow_state": "slice_selected",
   "experiment_state": "contract_locked",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "3e93b5d21dcf46b6d188f9dcb4860189a6c1656f9fb4feac9b948ea4de2fa6b1",
+    "active_goal_sha256": "07cba3670294625aaee873ef1889008308051f14545904d09132edcf025d8214",
     "acceptance_matrix_sha256": "caa9e458d39a20964f46b81ae0aee3604f893dfd783410b88a58af53b9020d30",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "4afd254d9b7989108d726a737a3cc939c9f45deb"
+    "git_head_sha": "ba9166ab9ded2780cc6db199b9c41ee3399d8bfa"
   },
-  "current_slice": "#145 atomic bootstrap parse-result cancel-poll recovery",
+  "current_slice": "#140 freeze mixed-directory benchmark contract and anti-overfit evidence layers",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -33,29 +33,34 @@
       "from": "contract_conflict",
       "to": "pr_opened",
       "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/145#issuecomment-4932578248"
+    },
+    {
+      "from": "pr_opened",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4932743665"
     }
   ],
   "verification": {
     "commands": [
       {
-        "command": "gh issue view #145",
+        "command": "gh pr view #147",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/145"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/147"
       },
       {
-        "command": "gh pr checks #144",
-        "exit_code": 1,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/actions/runs/29068476119/job/86284945029"
-      },
-      {
-        "command": "git rev-parse origin/main:crates/import-pipeline/src/lib.rs b093b1a:crates/import-pipeline/src/lib.rs",
+        "command": "gh issue view #140",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/145"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4932743665"
       },
       {
         "command": "cargo test -p import-pipeline tests::recv_parse_result_polls_cancel_while_waiting --locked -- --exact",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/145"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/140"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "perf/current-loop-state.json"
       },
       {
         "command": "python3 scripts/ci/check-autonomous-goal.py",
@@ -75,7 +80,7 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#145",
+    "primary_issue": "#140",
     "active_prs": [
       "#142",
       "#144"
@@ -83,8 +88,7 @@
     "open_blockers": [
       "#37",
       "#140",
-      "#143",
-      "#145"
+      "#143"
     ]
   }
 }
