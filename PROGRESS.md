@@ -2710,15 +2710,12 @@ guards, local runtime discovery, and PR #9 CI state.
   roots unconfigured, so no private file was read and `$HOME` was not inferred.
   This bounded transition changes machine state only; classifier and production
   behavior remain out of scope.
-- S703 implements #152's local freezer after the user's public-safe `$HOME`
-  authorization. Cross-platform smoke freezes 73-75 samples and covers scope,
-  permission, VCS, immutable full content, layer separation, and privacy. Final
-  private v2 used all 14,439 eligible files: depth 3611/3610/3609/3609;
+- S703 implements #152's local freezer after public-safe `$HOME` authorization;
+  cross-platform smoke covers scope, VCS, immutable content, layers, and privacy.
+  Final v2 used all 14,439 eligible files: depth 3611/3610/3609/3609;
   clean/ordinary source 8,721/5,718; calibration/holdout 11,551/2,888; 7
-  resume-only and 15 mixed directories. Required exclusions left fewer than
-  20,000 files, so no duplicate filler was added.
-  Modes are 0700/0600; unchanged verify passed; the superseded pilot remains
-  archived locally and no private artifact is public.
+  resume-only and 15 mixed directories. Exclusions left fewer than 20,000, so
+  no filler was added. Modes are 0700/0600; verify passed; no private artifact is public.
 
 ## Slice Status
 
