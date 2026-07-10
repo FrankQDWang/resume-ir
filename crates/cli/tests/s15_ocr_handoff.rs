@@ -147,6 +147,7 @@ fn pause_and_resume_ocr_task_persistently_controls_worker_claims() {
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.81\n'
 printf 'text:\n'
+printf 'SUMMARY\nSynthetic OCR fixture.\nEXPERIENCE\nBuilt systems.\nSKILLS\nSearch.\n'
 printf 'OCRS33PauseResumeToken worker text\n'
 "#,
     );
@@ -246,6 +247,7 @@ input_size="$(wc -c < "$RESUME_IR_OCR_INPUT_PATH" | tr -d ' ')"
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.73\n'
 printf 'text:\n'
+printf 'SUMMARY\nSynthetic OCR fixture.\nEXPERIENCE\nBuilt systems.\nSKILLS\nSearch.\n'
 printf 'OCRS31UniqueToken worker text bytes=%s page=%s\n' "$input_size" "$RESUME_IR_OCR_PAGE_NO"
 "#,
     );
@@ -359,6 +361,7 @@ input_bytes="$(cat "$RESUME_IR_OCR_INPUT_PATH")"
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.82\n'
 printf 'text:\n'
+printf 'SUMMARY\nSynthetic OCR fixture.\nEXPERIENCE\nBuilt systems.\nSKILLS\nSearch.\n'
 case "$input_bytes:$RESUME_IR_OCR_PAGE_NO" in
   S89_RENDERED_PAGE_1_BYTES:1) printf 'S89PageOneToken first page text\n' ;;
   S89_RENDERED_PAGE_2_BYTES:2) printf 'S89PageTwoToken second page text\n' ;;
@@ -632,6 +635,7 @@ fi
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.87\n'
 printf 'text:\n'
+printf 'SUMMARY\nSynthetic OCR fixture.\nEXPERIENCE\nBuilt systems.\nSKILLS\nSearch.\n'
 printf 'S91PdftoppmRenderedToken rendered page text\n'
 "#,
     );
@@ -748,7 +752,7 @@ fn ocr_worker_uses_tesseract_for_rendered_image_before_indexing() {
     let render_command = write_text_png_render_executable(
         "fixture-ocr-worker-tesseract-render",
         &pango_view,
-        "S92 OCR TEST",
+        "SUMMARY\nS92 OCR TEST\nEXPERIENCE\nBuilt systems\nSKILLS\nSearch",
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
@@ -1083,7 +1087,7 @@ fn ocr_worker_indexes_succeeded_cache_hit_without_invoking_command() {
         .unwrap();
         let cache_entry = OcrPageCacheEntry::succeeded(
             cache_key,
-            "OCRS41CacheHitToken cached OCR text",
+            "SUMMARY\nSynthetic OCR fixture.\nEXPERIENCE\nBuilt systems.\nSKILLS\nSearch.\nOCRS41CacheHitToken cached OCR text",
             0.84,
             "fixture-cache-engine",
             7,

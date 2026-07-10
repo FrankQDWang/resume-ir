@@ -12,7 +12,7 @@ endobj
 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
 endobj
 5 0 obj
-<< /Length 336 >>
+<< /Length 343 >>
 stream
 BT
 /F1 12 Tf
@@ -21,7 +21,8 @@ BT
 T* (Education) Tj
 T* (School: Synthetic Institute) Tj
 T* (Degree: Bachelor of Engineering) Tj
-T* (Experience: Built Java services for search indexing and payment reconciliation.) Tj
+T* (Experience) Tj
+T* (Built Java services for search indexing and payment reconciliation.) Tj
 T* (Skills: Java, Spring Cloud, SQLite) Tj
 T* (Dates: 2020.01 - 2024.03) Tj
 ET
@@ -38,5 +39,5 @@ xref
 trailer
 << /Root 1 0 R /Size 6 >>
 startxref
-697
+704
 %%EOF
