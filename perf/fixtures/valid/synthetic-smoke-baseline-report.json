@@ -6,11 +6,11 @@
   "evidence_lane": "smoke",
   "contract_pins": {
     "active_goal_sha256": "07cba3670294625aaee873ef1889008308051f14545904d09132edcf025d8214",
-    "acceptance_matrix_sha256": "caa9e458d39a20964f46b81ae0aee3604f893dfd783410b88a58af53b9020d30",
+    "acceptance_matrix_sha256": "fa8be1f3fea01c5d3875c60dcebb9dd41e000a8b506900a805100cf6821838d5",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "510b6a225e8ed8ce3dc7dc778797ca7a885d3491"
+    "git_head_sha": "89fd539e952a910d65a6d9f66836312d7f461d2b"
   },
   "synthetic_smoke": {
     "smoke_schema_version": "resume-ir.synthetic-smoke-baseline.v1",

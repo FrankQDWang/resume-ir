@@ -83,6 +83,45 @@ SYNTHETIC_SMOKE_BATCH_PROTOCOL_STAGES = {
     "snippet",
     "elapsed",
 }
+MIXED_IMPORT_BENCHMARK_LAYERS = [
+    "public_synthetic",
+    "private_calibration",
+    "blind_holdout",
+]
+MIXED_IMPORT_STATUSES = [
+    "resume_candidate",
+    "non_resume",
+    "needs_review",
+    "ocr_backlog",
+    "failed",
+]
+MIXED_IMPORT_REQUIRED_METRICS = [
+    "sample_counts",
+    "label_counts",
+    "extension_buckets",
+    "size_buckets",
+    "directory_depth_buckets",
+    "classification_counts",
+    "searchable_count",
+    "indexed_resume_precision",
+    "contamination_count",
+    "resume_completeness",
+    "clean_vs_mixed_wall_time",
+    "stage_timings",
+    "content_bytes_read",
+    "docs_per_second",
+    "mib_per_second",
+    "h_tier",
+    "resource_budget",
+    "privacy_confirmation",
+]
+MIXED_IMPORT_FORBIDDEN_SIGNALS = [
+    "path_whitelist",
+    "directory_name_whitelist",
+    "filename_whitelist",
+    "raw_file_hash_classifier_key",
+    "benchmark_mutation_to_fit_rules",
+]
 SYNTHETIC_SMOKE_TOP_LEVEL_KEYS = {
     "schema_version",
     "goal_id",
@@ -537,6 +576,76 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
     ]
     if required_smoke_commands != expected_smoke_commands:
         fail("matrix.synthetic_smoke_baseline.required_commands mismatch")
+
+    mixed_import = require_mapping(
+        matrix.get("mixed_import_correctness"),
+        "matrix.mixed_import_correctness",
+    )
+    expected_mixed_strings = {
+        "phase": "product_contract_precondition",
+        "must_complete_after_issue": "#138",
+        "contract_owner_issue": "#140",
+        "report_schema_target": "resume-ir.mixed-import-report.v1",
+        "contract_checker_target": "scripts/ci/check-mixed-import-contracts.py",
+        "freeze_identity_scheme": "hmac_sha256_opaque_manifest_v1",
+        "public_synthetic_source_visibility": "committed_synthetic_exact",
+        "public_synthetic_output_visibility": "bounded_aggregate_only",
+        "private_calibration_visibility": "local_tuning_redacted_aggregate_public",
+        "blind_holdout_visibility": "acceptance_only_redacted_aggregate_public",
+        "indexed_resume_precision_formula": "indexed_true_resumes / indexed_total",
+        "resume_completeness_formula": "indexed_true_resumes / expected_true_resumes",
+        "classifier_position": "after_parse_text_extraction_before_searchable_indexing",
+        "fs_crawler_role": "cheap_source_discovery_only",
+        "public_evidence": "redacted_aggregate_only",
+    }
+    for key, expected in expected_mixed_strings.items():
+        if mixed_import.get(key) != expected:
+            fail(f"matrix.mixed_import_correctness.{key} mismatch")
+    require_bool_fields(
+        mixed_import,
+        [
+            "required_before_gui_implementation",
+            "required_before_query_hot_path_optimization",
+            "benchmark_must_be_frozen_before_classifier",
+            "precision_first",
+            "local_per_file_audit_required",
+            "completeness_improvement_requires_precision_non_regression",
+            "completeness_improvement_requires_contamination_within_limit",
+        ],
+        True,
+        "matrix.mixed_import_correctness",
+    )
+    require_bool_fields(
+        mixed_import,
+        [
+            "mutation_after_freeze_allowed",
+            "report_contract_implemented",
+            "blind_holdout_visible_during_calibration",
+            "synthetic_fixture_ids_classifier_features_allowed",
+            "labels_classifier_features_allowed",
+            "classifier_uses_ai_or_llm",
+            "needs_review_indexed_by_default",
+            "non_resume_indexed",
+            "ocr_backlog_classified_as_non_resume_before_ocr",
+        ],
+        False,
+        "matrix.mixed_import_correctness",
+    )
+    if mixed_import.get("indexed_resume_precision_min") != 1.0:
+        fail("matrix.mixed_import_correctness.indexed_resume_precision_min mismatch")
+    if mixed_import.get("contamination_count_max") != 0:
+        fail("matrix.mixed_import_correctness.contamination_count_max mismatch")
+    if mixed_import.get("precision_non_regression_tolerance") != 0.0:
+        fail("matrix.mixed_import_correctness.precision_non_regression_tolerance mismatch")
+    if mixed_import.get("benchmark_layers") != MIXED_IMPORT_BENCHMARK_LAYERS:
+        fail("matrix.mixed_import_correctness.benchmark_layers mismatch")
+    if mixed_import.get("status_values") != MIXED_IMPORT_STATUSES:
+        fail("matrix.mixed_import_correctness.status_values mismatch")
+    if mixed_import.get("required_metrics") != MIXED_IMPORT_REQUIRED_METRICS:
+        fail("matrix.mixed_import_correctness.required_metrics mismatch")
+    if mixed_import.get("forbidden_signals") != MIXED_IMPORT_FORBIDDEN_SIGNALS:
+        fail("matrix.mixed_import_correctness.forbidden_signals mismatch")
+
     scale_gates = require_mapping(matrix.get("scale_gates"), "matrix.scale_gates")
     for gate, minimums in {
         "D10K_private_calibration": (10_000, 8_000, False),

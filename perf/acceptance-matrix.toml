@@ -262,6 +262,71 @@ docs_per_second_must_report = true
 mib_per_second_must_report = true
 scan_complete_ms_must_report = true
 
+[mixed_import_correctness]
+phase = "product_contract_precondition"
+must_complete_after_issue = "#138"
+contract_owner_issue = "#140"
+required_before_gui_implementation = true
+required_before_query_hot_path_optimization = true
+report_schema_target = "resume-ir.mixed-import-report.v1"
+contract_checker_target = "scripts/ci/check-mixed-import-contracts.py"
+report_contract_implemented = false
+benchmark_must_be_frozen_before_classifier = true
+mutation_after_freeze_allowed = false
+freeze_identity_scheme = "hmac_sha256_opaque_manifest_v1"
+public_synthetic_source_visibility = "committed_synthetic_exact"
+public_synthetic_output_visibility = "bounded_aggregate_only"
+private_calibration_visibility = "local_tuning_redacted_aggregate_public"
+blind_holdout_visibility = "acceptance_only_redacted_aggregate_public"
+blind_holdout_visible_during_calibration = false
+synthetic_fixture_ids_classifier_features_allowed = false
+labels_classifier_features_allowed = false
+classifier_position = "after_parse_text_extraction_before_searchable_indexing"
+fs_crawler_role = "cheap_source_discovery_only"
+classifier_uses_ai_or_llm = false
+precision_first = true
+indexed_resume_precision_formula = "indexed_true_resumes / indexed_total"
+resume_completeness_formula = "indexed_true_resumes / expected_true_resumes"
+indexed_resume_precision_min = 1.0
+contamination_count_max = 0
+precision_non_regression_tolerance = 0.0
+completeness_improvement_requires_precision_non_regression = true
+completeness_improvement_requires_contamination_within_limit = true
+needs_review_indexed_by_default = false
+non_resume_indexed = false
+ocr_backlog_classified_as_non_resume_before_ocr = false
+local_per_file_audit_required = true
+public_evidence = "redacted_aggregate_only"
+benchmark_layers = ["public_synthetic", "private_calibration", "blind_holdout"]
+status_values = ["resume_candidate", "non_resume", "needs_review", "ocr_backlog", "failed"]
+required_metrics = [
+  "sample_counts",
+  "label_counts",
+  "extension_buckets",
+  "size_buckets",
+  "directory_depth_buckets",
+  "classification_counts",
+  "searchable_count",
+  "indexed_resume_precision",
+  "contamination_count",
+  "resume_completeness",
+  "clean_vs_mixed_wall_time",
+  "stage_timings",
+  "content_bytes_read",
+  "docs_per_second",
+  "mib_per_second",
+  "h_tier",
+  "resource_budget",
+  "privacy_confirmation",
+]
+forbidden_signals = [
+  "path_whitelist",
+  "directory_name_whitelist",
+  "filename_whitelist",
+  "raw_file_hash_classifier_key",
+  "benchmark_mutation_to_fit_rules",
+]
+
 [incremental_redlines.zero_change]
 max_reparse_count = 0
 max_full_rebuilds = 0

@@ -3363,6 +3363,38 @@ guards, local runtime discovery, and PR #9 CI state.
   D10K/W1/full baseline, GUI, query optimization, new L4 import optimization,
   stable-release, or `goal_complete` claim.
 
+### S694
+
+- Scope: freeze the mixed-import product-correctness acceptance matrix and
+  evidence-layer prose for #140 before adding a report schema, public synthetic
+  corpus, or classifier behavior.
+- Contract: `perf/acceptance-matrix.toml` now machine-locks the three benchmark
+  layers, five classification states, precision-first/index-admission rules,
+  required aggregate metrics, freeze-before-classifier and immutable-after-freeze
+  rules, layer visibility, opaque freeze identity, and forbidden classifier
+  signals. Goal docs align the same contract and keep real private witness
+  construction in a later authorized linked issue.
+- TDD evidence: after adding the matrix assertions, RED
+  `python3 scripts/ci/check-performance-contracts.py` failed on the stale
+  acceptance-matrix hash. The loop snapshot and paired synthetic-smoke report
+  and manifest were then repinned to the new matrix before final verification.
+- Verification: the performance-contract, autonomous-goal, loop-state,
+  public-repo, PR-budget, Python compile, and diff checks all exited 0. An
+  in-memory negative checks also proved that enabling mutation after freeze,
+  lowering precision below 1.0, raising contamination above 0, or allowing
+  precision regression is rejected by the matrix validator.
+- Review correction: pre-merge review found that the first draft implied the
+  not-yet-landed report schema/checker already existed and did not quantify the
+  precision-first gate. The matrix now marks those artifacts as targets with
+  `report_contract_implemented=false`, freezes precision at 1.0 and
+  contamination at 0 with zero regression tolerance, and makes completeness
+  improvement conditional on both guards. Public synthetic source visibility
+  is also separated from bounded aggregate report output.
+- Boundary: contract/docs only. This slice does not add the mixed-import report
+  schema/checker, frozen public corpus, classifier code, private-root reads,
+  calibration/holdout execution, GUI/query/L4 optimization, scale evidence,
+  stable-release readiness, or `goal_complete`.
+
 ### S600
 
 - Scope: make the #53 blocked handoff recommend the right next action when
