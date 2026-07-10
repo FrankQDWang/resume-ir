@@ -1,18 +1,18 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "branch_active",
+  "workflow_state": "evidence_review",
   "experiment_state": "contract_locked",
   "evidence_lane": "smoke",
   "contract_pins": {
-    "active_goal_sha256": "cebbb5fbbf8a9c6ce5ddaff35eb001960fd237ebc6fe6d9c50dd4c470fc35066",
+    "active_goal_sha256": "eddb124cf43561f9ece3b9cfb502015305ca109450cd21cc6a00afe336863ce5",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "95ddd43b4e0946bf3b18febac56b38e046c454d9"
   },
-  "current_slice": "#159 enforce classifier-gated parse/OCR/search-index admission",
+  "current_slice": "#159 prepare classifier-admission synthetic fixtures",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -128,34 +128,49 @@
       "from": "slice_selected",
       "to": "branch_active",
       "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/159"
+    },
+    {
+      "from": "branch_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#s706"
+    },
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#s706"
     }
   ],
   "verification": {
     "commands": [
       {
-        "command": "python3 scripts/ci/check-loop-state.py",
+        "command": "cargo test -p resume-cli --locked --test s9_import_search --test s10_search_filters --test s15_ocr_handoff --test s16_persisted_fields --test s21_import_candidate_assignment",
         "exit_code": 0,
-        "evidence_ref": "perf/current-loop-state.json"
+        "evidence_ref": "PROGRESS.md#s706"
       },
       {
-        "command": "./scripts/ci/guard-public-repo.sh",
+        "command": "cargo test -p resume-daemon --locked --test s4_daemon --test s50_ocr_worker",
         "exit_code": 0,
-        "evidence_ref": "scripts/ci/guard-public-repo.sh"
+        "evidence_ref": "PROGRESS.md#s706"
       },
       {
-        "command": "cargo test -p meta-store --test s3_sqlite migrations_are_idempotent_and_schema_v1_is_queryable --locked -- --exact",
-        "exit_code": 101,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/157"
-      },
-      {
-        "command": "cargo test -p meta-store classification::tests::five_states_round_trip_and_visible_counts_exclude_soft_deleted_records --locked -- --exact",
+        "command": "cargo test -p parser-docx --locked --test s6_docx && cargo test -p parser-pdf --locked --test s6_pdf",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/157"
+        "evidence_ref": "PROGRESS.md#s706"
       },
       {
         "command": "cargo test --workspace --locked",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/157"
+        "evidence_ref": "PROGRESS.md#s706"
+      },
+      {
+        "command": "cargo clippy -p resume-cli -p resume-daemon --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s706"
+      },
+      {
+        "command": "rust-analyzer diagnostics .",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s706"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
@@ -166,6 +181,16 @@
         "command": "python3 scripts/ci/check-autonomous-goal.py",
         "exit_code": 0,
         "evidence_ref": "perf/current-loop-state.json"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "perf/current-loop-state.json"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "scripts/ci/guard-public-repo.sh"
       }
     ],
     "all_required_commands_ran": true,

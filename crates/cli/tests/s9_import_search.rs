@@ -270,7 +270,7 @@ fn witness_imports_only_pdf_and_word_samples_without_persisting_private_data() {
     .unwrap();
     fs::write(
         private_root.join("real-person-legacy.doc"),
-        b"Synthetic legacy Word resume\nSkills: Rust\n",
+        b"Synthetic legacy Word resume\nSUMMARY\nSynthetic Word profile.\nEXPERIENCE\nBuilt local search services.\nSKILLS\nRust\n",
     )
     .unwrap();
     fs::write(
@@ -658,6 +658,12 @@ fn witness_run_ocr_executes_local_command_without_output_or_path_leak() {
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.77\n'
 printf 'text:\n'
+printf 'SUMMARY\n'
+printf 'Synthetic OCR profile.\n'
+printf 'EXPERIENCE\n'
+printf 'Built local OCR search systems.\n'
+printf 'SKILLS\n'
+printf 'Rust Search\n'
 printf 'WitnessOCRSecretToken local OCR text\n'
 "#,
     );
@@ -722,6 +728,12 @@ fn witness_run_ocr_can_budget_documents_after_full_private_scan_without_path_lea
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.77\n'
 printf 'text:\n'
+printf 'SUMMARY\n'
+printf 'Synthetic OCR profile.\n'
+printf 'EXPERIENCE\n'
+printf 'Built local OCR search systems.\n'
+printf 'SKILLS\n'
+printf 'Rust Search\n'
 printf 'WitnessOCRBudgetSecret local OCR text\n'
 "#,
     );
@@ -801,6 +813,12 @@ fi
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.77\n'
 printf 'text:\n'
+printf 'SUMMARY\n'
+printf 'Synthetic OCR profile.\n'
+printf 'EXPERIENCE\n'
+printf 'Built local OCR search systems.\n'
+printf 'SKILLS\n'
+printf 'Rust Search\n'
 printf 'WitnessOCRPartialSecret local OCR text\n'
 "#,
             path_str(&counter_file)
@@ -949,7 +967,7 @@ fn import_txt_resume_builds_searchable_index_without_path_leakage() {
     let canonical_private_root = fs::canonicalize(&private_root).unwrap();
     fs::write(
         private_root.join("synthetic-rust-search.txt"),
-        "Synthetic Candidate\nRust search infrastructure\nemail: candidate@example.test\n",
+        "Synthetic Candidate\nSUMMARY\nRust search infrastructure\nEXPERIENCE\nBuilt local search services.\nSKILLS\nRust search\nemail: candidate@example.test\n",
     )
     .unwrap();
 
@@ -1026,7 +1044,7 @@ fn import_rebuilds_from_metadata_when_active_snapshot_is_unreadable() {
     let canonical_private_root = fs::canonicalize(&private_root).unwrap();
     fs::write(
         private_root.join("synthetic-first.txt"),
-        "Synthetic First\nRust firsttoken search\n",
+        "Synthetic First\nSUMMARY\nRust firsttoken search\nEXPERIENCE\nBuilt local search services.\nSKILLS\nRust\n",
     )
     .unwrap();
 
@@ -1062,7 +1080,7 @@ fn import_rebuilds_from_metadata_when_active_snapshot_is_unreadable() {
     .unwrap();
     fs::write(
         private_root.join("synthetic-second.txt"),
-        "Synthetic Second\nPython secondtoken ranking\n",
+        "Synthetic Second\nSUMMARY\nPython secondtoken ranking\nEXPERIENCE\nDeveloped local ranking services.\nSKILLS\nPython\n",
     )
     .unwrap();
 
@@ -2170,7 +2188,7 @@ fn seed_large_import_fixture(root: &Path, file_count: usize, token: &str) {
         fs::write(
             root.join(format!("candidate-{index:04}.txt")),
             format!(
-                "Synthetic Candidate {index}\nSkills: Rust Kubernetes Search {token}\nExperience: {}\n",
+                "Synthetic Candidate {index}\nSUMMARY\nLocal retrieval profile.\nEXPERIENCE\nBuilt {}\nSKILLS\nRust Kubernetes Search {token}\n",
                 "local-first retrieval ".repeat(20)
             ),
         )
@@ -2334,6 +2352,12 @@ fn windows_fixture_command_body(body: &str) -> String {
                 "echo resume-ir-ocr-v1\r\n",
                 "echo confidence=0.77\r\n",
                 "echo text:\r\n",
+                "echo SUMMARY\r\n",
+                "echo Synthetic OCR profile.\r\n",
+                "echo EXPERIENCE\r\n",
+                "echo Built local OCR search systems.\r\n",
+                "echo SKILLS\r\n",
+                "echo Rust Search\r\n",
                 "echo WitnessOCRPartialSecret local OCR text\r\n",
                 "exit /b 0\r\n"
             ),

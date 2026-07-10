@@ -2734,11 +2734,21 @@ guards, local runtime discovery, and PR #9 CI state.
   retains keyed audit but leaves counts, and physical delete cascades. Existing
   documents are not backfilled; admission, OCR wiring, private data, and
   performance work remain out of scope.
+- S706 prepares #159's classifier-admission fixture boundary without changing
+  production behavior. Seven Rust integration-test fixture owners plus the
+  shared synthetic DOCX/PDF now express the frozen multi-signal positive-resume
+  shape while preserving each test's original tokens, assertions, lifecycle,
+  privacy, and parser semantics. The exact 15-path normal budget includes the
+  paired machine-state pins and gate-integrity lock; the same-issue follow-up is
+  restricted to the named production-admission slice and its exact declared
+  paths. No classifier threshold, admission path, private corpus, or product
+  metric changes in this prep slice.
 
 ## Slice Status
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S706 | #159 classifier-admission synthetic fixtures prepared | Seven Rust test fixture owners and the shared DOCX/PDF now carry the frozen strong positive signals without changing assertions or production code. Focused CLI/daemon/parser tests pass 126/126; the full workspace, formatting, clippy, rust-analyzer diagnostics, exact path budget, and required machine/privacy gates pass. | #37/#159 remain open. Production parse/OCR/rebuild/rerun/legacy admission is not implemented here; no private classification, index precision/contamination/completeness, timing, overhead, scale, GUI, or readiness claim. |
 | S705 | #157 durable classification audit storage implemented | RED: V22/API were absent. GREEN: five states and bounded ordered reasons round-trip through typed atomic upsert/read; aggregate counts exclude soft-deleted records; invalid input/missing parents fail closed; migration constraints, idempotence, and cascades pass. Existing documents remain unclassified. | #37/#157 remain open until hosted acceptance. No import/OCR/index admission, private calibration/holdout, timings, overhead, or product correctness/readiness claim. |
 | S704 | #155 deterministic classifier core implemented | RED: the workspace had no `resume-classifier` package. GREEN: 7 Rust tests run the unchanged 9-sample frozen public fixture through the production API and cover five states, precision-first admission, corroborated rejection, JD/template/weak/metadata independence, bounded reasons, deterministic output, and debug redaction. Aggregate: candidate/non-resume/review/OCR/failed = 3/3/1/1/1; synthetic precision 1.0, contamination 0, completeness 0.75; privacy flags remain false. | #37/#155 remain open until hosted acceptance. This slice does not persist audit state, gate full-text/field/vector admission, reclassify OCR output, read calibration/holdout, measure timings or overhead, or claim product correctness/readiness. |
 | S703 | #152 local freezer implemented and private corpus frozen | Synthetic freezer smoke passes, including Git-worktree exclusion and large-file middle mutation. Final v2 aggregate: 14,439 files, 0-3 depth nearly equal, 11,551 calibration, 2,888 sealed holdout, 7 resume-only and 15 mixed directories, keyed full-content HMAC manifests, aggregate-only public output with all leakage flags false, local permissions 0700/0600. | 20,000 was not reachable after required exclusions, so the authorized maximum was used. Ordinary-source labels are provenance-based; no classifier/index/readiness claim. |
@@ -3329,6 +3339,32 @@ guards, local runtime discovery, and PR #9 CI state.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S706
+
+- Fresh #159 impact audit found that a default production gate would invalidate
+  weak parser-success synthetic bodies across seven Rust test files and two
+  shared binary fixtures. A one-PR implementation would exceed the normal path
+  budget, so #159 stays the single product issue and uses a bounded fixture-prep
+  PR before its production admission PR; no scope exception or gate bypass is
+  used.
+- The fixture-only semantic migration preserves existing names, field/query
+  tokens, pagination, OCR/cache/lifecycle behavior, assertions, and parser
+  formats. Focused CLI 82/82, daemon 25/25, DOCX 6/6, and PDF 13/13 tests pass;
+  `cargo test --workspace --locked`, fmt, clippy with warnings denied, and
+  rust-analyzer diagnostics pass (existing cfg inactive-code weak warnings only).
+- Gate integrity requires the next same-issue #159 change to transition from
+  fixture prep to the named production-admission slice and makes its Git diff
+  exactly equal that slice's declared allowed paths; an arbitrary same-issue
+  follow-up cannot bypass scope enforcement.
+- Product classification sample size and all five production state counts are
+  zero in this prep slice because no admission classifier is executed. Likewise
+  searchable/OCR backlog/failed/non-resume/review counts, stage timings,
+  clean-vs-mixed overhead, indexed precision, contamination, completeness,
+  H-tier, and resource budget are not applicable and are not claimed.
+- Privacy: public synthetic fixtures only. No private root or file, real path or
+  filename, raw text, label detail, hash, query, candidate result, manifest,
+  diagnostic package, or token was read, emitted, committed, or uploaded.
 
 ### S705
 

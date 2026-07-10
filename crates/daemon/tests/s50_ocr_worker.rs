@@ -23,7 +23,12 @@ input_size="$(wc -c < "$RESUME_IR_OCR_INPUT_PATH" | tr -d ' ')"
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.71\n'
 printf 'text:\n'
-printf 'OCRS50DaemonOnceToken worker bytes=%s page=%s\n' "$input_size" "$RESUME_IR_OCR_PAGE_NO"
+printf 'SUMMARY\n'
+printf 'Synthetic OCR platform engineer.\n'
+printf 'EXPERIENCE\n'
+printf 'Built OCRS50DaemonOnceToken worker bytes=%s page=%s.\n' "$input_size" "$RESUME_IR_OCR_PAGE_NO"
+printf 'SKILLS\n'
+printf 'Rust search systems.\n'
 "#,
     );
 
@@ -115,7 +120,12 @@ fn daemon_ocr_worker_once_recovers_stale_running_job_after_restart() {
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.77\n'
 printf 'text:\n'
-printf 'S50RecoveredStaleOcrJobToken page %s\n' "$RESUME_IR_OCR_PAGE_NO"
+printf 'SUMMARY\n'
+printf 'Synthetic recovered OCR engineer.\n'
+printf 'EXPERIENCE\n'
+printf 'Built S50RecoveredStaleOcrJobToken page %s search services.\n' "$RESUME_IR_OCR_PAGE_NO"
+printf 'SKILLS\n'
+printf 'Rust recovery systems.\n'
 "#,
     );
 
@@ -190,8 +200,8 @@ printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.84\n'
 printf 'text:\n'
 case "$input_bytes:$RESUME_IR_OCR_PAGE_NO" in
-  S89_DAEMON_RENDERED_PAGE_1_BYTES:1) printf 'S89DaemonPageOneToken first page text\n' ;;
-  S89_DAEMON_RENDERED_PAGE_2_BYTES:2) printf 'S89DaemonPageTwoToken second page text\n' ;;
+  S89_DAEMON_RENDERED_PAGE_1_BYTES:1) printf 'SUMMARY\nSynthetic multi-page OCR engineer.\nEXPERIENCE\nBuilt S89DaemonPageOneToken search services.\n' ;;
+  S89_DAEMON_RENDERED_PAGE_2_BYTES:2) printf 'SKILLS\nRust indexing with S89DaemonPageTwoToken.\n' ;;
   *) printf 'PRIVATE_DAEMON_UNEXPECTED_OCR_INPUT_%s_PAGE_%s\n' "$input_bytes" "$RESUME_IR_OCR_PAGE_NO"; exit 19 ;;
 esac
 "#,
@@ -366,7 +376,12 @@ fi
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.89\n'
 printf 'text:\n'
-printf 'S91DaemonPdftoppmRenderedToken rendered daemon page text\n'
+printf 'SUMMARY\n'
+printf 'Synthetic rendered OCR engineer.\n'
+printf 'EXPERIENCE\n'
+printf 'Built S91DaemonPdftoppmRenderedToken search services.\n'
+printf 'SKILLS\n'
+printf 'Rust PDF indexing.\n'
 "#,
     );
 
@@ -470,7 +485,7 @@ fn daemon_ocr_worker_once_uses_tesseract_for_rendered_image_before_indexing() {
     let render_command = write_text_png_render_executable(
         "fixture-daemon-ocr-worker-tesseract-render",
         &pango_view,
-        "S92 OCR TEST",
+        "SUMMARY\nS92 OCR TEST\nEXPERIENCE\nBuilt SEARCH SYSTEMS\nSKILLS\nRUST",
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
@@ -773,7 +788,12 @@ fn daemon_ocr_worker_loop_serves_status_ipc_while_indexing_scanned_pdf() {
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.74\n'
 printf 'text:\n'
-printf 'OCRS50DaemonLoopToken background worker text\n'
+printf 'SUMMARY\n'
+printf 'Synthetic background OCR engineer.\n'
+printf 'EXPERIENCE\n'
+printf 'Built OCRS50DaemonLoopToken background search services.\n'
+printf 'SKILLS\n'
+printf 'Rust worker systems.\n'
 "#,
     );
 
@@ -849,7 +869,12 @@ fn daemon_ocr_worker_loop_batches_multiple_jobs_in_one_tick() {
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.72\n'
 printf 'text:\n'
-printf 'OCRS50DaemonBatchToken page %s\n' "$RESUME_IR_OCR_PAGE_NO"
+printf 'SUMMARY\n'
+printf 'Synthetic batch OCR engineer.\n'
+printf 'EXPERIENCE\n'
+printf 'Built OCRS50DaemonBatchToken page %s search services.\n' "$RESUME_IR_OCR_PAGE_NO"
+printf 'SKILLS\n'
+printf 'Rust batch systems.\n'
 "#,
     );
 
