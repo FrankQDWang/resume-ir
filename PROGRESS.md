@@ -2674,11 +2674,23 @@ guards, local runtime discovery, and PR #9 CI state.
   loop-state pins, and paired synthetic-smoke pins were reconciled. No mixed
   benchmark, classifier, Rust behavior, private root read, GUI/query work, or
   performance/readiness completion claim is included.
+- S696 selects the bounded #145 test-fix contract without changing Rust. PR
+  #144 reached a hosted terminal with 13 green checks, including Windows, and
+  one macOS failure in `recv_parse_result_polls_cancel_while_waiting`; its base
+  and head use the identical import-pipeline source blob. Code inspection found
+  an unsynchronized 180 ms sender sleep racing a 50 ms receive timeout, so a
+  delayed receiver may observe fewer than two cancellation polls. #144 is
+  frozen without rerun or scope mutation. The #145 contract requires a separate
+  authorization PR, exact test-only source digest, merge-base path authority,
+  and later restoration to #140 before #144/#143/#142 resume. It forbids
+  production semantics, global serialization, private benchmark work, and every
+  ordinary path except `crates/import-pipeline/src/lib.rs` and `PROGRESS.md`.
 
 ## Slice Status
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S696 | #145 scheduler-independent cancel-poll test contract prepared | PR #144 terminal: https://github.com/FrankQDWang/resume-ir/pull/144#issuecomment-4932013835. Root-cause issue: https://github.com/FrankQDWang/resume-ir/issues/145. macOS failed the timing assertion while Windows and 12 other checks passed; base/head import-pipeline blobs are identical. | #140/#143/#145 and PR #142/#144 remain open. This PR contains no Rust and cannot claim the test fixed. The #145 Rust PR may begin only after this contract is main-reachable. |
 | S693 | #138 audit complete; #140 selected as frozen mixed benchmark contract slice | Fresh audit evidence: https://github.com/FrankQDWang/resume-ir/issues/138#issuecomment-4931222189. #138 closed completed; linked #140 opened at https://github.com/FrankQDWang/resume-ir/issues/140. Focused full-text, import/search, and redacted detail IPC tests passed. RED contract checks failed on the stale `#138` issue expectation and active-goal hash; GREEN passed after `ACTIVE_GOAL.toml`, `perf/current-loop-state.json`, `scripts/ci/check-autonomous-goal.py`, and paired synthetic-smoke pins were advanced to #140. | #37 remains open. #140 is contract/harness only: production code and private benchmark execution are disabled, and no production crate path is allowed. Classifier implementation remains blocked until the three-layer benchmark and leakage guards are frozen. |
 | S692 | Issue train pivots from #137 L4 import tail to #138 product-capability audit | #138 opened for read-only mixed-directory import, query/search recall, and detail/hydrate contract audit: https://github.com/FrankQDWang/resume-ir/issues/138. #137 closed not planned as failed/reverted: https://github.com/FrankQDWang/resume-ir/issues/137#issuecomment-4924947742. #37 updated to keep the parent ledger open and point at #138: https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4924950431. Local state now points at #138 with `workflow_state=slice_selected`, `experiment_state=contract_locked`, and `primary_issue=#138`; synthetic-smoke fixture pins were updated after the ACTIVE_GOAL hash changed. Verification passed `python3 scripts/ci/check-performance-contracts.py`, `python3 scripts/ci/check-autonomous-goal.py`, `python3 scripts/ci/check-loop-state.py`, `./scripts/ci/guard-public-repo.sh`, and focused `git diff --check`. | #37 remains open as the parent import/searchability ledger. #33 and #53 remain open downstream query ledgers and were not mutated in this first pivot slice. #138 must start from fresh repo/GitHub/contract observation and produce a product contract gap list before any GUI, query-hot-path, or classifier implementation. |
 | S691 | Issue #137 records fresh evidence and rejects/reverts append-only empty-staging delete-skip | Fresh #137 before-clean preserved 8720 discovered, 8248 searchable, 279 OCR-required/backlog, 279 OCR queued, 193 failed, 0 deleted, 0 scan errors, and 3538586345 content bytes on H2 with 1536 MiB aggregate budget and 256 MiB writer heap, measuring full-import/full-index 36777.282ms, stage index 12615.227ms, RSS 694779904, index_publication_commit 5020.928ms, PDF content decode 4422.550ms, text-operator prefilter 4187.266ms, document load 3903.482ms, text collection 3311.240ms, stdout hash `b8c92798437eefb09c58b4856ed23593e4221e2041fceb0177f7a28fbbfec0e9`, status hash `463e09f86f07f9704391908f8a7d3a78a62d5d944baee88bad61ad20868dbafd`, and empty stderr. Fresh before-profile preserved counts/content bytes and measured full-import/full-index 37900.230ms, stage index 13063.207ms, RSS 727760896, index_publication_commit 5166.442ms, PDF content decode 5173.375ms, document load 4685.988ms, text-operator prefilter 4468.307ms, text collection 3863.687ms, stdout hash `e6fd38628c74f64c457ba9371440f96752dfacfa4db8c879fd201a8dae2e029a`, status hash `d9498ee6d53c693c9d03d9539a2792f92840b37ccfa386d761ab78c0c061ae1f`, empty stderr, and sanitized buckets allocation=14302, rayon=26331, lopdf=16748, tantivy_index=1339, sqlite_db=2216, regex=1112, parser_pdf=1052, import_pipeline=204, sectionizer=162, text_normalizer=65, filesystem_io=45, sync_write=313. The fresh-staging append-only/delete-skip hypothesis was tested and rejected: attempted after-clean was effectively flat (commit 5020.928ms -> 5014.275ms), and attempted after-profile regressed full-import/full-index 37900.230ms -> 38502.891ms (+1.6%), stage index 13063.207ms -> 13322.573ms (+2.0%), and commit 5166.442ms -> 5326.811ms (+3.1%). The code was reverted; no #137 production code is retained. Verification after rollback passed fmt, index-fulltext single-thread focused suite, CLI import/search fixture, release build, rust-analyzer diagnostics with existing cfg inactive-code WeakWarnings only, performance/autonomous/loop-state checks, public repo guard, and `git diff --check`. GitHub comments succeeded: #137 https://github.com/FrankQDWang/resume-ir/issues/137#issuecomment-4924778583 and #37 https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4924778760. | #137 remains open. This is a failed/reverted import index-tail hypothesis only. It does not close #37 or #137, retain production code, claim full baseline, D10K/D100K/D1M, stable release readiness, GUI readiness, query hot-path tuning, OCR/embedding completion, semantic resume classification, original-path/detail contract completion, or `goal_complete`. Next bounded step should not retry empty-staging append-only/delete-skip without new evidence; choose fresh commit sub-attribution or the comparable PDF content-decode/document-load tail from new observe-before-act evidence. |
@@ -3260,6 +3272,38 @@ guards, local runtime discovery, and PR #9 CI state.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S696
+
+- Scope: transition from #140 to #145 in one independent 15-file contract PR.
+  No Rust, Cargo, workflow, acceptance-matrix, doc-14, or performance-checker
+  change is included.
+- Fresh evidence: `origin/main` remained
+  `4afd254d9b7989108d726a737a3cc939c9f45deb`; PR #144 head `b093b1a` reached
+  13 green checks and one macOS failure in run `29068476119`, job `86284945029`.
+  Windows passed. The failure was `import-pipeline` test
+  `recv_parse_result_polls_cancel_while_waiting`; 31 of 32 lib tests passed.
+- Root cause: #144 base/head use identical import-pipeline blob
+  `ebe399c1f99cdf09ba80b696519ced69053e604a`. The sender sleeps 180 ms without a
+  start handshake while the receiver polls after 50 ms timeouts; scheduler delay
+  can make the result arrive before the second timeout. Issue #145 freezes a
+  release-channel handshake fix with no production change.
+- Control: the exact focused test passed locally (1/1) on the identical source,
+  reinforcing that the hosted failure is timing-dependent rather than stable.
+- Contract: #145 has `contract_change_allowed=false`, test-only and
+  no-production-semantics flags, no private benchmark authority, exact ordinary
+  paths `crates/import-pipeline/src/lib.rs` and `PROGRESS.md`, and only a return
+  target to #140. Gate integrity trusts merge-base policy, checks exact forward
+  and reverse sets, rejects index/worktree or untracked masking, and derives the
+  exact approved test-only source before checking its digest.
+- GREEN: performance-contract, autonomous-goal, loop-state, gate-integrity,
+  private-evidence, workflow, public-repo, Python compile, and diff checks all
+  passed before commit; post-commit budget/scope checks remain required.
+- Boundary: public contract, test names, job identifiers, and aggregate
+  pass/fail evidence only. No private roots, paths, filenames, resume text,
+  labels, raw hashes, queries, candidate results, diagnostics packages, tokens,
+  or private manifests were read or published. This slice does not fix #145,
+  merge #144, complete #140, or claim classifier/scale/GUI/release/goal readiness.
 
 ### S693
 

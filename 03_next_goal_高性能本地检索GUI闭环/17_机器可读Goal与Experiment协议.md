@@ -24,7 +24,7 @@ Policy truth lives in `ACTIVE_GOAL.toml`, `perf/acceptance-matrix.toml`, schemas
 
 1. 每次长程 Codex 执行开始时读取 `ACTIVE_GOAL.toml`。
 2. 若执行目标、允许路径、隐私边界或 active slice 与用户请求冲突，停止实现并回到 Superpowers planning 或 local gstack-lite scope/plan gate；不得加载旧 `fw-*` wrapper。
-3. #138 product-capability audit 已完成；当前 #140 active slice 只允许冻结 mixed-directory benchmark、anti-overfit evidence contract、public schema/fixtures 和 CI harness。Classifier production code、private mixed-root execution、GUI、query hot-path 优化、新 L4 import 微优化和 profile optimization issue 仍必须等新的 linked issue 与对应证据满足后再进入。
+3. #138 product-capability audit 已完成；#140 仍负责冻结 mixed-directory benchmark、anti-overfit evidence contract、public schema/fixtures 和 CI harness。当前临时 active slice #145 只授权独立 test-only parse-result cancel-poll 时序修复，不授权 classifier、private mixed-root、GUI、query hot-path、新 L4 或 profile work；#145 main-reachable 后必须恢复 #140、刷新 PR #144，再继续 #143/#142。
 4. 目标锁不能被实现者临时放宽。需要放宽时必须先改 spec/plan 并重新 review。
 
 ## 3. Experiment Report Rules

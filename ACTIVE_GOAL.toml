@@ -5,39 +5,29 @@ date = "2026-06-26"
 [authority]
 root_goal = "GOAL.md"
 active_goal_docs_root = "03_next_goal_高性能本地检索GUI闭环"
-spec = "docs/superpowers/specs/2026-06-22-performance-goal-doc-contract.md"
-plan = "docs/superpowers/plans/2026-06-22-performance-goal-doc-contract.md"
+spec = "docs/superpowers/specs/2026-07-10-parse-result-cancel-poll-test-isolation.md"
+plan = "docs/superpowers/plans/2026-07-10-parse-result-cancel-poll-test-isolation.md"
 review_ledger = "03_next_goal_高性能本地检索GUI闭环/12_Review问题映射与修复责任.md"
 loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md"
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#140"
-name = "freeze_mixed_import_benchmark_contract_and_anti_overfit_evidence_layers"
-contract_change_allowed = true
-production_code_allowed = false
+issue = "#145"
+name = "make_parse_result_cancel_poll_test_scheduler_independent"
+linked_spec = "docs/superpowers/specs/2026-07-10-parse-result-cancel-poll-test-isolation.md"
+linked_plan = "docs/superpowers/plans/2026-07-10-parse-result-cancel-poll-test-isolation.md"
+contract_change_allowed = false
+production_code_allowed = true
+production_semantics_change_allowed = false
+test_only_change_required = true
+global_test_serialization_allowed = false
 private_benchmark_allowed = false
 scope_exception = false
-scope_exception_reason = "No exception is used: the #140 contract-only reconciliation is split into reviewable PRs that each stay within the normal file and line budgets. Issue #140 may freeze only the public synthetic, private calibration, and blind holdout benchmark/evidence contract; it must not implement classifier or production behavior, read a private mixed root, implement GUI, optimize the query hot path, start a new L4 import micro-optimization, relax query semantics, publish raw private data, claim full baseline, D10K/D100K/D1M, stable-release readiness, GUI readiness, or goal completion."
+scope_exception_reason = "Issue #145 is a bounded test-only repair for a scheduler-dependent parse-result cancel-poll assertion that blocks PR #144; it forbids production semantics, global serialization, gate weakening, private data, mixed-import behavior, and completion claims."
+allowed_contract_transition_targets = ["#140"]
 allowed_paths = [
-  "AGENTS.md",
-  "GOAL.md",
-  "MANIFEST.md",
-  "ACTIVE_GOAL.toml",
-  ".github/workflows/pr.yml",
-  ".github/PULL_REQUEST_TEMPLATE.md",
-  ".github/ISSUE_TEMPLATE/",
-  "03_next_goal_高性能本地检索GUI闭环/",
+  "crates/import-pipeline/src/lib.rs",
   "PROGRESS.md",
-  "docs/superpowers/",
-  "perf/",
-  "scripts/ci/check-performance-contracts.py",
-  "scripts/ci/check-mixed-import-contracts.py",
-  "scripts/ci/check-autonomous-goal.py",
-  "scripts/ci/check-loop-state.py",
-  "scripts/ci/check-pr-budget.py",
-  "scripts/ci/check-private-evidence-redaction.py",
-  "scripts/ci/check-gate-integrity.py",
 ]
 
 [contracts]
@@ -197,6 +187,20 @@ verify_after_side_effect_required = true
 compare_and_swap_state_update_required = true
 lease_required = true
 heartbeat_required = true
+
+[[autonomous_delivery.transitions]]
+name = "reconcile_contract_conflict"
+from = ["contract_conflict"]
+to = "slice_selected"
+required_permissions = []
+required_evidence = [
+  "contract_conflict_evidence",
+  "linked_issue",
+  "reviewed_spec",
+  "reviewed_plan",
+  "privacy_boundary",
+]
+allowed_actions = ["edit_contract", "update_issue", "select_slice"]
 
 [[autonomous_delivery.transitions]]
 name = "capture_synthetic_smoke_baseline"
