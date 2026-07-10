@@ -7,8 +7,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use index_fulltext::{FullTextIndex, SearchQuery};
 use meta_store::{
-    Document, DocumentId, DocumentStatus, FileExtension, IngestJobFailureKind, IngestJobKind,
-    IngestJobStatus, MetaStore, OcrPageCacheKey, OcrPageCacheStatus, UnixTimestamp, WorkerTaskKind,
+    ClassificationStatus, Document, DocumentClassificationRecord, DocumentId, DocumentStatus,
+    FileExtension, IngestJobFailureKind, IngestJobKind, IngestJobStatus, MetaStore,
+    OcrPageCacheKey, OcrPageCacheStatus, ReasonCode, ReviewDisposition, UnixTimestamp,
+    WorkerTaskKind, CLASSIFIER_EPOCH,
 };
 
 #[cfg(unix)]
@@ -569,7 +571,7 @@ fn daemon_ocr_worker_once_uses_tesseract_for_rendered_image_before_indexing() {
 
 #[cfg(unix)]
 #[test]
-fn daemon_ocr_worker_once_records_command_crash_as_retryable_without_leaks() {
+fn daemon_ocr_worker_command_crash_becomes_permanent_after_max_attempts_without_leaks() {
     let data_dir = temp_dir("ocr-worker-crash-data");
     let private_document_path = seed_scanned_document(&data_dir);
     let command = write_fixture_executable(
@@ -621,6 +623,7 @@ exit 17
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].status, IngestJobStatus::FailedRetryable);
     assert_eq!(jobs[0].attempt_count, 1);
+    let job_id = jobs[0].id.clone();
     let cache_key = OcrPageCacheKey::new(
         scanned.content_hash.expect("content hash"),
         1,
@@ -636,6 +639,47 @@ exit 17
     assert_eq!(cache_entry.status(), OcrPageCacheStatus::FailedRetryable);
     assert_eq!(cache_entry.text(), None);
     assert_eq!(cache_entry.error_kind(), Some("EngineFailed"));
+    drop(store);
+
+    for attempt in 2..=3 {
+        let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+            .args([
+                "--data-dir",
+                path_str(&data_dir),
+                "run",
+                "--foreground",
+                "--once",
+                "--work-ocr-once",
+                "--ocr-command",
+                path_str(&command),
+            ])
+            .output()
+            .expect("rerun daemon OCR worker with crashing command");
+        assert!(output.status.success());
+        assert!(output.stderr.is_empty());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("ocr worker failed: 1"));
+
+        let store = MetaStore::open_data_dir(&data_dir).unwrap();
+        store.run_migrations().unwrap();
+        let scanned = scanned_document(&store);
+        let job = store.ingest_job_by_id(&job_id).unwrap().unwrap();
+        let classification = store
+            .document_classification_by_id(&scanned.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.attempt_count, attempt);
+        if attempt < 3 {
+            assert_eq!(job.status, IngestJobStatus::FailedRetryable);
+            assert_eq!(scanned.status, DocumentStatus::OcrRequired);
+            assert_eq!(classification.status, ClassificationStatus::OcrBacklog);
+        } else {
+            assert_eq!(job.status, IngestJobStatus::FailedPermanent);
+            assert_eq!(scanned.status, DocumentStatus::FailedPermanent);
+            assert_eq!(classification.status, ClassificationStatus::Failed);
+            assert_eq!(classification.reason_codes, vec![ReasonCode::ParserFailed]);
+        }
+    }
 
     remove_dir(&data_dir);
 }
@@ -964,6 +1008,16 @@ fn seed_scanned_document_fixture(
             created_at: now,
             updated_at: now,
             status: DocumentStatus::OcrRequired,
+        })
+        .unwrap();
+    store
+        .upsert_document_classification(&DocumentClassificationRecord {
+            document_id: doc_id.clone(),
+            status: ClassificationStatus::OcrBacklog,
+            classifier_epoch: CLASSIFIER_EPOCH.to_string(),
+            reason_codes: vec![ReasonCode::OcrRequired],
+            classified_at: now,
+            review_disposition: ReviewDisposition::NotRequired,
         })
         .unwrap();
     store.enqueue_ocr_job_for_document(&doc_id, now).unwrap();

@@ -49,7 +49,7 @@ use meta_store::{
     ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanErrorSummary,
     ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
     ImportTaskStatus, IndexStateStatus, IngestJobFailureKind, IngestJobKind, IngestJobStatus,
-    MetaStore, MetadataEncryptionState, OcrPageCacheEntry, OcrPageCacheKey,
+    MetaStore, MetadataEncryptionState, OcrAttemptFailure, OcrPageCacheEntry, OcrPageCacheKey,
     PendingImportTaskByRootDiagnostic, QueryLatencySummary, ResumeVersion, ResumeVersionId,
     ResumeVisibility, UnixTimestamp, WorkerTaskKind,
 };
@@ -11594,12 +11594,9 @@ fn run_witness_ocr_jobs(
             }
             Err(_) => {
                 documents_failed += 1;
-                if let Ok(Some(current_job)) = store.ingest_job_by_id(&job.id) {
-                    if current_job.status == IngestJobStatus::Running {
-                        let _ =
-                            store.update_job_status(&job.id, IngestJobStatus::FailedRetryable, now);
-                    }
-                }
+                store
+                    .finish_ocr_attempt_failure(&job, OcrAttemptFailure::Retryable, now)
+                    .map_err(CliError::store)?;
                 if max_documents.is_some() {
                     continue;
                 }
@@ -16797,11 +16794,9 @@ fn ocr_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
             Ok(())
         }
         Err(error) => {
-            if let Ok(Some(current_job)) = store.ingest_job_by_id(&job.id) {
-                if current_job.status == IngestJobStatus::Running {
-                    let _ = store.update_job_status(&job.id, IngestJobStatus::FailedRetryable, now);
-                }
-            }
+            store
+                .finish_ocr_attempt_failure(&job, OcrAttemptFailure::Retryable, now)
+                .map_err(CliError::store)?;
             Err(error)
         }
     }
@@ -16819,24 +16814,27 @@ fn run_claimed_ocr_job(
         .map_err(CliError::store)?
     else {
         store
-            .update_job_status(&job.id, IngestJobStatus::FailedPermanent, now)
+            .finish_ocr_attempt_failure(job, OcrAttemptFailure::Permanent, now)
             .map_err(CliError::store)?;
         return Err(CliError::user("ocr worker job document was not found"));
     };
-    let content_hash = document
-        .content_hash
-        .clone()
-        .ok_or_else(|| CliError::user("ocr worker document is missing content hash"))?;
+    let Some(content_hash) = document.content_hash.clone() else {
+        store
+            .finish_ocr_attempt_failure(job, OcrAttemptFailure::Permanent, now)
+            .map_err(CliError::store)?;
+        return Err(CliError::user(
+            "ocr worker document is missing content hash",
+        ));
+    };
     let bytes = fs::read(&document.normalized_path)
         .map_err(|_| CliError::user("ocr worker could not read document bytes"))?;
     let page_count =
         detect_ocr_page_count(&document.extension, &bytes).map_err(CliError::import)?;
     if page_count > worker_args.max_pages_per_document {
         store
-            .update_job_status_with_failure_kind(
-                &job.id,
-                IngestJobStatus::FailedRetryable,
-                Some(IngestJobFailureKind::OcrPageBudgetExceeded),
+            .finish_ocr_attempt_failure(
+                job,
+                OcrAttemptFailure::RetryableWithKind(IngestJobFailureKind::OcrPageBudgetExceeded),
                 now,
             )
             .map_err(CliError::store)?;
@@ -16936,9 +16934,6 @@ fn run_claimed_ocr_job(
                         store
                             .upsert_ocr_page_cache_entry(&entry)
                             .map_err(CliError::store)?;
-                        store
-                            .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
-                            .map_err(CliError::store)?;
                         return Err(CliError::user(
                             "ocr worker blocked: requested OCR language pack is unavailable",
                         ));
@@ -16952,9 +16947,6 @@ fn run_claimed_ocr_job(
                         .map_err(CliError::store)?;
                         store
                             .upsert_ocr_page_cache_entry(&entry)
-                            .map_err(CliError::store)?;
-                        store
-                            .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
                             .map_err(CliError::store)?;
                         return Err(CliError::user(
                             "ocr worker blocked: local OCR command failed or unavailable",
@@ -16983,9 +16975,6 @@ fn run_claimed_ocr_job(
                     store
                         .upsert_ocr_page_cache_entry(&entry)
                         .map_err(CliError::store)?;
-                    store
-                        .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
-                        .map_err(CliError::store)?;
                     return Err(CliError::user(
                         "ocr worker blocked: local OCR command failed or unavailable",
                     ));
@@ -17009,9 +16998,6 @@ fn run_claimed_ocr_job(
                     .map_err(CliError::store)?;
                     store
                         .upsert_ocr_page_cache_entry(&entry)
-                        .map_err(CliError::store)?;
-                    store
-                        .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
                         .map_err(CliError::store)?;
                     return Err(CliError::user(
                         "ocr worker blocked: local OCR command failed or unavailable",
@@ -17044,9 +17030,6 @@ fn run_claimed_ocr_job(
                 .map_err(CliError::store)?;
                 store
                     .upsert_ocr_page_cache_entry(&entry)
-                    .map_err(CliError::store)?;
-                store
-                    .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
                     .map_err(CliError::store)?;
                 return Err(CliError::user(
                     "ocr worker blocked: local OCR command failed or unavailable",

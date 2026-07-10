@@ -3,9 +3,9 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    Document, DocumentId, DocumentStatus, FileExtension, IngestJobFailureKind, IngestJobKind,
-    IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus,
-    UnixTimestamp,
+    ClassificationStatus, Document, DocumentId, DocumentStatus, FileExtension,
+    IngestJobFailureKind, IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheEntry,
+    OcrPageCacheKey, OcrPageCacheStatus, ReasonCode, UnixTimestamp,
 };
 
 #[test]
@@ -854,7 +854,7 @@ fn ocr_worker_uses_tesseract_for_rendered_image_before_indexing() {
 
 #[cfg(unix)]
 #[test]
-fn ocr_worker_command_crash_records_retryable_failure_without_leaking_outputs() {
+fn ocr_worker_command_crash_becomes_permanent_after_max_attempts_without_leaks() {
     let data_dir = temp_dir("ocr-worker-crash-data");
     let fixture_root = fixture_root();
     let command = write_fixture_executable(
@@ -897,6 +897,7 @@ exit 17
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].status, IngestJobStatus::FailedRetryable);
     assert_eq!(jobs[0].attempt_count, 1);
+    let job_id = jobs[0].id.clone();
     let cache_key = OcrPageCacheKey::new(
         scanned.content_hash.expect("content hash"),
         1,
@@ -912,6 +913,43 @@ exit 17
     assert_eq!(cache_entry.status(), OcrPageCacheStatus::FailedRetryable);
     assert_eq!(cache_entry.text(), None);
     assert_eq!(cache_entry.error_kind(), Some("EngineFailed"));
+    drop(store);
+
+    for attempt in 2..=3 {
+        let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+            .args([
+                "--data-dir",
+                path_str(&data_dir),
+                "ocr-worker",
+                "--once",
+                "--command",
+                path_str(&command),
+            ])
+            .output()
+            .expect("rerun crashed ocr worker command");
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+
+        let store = MetaStore::open_data_dir(&data_dir).unwrap();
+        store.run_migrations().unwrap();
+        let scanned = scanned_document(&store);
+        let job = store.ingest_job_by_id(&job_id).unwrap().unwrap();
+        let classification = store
+            .document_classification_by_id(&scanned.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.attempt_count, attempt);
+        if attempt < 3 {
+            assert_eq!(job.status, IngestJobStatus::FailedRetryable);
+            assert_eq!(scanned.status, DocumentStatus::OcrRequired);
+            assert_eq!(classification.status, ClassificationStatus::OcrBacklog);
+        } else {
+            assert_eq!(job.status, IngestJobStatus::FailedPermanent);
+            assert_eq!(scanned.status, DocumentStatus::FailedPermanent);
+            assert_eq!(classification.status, ClassificationStatus::Failed);
+            assert_eq!(classification.reason_codes, vec![ReasonCode::ParserFailed]);
+        }
+    }
 
     let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([

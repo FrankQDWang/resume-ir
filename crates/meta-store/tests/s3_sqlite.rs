@@ -10,9 +10,10 @@ use meta_store::{
     ImportScanError, ImportScanErrorKind, ImportScanErrorOperation, ImportScanErrorSummary,
     ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexState,
     IndexStateStatus, IngestJob, IngestJobFailureKind, IngestJobId, IngestJobKind, IngestJobStatus,
-    MetaStore, MetadataEncryptionState, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus,
-    OcrWordBox, ReasonCode, ResumeVersion, ResumeVersionId, ResumeVisibility, ReviewDisposition,
-    SearchableImportDocument, UnixTimestamp, WorkerTaskControl, WorkerTaskKind,
+    MetaStore, MetadataEncryptionState, OcrAttemptFailure, OcrAttemptFailureOutcome,
+    OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, OcrWordBox, ReasonCode, ResumeVersion,
+    ResumeVersionId, ResumeVisibility, ReviewDisposition, SearchableImportDocument, UnixTimestamp,
+    WorkerTaskControl, WorkerTaskKind, CLASSIFIER_EPOCH,
 };
 use rusqlite::{params, Connection};
 
@@ -1292,12 +1293,12 @@ fn retryable_queue_excludes_live_running_jobs() {
 #[test]
 fn stale_running_ingest_jobs_are_recovered_to_interrupted_for_retry() {
     let store = migrated_store();
-    let document = document(
+    let source_document = document(
         "stale-ingest-recovery-document-placeholder",
         false,
         DocumentStatus::OcrRequired,
     );
-    store.upsert_document(&document).unwrap();
+    store.upsert_document(&source_document).unwrap();
     let stale_started = UnixTimestamp::from_unix_seconds(1_800_000_010);
     let fresh_started = UnixTimestamp::from_unix_seconds(1_800_000_090);
     let recover_at = UnixTimestamp::from_unix_seconds(1_800_000_120);
@@ -1306,7 +1307,7 @@ fn stale_running_ingest_jobs_are_recovered_to_interrupted_for_retry() {
 
     let stale = job(
         "stale-running-ingest-placeholder",
-        &document.id,
+        &source_document.id,
         IngestJobStatus::Running,
         1,
         3,
@@ -1315,20 +1316,37 @@ fn stale_running_ingest_jobs_are_recovered_to_interrupted_for_retry() {
     .updated_at(stale_started);
     let fresh = job(
         "fresh-running-ingest-placeholder",
-        &document.id,
+        &source_document.id,
         IngestJobStatus::Running,
         1,
         3,
     )
     .started_at(fresh_started)
     .updated_at(fresh_started);
+    let exhausted_document = document(
+        "exhausted-ocr-recovery-document",
+        false,
+        DocumentStatus::OcrRequired,
+    );
+    upsert_ocr_backlog(&store, &exhausted_document, 1_800_000_009);
+    let mut exhausted = job(
+        "exhausted-ocr-recovery-job",
+        &exhausted_document.id,
+        IngestJobStatus::Running,
+        3,
+        3,
+    )
+    .started_at(stale_started)
+    .updated_at(stale_started);
+    exhausted.kind = IngestJobKind::OcrDocument;
     store.insert_ingest_job(&stale).unwrap();
     store.insert_ingest_job(&fresh).unwrap();
+    store.insert_ingest_job(&exhausted).unwrap();
 
     let recovered = store
         .recover_stale_running_ingest_jobs(recover_at, stale_before)
         .unwrap();
-    assert_eq!(recovered, 1);
+    assert_eq!(recovered, 2);
 
     let recovered_job = store.ingest_job_by_id(&stale.id).unwrap().unwrap();
     assert_eq!(recovered_job.status, IngestJobStatus::Interrupted);
@@ -1339,6 +1357,13 @@ fn stale_running_ingest_jobs_are_recovered_to_interrupted_for_retry() {
         store.ingest_job_by_id(&fresh.id).unwrap().unwrap().status,
         IngestJobStatus::Running
     );
+    let exhausted = store.ingest_job_by_id(&exhausted.id).unwrap().unwrap();
+    let classification = store
+        .document_classification_by_id(&exhausted_document.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(exhausted.status, IngestJobStatus::FailedPermanent);
+    assert_eq!(classification.status, ClassificationStatus::Failed);
 
     let claimed = store.claim_next_job(claim_at).unwrap().unwrap();
     assert_eq!(claimed.id, stale.id);
@@ -1351,28 +1376,28 @@ fn stale_running_ingest_jobs_are_recovered_to_interrupted_for_retry() {
 #[test]
 fn ocr_document_jobs_are_durable_idempotent_and_claimable_by_kind() {
     let store = migrated_store();
-    let document = document(
+    let mut ocr_document = document(
         "ocr-page-document-placeholder",
         false,
         DocumentStatus::OcrRequired,
     );
-    store.upsert_document(&document).unwrap();
+    upsert_ocr_backlog(&store, &ocr_document, 1_800_000_599);
 
     let first = store
         .enqueue_ocr_job_for_document(
-            &document.id,
+            &ocr_document.id,
             UnixTimestamp::from_unix_seconds(1_800_000_600),
         )
         .unwrap();
     let second = store
         .enqueue_ocr_job_for_document(
-            &document.id,
+            &ocr_document.id,
             UnixTimestamp::from_unix_seconds(1_800_000_601),
         )
         .unwrap();
 
-    assert!(first.inserted);
-    assert!(!second.inserted);
+    assert!(first.scheduled);
+    assert!(!second.scheduled);
     assert_eq!(first.job.id, second.job.id);
     assert_eq!(first.job.kind, IngestJobKind::OcrDocument);
     assert_eq!(store.status_summary().unwrap().ocr_jobs_queued, 1);
@@ -1389,6 +1414,93 @@ fn ocr_document_jobs_are_durable_idempotent_and_claimable_by_kind() {
     assert_eq!(claimed.status, IngestJobStatus::Running);
     assert_eq!(claimed.attempt_count, 1);
     assert_eq!(store.status_summary().unwrap().ocr_jobs_queued, 0);
+    let finish = |job: &IngestJob, failure, at| {
+        store
+            .finish_ocr_attempt_failure(job, failure, UnixTimestamp::from_unix_seconds(at))
+            .unwrap()
+    };
+    assert_eq!(
+        finish(&claimed, OcrAttemptFailure::Retryable, 1_800_000_701),
+        OcrAttemptFailureOutcome::Retryable
+    );
+    let second = store
+        .claim_next_job_by_kind(
+            IngestJobKind::OcrDocument,
+            UnixTimestamp::from_unix_seconds(1_800_000_702),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        finish(
+            &second,
+            OcrAttemptFailure::RetryableWithKind(IngestJobFailureKind::OcrPageBudgetExceeded),
+            1_800_000_703,
+        ),
+        OcrAttemptFailureOutcome::Retryable
+    );
+    let third = store
+        .claim_next_job_by_kind(
+            IngestJobKind::OcrDocument,
+            UnixTimestamp::from_unix_seconds(1_800_000_704),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        finish(&claimed, OcrAttemptFailure::Permanent, 1_800_000_705),
+        OcrAttemptFailureOutcome::Superseded
+    );
+    assert_eq!(
+        finish(&third, OcrAttemptFailure::Retryable, 1_800_000_706),
+        OcrAttemptFailureOutcome::FailedPermanent
+    );
+    let terminal_document = store.document_by_id(&ocr_document.id).unwrap().unwrap();
+    let classification = store
+        .document_classification_by_id(&ocr_document.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(terminal_document.status, DocumentStatus::FailedPermanent);
+    assert_eq!(classification.status, ClassificationStatus::Failed);
+    ocr_document.status = DocumentStatus::OcrRequired;
+    upsert_ocr_backlog(&store, &ocr_document, 1_800_000_707);
+    let requeued = store
+        .enqueue_ocr_job_for_document(
+            &ocr_document.id,
+            UnixTimestamp::from_unix_seconds(1_800_000_707),
+        )
+        .unwrap();
+    assert!(requeued.scheduled);
+    assert_eq!(
+        (requeued.job.attempt_count, requeued.job.max_attempts),
+        (3, 6)
+    );
+
+    let saturated_document = document(
+        "ocr-saturated-attempt-placeholder",
+        false,
+        DocumentStatus::OcrRequired,
+    );
+    upsert_ocr_backlog(&store, &saturated_document, 1_800_000_708);
+    let mut saturated_job = job(
+        "ocr-saturated-attempt-placeholder",
+        &saturated_document.id,
+        IngestJobStatus::FailedPermanent,
+        u32::MAX,
+        u32::MAX,
+    );
+    saturated_job.id =
+        IngestJobId::from_non_secret_parts(&["ocr-document", saturated_document.id.as_str()]);
+    saturated_job.kind = IngestJobKind::OcrDocument;
+    store.insert_ingest_job(&saturated_job).unwrap();
+    assert!(store
+        .enqueue_ocr_job_for_document(
+            &saturated_document.id,
+            UnixTimestamp::from_unix_seconds(1_800_000_709),
+        )
+        .is_err());
+    assert_eq!(
+        store.ingest_job_by_id(&saturated_job.id).unwrap().unwrap(),
+        saturated_job
+    );
 }
 
 #[test]
@@ -1440,8 +1552,8 @@ fn embedding_update_jobs_are_durable_idempotent_and_claimable_by_resume_version(
             )
             .unwrap();
 
-        assert!(first.inserted);
-        assert!(!second.inserted);
+        assert!(first.scheduled);
+        assert!(!second.scheduled);
         assert_eq!(first.job.id, second.job.id);
         assert_eq!(first.job.kind, IngestJobKind::UpdateIndex);
         assert_eq!(first.job.resume_version_id, Some(version.id.clone()));
@@ -1523,8 +1635,8 @@ fn embedding_update_jobs_are_scoped_by_model_and_dimension() {
             queued_at,
         )
         .unwrap();
-    assert!(first.inserted);
-    assert!(!duplicate.inserted);
+    assert!(first.scheduled);
+    assert!(!duplicate.scheduled);
     assert_eq!(first.job.id, duplicate.job.id);
 
     let claimed_first = store
@@ -1554,8 +1666,8 @@ fn embedding_update_jobs_are_scoped_by_model_and_dimension() {
         )
         .unwrap();
 
-    assert!(second_model.inserted);
-    assert!(second_dimension.inserted);
+    assert!(second_model.scheduled);
+    assert!(second_dimension.scheduled);
     assert_ne!(second_model.job.id, first.job.id);
     assert_ne!(second_dimension.job.id, first.job.id);
     assert_eq!(store.status_summary().unwrap().embedding_queue_depth, 2);
@@ -2601,6 +2713,11 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
     assert_eq!(summary.ocr_language_unavailable, 1);
     assert_eq!(summary.index_health, IndexStateStatus::Building);
     assert_eq!(summary.last_snapshot_id.as_deref(), Some("snapshot-v1"));
+
+    store
+        .update_job_status(&ocr_language_job.id, IngestJobStatus::FailedPermanent, now)
+        .unwrap();
+    assert_eq!(store.status_summary().unwrap().ocr_language_unavailable, 1);
 }
 
 #[test]
@@ -3717,6 +3834,20 @@ fn job(
         updated_at: now,
         failure_kind: None,
     }
+}
+
+fn upsert_ocr_backlog(store: &MetaStore, document: &Document, classified_at: i64) {
+    store.upsert_document(document).unwrap();
+    store
+        .upsert_document_classification(&DocumentClassificationRecord {
+            document_id: document.id.clone(),
+            status: ClassificationStatus::OcrBacklog,
+            classifier_epoch: CLASSIFIER_EPOCH.to_string(),
+            reason_codes: vec![ReasonCode::OcrRequired],
+            classified_at: UnixTimestamp::from_unix_seconds(classified_at),
+            review_disposition: ReviewDisposition::NotRequired,
+        })
+        .unwrap();
 }
 
 fn import_task(label: &str, root_path: &str, status: ImportTaskStatus) -> ImportTask {

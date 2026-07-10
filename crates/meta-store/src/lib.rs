@@ -2048,14 +2048,14 @@ impl MetaStore {
             updated_at: queued_at,
             failure_kind: None,
         };
-        let inserted = {
+        let scheduled = {
             let mut connection = self.connection.borrow_mut();
             let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-            let existing_id = {
+            let existing = {
                 let mut statement = transaction
                     .prepare(
                         "\
-                        SELECT id
+                        SELECT id, attempt_count
                         FROM ingest_job
                         WHERE document_id = ?1 AND kind = ?2
                         ORDER BY rowid
@@ -2070,14 +2070,58 @@ impl MetaStore {
                     .map_err(MetaStoreError::storage)?;
 
                 match rows.next().map_err(MetaStoreError::storage)? {
-                    Some(row) => Some(read_string(row, 0)?),
+                    Some(row) => Some((
+                        read_string(row, 0)?,
+                        i64_to_u32(
+                            row.get(1).map_err(MetaStoreError::storage)?,
+                            "ingest_job.attempt_count",
+                        )?,
+                    )),
                     None => None,
                 }
             };
 
-            if existing_id.is_some() {
-                transaction.commit().map_err(MetaStoreError::storage)?;
-                false
+            let scheduled = if let Some((existing_id, attempt_count)) = existing {
+                let renewed_max_attempts = attempt_count
+                    .checked_add(3)
+                    .ok_or_else(|| MetaStoreError::invalid_value("ingest_job.max_attempts"))?;
+                transaction
+                    .execute(
+                        "UPDATE ingest_job
+                         SET status = ?1, max_attempts = ?2,
+                             queued_at_seconds = ?3, started_at_seconds = NULL,
+                             finished_at_seconds = NULL, updated_at_seconds = ?3,
+                             failure_kind = NULL
+                         WHERE id = ?4 AND (
+                             status IN (?5, ?6)
+                             OR (status IN (?7, ?8) AND attempt_count >= max_attempts)
+                         ) AND EXISTS (
+                             SELECT 1
+                             FROM document
+                             JOIN document_classification AS classification
+                               ON classification.document_id = document.id
+                             WHERE document.id = ?9 AND document.is_deleted = 0
+                               AND document.status = ?10
+                               AND classification.status = ?11
+                               AND classification.classifier_epoch = ?12
+                         )",
+                        params![
+                            ingest_job_status_to_storage(IngestJobStatus::Queued),
+                            u32_to_i64(renewed_max_attempts),
+                            queued_at.as_unix_seconds(),
+                            existing_id,
+                            ingest_job_status_to_storage(IngestJobStatus::Completed),
+                            ingest_job_status_to_storage(IngestJobStatus::FailedPermanent),
+                            ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
+                            ingest_job_status_to_storage(IngestJobStatus::Interrupted),
+                            document_id.as_str(),
+                            document_status_to_storage(DocumentStatus::OcrRequired),
+                            ClassificationStatus::OcrBacklog.as_str(),
+                            CLASSIFIER_EPOCH,
+                        ],
+                    )
+                    .map_err(MetaStoreError::storage)?
+                    == 1
             } else {
                 transaction
                     .execute(
@@ -2104,15 +2148,16 @@ impl MetaStore {
                         ],
                     )
                     .map_err(MetaStoreError::storage)?;
-                transaction.commit().map_err(MetaStoreError::storage)?;
                 true
-            }
+            };
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            scheduled
         };
 
         let job = self
             .ocr_job_for_document(document_id)?
             .ok_or_else(|| MetaStoreError::not_found("ingest_job"))?;
-        Ok(EnqueuedIngestJob { job, inserted })
+        Ok(EnqueuedIngestJob { job, scheduled })
     }
 
     pub fn enqueue_embedding_job_for_resume_version(
@@ -2241,10 +2286,13 @@ impl MetaStore {
         let job = self
             .embedding_job_for_resume_version(resume_version_id, model_id, dimension)?
             .ok_or_else(|| MetaStoreError::not_found("ingest_job"))?;
-        Ok(EnqueuedIngestJob { job, inserted })
+        Ok(EnqueuedIngestJob {
+            job,
+            scheduled: inserted,
+        })
     }
 
-    fn ocr_job_for_document(&self, document_id: &DocumentId) -> Result<Option<IngestJob>> {
+    pub fn ocr_job_for_document(&self, document_id: &DocumentId) -> Result<Option<IngestJob>> {
         let connection = self.connection.borrow();
         let sql = format!(
             "\
@@ -2462,6 +2510,82 @@ impl MetaStore {
         Ok(())
     }
 
+    pub fn finish_ocr_attempt_failure(
+        &self,
+        claimed: &IngestJob,
+        failure: OcrAttemptFailure,
+        now: UnixTimestamp,
+    ) -> Result<OcrAttemptFailureOutcome> {
+        if claimed.kind != IngestJobKind::OcrDocument
+            || claimed.status != IngestJobStatus::Running
+            || claimed.attempt_count == 0
+        {
+            return Err(MetaStoreError::invalid_value("ingest_job.ocr_attempt"));
+        }
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        let terminal = failure == OcrAttemptFailure::Permanent
+            || claimed.attempt_count >= claimed.max_attempts;
+        let failure_kind = match failure {
+            OcrAttemptFailure::RetryableWithKind(kind) => Some(kind),
+            OcrAttemptFailure::Retryable | OcrAttemptFailure::Permanent => None,
+        };
+        let next_status = if terminal {
+            IngestJobStatus::FailedPermanent
+        } else {
+            IngestJobStatus::FailedRetryable
+        };
+        let changed = transaction
+            .execute(
+                "UPDATE ingest_job
+                 SET status = ?1, finished_at_seconds = ?2, updated_at_seconds = ?2,
+                     failure_kind = ?3
+                 WHERE id = ?4 AND document_id = ?5 AND kind = ?6
+                   AND status = ?7 AND attempt_count = ?8 AND max_attempts = ?9",
+                params![
+                    ingest_job_status_to_storage(next_status),
+                    now.as_unix_seconds(),
+                    failure_kind.map(ingest_job_failure_kind_to_storage),
+                    claimed.id.as_str(),
+                    claimed.document_id.as_str(),
+                    ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
+                    ingest_job_status_to_storage(IngestJobStatus::Running),
+                    u32_to_i64(claimed.attempt_count),
+                    u32_to_i64(claimed.max_attempts),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        if changed == 0 {
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            return Ok(OcrAttemptFailureOutcome::Superseded);
+        }
+        if terminal {
+            classification::transition_current_ocr_backlog_to_failed(
+                &transaction,
+                &claimed.document_id,
+                now,
+            )?;
+            transaction
+                .execute(
+                    "UPDATE document SET status = ?1, updated_at_seconds = ?2
+                     WHERE id = ?3 AND is_deleted = 0 AND status = ?4",
+                    params![
+                        document_status_to_storage(DocumentStatus::FailedPermanent),
+                        now.as_unix_seconds(),
+                        claimed.document_id.as_str(),
+                        document_status_to_storage(DocumentStatus::OcrRequired),
+                    ],
+                )
+                .map_err(MetaStoreError::storage)?;
+        }
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(if terminal {
+            OcrAttemptFailureOutcome::FailedPermanent
+        } else {
+            OcrAttemptFailureOutcome::Retryable
+        })
+    }
+
     pub fn claim_next_job(&self, now: UnixTimestamp) -> Result<Option<IngestJob>> {
         self.claim_next_job_matching(None, false, now)
     }
@@ -2590,8 +2714,8 @@ impl MetaStore {
                         SELECT id
                         FROM ingest_job
                         WHERE (
-                                status IN (?1, ?2)
-                                OR (status = ?3 AND attempt_count < max_attempts)
+                                status = ?1
+                                OR (status IN (?2, ?3) AND attempt_count < max_attempts)
                             )
                             AND (?4 IS NULL OR kind = ?4)
                             AND (?5 = 0 OR resume_version_id IS NOT NULL)
@@ -2634,8 +2758,8 @@ impl MetaStore {
                         failure_kind = NULL
                     WHERE id = ?3
                         AND (
-                            status IN (?4, ?5)
-                            OR (status = ?6 AND attempt_count < max_attempts)
+                            status = ?4
+                            OR (status IN (?5, ?6) AND attempt_count < max_attempts)
                         )
                         AND (?7 IS NULL OR kind = ?7)
                         AND (?8 = 0 OR resume_version_id IS NOT NULL)",
@@ -2672,8 +2796,8 @@ impl MetaStore {
     pub fn retryable_jobs(&self) -> Result<Vec<IngestJob>> {
         self.query_jobs(
             "\
-            WHERE status IN (?1, ?2)
-                OR (status = ?3 AND attempt_count < max_attempts)
+            WHERE status = ?1
+                OR (status IN (?2, ?3) AND attempt_count < max_attempts)
             ORDER BY rowid",
             params![
                 ingest_job_status_to_storage(IngestJobStatus::Queued),
@@ -2686,8 +2810,8 @@ impl MetaStore {
     pub fn jobs_requiring_recovery(&self) -> Result<Vec<IngestJob>> {
         self.query_jobs(
             "\
-            WHERE status IN (?1, ?2)
-                OR (status = ?3 AND attempt_count < max_attempts)
+            WHERE status = ?1
+                OR (status IN (?2, ?3) AND attempt_count < max_attempts)
             ORDER BY rowid",
             params![
                 ingest_job_status_to_storage(IngestJobStatus::Running),
@@ -2702,6 +2826,23 @@ impl MetaStore {
         now: UnixTimestamp,
         stale_before: UnixTimestamp,
     ) -> Result<usize> {
+        let exhausted_ocr = self.query_jobs(
+            "WHERE kind = ?1 AND status = ?2 AND attempt_count >= max_attempts
+               AND updated_at_seconds <= ?3 ORDER BY rowid",
+            params![
+                ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
+                ingest_job_status_to_storage(IngestJobStatus::Running),
+                stale_before.as_unix_seconds(),
+            ],
+        )?;
+        let mut terminalized = 0_usize;
+        for job in exhausted_ocr {
+            if self.finish_ocr_attempt_failure(&job, OcrAttemptFailure::Permanent, now)?
+                == OcrAttemptFailureOutcome::FailedPermanent
+            {
+                terminalized += 1;
+            }
+        }
         let changed = self
             .connection
             .borrow()
@@ -2723,7 +2864,7 @@ impl MetaStore {
                 ],
             )
             .map_err(MetaStoreError::storage)?;
-        Ok(changed)
+        Ok(terminalized.saturating_add(changed))
     }
 
     pub fn ingest_jobs(&self) -> Result<Vec<IngestJob>> {
@@ -3620,8 +3761,8 @@ impl MetaStore {
                 "\
                 SELECT COUNT(*)
                 FROM ingest_job
-                WHERE status IN (?1, ?2)
-                    OR (status = ?3 AND attempt_count < max_attempts)",
+                WHERE status = ?1
+                    OR (status IN (?2, ?3) AND attempt_count < max_attempts)",
                 params![
                     ingest_job_status_to_storage(IngestJobStatus::Running),
                     ingest_job_status_to_storage(IngestJobStatus::Interrupted),
@@ -3637,8 +3778,8 @@ impl MetaStore {
                 FROM ingest_job
                 WHERE kind = ?1
                     AND (
-                        status IN (?2, ?3)
-                        OR (status = ?4 AND attempt_count < max_attempts)
+                        status = ?2
+                        OR (status IN (?3, ?4) AND attempt_count < max_attempts)
                     )",
                 params![
                     ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
@@ -3677,19 +3818,20 @@ impl MetaStore {
                 FROM ingest_job AS job
                 JOIN document AS document ON document.id = job.document_id
                 WHERE job.kind = ?1
-                    AND job.status = ?2
+                    AND job.status IN (?2, ?3)
                     AND document.is_deleted = 0
-                    AND document.status <> ?3
+                    AND document.status <> ?4
                     AND EXISTS (
                         SELECT 1
                         FROM ocr_page_cache AS cache
                         WHERE cache.file_content_hash = document.content_hash
-                            AND cache.status = ?4
-                            AND cache.error_kind = ?5
+                            AND cache.status = ?5
+                            AND cache.error_kind = ?6
                     )",
                 params![
                     ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
                     ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
+                    ingest_job_status_to_storage(IngestJobStatus::FailedPermanent),
                     document_status_to_storage(DocumentStatus::Deleted),
                     ocr_page_cache_status_to_storage(OcrPageCacheStatus::FailedRetryable),
                     "LanguageUnavailable",
@@ -4365,10 +4507,24 @@ pub enum IngestJobFailureKind {
     OcrPageBudgetExceeded,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OcrAttemptFailure {
+    Retryable,
+    RetryableWithKind(IngestJobFailureKind),
+    Permanent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OcrAttemptFailureOutcome {
+    Retryable,
+    FailedPermanent,
+    Superseded,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EnqueuedIngestJob {
     pub job: IngestJob,
-    pub inserted: bool,
+    pub scheduled: bool,
 }
 
 #[derive(Clone, PartialEq, Eq)]

@@ -2734,12 +2734,11 @@ guards, local runtime discovery, and PR #9 CI state.
   retains keyed audit but leaves counts, and physical delete cascades. Existing
   documents are not backfilled; admission, OCR wiring, private data, and
   performance work remain out of scope.
-- S708 reconciles merged PR #162 and keeps #159 on the product-correctness
-  train. GitHub had automatically closed the still-partial issue; it is reopened
-  with the remaining gaps recorded. The next bounded slice is terminal OCR
-  failure/requeue correctness only: retry exhaustion must atomically replace
-  `ocr_backlog` with `failed`, while an explicit fresh OCR-required import may
-  reopen a terminal job with monotonic attempts. Successful OCR generation CAS,
+- S708 makes OCR retry exhaustion terminal instead of leaving a stable dead
+  backlog: the third failed attempt atomically moves the job/document/audit to
+  `failed_permanent`/`failed` with `parser_failed`; stale final attempts use the
+  same CAS path, and an explicit fresh OCR-required import may reopen terminal
+  work with a checked monotonic attempt budget. Successful OCR generation CAS,
   legacy migration, and physical-vector cleanup remain later #159 slices.
 - S706 prepares #159's classifier-admission fixture boundary without changing
   production behavior. Seven Rust integration-test fixture owners plus the
@@ -2755,7 +2754,7 @@ guards, local runtime discovery, and PR #9 CI state.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
-| S708 | #159 terminal OCR failure/requeue slice selected | PR #162 merged all 14 hosted checks green as `a22bb5c2f3121b04e79ffc3f6be47aa4ac32df1e`; #159 was reopened after incorrect automatic closure; the branch and exact normal-budget path lock now select one terminal OCR lifecycle hypothesis. | Production RED/GREEN is not yet run. Successful OCR generation CAS, legacy migration, vectors, private benchmark, GUI/query/performance, readiness, and completion remain open. |
+| S708 | #159 terminal OCR failure/requeue implemented | RED synthetic n=3: after three failed OCR invocations `failed permanent=0`, `ocr queue=1`, `ocr jobs queued=0`. GREEN: attempts 1/2 retain retryable backlog; attempt 3 atomically becomes permanent failed/`parser_failed`; stale-final recovery follows the same path; explicit rerun reopens 3/6 attempts without overflow. Fresh synthetic n=3 reports searchable 2 stable, failed permanent 1, OCR queue/jobs 0/0; focused tests, workspace, clippy, rust-analyzer, and privacy/contract gates pass. | #37/#159 remain open. Precision, contamination, completeness, stage timings, clean-vs-mixed overhead, H-tier/resource budget, private benchmark, successful OCR generation CAS, migration, vectors, GUI/query/performance, readiness, and completion are not claimed. |
 | S706 | #159 classifier-admission synthetic fixtures prepared | Seven Rust test fixture owners and the shared DOCX/PDF now carry the frozen strong positive signals without changing assertions or production code. Focused CLI/daemon/parser tests pass 126/126; the full workspace, formatting, clippy, rust-analyzer diagnostics, exact path budget, and required machine/privacy gates pass. | #37/#159 remain open. Production parse/OCR/rebuild/rerun/legacy admission is not implemented here; no private classification, index precision/contamination/completeness, timing, overhead, scale, GUI, or readiness claim. |
 | S705 | #157 durable classification audit storage implemented | RED: V22/API were absent. GREEN: five states and bounded ordered reasons round-trip through typed atomic upsert/read; aggregate counts exclude soft-deleted records; invalid input/missing parents fail closed; migration constraints, idempotence, and cascades pass. Existing documents remain unclassified. | #37/#157 remain open until hosted acceptance. No import/OCR/index admission, private calibration/holdout, timings, overhead, or product correctness/readiness claim. |
 | S704 | #155 deterministic classifier core implemented | RED: the workspace had no `resume-classifier` package. GREEN: 7 Rust tests run the unchanged 9-sample frozen public fixture through the production API and cover five states, precision-first admission, corroborated rejection, JD/template/weak/metadata independence, bounded reasons, deterministic output, and debug redaction. Aggregate: candidate/non-resume/review/OCR/failed = 3/3/1/1/1; synthetic precision 1.0, contamination 0, completeness 0.75; privacy flags remain false. | #37/#155 remain open until hosted acceptance. This slice does not persist audit state, gate full-text/field/vector admission, reclassify OCR output, read calibration/holdout, measure timings or overhead, or claim product correctness/readiness. |
@@ -3350,16 +3349,11 @@ guards, local runtime discovery, and PR #9 CI state.
 
 ### S708
 
-- Fresh execution truth: PR #162 is main-reachable at
-  `a22bb5c2f3121b04e79ffc3f6be47aa4ac32df1e`, all 14 hosted checks passed,
-  no review thread remained, and #159 is open after post-merge reconciliation.
-- Contract drift repair selects `make_ocr_terminal_failure_recoverable` on a
-  fresh main-based branch and replaces the exhausted one-off #159 transition
-  check with an explicit named transition that still requires the Git diff to
-  equal `ACTIVE_GOAL.toml` allowed paths exactly.
-- Runtime capability attestation passed for workspace/GitHub and configured
-  private-root readability, but this slice is public synthetic only and reads
-  no private file. Production verification is pending.
+- Fresh truth: PR #162 is main-reachable at `a22bb5c2f3121b04e79ffc3f6be47aa4ac32df1e`, its 14 checks passed with no open review, and reconciled #159 is open.
+- The fresh-main branch selects `make_ocr_terminal_failure_recoverable`; its exact-path gate remains strict.
+- Workspace/GitHub/private-root capability checks passed, but this public-synthetic slice read no private file and emitted no private payload.
+- RED left exhausted OCR in a dead backlog. GREEN finalizes attempt 3, retains remediation, fails overflow before mutation, and permits only fresh-classified monotonic requeue; n=3 keeps searchable 2 while failed permanent moves 0 -> 1 and OCR queue 1 -> 0.
+- Focused/workspace/clippy/rust-analyzer/four-gate evidence passes; timings, overhead, quality, H-tier/resource deltas, and private calibration/holdout were not measured.
 
 ### S707
 
