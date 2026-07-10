@@ -154,6 +154,57 @@ def main() -> int:
 
     validate_github_ledger(state)
 
+    active_slice = require_mapping(
+        active_goal.get("scope", {}).get("active_slice"),
+        "ACTIVE_GOAL.toml.scope.active_slice",
+    )
+    active_issue = require_issue_ref(
+        active_slice.get("issue"),
+        "ACTIVE_GOAL.toml.scope.active_slice.issue",
+    )
+    github_ledger = require_mapping(
+        state.get("github_ledger"),
+        "perf/current-loop-state.json.github_ledger",
+    )
+    require_string(
+        github_ledger.get("primary_issue"),
+        active_issue,
+        "perf/current-loop-state.json.github_ledger.primary_issue",
+    )
+    current_slice = state.get("current_slice")
+    if not isinstance(current_slice, str) or not current_slice.startswith(f"{active_issue} "):
+        fail(
+            "perf/current-loop-state.json.current_slice: expected prefix "
+            f"{active_issue!r}"
+        )
+    if active_issue == "#145":
+        for key, expected in {
+            "workflow_state": "pr_opened",
+            "experiment_state": "contract_locked",
+            "evidence_lane": "w0_docs",
+            "current_slice": "#145 atomic bootstrap parse-result cancel-poll recovery",
+        }.items():
+            require_string(state.get(key), expected, f"perf/current-loop-state.json.{key}")
+        active_prs = github_ledger.get("active_prs")
+        if active_prs != ["#142", "#144"]:
+            fail(
+                "perf/current-loop-state.json.github_ledger.active_prs: "
+                "#145 bootstrap snapshot must keep open PRs #142 and #144"
+            )
+        open_blockers = github_ledger.get("open_blockers")
+        if open_blockers != ["#37", "#140", "#143", "#145"]:
+            fail(
+                "perf/current-loop-state.json.github_ledger.open_blockers: "
+                "#145 bootstrap snapshot must equal #37/#140/#143/#145"
+            )
+        transition = {
+            "from": "contract_conflict",
+            "to": "pr_opened",
+            "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/145#issuecomment-4932578248",
+        }
+        if transition not in state.get("transition_history", []):
+            fail("perf/current-loop-state.json.transition_history: missing atomic bootstrap intent transition")
+
     active_loop = active_goal.get("loop")
     if not isinstance(active_loop, dict):
         fail("ACTIVE_GOAL.toml: missing [loop]")

@@ -4387,10 +4387,11 @@ mod tests {
         let file = crawl_directory(&root).unwrap().files.remove(0);
         let document = test_document("wait", DocumentStatus::Searchable);
         let (result_tx, result_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::sync_channel(1);
         let cancel_polls = Arc::new(AtomicUsize::new(0));
         let observed_cancel_polls = Arc::clone(&cancel_polls);
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(180));
+        let sender = thread::spawn(move || {
+            release_rx.recv().unwrap();
             let parse_started = Instant::now();
             result_tx
                 .send(ParseWorkResult {
@@ -4408,10 +4409,14 @@ mod tests {
         });
 
         let result = recv_parse_result_with_cancel_poll(&result_rx, &|| {
-            observed_cancel_polls.fetch_add(1, Ordering::SeqCst);
+            let poll = observed_cancel_polls.fetch_add(1, Ordering::SeqCst) + 1;
+            if poll == 2 {
+                release_tx.send(()).unwrap();
+            }
             Ok(())
         })
         .unwrap();
+        sender.join().unwrap();
 
         assert_eq!(result.index, 7);
         assert!(
