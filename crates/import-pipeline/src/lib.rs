@@ -30,8 +30,8 @@ use meta_store::{
     ClassificationStatus, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
     EntityType, FileExtension, ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanError,
     ImportScanErrorKind, ImportScanErrorOperation, ImportTask, ImportTaskId, ImportTaskStatus,
-    IndexState, IndexStateStatus, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility,
-    SearchableImportDocument, UnixTimestamp,
+    IndexState, IndexStateStatus, IngestJob, IngestJobStatus, MetaStore, ResumeVersion,
+    ResumeVersionId, ResumeVisibility, SearchableImportDocument, UnixTimestamp,
 };
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
 use parser_doc::DocParser;
@@ -2943,7 +2943,7 @@ fn mark_ocr_required_and_enqueue(
         .enqueue_ocr_job_for_document(&document.id, now)
         .map_err(ImportPipelineError::store)?;
 
-    Ok(enqueue.inserted)
+    Ok(enqueue.scheduled)
 }
 
 fn entity_mentions_from_rules(
@@ -3045,7 +3045,13 @@ fn exact_rerun_noop_kind(
             if is_current(&classification)
                 && classification.status == ClassificationStatus::OcrBacklog =>
         {
-            Ok(Some(ExactRerunNoopKind::OcrRequired))
+            let job = store
+                .ocr_job_for_document(&document.id)
+                .map_err(ImportPipelineError::store)?;
+            Ok(job
+                .as_ref()
+                .is_some_and(ocr_job_is_actionable)
+                .then_some(ExactRerunNoopKind::OcrRequired))
         }
         DocumentStatus::TextCleaned | DocumentStatus::OcrDone
             if is_current(&classification)
@@ -3057,6 +3063,16 @@ fn exact_rerun_noop_kind(
             Ok(Some(ExactRerunNoopKind::Excluded))
         }
         _ => Ok(None),
+    }
+}
+
+fn ocr_job_is_actionable(job: &IngestJob) -> bool {
+    match job.status {
+        IngestJobStatus::Queued | IngestJobStatus::Running => true,
+        IngestJobStatus::Interrupted | IngestJobStatus::FailedRetryable => {
+            job.attempt_count < job.max_attempts
+        }
+        IngestJobStatus::Completed | IngestJobStatus::FailedPermanent => false,
     }
 }
 
@@ -3759,7 +3775,8 @@ mod tests {
     use fs_crawler::{crawl_directory, normalize_path, NormalizedPath, ScanProfile};
     use meta_store::{
         Document, DocumentId, DocumentStatus, FileExtension, ImportRootKind, ImportScanProfile,
-        ImportScanScope, ImportTask, ImportTaskStatus, MetaStore, UnixTimestamp,
+        ImportScanScope, ImportTask, ImportTaskStatus, IngestJobKind, IngestJobStatus, MetaStore,
+        UnixTimestamp,
     };
 
     use super::{
@@ -5043,7 +5060,7 @@ mod tests {
     }
 
     #[test]
-    fn import_root_rerun_with_unchanged_ocr_required_file_keeps_ocr_queue_stable() {
+    fn import_root_rerun_with_unchanged_ocr_required_file_requeues_only_terminal_job() {
         let temp = TestDir::new("import-pipeline-zero-change-ocr-rerun");
         let data_dir = temp.path().join("data");
         let root = temp.path().join("resumes");
@@ -5130,6 +5147,53 @@ mod tests {
             first_index_state.snapshot_token
         );
         assert!(!format!("{second_index_state:?}").contains(root.to_str().unwrap()));
+
+        let claimed_at = UnixTimestamp::from_unix_seconds(1_700_000_197);
+        let claimed = store
+            .claim_next_job_by_kind(IngestJobKind::OcrDocument, claimed_at)
+            .unwrap()
+            .unwrap();
+        assert_eq!(claimed.status, IngestJobStatus::Running);
+        assert_eq!(claimed.attempt_count, 1);
+        store
+            .update_job_status(
+                &claimed.id,
+                IngestJobStatus::Completed,
+                UnixTimestamp::from_unix_seconds(1_700_000_198),
+            )
+            .unwrap();
+
+        let third_now = UnixTimestamp::from_unix_seconds(1_700_000_199);
+        let third_task = import_task(
+            "zero-change-ocr-third-import",
+            root.to_str().unwrap(),
+            third_now,
+        );
+        store.insert_import_task(&third_task).unwrap();
+        let third_summary = import_root_with_options(
+            &data_dir,
+            &store,
+            &third_task,
+            &root,
+            third_now,
+            ImportOptions::default(),
+        )
+        .unwrap();
+
+        assert_eq!(third_summary.ocr_required_documents, 1);
+        assert_eq!(third_summary.ocr_jobs_queued, 1);
+        let requeued = store.ingest_job_by_id(&claimed.id).unwrap().unwrap();
+        assert_eq!(requeued.status, IngestJobStatus::Queued);
+        assert_eq!(requeued.attempt_count, 1);
+        assert_eq!(requeued.queued_at, third_now);
+        let reclaimed = store
+            .claim_next_job_by_kind(
+                IngestJobKind::OcrDocument,
+                UnixTimestamp::from_unix_seconds(1_700_000_200),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(reclaimed.attempt_count, 2);
     }
 
     #[cfg(unix)]

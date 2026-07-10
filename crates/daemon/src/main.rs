@@ -35,9 +35,9 @@ use meta_store::{
     ContactHash, Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
     ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportScanScope,
     ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobFailureKind,
-    IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey,
-    OcrPageCacheStatus, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
-    WorkerTaskKind,
+    IngestJobKind, IngestJobStatus, MetaStore, OcrAttemptFailure, OcrPageCacheEntry,
+    OcrPageCacheKey, OcrPageCacheStatus, ResumeVersion, ResumeVersionId, ResumeVisibility,
+    UnixTimestamp, WorkerTaskKind,
 };
 use notify::{
     event::EventKind as NotifyEventKind, Config as NotifyConfig, Event as NotifyEvent,
@@ -933,7 +933,13 @@ fn run_ocr_worker_once(
         });
     };
 
-    let mut summary = run_claimed_ocr_job(data_dir, store, &job, options, now)?;
+    let mut summary = match run_claimed_ocr_job(data_dir, store, &job, options, now) {
+        Ok(summary) => summary,
+        Err(error) => {
+            mark_ocr_job_failed_retryable(store, &job, now)?;
+            return Err(error);
+        }
+    };
     summary.stale_recovered = stale_recovered;
     Ok(summary)
 }
@@ -1283,7 +1289,8 @@ fn mark_ocr_job_failed_retryable(
     now: UnixTimestamp,
 ) -> Result<()> {
     store
-        .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
+        .finish_ocr_attempt_failure(job, OcrAttemptFailure::Retryable, now)
+        .map(|_| ())
         .map_err(DaemonError::store)
 }
 
@@ -1294,12 +1301,8 @@ fn mark_ocr_job_failed_retryable_with_failure_kind(
     now: UnixTimestamp,
 ) -> Result<()> {
     store
-        .update_job_status_with_failure_kind(
-            &job.id,
-            IngestJobStatus::FailedRetryable,
-            Some(failure_kind),
-            now,
-        )
+        .finish_ocr_attempt_failure(job, OcrAttemptFailure::RetryableWithKind(failure_kind), now)
+        .map(|_| ())
         .map_err(DaemonError::store)
 }
 
@@ -1309,7 +1312,8 @@ fn mark_ocr_job_failed_permanent(
     now: UnixTimestamp,
 ) -> Result<()> {
     store
-        .update_job_status(&job.id, IngestJobStatus::FailedPermanent, now)
+        .finish_ocr_attempt_failure(job, OcrAttemptFailure::Permanent, now)
+        .map(|_| ())
         .map_err(DaemonError::store)
 }
 

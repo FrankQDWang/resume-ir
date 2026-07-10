@@ -2734,6 +2734,12 @@ guards, local runtime discovery, and PR #9 CI state.
   retains keyed audit but leaves counts, and physical delete cascades. Existing
   documents are not backfilled; admission, OCR wiring, private data, and
   performance work remain out of scope.
+- S708 makes OCR retry exhaustion terminal instead of leaving a stable dead
+  backlog: the third failed attempt atomically moves the job/document/audit to
+  `failed_permanent`/`failed` with `parser_failed`; stale final attempts use the
+  same CAS path, and an explicit fresh OCR-required import may reopen terminal
+  work with a checked monotonic attempt budget. Successful OCR generation CAS,
+  legacy migration, and physical-vector cleanup remain later #159 slices.
 - S706 prepares #159's classifier-admission fixture boundary without changing
   production behavior. Seven Rust integration-test fixture owners plus the
   shared synthetic DOCX/PDF now express the frozen multi-signal positive-resume
@@ -2748,6 +2754,7 @@ guards, local runtime discovery, and PR #9 CI state.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S708 | #159 terminal OCR failure/requeue implemented | RED synthetic n=3: after three failed OCR invocations `failed permanent=0`, `ocr queue=1`, `ocr jobs queued=0`. GREEN: attempts 1/2 retain retryable backlog; attempt 3 atomically becomes permanent failed/`parser_failed`; stale-final recovery follows the same path; explicit rerun reopens 3/6 attempts without overflow. Fresh synthetic n=3 reports searchable 2 stable, failed permanent 1, OCR queue/jobs 0/0; focused tests, workspace, clippy, rust-analyzer, and privacy/contract gates pass. | #37/#159 remain open. Precision, contamination, completeness, stage timings, clean-vs-mixed overhead, H-tier/resource budget, private benchmark, successful OCR generation CAS, migration, vectors, GUI/query/performance, readiness, and completion are not claimed. |
 | S706 | #159 classifier-admission synthetic fixtures prepared | Seven Rust test fixture owners and the shared DOCX/PDF now carry the frozen strong positive signals without changing assertions or production code. Focused CLI/daemon/parser tests pass 126/126; the full workspace, formatting, clippy, rust-analyzer diagnostics, exact path budget, and required machine/privacy gates pass. | #37/#159 remain open. Production parse/OCR/rebuild/rerun/legacy admission is not implemented here; no private classification, index precision/contamination/completeness, timing, overhead, scale, GUI, or readiness claim. |
 | S705 | #157 durable classification audit storage implemented | RED: V22/API were absent. GREEN: five states and bounded ordered reasons round-trip through typed atomic upsert/read; aggregate counts exclude soft-deleted records; invalid input/missing parents fail closed; migration constraints, idempotence, and cascades pass. Existing documents remain unclassified. | #37/#157 remain open until hosted acceptance. No import/OCR/index admission, private calibration/holdout, timings, overhead, or product correctness/readiness claim. |
 | S704 | #155 deterministic classifier core implemented | RED: the workspace had no `resume-classifier` package. GREEN: 7 Rust tests run the unchanged 9-sample frozen public fixture through the production API and cover five states, precision-first admission, corroborated rejection, JD/template/weak/metadata independence, bounded reasons, deterministic output, and debug redaction. Aggregate: candidate/non-resume/review/OCR/failed = 3/3/1/1/1; synthetic precision 1.0, contamination 0, completeness 0.75; privacy flags remain false. | #37/#155 remain open until hosted acceptance. This slice does not persist audit state, gate full-text/field/vector admission, reclassify OCR output, read calibration/holdout, measure timings or overhead, or claim product correctness/readiness. |
@@ -3339,6 +3346,14 @@ guards, local runtime discovery, and PR #9 CI state.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S708
+
+- Fresh truth: PR #162 is main-reachable at `a22bb5c2f3121b04e79ffc3f6be47aa4ac32df1e`, its 14 checks passed with no open review, and reconciled #159 is open.
+- The fresh-main branch selects `make_ocr_terminal_failure_recoverable`; its exact-path gate remains strict.
+- Workspace/GitHub/private-root capability checks passed, but this public-synthetic slice read no private file and emitted no private payload.
+- RED left exhausted OCR in a dead backlog. GREEN finalizes attempt 3, retains remediation, fails overflow before mutation, and permits only fresh-classified monotonic requeue; n=3 keeps searchable 2 while failed permanent moves 0 -> 1 and OCR queue 1 -> 0.
+- Focused/workspace/clippy/rust-analyzer/four-gate evidence passes; timings, overhead, quality, H-tier/resource deltas, and private calibration/holdout were not measured.
 
 ### S707
 
