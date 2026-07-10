@@ -1,0 +1,23 @@
+{
+  "schema_version": "resume-ir.public-synthetic-mixed-benchmark.v1",
+  "fixture_role": "frozen_classifier_independent_smoke",
+  "synthetic_only": true,
+  "contains_real_personal_data": false,
+  "freeze": {
+    "identity_scheme": "hmac_sha256_opaque_manifest_v1",
+    "opaque_manifest_id": "1335bfd07424922c5ca393096f71149cd7208e280766359242f3b14314c7cb28",
+    "frozen": true,
+    "mutation_after_freeze_allowed": false
+  },
+  "samples": [
+    { "sample_id": "public-001", "virtual_relative_path": "unit-a/profile-a.txt", "extension": "txt", "ground_truth": "resume", "parser_outcome": "text_extracted", "expected_status": "resume_candidate", "content": "SUMMARY\nSoftware engineering and local search systems.\nSKILLS\nRust Python SQL.\nEXPERIENCE\nBuilt reliable indexing services." },
+    { "sample_id": "public-002", "virtual_relative_path": "unit-b/resumes/profile-b.docx", "extension": "docx", "ground_truth": "resume", "parser_outcome": "text_extracted", "expected_status": "resume_candidate", "content": "EDUCATION\nBachelor degree in computing.\nEXPERIENCE\nDeveloped data pipelines and search tooling.\nSKILLS\nJava distributed systems." },
+    { "sample_id": "public-003", "virtual_relative_path": "org/c/archive/resumes/profile-c.pdf", "extension": "pdf", "ground_truth": "resume", "parser_outcome": "text_extracted", "expected_status": "resume_candidate", "content": "PROFILE\nPlatform engineering.\nWORK EXPERIENCE\nImplemented queue backpressure and observability.\nEDUCATION\nTechnical degree." },
+    { "sample_id": "public-004", "virtual_relative_path": "invoice.txt", "extension": "txt", "ground_truth": "non_resume", "parser_outcome": "text_extracted", "expected_status": "non_resume", "content": "INVOICE\nOffice supplies quantity two.\nSubtotal and payment terms.\nThis document is synthetic." },
+    { "sample_id": "public-005", "virtual_relative_path": "unit-b/ordinary/meeting.docx", "extension": "docx", "ground_truth": "non_resume", "parser_outcome": "text_extracted", "expected_status": "non_resume", "content": "MEETING NOTES\nAgenda review.\nDecision to update the project timeline.\nAction items remain synthetic." },
+    { "sample_id": "public-006", "virtual_relative_path": "org/c/manuals/manual.pdf", "extension": "pdf", "ground_truth": "non_resume", "parser_outcome": "text_extracted", "expected_status": "non_resume", "content": "DEVICE MANUAL\nConnect the cable before startup.\nFollow maintenance steps and safety guidance." },
+    { "sample_id": "public-007", "virtual_relative_path": "review/fragments/fragment.txt", "extension": "txt", "ground_truth": "unknown", "parser_outcome": "text_extracted", "expected_status": "needs_review", "content": "Project coordination and analysis." },
+    { "sample_id": "public-008", "virtual_relative_path": "scanned/resumes/profile-d.pdf", "extension": "pdf", "ground_truth": "resume", "parser_outcome": "ocr_required", "expected_status": "ocr_backlog", "content": "" },
+    { "sample_id": "public-009", "virtual_relative_path": "broken/deep/import/unreadable.doc", "extension": "doc", "ground_truth": "unknown", "parser_outcome": "failed", "expected_status": "failed", "content": "" }
+  ]
+}

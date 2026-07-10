@@ -1,0 +1,91 @@
+{
+  "schema_version": "resume-ir.mixed-import-report.v1",
+  "benchmark_layer": "public_synthetic",
+  "claim": "no_claim",
+  "freeze": {
+    "identity_scheme": "hmac_sha256_opaque_manifest_v1",
+    "opaque_manifest_id": "1335bfd07424922c5ca393096f71149cd7208e280766359242f3b14314c7cb28",
+    "frozen": true,
+    "mutation_after_freeze_allowed": false
+  },
+  "visibility": {
+    "aggregate_only": true,
+    "per_file_details": false,
+    "calibration_labels_visible_to_tuner": false,
+    "blind_holdout_visible_during_calibration": false
+  },
+  "sample_counts": { "total": 9 },
+  "label_counts": { "known_resume": 4, "known_non_resume": 3, "unknown": 2 },
+  "extension_buckets": [
+    { "name": "doc", "count": 1 },
+    { "name": "docx", "count": 2 },
+    { "name": "pdf", "count": 3 },
+    { "name": "txt", "count": 3 }
+  ],
+  "size_buckets": [
+    { "name": "empty", "count": 2 },
+    { "name": "bytes_1_127", "count": 6 },
+    { "name": "bytes_128_1023", "count": 1 }
+  ],
+  "directory_depth_buckets": [
+    { "name": "depth_0", "count": 1 },
+    { "name": "depth_1", "count": 1 },
+    { "name": "depth_2", "count": 4 },
+    { "name": "depth_3", "count": 2 },
+    { "name": "depth_4", "count": 1 }
+  ],
+  "classification_counts": {
+    "resume_candidate": 3,
+    "non_resume": 3,
+    "needs_review": 1,
+    "ocr_backlog": 1,
+    "failed": 1
+  },
+  "index_admission": {
+    "searchable_count": 3,
+    "indexed_total": 3,
+    "indexed_true_resumes": 3,
+    "indexed_resume_precision": 1.0,
+    "contamination_count": 0,
+    "expected_true_resumes": 4,
+    "resume_completeness": 0.75,
+    "precision_regression": 0.0,
+    "completeness_improvement_claimed": false
+  },
+  "timings_ms": {
+    "clean_wall": 5.0,
+    "mixed_wall": 9.0,
+    "mixed_overhead_pct": 80.0,
+    "stage_timings": [
+      { "name": "scan", "value": 1.0 },
+      { "name": "parse", "value": 3.0 },
+      { "name": "normalize_sectionize", "value": 1.0 },
+      { "name": "classify", "value": 1.0 },
+      { "name": "index", "value": 2.0 }
+    ]
+  },
+  "throughput": {
+    "content_bytes_read": 694,
+    "docs_per_second": 1000.0,
+    "mib_per_second": 0.073538886176215
+  },
+  "resource_budget": {
+    "h_tier": "H0_Eco",
+    "aggregate_mb": 512,
+    "writer_heap_mb": 64,
+    "parser_workers": 1
+  },
+  "privacy": {
+    "aggregate_only": true,
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_filenames": false,
+    "contains_label_details": false,
+    "contains_raw_file_hashes": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false,
+    "contains_private_manifest": false
+  }
+}

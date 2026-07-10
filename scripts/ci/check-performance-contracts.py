@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import hashlib
 import pathlib
+import runpy
 import subprocess
 import sys
 import tomllib
@@ -586,7 +587,11 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
         "must_complete_after_issue": "#138",
         "contract_owner_issue": "#140",
         "report_schema_target": "resume-ir.mixed-import-report.v1",
+        "report_schema_path": "perf/mixed-import-report.schema.json",
         "contract_checker_target": "scripts/ci/check-mixed-import-contracts.py",
+        "public_synthetic_fixture_path": "perf/fixtures/mixed-import/public-synthetic-benchmark.json",
+        "valid_report_fixture_path": "perf/fixtures/mixed-import/valid-public-report.json",
+        "negative_cases_fixture_path": "perf/fixtures/mixed-import/invalid-cases.json",
         "freeze_identity_scheme": "hmac_sha256_opaque_manifest_v1",
         "public_synthetic_source_visibility": "committed_synthetic_exact",
         "public_synthetic_output_visibility": "bounded_aggregate_only",
@@ -607,6 +612,7 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
             "required_before_gui_implementation",
             "required_before_query_hot_path_optimization",
             "benchmark_must_be_frozen_before_classifier",
+            "report_contract_implemented",
             "precision_first",
             "local_per_file_audit_required",
             "completeness_improvement_requires_precision_non_regression",
@@ -619,7 +625,6 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
         mixed_import,
         [
             "mutation_after_freeze_allowed",
-            "report_contract_implemented",
             "blind_holdout_visible_during_calibration",
             "synthetic_fixture_ids_classifier_features_allowed",
             "labels_classifier_features_allowed",
@@ -637,6 +642,8 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
         fail("matrix.mixed_import_correctness.contamination_count_max mismatch")
     if mixed_import.get("precision_non_regression_tolerance") != 0.0:
         fail("matrix.mixed_import_correctness.precision_non_regression_tolerance mismatch")
+    if mixed_import.get("public_synthetic_sample_count") != 9:
+        fail("matrix.mixed_import_correctness.public_synthetic_sample_count mismatch")
     if mixed_import.get("benchmark_layers") != MIXED_IMPORT_BENCHMARK_LAYERS:
         fail("matrix.mixed_import_correctness.benchmark_layers mismatch")
     if mixed_import.get("status_values") != MIXED_IMPORT_STATUSES:
@@ -1378,6 +1385,14 @@ def validate_fixture(path: pathlib.Path, matrix: Mapping[str, object]) -> None:
 def main() -> int:
     matrix = load_toml(PERF / "acceptance-matrix.toml")
     validate_matrix(matrix)
+    mixed_module = runpy.run_path(str(ROOT / "scripts" / "ci" / "check-mixed-import-contracts.py"))
+    mixed_main = mixed_module.get("main")
+    if not callable(mixed_main):
+        fail("mixed-import contract check: missing callable main")
+    try:
+        mixed_main()
+    except (OSError, ValueError) as exc:
+        fail(f"mixed-import contract check failed: {exc}")
     validate_experiment_report_schema(
         require_mapping(load_json(PERF / "experiment-report.schema.json"), "experiment schema"),
         matrix,

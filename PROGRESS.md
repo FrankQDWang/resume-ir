@@ -2696,11 +2696,18 @@ guards, local runtime discovery, and PR #9 CI state.
   limits this slice to the exact ten-path contract reverse. The #145 cancel-poll
   and #143 redaction-counter Rust fixes remain unchanged; focused tests and
   required machine gates pass before PR #142 refresh.
+- S701 completes the remaining #140 frozen-benchmark contract in one bounded
+  slice after PR #142 merged all-green as `d846b1290595a882b78455f62ee7aa1ef0707d20`.
+  RED proved the report schema/checker were absent. GREEN freezes nine nested
+  public synthetic samples with opaque HMAC identity, validates one bounded
+  aggregate report, and rejects 15 leakage/layer/precision mutations. No private
+  root, classifier, production, GUI/query/L4, or readiness claim is included.
 
 ## Slice Status
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S701 | #140 frozen public benchmark contract candidate | PR #142 merged all-green. RED: schema/checker absent. GREEN: 9 frozen synthetic samples, 15 negative cases, precision 1.0, contamination 0, completeness 0.75; required gates pass. | #37/#140 remain open until hosted acceptance. No private/classifier/production/GUI work or completion claim. |
 | S700 | #140 issue-centric restoration candidate prepared | PR #149 merged all-green; #143 closed; intent: https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4933072676. Merged-main focused tests and required gates pass before the exact ten-path reverse. | #37/#140 and PR #142 remain open. No production/private/classifier/GUI work, gate weakening, bypass, or completion claim. |
 | S699 | #143 atomic redaction-counter repair candidate | Intent: https://github.com/FrankQDWang/resume-ir/issues/143#issuecomment-4932928934. RED observed worker leakage; GREEN regression, three existing assertions, 20/20 parallel lib runs, full crate, Rust checks, and required gates pass. PR #144 closed. | #37/#140/#143 and PR #142 remain open. No production/private/classifier/GUI work, serialization, or bypass. |
 | S698 | #140 issue-centric restoration candidate prepared | PR #147 merged all-green; intent: https://github.com/FrankQDWang/resume-ir/issues/140#issuecomment-4932743665. Merged-main focused test and required gates passed before the exact ten-path reverse. | #37/#140/#143 and PR #142/#144 remain open. No production/private/classifier/GUI work or bypass. |
@@ -3286,6 +3293,18 @@ guards, local runtime discovery, and PR #9 CI state.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S701
+
+- RED: `check-mixed-import-contracts.py` and `mixed-import-report.schema.json`
+  were absent; matrix activation then failed on the stale report-contract flag.
+- GREEN: 9 classifier-independent synthetic samples are HMAC-frozen before
+  rules; the bounded aggregate fixture reports all five states, precision 1.0,
+  contamination 0, completeness 0.75, timings, throughput, H-tier, and privacy.
+  Fifteen negative mutations cover leakage, layer mixing, mutability, precision,
+  and contamination. Required contract/privacy/loop/public gates pass.
+- Boundary: no private read, real file/path/name/text/label/hash/query/result,
+  classifier/production code, GUI/query/L4 work, or readiness/completion claim.
 
 ### S700
 

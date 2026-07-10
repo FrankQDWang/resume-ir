@@ -1,0 +1,20 @@
+{
+  "schema_version": "resume-ir.mixed-import-negative-cases.v1",
+  "cases": [
+    { "name": "raw_path", "path": "raw_path", "value": "synthetic-relative" },
+    { "name": "filename", "path": "filename", "value": "synthetic-name" },
+    { "name": "body_text", "path": "body_text", "value": "synthetic-body" },
+    { "name": "raw_label_details", "path": "raw_label_details", "value": [] },
+    { "name": "raw_file_hash", "path": "raw_file_hash", "value": "synthetic-hash" },
+    { "name": "raw_query", "path": "raw_query", "value": "synthetic-query" },
+    { "name": "candidate_results", "path": "candidate_results", "value": [] },
+    { "name": "token", "path": "token", "value": "synthetic-token" },
+    { "name": "diagnostics_package", "path": "diagnostics_package", "value": {} },
+    { "name": "private_manifest", "path": "private_manifest", "value": {} },
+    { "name": "layer_mixing", "path": "combined_layers", "value": ["public_synthetic", "blind_holdout"] },
+    { "name": "mutable_after_freeze", "path": "freeze.mutation_after_freeze_allowed", "value": true },
+    { "name": "holdout_visible_during_calibration", "path": "visibility.blind_holdout_visible_during_calibration", "value": true },
+    { "name": "precision_below_threshold", "path": "index_admission.indexed_resume_precision", "value": 0.99 },
+    { "name": "contamination_above_threshold", "path": "index_admission.contamination_count", "value": 1 }
+  ]
+}
