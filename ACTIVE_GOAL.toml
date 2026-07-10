@@ -12,32 +12,20 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#140"
-name = "freeze_mixed_import_benchmark_contract_and_anti_overfit_evidence_layers"
-contract_change_allowed = true
-production_code_allowed = false
+issue = "#143"
+name = "remove_parallel_redaction_counter_test_race"
+contract_change_allowed = false
+production_code_allowed = true
+production_semantics_change_allowed = false
+test_only_change_required = true
+global_test_serialization_allowed = false
 private_benchmark_allowed = false
 scope_exception = false
-scope_exception_reason = "No exception is used: the #140 contract-only reconciliation is split into reviewable PRs that each stay within the normal file and line budgets. Issue #140 may freeze only the public synthetic, private calibration, and blind holdout benchmark/evidence contract; it must not implement classifier or production behavior, read a private mixed root, implement GUI, optimize the query hot path, start a new L4 import micro-optimization, relax query semantics, publish raw private data, claim full baseline, D10K/D100K/D1M, stable-release readiness, GUI readiness, or goal completion."
+scope_exception_reason = "No exception is used: issue #143 atomically combines its exact test-only counter repair with the minimum issue-centric contract transition inside normal PR budgets; production semantics, global serialization, private data, mixed-import behavior, gate weakening, and completion claims remain forbidden."
+allowed_contract_transition_targets = ["#140"]
 allowed_paths = [
-  "AGENTS.md",
-  "GOAL.md",
-  "MANIFEST.md",
-  "ACTIVE_GOAL.toml",
-  ".github/workflows/pr.yml",
-  ".github/PULL_REQUEST_TEMPLATE.md",
-  ".github/ISSUE_TEMPLATE/",
-  "03_next_goal_高性能本地检索GUI闭环/",
+  "crates/index-fulltext/src/lib.rs",
   "PROGRESS.md",
-  "docs/superpowers/",
-  "perf/",
-  "scripts/ci/check-performance-contracts.py",
-  "scripts/ci/check-mixed-import-contracts.py",
-  "scripts/ci/check-autonomous-goal.py",
-  "scripts/ci/check-loop-state.py",
-  "scripts/ci/check-pr-budget.py",
-  "scripts/ci/check-private-evidence-redaction.py",
-  "scripts/ci/check-gate-integrity.py",
 ]
 
 [contracts]
@@ -197,6 +185,21 @@ verify_after_side_effect_required = true
 compare_and_swap_state_update_required = true
 lease_required = true
 heartbeat_required = true
+
+[[autonomous_delivery.transitions]]
+name = "atomic_redaction_counter_test_fix"
+from = ["slice_selected"]
+to = "pr_opened"
+required_permissions = ["production_code_allowed", "commit_push_allowed", "github_pr_write_allowed", "github_issue_write_allowed"]
+required_evidence = [
+  "explicit_user_authorization",
+  "linked_issue",
+  "issue_intent_comment",
+  "exact_test_only_patch",
+  "local_tests",
+  "privacy_boundary",
+]
+allowed_actions = ["edit_contract", "edit_exact_test", "run_tests", "commit", "push_branch", "create_pr", "update_issue"]
 
 [[autonomous_delivery.transitions]]
 name = "capture_synthetic_smoke_baseline"

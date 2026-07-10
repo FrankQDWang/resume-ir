@@ -24,7 +24,7 @@ Policy truth lives in `ACTIVE_GOAL.toml`, `perf/acceptance-matrix.toml`, schemas
 
 1. 每次长程 Codex 执行开始时读取 `ACTIVE_GOAL.toml`。
 2. 若执行目标、允许路径、隐私边界或 active slice 与用户请求冲突，停止实现并回到 linked GitHub issue 重新 observe/锁定合同；不得加载旧 `fw-*` wrapper。
-3. #138 product-capability audit 已完成；当前 #140 active slice 只允许冻结 mixed-directory benchmark、anti-overfit evidence contract、public schema/fixtures 和 CI harness。Classifier production code、private mixed-root execution、GUI、query hot-path 优化、新 L4 import 微优化和 profile optimization issue 仍必须等新的 linked issue 与对应证据满足后再进入。
+3. #138 product-capability audit 已完成；#140 仍负责 mixed-directory benchmark 与 anti-overfit evidence contract。当前临时 #143 active slice 只授权一个 pinned issue-centric atomic contract-plus-test PR，以 thread-local test observation 修复 parallel redaction-counter race；不授权 production semantics、global serialization、private mixed-root、classifier、GUI、query hot-path、新 L4 或 profile work。#143 合并后必须恢复 #140，再刷新 PR #142。
 4. 目标锁不能被实现者临时放宽。需要放宽时必须先更新 linked GitHub issue 与 `ACTIVE_GOAL.toml`，再重新验证机器合同。
 
 ## 3. Experiment Report Rules
