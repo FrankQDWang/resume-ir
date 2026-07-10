@@ -22,23 +22,21 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = true
 unconfigured_private_run_terminal = "not_applicable_public_synthetic_admission_only"
 scope_exception = false
-scope_exception_reason = "No exception is used. The first bounded #159 production delivery closes core parse, OCR-success, rebuild, rerun, and legacy DB/fulltext admission bypasses; generation-safe OCR failure/requeue and physical vector cleanup remain on #159."
+scope_exception_reason = "No exception is used. The first bounded #159 production delivery closes core parse, OCR-success, runtime rebuild/rerun, and DB/fulltext admission bypasses; legacy migration, generation-safe OCR failure/requeue, and physical vector cleanup remain on #159."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
   "crates/cli/tests/s10_search_filters.rs",
   "crates/cli/tests/s15_ocr_handoff.rs",
-  "crates/cli/tests/s146_metadata_key_cli.rs",
-  "crates/cli/tests/s147_metadata_key_rotation_cli.rs",
   "crates/import-pipeline/src/classification.rs",
   "crates/import-pipeline/src/lib.rs",
   "crates/meta-store/src/lib.rs",
-  "crates/meta-store/tests/s3_sqlite.rs",
   "crates/ocr-client/src/lib.rs",
   "perf/current-loop-state.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
   "scripts/ci/check-cli-closed-loop.sh",
+  "scripts/ci/check-daemon-closed-loop.sh",
 ]
 
 [contracts]

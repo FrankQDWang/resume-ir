@@ -25,9 +25,9 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     let first = store.run_migrations().unwrap();
     assert_eq!(
         first.applied_versions(),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,]
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,]
     );
-    assert_eq!(store.schema_version().unwrap(), 23);
+    assert_eq!(store.schema_version().unwrap(), 22);
 
     for table_name in [
         "candidate",
@@ -53,84 +53,7 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 23);
-}
-
-#[test]
-fn schema_v23_quarantines_non_current_searchability_without_fabricating_audit() {
-    assert_eq!(resume_classifier::CLASSIFIER_EPOCH, "precision_first_v1");
-    let db_path = temp_db_path("classifier-quarantine-v23");
-    let now = UnixTimestamp::from_unix_seconds(1_800_000_010);
-    let cases = [
-        ("current", Some("precision_first_v1")),
-        ("missing", None),
-        ("stale", Some("stale_epoch")),
-    ];
-
-    {
-        let store = MetaStore::open(&db_path).unwrap();
-        store.run_migrations().unwrap();
-        for (label, epoch) in cases {
-            let document = document(label, false, DocumentStatus::Searchable);
-            store.upsert_document(&document).unwrap();
-            store
-                .upsert_resume_version(&resume_version(
-                    &format!("{label}-version"),
-                    document.id.clone(),
-                ))
-                .unwrap();
-            if let Some(epoch) = epoch {
-                store
-                    .upsert_document_classification(&DocumentClassificationRecord {
-                        document_id: document.id,
-                        status: ClassificationStatus::ResumeCandidate,
-                        classifier_epoch: epoch.to_string(),
-                        reason_codes: vec![ReasonCode::CorroboratedResumeSignals],
-                        classified_at: now,
-                        review_disposition: ReviewDisposition::NotRequired,
-                    })
-                    .unwrap();
-            }
-        }
-        store
-            .upsert_index_state(&IndexState {
-                manifest_version: "synthetic-v23".to_string(),
-                snapshot_token: Some("synthetic-token".to_string()),
-                status: IndexStateStatus::Ready,
-                updated_at: now,
-                visible_epoch: 7,
-                manifest_document_count: 3,
-            })
-            .unwrap();
-    }
-    open_raw_connection(&db_path)
-        .execute("DELETE FROM schema_migrations WHERE version = 23", [])
-        .unwrap();
-
-    let store = MetaStore::open(&db_path).unwrap();
-    assert_eq!(store.run_migrations().unwrap().applied_versions(), &[23]);
-    let searchable = store.searchable_document_ids().unwrap();
-    assert_eq!(
-        searchable,
-        vec![DocumentId::from_non_secret_parts(&["s3", "current"])]
-    );
-    for label in ["missing", "stale"] {
-        let document_id = DocumentId::from_non_secret_parts(&["s3", label]);
-        let document = store.document_by_id(&document_id).unwrap().unwrap();
-        let version = store
-            .resume_versions_for_document(&document_id)
-            .unwrap()
-            .remove(0);
-        assert_eq!(
-            (document.status, version.visibility),
-            (DocumentStatus::TextCleaned, ResumeVisibility::Hidden)
-        );
-    }
-    let index_state = store.index_state().unwrap().unwrap();
-    assert_eq!(index_state.status, IndexStateStatus::Stale);
-    assert_eq!(index_state.snapshot_token, None);
-    assert_eq!(index_state.manifest_document_count, 0);
-    remove_temp_db(&db_path);
+    assert_eq!(store.schema_version().unwrap(), 22);
 }
 
 #[test]
@@ -164,7 +87,7 @@ fn encrypted_metadata_store_requires_key_and_survives_reopen_without_plaintext_h
         assert_eq!(store.metadata_encryption_state().label(), "sqlcipher");
         store.run_migrations().unwrap();
         store.upsert_document(&document).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 23);
+        assert_eq!(store.schema_version().unwrap(), 22);
     }
 
     let encrypted_bytes = fs::read(&db_path).unwrap();
@@ -211,7 +134,7 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         plaintext.run_migrations().unwrap();
         plaintext.upsert_document(&document).unwrap();
         plaintext.upsert_resume_version(&version).unwrap();
-        assert_eq!(plaintext.schema_version().unwrap(), 23);
+        assert_eq!(plaintext.schema_version().unwrap(), 22);
         assert_eq!(
             plaintext.metadata_encryption_state(),
             MetadataEncryptionState::Plaintext
@@ -226,7 +149,7 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         migrated.metadata_encryption_state(),
         MetadataEncryptionState::SqlCipher
     );
-    assert_eq!(migrated.schema_version().unwrap(), 23);
+    assert_eq!(migrated.schema_version().unwrap(), 22);
     assert_eq!(
         migrated.document_by_id(&document.id).unwrap().unwrap().id,
         document.id
@@ -2339,7 +2262,7 @@ fn schema_v6_redacts_existing_contact_entity_mentions() {
         let reopened = MetaStore::open(&db_path).unwrap();
         let report = reopened.run_migrations().unwrap();
         assert_eq!(report.applied_versions(), &[6, 7, 15]);
-        assert_eq!(reopened.schema_version().unwrap(), 23);
+        assert_eq!(reopened.schema_version().unwrap(), 22);
 
         let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
         let email = mentions
@@ -2776,7 +2699,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 23);
+        assert_eq!(reopened.schema_version().unwrap(), 22);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -3306,7 +3229,7 @@ fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
             report.applied_versions(),
             &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15]
         );
-        assert_eq!(reopened.schema_version().unwrap(), 23);
+        assert_eq!(reopened.schema_version().unwrap(), 22);
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document.clone())
@@ -3346,7 +3269,7 @@ fn file_backed_store_reopens_schema_and_index_state() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 23);
+        assert_eq!(reopened.schema_version().unwrap(), 22);
         assert_eq!(reopened.index_state().unwrap(), Some(state));
     }
 

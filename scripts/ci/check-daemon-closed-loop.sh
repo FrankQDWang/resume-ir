@@ -170,7 +170,7 @@ cat >"$ocr_command" <<'SH'
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.97\n'
 printf 'text:\n'
-printf 'DaemonClosedLoopOCRToken page %s\n' "$RESUME_IR_OCR_PAGE_NO"
+printf 'SUMMARY\nSynthetic OCR profile.\nEXPERIENCE\nBuilt DaemonClosedLoopOCRToken systems on page %s.\nSKILLS\nSearch.\n' "$RESUME_IR_OCR_PAGE_NO"
 SH
 chmod 700 "$ocr_command"
 

@@ -52,7 +52,6 @@ const SCHEMA_VERSION_V19: u32 = 19;
 const SCHEMA_VERSION_V20: u32 = 20;
 const SCHEMA_VERSION_V21: u32 = 21;
 const SCHEMA_VERSION_V22: u32 = 22;
-const SCHEMA_VERSION_V23: u32 = 23;
 const QUERY_OBSERVATION_RETENTION_ROWS: i64 = 10_000;
 const METADATA_STORE_FILE: &str = "metadata.sqlite3";
 const METADATA_ENCRYPTION_KEY_LEN: usize = 32;
@@ -824,7 +823,6 @@ impl MetaStore {
             (SCHEMA_VERSION_V20, SCHEMA_V20),
             (SCHEMA_VERSION_V21, SCHEMA_V21),
             (SCHEMA_VERSION_V22, SCHEMA_V22),
-            (SCHEMA_VERSION_V23, SCHEMA_V23),
         ] {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
@@ -5453,59 +5451,6 @@ CREATE TABLE document_classification_reason (
 
 CREATE INDEX document_classification_review_idx
     ON document_classification(review_disposition, status);
-"#;
-
-const SCHEMA_V23: &str = r#"
-CREATE TEMP TABLE classifier_quarantine_document AS
-SELECT document.id
-FROM document AS document
-WHERE document.is_deleted = 0
-  AND document.status IN (
-    'fields_extracted', 'embedding_done', 'indexed_partial', 'searchable'
-  )
-  AND NOT EXISTS (
-    SELECT 1
-    FROM document_classification AS classification
-    WHERE classification.document_id = document.id
-      AND classification.status = 'resume_candidate'
-      AND classification.classifier_epoch = 'precision_first_v1'
-  );
-
-UPDATE index_state
-SET snapshot_token = NULL,
-    status = CASE WHEN status = 'empty' THEN 'empty' ELSE 'stale' END,
-    manifest_document_count = 0
-WHERE state_key = 'default'
-  AND EXISTS (SELECT 1 FROM classifier_quarantine_document);
-
-DELETE FROM candidate_contact_conflict
-WHERE resume_version_id IN (
-  SELECT id FROM resume_version
-  WHERE document_id IN (SELECT id FROM classifier_quarantine_document)
-);
-
-DELETE FROM entity_mention
-WHERE resume_version_id IN (
-  SELECT id FROM resume_version
-  WHERE document_id IN (SELECT id FROM classifier_quarantine_document)
-);
-
-UPDATE resume_version
-SET visibility = 'hidden', candidate_id = NULL
-WHERE document_id IN (SELECT id FROM classifier_quarantine_document);
-
-UPDATE candidate
-SET version_count = (
-  SELECT COUNT(*) FROM resume_version
-  WHERE resume_version.candidate_id = candidate.id
-);
-DELETE FROM candidate WHERE version_count = 0;
-
-UPDATE document
-SET status = 'text_cleaned'
-WHERE id IN (SELECT id FROM classifier_quarantine_document);
-
-DROP TABLE classifier_quarantine_document;
 "#;
 
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
