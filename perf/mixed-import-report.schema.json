@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/resume-ir/perf/mixed-import-report.schema.json",
+  "title": "resume-ir mixed import correctness report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "benchmark_layer", "claim", "freeze", "visibility",
+    "sample_counts", "label_counts", "extension_buckets", "size_buckets",
+    "directory_depth_buckets", "classification_counts", "index_admission",
+    "timings_ms", "throughput", "resource_budget", "privacy"
+  ],
+  "properties": {
+    "schema_version": { "const": "resume-ir.mixed-import-report.v1" },
+    "benchmark_layer": { "enum": ["public_synthetic", "private_calibration", "blind_holdout"] },
+    "claim": { "const": "no_claim" },
+    "freeze": { "$ref": "#/$defs/freeze" },
+    "visibility": { "$ref": "#/$defs/visibility" },
+    "sample_counts": { "$ref": "#/$defs/sample_counts" },
+    "label_counts": { "$ref": "#/$defs/label_counts" },
+    "extension_buckets": { "$ref": "#/$defs/buckets" },
+    "size_buckets": { "$ref": "#/$defs/buckets" },
+    "directory_depth_buckets": { "$ref": "#/$defs/buckets" },
+    "classification_counts": { "$ref": "#/$defs/classification_counts" },
+    "index_admission": { "$ref": "#/$defs/index_admission" },
+    "timings_ms": { "$ref": "#/$defs/timings" },
+    "throughput": { "$ref": "#/$defs/throughput" },
+    "resource_budget": { "$ref": "#/$defs/resource_budget" },
+    "privacy": { "$ref": "#/$defs/privacy" }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+    "hex64": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "bucket": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "count"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9_]+$", "maxLength": 32 },
+        "count": { "$ref": "#/$defs/count" }
+      }
+    },
+    "buckets": {
+      "type": "array", "minItems": 1, "maxItems": 16,
+      "items": { "$ref": "#/$defs/bucket" }
+    },
+    "freeze": {
+      "type": "object", "additionalProperties": false,
+      "required": ["identity_scheme", "opaque_manifest_id", "frozen", "mutation_after_freeze_allowed"],
+      "properties": {
+        "identity_scheme": { "const": "hmac_sha256_opaque_manifest_v1" },
+        "opaque_manifest_id": { "$ref": "#/$defs/hex64" },
+        "frozen": { "const": true },
+        "mutation_after_freeze_allowed": { "const": false }
+      }
+    },
+    "visibility": {
+      "type": "object", "additionalProperties": false,
+      "required": ["aggregate_only", "per_file_details", "calibration_labels_visible_to_tuner", "blind_holdout_visible_during_calibration"],
+      "properties": {
+        "aggregate_only": { "const": true },
+        "per_file_details": { "const": false },
+        "calibration_labels_visible_to_tuner": { "type": "boolean" },
+        "blind_holdout_visible_during_calibration": { "const": false }
+      }
+    },
+    "sample_counts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["total"],
+      "properties": { "total": { "type": "integer", "minimum": 1 } }
+    },
+    "label_counts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["known_resume", "known_non_resume", "unknown"],
+      "properties": {
+        "known_resume": { "$ref": "#/$defs/count" },
+        "known_non_resume": { "$ref": "#/$defs/count" },
+        "unknown": { "$ref": "#/$defs/count" }
+      }
+    },
+    "classification_counts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["resume_candidate", "non_resume", "needs_review", "ocr_backlog", "failed"],
+      "properties": {
+        "resume_candidate": { "$ref": "#/$defs/count" },
+        "non_resume": { "$ref": "#/$defs/count" },
+        "needs_review": { "$ref": "#/$defs/count" },
+        "ocr_backlog": { "$ref": "#/$defs/count" },
+        "failed": { "$ref": "#/$defs/count" }
+      }
+    },
+    "index_admission": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "searchable_count", "indexed_total", "indexed_true_resumes",
+        "indexed_resume_precision", "contamination_count", "expected_true_resumes",
+        "resume_completeness", "precision_regression", "completeness_improvement_claimed"
+      ],
+      "properties": {
+        "searchable_count": { "$ref": "#/$defs/count" },
+        "indexed_total": { "type": "integer", "minimum": 1 },
+        "indexed_true_resumes": { "$ref": "#/$defs/count" },
+        "indexed_resume_precision": { "$ref": "#/$defs/ratio" },
+        "contamination_count": { "$ref": "#/$defs/count" },
+        "expected_true_resumes": { "type": "integer", "minimum": 1 },
+        "resume_completeness": { "$ref": "#/$defs/ratio" },
+        "precision_regression": { "$ref": "#/$defs/ratio" },
+        "completeness_improvement_claimed": { "type": "boolean" }
+      }
+    },
+    "stage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": { "enum": ["scan", "parse", "normalize_sectionize", "classify", "index", "ocr"] },
+        "value": { "type": "number", "minimum": 0 }
+      }
+    },
+    "timings": {
+      "type": "object", "additionalProperties": false,
+      "required": ["clean_wall", "mixed_wall", "mixed_overhead_pct", "stage_timings"],
+      "properties": {
+        "clean_wall": { "type": "number", "exclusiveMinimum": 0 },
+        "mixed_wall": { "type": "number", "exclusiveMinimum": 0 },
+        "mixed_overhead_pct": { "type": "number" },
+        "stage_timings": { "type": "array", "minItems": 5, "maxItems": 6, "items": { "$ref": "#/$defs/stage" } }
+      }
+    },
+    "throughput": {
+      "type": "object", "additionalProperties": false,
+      "required": ["content_bytes_read", "docs_per_second", "mib_per_second"],
+      "properties": {
+        "content_bytes_read": { "$ref": "#/$defs/count" },
+        "docs_per_second": { "type": "number", "minimum": 0 },
+        "mib_per_second": { "type": "number", "minimum": 0 }
+      }
+    },
+    "resource_budget": {
+      "type": "object", "additionalProperties": false,
+      "required": ["h_tier", "aggregate_mb", "writer_heap_mb", "parser_workers"],
+      "properties": {
+        "h_tier": { "enum": ["H0_Eco", "H1_Balanced", "H2_Aggressive"] },
+        "aggregate_mb": { "type": "integer", "minimum": 1 },
+        "writer_heap_mb": { "type": "integer", "minimum": 1 },
+        "parser_workers": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "privacy": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "aggregate_only", "contains_raw_resume_text", "contains_raw_query_text",
+        "contains_candidate_results", "contains_local_paths", "contains_filenames",
+        "contains_label_details", "contains_raw_file_hashes", "contains_tokens",
+        "contains_diagnostics_package", "contains_private_manifest"
+      ],
+      "properties": {
+        "aggregate_only": { "const": true },
+        "contains_raw_resume_text": { "const": false },
+        "contains_raw_query_text": { "const": false },
+        "contains_candidate_results": { "const": false },
+        "contains_local_paths": { "const": false },
+        "contains_filenames": { "const": false },
+        "contains_label_details": { "const": false },
+        "contains_raw_file_hashes": { "const": false },
+        "contains_tokens": { "const": false },
+        "contains_diagnostics_package": { "const": false },
+        "contains_private_manifest": { "const": false }
+      }
+    }
+  }
+}
