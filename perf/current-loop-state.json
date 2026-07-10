@@ -5,14 +5,14 @@
   "experiment_state": "contract_locked",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "546c808d3c412add0bfa07ffcc3186a1c01b7209dde9e829edcfe9b59009145c",
+    "active_goal_sha256": "07cba3670294625aaee873ef1889008308051f14545904d09132edcf025d8214",
     "acceptance_matrix_sha256": "caa9e458d39a20964f46b81ae0aee3604f893dfd783410b88a58af53b9020d30",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "71917e84e865b5aca6667ee30f790aaffd08a6be"
+    "git_head_sha": "36d510a94ce062a4a4245f784a2ae0f21782f85e"
   },
-  "current_slice": "#138 product capability audit for mixed import, search recall, and detail hydrate contract",
+  "current_slice": "#140 freeze mixed-directory benchmark contract and anti-overfit evidence layers",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -23,24 +23,29 @@
       "from": "next_issue_or_goal_complete",
       "to": "slice_selected",
       "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/138"
+    },
+    {
+      "from": "evidence_review",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/138#issuecomment-4931222189"
     }
   ],
   "verification": {
     "commands": [
       {
-        "command": "gh issue create #138",
+        "command": "gh issue create #140",
+        "exit_code": 0,
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/140"
+      },
+      {
+        "command": "gh issue comment #138",
+        "exit_code": 0,
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/138#issuecomment-4931222189"
+      },
+      {
+        "command": "gh issue close #138 --reason completed",
         "exit_code": 0,
         "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/138"
-      },
-      {
-        "command": "gh issue close #137 --reason not planned",
-        "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/137#issuecomment-4924947742"
-      },
-      {
-        "command": "gh issue comment #37",
-        "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/37#issuecomment-4924950431"
       }
     ],
     "all_required_commands_ran": true,
@@ -55,11 +60,13 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#138",
-    "active_prs": [],
+    "primary_issue": "#140",
+    "active_prs": [
+      "#141"
+    ],
     "open_blockers": [
       "#37",
-      "#138"
+      "#140"
     ]
   }
 }

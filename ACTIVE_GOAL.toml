@@ -12,13 +12,13 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#138"
-name = "product_capability_audit_mixed_import_search_recall_detail_hydrate_contract"
+issue = "#140"
+name = "freeze_mixed_import_benchmark_contract_and_anti_overfit_evidence_layers"
 contract_change_allowed = true
-production_code_allowed = true
-private_benchmark_allowed = true
-scope_exception = true
-scope_exception_reason = "Issue #138 product-capability audit is the active issue-train pivot after #137 closed as a failed/reverted L4 import hypothesis. The slice may repair public machine state and inspect current import/search/detail contracts, but it must not implement GUI, optimize the query hot path, start a new L4 import micro-optimization, relax query semantics, publish raw private data, claim full baseline, D10K/D100K/D1M, stable-release readiness, GUI readiness, or goal completion."
+production_code_allowed = false
+private_benchmark_allowed = false
+scope_exception = false
+scope_exception_reason = "No exception is used: the #140 contract-only reconciliation is split into reviewable PRs that each stay within the normal file and line budgets. Issue #140 may freeze only the public synthetic, private calibration, and blind holdout benchmark/evidence contract; it must not implement classifier or production behavior, read a private mixed root, implement GUI, optimize the query hot path, start a new L4 import micro-optimization, relax query semantics, publish raw private data, claim full baseline, D10K/D100K/D1M, stable-release readiness, GUI readiness, or goal completion."
 allowed_paths = [
   "AGENTS.md",
   "GOAL.md",
@@ -29,27 +29,15 @@ allowed_paths = [
   ".github/ISSUE_TEMPLATE/",
   "03_next_goal_高性能本地检索GUI闭环/",
   "PROGRESS.md",
-  "crates/cli/",
-  "crates/core-domain/",
-  "crates/import-pipeline/",
-  "crates/index-fulltext/",
-  "crates/parser-pdf/",
-  "docs/runbooks/release-blockers.md",
   "docs/superpowers/",
   "perf/",
   "scripts/ci/check-performance-contracts.py",
-  "scripts/ci/check-benchmark-smoke.sh",
+  "scripts/ci/check-mixed-import-contracts.py",
   "scripts/ci/check-autonomous-goal.py",
   "scripts/ci/check-loop-state.py",
-  "scripts/ci/check-experiment-report.py",
   "scripts/ci/check-pr-budget.py",
-  "scripts/ci/check-benchmark-lanes.py",
   "scripts/ci/check-private-evidence-redaction.py",
   "scripts/ci/check-gate-integrity.py",
-  "scripts/ci/check-goal-complete.py",
-  "scripts/ci/check-current-stage-validation.sh",
-  "scripts/ci/check-runbooks.sh",
-  "scripts/local/run-current-stage-validation.sh",
 ]
 
 [contracts]
@@ -106,6 +94,7 @@ runtime_capability_attestation_required = true
 production_code_allowed = true
 private_benchmark_allowed = true
 private_resume_root_read_allowed = true
+private_mixed_source_root_read_allowed = true
 seektalent_artifacts_query_read_allowed = true
 github_issue_write_allowed = true
 github_pr_write_allowed = true
@@ -387,9 +376,11 @@ allowed_actions = ["comment_issue", "update_issue", "open_follow_up_issue"]
 [autonomous_delivery.private_sources]
 source_kind = "env_var"
 private_resume_root = "$RESUME_IR_PRIVATE_RESUME_ROOT"
+mixed_source_root = "$RESUME_IR_MIXED_SOURCE_ROOT"
 seektalent_runs_root = "$RESUME_IR_QUERY_ARTIFACT_ROOT"
 local_evidence_dir = "$RESUME_IR_LOCAL_EVIDENCE_DIR"
 private_resume_root_env_var = "RESUME_IR_PRIVATE_RESUME_ROOT"
+mixed_source_root_env_var = "RESUME_IR_MIXED_SOURCE_ROOT"
 seektalent_runs_root_env_var = "RESUME_IR_QUERY_ARTIFACT_ROOT"
 local_evidence_dir_env_var = "RESUME_IR_LOCAL_EVIDENCE_DIR"
 seektalent_trace_glob = "**/runtime/trace.log"

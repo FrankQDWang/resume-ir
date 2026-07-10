@@ -142,6 +142,7 @@ def main() -> int:
         "production_code_allowed",
         "private_benchmark_allowed",
         "private_resume_root_read_allowed",
+        "private_mixed_source_root_read_allowed",
         "seektalent_artifacts_query_read_allowed",
         "github_issue_write_allowed",
         "github_pr_write_allowed",
@@ -162,13 +163,29 @@ def main() -> int:
         require_bool(permissions.get(key), False, f"autonomous_delivery.permissions.{key}")
 
     active_slice = active_goal.get("scope", {}).get("active_slice", {})
-    require_string(active_slice.get("issue"), "#138", "scope.active_slice.issue")
-    require_non_empty_string(active_slice.get("name"), "scope.active_slice.name")
+    require_string(active_slice.get("issue"), "#140", "scope.active_slice.issue")
+    require_string(
+        active_slice.get("name"),
+        "freeze_mixed_import_benchmark_contract_and_anti_overfit_evidence_layers",
+        "scope.active_slice.name",
+    )
     require_bool(active_slice.get("contract_change_allowed"), True, "scope.active_slice.contract_change_allowed")
-    require_bool(active_slice.get("production_code_allowed"), True, "scope.active_slice.production_code_allowed")
-    require_bool(active_slice.get("private_benchmark_allowed"), True, "scope.active_slice.private_benchmark_allowed")
-    require_bool(active_slice.get("scope_exception"), True, "scope.active_slice.scope_exception")
+    require_bool(active_slice.get("production_code_allowed"), False, "scope.active_slice.production_code_allowed")
+    require_bool(active_slice.get("private_benchmark_allowed"), False, "scope.active_slice.private_benchmark_allowed")
+    require_bool(active_slice.get("scope_exception"), False, "scope.active_slice.scope_exception")
     require_non_empty_string(active_slice.get("scope_exception_reason"), "scope.active_slice.scope_exception_reason")
+    allowed_paths = require_list(active_slice.get("allowed_paths"), "scope.active_slice.allowed_paths")
+    production_prefixes = ("crates/", "src/", "app/", "apps/")
+    production_paths = [
+        path
+        for path in allowed_paths
+        if isinstance(path, str) and path.startswith(production_prefixes)
+    ]
+    if production_paths:
+        fail(
+            "scope.active_slice.allowed_paths: #140 contract-only slice must not allow "
+            f"production paths {production_paths!r}"
+        )
 
     gui = active_goal.get("gui")
     if not isinstance(gui, dict):
