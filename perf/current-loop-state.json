@@ -1,16 +1,16 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
+  "workflow_state": "evidence_review",
   "experiment_state": "contract_locked",
-  "evidence_lane": "w0_docs",
+  "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "f400cc4109a70d85984bb4c1f8ab864d9ca3aeb642a58d37ed10b956d118fbd1",
+    "active_goal_sha256": "19d89d161066140efa1eb386efe80df5d13af146a7287cdc6b30837a0258cd34",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "ce5b17e400b675c7dd81f6174c3eb8f337fdefad"
+    "git_head_sha": "d49fb4b52124bdab5e30a80789367632f179ad57"
   },
   "current_slice": "#152 freeze local mixed calibration and sealed blind holdout benchmark",
   "transition_history": [
@@ -58,14 +58,19 @@
       "from": "next_issue_or_goal_complete",
       "to": "slice_selected",
       "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/152"
+    },
+    {
+      "from": "slice_selected",
+      "to": "evidence_review",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/152#issuecomment-4933964443"
     }
   ],
   "verification": {
     "commands": [
       {
-        "command": "gh pr view #151",
+        "command": "gh pr view #153",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/151"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/153"
       },
       {
         "command": "gh issue view #152",
@@ -73,9 +78,9 @@
         "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/152"
       },
       {
-        "command": "test -z \"${RESUME_IR_PRIVATE_RESUME_ROOT:-}\" && test -z \"${RESUME_IR_MIXED_SOURCE_ROOT:-}\" && test -z \"${RESUME_IR_LOCAL_EVIDENCE_DIR:-}\"",
+        "command": "python3 scripts/ci/check-mixed-import-contracts.py && python3 scripts/local/prepare-mixed-import-benchmark.py verify >/dev/null && python3 scripts/ci/check-performance-contracts.py && python3 scripts/ci/check-autonomous-goal.py && python3 scripts/ci/check-loop-state.py && ./scripts/ci/guard-public-repo.sh",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/152"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/152#issuecomment-4933964443"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
@@ -102,7 +107,6 @@
   "github_ledger": {
     "primary_issue": "#152",
     "active_prs": [
-      "#153"
     ],
     "open_blockers": [
       "#37",

@@ -10,6 +10,7 @@ import json
 import math
 import pathlib
 import re
+import runpy
 import sys
 import tomllib
 from collections import Counter
@@ -409,7 +410,15 @@ def main() -> int:
     validate_report(report, matrix)
     validate_public_pair(report, samples)
     validate_negative_cases(negative, report, matrix, samples)
-    print(f"mixed import contract check passed ({len(samples)} frozen synthetic samples, {len(NEGATIVE_CASE_NAMES)} negative cases)")
+    local_tool = runpy.run_path(str(ROOT / "scripts" / "local" / "prepare-mixed-import-benchmark.py"))
+    smoke = local_tool.get("run_synthetic_smoke")
+    if not callable(smoke):
+        fail("mixed import benchmark smoke: missing callable")
+    smoke_result = smoke()
+    if not isinstance(smoke_result, dict) or smoke_result.get("sample_count", 0) < 64:
+        fail("mixed import benchmark smoke: invalid aggregate result")
+    print("mixed import contract check passed "
+          f"({len(samples)} frozen synthetic samples, {len(NEGATIVE_CASE_NAMES)} negative cases, local freezer smoke)")
     return 0
 
 
