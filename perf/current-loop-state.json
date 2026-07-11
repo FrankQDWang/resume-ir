@@ -1,8 +1,8 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
-  "experiment_state": "hypothesis_registered",
+  "workflow_state": "verification_active",
+  "experiment_state": "correctness_passed",
   "evidence_lane": "w1_private",
   "contract_pins": {
     "active_goal_sha256": "8522ba7d8c91bbfb976018ba520ff71cfd8ab73fff47644d09717382c4ade883",
@@ -10,7 +10,7 @@
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "f0949e8abd393fe0fa63f3ef485aeaee23e54056"
+    "git_head_sha": "40bacc8fe4af6553c762829faef1b8d3d13cd2e4"
   },
   "current_slice": "#173 fail-closed local-only linear promotion adapter",
   "transition_history": [
@@ -226,7 +226,10 @@
     {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/170"},
     {"from":"slice_selected","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/170#issuecomment-4943117918"},
     {"from":"evidence_review","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/170#issuecomment-4943117918"},
-    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/173"}
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/173"},
+    {"from":"slice_selected","to":"branch_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/173"},
+    {"from":"branch_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s714"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s714"}
   ],
   "hypothesis": {
     "id": "issue-173-local-linear-promotion-adapter-v1",
@@ -237,9 +240,29 @@
   "verification": {
     "commands": [
       {
-        "command": "PR #172 all hosted required checks green and main-reachable before #170 acceptance",
+        "command": "cargo test -p resume-classifier -- --test-threads=1",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/172"
+        "evidence_ref": "PROGRESS.md#s714"
+      },
+      {
+        "command": "cargo test -p resume-cli --test s173_classifier_model",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s714"
+      },
+      {
+        "command": "cargo test -p import-pipeline classifier_gate_persists_all_five_states_before_search_admission",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s714"
+      },
+      {
+        "command": "cargo clippy -p resume-classifier -p import-pipeline -p resume-cli --tests -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s714"
+      },
+      {
+        "command": "rust-analyzer diagnostics crates/cli/src/main.rs",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s714"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
@@ -262,8 +285,8 @@
         "evidence_ref": "scripts/ci/guard-public-repo.sh"
       }
     ],
-    "all_required_commands_ran": false,
-    "claim": "partial"
+    "all_required_commands_ran": true,
+    "claim": "pass"
   },
   "privacy": {
     "contains_raw_resume_text": false,
