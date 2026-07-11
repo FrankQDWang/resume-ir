@@ -5,14 +5,14 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "9316b656904071603424ecff8864573a366ae0817f7834a046f9832813f62a7f",
+    "active_goal_sha256": "a9520be74a5e96d0a12b282245a52b6ccd524f2d015c95a4dc11994ec8980fc8",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "a4ef03702eed923b8e0a318b146f915d3f7496ac"
   },
-  "current_slice": "#180 H2 parse-worker sensitivity on frozen mixed calibration",
+  "current_slice": "#182 parse work-queue capacity at fixed H2 workers",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -245,20 +245,25 @@
     {"from":"verification_active","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/178#issuecomment-4945070084"},
     {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/178#issuecomment-4945070084"},
     {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/178#issuecomment-4945070084"},
-    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/180"}
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/180"},
+    {"from":"slice_selected","to":"verification_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/180#issuecomment-4946870242"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/180#issuecomment-4946870242"},
+    {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/180#issuecomment-4946870242"},
+    {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/180#issuecomment-4946870242"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/182"}
   ],
   "hypothesis": {
-    "id": "issue-180-h2-parse-worker-sensitivity-v1",
+    "id": "issue-182-fixed-worker-parse-queue-capacity-v1",
     "acceptance_cell": "private_mixed_profile",
-    "expected_effect": "an isolated four-worker override improves parse-worker or full-import-ready wall by at least 10 percent versus the three-worker H2 default without semantic, stage, or resource regression; otherwise retain three workers and reject the hypothesis",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/180"
+    "expected_effect": "doubling only parse work-queue capacity at the fixed three-worker H2 policy reduces queue wait by at least 10 percent without increasing queue-full events, regressing full-import-ready wall, or changing semantic and resource outcomes",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/182"
   },
   "verification": {
     "commands": [
       {
-        "command": "#178 classifier-enabled frozen mixed profile evidence recorded and issue closed",
+        "command": "#180 worker-sensitivity experiment aborted after the requested four-worker value was observed clamped to three",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/178#issuecomment-4945070084"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/180#issuecomment-4946870242"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
@@ -293,11 +298,11 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#180",
+    "primary_issue": "#182",
     "active_prs": [],
     "open_blockers": [
       "#37",
-      "#180"
+      "#182"
     ]
   }
 }
