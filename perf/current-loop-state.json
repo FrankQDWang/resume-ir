@@ -5,14 +5,14 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "78dd0489056ac6451e7faca7a760991792602473af1ff167296a2a62c198d7bf",
+    "active_goal_sha256": "f8ea6e34585534894f24eb8db974f534fe81db34d125349ed2b8c8b2bf0d3788",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "ae339abe01924e43bf89d8090f292e2382f6c8b9"
+    "git_head_sha": "94a0065bf8fb20b317aad7339b76dbac542b915e"
   },
-  "current_slice": "#165 safe-gray linear model private bake-off",
+  "current_slice": "#170 one-shot blind-holdout acceptance for locked safe-gray linear models",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -220,35 +220,23 @@
     {"from":"pr_opened","to":"pr_merged","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/168"},
     {"from":"pr_merged","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941985332"},
     {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941985332"},
-    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165"}
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165"},
+    {"from":"slice_selected","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4942739596"},
+    {"from":"evidence_review","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4942739596"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/170"}
   ],
   "hypothesis": {
-    "id": "issue-165-safe-gray-linear-bakeoff-v1",
-    "acceptance_cell": "private_calibration",
-    "expected_effect": "safe-gray promotion increases calibration-test completeness by at least 0.05 absolute above the precision_first_v4 baseline while precision remains 1.0, contamination remains zero, and strong-negative admissions remain zero",
-    "before_measurement_ref": "PROGRESS.md#s712"
+    "id": "issue-170-safe-gray-linear-blind-holdout-v1",
+    "acceptance_cell": "blind_holdout",
+    "expected_effect": "the preselected locked primary family preserves indexed precision 1.0, zero contamination, zero strong-negative and conflict admissions, and improves completeness by at least 0.05 absolute over the blind-holdout precision_first_v4 baseline",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/170"
   },
   "verification": {
     "commands": [
       {
-        "command": "frozen private_calibration label-separated and combined production import after precision_first_v4",
+        "command": "PR #171 all hosted required checks green and main-reachable before #170 selection",
         "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s712"
-      },
-      {
-        "command": "cargo test -p resume-classifier --locked && cargo clippy -p resume-classifier --all-targets --locked -- -D warnings && cargo fmt --all -- --check",
-        "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s712"
-      },
-      {
-        "command": "cargo test --workspace --locked -- --test-threads=1",
-        "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s712"
-      },
-      {
-        "command": "rust-analyzer diagnostics .",
-        "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s712"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/171"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
@@ -283,11 +271,11 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#165",
+    "primary_issue": "#170",
     "active_prs": [],
     "open_blockers": [
       "#37",
-      "#165"
+      "#170"
     ]
   }
 }
