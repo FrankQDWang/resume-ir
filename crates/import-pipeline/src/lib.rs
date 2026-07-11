@@ -2835,6 +2835,25 @@ fn process_file_inner(
     })
 }
 
+#[allow(dead_code)]
+fn assign_candidate_from_contact_mentions(
+    data_dir: &Path,
+    store: &MetaStore,
+    version_id: &ResumeVersionId,
+    mentions: &[EntityMention],
+) -> Result<()> {
+    let (email_hash, phone_hash) = contact_hashes_from_mentions(data_dir, mentions)?;
+    if email_hash.is_none() && phone_hash.is_none() {
+        return Ok(());
+    }
+
+    store
+        .assign_candidate_from_hashed_contacts(version_id, email_hash.as_ref(), phone_hash.as_ref())
+        .map_err(ImportPipelineError::store)?;
+
+    Ok(())
+}
+
 fn contact_hashes_from_mentions(
     data_dir: &Path,
     mentions: &[EntityMention],

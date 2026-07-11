@@ -721,12 +721,6 @@ pub struct OcrAttemptPublication<'a> {
     pub index_state: &'a IndexState,
 }
 
-impl fmt::Debug for OcrAttemptPublication<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("OcrAttemptPublication(<redacted>)")
-    }
-}
-
 impl fmt::Debug for SearchableImportDocument<'_> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -2532,17 +2526,17 @@ impl MetaStore {
         failure: OcrAttemptFailure,
         now: UnixTimestamp,
     ) -> Result<OcrAttemptFailureOutcome> {
-        let claimed_job = &claimed.job;
-        if claimed_job.kind != IngestJobKind::OcrDocument
-            || claimed_job.status != IngestJobStatus::Running
-            || claimed_job.attempt_count == 0
+        let claimed = &claimed.job;
+        if claimed.kind != IngestJobKind::OcrDocument
+            || claimed.status != IngestJobStatus::Running
+            || claimed.attempt_count == 0
         {
             return Err(MetaStoreError::invalid_value("ingest_job.ocr_attempt"));
         }
         let mut connection = self.connection.borrow_mut();
         let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
         let terminal = failure == OcrAttemptFailure::Permanent
-            || claimed_job.attempt_count >= claimed_job.max_attempts;
+            || claimed.attempt_count >= claimed.max_attempts;
         let failure_kind = match failure {
             OcrAttemptFailure::RetryableWithKind(kind) => Some(kind),
             OcrAttemptFailure::Retryable | OcrAttemptFailure::Permanent => None,
@@ -2563,12 +2557,12 @@ impl MetaStore {
                     ingest_job_status_to_storage(next_status),
                     now.as_unix_seconds(),
                     failure_kind.map(ingest_job_failure_kind_to_storage),
-                    claimed_job.id.as_str(),
-                    claimed_job.document_id.as_str(),
+                    claimed.id.as_str(),
+                    claimed.document_id.as_str(),
                     ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
                     ingest_job_status_to_storage(IngestJobStatus::Running),
-                    u32_to_i64(claimed_job.attempt_count),
-                    u32_to_i64(claimed_job.max_attempts),
+                    u32_to_i64(claimed.attempt_count),
+                    u32_to_i64(claimed.max_attempts),
                 ],
             )
             .map_err(MetaStoreError::storage)?;
@@ -2579,7 +2573,7 @@ impl MetaStore {
         if terminal {
             classification::transition_current_ocr_backlog_to_failed(
                 &transaction,
-                &claimed_job.document_id,
+                &claimed.document_id,
                 now,
             )?;
             transaction
@@ -2589,7 +2583,7 @@ impl MetaStore {
                     params![
                         document_status_to_storage(DocumentStatus::FailedPermanent),
                         now.as_unix_seconds(),
-                        claimed_job.document_id.as_str(),
+                        claimed.document_id.as_str(),
                         document_status_to_storage(DocumentStatus::OcrRequired),
                     ],
                 )
@@ -2609,29 +2603,7 @@ impl MetaStore {
         else {
             return Ok(None);
         };
-        let source_fingerprint = self
-            .connection
-            .borrow()
-            .query_row(
-                "SELECT document.content_hash FROM ingest_job AS job
-                 JOIN document ON document.id = job.document_id
-                 WHERE job.id = ?1 AND job.status = ?2
-                   AND job.attempt_count = ?3 AND job.max_attempts = ?4",
-                params![
-                    job.id.as_str(),
-                    ingest_job_status_to_storage(IngestJobStatus::Running),
-                    u32_to_i64(job.attempt_count),
-                    u32_to_i64(job.max_attempts),
-                ],
-                |row| row.get::<_, Option<String>>(0),
-            )
-            .optional()
-            .map_err(MetaStoreError::storage)?
-            .flatten();
-        Ok(source_fingerprint.map(|source_fingerprint| ClaimedOcrJob {
-            job,
-            source_fingerprint,
-        }))
+        self.claimed_ocr_job_from_job(job)
     }
 
     pub fn ocr_claim_is_current(&self, claimed: &ClaimedOcrJob) -> Result<bool> {
@@ -3042,7 +3014,42 @@ impl MetaStore {
 
     pub fn upsert_index_state(&self, state: &IndexState) -> Result<()> {
         let connection = self.connection.borrow();
-        upsert_index_state_in_connection(&connection, state)
+        connection
+            .execute(
+                "\
+                INSERT INTO index_state (
+                    state_key,
+                    manifest_version,
+                    snapshot_token,
+                    status,
+                    updated_at_seconds,
+                    visible_epoch,
+                    manifest_document_count
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ON CONFLICT(state_key) DO UPDATE SET
+                    manifest_version = excluded.manifest_version,
+                    snapshot_token = excluded.snapshot_token,
+                    status = excluded.status,
+                    updated_at_seconds = excluded.updated_at_seconds,
+                    visible_epoch = excluded.visible_epoch,
+                    manifest_document_count = excluded.manifest_document_count",
+                params![
+                    INDEX_STATE_KEY,
+                    state.manifest_version,
+                    state.snapshot_token,
+                    index_state_status_to_storage(state.status),
+                    state.updated_at.as_unix_seconds(),
+                    u64_to_i64(state.visible_epoch, "index_state.visible_epoch")?,
+                    u64_to_i64(
+                        state.manifest_document_count,
+                        "index_state.manifest_document_count",
+                    )?,
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+
+        Ok(())
     }
 
     pub fn index_state(&self) -> Result<Option<IndexState>> {
