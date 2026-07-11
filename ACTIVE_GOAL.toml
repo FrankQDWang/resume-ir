@@ -23,6 +23,7 @@ home_mixed_root_authorized = true
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = false
 scope_exception_reason = "No exception is used. precision_first_v4 is frozen at 0.270030 completeness with precision 1.0 and zero contamination. This evidence-only slice compares two local private safe-gray linear classifiers on grouped train, threshold-dev, and calibration-test partitions. Blind holdout remains sealed; the model may only promote conflict-free needs_review rows and no production classifier code or dependency may change."
+allowed_contract_transition_targets = ["#170"]
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "perf/current-loop-state.json",

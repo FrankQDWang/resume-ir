@@ -101,6 +101,12 @@ CLASSIFIER_ADMISSION_FIXTURE_PATHS = {
     "tests/fixtures/resumes/synthetic-java-engineer.docx",
     "tests/fixtures/resumes/synthetic-java-platform.pdf",
 }
+BLIND_HOLDOUT_ACCEPTANCE_PATHS = {
+    "ACTIVE_GOAL.toml",
+    "perf/current-loop-state.json",
+    "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
+    "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+}
 
 
 def fail(message: str) -> None:
@@ -416,6 +422,29 @@ def validate_transition_scope(base_goal: dict, head_goal: dict, merge_base: str,
             fail(
                 "#159 -> #165 path mismatch: expected exact ACTIVE_GOAL allowed_paths "
                 f"{sorted(expected_paths)!r}, found {sorted(changed)!r}"
+            )
+        return
+
+    if (base_issue, head_issue) == ("#165", "#170"):
+        targets = base_slice.get("allowed_contract_transition_targets")
+        if not isinstance(targets, list) or "#170" not in targets:
+            fail("#165 contract does not authorize transition to #170")
+        require_bool(head_slice.get("production_code_allowed"), False, "head.scope.active_slice.production_code_allowed")
+        require_bool(head_slice.get("private_benchmark_allowed"), True, "head.scope.active_slice.private_benchmark_allowed")
+        require_bool(head_slice.get("scope_exception"), False, "head.scope.active_slice.scope_exception")
+        allowed_paths = head_slice.get("allowed_paths")
+        if not isinstance(allowed_paths, list) or not all(isinstance(path, str) and path for path in allowed_paths):
+            fail("#165 -> #170 requires non-empty allowed_paths")
+        expected_paths = set(allowed_paths)
+        if len(expected_paths) != len(allowed_paths) or expected_paths != BLIND_HOLDOUT_ACCEPTANCE_PATHS:
+            fail(
+                "#165 -> #170 ACTIVE_GOAL allowed_paths mismatch: expected "
+                f"{sorted(BLIND_HOLDOUT_ACCEPTANCE_PATHS)!r}, found {sorted(expected_paths)!r}"
+            )
+        if changed != BLIND_HOLDOUT_ACCEPTANCE_PATHS:
+            fail(
+                "#165 -> #170 path mismatch: expected "
+                f"{sorted(BLIND_HOLDOUT_ACCEPTANCE_PATHS)!r}, found {sorted(changed)!r}"
             )
         return
 

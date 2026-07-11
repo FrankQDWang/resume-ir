@@ -2754,6 +2754,7 @@ guards, local runtime discovery, and PR #9 CI state.
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S713 | #165 -> #170 transition contract repair prepared | The #165 contract names #170 as its sole successor target; gate integrity admits only the exact four state/pin paths and requires acceptance-only permissions. Focused positive/negative transition checks and required contract/privacy gates pass. | Hosted checks and merge remain required before the #170 state transition. Blind holdout remains sealed; no production semantics, model, threshold, benchmark, label, or gate strength changed. |
 | S712 | #165 third calibration recall rule accepted locally | `precision_first_v4` adds exactly eight calibration-selected Chinese operational-action prefixes while retaining all structural/conflict gates. Frozen calibration n=11,551 moves known-resume candidates 1,844 -> 1,884 and completeness 0.264297 -> 0.270030 (+0.005733), while 4,574 known non-resumes remain at 0 candidates, precision remains 1.0, and contamination remains 0. Focused/full Rust tests, clippy, formatting, rust-analyzer, and privacy/contract gates pass. | Blind holdout remains sealed. Mixed wall is 142.380s versus 110.940s clean-resume wall (+28.340% with 65.56% more files); no performance-improvement claim. 4,720 known resumes still need review. |
 | S711 | #165 second calibration recall rule accepted locally | After reconciling PR #166 machine-state drift, `precision_first_v3` adds exactly eight calibration-selected Chinese experience-line action prefixes while retaining all structural/conflict gates. Frozen calibration n=11,551 moves known-resume candidates 1,698 -> 1,844 and completeness 0.243371 -> 0.264297 (+0.020926), while 4,574 known non-resumes remain at 0 candidates, precision remains 1.0, and contamination remains 0. Public synthetic hard negatives, focused/full Rust tests, clippy, formatting, rust-analyzer, and privacy/contract gates pass. | Blind holdout remains sealed. Mixed wall is 151.342s versus 102.579s clean-resume wall (+47.537% with 65.56% more files); no performance-improvement claim. 4,760 known resumes still need review. |
 | S710 | #165 first calibration recall rule accepted locally | `precision_first_v2` expands line-leading English past-tense and Chinese career-action prefixes while retaining experience-heading, two-heading-family, conflict, and weak-evidence gates. Frozen calibration n=11,551 moves known resumes from 1,008 to 1,698 candidates and completeness 0.144475 -> 0.243371 (+0.098896), while 4,574 known non-resumes remain at 0 candidates, indexed precision remains 1.0, and contamination remains 0. Public synthetic hard negatives, full workspace, clippy, formatting, rust-analyzer, and privacy/contract gates pass. | Blind holdout remains sealed. 4,906 known resumes still need review; OCR/failed are unchanged. No GUI/query/performance/readiness or goal-complete claim. |
@@ -3362,6 +3363,23 @@ guards, local runtime discovery, and PR #9 CI state.
 - Combined calibration aggregate n=11,551 is candidate/non-resume/review/OCR/failed = 1,844/0/9,316/229/162, searchable 1,844, content bytes 3,219,569,967, docs/s 76.324, MiB/s 20.288, H2, 256 MiB writer heap, and 3 workers. Mixed wall/stages scan/parse/DB/index/normalize/sectionize are 151.342s / 5.937s / 125.847s / 26.376s / 30.446s / 12.551s / 6.055s.
 - Clean-resume n=6,977 wall is 102.579s, so mixed wall overhead is +47.537% while file count is +65.56%; this is product-correctness evidence, not a performance gain claim. Public output remains aggregate-only with all leakage booleans false.
 - Verification passes classifier 8/8, warnings-denied clippy, formatting, full sequential workspace tests, rust-analyzer diagnostics (existing platform-inactive weak warnings only), and required contract/privacy gates.
+
+### S713
+
+- Fresh truth: `main` and `origin/main` are clean at `453d807`; #165 is closed,
+  #170 is its unique open successor, and no PR is open. The frozen blind
+  holdout remains unread.
+- Contract blocker: gate integrity authorizes active-slice transitions only
+  through `#159 -> #165`. The bounded repair adds an explicit #165 contract
+  target for #170 and admits only the exact four state/pin paths needed for
+  the acceptance-only transition.
+- The transition still requires `production_code_allowed = false`,
+  `private_benchmark_allowed = true`, `scope_exception = false`, exact unique
+  allowed paths, and no extra changed path. Focused positive and negative
+  checks reject missing authorization and production-code path expansion.
+- No classifier, model, threshold, benchmark, label, production semantics, CI
+  requirement, branch protection, or privacy boundary changes. Blind holdout
+  read remains false.
 
 ### S712
 
