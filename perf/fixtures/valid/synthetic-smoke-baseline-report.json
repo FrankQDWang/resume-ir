@@ -5,7 +5,7 @@
   "claim": "no_claim",
   "evidence_lane": "smoke",
   "contract_pins": {
-    "active_goal_sha256": "7399e3234118e04a4655d8a4be873f1d69ba678c6caf60fd47eb40800d6d4b67",
+    "active_goal_sha256": "b618a6e3e961592f91a70b082c2e37f3101985c8d8f14761c47714b5d738760d",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",

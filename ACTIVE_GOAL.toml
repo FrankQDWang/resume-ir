@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#184"
-name = "fixed_worker_parse_result_queue_capacity"
+issue = "#186"
+name = "import_progress_db_write_interval"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = true
@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = true
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = false
-scope_exception_reason = "No exception is used. #182 doubled only parse work-queue capacity and failed because queue wait and queue-full events increased, so the change was rolled back with zero repository diff. This bounded L2 slice keeps three workers and work-queue capacity fixed and changes only the blocking parse result-queue capacity from worker_count to twice worker_count. Parser logic, ordered commit, DB/index behavior, classifier semantics, artifact, threshold, benchmark, labels, and admission gates remain fixed."
+scope_exception_reason = "No exception is used. #182 and #184 disproved both queue-capacity hypotheses and rolled them back with zero repository diff. This bounded L2 DB-coordination slice changes only import progress publication frequency from every 32 files to every 128 files while retaining final and searchable-flush publication. Workers, queues, parser, classification, artifact, threshold, benchmark, labels, indexing, cancellation, and admission semantics remain fixed."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "Cargo.lock",
