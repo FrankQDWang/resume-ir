@@ -3362,6 +3362,14 @@ guards, local runtime discovery, and PR #9 CI state.
 - Clean-resume n=6,977 wall is 102.579s, so mixed wall overhead is +47.537% while file count is +65.56%; this is product-correctness evidence, not a performance gain claim. Public output remains aggregate-only with all leakage booleans false.
 - Verification passes classifier 8/8, warnings-denied clippy, formatting, full sequential workspace tests, rust-analyzer diagnostics (existing platform-inactive weak warnings only), and required contract/privacy gates.
 
+### S712
+
+- Fresh execution truth: main and origin/main are clean at `791d235`; PR #167 is merged, #165 and #37 remain open, and only unrelated Dependabot PRs are open.
+- Contract drift: `perf/current-loop-state.json` still reported `pr_opened` with active PR #167. This checkpoint reconciles the merged PR and selects the next bounded same-lane slice before any classifier production change.
+- Fresh unchanged-calibration observation: 4,760 known resumes remain `needs_review`. Eight predeclared Chinese line-leading operational actions occur in 50-76 known-resume review documents each and zero of 4,556 known-non-resume review documents. Blind holdout was not read.
+- Hypothesis: add exactly those eight actions in `precision_first_v4` while retaining experience-heading, two-heading-family, conflict, and weak-evidence gates. Acceptance requires known-non-resume candidates 0, precision 1.0, contamination 0, and completeness above 0.264297; otherwise revert.
+- Privacy: only aggregate counts were observed. No raw path, filename, text, label detail, hash, manifest, query, candidate result, diagnostics package, or token enters git or GitHub.
+
 ### S710
 
 - Fresh main/GitHub truth: PR #164 is merged at `f3f2fae`; #37/#159 remain open, #165 is the linked calibration-recall issue, and no successor product PR is open.
