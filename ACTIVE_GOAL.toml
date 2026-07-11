@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = true
 unconfigured_private_run_terminal = "not_applicable_public_synthetic_admission_only"
 scope_exception = false
-scope_exception_reason = "No exception is used. This bounded #159 follow-up binds OCR enqueue, claim, cache identity, result publication, and completion to one attempt plus the persisted crawler fingerprint. The gate change replaces an exhausted one-off transition lock with an equally strict exact-path lock for this named same-issue slice; full-byte strong identity, multi-writer DB/index coordination, and physical vector cleanup remain on #159 or linked follow-up work."
+scope_exception_reason = "No exception is used. This bounded #159 follow-up binds OCR claim, cache identity, result publication, and completion to one attempt plus the claimed persisted document fingerprint. The gate change replaces an exhausted one-off transition lock with an equally strict exact-path lock for this named same-issue slice; enqueue generations require the planned stable-file/strong-hash model, while multi-writer DB/index coordination and physical vector cleanup remain on #159 or linked follow-up work."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",

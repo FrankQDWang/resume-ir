@@ -3,9 +3,10 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    ClassificationStatus, Document, DocumentId, DocumentStatus, FileExtension,
-    IngestJobFailureKind, IngestJobKind, IngestJobStatus, MetaStore, OcrPageCacheEntry,
-    OcrPageCacheKey, OcrPageCacheStatus, ReasonCode, UnixTimestamp,
+    ClassificationStatus, Document, DocumentClassificationRecord, DocumentId, DocumentStatus,
+    FileExtension, IngestJobFailureKind, IngestJobKind, IngestJobStatus, MetaStore,
+    OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, ReasonCode, ReviewDisposition,
+    UnixTimestamp, CLASSIFIER_EPOCH,
 };
 
 #[test]
@@ -52,14 +53,11 @@ fn import_scanned_pdf_creates_durable_ocr_document_job_without_searchable_text()
     assert_eq!(retryable[0].status, IngestJobStatus::Queued);
 
     let claimed = store
-        .claim_next_job_by_kind(
-            IngestJobKind::OcrDocument,
-            UnixTimestamp::from_unix_seconds(1_900_000_000),
-        )
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_900_000_000))
         .unwrap()
         .expect("ocr document job can be claimed after restart");
-    assert_eq!(claimed.kind, IngestJobKind::OcrDocument);
-    assert_eq!(claimed.status, IngestJobStatus::Running);
+    assert_eq!(claimed.job.kind, IngestJobKind::OcrDocument);
+    assert_eq!(claimed.job.status, IngestJobStatus::Running);
 
     let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -1431,6 +1429,16 @@ fn seed_ocr_pdf_document_with_bytes(
             created_at: now,
             updated_at: now,
             status: DocumentStatus::OcrRequired,
+        })
+        .unwrap();
+    store
+        .upsert_document_classification(&DocumentClassificationRecord {
+            document_id: doc_id.clone(),
+            status: ClassificationStatus::OcrBacklog,
+            classifier_epoch: CLASSIFIER_EPOCH.to_string(),
+            reason_codes: vec![ReasonCode::OcrRequired],
+            classified_at: now,
+            review_disposition: ReviewDisposition::NotRequired,
         })
         .unwrap();
     store.enqueue_ocr_job_for_document(&doc_id, now).unwrap();

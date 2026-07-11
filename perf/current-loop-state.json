@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "branch_active",
+  "workflow_state": "evidence_review",
   "experiment_state": "contract_locked",
   "evidence_lane": "smoke",
   "contract_pins": {
-    "active_goal_sha256": "594dbd63868ffe47973806621c8ac601db2f010728efb9ee0a904cf11e77021f",
+    "active_goal_sha256": "c4f24a14d29d66242756719dd3ac5497c820cc0aa9b2ea960853da8f09f4d04f",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
@@ -186,11 +186,54 @@
     {"from":"pr_merged","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4937912235"},
     {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4937912235"},
     {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4937997963"},
-    {"from":"slice_selected","to":"branch_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4937997963"}
+    {"from":"slice_selected","to":"branch_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4937997963"},
+    {"from":"branch_active","to":"verification_active","evidence_ref":"PROGRESS.md#s709"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s709"}
   ],
   "verification": {
-    "commands": [],
-    "all_required_commands_ran": false,
+    "commands": [
+      {
+        "command": "cargo fmt --all -- --check && focused meta-store/import-pipeline/resume-cli/resume-daemon tests and clippy",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s709"
+      },
+      {
+        "command": "cargo test --workspace --locked -- --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s709"
+      },
+      {
+        "command": "rust-analyzer diagnostics .",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s709"
+      },
+      {
+        "command": "public synthetic stale-attempt supersession and current-attempt commit witness",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s709"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "perf/current-loop-state.json"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "perf/current-loop-state.json"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "perf/current-loop-state.json"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "scripts/ci/guard-public-repo.sh"
+      }
+    ],
+    "all_required_commands_ran": true,
     "claim": "partial"
   },
   "privacy": {

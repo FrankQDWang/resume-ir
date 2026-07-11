@@ -194,6 +194,54 @@ impl MetaStore {
     }
 }
 
+pub(super) fn upsert_document_classification_in_connection(
+    connection: &Connection,
+    record: &DocumentClassificationRecord,
+) -> Result<()> {
+    validate_record(record)?;
+    connection
+        .execute(
+            "INSERT INTO document_classification (
+                    document_id, status, classifier_epoch, classified_at_seconds,
+                    review_disposition
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(document_id) DO UPDATE SET
+                    status = excluded.status,
+                    classifier_epoch = excluded.classifier_epoch,
+                    classified_at_seconds = excluded.classified_at_seconds,
+                    review_disposition = excluded.review_disposition",
+            params![
+                record.document_id.as_str(),
+                record.status.as_str(),
+                record.classifier_epoch,
+                record.classified_at.as_unix_seconds(),
+                review_disposition_to_storage(record.review_disposition),
+            ],
+        )
+        .map_err(MetaStoreError::storage)?;
+    connection
+        .execute(
+            "DELETE FROM document_classification_reason WHERE document_id = ?1",
+            params![record.document_id.as_str()],
+        )
+        .map_err(MetaStoreError::storage)?;
+    for (ordinal, reason_code) in record.reason_codes.iter().copied().enumerate() {
+        connection
+            .execute(
+                "INSERT INTO document_classification_reason (
+                        document_id, ordinal, reason_code
+                     ) VALUES (?1, ?2, ?3)",
+                params![
+                    record.document_id.as_str(),
+                    ordinal,
+                    reason_code_to_storage(reason_code),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+    }
+    Ok(())
+}
+
 pub(super) fn transition_current_ocr_backlog_to_failed(
     connection: &Connection,
     document_id: &DocumentId,

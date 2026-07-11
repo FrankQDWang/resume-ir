@@ -18,9 +18,9 @@ use embedder::{
     LocalEmbeddingCommandSpec,
 };
 use import_pipeline::{
-    detect_ocr_page_count, import_root_with_options, index_ocr_text, rebuild_full_text_index,
-    ImportOptions, ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary,
-    ImportTaskOwnerLock, ScanProfile,
+    detect_ocr_page_count, import_root_with_options, index_claimed_ocr_text,
+    rebuild_full_text_index, ImportOptions, ImportScanBudgetKind as PipelineImportScanBudgetKind,
+    ImportSummary, ImportTaskOwnerLock, ScanProfile,
 };
 use index_fulltext::{
     inspect_snapshot_root, redact_contact_values, FullTextIndex, SearchHit, SearchQuery,
@@ -35,9 +35,9 @@ use meta_store::{
     ContactHash, Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
     ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportScanScope,
     ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobFailureKind,
-    IngestJobKind, IngestJobStatus, MetaStore, OcrAttemptFailure, OcrPageCacheEntry,
-    OcrPageCacheKey, OcrPageCacheStatus, ResumeVersion, ResumeVersionId, ResumeVisibility,
-    UnixTimestamp, WorkerTaskKind,
+    IngestJobStatus, MetaStore, OcrAttemptFailure, OcrPageCacheEntry, OcrPageCacheKey,
+    OcrPageCacheStatus, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
+    WorkerTaskKind,
 };
 use notify::{
     event::EventKind as NotifyEventKind, Config as NotifyConfig, Event as NotifyEvent,
@@ -923,10 +923,7 @@ fn run_ocr_worker_once(
     }
 
     let stale_recovered = recover_stale_ingest_jobs(store, now)?;
-    let Some(job) = store
-        .claim_next_job_by_kind(IngestJobKind::OcrDocument, now)
-        .map_err(DaemonError::store)?
-    else {
+    let Some(job) = store.claim_next_ocr_job(now).map_err(DaemonError::store)? else {
         return Ok(OcrWorkerSummary {
             stale_recovered,
             ..OcrWorkerSummary::default()
@@ -965,12 +962,12 @@ fn run_ocr_worker_batch(
 fn run_claimed_ocr_job(
     data_dir: &Path,
     store: &MetaStore,
-    job: &IngestJob,
+    job: &meta_store::ClaimedOcrJob,
     options: &RunOptions,
     now: UnixTimestamp,
 ) -> Result<OcrWorkerSummary> {
     let Some(document) = store
-        .document_by_id(&job.document_id)
+        .document_by_id(&job.job.document_id)
         .map_err(DaemonError::store)?
     else {
         mark_ocr_job_failed_permanent(store, job, now)?;
@@ -979,13 +976,7 @@ fn run_claimed_ocr_job(
             ..OcrWorkerSummary::default()
         });
     };
-    let Some(content_hash) = document.content_hash.clone() else {
-        mark_ocr_job_failed_permanent(store, job, now)?;
-        return Ok(OcrWorkerSummary {
-            failed: 1,
-            ..OcrWorkerSummary::default()
-        });
-    };
+    let content_hash = job.source_fingerprint().to_string();
 
     let bytes = match fs::read(&document.normalized_path) {
         Ok(bytes) => bytes,
@@ -1243,23 +1234,26 @@ fn run_claimed_ocr_job(
 
     let combined_text = page_texts.join("\n");
     let confidence = (confidence_count > 0).then_some(confidence_sum / confidence_count as f32);
-    if let Err(error) = index_ocr_text(
+    let outcome = match index_claimed_ocr_text(
         data_dir,
         store,
-        &document.id,
+        job,
         &combined_text,
         confidence,
         Some(page_count),
         now,
     ) {
-        let _ = mark_ocr_job_failed_retryable(store, job, now);
-        return Err(DaemonError::import(error));
-    }
-    store
-        .update_job_status(&job.id, IngestJobStatus::Completed, now)
-        .map_err(DaemonError::store)?;
+        Ok(outcome) => outcome,
+        Err(error) => {
+            let _ = mark_ocr_job_failed_retryable(store, job, now);
+            return Err(DaemonError::import(error));
+        }
+    };
     Ok(OcrWorkerSummary {
-        processed: 1,
+        processed: usize::from(matches!(
+            outcome,
+            import_pipeline::OcrTextIndexOutcome::Committed(_)
+        )),
         cache_writes,
         cache_hits,
         ..OcrWorkerSummary::default()
@@ -1285,7 +1279,7 @@ fn ocr_word_boxes_for_cache(page: &ocr_client::OcrPage) -> Result<Vec<meta_store
 
 fn mark_ocr_job_failed_retryable(
     store: &MetaStore,
-    job: &IngestJob,
+    job: &meta_store::ClaimedOcrJob,
     now: UnixTimestamp,
 ) -> Result<()> {
     store
@@ -1296,7 +1290,7 @@ fn mark_ocr_job_failed_retryable(
 
 fn mark_ocr_job_failed_retryable_with_failure_kind(
     store: &MetaStore,
-    job: &IngestJob,
+    job: &meta_store::ClaimedOcrJob,
     failure_kind: IngestJobFailureKind,
     now: UnixTimestamp,
 ) -> Result<()> {
@@ -1308,7 +1302,7 @@ fn mark_ocr_job_failed_retryable_with_failure_kind(
 
 fn mark_ocr_job_failed_permanent(
     store: &MetaStore,
-    job: &IngestJob,
+    job: &meta_store::ClaimedOcrJob,
     now: UnixTimestamp,
 ) -> Result<()> {
     store

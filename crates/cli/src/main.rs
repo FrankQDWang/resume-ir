@@ -25,11 +25,11 @@ use embedder::{
 use fs4::fs_std::FileExt;
 use fs_crawler::{crawl_directory_with_options, ScanOptions as CrawlerScanOptions};
 use import_pipeline::{
-    detect_ocr_page_count, import_root_with_options, index_ocr_text, rebuild_full_text_index,
-    remove_documents_from_full_text_index, ImportFailureKind, ImportHardwareTier,
-    ImportMilestoneTimings, ImportOptions, ImportParseWorkers, ImportResourcePolicy,
-    ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ImportTaskOwnerLock,
-    ScanProfile,
+    detect_ocr_page_count, import_root_with_options, index_claimed_ocr_text,
+    rebuild_full_text_index, remove_documents_from_full_text_index, ImportFailureKind,
+    ImportHardwareTier, ImportMilestoneTimings, ImportOptions, ImportParseWorkers,
+    ImportResourcePolicy, ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary,
+    ImportTaskOwnerLock, ScanProfile,
 };
 use index_fulltext::{
     inspect_snapshot_root, publish_snapshot, purge_obsolete_snapshots, redact_contact_values,
@@ -11573,10 +11573,7 @@ fn run_witness_ocr_jobs(
             });
         }
 
-        let Some(job) = store
-            .claim_next_job_by_kind(IngestJobKind::OcrDocument, now)
-            .map_err(CliError::store)?
-        else {
+        let Some(job) = store.claim_next_ocr_job(now).map_err(CliError::store)? else {
             return Ok(WitnessOcrStatus::Completed {
                 documents_processed,
                 documents_failed,
@@ -16774,10 +16771,7 @@ fn ocr_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
         ));
     }
 
-    let Some(job) = store
-        .claim_next_job_by_kind(IngestJobKind::OcrDocument, now)
-        .map_err(CliError::store)?
-    else {
+    let Some(job) = store.claim_next_ocr_job(now).map_err(CliError::store)? else {
         println!("ocr worker: idle");
         println!("documents processed: 0");
         println!("cache writes: 0");
@@ -16805,12 +16799,12 @@ fn ocr_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
 fn run_claimed_ocr_job(
     data_dir: &Path,
     store: &MetaStore,
-    job: &meta_store::IngestJob,
+    job: &meta_store::ClaimedOcrJob,
     worker_args: &OcrWorkerArgs,
     now: UnixTimestamp,
 ) -> Result<OcrWorkerSummary> {
     let Some(document) = store
-        .document_by_id(&job.document_id)
+        .document_by_id(&job.job.document_id)
         .map_err(CliError::store)?
     else {
         store
@@ -16818,14 +16812,7 @@ fn run_claimed_ocr_job(
             .map_err(CliError::store)?;
         return Err(CliError::user("ocr worker job document was not found"));
     };
-    let Some(content_hash) = document.content_hash.clone() else {
-        store
-            .finish_ocr_attempt_failure(job, OcrAttemptFailure::Permanent, now)
-            .map_err(CliError::store)?;
-        return Err(CliError::user(
-            "ocr worker document is missing content hash",
-        ));
-    };
+    let content_hash = job.source_fingerprint().to_string();
     let bytes = fs::read(&document.normalized_path)
         .map_err(|_| CliError::user("ocr worker could not read document bytes"))?;
     let page_count =
@@ -17058,21 +17045,21 @@ fn run_claimed_ocr_job(
 
     let combined_text = page_texts.join("\n");
     let confidence = (confidence_count > 0).then_some(confidence_sum / confidence_count as f32);
-    let _ = index_ocr_text(
+    let outcome = index_claimed_ocr_text(
         data_dir,
         store,
-        &document.id,
+        job,
         &combined_text,
         confidence,
         Some(page_count),
         now,
     )
     .map_err(CliError::import)?;
-    store
-        .update_job_status(&job.id, IngestJobStatus::Completed, now)
-        .map_err(CliError::store)?;
     Ok(OcrWorkerSummary {
-        documents_processed: 1,
+        documents_processed: usize::from(matches!(
+            outcome,
+            import_pipeline::OcrTextIndexOutcome::Committed(_)
+        )),
         cache_writes,
         cache_hits,
     })
