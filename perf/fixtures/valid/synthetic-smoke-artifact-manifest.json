@@ -7,12 +7,12 @@
   "evidence_lane": "smoke",
   "claim": "no_claim",
   "contract_pins": {
-    "active_goal_sha256": "3fc0bbdb554356103e0cab78898b95312f4fac65ffce903af93bb33ab3f4db4d",
+    "active_goal_sha256": "c5f6d5b3c6fff2286ce283398b8abcb6bc46845ce1289b16071c644a690a5b4a",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "f3f2fae7a0891c2085405598a7a848b508fbad5e"
+    "git_head_sha": "132dfd6c760bbddc988e79c67aaee6fae3d4df86"
   },
   "privacy": {
     "contains_raw_resume_text": false,
@@ -23,7 +23,7 @@
     "contains_diagnostics_package": false,
     "trace_summary_redacted": true
   },
-  "report_sha256": "b39c5122ea6ff6f3ca566cc99c4801ac69e748d294a0ff8e01d103ad9155f776",
+  "report_sha256": "d8ce049d8fb6bab5b3e367fd389faf5b150f7ffc91eab85c8269a9bf1a7b189b",
   "report_size_bytes": 4072,
   "artifacts": [
     {

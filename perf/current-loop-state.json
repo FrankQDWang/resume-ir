@@ -5,14 +5,14 @@
   "experiment_state": "accepted",
   "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "3fc0bbdb554356103e0cab78898b95312f4fac65ffce903af93bb33ab3f4db4d",
+    "active_goal_sha256": "c5f6d5b3c6fff2286ce283398b8abcb6bc46845ce1289b16071c644a690a5b4a",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "f3f2fae7a0891c2085405598a7a848b508fbad5e"
+    "git_head_sha": "132dfd6c760bbddc988e79c67aaee6fae3d4df86"
   },
-  "current_slice": "#165 expand corroborated career history signals",
+  "current_slice": "#165 expand Chinese career action signals",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -198,43 +198,47 @@
     {"from":"branch_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s710"},
     {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s710"},
     {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s710"},
-    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/166"}
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/166"},
+    {"from":"pr_opened","to":"pr_merged","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/166"},
+    {"from":"pr_merged","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941460751"},
+    {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941460751"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165"},
+    {"from":"slice_selected","to":"branch_active","evidence_ref":"PROGRESS.md#s711"},
+    {"from":"branch_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s711"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s711"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s711"},
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/167"}
   ],
   "hypothesis": {
-    "id": "issue-165-career-action-prefixes-v1",
+    "id": "issue-165-chinese-career-actions-v1",
     "acceptance_cell": "private_calibration",
-    "expected_effect": "increase known-resume completeness while indexed precision remains 1.0 and contamination remains zero",
-    "before_measurement_ref": "PROGRESS.md#s710",
-    "after_measurement_ref": "PROGRESS.md#s710",
-    "reprofile_ref": "PROGRESS.md#s710",
+    "expected_effect": "increase known-resume completeness above 0.243371 while indexed precision remains 1.0 and contamination remains zero",
+    "before_measurement_ref": "PROGRESS.md#s711",
+    "after_measurement_ref": "PROGRESS.md#s711",
+    "reprofile_ref": "PROGRESS.md#s711",
     "decision": "accepted"
   },
   "verification": {
     "commands": [
       {
-        "command": "frozen private_calibration label-separated production import baseline",
+        "command": "frozen private_calibration label-separated and combined production import after precision_first_v3",
         "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s710"
-      },
-      {
-        "command": "frozen private_calibration label-separated production import after precision_first_v2",
-        "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s710"
+        "evidence_ref": "PROGRESS.md#s711"
       },
       {
         "command": "cargo test -p resume-classifier --locked && cargo clippy -p resume-classifier --all-targets --locked -- -D warnings && cargo fmt --all -- --check",
         "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s710"
+        "evidence_ref": "PROGRESS.md#s711"
       },
       {
         "command": "cargo test --workspace --locked -- --test-threads=1",
         "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s710"
+        "evidence_ref": "PROGRESS.md#s711"
       },
       {
         "command": "rust-analyzer diagnostics .",
         "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s710"
+        "evidence_ref": "PROGRESS.md#s711"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
@@ -270,7 +274,7 @@
   },
   "github_ledger": {
     "primary_issue": "#165",
-    "active_prs": ["#166"],
+    "active_prs": ["#167"],
     "open_blockers": [
       "#37",
       "#165"

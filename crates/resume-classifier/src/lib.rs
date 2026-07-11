@@ -1,7 +1,7 @@
 use std::fmt;
 
-/// Stable epoch for the initial deterministic precision-first ruleset.
-pub const CLASSIFIER_EPOCH: &str = "precision_first_v2";
+/// Stable epoch for the deterministic precision-first ruleset.
+pub const CLASSIFIER_EPOCH: &str = "precision_first_v3";
 
 /// Hard cap for reason codes returned for one document.
 pub const MAX_REASON_CODES: usize = 8;
@@ -388,7 +388,8 @@ fn starts_with_history_action(line: &str) -> bool {
             | "supported"
     ) || [
         "主导", "参与", "协助", "完成", "搭建", "推动", "构建", "管理", "设计", "负责", "开发",
-        "实现", "优化", "维护", "制定",
+        "实现", "优化", "维护", "制定", "提升", "分析", "招聘", "建立", "编写", "测试", "运营",
+        "组织",
     ]
     .iter()
     .any(|prefix| normalized.starts_with(prefix))
@@ -486,6 +487,8 @@ mod tests {
             "SUMMARY\nExample profile.\nEXPERIENCE\nSample entry: Built systems.",
             "SUMMARY\nWe are hiring.\nEXPERIENCE\nCandidates who managed teams are preferred.",
             "SUMMARY\nTemplate.\nEXPERIENCE\nExample entry: Led delivery programs.",
+            "个人简介\n招聘说明\n工作经历\n候选人需要具备提升效率经验。",
+            "个人简介\n模板\n工作经历\n示例：组织跨团队协作。",
             "An experienced and skillful educational writer.",
         ] {
             let result = classify(ClassifierInput::NormalizedText(text));
@@ -495,6 +498,18 @@ mod tests {
 
     #[test]
     fn generalized_career_action_prefixes_require_corroborated_resume_structure() {
+        for line in [
+            "提升交付效率。",
+            "分析业务数据。",
+            "招聘并培养团队。",
+            "建立质量体系。",
+            "编写自动化工具。",
+            "测试核心服务。",
+            "运营本地平台。",
+            "组织跨团队协作。",
+        ] {
+            assert!(starts_with_history_action(line));
+        }
         for text in [
             "SUMMARY\nPlatform engineer\nWORK EXPERIENCE\nLed distributed search delivery.\nEDUCATION\nSynthetic University",
             "个人简介\n平台工程师\n工作经历\n主导分布式检索交付。\n教育背景\n示例大学",
