@@ -1,8 +1,8 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "branch_active",
-  "experiment_state": "hypothesis_registered",
+  "workflow_state": "evidence_review",
+  "experiment_state": "accepted",
   "evidence_lane": "w1_private",
   "contract_pins": {
     "active_goal_sha256": "a023b6967565440743217776ae4cd92b3326bf748bd9d7cdfa59b99fb8291a98",
@@ -212,20 +212,64 @@
     {"from":"pr_merged","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941750034"},
     {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941750034"},
     {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941802723"},
-    {"from":"slice_selected","to":"branch_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941802723"}
+    {"from":"slice_selected","to":"branch_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941802723"},
+    {"from":"branch_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s712"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s712"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s712"}
   ],
   "hypothesis": {
     "id": "issue-165-chinese-operational-actions-v1",
     "acceptance_cell": "private_calibration",
     "expected_effect": "increase known-resume completeness above 0.264297 while indexed precision remains 1.0 and contamination remains zero",
     "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941802723",
-    "after_measurement_ref": "pending",
-    "reprofile_ref": "pending",
-    "decision": "pending"
+    "after_measurement_ref": "PROGRESS.md#s712",
+    "reprofile_ref": "PROGRESS.md#s712",
+    "decision": "accepted"
   },
   "verification": {
-    "commands": [],
-    "all_required_commands_ran": false,
+    "commands": [
+      {
+        "command": "frozen private_calibration label-separated and combined production import after precision_first_v4",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s712"
+      },
+      {
+        "command": "cargo test -p resume-classifier --locked && cargo clippy -p resume-classifier --all-targets --locked -- -D warnings && cargo fmt --all -- --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s712"
+      },
+      {
+        "command": "cargo test --workspace --locked -- --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s712"
+      },
+      {
+        "command": "rust-analyzer diagnostics .",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s712"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "perf/current-loop-state.json"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "perf/current-loop-state.json"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "perf/current-loop-state.json"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "scripts/ci/guard-public-repo.sh"
+      }
+    ],
+    "all_required_commands_ran": true,
     "claim": "partial"
   },
   "privacy": {
