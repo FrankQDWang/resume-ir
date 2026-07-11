@@ -5,14 +5,14 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "f8ea6e34585534894f24eb8db974f534fe81db34d125349ed2b8c8b2bf0d3788",
+    "active_goal_sha256": "8522ba7d8c91bbfb976018ba520ff71cfd8ab73fff47644d09717382c4ade883",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "94a0065bf8fb20b317aad7339b76dbac542b915e"
+    "git_head_sha": "f0949e8abd393fe0fa63f3ef485aeaee23e54056"
   },
-  "current_slice": "#170 one-shot blind-holdout acceptance for locked safe-gray linear models",
+  "current_slice": "#173 fail-closed local-only linear promotion adapter",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -223,20 +223,23 @@
     {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165"},
     {"from":"slice_selected","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4942739596"},
     {"from":"evidence_review","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4942739596"},
-    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/170"}
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/170"},
+    {"from":"slice_selected","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/170#issuecomment-4943117918"},
+    {"from":"evidence_review","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/170#issuecomment-4943117918"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/173"}
   ],
   "hypothesis": {
-    "id": "issue-170-safe-gray-linear-blind-holdout-v1",
-    "acceptance_cell": "blind_holdout",
-    "expected_effect": "the preselected locked primary family preserves indexed precision 1.0, zero contamination, zero strong-negative and conflict admissions, and improves completeness by at least 0.05 absolute over the blind-holdout precision_first_v4 baseline",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/170"
+    "id": "issue-173-local-linear-promotion-adapter-v1",
+    "acceptance_cell": "production_adapter",
+    "expected_effect": "a valid owner-only local artifact promotes only conflict-free safe-gray needs_review rows while missing, corrupt, incompatible, or drifted artifacts fail closed to deterministic precision_first_v4 with zero promotions",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/173"
   },
   "verification": {
     "commands": [
       {
-        "command": "PR #171 all hosted required checks green and main-reachable before #170 selection",
+        "command": "PR #172 all hosted required checks green and main-reachable before #170 acceptance",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/171"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/172"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
@@ -271,11 +274,11 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#170",
+    "primary_issue": "#173",
     "active_prs": [],
     "open_blockers": [
       "#37",
-      "#170"
+      "#173"
     ]
   }
 }
