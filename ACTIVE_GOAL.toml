@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#165"
-name = "safe_gray_linear_model_private_bakeoff"
+issue = "#170"
+name = "safe_gray_linear_model_blind_holdout_acceptance"
 contract_change_allowed = true
 production_code_allowed = false
 private_benchmark_allowed = true
@@ -22,8 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = true
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = false
-scope_exception_reason = "No exception is used. precision_first_v4 is frozen at 0.270030 completeness with precision 1.0 and zero contamination. This evidence-only slice compares two local private safe-gray linear classifiers on grouped train, threshold-dev, and calibration-test partitions. Blind holdout remains sealed; the model may only promote conflict-free needs_review rows and no production classifier code or dependency may change."
-allowed_contract_transition_targets = ["#170"]
+scope_exception_reason = "No exception is used. The #165 train/dev-locked safe-gray linear winners, feature contracts, input cap, and promotion thresholds are frozen. This acceptance-only slice consumes the sealed blind holdout exactly once for aggregate evaluation of both locked families. No retraining, threshold tuning, production integration, classifier code, dependency, label, partition, or benchmark mutation is allowed."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "perf/current-loop-state.json",
