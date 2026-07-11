@@ -29,7 +29,7 @@ use import_pipeline::{
     rebuild_full_text_index, remove_documents_from_full_text_index, ImportFailureKind,
     ImportHardwareTier, ImportMilestoneTimings, ImportOptions, ImportParseWorkers,
     ImportResourcePolicy, ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary,
-    ImportTaskOwnerLock, ScanProfile,
+    ImportTaskOwnerLock, LinearPromotionPolicy, ScanProfile,
 };
 use index_fulltext::{
     inspect_snapshot_root, publish_snapshot, purge_obsolete_snapshots, redact_contact_values,
@@ -10977,6 +10977,11 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     }
 
     let import_started = Instant::now();
+    let linear_promotion = import_args
+        .linear_promotion_artifact
+        .as_deref()
+        .map(LinearPromotionPolicy::load_local)
+        .unwrap_or_default();
     for (task, root) in tasks.iter().zip(roots.iter()) {
         let _task_owner_lock = ImportTaskOwnerLock::acquire(data_dir, &task.id)
             .map_err(|_| CliError::user("unable to acquire import task owner lock"))?;
@@ -10992,6 +10997,7 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
                 max_files: import_args.max_files,
                 parse_workers: import_args.parse_workers,
                 index_writer_heap_bytes: import_args.index_writer_heap_bytes,
+                linear_promotion: linear_promotion.clone(),
             },
         )
         .map_err(CliError::import)?;
@@ -11012,6 +11018,17 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
         println!("task ids: {task_ids}");
     }
     println!("status: completed");
+    println!(
+        "resume classifier promotion: {}",
+        match (
+            import_args.linear_promotion_artifact.is_some(),
+            linear_promotion.enabled(),
+        ) {
+            (_, true) => "enabled",
+            (true, false) => "fail_closed_disabled",
+            (false, false) => "not_configured",
+        }
+    );
     println!("scan profile: {}", import_args.profile.label());
     println!("roots scanned: {}", roots.len());
     println!("files discovered: {}", summary.files_discovered);
@@ -11087,6 +11104,7 @@ fn witness_command(args: &[String]) -> Result<()> {
             max_files: None,
             parse_workers: ImportParseWorkers::default(),
             index_writer_heap_bytes: ImportResourcePolicy::detect().index_writer_heap_bytes,
+            linear_promotion: LinearPromotionPolicy::default(),
         },
     )
     .map_err(CliError::import)?;
@@ -12921,6 +12939,7 @@ struct ImportArgs {
     profile: ScanProfile,
     max_files: Option<usize>,
     parse_workers: ImportParseWorkers,
+    linear_promotion_artifact: Option<PathBuf>,
     index_writer_heap_bytes: usize,
     hardware_tier: ImportHardwareTier,
     max_private_or_anonymous_mb: u16,
@@ -12965,6 +12984,7 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
     let mut profile_seen = false;
     let mut max_files = None;
     let mut parse_workers = None;
+    let mut linear_promotion_artifact = None;
     let mut enqueue = false;
     let mut ipc_auto = false;
     let mut ipc_endpoint = None;
@@ -13034,6 +13054,16 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
                 };
                 parse_workers = Some(parse_import_parse_workers(value)?);
             }
+            "--resume-classifier-model" => {
+                if linear_promotion_artifact.is_some() {
+                    return Err(import_usage());
+                }
+                index += 1;
+                let Some(value) = args.get(index) else {
+                    return Err(import_usage());
+                };
+                linear_promotion_artifact = Some(PathBuf::from(value));
+            }
             "--ipc" => {
                 if ipc_auto || ipc_endpoint.is_some() {
                     return Err(import_usage());
@@ -13068,6 +13098,9 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
     if !ipc_auto && ipc_endpoint.is_some() != ipc_token_file.is_some() {
         return Err(import_usage());
     }
+    if linear_promotion_artifact.is_some() && (enqueue || ipc_auto || ipc_endpoint.is_some()) {
+        return Err(import_usage());
+    }
 
     let (root_selection, default_profile) = if !roots.is_empty() {
         (ImportRootSelection::Explicit(roots), ScanProfile::Explicit)
@@ -13094,6 +13127,7 @@ fn parse_import_args(args: &[String]) -> Result<ImportArgs> {
         profile: profile.unwrap_or(default_profile),
         max_files,
         parse_workers: parse_workers.unwrap_or(default_resource_policy.parse_workers),
+        linear_promotion_artifact,
         index_writer_heap_bytes: default_resource_policy.index_writer_heap_bytes,
         hardware_tier: default_resource_policy.hardware_tier,
         max_private_or_anonymous_mb: default_resource_policy.max_private_or_anonymous_mb,
@@ -13185,7 +13219,7 @@ fn parse_import_parse_workers(value: &str) -> Result<ImportParseWorkers> {
 }
 
 fn import_usage_text() -> &'static str {
-    "usage: resume-cli import [--enqueue] [--ipc auto|<http://127.0.0.1:port/imports|/status> --ipc-token-file <path>] (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery] [--max-files <count>] [--parse-workers <count>]"
+    "usage: resume-cli import [--enqueue] [--ipc auto|<http://127.0.0.1:port/imports|/status> --ipc-token-file <path>] (--root <path> [--root <path> ...] | --root-preset local-discovery) [--profile explicit|discovery] [--max-files <count>] [--parse-workers <count>] [--resume-classifier-model <owner-only-path>]"
 }
 
 fn import_usage() -> CliError {

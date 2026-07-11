@@ -1,5 +1,9 @@
 use std::fmt;
 
+mod linear_promotion;
+
+pub use linear_promotion::{LinearPromotionPolicy, PromotionSection, PROMOTED_EPOCH_PREFIX};
+
 /// Stable epoch for the deterministic precision-first ruleset.
 pub const CLASSIFIER_EPOCH: &str = "precision_first_v4";
 
@@ -81,7 +85,7 @@ pub struct ClassificationResult {
     reason_codes: Vec<ReasonCode>,
     positive_signal_components: u8,
     negative_signal_components: u8,
-    classifier_epoch: &'static str,
+    classifier_epoch: String,
 }
 
 impl ClassificationResult {
@@ -101,8 +105,24 @@ impl ClassificationResult {
         self.negative_signal_components
     }
 
-    pub fn classifier_epoch(&self) -> &'static str {
-        self.classifier_epoch
+    pub fn classifier_epoch(&self) -> &str {
+        &self.classifier_epoch
+    }
+
+    fn is_conflict_free_safe_gray(&self) -> bool {
+        self.status == ClassificationStatus::NeedsReview
+            && self.reason_codes.first() == Some(&ReasonCode::InsufficientSignalFamilies)
+    }
+
+    fn promote_to_resume_candidate(&mut self) {
+        self.status = ClassificationStatus::ResumeCandidate;
+        self.reason_codes
+            .insert(0, ReasonCode::CorroboratedResumeSignals);
+        self.reason_codes.truncate(MAX_REASON_CODES);
+    }
+
+    fn set_classifier_epoch(&mut self, epoch: &str) {
+        self.classifier_epoch = epoch.to_string();
     }
 }
 
@@ -274,7 +294,7 @@ fn result(
         reason_codes,
         positive_signal_components,
         negative_signal_components,
-        classifier_epoch: CLASSIFIER_EPOCH,
+        classifier_epoch: CLASSIFIER_EPOCH.to_string(),
     }
 }
 

@@ -40,6 +40,7 @@ use parser_docx::DocxParser;
 use parser_pdf::{PdfParser, PdfTextExtractionTimings};
 use parser_text::TxtParser;
 use privacy::{ContactHasher, ContactKind};
+pub use resume_classifier::LinearPromotionPolicy;
 use sectionizer::{SectionChunk, Sectionizer};
 use sysinfo::System;
 use text_normalizer::TextNormalizer;
@@ -291,6 +292,7 @@ fn run_import(
             import_started,
             options.parse_workers,
             options.index_writer_heap_bytes,
+            &options.linear_promotion,
         )?;
     } else {
         process_files_sequential(
@@ -308,6 +310,7 @@ fn run_import(
             &set_cancel_phase,
             import_started,
             options.index_writer_heap_bytes,
+            &options.linear_promotion,
         )?;
     }
 
@@ -378,6 +381,7 @@ fn process_files_sequential(
     set_cancel_phase: &dyn Fn(ImportCancelCheckPhase),
     import_started: Instant,
     index_writer_heap_bytes: usize,
+    linear_promotion: &LinearPromotionPolicy,
 ) -> Result<()> {
     let total_files = files.len();
     for (index, file) in files.into_iter().enumerate() {
@@ -393,6 +397,7 @@ fn process_files_sequential(
             &mut summary.stage_timings,
             &mut summary.worker_metrics,
             &mut summary.content_bytes_read,
+            linear_promotion,
         )?;
         finish_import_file(
             data_dir,
@@ -432,6 +437,7 @@ fn process_files_with_parse_workers(
     import_started: Instant,
     parse_workers: ImportParseWorkers,
     index_writer_heap_bytes: usize,
+    linear_promotion: &LinearPromotionPolicy,
 ) -> Result<()> {
     let total_files = files.len();
     let worker_count = parse_workers.get().min(total_files);
@@ -455,6 +461,7 @@ fn process_files_with_parse_workers(
             set_cancel_phase,
             import_started,
             index_writer_heap_bytes,
+            linear_promotion,
         );
     }
 
@@ -478,6 +485,7 @@ fn process_files_with_parse_workers(
             &mut summary.stage_timings,
             &mut summary.worker_metrics,
             &mut summary.content_bytes_read,
+            linear_promotion,
         )?;
         finish_import_file(
             data_dir,
@@ -525,6 +533,7 @@ fn process_files_with_parse_workers(
             import_started,
             index_writer_heap_bytes,
             total_files,
+            linear_promotion,
         );
     }
 
@@ -537,7 +546,8 @@ fn process_files_with_parse_workers(
         for _ in 0..worker_count {
             let work_rx = Arc::clone(&work_rx);
             let result_tx = result_tx.clone();
-            scope.spawn(move || parse_worker_loop(work_rx, result_tx));
+            let linear_promotion = linear_promotion.clone();
+            scope.spawn(move || parse_worker_loop(work_rx, result_tx, &linear_promotion));
         }
         drop(result_tx);
 
@@ -576,6 +586,7 @@ fn process_files_with_parse_workers(
                 &mut summary.stage_timings.db,
                 &mut summary.worker_metrics.parse_prepare,
                 &mut summary.content_bytes_read,
+                linear_promotion,
             )?;
             match prepared {
                 PreparedFile::Ready(result) => {
@@ -678,6 +689,7 @@ fn process_indexed_files_sequential(
     import_started: Instant,
     index_writer_heap_bytes: usize,
     total_files: usize,
+    linear_promotion: &LinearPromotionPolicy,
 ) -> Result<()> {
     for (index, file) in files {
         set_cancel_phase(ImportCancelCheckPhase::SequentialParse);
@@ -692,6 +704,7 @@ fn process_indexed_files_sequential(
             &mut summary.stage_timings,
             &mut summary.worker_metrics,
             &mut summary.content_bytes_read,
+            linear_promotion,
         )?;
         finish_import_file(
             data_dir,
@@ -1044,12 +1057,13 @@ impl ImportCancelPoller {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct ImportOptions {
     pub scan_profile: ScanProfile,
     pub max_files: Option<usize>,
     pub parse_workers: ImportParseWorkers,
     pub index_writer_heap_bytes: usize,
+    pub linear_promotion: LinearPromotionPolicy,
 }
 
 impl Default for ImportOptions {
@@ -1065,6 +1079,7 @@ impl ImportOptions {
             max_files: None,
             parse_workers: resource_policy.parse_workers,
             index_writer_heap_bytes: resource_policy.index_writer_heap_bytes,
+            linear_promotion: LinearPromotionPolicy::default(),
         }
     }
 
@@ -1080,6 +1095,7 @@ impl ImportOptions {
                 available_parallelism,
             ),
             index_writer_heap_bytes: H0_INDEX_WRITER_HEAP_BYTES,
+            linear_promotion: LinearPromotionPolicy::default(),
         }
     }
 }
@@ -1275,6 +1291,28 @@ pub fn index_claimed_ocr_text(
     page_count: Option<u32>,
     now: UnixTimestamp,
 ) -> Result<OcrTextIndexOutcome> {
+    index_claimed_ocr_text_with_policy(
+        data_dir,
+        store,
+        claimed,
+        ocr_text,
+        confidence,
+        page_count,
+        now,
+        &LinearPromotionPolicy::default(),
+    )
+}
+
+pub fn index_claimed_ocr_text_with_policy(
+    data_dir: &Path,
+    store: &MetaStore,
+    claimed: &ClaimedOcrJob,
+    ocr_text: &str,
+    confidence: Option<f32>,
+    page_count: Option<u32>,
+    now: UnixTimestamp,
+    linear_promotion: &LinearPromotionPolicy,
+) -> Result<OcrTextIndexOutcome> {
     let Some(mut document) = store
         .document_by_id(&claimed.job.document_id)
         .map_err(ImportPipelineError::store)?
@@ -1296,7 +1334,8 @@ pub fn index_claimed_ocr_text(
     let clean_text = TextNormalizer::normalize_text_only(ocr_text);
     let sectionizer = Sectionizer::default();
     let sections = sectionizer.sectionize(&clean_text);
-    let decision = AdmissionDecision::after_sectionization(&clean_text, &sections);
+    let decision =
+        AdmissionDecision::after_sectionization(&clean_text, &sections, linear_promotion);
     let admitted = decision.admits_search_index();
     let pending_doc_ids = BTreeSet::from([document.id.as_str().to_string()]);
     let version_id = ResumeVersionId::from_non_secret_parts(&[
@@ -2065,6 +2104,7 @@ fn prepare_file_for_parse(
     db_timing: &mut Duration,
     parse_prepare_timing: &mut Duration,
     content_bytes_read: &mut u64,
+    linear_promotion: &LinearPromotionPolicy,
 ) -> Result<PreparedFile> {
     let started = Instant::now();
     let mut db_elapsed = Duration::ZERO;
@@ -2076,6 +2116,7 @@ fn prepare_file_for_parse(
         ensure_not_cancelled,
         &mut db_elapsed,
         content_bytes_read,
+        linear_promotion,
     );
     *db_timing += db_elapsed;
     *parse_prepare_timing += started.elapsed().saturating_sub(db_elapsed);
@@ -2090,11 +2131,12 @@ fn prepare_file_for_parse_inner(
     ensure_not_cancelled: &dyn Fn() -> Result<()>,
     db_elapsed: &mut Duration,
     content_bytes_read: &mut u64,
+    linear_promotion: &LinearPromotionPolicy,
 ) -> Result<PreparedFile> {
     ensure_not_cancelled()?;
-    if let Some(noop_kind) =
-        measure_result_stage(db_elapsed, || exact_rerun_noop_kind(store, &file))?
-    {
+    if let Some(noop_kind) = measure_result_stage(db_elapsed, || {
+        exact_rerun_noop_kind(store, &file, linear_promotion)
+    })? {
         let processed = match noop_kind {
             ExactRerunNoopKind::Searchable => ProcessedFile::UnchangedSearchable,
             ExactRerunNoopKind::OcrRequired => ProcessedFile::UnchangedOcrRequired,
@@ -2152,6 +2194,7 @@ fn prepare_file_for_parse_inner(
 fn parse_worker_loop(
     work_rx: Arc<Mutex<mpsc::Receiver<ParseWorkItem>>>,
     result_tx: mpsc::SyncSender<ParseWorkResult>,
+    linear_promotion: &LinearPromotionPolicy,
 ) {
     loop {
         let work = match work_rx.lock() {
@@ -2161,13 +2204,19 @@ fn parse_worker_loop(
         let Ok(work) = work else {
             return;
         };
-        if result_tx.send(parse_work_item(work)).is_err() {
+        if result_tx
+            .send(parse_work_item(work, linear_promotion))
+            .is_err()
+        {
             return;
         }
     }
 }
 
-fn parse_work_item(work: ParseWorkItem) -> ParseWorkResult {
+fn parse_work_item(
+    work: ParseWorkItem,
+    linear_promotion: &LinearPromotionPolicy,
+) -> ParseWorkResult {
     let ParseWorkItem {
         index,
         file,
@@ -2175,7 +2224,7 @@ fn parse_work_item(work: ParseWorkItem) -> ParseWorkResult {
         bytes,
     } = work;
     let parse_started = Instant::now();
-    let output = parse_work_item_inner(&file, &document, &bytes);
+    let output = parse_work_item_inner(&file, &document, &bytes, linear_promotion);
     let parse_finished = Instant::now();
 
     ParseWorkResult {
@@ -2195,6 +2244,7 @@ fn parse_work_item_inner(
     file: &DiscoveredFile,
     document: &Document,
     bytes: &[u8],
+    linear_promotion: &LinearPromotionPolicy,
 ) -> ParseWorkItemOutput {
     let extension = file_extension_label(&file.extension);
     let mut pdf_parse_timings = PdfTextExtractionTimings::default();
@@ -2298,7 +2348,8 @@ fn parse_work_item_inner(
     let sections = measure_stage(&mut post_parser_timings.sectionization, || {
         Sectionizer::default().sectionize(&clean_text)
     });
-    let decision = AdmissionDecision::after_sectionization(&clean_text, &sections);
+    let decision =
+        AdmissionDecision::after_sectionization(&clean_text, &sections, linear_promotion);
     let admitted = decision.admits_search_index();
     let version = ResumeVersion {
         id: version_id.clone(),
@@ -2586,6 +2637,7 @@ fn process_file(
     stage_timings: &mut ImportStageTimings,
     worker_metrics: &mut ImportWorkerMetrics,
     content_bytes_read: &mut u64,
+    linear_promotion: &LinearPromotionPolicy,
 ) -> Result<ProcessedFile> {
     let started = Instant::now();
     let mut db_elapsed = Duration::ZERO;
@@ -2599,6 +2651,7 @@ fn process_file(
         &mut db_elapsed,
         worker_metrics,
         content_bytes_read,
+        linear_promotion,
     );
     stage_timings.db += db_elapsed;
     stage_timings.parse += started.elapsed().saturating_sub(db_elapsed);
@@ -2615,11 +2668,12 @@ fn process_file_inner(
     db_elapsed: &mut Duration,
     worker_metrics: &mut ImportWorkerMetrics,
     content_bytes_read: &mut u64,
+    linear_promotion: &LinearPromotionPolicy,
 ) -> Result<ProcessedFile> {
     ensure_not_cancelled()?;
-    if let Some(noop_kind) =
-        measure_result_stage(db_elapsed, || exact_rerun_noop_kind(store, file))?
-    {
+    if let Some(noop_kind) = measure_result_stage(db_elapsed, || {
+        exact_rerun_noop_kind(store, file, linear_promotion)
+    })? {
         return Ok(match noop_kind {
             ExactRerunNoopKind::Searchable => ProcessedFile::UnchangedSearchable,
             ExactRerunNoopKind::OcrRequired => ProcessedFile::UnchangedOcrRequired,
@@ -2777,7 +2831,8 @@ fn process_file_inner(
         sectionizer.sectionize(&clean_text)
     });
     worker_metrics.post_parser_timings.sectionization += post_parser_timings.sectionization;
-    let decision = AdmissionDecision::after_sectionization(&clean_text, &sections);
+    let decision =
+        AdmissionDecision::after_sectionization(&clean_text, &sections, linear_promotion);
     let admitted = decision.admits_search_index();
     let version = ResumeVersion {
         id: version_id.clone(),
@@ -3015,6 +3070,7 @@ fn entity_type_from_field_type(field_type: &FieldType) -> EntityType {
 fn exact_rerun_noop_kind(
     store: &MetaStore,
     file: &DiscoveredFile,
+    linear_promotion: &LinearPromotionPolicy,
 ) -> Result<Option<ExactRerunNoopKind>> {
     let Some(document) = store
         .document_by_id(&file.document_id)
@@ -3040,6 +3096,13 @@ fn exact_rerun_noop_kind(
     else {
         return Ok(None);
     };
+    if classification
+        .classifier_epoch
+        .starts_with(resume_classifier::PROMOTED_EPOCH_PREFIX)
+        && linear_promotion.classifier_epoch() != Some(classification.classifier_epoch.as_str())
+    {
+        return Ok(None);
+    }
 
     match document.status {
         DocumentStatus::Searchable | DocumentStatus::IndexedPartial
@@ -3072,6 +3135,11 @@ fn exact_rerun_noop_kind(
                     ClassificationStatus::NonResume | ClassificationStatus::NeedsReview
                 ) =>
         {
+            if linear_promotion.enabled()
+                && classification.status == ClassificationStatus::NeedsReview
+            {
+                return Ok(None);
+            }
             Ok(Some(ExactRerunNoopKind::Excluded))
         }
         _ => Ok(None),
