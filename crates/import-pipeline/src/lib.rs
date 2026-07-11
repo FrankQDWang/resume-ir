@@ -27,11 +27,12 @@ use index_fulltext::{
     IndexSection, SnapshotPublishControl, SnapshotPublishPhase,
 };
 use meta_store::{
-    ClassificationStatus, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
-    EntityType, FileExtension, ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanError,
-    ImportScanErrorKind, ImportScanErrorOperation, ImportTask, ImportTaskId, ImportTaskStatus,
-    IndexState, IndexStateStatus, IngestJob, IngestJobStatus, MetaStore, ResumeVersion,
-    ResumeVersionId, ResumeVisibility, SearchableImportDocument, UnixTimestamp,
+    ClaimedOcrJob, ClassificationStatus, ContactHash, Document, DocumentId, DocumentStatus,
+    EntityMention, EntityType, FileExtension, ImportScanBudgetKind as StoreImportScanBudgetKind,
+    ImportScanError, ImportScanErrorKind, ImportScanErrorOperation, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexState, IndexStateStatus, IngestJob, IngestJobStatus, MetaStore,
+    OcrAttemptPublication, OcrAttemptSuccessOutcome, ResumeVersion, ResumeVersionId,
+    ResumeVisibility, SearchableImportDocument, UnixTimestamp,
 };
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
 use parser_doc::DocParser;
@@ -1265,17 +1266,17 @@ pub fn remove_documents_from_full_text_index(
     Ok(IndexRebuildSummary { indexed_documents })
 }
 
-pub fn index_ocr_text(
+pub fn index_claimed_ocr_text(
     data_dir: &Path,
     store: &MetaStore,
-    document_id: &DocumentId,
+    claimed: &ClaimedOcrJob,
     ocr_text: &str,
     confidence: Option<f32>,
     page_count: Option<u32>,
     now: UnixTimestamp,
-) -> Result<OcrTextIndexSummary> {
+) -> Result<OcrTextIndexOutcome> {
     let Some(mut document) = store
-        .document_by_id(document_id)
+        .document_by_id(&claimed.job.document_id)
         .map_err(ImportPipelineError::store)?
     else {
         return Err(ImportPipelineError {
@@ -1283,6 +1284,14 @@ pub fn index_ocr_text(
             retryable: false,
         });
     };
+
+    if document.content_hash.as_deref() != Some(claimed.source_fingerprint())
+        || !store
+            .ocr_claim_is_current(claimed)
+            .map_err(ImportPipelineError::store)?
+    {
+        return Ok(OcrTextIndexOutcome::Superseded);
+    }
 
     let clean_text = TextNormalizer::normalize_text_only(ocr_text);
     let sectionizer = Sectionizer::default();
@@ -1293,21 +1302,14 @@ pub fn index_ocr_text(
     let version_id = ResumeVersionId::from_non_secret_parts(&[
         "ocr",
         document.id.as_str(),
+        claimed.source_fingerprint(),
         OCR_PARSE_VERSION,
         SCHEMA_VERSION,
     ]);
-    let existing_candidate_id = store
-        .resume_version_by_id(&version_id)
-        .map_err(ImportPipelineError::store)?
-        .and_then(|version| version.candidate_id);
     let version = (!clean_text.trim().is_empty()).then(|| ResumeVersion {
         id: version_id.clone(),
         document_id: document.id.clone(),
-        candidate_id: if admitted {
-            existing_candidate_id
-        } else {
-            None
-        },
+        candidate_id: None,
         parse_version: OCR_PARSE_VERSION.to_string(),
         schema_version: SCHEMA_VERSION.to_string(),
         language_set: language_set(&clean_text),
@@ -1321,59 +1323,34 @@ pub fn index_ocr_text(
             ResumeVisibility::Hidden
         },
     });
-    document.status = DocumentStatus::OcrDone;
+    document.status = if admitted {
+        DocumentStatus::Searchable
+    } else {
+        DocumentStatus::OcrDone
+    };
     document.updated_at = now;
-    if !admitted {
-        persist_non_searchable(store, &document, version.as_ref(), decision, now)?;
-        let (snapshot_token, indexed_documents) = write_incremental_full_text_index(
-            data_dir,
-            store,
-            now,
-            Vec::new(),
-            &pending_doc_ids,
-            0,
-            0,
-            None,
-            CurrentImportIndexCacheMode::Retain,
-            None,
-            None,
-            None,
-            ImportResourcePolicy::detect().index_writer_heap_bytes,
-        )?;
-        update_index_state(store, now, snapshot_token, indexed_documents)?;
-        return Ok(OcrTextIndexSummary {
-            searchable: false,
-            indexed_documents,
-        });
-    }
-
-    store
-        .upsert_document(&document)
-        .map_err(ImportPipelineError::store)?;
-    persist_classification(store, &document.id, decision, now)?;
-    let version = version.expect("admitted normalized text is non-empty");
-    store
-        .upsert_resume_version(&version)
-        .map_err(ImportPipelineError::store)?;
-    let mentions = entity_mentions_from_rules(&version_id, &clean_text);
-    store
-        .replace_entity_mentions(&version_id, &mentions)
-        .map_err(ImportPipelineError::store)?;
-    assign_candidate_from_contact_mentions(data_dir, store, &version_id, &mentions)?;
-
-    let pending_index_document = IndexDocument {
-        doc_id: document.id.to_string(),
-        version_id: version_id.to_string(),
-        file_name: document.file_name.clone(),
-        clean_text: clean_text.clone(),
-        sections: sections_to_index(sections),
-        is_deleted: document.is_deleted,
+    let mentions = if admitted {
+        entity_mentions_from_rules(&version_id, &clean_text)
+    } else {
+        Vec::new()
+    };
+    let pending_index_documents = if admitted {
+        vec![IndexDocument {
+            doc_id: document.id.to_string(),
+            version_id: version_id.to_string(),
+            file_name: document.file_name.clone(),
+            clean_text: clean_text.clone(),
+            sections: sections_to_index(sections),
+            is_deleted: document.is_deleted,
+        }]
+    } else {
+        Vec::new()
     };
     let (snapshot_token, indexed_documents) = write_incremental_full_text_index(
         data_dir,
         store,
         now,
-        vec![pending_index_document],
+        pending_index_documents,
         &pending_doc_ids,
         0,
         0,
@@ -1384,17 +1361,45 @@ pub fn index_ocr_text(
         None,
         ImportResourcePolicy::detect().index_writer_heap_bytes,
     )?;
-    document.status = DocumentStatus::Searchable;
-    document.updated_at = now;
-    store
-        .upsert_document(&document)
-        .map_err(ImportPipelineError::store)?;
-    update_index_state(store, now, snapshot_token, indexed_documents)?;
-
-    Ok(OcrTextIndexSummary {
-        searchable: true,
-        indexed_documents,
-    })
+    let visible_epoch = store
+        .index_state()
+        .map_err(ImportPipelineError::store)?
+        .map_or(1, |state| state.visible_epoch.saturating_add(1));
+    let index_state = IndexState {
+        manifest_version: INDEX_MANIFEST_VERSION.to_string(),
+        snapshot_token: Some(snapshot_token),
+        status: IndexStateStatus::Ready,
+        updated_at: now,
+        visible_epoch,
+        manifest_document_count: indexed_documents as u64,
+    };
+    let (email_hash, phone_hash) = if admitted {
+        contact_hashes_from_mentions(data_dir, &mentions)?
+    } else {
+        (None, None)
+    };
+    let classification = decision.into_record(document.id.clone(), now);
+    let publication = OcrAttemptPublication {
+        document: &document,
+        classification: &classification,
+        version: version.as_ref(),
+        mentions: &mentions,
+        email_hash: email_hash.as_ref(),
+        phone_hash: phone_hash.as_ref(),
+        index_state: &index_state,
+    };
+    match store
+        .finish_ocr_attempt_success(claimed, publication, now)
+        .map_err(ImportPipelineError::store)?
+    {
+        OcrAttemptSuccessOutcome::Completed => {
+            Ok(OcrTextIndexOutcome::Committed(OcrTextIndexSummary {
+                searchable: admitted,
+                indexed_documents,
+            }))
+        }
+        OcrAttemptSuccessOutcome::Superseded => Ok(OcrTextIndexOutcome::Superseded),
+    }
 }
 
 pub fn detect_ocr_page_count(extension: &FileExtension, bytes: &[u8]) -> Result<u32> {
@@ -1419,6 +1424,12 @@ pub fn detect_ocr_page_count(extension: &FileExtension, bytes: &[u8]) -> Result<
 pub struct OcrTextIndexSummary {
     pub searchable: bool,
     pub indexed_documents: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OcrTextIndexOutcome {
+    Committed(OcrTextIndexSummary),
+    Superseded,
 }
 
 fn write_full_text_index<I>(
@@ -2824,6 +2835,7 @@ fn process_file_inner(
     })
 }
 
+#[allow(dead_code)]
 fn assign_candidate_from_contact_mentions(
     data_dir: &Path,
     store: &MetaStore,
@@ -3776,22 +3788,41 @@ mod tests {
     use meta_store::{
         Document, DocumentId, DocumentStatus, FileExtension, ImportRootKind, ImportScanProfile,
         ImportScanScope, ImportTask, ImportTaskStatus, IngestJobKind, IngestJobStatus, MetaStore,
-        UnixTimestamp,
+        OcrAttemptFailure, UnixTimestamp,
     };
 
     use super::{
         classify_language_set, current_timestamp_or, document_path_is_deletion_candidate,
-        import_root_with_options, index_ocr_text, recv_parse_result_with_cancel_poll,
-        should_flush_searchable_documents, take_pending_searchable_documents,
-        write_incremental_full_text_index, CachedIndexDocument, CurrentImportIndexCacheMode,
-        CurrentImportIndexDocuments, ImportCancelCheckPhase, ImportHardwareProfile,
-        ImportHardwareTier, ImportOptions, ImportParseWorkers, ImportPipelineErrorKind,
-        ImportResourcePolicy, IndexDocument, IndexSection, ParseWorkOutcome, ParseWorkResult,
-        SnapshotPublishPhase, BYTES_PER_GIB, H2_INDEX_WRITER_HEAP_BYTES,
+        import_root_with_options, index_claimed_ocr_text, persist_classification,
+        recv_parse_result_with_cancel_poll, should_flush_searchable_documents,
+        take_pending_searchable_documents, write_incremental_full_text_index, AdmissionDecision,
+        CachedIndexDocument, CurrentImportIndexCacheMode, CurrentImportIndexDocuments,
+        ImportCancelCheckPhase, ImportHardwareProfile, ImportHardwareTier, ImportOptions,
+        ImportParseWorkers, ImportPipelineErrorKind, ImportResourcePolicy, IndexDocument,
+        IndexSection, OcrTextIndexOutcome, ParseWorkOutcome, ParseWorkResult, SnapshotPublishPhase,
+        BYTES_PER_GIB, H2_INDEX_WRITER_HEAP_BYTES,
     };
 
     #[cfg(unix)]
     static DOC_CONVERTER_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn claim_ocr_document(
+        store: &MetaStore,
+        document: &Document,
+        now: UnixTimestamp,
+    ) -> meta_store::ClaimedOcrJob {
+        let mut document = document.clone();
+        document.status = DocumentStatus::OcrRequired;
+        store.upsert_document(&document).unwrap();
+        store
+            .quarantine_document_searchability(&document.id)
+            .unwrap();
+        persist_classification(store, &document.id, AdmissionDecision::ocr_backlog(), now).unwrap();
+        store
+            .enqueue_ocr_job_for_document(&document.id, now)
+            .unwrap();
+        store.claim_next_ocr_job(now).unwrap().unwrap()
+    }
 
     #[test]
     fn discovery_deletion_requires_direct_parent_directory_to_be_scanned() {
@@ -4210,16 +4241,19 @@ mod tests {
             .unwrap()
             .contains("Rust Search"));
         assert_eq!(version.raw_text, None);
-        let rejected = index_ocr_text(
+        let claim = claim_ocr_document(&store, &document, now);
+        let OcrTextIndexOutcome::Committed(rejected) = index_claimed_ocr_text(
             &data_dir,
             &store,
-            &document.id,
+            &claim,
             "INVOICE\nSubtotal 10\nPayment terms net 30",
             None,
             Some(1),
             UnixTimestamp::from_unix_seconds(1_700_000_077),
         )
-        .unwrap();
+        .unwrap() else {
+            panic!("current OCR attempt was superseded");
+        };
         assert!(!rejected.searchable);
         assert_eq!(
             store.document_classification_counts().unwrap().non_resume,
@@ -4696,18 +4730,48 @@ mod tests {
         let store = MetaStore::open_in_memory().unwrap();
         store.run_migrations().unwrap();
         let document = test_document("ocr-doc", DocumentStatus::OcrRequired);
-        store.upsert_document(&document).unwrap();
+        let stale = claim_ocr_document(
+            &store,
+            &document,
+            UnixTimestamp::from_unix_seconds(1_700_000_075),
+        );
+        store
+            .finish_ocr_attempt_failure(
+                &stale,
+                OcrAttemptFailure::Retryable,
+                UnixTimestamp::from_unix_seconds(1_700_000_075),
+            )
+            .unwrap();
+        let current = store
+            .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_700_000_076))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            index_claimed_ocr_text(
+                &data_dir,
+                &store,
+                &stale,
+                "stale OCR output",
+                Some(0.99),
+                Some(1),
+                UnixTimestamp::from_unix_seconds(1_700_000_076),
+            )
+            .unwrap(),
+            OcrTextIndexOutcome::Superseded
+        );
 
-        let summary = index_ocr_text(
+        let OcrTextIndexOutcome::Committed(summary) = index_claimed_ocr_text(
             &data_dir,
             &store,
-            &document.id,
+            &current,
             &synthetic_resume_text("OCR Candidate", "Rust Search"),
             Some(0.91),
             Some(1),
             UnixTimestamp::from_unix_seconds(1_700_000_076),
         )
-        .unwrap();
+        .unwrap() else {
+            panic!("current OCR attempt was superseded");
+        };
 
         assert!(summary.searchable);
         let version = store

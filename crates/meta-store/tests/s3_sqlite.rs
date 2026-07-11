@@ -1403,18 +1403,15 @@ fn ocr_document_jobs_are_durable_idempotent_and_claimable_by_kind() {
     assert_eq!(store.status_summary().unwrap().ocr_jobs_queued, 1);
 
     let claimed = store
-        .claim_next_job_by_kind(
-            IngestJobKind::OcrDocument,
-            UnixTimestamp::from_unix_seconds(1_800_000_700),
-        )
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_800_000_700))
         .unwrap()
         .unwrap();
-    assert_eq!(claimed.id, first.job.id);
-    assert_eq!(claimed.kind, IngestJobKind::OcrDocument);
-    assert_eq!(claimed.status, IngestJobStatus::Running);
-    assert_eq!(claimed.attempt_count, 1);
+    assert_eq!(claimed.job.id, first.job.id);
+    assert_eq!(claimed.job.kind, IngestJobKind::OcrDocument);
+    assert_eq!(claimed.job.status, IngestJobStatus::Running);
+    assert_eq!(claimed.job.attempt_count, 1);
     assert_eq!(store.status_summary().unwrap().ocr_jobs_queued, 0);
-    let finish = |job: &IngestJob, failure, at| {
+    let finish = |job, failure, at| {
         store
             .finish_ocr_attempt_failure(job, failure, UnixTimestamp::from_unix_seconds(at))
             .unwrap()
@@ -1424,10 +1421,7 @@ fn ocr_document_jobs_are_durable_idempotent_and_claimable_by_kind() {
         OcrAttemptFailureOutcome::Retryable
     );
     let second = store
-        .claim_next_job_by_kind(
-            IngestJobKind::OcrDocument,
-            UnixTimestamp::from_unix_seconds(1_800_000_702),
-        )
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_800_000_702))
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -1439,10 +1433,7 @@ fn ocr_document_jobs_are_durable_idempotent_and_claimable_by_kind() {
         OcrAttemptFailureOutcome::Retryable
     );
     let third = store
-        .claim_next_job_by_kind(
-            IngestJobKind::OcrDocument,
-            UnixTimestamp::from_unix_seconds(1_800_000_704),
-        )
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_800_000_704))
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -1473,7 +1464,6 @@ fn ocr_document_jobs_are_durable_idempotent_and_claimable_by_kind() {
         (requeued.job.attempt_count, requeued.job.max_attempts),
         (3, 6)
     );
-
     let saturated_document = document(
         "ocr-saturated-attempt-placeholder",
         false,
@@ -2761,19 +2751,19 @@ fn ocr_job_failure_kind_persists_reports_and_clears_on_retry_claim() {
         false,
         DocumentStatus::OcrRequired,
     );
-    let mut job = job(
-        "ocr-page-budget-job-placeholder",
-        &document.id,
-        IngestJobStatus::FailedRetryable,
-        1,
-        3,
-    )
-    .finished_at(now);
-    job.kind = IngestJobKind::OcrDocument;
-    job.failure_kind = Some(IngestJobFailureKind::OcrPageBudgetExceeded);
-
-    store.upsert_document(&document).unwrap();
-    store.insert_ingest_job(&job).unwrap();
+    upsert_ocr_backlog(&store, &document, now.as_unix_seconds());
+    let job = store
+        .enqueue_ocr_job_for_document(&document.id, now)
+        .unwrap()
+        .job;
+    let claimed = store.claim_next_ocr_job(now).unwrap().unwrap();
+    store
+        .finish_ocr_attempt_failure(
+            &claimed,
+            OcrAttemptFailure::RetryableWithKind(IngestJobFailureKind::OcrPageBudgetExceeded),
+            now,
+        )
+        .unwrap();
 
     let persisted = store.ingest_job_by_id(&job.id).unwrap().unwrap();
     assert_eq!(
@@ -2783,14 +2773,11 @@ fn ocr_job_failure_kind_persists_reports_and_clears_on_retry_claim() {
     assert_eq!(store.status_summary().unwrap().ocr_page_budget_blocked, 1);
 
     let claimed = store
-        .claim_next_job_by_kind(
-            IngestJobKind::OcrDocument,
-            UnixTimestamp::from_unix_seconds(1_800_010_050),
-        )
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_800_010_050))
         .unwrap()
         .unwrap();
-    assert_eq!(claimed.status, IngestJobStatus::Running);
-    assert_eq!(claimed.failure_kind, None);
+    assert_eq!(claimed.job.status, IngestJobStatus::Running);
+    assert_eq!(claimed.job.failure_kind, None);
     assert_eq!(store.status_summary().unwrap().ocr_page_budget_blocked, 0);
 }
 

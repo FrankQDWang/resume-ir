@@ -8,9 +8,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use index_fulltext::{FullTextIndex, SearchQuery};
 use meta_store::{
     ClassificationStatus, Document, DocumentClassificationRecord, DocumentId, DocumentStatus,
-    FileExtension, IngestJobFailureKind, IngestJobKind, IngestJobStatus, MetaStore,
-    OcrPageCacheKey, OcrPageCacheStatus, ReasonCode, ReviewDisposition, UnixTimestamp,
-    WorkerTaskKind, CLASSIFIER_EPOCH,
+    FileExtension, IngestJobFailureKind, IngestJobStatus, MetaStore, OcrPageCacheKey,
+    OcrPageCacheStatus, ReasonCode, ReviewDisposition, UnixTimestamp, WorkerTaskKind,
+    CLASSIFIER_EPOCH,
 };
 
 #[cfg(unix)]
@@ -107,13 +107,10 @@ fn daemon_ocr_worker_once_recovers_stale_running_job_after_restart() {
     let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let stale_claimed = store
-        .claim_next_job_by_kind(
-            IngestJobKind::OcrDocument,
-            UnixTimestamp::from_unix_seconds(1_700_050_010),
-        )
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_700_050_010))
         .unwrap()
         .expect("seed stale running OCR job");
-    assert_eq!(stale_claimed.status, IngestJobStatus::Running);
+    assert_eq!(stale_claimed.job.status, IngestJobStatus::Running);
     drop(store);
 
     let command = write_fixture_executable(
@@ -166,7 +163,7 @@ printf 'Rust recovery systems.\n'
     let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let recovered_job = store
-        .ingest_job_by_id(&stale_claimed.id)
+        .ingest_job_by_id(&stale_claimed.job.id)
         .unwrap()
         .expect("recovered OCR job remains persisted");
     assert_eq!(recovered_job.status, IngestJobStatus::Completed);

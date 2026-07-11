@@ -7,12 +7,12 @@
   "evidence_lane": "smoke",
   "claim": "no_claim",
   "contract_pins": {
-    "active_goal_sha256": "b4529e0763e633ab33a4b561ee1c8d4fb5a621f498e4e524d0e42e8f0cf4da7c",
+    "active_goal_sha256": "c4f24a14d29d66242756719dd3ac5497c820cc0aa9b2ea960853da8f09f4d04f",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "a22bb5c2f3121b04e79ffc3f6be47aa4ac32df1e"
+    "git_head_sha": "69596288835ada21c755a749dbe84740947e69cc"
   },
   "privacy": {
     "contains_raw_resume_text": false,
@@ -23,7 +23,7 @@
     "contains_diagnostics_package": false,
     "trace_summary_redacted": true
   },
-  "report_sha256": "12d3e78d89734f0580e3cb3c96549b01ae58e896e2492d1829a94adec1514a96",
+  "report_sha256": "325b21dd2feafceb5a53d4e841dad6a0d79d6547efcf7a9c75d2090e1303a6d4",
   "report_size_bytes": 4072,
   "artifacts": [
     {
