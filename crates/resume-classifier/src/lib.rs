@@ -1,7 +1,7 @@
 use std::fmt;
 
 /// Stable epoch for the initial deterministic precision-first ruleset.
-pub const CLASSIFIER_EPOCH: &str = "precision_first_v1";
+pub const CLASSIFIER_EPOCH: &str = "precision_first_v2";
 
 /// Hard cap for reason codes returned for one document.
 pub const MAX_REASON_CODES: usize = 8;
@@ -355,7 +355,43 @@ fn starts_with_history_action(line: &str) -> bool {
         .split(|character: char| !character.is_alphanumeric())
         .next()
         .unwrap_or_default();
-    matches!(first_token, "built" | "developed" | "implemented") || normalized.starts_with("负责")
+    matches!(
+        first_token,
+        "achieved"
+            | "analyzed"
+            | "architected"
+            | "automated"
+            | "built"
+            | "collaborated"
+            | "conducted"
+            | "coordinated"
+            | "created"
+            | "delivered"
+            | "deployed"
+            | "designed"
+            | "developed"
+            | "engineered"
+            | "established"
+            | "implemented"
+            | "improved"
+            | "increased"
+            | "launched"
+            | "led"
+            | "maintained"
+            | "managed"
+            | "operated"
+            | "optimized"
+            | "owned"
+            | "reduced"
+            | "resolved"
+            | "streamlined"
+            | "supported"
+    ) || [
+        "主导", "参与", "协助", "完成", "搭建", "推动", "构建", "管理", "设计", "负责", "开发",
+        "实现", "优化", "维护", "制定",
+    ]
+    .iter()
+    .any(|prefix| normalized.starts_with(prefix))
 }
 
 fn is_section_boundary(line: &str, heading: &str) -> bool {
@@ -448,10 +484,24 @@ mod tests {
             "SUMMARY\nWe seek engineers who have built systems.\nEXPERIENCE\nFive years required.",
             "SUMMARY\nTemplate.\nEXPERIENCE\nDescribe projects you developed.\nSKILLS\nAdd keywords.",
             "SUMMARY\nExample profile.\nEXPERIENCE\nSample entry: Built systems.",
+            "SUMMARY\nWe are hiring.\nEXPERIENCE\nCandidates who managed teams are preferred.",
+            "SUMMARY\nTemplate.\nEXPERIENCE\nExample entry: Led delivery programs.",
             "An experienced and skillful educational writer.",
         ] {
             let result = classify(ClassifierInput::NormalizedText(text));
             assert_eq!(result.status(), ClassificationStatus::NeedsReview);
+        }
+    }
+
+    #[test]
+    fn generalized_career_action_prefixes_require_corroborated_resume_structure() {
+        for text in [
+            "SUMMARY\nPlatform engineer\nWORK EXPERIENCE\nLed distributed search delivery.\nEDUCATION\nSynthetic University",
+            "个人简介\n平台工程师\n工作经历\n主导分布式检索交付。\n教育背景\n示例大学",
+        ] {
+            let result = classify(ClassifierInput::NormalizedText(text));
+            assert_eq!(result.status(), ClassificationStatus::ResumeCandidate);
+            assert!(result.reason_codes().contains(&ReasonCode::CareerHistoryDetail));
         }
     }
 

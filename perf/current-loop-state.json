@@ -1,18 +1,18 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "pr_opened",
-  "experiment_state": "contract_locked",
-  "evidence_lane": "smoke",
+  "workflow_state": "evidence_review",
+  "experiment_state": "accepted",
+  "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "c4f24a14d29d66242756719dd3ac5497c820cc0aa9b2ea960853da8f09f4d04f",
+    "active_goal_sha256": "3fc0bbdb554356103e0cab78898b95312f4fac65ffce903af93bb33ab3f4db4d",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "69596288835ada21c755a749dbe84740947e69cc"
+    "git_head_sha": "f3f2fae7a0891c2085405598a7a848b508fbad5e"
   },
-  "current_slice": "#159 bind OCR attempt to persisted generation",
+  "current_slice": "#165 expand corroborated career history signals",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -189,29 +189,51 @@
     {"from":"slice_selected","to":"branch_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4937997963"},
     {"from":"branch_active","to":"verification_active","evidence_ref":"PROGRESS.md#s709"},
     {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s709"},
-    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/164"}
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/164"},
+    {"from":"pr_opened","to":"pr_merged","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/164"},
+    {"from":"pr_merged","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159#issuecomment-4941149198"},
+    {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941229535"},
+    {"from":"slice_selected","to":"branch_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941229535"},
+    {"from":"branch_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s710"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s710"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s710"}
   ],
+  "hypothesis": {
+    "id": "issue-165-career-action-prefixes-v1",
+    "acceptance_cell": "private_calibration",
+    "expected_effect": "increase known-resume completeness while indexed precision remains 1.0 and contamination remains zero",
+    "before_measurement_ref": "PROGRESS.md#s710",
+    "after_measurement_ref": "PROGRESS.md#s710",
+    "reprofile_ref": "PROGRESS.md#s710",
+    "decision": "accepted"
+  },
   "verification": {
     "commands": [
       {
-        "command": "cargo fmt --all -- --check && focused meta-store/import-pipeline/resume-cli/resume-daemon tests and clippy",
+        "command": "frozen private_calibration label-separated production import baseline",
         "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s709"
+        "evidence_ref": "PROGRESS.md#s710"
+      },
+      {
+        "command": "frozen private_calibration label-separated production import after precision_first_v2",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s710"
+      },
+      {
+        "command": "cargo test -p resume-classifier --locked && cargo clippy -p resume-classifier --all-targets --locked -- -D warnings && cargo fmt --all -- --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s710"
       },
       {
         "command": "cargo test --workspace --locked -- --test-threads=1",
         "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s709"
+        "evidence_ref": "PROGRESS.md#s710"
       },
       {
         "command": "rust-analyzer diagnostics .",
         "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s709"
-      },
-      {
-        "command": "public synthetic stale-attempt supersession and current-attempt commit witness",
-        "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s709"
+        "evidence_ref": "PROGRESS.md#s710"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
@@ -246,11 +268,11 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#159",
-    "active_prs": ["#164"],
+    "primary_issue": "#165",
+    "active_prs": [],
     "open_blockers": [
       "#37",
-      "#159"
+      "#165"
     ]
   }
 }
