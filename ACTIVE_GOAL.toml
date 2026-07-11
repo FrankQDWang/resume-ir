@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#182"
-name = "fixed_worker_parse_queue_capacity"
+issue = "#184"
+name = "fixed_worker_parse_result_queue_capacity"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = true
@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = true
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = false
-scope_exception_reason = "No exception is used. #180 proved that the requested four-worker intervention is silently clamped to the existing three-worker global cap, so worker-count performance was not evaluated. This bounded L2 slice keeps three workers fixed and changes only parse work-queue capacity from worker_count to twice worker_count. Result-queue capacity, parser logic, DB/index behavior, classifier semantics, artifact, threshold, benchmark, labels, and admission gates remain fixed."
+scope_exception_reason = "No exception is used. #182 doubled only parse work-queue capacity and failed because queue wait and queue-full events increased, so the change was rolled back with zero repository diff. This bounded L2 slice keeps three workers and work-queue capacity fixed and changes only the blocking parse result-queue capacity from worker_count to twice worker_count. Parser logic, ordered commit, DB/index behavior, classifier semantics, artifact, threshold, benchmark, labels, and admission gates remain fixed."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "Cargo.lock",
