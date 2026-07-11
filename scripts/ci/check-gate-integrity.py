@@ -107,6 +107,17 @@ BLIND_HOLDOUT_ACCEPTANCE_PATHS = {
     "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
     "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
 }
+SUCCESSOR_TRANSITION_RECORD = "perf/active-slice-transition.json"
+SUCCESSOR_TRANSITION_PATHS = {
+    "ACTIVE_GOAL.toml",
+    "perf/current-loop-state.json",
+    "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
+    "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+    SUCCESSOR_TRANSITION_RECORD,
+}
+SUCCESSOR_TRANSITION_BOOTSTRAP_PATHS = SUCCESSOR_TRANSITION_PATHS | {
+    "scripts/ci/check-gate-integrity.py",
+}
 
 
 def fail(message: str) -> None:
@@ -126,6 +137,21 @@ def load_toml(path: pathlib.Path) -> dict:
 def require_bool(value: object, expected: bool, path: str) -> None:
     if value is not expected:
         fail(f"{path}: expected {expected}")
+
+
+def require_non_empty_string(value: object, path: str) -> str:
+    if not isinstance(value, str) or not value or "\n" in value or "\r" in value:
+        fail(f"{path}: expected bounded single-line string")
+    if len(value) > 512:
+        fail(f"{path}: exceeds 512 characters")
+    return value
+
+
+def require_issue_ref(value: object, path: str) -> str:
+    value = require_non_empty_string(value, path)
+    if not value.startswith("#") or not value[1:].isdigit():
+        fail(f"{path}: expected issue ref")
+    return value
 
 
 def git(args: list[str]) -> str:
@@ -188,6 +214,99 @@ def merge_base_and_changed_paths() -> tuple[str, set[str]]:
 
 def load_toml_at_revision(revision: str, path: str) -> dict:
     return tomllib.loads(git(["show", f"{revision}:{path}"]))
+
+
+def validate_declared_successor_transition(
+    base_goal: dict,
+    head_goal: dict,
+    merge_base: str,
+    changed: set[str],
+) -> None:
+    raw = load_json(ROOT / SUCCESSOR_TRANSITION_RECORD)
+    if not isinstance(raw, dict):
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}: expected object")
+    expected_keys = {
+        "schema_version",
+        "transition_id",
+        "from_issue",
+        "to_issue",
+        "predecessor_terminal_evidence_ref",
+        "successor_issue_ref",
+        "base_active_goal_sha256",
+        "state_paths",
+        "bootstrap_gate_change",
+        "production_code_changed",
+        "blind_holdout_reread",
+        "gate_weakening",
+        "privacy",
+    }
+    if set(raw) != expected_keys:
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}: keys mismatch")
+    if raw.get("schema_version") != "resume-ir.active-slice-transition.v1":
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.schema_version: mismatch")
+    require_non_empty_string(raw.get("transition_id"), f"{SUCCESSOR_TRANSITION_RECORD}.transition_id")
+    base_slice = base_goal.get("scope", {}).get("active_slice", {})
+    head_slice = head_goal.get("scope", {}).get("active_slice", {})
+    base_issue = require_issue_ref(base_slice.get("issue"), "base.scope.active_slice.issue")
+    head_issue = require_issue_ref(head_slice.get("issue"), "head.scope.active_slice.issue")
+    if raw.get("from_issue") != base_issue or raw.get("to_issue") != head_issue:
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}: issue transition mismatch")
+    expected_successor_ref = f"https://github.com/FrankQDWang/resume-ir/issues/{head_issue[1:]}"
+    if raw.get("successor_issue_ref") != expected_successor_ref:
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.successor_issue_ref: mismatch")
+    evidence_ref = require_non_empty_string(
+        raw.get("predecessor_terminal_evidence_ref"),
+        f"{SUCCESSOR_TRANSITION_RECORD}.predecessor_terminal_evidence_ref",
+    )
+    if not evidence_ref.startswith(
+        f"https://github.com/FrankQDWang/resume-ir/issues/{base_issue[1:]}#issuecomment-"
+    ):
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.predecessor_terminal_evidence_ref: mismatch")
+    base_goal_source = subprocess.check_output(
+        ["git", "show", f"{merge_base}:ACTIVE_GOAL.toml"], cwd=ROOT
+    )
+    if raw.get("base_active_goal_sha256") != source_sha256(base_goal_source):
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.base_active_goal_sha256: mismatch")
+    state_paths = raw.get("state_paths")
+    if not isinstance(state_paths, list) or state_paths != sorted(SUCCESSOR_TRANSITION_PATHS):
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.state_paths: mismatch")
+    require_bool(raw.get("production_code_changed"), False, f"{SUCCESSOR_TRANSITION_RECORD}.production_code_changed")
+    require_bool(raw.get("blind_holdout_reread"), False, f"{SUCCESSOR_TRANSITION_RECORD}.blind_holdout_reread")
+    require_bool(raw.get("gate_weakening"), False, f"{SUCCESSOR_TRANSITION_RECORD}.gate_weakening")
+    privacy = raw.get("privacy")
+    if not isinstance(privacy, dict) or set(privacy) != {
+        "contains_raw_resume_text",
+        "contains_raw_query_text",
+        "contains_candidate_results",
+        "contains_local_paths",
+        "contains_tokens",
+        "contains_diagnostics_package",
+    }:
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.privacy: shape mismatch")
+    for key, value in privacy.items():
+        require_bool(value, False, f"{SUCCESSOR_TRANSITION_RECORD}.privacy.{key}")
+    require_bool(base_slice.get("contract_change_allowed"), True, "base.scope.active_slice.contract_change_allowed")
+    require_bool(head_slice.get("scope_exception"), False, "head.scope.active_slice.scope_exception")
+    allowed_paths = head_slice.get("allowed_paths")
+    if not isinstance(allowed_paths, list) or not all(isinstance(path, str) and path for path in allowed_paths):
+        fail("successor active slice requires non-empty allowed_paths")
+    if len(set(allowed_paths)) != len(allowed_paths):
+        fail("successor active slice allowed_paths must be unique")
+    bootstrap = raw.get("bootstrap_gate_change")
+    require_bool(bootstrap, bootstrap is True, f"{SUCCESSOR_TRANSITION_RECORD}.bootstrap_gate_change")
+    if bootstrap:
+        if (base_issue, head_issue) != ("#170", "#173"):
+            fail("successor transition bootstrap is restricted to #170 -> #173")
+        if changed != SUCCESSOR_TRANSITION_BOOTSTRAP_PATHS:
+            fail(
+                "successor transition bootstrap path mismatch: expected "
+                f"{sorted(SUCCESSOR_TRANSITION_BOOTSTRAP_PATHS)!r}, found {sorted(changed)!r}"
+            )
+    elif changed != SUCCESSOR_TRANSITION_PATHS:
+        fail(
+            "successor transition path mismatch: expected "
+            f"{sorted(SUCCESSOR_TRANSITION_PATHS)!r}, found {sorted(changed)!r}"
+        )
 
 
 def source_sha256(source: bytes) -> str:
@@ -448,6 +567,10 @@ def validate_transition_scope(base_goal: dict, head_goal: dict, merge_base: str,
             )
         return
 
+    if SUCCESSOR_TRANSITION_RECORD in changed:
+        validate_declared_successor_transition(base_goal, head_goal, merge_base, changed)
+        return
+
     fail(f"unauthorized active-slice transition: {base_issue!r} -> {head_issue!r}")
 
 
@@ -461,6 +584,8 @@ def is_gate_path(path: str) -> bool:
     if path.startswith(".github/ISSUE_TEMPLATE/"):
         return True
     if path.startswith("perf/") and path.endswith(".schema.json"):
+        return True
+    if path == SUCCESSOR_TRANSITION_RECORD:
         return True
     return False
 
