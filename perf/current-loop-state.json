@@ -1,18 +1,18 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "pr_opened",
-  "experiment_state": "accepted",
+  "workflow_state": "slice_selected",
+  "experiment_state": "hypothesis_registered",
   "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "a023b6967565440743217776ae4cd92b3326bf748bd9d7cdfa59b99fb8291a98",
+    "active_goal_sha256": "14b60c052801bc881966400a89dc7fbddbb78a41b25b4e6390a409eea72e0e93",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "791d235d21f84fb79b28fff56e89daff4238c943"
+    "git_head_sha": "ae339abe01924e43bf89d8090f292e2382f6c8b9"
   },
-  "current_slice": "#165 expand Chinese operational action signals",
+  "current_slice": "#165 safe-gray linear model private bake-off",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -216,16 +216,17 @@
     {"from":"branch_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s712"},
     {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s712"},
     {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s712"},
-    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/168"}
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/168"},
+    {"from":"pr_opened","to":"pr_merged","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/168"},
+    {"from":"pr_merged","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941985332"},
+    {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941985332"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165"}
   ],
   "hypothesis": {
-    "id": "issue-165-chinese-operational-actions-v1",
+    "id": "issue-165-safe-gray-linear-bakeoff-v1",
     "acceptance_cell": "private_calibration",
-    "expected_effect": "increase known-resume completeness above 0.264297 while indexed precision remains 1.0 and contamination remains zero",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941802723",
-    "after_measurement_ref": "PROGRESS.md#s712",
-    "reprofile_ref": "PROGRESS.md#s712",
-    "decision": "accepted"
+    "expected_effect": "safe-gray promotion increases calibration-test completeness by at least 0.05 absolute above the precision_first_v4 baseline while precision remains 1.0, contamination remains zero, and strong-negative admissions remain zero",
+    "before_measurement_ref": "PROGRESS.md#s712"
   },
   "verification": {
     "commands": [
@@ -270,7 +271,7 @@
         "evidence_ref": "scripts/ci/guard-public-repo.sh"
       }
     ],
-    "all_required_commands_ran": true,
+    "all_required_commands_ran": false,
     "claim": "partial"
   },
   "privacy": {
@@ -283,7 +284,7 @@
   },
   "github_ledger": {
     "primary_issue": "#165",
-    "active_prs": ["#168"],
+    "active_prs": [],
     "open_blockers": [
       "#37",
       "#165"
