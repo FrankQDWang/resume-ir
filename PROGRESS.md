@@ -2734,11 +2734,32 @@ guards, local runtime discovery, and PR #9 CI state.
   retains keyed audit but leaves counts, and physical delete cascades. Existing
   documents are not backfilled; admission, OCR wiring, private data, and
   performance work remain out of scope.
+- S708 makes OCR retry exhaustion terminal instead of leaving a stable dead
+  backlog: the third failed attempt atomically moves the job/document/audit to
+  `failed_permanent`/`failed` with `parser_failed`; stale final attempts use the
+  same CAS path, and an explicit fresh OCR-required import may reopen terminal
+  work with a checked monotonic attempt budget. Successful OCR generation CAS,
+  legacy migration, and physical-vector cleanup remain later #159 slices.
+- S706 prepares #159's classifier-admission fixture boundary without changing
+  production behavior. Seven Rust integration-test fixture owners plus the
+  shared synthetic DOCX/PDF now express the frozen multi-signal positive-resume
+  shape while preserving each test's original tokens, assertions, lifecycle,
+  privacy, and parser semantics. The exact 15-path normal budget includes the
+  paired machine-state pins and gate-integrity lock; the same-issue follow-up is
+  restricted to the named production-admission slice and its exact declared
+  paths. No classifier threshold, admission path, private corpus, or product
+  metric changes in this prep slice.
 
 ## Slice Status
 
 | Slice | Status | Evidence | Blockers |
 |---|---|---|---|
+| S712 | #165 third calibration recall rule accepted locally | `precision_first_v4` adds exactly eight calibration-selected Chinese operational-action prefixes while retaining all structural/conflict gates. Frozen calibration n=11,551 moves known-resume candidates 1,844 -> 1,884 and completeness 0.264297 -> 0.270030 (+0.005733), while 4,574 known non-resumes remain at 0 candidates, precision remains 1.0, and contamination remains 0. Focused/full Rust tests, clippy, formatting, rust-analyzer, and privacy/contract gates pass. | Blind holdout remains sealed. Mixed wall is 142.380s versus 110.940s clean-resume wall (+28.340% with 65.56% more files); no performance-improvement claim. 4,720 known resumes still need review. |
+| S711 | #165 second calibration recall rule accepted locally | After reconciling PR #166 machine-state drift, `precision_first_v3` adds exactly eight calibration-selected Chinese experience-line action prefixes while retaining all structural/conflict gates. Frozen calibration n=11,551 moves known-resume candidates 1,698 -> 1,844 and completeness 0.243371 -> 0.264297 (+0.020926), while 4,574 known non-resumes remain at 0 candidates, precision remains 1.0, and contamination remains 0. Public synthetic hard negatives, focused/full Rust tests, clippy, formatting, rust-analyzer, and privacy/contract gates pass. | Blind holdout remains sealed. Mixed wall is 151.342s versus 102.579s clean-resume wall (+47.537% with 65.56% more files); no performance-improvement claim. 4,760 known resumes still need review. |
+| S710 | #165 first calibration recall rule accepted locally | `precision_first_v2` expands line-leading English past-tense and Chinese career-action prefixes while retaining experience-heading, two-heading-family, conflict, and weak-evidence gates. Frozen calibration n=11,551 moves known resumes from 1,008 to 1,698 candidates and completeness 0.144475 -> 0.243371 (+0.098896), while 4,574 known non-resumes remain at 0 candidates, indexed precision remains 1.0, and contamination remains 0. Public synthetic hard negatives, full workspace, clippy, formatting, rust-analyzer, and privacy/contract gates pass. | Blind holdout remains sealed. 4,906 known resumes still need review; OCR/failed are unchanged. No GUI/query/performance/readiness or goal-complete claim. |
+| S709 | #159 OCR attempt publication fenced to claimed fingerprint | OCR workers now use a redacted typed claim carrying the exact attempt and persisted document fingerprint. Cache identity uses that claim, stale publication returns `Superseded`, and current success atomically publishes classification/version/mentions/searchable metadata while completing only the claimed attempt. Public synthetic stale/current witnesses pass, along with focused tests, the full sequential workspace, clippy, formatting, rust-analyzer diagnostics, and required privacy/contract gates. | #37/#159 remain open. The crawler fingerprint is not a full-byte digest; stable-file identity plus strong hashing, multi-writer SQLite/full-text coordination, physical stale snapshot cleanup, vectors, private benchmark, GUI/query/performance, readiness, and completion are not claimed. |
+| S708 | #159 terminal OCR failure/requeue implemented | RED synthetic n=3: after three failed OCR invocations `failed permanent=0`, `ocr queue=1`, `ocr jobs queued=0`. GREEN: attempts 1/2 retain retryable backlog; attempt 3 atomically becomes permanent failed/`parser_failed`; stale-final recovery follows the same path; explicit rerun reopens 3/6 attempts without overflow. Fresh synthetic n=3 reports searchable 2 stable, failed permanent 1, OCR queue/jobs 0/0; focused tests, workspace, clippy, rust-analyzer, and privacy/contract gates pass. | #37/#159 remain open. Precision, contamination, completeness, stage timings, clean-vs-mixed overhead, H-tier/resource budget, private benchmark, successful OCR generation CAS, migration, vectors, GUI/query/performance, readiness, and completion are not claimed. |
+| S706 | #159 classifier-admission synthetic fixtures prepared | Seven Rust test fixture owners and the shared DOCX/PDF now carry the frozen strong positive signals without changing assertions or production code. Focused CLI/daemon/parser tests pass 126/126; the full workspace, formatting, clippy, rust-analyzer diagnostics, exact path budget, and required machine/privacy gates pass. | #37/#159 remain open. Production parse/OCR/rebuild/rerun/legacy admission is not implemented here; no private classification, index precision/contamination/completeness, timing, overhead, scale, GUI, or readiness claim. |
 | S705 | #157 durable classification audit storage implemented | RED: V22/API were absent. GREEN: five states and bounded ordered reasons round-trip through typed atomic upsert/read; aggregate counts exclude soft-deleted records; invalid input/missing parents fail closed; migration constraints, idempotence, and cascades pass. Existing documents remain unclassified. | #37/#157 remain open until hosted acceptance. No import/OCR/index admission, private calibration/holdout, timings, overhead, or product correctness/readiness claim. |
 | S704 | #155 deterministic classifier core implemented | RED: the workspace had no `resume-classifier` package. GREEN: 7 Rust tests run the unchanged 9-sample frozen public fixture through the production API and cover five states, precision-first admission, corroborated rejection, JD/template/weak/metadata independence, bounded reasons, deterministic output, and debug redaction. Aggregate: candidate/non-resume/review/OCR/failed = 3/3/1/1/1; synthetic precision 1.0, contamination 0, completeness 0.75; privacy flags remain false. | #37/#155 remain open until hosted acceptance. This slice does not persist audit state, gate full-text/field/vector admission, reclassify OCR output, read calibration/holdout, measure timings or overhead, or claim product correctness/readiness. |
 | S703 | #152 local freezer implemented and private corpus frozen | Synthetic freezer smoke passes, including Git-worktree exclusion and large-file middle mutation. Final v2 aggregate: 14,439 files, 0-3 depth nearly equal, 11,551 calibration, 2,888 sealed holdout, 7 resume-only and 15 mixed directories, keyed full-content HMAC manifests, aggregate-only public output with all leakage flags false, local permissions 0700/0600. | 20,000 was not reachable after required exclusions, so the authorized maximum was used. Ordinary-source labels are provenance-based; no classifier/index/readiness claim. |
@@ -3329,6 +3350,90 @@ guards, local runtime discovery, and PR #9 CI state.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S711
+
+- Fresh execution truth: main and origin/main are clean at `132dfd6`; PR #166 is merged, #165 and #37 remain open, and only unrelated Dependabot PRs are open.
+- Contract drift: `perf/current-loop-state.json` still reported `pr_opened` and active PR #166. This checkpoint reconciles the merged PR and same-lane continuation before any classifier behavior change.
+- Runtime capability attestation confirms configured private resume, mixed source, and local evidence roots are readable; GitHub read/write and push/merge paths were freshly observed. No private file or blind-holdout entry is read in this reconciliation checkpoint.
+- Fresh v2 calibration-only reason/safe-prefix aggregation selected one gap: 2,264 remaining resume-review rows have the exact experience heading but only 153 have recognized career detail. The top missing Chinese line-leading actions are `提升` 252, `分析` 205, `招聘` 170, `建立` 162, `编写` 160, `测试` 159, `运营` 147, and `组织` 129; the known-non-resume lane matches zero of those eight.
+- Hypothesis: add exactly those eight generalized prefixes in `precision_first_v3` while retaining experience-heading, two-heading-family, conflict, and weak-evidence gates. Acceptance requires known-non-resume candidates 0, precision 1.0, contamination 0, and completeness above 0.243371 on the unchanged calibration; otherwise revert.
+- After production import: known-resume candidate/review/OCR/failed = 1,844/4,760/227/146; known-non-resume = 0/4,556/2/16. Precision stays 1.0, contamination stays 0, and completeness rises 0.243371 -> 0.264297 (+0.020926 absolute). Blind holdout was not read.
+- Combined calibration aggregate n=11,551 is candidate/non-resume/review/OCR/failed = 1,844/0/9,316/229/162, searchable 1,844, content bytes 3,219,569,967, docs/s 76.324, MiB/s 20.288, H2, 256 MiB writer heap, and 3 workers. Mixed wall/stages scan/parse/DB/index/normalize/sectionize are 151.342s / 5.937s / 125.847s / 26.376s / 30.446s / 12.551s / 6.055s.
+- Clean-resume n=6,977 wall is 102.579s, so mixed wall overhead is +47.537% while file count is +65.56%; this is product-correctness evidence, not a performance gain claim. Public output remains aggregate-only with all leakage booleans false.
+- Verification passes classifier 8/8, warnings-denied clippy, formatting, full sequential workspace tests, rust-analyzer diagnostics (existing platform-inactive weak warnings only), and required contract/privacy gates.
+
+### S712
+
+- Fresh execution truth: main and origin/main are clean at `791d235`; PR #167 is merged, #165 and #37 remain open, and only unrelated Dependabot PRs are open.
+- Contract drift: `perf/current-loop-state.json` still reported `pr_opened` with active PR #167. This checkpoint reconciles the merged PR and selects the next bounded same-lane slice before any classifier production change.
+- Fresh unchanged-calibration observation: 4,760 known resumes remain `needs_review`. Eight predeclared Chinese line-leading operational actions occur in 50-76 known-resume review documents each and zero of 4,556 known-non-resume review documents. Blind holdout was not read.
+- Hypothesis: add exactly those eight actions in `precision_first_v4` while retaining experience-heading, two-heading-family, conflict, and weak-evidence gates. Acceptance requires known-non-resume candidates 0, precision 1.0, contamination 0, and completeness above 0.264297; otherwise revert.
+- Privacy: only aggregate counts were observed. No raw path, filename, text, label detail, hash, manifest, query, candidate result, diagnostics package, or token enters git or GitHub.
+- After production import: known-resume candidate/review/OCR/failed = 1,884/4,720/227/146; known-non-resume = 0/4,556/2/16. Precision stays 1.0, contamination stays 0, and completeness rises 0.264297 -> 0.270030 (+0.005733 absolute). Blind holdout was not read.
+- Combined calibration aggregate n=11,551 is candidate/non-resume/review/OCR/failed = 1,884/0/9,276/229/162, searchable 1,884, content bytes 3,219,569,967, docs/s 81.746, MiB/s 21.729, H2, 1,536 MiB private/anonymous budget, 256 MiB writer heap, and 3 workers. Mixed wall/stages scan/parse/DB/index/normalize/sectionize are 142.380s / 3.090s / 118.024s / 22.485s / 30.724s / 12.254s / 5.688s.
+- Clean-resume n=6,977 wall is 110.940s, so mixed wall overhead is +28.340% while file count is +65.56%; this is product-correctness evidence, not a performance gain claim.
+- Verification passes classifier 8/8, warnings-denied clippy, formatting, full sequential workspace tests, rust-analyzer diagnostics (existing platform-inactive weak warnings only), and required contract/privacy gates.
+
+### S710
+
+- Fresh main/GitHub truth: PR #164 is merged at `f3f2fae`; #37/#159 remain open, #165 is the linked calibration-recall issue, and no successor product PR is open.
+- The unchanged frozen `private_calibration` split was materialized locally with hardlinks and imported by known-label lane; blind holdout was not read. Aggregate n=11,551 reports candidate/review/OCR/failed 1,008/5,596/227/146 for 6,977 known resumes and 0/4,556/2/16 for 4,574 known non-resumes.
+- Baseline indexed precision is 1.0, contamination 0, completeness 0.144475. Resume/non-resume wall times are 88.365s/36.233s; H2, 256 MiB writer heap, and 3/1 observed parser workers. Public evidence contains aggregates only; local manifests, paths, filenames, text, labels, hashes, and artifacts remain local.
+- Dominant gap: only 93 known-resume review rows satisfy current career-history detail despite 2,954 experience-heading and 3,758 education-heading matches; the detector recognizes only three English action verbs plus `负责`. The first rule slice expands a small generalized action-prefix set while preserving the existing corroborated heading and conflict gates.
+- After: known-resume candidate/review/OCR/failed = 1,698/4,906/227/146; known-non-resume = 0/4,556/2/16. Indexed precision stays 1.0, contamination stays 0, and completeness rises to 0.243371 (+0.098896 absolute). Resume/non-resume wall becomes 100.042s/34.190s; the higher resume index count raises DB/index work, so this slice makes no performance-improvement claim.
+- `precision_first_v2` adds only line-leading generalized career actions and retains the existing structural corroboration. Public synthetic tests include positive English/Chinese resumes plus job-description/template forms where action words are not direct history bullets.
+- Verification passes classifier 8/8, clippy with warnings denied, formatting, full sequential workspace tests, rust-analyzer diagnostics (existing platform-inactive weak warnings only), and the four required contract/privacy gates. Blind holdout was not read; no local artifact or private detail enters git/GitHub.
+
+### S709
+
+- Fresh truth: #163 is merged and main-reachable at `69596288835ada21c755a749dbe84740947e69cc`; #159 and parent #37 are open, and no successor product PR is open.
+- ACTIVE_GOAL/loop-state still named the merged terminal-failure slice and PR #163, so this checkpoint repairs that contract drift before production edits.
+- Single issue/hypothesis: bind one OCR attempt to its claimed persisted document fingerprint and make stale result publication/completion fail closed; selection evidence is issue comment `4937997963`.
+- Implementation: CLI and daemon OCR workers claim `ClaimedOcrJob`, derive cache identity from its frozen fingerprint, and publish through one metadata transaction that rechecks exact running attempt plus current fingerprint before classification/version/mentions/searchability become visible and the job completes. A lost CAS returns `Superseded` without searchable metadata publication.
+- Public synthetic witness: attempt 1 is made stale by retry and attempt 2 claim; attempt 1 publication returns `Superseded`, then attempt 2 commits one searchable clean-text version. This is a bounded race witness, not a precision/recall benchmark; classification counts, stage timings, clean-vs-mixed overhead, H-tier/resource budget, calibration, and blind holdout are not measured.
+- Verification: meta-store 59/59, import-pipeline 33/33, CLI OCR 13/13, daemon OCR 11/11, full `cargo test --workspace --locked -- --test-threads=1`, focused clippy with warnings denied, formatting, and `rust-analyzer diagnostics .` pass. Rust-analyzer reports only existing platform-inactive weak warnings. Exact-path scope uses 14 declared paths, no scope exception, and remains within the 800 net-line/5-commit budget.
+- Privacy: public synthetic code/contracts only; no private root, resume, path, filename, text, query, result, label, raw hash, manifest, diagnostics, cache, or token was read or emitted.
+- The stored crawler fingerprint is explicitly not a full-byte digest. The abandoned V23 job-generation draft was not shipped because it would have overstated identity strength. Stable-file identity plus strong hashing, multi-writer SQLite/full-text coordination, physical stale snapshot cleanup, private benchmark, vectors, GUI/query/performance, readiness, and completion remain unclaimed.
+
+### S708
+
+- Fresh truth: PR #162 is main-reachable at `a22bb5c2f3121b04e79ffc3f6be47aa4ac32df1e`, its 14 checks passed with no open review, and reconciled #159 is open.
+- The fresh-main branch selects `make_ocr_terminal_failure_recoverable`; its exact-path gate remains strict.
+- Workspace/GitHub/private-root capability checks passed, but this public-synthetic slice read no private file and emitted no private payload.
+- RED left exhausted OCR in a dead backlog. GREEN finalizes attempt 3, retains remediation, fails overflow before mutation, and permits only fresh-classified monotonic requeue; n=3 keeps searchable 2 while failed permanent moves 0 -> 1 and OCR queue 1 -> 0.
+- Focused/workspace/clippy/rust-analyzer/four-gate evidence passes; timings, overhead, quality, H-tier/resource deltas, and private calibration/holdout were not measured.
+
+### S707
+
+- #159 now gates parse/OCR completion after normalization/sectionization; exact rerun/runtime rebuild require current `resume_candidate`, and rejected/OCR-backlog rows clear searchable DB/fulltext visibility.
+- Public synthetic production sample n=5 under both sequential/parallel workers: resume/non-resume/review/OCR/failed=1/1/1/1/1; searchable=1, contamination=0, indexed precision=1.0 for this bounded fixture only. Completeness/timing/overhead/budgets were not evaluated; legacy migration, OCR generation/failure requeue, and vector residue remain open, so #159/readiness stay open. Fresh focused/workspace/clippy/rust-analyzer/fmt/closed-loop/four-gate evidence passed; only public synthetic data was read and all leakage flags remain false.
+
+### S706
+
+- Fresh #159 impact audit found that a default production gate would invalidate
+  weak parser-success synthetic bodies across seven Rust test files and two
+  shared binary fixtures. A one-PR implementation would exceed the normal path
+  budget, so #159 stays the single product issue and uses a bounded fixture-prep
+  PR before its production admission PR; no scope exception or gate bypass is
+  used.
+- The fixture-only semantic migration preserves existing names, field/query
+  tokens, pagination, OCR/cache/lifecycle behavior, assertions, and parser
+  formats. Focused CLI 82/82, daemon 25/25, DOCX 6/6, and PDF 13/13 tests pass;
+  `cargo test --workspace --locked`, fmt, clippy with warnings denied, and
+  rust-analyzer diagnostics pass (existing cfg inactive-code weak warnings only).
+- Gate integrity requires the next same-issue #159 change to transition from
+  fixture prep to the named production-admission slice and makes its Git diff
+  exactly equal that slice's declared allowed paths; an arbitrary same-issue
+  follow-up cannot bypass scope enforcement.
+- Product classification sample size and all five production state counts are
+  zero in this prep slice because no admission classifier is executed. Likewise
+  searchable/OCR backlog/failed/non-resume/review counts, stage timings,
+  clean-vs-mixed overhead, indexed precision, contamination, completeness,
+  H-tier, and resource budget are not applicable and are not claimed.
+- Privacy: public synthetic fixtures only. No private root or file, real path or
+  filename, raw text, label detail, hash, query, candidate result, manifest,
+  diagnostic package, or token was read, emitted, committed, or uploaded.
 
 ### S705
 

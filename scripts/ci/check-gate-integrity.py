@@ -84,6 +84,23 @@ CLASSIFICATION_AUDIT_PATHS = {
     "scripts/ci/check-autonomous-goal.py",
     "scripts/ci/check-gate-integrity.py",
 }
+CLASSIFIER_ADMISSION_FIXTURE_PATHS = {
+    "ACTIVE_GOAL.toml",
+    "PROGRESS.md",
+    "crates/cli/tests/s10_search_filters.rs",
+    "crates/cli/tests/s15_ocr_handoff.rs",
+    "crates/cli/tests/s16_persisted_fields.rs",
+    "crates/cli/tests/s21_import_candidate_assignment.rs",
+    "crates/cli/tests/s9_import_search.rs",
+    "crates/daemon/tests/s4_daemon.rs",
+    "crates/daemon/tests/s50_ocr_worker.rs",
+    "perf/current-loop-state.json",
+    "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
+    "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+    "scripts/ci/check-gate-integrity.py",
+    "tests/fixtures/resumes/synthetic-java-engineer.docx",
+    "tests/fixtures/resumes/synthetic-java-platform.pdf",
+}
 
 
 def fail(message: str) -> None:
@@ -280,6 +297,40 @@ def validate_transition_scope(base_goal: dict, head_goal: dict, merge_base: str,
     if base_issue == head_issue:
         if head_issue == "#143" and changed:
             fail("same-issue #143 changes are forbidden; use the exact #143 -> #140 restoration")
+        if head_issue == "#159" and changed:
+            base_name = base_slice.get("name")
+            head_name = head_slice.get("name")
+            expected_names = (
+                "make_ocr_terminal_failure_recoverable",
+                "bind_ocr_attempt_to_persisted_generation",
+            )
+            if (base_name, head_name) != expected_names:
+                fail(
+                    "same-issue #159 changes require the exact terminal-OCR-lifecycle -> "
+                    "generation-bound-attempt slice transition"
+                )
+            require_bool(
+                head_slice.get("production_code_allowed"),
+                True,
+                "head.scope.active_slice.production_code_allowed",
+            )
+            require_bool(
+                head_slice.get("private_benchmark_allowed"),
+                False,
+                "head.scope.active_slice.private_benchmark_allowed",
+            )
+            require_bool(head_slice.get("scope_exception"), False, "head.scope.active_slice.scope_exception")
+            allowed_paths = head_slice.get("allowed_paths")
+            if not isinstance(allowed_paths, list) or not all(
+                isinstance(path, str) and path for path in allowed_paths
+            ):
+                fail("same-issue #159 production slice requires non-empty allowed_paths")
+            expected_paths = set(allowed_paths)
+            if len(expected_paths) != len(allowed_paths) or changed != expected_paths:
+                fail(
+                    "same-issue #159 path mismatch: expected exact ACTIVE_GOAL allowed_paths "
+                    f"{sorted(expected_paths)!r}, found {sorted(changed)!r}"
+                )
         return
 
     if (base_issue, head_issue) == ("#140", "#143"):
@@ -339,6 +390,32 @@ def validate_transition_scope(base_goal: dict, head_goal: dict, merge_base: str,
             fail(
                 "#155 -> #157 path mismatch: expected "
                 f"{sorted(CLASSIFICATION_AUDIT_PATHS)!r}, found {sorted(changed)!r}"
+            )
+        return
+
+    if (base_issue, head_issue) == ("#157", "#159"):
+        require_bool(head_slice.get("production_code_allowed"), True, "head.scope.active_slice.production_code_allowed")
+        require_bool(head_slice.get("private_benchmark_allowed"), False, "head.scope.active_slice.private_benchmark_allowed")
+        require_bool(head_slice.get("scope_exception"), False, "head.scope.active_slice.scope_exception")
+        if changed != CLASSIFIER_ADMISSION_FIXTURE_PATHS:
+            fail(
+                "#157 -> #159 path mismatch: expected "
+                f"{sorted(CLASSIFIER_ADMISSION_FIXTURE_PATHS)!r}, found {sorted(changed)!r}"
+            )
+        return
+
+    if (base_issue, head_issue) == ("#159", "#165"):
+        require_bool(head_slice.get("production_code_allowed"), True, "head.scope.active_slice.production_code_allowed")
+        require_bool(head_slice.get("private_benchmark_allowed"), True, "head.scope.active_slice.private_benchmark_allowed")
+        require_bool(head_slice.get("scope_exception"), False, "head.scope.active_slice.scope_exception")
+        allowed_paths = head_slice.get("allowed_paths")
+        if not isinstance(allowed_paths, list) or not all(isinstance(path, str) and path for path in allowed_paths):
+            fail("#159 -> #165 requires non-empty allowed_paths")
+        expected_paths = set(allowed_paths)
+        if len(expected_paths) != len(allowed_paths) or changed != expected_paths:
+            fail(
+                "#159 -> #165 path mismatch: expected exact ACTIVE_GOAL allowed_paths "
+                f"{sorted(expected_paths)!r}, found {sorted(changed)!r}"
             )
         return
 

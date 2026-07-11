@@ -3,9 +3,10 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    Document, DocumentId, DocumentStatus, FileExtension, IngestJobFailureKind, IngestJobKind,
-    IngestJobStatus, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus,
-    UnixTimestamp,
+    ClassificationStatus, Document, DocumentClassificationRecord, DocumentId, DocumentStatus,
+    FileExtension, IngestJobFailureKind, IngestJobKind, IngestJobStatus, MetaStore,
+    OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, ReasonCode, ReviewDisposition,
+    UnixTimestamp, CLASSIFIER_EPOCH,
 };
 
 #[test]
@@ -52,14 +53,11 @@ fn import_scanned_pdf_creates_durable_ocr_document_job_without_searchable_text()
     assert_eq!(retryable[0].status, IngestJobStatus::Queued);
 
     let claimed = store
-        .claim_next_job_by_kind(
-            IngestJobKind::OcrDocument,
-            UnixTimestamp::from_unix_seconds(1_900_000_000),
-        )
+        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_900_000_000))
         .unwrap()
         .expect("ocr document job can be claimed after restart");
-    assert_eq!(claimed.kind, IngestJobKind::OcrDocument);
-    assert_eq!(claimed.status, IngestJobStatus::Running);
+    assert_eq!(claimed.job.kind, IngestJobKind::OcrDocument);
+    assert_eq!(claimed.job.status, IngestJobStatus::Running);
 
     let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -147,6 +145,7 @@ fn pause_and_resume_ocr_task_persistently_controls_worker_claims() {
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.81\n'
 printf 'text:\n'
+printf 'SUMMARY\nSynthetic OCR fixture.\nEXPERIENCE\nBuilt systems.\nSKILLS\nSearch.\n'
 printf 'OCRS33PauseResumeToken worker text\n'
 "#,
     );
@@ -246,6 +245,7 @@ input_size="$(wc -c < "$RESUME_IR_OCR_INPUT_PATH" | tr -d ' ')"
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.73\n'
 printf 'text:\n'
+printf 'SUMMARY\nSynthetic OCR fixture.\nEXPERIENCE\nBuilt systems.\nSKILLS\nSearch.\n'
 printf 'OCRS31UniqueToken worker text bytes=%s page=%s\n' "$input_size" "$RESUME_IR_OCR_PAGE_NO"
 "#,
     );
@@ -360,7 +360,7 @@ printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.82\n'
 printf 'text:\n'
 case "$input_bytes:$RESUME_IR_OCR_PAGE_NO" in
-  S89_RENDERED_PAGE_1_BYTES:1) printf 'S89PageOneToken first page text\n' ;;
+  S89_RENDERED_PAGE_1_BYTES:1) printf 'SUMMARY\nSynthetic OCR fixture.\nEXPERIENCE\nBuilt systems.\nSKILLS\nSearch.\nS89PageOneToken first page text\n' ;;
   S89_RENDERED_PAGE_2_BYTES:2) printf 'S89PageTwoToken second page text\n' ;;
   *) printf 'PRIVATE_UNEXPECTED_OCR_INPUT_%s_PAGE_%s\n' "$input_bytes" "$RESUME_IR_OCR_PAGE_NO"; exit 19 ;;
 esac
@@ -632,6 +632,7 @@ fi
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.87\n'
 printf 'text:\n'
+printf 'SUMMARY\nSynthetic OCR fixture.\nEXPERIENCE\nBuilt systems.\nSKILLS\nSearch.\n'
 printf 'S91PdftoppmRenderedToken rendered page text\n'
 "#,
     );
@@ -748,7 +749,7 @@ fn ocr_worker_uses_tesseract_for_rendered_image_before_indexing() {
     let render_command = write_text_png_render_executable(
         "fixture-ocr-worker-tesseract-render",
         &pango_view,
-        "S92 OCR TEST",
+        "SUMMARY\nS92 OCR TEST\nEXPERIENCE\nBuilt systems\nSKILLS\nSearch",
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
@@ -851,7 +852,7 @@ fn ocr_worker_uses_tesseract_for_rendered_image_before_indexing() {
 
 #[cfg(unix)]
 #[test]
-fn ocr_worker_command_crash_records_retryable_failure_without_leaking_outputs() {
+fn ocr_worker_command_crash_becomes_permanent_after_max_attempts_without_leaks() {
     let data_dir = temp_dir("ocr-worker-crash-data");
     let fixture_root = fixture_root();
     let command = write_fixture_executable(
@@ -894,6 +895,7 @@ exit 17
     assert_eq!(jobs.len(), 1);
     assert_eq!(jobs[0].status, IngestJobStatus::FailedRetryable);
     assert_eq!(jobs[0].attempt_count, 1);
+    let job_id = jobs[0].id.clone();
     let cache_key = OcrPageCacheKey::new(
         scanned.content_hash.expect("content hash"),
         1,
@@ -909,6 +911,43 @@ exit 17
     assert_eq!(cache_entry.status(), OcrPageCacheStatus::FailedRetryable);
     assert_eq!(cache_entry.text(), None);
     assert_eq!(cache_entry.error_kind(), Some("EngineFailed"));
+    drop(store);
+
+    for attempt in 2..=3 {
+        let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+            .args([
+                "--data-dir",
+                path_str(&data_dir),
+                "ocr-worker",
+                "--once",
+                "--command",
+                path_str(&command),
+            ])
+            .output()
+            .expect("rerun crashed ocr worker command");
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+
+        let store = MetaStore::open_data_dir(&data_dir).unwrap();
+        store.run_migrations().unwrap();
+        let scanned = scanned_document(&store);
+        let job = store.ingest_job_by_id(&job_id).unwrap().unwrap();
+        let classification = store
+            .document_classification_by_id(&scanned.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.attempt_count, attempt);
+        if attempt < 3 {
+            assert_eq!(job.status, IngestJobStatus::FailedRetryable);
+            assert_eq!(scanned.status, DocumentStatus::OcrRequired);
+            assert_eq!(classification.status, ClassificationStatus::OcrBacklog);
+        } else {
+            assert_eq!(job.status, IngestJobStatus::FailedPermanent);
+            assert_eq!(scanned.status, DocumentStatus::FailedPermanent);
+            assert_eq!(classification.status, ClassificationStatus::Failed);
+            assert_eq!(classification.reason_codes, vec![ReasonCode::ParserFailed]);
+        }
+    }
 
     let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -1083,7 +1122,7 @@ fn ocr_worker_indexes_succeeded_cache_hit_without_invoking_command() {
         .unwrap();
         let cache_entry = OcrPageCacheEntry::succeeded(
             cache_key,
-            "OCRS41CacheHitToken cached OCR text",
+            "SUMMARY\nSynthetic OCR fixture.\nEXPERIENCE\nBuilt systems.\nSKILLS\nSearch.\nOCRS41CacheHitToken cached OCR text",
             0.84,
             "fixture-cache-engine",
             7,
@@ -1390,6 +1429,16 @@ fn seed_ocr_pdf_document_with_bytes(
             created_at: now,
             updated_at: now,
             status: DocumentStatus::OcrRequired,
+        })
+        .unwrap();
+    store
+        .upsert_document_classification(&DocumentClassificationRecord {
+            document_id: doc_id.clone(),
+            status: ClassificationStatus::OcrBacklog,
+            classifier_epoch: CLASSIFIER_EPOCH.to_string(),
+            reason_codes: vec![ReasonCode::OcrRequired],
+            classified_at: now,
+            review_disposition: ReviewDisposition::NotRequired,
         })
         .unwrap();
     store.enqueue_ocr_job_for_document(&doc_id, now).unwrap();

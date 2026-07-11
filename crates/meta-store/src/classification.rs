@@ -1,7 +1,7 @@
 use std::fmt;
 
 pub use resume_classifier::{ClassificationStatus, ReasonCode};
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{
     document_status_to_storage, i64_to_u64, DocumentId, DocumentStatus, MetaStore, MetaStoreError,
@@ -192,6 +192,97 @@ impl MetaStore {
             failed: i64_to_u64(counts[4], "document_classification.count")?,
         })
     }
+}
+
+pub(super) fn upsert_document_classification_in_connection(
+    connection: &Connection,
+    record: &DocumentClassificationRecord,
+) -> Result<()> {
+    validate_record(record)?;
+    connection
+        .execute(
+            "INSERT INTO document_classification (
+                    document_id, status, classifier_epoch, classified_at_seconds,
+                    review_disposition
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(document_id) DO UPDATE SET
+                    status = excluded.status,
+                    classifier_epoch = excluded.classifier_epoch,
+                    classified_at_seconds = excluded.classified_at_seconds,
+                    review_disposition = excluded.review_disposition",
+            params![
+                record.document_id.as_str(),
+                record.status.as_str(),
+                record.classifier_epoch,
+                record.classified_at.as_unix_seconds(),
+                review_disposition_to_storage(record.review_disposition),
+            ],
+        )
+        .map_err(MetaStoreError::storage)?;
+    connection
+        .execute(
+            "DELETE FROM document_classification_reason WHERE document_id = ?1",
+            params![record.document_id.as_str()],
+        )
+        .map_err(MetaStoreError::storage)?;
+    for (ordinal, reason_code) in record.reason_codes.iter().copied().enumerate() {
+        connection
+            .execute(
+                "INSERT INTO document_classification_reason (
+                        document_id, ordinal, reason_code
+                     ) VALUES (?1, ?2, ?3)",
+                params![
+                    record.document_id.as_str(),
+                    ordinal,
+                    reason_code_to_storage(reason_code),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+    }
+    Ok(())
+}
+
+pub(super) fn transition_current_ocr_backlog_to_failed(
+    connection: &Connection,
+    document_id: &DocumentId,
+    classified_at: UnixTimestamp,
+) -> Result<bool> {
+    let changed = connection
+        .execute(
+            "UPDATE document_classification
+             SET status = 'failed', classified_at_seconds = ?1,
+                 review_disposition = 'not_required'
+             WHERE document_id = ?2 AND status = 'ocr_backlog'
+               AND classifier_epoch = ?3
+               AND EXISTS (
+                   SELECT 1 FROM document
+                   WHERE document.id = document_classification.document_id
+                     AND document.is_deleted = 0 AND document.status = 'ocr_required'
+               )",
+            params![
+                classified_at.as_unix_seconds(),
+                document_id.as_str(),
+                resume_classifier::CLASSIFIER_EPOCH,
+            ],
+        )
+        .map_err(MetaStoreError::storage)?;
+    if changed == 0 {
+        return Ok(false);
+    }
+    connection
+        .execute(
+            "DELETE FROM document_classification_reason WHERE document_id = ?1",
+            [document_id.as_str()],
+        )
+        .map_err(MetaStoreError::storage)?;
+    connection
+        .execute(
+            "INSERT INTO document_classification_reason (document_id, ordinal, reason_code)
+             VALUES (?1, 0, 'parser_failed')",
+            [document_id.as_str()],
+        )
+        .map_err(MetaStoreError::storage)?;
+    Ok(true)
 }
 
 fn validate_record(record: &DocumentClassificationRecord) -> Result<()> {

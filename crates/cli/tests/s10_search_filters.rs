@@ -212,17 +212,15 @@ fn filtered_search_prefilters_fields_before_fulltext_top_k_cutoff() {
         .collect::<Vec<_>>()
         .join(" ");
     for index in 0..5 {
-        fs::write(
+        write_resume(
             resume_root.join(format!("decoy-{index}.txt")),
             format!("Candidate Decoy {index}\nSkills: Java\n{noisy_query_text}\n"),
-        )
-        .unwrap();
+        );
     }
-    fs::write(
+    write_resume(
         resume_root.join("target-rust-candidate.txt"),
         "Candidate Target\nSkills: Rust\nneedle\n",
-    )
-    .unwrap();
+    );
 
     import_root(&data_dir, &resume_root);
 
@@ -265,17 +263,15 @@ fn filtered_search_prefilters_name_before_fulltext_top_k_cutoff() {
         .collect::<Vec<_>>()
         .join(" ");
     for index in 0..5 {
-        fs::write(
+        write_resume(
             resume_root.join(format!("name-decoy-{index}.txt")),
             format!("Name: Synthetic Decoy {index}\nSkills: Java\n{noisy_query_text}\n"),
-        )
-        .unwrap();
+        );
     }
-    fs::write(
+    write_resume(
         resume_root.join("name-target.txt"),
         "Name: Synthetic Target\nSkills: Java\nneedle\n",
-    )
-    .unwrap();
+    );
 
     import_root(&data_dir, &resume_root);
 
@@ -318,7 +314,7 @@ fn filtered_search_prefilters_unknown_school_tier_before_fulltext_top_k_cutoff()
         .collect::<Vec<_>>()
         .join(" ");
     for index in 0..5 {
-        fs::write(
+        write_resume(
             resume_root.join(format!("known-tier-decoy-{index}.txt")),
             format!(
                 "\
@@ -329,10 +325,9 @@ Skills: Java
 {noisy_query_text}
 "
             ),
-        )
-        .unwrap();
+        );
     }
-    fs::write(
+    write_resume(
         resume_root.join("unknown-tier-target.txt"),
         "\
 Candidate Unknown Tier Target
@@ -341,8 +336,7 @@ School: Synthetic Regional College
 Skills: Java
 needle
 ",
-    )
-    .unwrap();
+    );
 
     import_root(&data_dir, &resume_root);
 
@@ -385,7 +379,7 @@ fn filtered_search_prefilters_school_before_fulltext_top_k_cutoff() {
         .collect::<Vec<_>>()
         .join(" ");
     for index in 0..5 {
-        fs::write(
+        write_resume(
             resume_root.join(format!("school-decoy-{index}.txt")),
             format!(
                 "\
@@ -396,10 +390,9 @@ Skills: Java
 {noisy_query_text}
 "
             ),
-        )
-        .unwrap();
+        );
     }
-    fs::write(
+    write_resume(
         resume_root.join("school-target.txt"),
         "\
 Candidate School Target
@@ -408,8 +401,7 @@ School: Synthetic Institute of Technology
 Skills: Java
 needle
 ",
-    )
-    .unwrap();
+    );
 
     import_root(&data_dir, &resume_root);
 
@@ -452,7 +444,7 @@ fn filtered_search_prefilters_certificates_before_fulltext_top_k_cutoff() {
         .collect::<Vec<_>>()
         .join(" ");
     for index in 0..5 {
-        fs::write(
+        write_resume(
             resume_root.join(format!("certificate-decoy-{index}.txt")),
             format!(
                 "\
@@ -461,10 +453,9 @@ Skills: Java
 {noisy_query_text}
 "
             ),
-        )
-        .unwrap();
+        );
     }
-    fs::write(
+    write_resume(
         resume_root.join("certificate-target.txt"),
         "\
 Candidate Certificate Target
@@ -473,8 +464,7 @@ PMP
 Skills: Java
 needle
 ",
-    )
-    .unwrap();
+    );
 
     import_root(&data_dir, &resume_root);
 
@@ -517,7 +507,7 @@ fn filtered_search_prefilters_date_range_before_fulltext_top_k_cutoff() {
         .collect::<Vec<_>>()
         .join(" ");
     for index in 0..5 {
-        fs::write(
+        write_resume(
             resume_root.join(format!("date-range-decoy-{index}.txt")),
             format!(
                 "\
@@ -529,10 +519,9 @@ Skills: Java
 {noisy_query_text}
 "
             ),
-        )
-        .unwrap();
+        );
     }
-    fs::write(
+    write_resume(
         resume_root.join("date-range-target.txt"),
         "\
 Candidate Date Range Target
@@ -542,8 +531,7 @@ Synthetic Payments Inc.
 Skills: Java
 needle
 ",
-    )
-    .unwrap();
+    );
 
     import_root(&data_dir, &resume_root);
 
@@ -586,7 +574,7 @@ fn filtered_search_accepts_chinese_present_date_range_without_query_or_path_leak
         .collect::<Vec<_>>()
         .join(" ");
     for index in 0..4 {
-        fs::write(
+        write_resume(
             resume_root.join(format!("present-date-decoy-{index}.txt")),
             format!(
                 "\
@@ -598,10 +586,9 @@ Skills: Java
 {noisy_query_text}
 "
             ),
-        )
-        .unwrap();
+        );
     }
-    fs::write(
+    write_resume(
         resume_root.join("present-date-target.txt"),
         "\
 Candidate Present Date Target
@@ -611,8 +598,7 @@ Experience
 Skills: Java
 needle
 ",
-    )
-    .unwrap();
+    );
 
     import_root(&data_dir, &resume_root);
 
@@ -658,7 +644,7 @@ fn filtered_search_accepts_chinese_year_month_date_range_without_query_or_path_l
         .collect::<Vec<_>>()
         .join(" ");
     for index in 0..4 {
-        fs::write(
+        write_resume(
             resume_root.join(format!("year-month-date-decoy-{index}.txt")),
             format!(
                 "\
@@ -670,10 +656,9 @@ Skills: Java
 {noisy_query_text}
 "
             ),
-        )
-        .unwrap();
+        );
     }
-    fs::write(
+    write_resume(
         resume_root.join("year-month-date-target.txt"),
         "\
 Candidate Year Month Date Target
@@ -683,8 +668,7 @@ Experience
 Skills: Java
 needle
 ",
-    )
-    .unwrap();
+    );
 
     import_root(&data_dir, &resume_root);
 
@@ -730,7 +714,7 @@ fn filtered_search_prefilters_company_and_title_before_fulltext_top_k_cutoff() {
         .collect::<Vec<_>>()
         .join(" ");
     for index in 0..5 {
-        fs::write(
+        write_resume(
             resume_root.join(format!("role-decoy-{index}.txt")),
             format!(
                 "\
@@ -742,10 +726,9 @@ Skills: Java
 {noisy_query_text}
 "
             ),
-        )
-        .unwrap();
+        );
     }
-    fs::write(
+    write_resume(
         resume_root.join("role-target.txt"),
         "\
 Candidate Role Target
@@ -755,8 +738,7 @@ Senior Backend Engineer
 Skills: Java
 needle
 ",
-    )
-    .unwrap();
+    );
 
     import_root(&data_dir, &resume_root);
 
@@ -801,7 +783,7 @@ fn filtered_search_prefilters_location_before_fulltext_top_k_cutoff() {
         .collect::<Vec<_>>()
         .join(" ");
     for index in 0..5 {
-        fs::write(
+        write_resume(
             resume_root.join(format!("location-decoy-{index}.txt")),
             format!(
                 "\
@@ -811,10 +793,9 @@ Skills: Java
 {noisy_query_text}
 "
             ),
-        )
-        .unwrap();
+        );
     }
-    fs::write(
+    write_resume(
         resume_root.join("location-target.txt"),
         "\
 Candidate Location Target
@@ -822,8 +803,7 @@ Location: Shanghai, China
 Skills: Java
 needle
 ",
-    )
-    .unwrap();
+    );
 
     import_root(&data_dir, &resume_root);
 
@@ -866,7 +846,7 @@ fn filtered_search_prefilters_contact_hash_before_fulltext_top_k_cutoff_without_
         .collect::<Vec<_>>()
         .join(" ");
     for index in 0..5 {
-        fs::write(
+        write_resume(
             resume_root.join(format!("contact-decoy-{index}.txt")),
             format!(
                 "\
@@ -877,10 +857,9 @@ Skills: Java
 {noisy_query_text}
 "
             ),
-        )
-        .unwrap();
+        );
     }
-    fs::write(
+    write_resume(
         resume_root.join("contact-target.txt"),
         "\
 Candidate Contact Target
@@ -889,8 +868,7 @@ Phone: +1 212-555-0199
 Skills: Java
 needle
 ",
-    )
-    .unwrap();
+    );
 
     import_root(&data_dir, &resume_root);
 
@@ -935,6 +913,17 @@ fn import_fixtures(data_dir: &Path) {
         .join("../..")
         .join("tests/fixtures/resumes");
     import_root(data_dir, &fixture_root);
+}
+
+fn write_resume(path: impl AsRef<Path>, body: impl AsRef<str>) {
+    fs::write(
+        path,
+        format!(
+            "SUMMARY\nSynthetic search profile.\nEXPERIENCE\nBuilt deterministic local search systems.\n{}\n",
+            body.as_ref().trim_end()
+        ),
+    )
+    .unwrap();
 }
 
 fn import_root(data_dir: &Path, root: &Path) {

@@ -1327,7 +1327,8 @@ fn parse_tesseract_tsv(
     let output = String::from_utf8(stdout.to_vec())
         .map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))?
         .replace("\r\n", "\n");
-    let mut words = Vec::new();
+    let mut text = String::new();
+    let mut previous_line = None;
     let mut word_boxes = Vec::new();
     let mut confidence_sum = 0.0_f32;
     let mut confidence_count = 0_usize;
@@ -1342,6 +1343,16 @@ fn parse_tesseract_tsv(
         if word.is_empty() {
             continue;
         }
+        let line_key = [columns[1], columns[2], columns[3], columns[4]];
+        if !text.is_empty() {
+            text.push(if previous_line == Some(line_key) {
+                ' '
+            } else {
+                '\n'
+            });
+        }
+        text.push_str(word);
+        previous_line = Some(line_key);
         let confidence = columns[10]
             .parse::<f32>()
             .map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))?;
@@ -1362,14 +1373,11 @@ fn parse_tesseract_tsv(
             OcrWordBox::new(word, left, top, width, height, normalized_confidence)
                 .map_err(|_| OcrError::new(OcrErrorKind::EngineFailed))?,
         );
-        words.push(word.to_string());
     }
 
-    let text = if words.is_empty() {
-        String::new()
-    } else {
-        format!("{}\n", words.join(" "))
-    };
+    if !text.is_empty() {
+        text.push('\n');
+    }
     let confidence = if confidence_count == 0 {
         0.0
     } else {

@@ -475,7 +475,7 @@ fn foreground_import_scheduler_rescans_completed_root_without_path_leak() {
     let fixture_root = temp_dir("daemon-import-rescan-root");
     fs::write(
         fixture_root.join("first.txt"),
-        b"Synthetic first resume\nSkills: Rust",
+        b"SUMMARY\nSynthetic first resume.\nEXPERIENCE\nBuilt Rust search services.\nSKILLS\nRust",
     )
     .unwrap();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -488,7 +488,7 @@ fn foreground_import_scheduler_rescans_completed_root_without_path_leak() {
     run_import_worker_once(&data_dir);
     fs::write(
         fixture_root.join("second.txt"),
-        b"Synthetic second resume\nSkills: Kubernetes",
+        b"SUMMARY\nSynthetic second resume.\nEXPERIENCE\nBuilt Kubernetes search services.\nSKILLS\nKubernetes",
     )
     .unwrap();
 
@@ -740,7 +740,7 @@ fn foreground_import_watcher_requeues_completed_root_after_file_change_without_p
     let watched_file = watched_root.join("candidate.txt");
     fs::write(
         &watched_file,
-        "Initial watcher candidate with Rust backend experience.",
+        "SUMMARY\nInitial watcher candidate.\nEXPERIENCE\nBuilt Rust backend services.\nSKILLS\nRust",
     )
     .unwrap();
     let canonical_watched_root = fs::canonicalize(&watched_root).unwrap();
@@ -778,14 +778,14 @@ fn foreground_import_watcher_requeues_completed_root_after_file_change_without_p
         fs::write(
             &watched_file,
             format!(
-                "WatcherUpdatedToken refreshed candidate attempt {attempt} with Rust backend experience."
+                "SUMMARY\nWatcherUpdatedToken refreshed candidate attempt {attempt}.\nEXPERIENCE\nBuilt Rust backend services for the watcher.\nSKILLS\nRust"
             ),
         )
         .unwrap();
         fs::write(
             watched_root.join(format!("candidate-extra-{attempt}.txt")),
             format!(
-                "WatcherUpdatedToken extra candidate attempt {attempt} with Rust backend experience."
+                "SUMMARY\nWatcherUpdatedToken extra candidate attempt {attempt}.\nEXPERIENCE\nBuilt Rust backend services for the watcher.\nSKILLS\nRust"
             ),
         )
         .unwrap();
@@ -904,7 +904,7 @@ fn active_kill_fixture_root(file_count: usize) -> PathBuf {
         fs::write(
             root.join(format!("candidate-{index:04}.txt")),
             format!(
-                "Synthetic resume {index}\nSkills: Rust Java Kubernetes ActiveKillToken\nExperience: {}\n",
+                "SUMMARY\nSynthetic resume {index}.\nEXPERIENCE\nBuilt ActiveKillToken local-first search services. {}\nSKILLS\nRust Java Kubernetes\n",
                 "local-first search ".repeat(48)
             ),
         )

@@ -264,7 +264,13 @@ fn pdf_resume_body(
     let mut content = String::from("BT\n/F1 12 Tf\n72 720 Td\n");
     for line in [
         heading.to_string(),
+        "SUMMARY".to_string(),
+        "Synthetic software profile.".to_string(),
+        "EXPERIENCE".to_string(),
+        "Built deterministic local search services.".to_string(),
         java_line.to_string(),
+        "SKILLS".to_string(),
+        "Java Rust Search".to_string(),
         email
             .map(|value| format!("Email: {value}"))
             .unwrap_or_default(),

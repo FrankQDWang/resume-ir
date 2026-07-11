@@ -1,7 +1,7 @@
 use std::fmt;
 
-/// Stable epoch for the initial deterministic precision-first ruleset.
-pub const CLASSIFIER_EPOCH: &str = "precision_first_v1";
+/// Stable epoch for the deterministic precision-first ruleset.
+pub const CLASSIFIER_EPOCH: &str = "precision_first_v4";
 
 /// Hard cap for reason codes returned for one document.
 pub const MAX_REASON_CODES: usize = 8;
@@ -355,7 +355,44 @@ fn starts_with_history_action(line: &str) -> bool {
         .split(|character: char| !character.is_alphanumeric())
         .next()
         .unwrap_or_default();
-    matches!(first_token, "built" | "developed" | "implemented") || normalized.starts_with("负责")
+    matches!(
+        first_token,
+        "achieved"
+            | "analyzed"
+            | "architected"
+            | "automated"
+            | "built"
+            | "collaborated"
+            | "conducted"
+            | "coordinated"
+            | "created"
+            | "delivered"
+            | "deployed"
+            | "designed"
+            | "developed"
+            | "engineered"
+            | "established"
+            | "implemented"
+            | "improved"
+            | "increased"
+            | "launched"
+            | "led"
+            | "maintained"
+            | "managed"
+            | "operated"
+            | "optimized"
+            | "owned"
+            | "reduced"
+            | "resolved"
+            | "streamlined"
+            | "supported"
+    ) || [
+        "主导", "参与", "协助", "完成", "搭建", "推动", "构建", "管理", "设计", "负责", "开发",
+        "实现", "优化", "维护", "制定", "提升", "分析", "招聘", "建立", "编写", "测试", "运营",
+        "组织", "销售", "监控", "执行", "担任", "获得", "降低", "协调", "培训",
+    ]
+    .iter()
+    .any(|prefix| normalized.starts_with(prefix))
 }
 
 fn is_section_boundary(line: &str, heading: &str) -> bool {
@@ -448,10 +485,53 @@ mod tests {
             "SUMMARY\nWe seek engineers who have built systems.\nEXPERIENCE\nFive years required.",
             "SUMMARY\nTemplate.\nEXPERIENCE\nDescribe projects you developed.\nSKILLS\nAdd keywords.",
             "SUMMARY\nExample profile.\nEXPERIENCE\nSample entry: Built systems.",
+            "SUMMARY\nWe are hiring.\nEXPERIENCE\nCandidates who managed teams are preferred.",
+            "SUMMARY\nTemplate.\nEXPERIENCE\nExample entry: Led delivery programs.",
+            "个人简介\n招聘说明\n工作经历\n候选人需要具备提升效率经验。",
+            "个人简介\n模板\n工作经历\n示例：组织跨团队协作。",
+            "招聘说明\n工作经历\n执行销售计划并培训团队。",
+            "个人简介\n模板\n工作经历\n担任示例角色。\n发票\n税额与应付金额。",
             "An experienced and skillful educational writer.",
         ] {
             let result = classify(ClassifierInput::NormalizedText(text));
             assert_eq!(result.status(), ClassificationStatus::NeedsReview);
+        }
+    }
+
+    #[test]
+    fn generalized_career_action_prefixes_require_corroborated_resume_structure() {
+        for line in [
+            "提升交付效率。",
+            "分析业务数据。",
+            "招聘并培养团队。",
+            "建立质量体系。",
+            "编写自动化工具。",
+            "测试核心服务。",
+            "运营本地平台。",
+            "组织跨团队协作。",
+            "销售企业软件。",
+            "监控服务质量。",
+            "执行交付计划。",
+            "担任项目负责人。",
+            "获得年度表彰。",
+            "降低运营成本。",
+            "协调跨部门资源。",
+            "培训新成员。",
+        ] {
+            assert!(starts_with_history_action(line));
+            let text = format!("工作经历\n{line}\n教育背景\n示例大学");
+            assert_eq!(
+                classify(ClassifierInput::NormalizedText(&text)).status(),
+                ClassificationStatus::ResumeCandidate
+            );
+        }
+        for text in [
+            "SUMMARY\nPlatform engineer\nWORK EXPERIENCE\nLed distributed search delivery.\nEDUCATION\nSynthetic University",
+            "个人简介\n平台工程师\n工作经历\n主导分布式检索交付。\n教育背景\n示例大学",
+        ] {
+            let result = classify(ClassifierInput::NormalizedText(text));
+            assert_eq!(result.status(), ClassificationStatus::ResumeCandidate);
+            assert!(result.reason_codes().contains(&ReasonCode::CareerHistoryDetail));
         }
     }
 

@@ -5,6 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{EntityType, MetaStore};
 
+const CLASSIFIER_RESUME_PREFIX: &str =
+    "SUMMARY\nSynthetic fixture profile.\nEXPERIENCE\nBuilt systems.\n";
+
 #[test]
 fn filtered_search_uses_persisted_field_mentions_without_reextracting_clean_text() {
     let data_dir = temp_dir("persisted-fields-data");
@@ -77,7 +80,7 @@ fn filtered_search_uses_persisted_field_mentions_without_reextracting_clean_text
 fn import_persists_sectioned_certificate_alias_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-certificate-alias-data");
     let resume_root = temp_dir("persisted-certificate-alias-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-cert-candidate.txt"),
         "\
 Synthetic Cert Candidate
@@ -152,7 +155,7 @@ Skills: Java
 fn import_persists_broader_certificate_aliases_and_filters_without_output_leaks() {
     let data_dir = temp_dir("persisted-broader-certificate-data");
     let resume_root = temp_dir("persisted-broader-certificate-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-broader-cert-target.txt"),
         "\
 Synthetic Broader Cert Target
@@ -167,7 +170,7 @@ Skills: needle Java
 ",
     )
     .unwrap();
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-broader-cert-decoy.txt"),
         "\
 Synthetic Broader Cert Decoy
@@ -277,7 +280,7 @@ Skills: needle Java
 fn import_persists_labeled_location_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-location-data");
     let resume_root = temp_dir("persisted-location-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-location-candidate.txt"),
         "\
 Synthetic Location Candidate
@@ -350,7 +353,7 @@ Skills: Java
 fn import_persists_broader_location_aliases_and_filters_without_output_leaks() {
     let data_dir = temp_dir("persisted-location-alias-data");
     let resume_root = temp_dir("persisted-location-alias-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-location-alias-target.txt"),
         "\
 Synthetic Location Alias Target
@@ -363,7 +366,7 @@ Skills: needle Rust
 ",
     )
     .unwrap();
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-location-alias-decoy.txt"),
         "\
 Synthetic Location Alias Decoy
@@ -468,7 +471,7 @@ Skills: needle Rust
 fn import_persists_labeled_address_city_locations_without_street_evidence_leaks() {
     let data_dir = temp_dir("persisted-address-location-data");
     let resume_root = temp_dir("persisted-address-location-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-address-location-target.txt"),
         "\
 Synthetic Address Location Target
@@ -480,7 +483,7 @@ Skills: needle Rust
 ",
     )
     .unwrap();
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-address-location-decoy.txt"),
         "\
 Synthetic Address Location Decoy
@@ -582,7 +585,7 @@ Skills: needle Rust
 fn import_persists_case_insensitive_and_district_address_city_locations() {
     let data_dir = temp_dir("persisted-address-city-alias-data");
     let resume_root = temp_dir("persisted-address-city-alias-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-address-city-alias-target.txt"),
         "\
 Synthetic Address City Alias Target
@@ -595,7 +598,7 @@ Skills: needle Rust
 ",
     )
     .unwrap();
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-address-city-alias-decoy.txt"),
         "\
 Synthetic Address City Alias Decoy
@@ -699,7 +702,7 @@ Skills: needle Rust
 fn import_persists_sectioned_skill_alias_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-skill-alias-data");
     let resume_root = temp_dir("persisted-skill-alias-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-skill-candidate.txt"),
         "\
 Synthetic Skill Candidate
@@ -785,7 +788,7 @@ Java island migration
 fn import_persists_broader_skill_aliases_and_filters_without_output_leaks() {
     let data_dir = temp_dir("persisted-broader-skill-alias-data");
     let resume_root = temp_dir("persisted-broader-skill-alias-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-broader-skill-target.txt"),
         "\
 Synthetic Broader Skill Target
@@ -800,7 +803,7 @@ needle delivery platform
 ",
     )
     .unwrap();
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-broader-skill-decoy.txt"),
         "\
 Synthetic Broader Skill Decoy
@@ -917,7 +920,7 @@ needle delivery platform
 fn import_persists_labeled_school_and_degree_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-labeled-education-data");
     let resume_root = temp_dir("persisted-labeled-education-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-labeled-education-candidate.txt"),
         "\
 Synthetic Education Candidate
@@ -1013,7 +1016,7 @@ Skills: Java
 fn import_persists_broader_degree_aliases_and_filters_without_output_leaks() {
     let data_dir = temp_dir("persisted-degree-alias-data");
     let resume_root = temp_dir("persisted-degree-alias-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-degree-alias-target.txt"),
         "\
 Synthetic Degree Alias Target
@@ -1025,7 +1028,7 @@ Skills: needle Rust
 ",
     )
     .unwrap();
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-degree-alias-decoy.txt"),
         "\
 Synthetic Degree Alias Decoy
@@ -1126,7 +1129,7 @@ Skills: needle Rust
 fn import_persists_labeled_major_mentions_and_filters_search_without_output_leaks() {
     let data_dir = temp_dir("persisted-major-data");
     let resume_root = temp_dir("persisted-major-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-major-candidate.txt"),
         "\
 Synthetic Major Candidate
@@ -1142,7 +1145,7 @@ needle
 ",
     )
     .unwrap();
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-major-decoy.txt"),
         "\
 Synthetic Major Decoy
@@ -1248,7 +1251,7 @@ needle needle needle needle needle needle needle needle needle needle
 fn import_persists_broader_major_aliases_without_output_leaks() {
     let data_dir = temp_dir("persisted-broader-major-data");
     let resume_root = temp_dir("persisted-broader-major-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-broader-major-candidate.txt"),
         "\
 Synthetic Broader Major Candidate
@@ -1264,7 +1267,7 @@ needle
 ",
     )
     .unwrap();
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-broader-major-decoy.txt"),
         "\
 Synthetic Broader Major Decoy
@@ -1374,7 +1377,7 @@ needle needle needle needle needle
 fn import_persists_chinese_degree_aliases_and_filters_without_output_leaks() {
     let data_dir = temp_dir("persisted-chinese-degree-filter-data");
     let resume_root = temp_dir("persisted-chinese-degree-filter-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-chinese-degree-target.txt"),
         "\
 Synthetic Chinese Degree Target
@@ -1386,7 +1389,7 @@ Skills: needle Rust
 ",
     )
     .unwrap();
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-chinese-degree-decoy.txt"),
         "\
 Synthetic Chinese Degree Decoy
@@ -1487,7 +1490,7 @@ Skills: needle Rust
 fn import_persists_school_tier_mentions_and_filters_search_without_output_leaks() {
     let data_dir = temp_dir("persisted-school-tier-data");
     let resume_root = temp_dir("persisted-school-tier-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-school-tier-candidate.txt"),
         "\
 Synthetic School Tier Candidate
@@ -1607,7 +1610,7 @@ Skills: Java
 fn import_persists_broader_school_tier_aliases_and_filters_without_output_leaks() {
     let data_dir = temp_dir("persisted-school-tier-alias-data");
     let resume_root = temp_dir("persisted-school-tier-alias-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-school-tier-alias-target.txt"),
         "\
 Synthetic School Tier Alias Target
@@ -1620,7 +1623,7 @@ Skills: needle Java
 ",
     )
     .unwrap();
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-school-tier-alias-decoy.txt"),
         "\
 Synthetic School Tier Alias Decoy
@@ -1721,7 +1724,7 @@ Skills: needle Java
 fn import_does_not_persist_degree_aliases_from_skill_lines() {
     let data_dir = temp_dir("persisted-degree-context-data");
     let resume_root = temp_dir("persisted-degree-context-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-degree-context-candidate.txt"),
         "\
 Synthetic Degree Context Candidate
@@ -1806,7 +1809,7 @@ Bachelor of Science in Computer Science
 fn import_persists_labeled_company_and_title_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-labeled-role-data");
     let resume_root = temp_dir("persisted-labeled-role-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-labeled-role-candidate.txt"),
         "\
 Synthetic Labeled Role Candidate
@@ -1901,7 +1904,7 @@ Skills: Java
 fn import_persists_broader_company_suffixes_and_filters_without_output_leaks() {
     let data_dir = temp_dir("persisted-company-suffix-data");
     let resume_root = temp_dir("persisted-company-suffix-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-company-suffix-target.txt"),
         "\
 Synthetic Suffix Target
@@ -1916,7 +1919,7 @@ Skills: needle Rust
 ",
     )
     .unwrap();
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-company-suffix-decoy.txt"),
         "\
 Synthetic Suffix Decoy
@@ -2029,7 +2032,7 @@ Skills: needle Rust
 fn import_persists_broader_title_alias_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-title-alias-data");
     let resume_root = temp_dir("persisted-title-alias-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-title-alias-candidate.txt"),
         "\
 Synthetic Title Alias Candidate
@@ -2121,7 +2124,7 @@ Skills: Java
 fn import_persists_expanded_production_alias_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-expanded-alias-data");
     let resume_root = temp_dir("persisted-expanded-alias-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-expanded-alias-candidate.txt"),
         "\
 Synthetic Expanded Alias Candidate
@@ -2263,7 +2266,7 @@ Title: Business Analyst
 fn import_persists_chinese_date_range_and_years_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-chinese-date-data");
     let resume_root = temp_dir("persisted-chinese-date-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-chinese-date-candidate.txt"),
         "\
 Synthetic Date Candidate
@@ -2342,7 +2345,7 @@ Synthetic Payments Inc.
 fn import_persists_present_date_range_and_years_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-present-date-data");
     let resume_root = temp_dir("persisted-present-date-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-present-date-candidate.txt"),
         "\
 Synthetic Present Date Candidate
@@ -2431,7 +2434,7 @@ Skills: Java
 fn import_persists_chinese_mobile_mentions_without_output_leaks() {
     let data_dir = temp_dir("persisted-chinese-mobile-data");
     let resume_root = temp_dir("persisted-chinese-mobile-resumes");
-    fs::write(
+    write_resume_fixture(
         resume_root.join("synthetic-mobile-candidate.txt"),
         "\
 Synthetic Mobile Candidate
@@ -2511,6 +2514,10 @@ Skills: Java
 
     remove_dir(&data_dir);
     remove_dir(&resume_root);
+}
+
+fn write_resume_fixture(path: impl AsRef<Path>, body: impl AsRef<str>) -> std::io::Result<()> {
+    fs::write(path, format!("{CLASSIFIER_RESUME_PREFIX}{}", body.as_ref()))
 }
 
 fn import_fixtures(data_dir: &Path) {
