@@ -1,7 +1,7 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
+  "workflow_state": "pr_opened",
   "experiment_state": "accepted",
   "evidence_lane": "w1_private",
   "contract_pins": {
@@ -197,7 +197,8 @@
     {"from":"slice_selected","to":"branch_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/165#issuecomment-4941229535"},
     {"from":"branch_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s710"},
     {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s710"},
-    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s710"}
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s710"},
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/166"}
   ],
   "hypothesis": {
     "id": "issue-165-career-action-prefixes-v1",
@@ -269,7 +270,7 @@
   },
   "github_ledger": {
     "primary_issue": "#165",
-    "active_prs": [],
+    "active_prs": ["#166"],
     "open_blockers": [
       "#37",
       "#165"
