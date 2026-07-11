@@ -5,14 +5,14 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "7a898b51b7113ac71ca32fdced301aace400ec76d89c440889191fd19c4ab46f",
+    "active_goal_sha256": "9316b656904071603424ecff8864573a366ae0817f7834a046f9832813f62a7f",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "a4ef03702eed923b8e0a318b146f915d3f7496ac"
   },
-  "current_slice": "#178 classifier-enabled frozen mixed import profile",
+  "current_slice": "#180 H2 parse-worker sensitivity on frozen mixed calibration",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -240,20 +240,25 @@
     {"from":"verification_active","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/176#issuecomment-4944916461"},
     {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/176#issuecomment-4944916461"},
     {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/176#issuecomment-4944916461"},
-    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/178"}
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/178"},
+    {"from":"slice_selected","to":"verification_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/178#issuecomment-4945070084"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/178#issuecomment-4945070084"},
+    {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/178#issuecomment-4945070084"},
+    {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/178#issuecomment-4945070084"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/180"}
   ],
   "hypothesis": {
-    "id": "issue-178-classifier-enabled-frozen-mixed-profile-v1",
+    "id": "issue-180-h2-parse-worker-sensitivity-v1",
     "acceptance_cell": "private_mixed_profile",
-    "expected_effect": "one unchanged classifier-enabled frozen mixed import preserves precision 1.0, contamination 0, and zero hard-veto admissions while producing enough bounded stage and resource evidence to select exactly one measured bottleneck",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/178"
+    "expected_effect": "an isolated four-worker override improves parse-worker or full-import-ready wall by at least 10 percent versus the three-worker H2 default without semantic, stage, or resource regression; otherwise retain three workers and reject the hypothesis",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/180"
   },
   "verification": {
     "commands": [
       {
-        "command": "#176 production adapter private-calibration acceptance evidence recorded and issue closed",
+        "command": "#178 classifier-enabled frozen mixed profile evidence recorded and issue closed",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/176#issuecomment-4944916461"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/178#issuecomment-4945070084"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
@@ -288,11 +293,11 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#178",
+    "primary_issue": "#180",
     "active_prs": [],
     "open_blockers": [
       "#37",
-      "#178"
+      "#180"
     ]
   }
 }
