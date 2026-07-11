@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-170-to-173",
-  "from_issue": "#170",
-  "to_issue": "#173",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/170#issuecomment-4943117918",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/173",
-  "base_active_goal_sha256": "f8ea6e34585534894f24eb8db974f534fe81db34d125349ed2b8c8b2bf0d3788",
+  "transition_id": "issue-173-to-176",
+  "from_issue": "#173",
+  "to_issue": "#176",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/173#issuecomment-4944066716",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/176",
+  "base_active_goal_sha256": "8522ba7d8c91bbfb976018ba520ff71cfd8ab73fff47644d09717382c4ade883",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
@@ -13,7 +13,7 @@
     "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
     "perf/fixtures/valid/synthetic-smoke-baseline-report.json"
   ],
-  "bootstrap_gate_change": true,
+  "bootstrap_gate_change": false,
   "production_code_changed": false,
   "blind_holdout_reread": false,
   "gate_weakening": false,
