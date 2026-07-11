@@ -5,14 +5,14 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "7399e3234118e04a4655d8a4be873f1d69ba678c6caf60fd47eb40800d6d4b67",
+    "active_goal_sha256": "b618a6e3e961592f91a70b082c2e37f3101985c8d8f14761c47714b5d738760d",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "a4ef03702eed923b8e0a318b146f915d3f7496ac"
   },
-  "current_slice": "#184 parse result-queue capacity at fixed H2 workers",
+  "current_slice": "#186 import progress DB write interval",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -255,20 +255,25 @@
     {"from":"implementation_active","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/182#issuecomment-4946954081"},
     {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/182#issuecomment-4946954081"},
     {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/182#issuecomment-4946954081"},
-    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/184"}
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/184"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/184"},
+    {"from":"implementation_active","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/184#issuecomment-4947059369"},
+    {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/184#issuecomment-4947059369"},
+    {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/184#issuecomment-4947059369"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/186"}
   ],
   "hypothesis": {
-    "id": "issue-184-fixed-worker-parse-result-queue-capacity-v1",
+    "id": "issue-186-import-progress-db-write-interval-v1",
     "acceptance_cell": "private_mixed_profile",
-    "expected_effect": "doubling only parse result-queue capacity at the fixed three-worker H2 policy improves full-import-ready and parse-worker wall by at least 5 percent without work-queue, stage, semantic, or resource regression",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/184"
+    "expected_effect": "reducing periodic import progress publications from every 32 files to every 128 files improves DB stage by at least 10 percent and full-import-ready wall by at least 5 percent without progress, milestone, semantic, stage, or resource regression",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/186"
   },
   "verification": {
     "commands": [
       {
-        "command": "#182 fixed-worker parse work-queue capacity hypothesis failed and the code change was rolled back",
+        "command": "#184 fixed-worker parse result-queue capacity hypothesis failed and the code change was rolled back",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/182#issuecomment-4946954081"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/184#issuecomment-4947059369"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
@@ -303,11 +308,11 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#184",
+    "primary_issue": "#186",
     "active_prs": [],
     "open_blockers": [
       "#37",
-      "#184"
+      "#186"
     ]
   }
 }
