@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-186-to-188",
-  "from_issue": "#186",
-  "to_issue": "#188",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/186#issuecomment-4947163830",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/188",
-  "base_active_goal_sha256": "b618a6e3e961592f91a70b082c2e37f3101985c8d8f14761c47714b5d738760d",
+  "transition_id": "issue-188-to-190",
+  "from_issue": "#188",
+  "to_issue": "#190",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/188#issuecomment-4949699965",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/190",
+  "base_active_goal_sha256": "70a77c996c1e2bbb4d603f061ad19d054b3a379f5d7e0bfa77e4c1f23a45dade",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
