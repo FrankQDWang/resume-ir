@@ -1,18 +1,18 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
-  "experiment_state": "perf_measured",
+  "workflow_state": "slice_selected",
+  "experiment_state": "hypothesis_registered",
   "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "bda96853cdb175c7621ad13de99947287c0e472094847497172a69c6d9ab458f",
+    "active_goal_sha256": "beb0ab7ba5cb2cf99ada1bc7f5cd7fa4ce1f9629067640512de7aaf615b29728",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "a4ef03702eed923b8e0a318b146f915d3f7496ac"
   },
-  "current_slice": "#193 remove per-window allocation from linear promotion inference",
+  "current_slice": "#197 fuse linear-promotion lowercase and whitespace normalization",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -277,40 +277,23 @@
     {"from":"slice_selected","to":"branch_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/193"},
     {"from":"branch_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s716"},
     {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s716"},
-    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s716"}
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s716"},
+    {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/193#issuecomment-4949972295"},
+    {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/193#issuecomment-4949972295"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/197"}
   ],
   "hypothesis": {
-    "id": "issue-193-linear-promotion-allocation-reduction-v1",
+    "id": "issue-197-linear-promotion-normalization-fusion-v1",
     "acceptance_cell": "private_mixed_profile",
-    "expected_effect": "borrowed character-slice lookup and stable lexical feature IDs remove one n-gram String allocation per 3-5-character input window while preserving exact model scores, decisions, and frozen private product counts",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/190#issuecomment-4949821467"
+    "expected_effect": "one-pass Unicode lowercase and whitespace collapse removes intermediate normalization allocations while preserving the exact normalized character vector, model scores, decisions, and frozen private product counts",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/193#issuecomment-4949972295"
   },
   "verification": {
     "commands": [
       {
-        "command": "nine interleaved local-only release microprobe pairs preserved output and reduced median linear-promotion inference elapsed time by 88.356%",
+        "command": "#193 merged with unchanged frozen product counts and reduced median isolated linear-promotion inference elapsed time by 88.356%",
         "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s716"
-      },
-      {
-        "command": "frozen private calibration import preserved candidate/non_resume/review/OCR/failed/searchable = 6070/0/5090/229/162/6070",
-        "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s716"
-      },
-      {
-        "command": "cargo test -p resume-classifier --locked && cargo test -p import-pipeline --locked",
-        "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s716"
-      },
-      {
-        "command": "cargo clippy -p resume-classifier -p import-pipeline -p resume-cli --all-targets --locked -- -D warnings",
-        "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s716"
-      },
-      {
-        "command": "rust-analyzer diagnostics .",
-        "exit_code": 0,
-        "evidence_ref": "PROGRESS.md#s716"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/193#issuecomment-4949972295"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
@@ -333,8 +316,8 @@
         "evidence_ref": "scripts/ci/guard-public-repo.sh"
       }
     ],
-    "all_required_commands_ran": true,
-    "claim": "pass"
+    "all_required_commands_ran": false,
+    "claim": "partial"
   },
   "privacy": {
     "contains_raw_resume_text": false,
@@ -345,11 +328,11 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#193",
+    "primary_issue": "#197",
     "active_prs": [],
     "open_blockers": [
       "#37",
-      "#193"
+      "#197"
     ]
   }
 }
