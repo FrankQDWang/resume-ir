@@ -3352,6 +3352,44 @@ guards, local runtime discovery, and PR #9 CI state.
 
 ## Command Log
 
+### S716
+
+- #190's separate macOS `sample` diagnostic preserved the frozen calibration
+  counts and identified linear-promotion inference as a candidate CPU hot loop,
+  but its target-binary stack share was diagnostic rather than wall-time
+  attribution. #193 therefore tested one bounded hypothesis only: eliminate the
+  `String` allocation performed for every 3-5-character window without changing
+  model or admission semantics.
+- `LinearModel` now assigns feature IDs in the prior lexical key order, uses
+  borrowed `&[char]` lookup for input windows, and accumulates detected weights
+  by those stable IDs. ID order preserves the previous floating-point summation
+  order; artifact schema, feature contract, normalization, 32,768-character
+  bound, threshold, epoch, and fail-closed behavior are unchanged.
+- A focused reference-equivalence test retains the old string-allocating scorer
+  independently and matches decisions across bounded, repeated, Chinese,
+  English, mixed-language, positive, and negative synthetic cases. Existing
+  classifier and import-pipeline suites pass unchanged.
+- A local-only release microprobe used synthetic 32,768-character input with the
+  unchanged owner-only model. After two warm-ups per variant, nine interleaved
+  control/intervention pairs of 200 inference calls preserved identical output.
+  Median elapsed time moved 2,602,549,000 ns -> 302,510,875 ns (-88.356%);
+  every pair improved, with the least favorable pair at -88.187%. The temporary
+  probe source and raw local outputs were removed and are not public evidence.
+- An initial exploratory whole-root pairing was rejected before interpretation
+  because its 14,439-file cardinality did not match the frozen 11,551-file
+  calibration split and all pairs were host-invalid. No timing or product claim
+  carries forward from it. The corrected frozen-calibration import preserved
+  candidate/non-resume/review/OCR/failed/searchable =
+  6,070/0/5,090/229/162/6,070; blind holdout remained sealed. Thus indexed
+  precision 1.0, contamination 0, and accepted completeness do not regress.
+- Focused verification passes `cargo fmt --check`, `cargo test -p
+  resume-classifier --locked` (13/13), `cargo test -p import-pipeline --locked`
+  (33/33), warnings-denied focused clippy, and rust-analyzer diagnostics with
+  only existing platform-inactive weak warnings. Required contract/privacy
+  gates pass after the active-slice pins are updated. This is classifier-local
+  CPU/allocation work only; it makes no accepted full-import timing, GUI,
+  query-path, release, scale, or goal-complete claim.
+
 ### S715
 
 - #188 was reconciled and closed without a performance conclusion after fresh
