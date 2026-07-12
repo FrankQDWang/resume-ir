@@ -5,14 +5,14 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "42631f444b3c976e92240455768728e849ce3bb6cc3f52f5dfcf79b4181d97ba",
+    "active_goal_sha256": "bda96853cdb175c7621ad13de99947287c0e472094847497172a69c6d9ab458f",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "a4ef03702eed923b8e0a318b146f915d3f7496ac"
   },
-  "current_slice": "#190 tool-backed mixed-import variance protocol",
+  "current_slice": "#193 remove per-window allocation from linear promotion inference",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -269,20 +269,24 @@
     {"from":"slice_selected","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/188#issuecomment-4949699965"},
     {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/188#issuecomment-4949699965"},
     {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/188#issuecomment-4949699965"},
-    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/190"}
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/190"},
+    {"from":"slice_selected","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/190#issuecomment-4949821467"},
+    {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/190#issuecomment-4949821467"},
+    {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/190#issuecomment-4949821467"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/193"}
   ],
   "hypothesis": {
-    "id": "issue-190-tool-backed-mixed-import-variance-protocol-v1",
+    "id": "issue-193-linear-promotion-allocation-reduction-v1",
     "acceptance_cell": "private_mixed_profile",
-    "expected_effect": "a bounded local runner restores goal document 15 with at least 30 seconds of excluded warm-up, at least five formal repeats, per-run resource evidence, continuous host and target telemetry, thermal and memory-pressure evidence, median plus worst-valid reporting, and no one-shot process-CPU veto",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/190"
+    "expected_effect": "borrowed character-slice lookup and stable lexical feature IDs remove one n-gram String allocation per 3-5-character input window while preserving exact model scores, decisions, and frozen private product counts",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/190#issuecomment-4949821467"
   },
   "verification": {
     "commands": [
       {
-        "command": "#188 three-repeat variance protocol was closed without a performance conclusion because it conflicted with goal document 15",
+        "command": "#190 separate sample diagnostic preserved frozen product counts and ranked LinearPromotionPolicy::apply as the leading target-binary top-of-stack symbol",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/188#issuecomment-4949699965"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/190#issuecomment-4949821467"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
@@ -317,11 +321,11 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#190",
+    "primary_issue": "#193",
     "active_prs": [],
     "open_blockers": [
       "#37",
-      "#190"
+      "#193"
     ]
   }
 }
