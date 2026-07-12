@@ -3352,6 +3352,36 @@ guards, local runtime discovery, and PR #9 CI state.
 
 ## Command Log
 
+### S715
+
+- #188 was reconciled and closed without a performance conclusion after fresh
+  research proved its three-repeat and one-shot process-CPU veto conflicted
+  with authoritative goal document 15. No #188 warm-up or 1/3 timing sample
+  carries forward.
+- #190 adds one local-only macOS variance runner. The frozen protocol requires
+  a release binary, at least 30 seconds of excluded warm-up, at least five
+  formal repeats with unique data directories, complete reporting of invalid
+  runs, median plus worst-valid selection, and a separate profiler lane.
+- Each run captures `/usr/bin/time -l`, one-second `top` target/host samples,
+  VM pageout/swapout deltas, `memory_pressure -Q`, and direct macOS
+  `NSProcessInfo.thermalState` plus `vm.memory_pressure` polling without sudo.
+  A single process spike no longer vetoes a run; only sustained external CPU
+  overlap, serious/critical thermal state, warning/critical memory pressure,
+  pageout/swapout growth, telemetry failure, command failure, or semantic
+  drift invalidates it.
+- The public result is bounded aggregate-only JSON with no process names,
+  commands, paths, filenames, raw samples, resume/query text, candidates, or
+  tokens. Raw telemetry and private inputs remain in the configured ignored
+  local evidence directory; blind holdout evaluation is explicitly false.
+- Focused TDD passes 10/10 pure protocol/parser/validity/statistics/privacy tests.
+  A real local synthetic harness smoke completed one excluded warm-up and five
+  formal runs with telemetry lifecycle, unique runs, disk aggregation, explicit
+  validity accounting, and privacy assertions passing; ordinary host load was
+  reported rather than used as a preflight veto. This slice changes
+  no import, classifier, benchmark membership, model, threshold, worker/queue,
+  DB/index, admission, GUI, or query semantics and makes no performance,
+  readiness, release, scale, or goal-complete claim.
+
 ### S714
 
 - #173 now has a production-callable local linear promotion adapter at the existing post-normalize/sectionize, pre-index admission boundary. Deterministic v4 direct candidates, non-resume outcomes, corroborated-negative/conflict vetoes, OCR backlog, and failures remain authoritative; only conflict-free safe-gray `needs_review` rows can be promoted.
