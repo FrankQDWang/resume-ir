@@ -12,33 +12,25 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#188"
-name = "mixed_import_same_policy_variance_envelope"
+issue = "#190"
+name = "tool_backed_mixed_import_variance_protocol"
 contract_change_allowed = true
-production_code_allowed = true
+production_code_allowed = false
 private_benchmark_allowed = true
 configured_private_roots_required = true
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = true
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = false
-scope_exception_reason = "No exception is used. #182, #184, and #186 all preserved product semantics but their one-shot performance movements were confounded by material same-policy and warm-cache variance; every production experiment was rolled back with zero repository diff. This bounded no-code slice runs one warm-up plus exactly three measured repeats of unchanged main to establish whether full-import, parse, DB, index, and RSS variance is low enough for further causal optimization claims."
+scope_exception_reason = "No exception is used. #188 was closed without a performance conclusion because its three-repeat and one-shot process-CPU veto conflicted with authoritative goal document 15. This bounded local-tooling slice restores the frozen macOS method with a release binary, at least 30 seconds of excluded warm-up, at least five formal repeats, median plus worst-valid reporting, continuous bounded host and target telemetry, thermal and memory-pressure evidence, and separate diagnostic profiling. Import, classifier, benchmark membership, model, threshold, workers, queues, DB/index, and admission semantics remain fixed."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
-  "Cargo.lock",
   "PROGRESS.md",
-  "crates/cli/src/main.rs",
-  "crates/cli/tests/s173_classifier_model.rs",
-  "crates/import-pipeline/Cargo.toml",
-  "crates/import-pipeline/src/classification.rs",
-  "crates/import-pipeline/src/lib.rs",
-  "crates/resume-classifier/Cargo.toml",
-  "crates/resume-classifier/src/lib.rs",
-  "crates/resume-classifier/src/linear_promotion.rs",
-  "crates/resume-classifier/src/linear_promotion_tests.rs",
   "perf/current-loop-state.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+  "scripts/local/run-mixed-import-variance.py",
+  "scripts/local/tests/test_run_mixed_import_variance.py",
 ]
 
 [contracts]
