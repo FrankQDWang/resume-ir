@@ -38,6 +38,89 @@ fn synthetic_model() -> ArtifactModel {
     }
 }
 
+fn equivalence_model() -> ArtifactModel {
+    ArtifactModel {
+        schema: ARTIFACT_SCHEMA.to_string(),
+        classifier_epoch: CLASSIFIER_EPOCH.to_string(),
+        feature_contract: FEATURE_CONTRACT.to_string(),
+        max_input_chars: 96,
+        threshold: 0.51,
+        intercept: -0.35,
+        features: vec![
+            ArtifactFeature {
+                ngram: "pla".to_string(),
+                idf: 1.2,
+                coefficient: 0.8,
+            },
+            ArtifactFeature {
+                ngram: "工程师".to_string(),
+                idf: 1.7,
+                coefficient: 1.1,
+            },
+            ArtifactFeature {
+                ngram: "rust".to_string(),
+                idf: 1.4,
+                coefficient: 0.6,
+            },
+            ArtifactFeature {
+                ngram: "__sec".to_string(),
+                idf: 0.9,
+                coefficient: 0.4,
+            },
+            ArtifactFeature {
+                ngram: "发票与".to_string(),
+                idf: 1.3,
+                coefficient: -1.4,
+            },
+        ],
+    }
+}
+
+fn reference_predict(
+    artifact: &ArtifactModel,
+    normalized_text: &str,
+    sections: &[PromotionSection],
+    reasons: &[ReasonCode],
+) -> bool {
+    let feature_text =
+        bounded_feature_text(normalized_text, sections, reasons, artifact.max_input_chars);
+    let normalized = collapse_whitespace(&feature_text.to_lowercase());
+    let chars = normalized.chars().collect::<Vec<_>>();
+    let features = artifact
+        .features
+        .iter()
+        .map(|feature| (feature.ngram.as_str(), (feature.idf, feature.coefficient)))
+        .collect::<BTreeMap<_, _>>();
+    let mut values = BTreeMap::<String, f64>::new();
+    for n in 3..=5 {
+        for window in chars.windows(n) {
+            let ngram = window.iter().collect::<String>();
+            if features.contains_key(ngram.as_str()) {
+                *values.entry(ngram).or_default() += 1.0;
+            }
+        }
+    }
+    let mut norm_squared = 0.0;
+    for (ngram, count) in &mut values {
+        let (idf, _) = features[ngram.as_str()];
+        *count = (1.0 + count.ln()) * idf;
+        norm_squared += *count * *count;
+    }
+    let norm = norm_squared.sqrt();
+    let score = values
+        .into_iter()
+        .fold(artifact.intercept, |score, (ngram, value)| {
+            let coefficient = features[ngram.as_str()].1;
+            score
+                + if norm > 0.0 {
+                    value / norm * coefficient
+                } else {
+                    0.0
+                }
+        });
+    logistic_probability(score) >= artifact.threshold
+}
+
 #[test]
 fn valid_synthetic_artifact_promotes_only_safe_gray() {
     let artifact = write_artifact(synthetic_model());
@@ -74,6 +157,34 @@ fn inference_is_bounded_and_repeatable() {
     let first = policy.apply(&text, &[PromotionSection::Profile], baseline.clone());
     let second = policy.apply(&text, &[PromotionSection::Profile], baseline);
     assert_eq!(first, second);
+}
+
+#[test]
+fn borrowed_ngram_lookup_matches_string_allocating_reference() {
+    let artifact = equivalence_model();
+    let model = LinearModel::from_artifact(equivalence_model(), "test-epoch".to_string()).unwrap();
+    let cases = [
+        (
+            "Platform engineer using Rust",
+            vec![PromotionSection::Profile],
+        ),
+        ("平台工程师 Rust Rust", vec![PromotionSection::Experience]),
+        ("发票与付款说明", vec![PromotionSection::OtherChunk]),
+        ("mixed 工程师 and platform", vec![PromotionSection::Skill]),
+        ("x", vec![]),
+        (
+            &"Pla 工程师 Rust 发票 ".repeat(20),
+            vec![PromotionSection::Profile],
+        ),
+    ];
+    let reasons = [ReasonCode::ProfileHeading, ReasonCode::InvoiceHeading];
+    for (text, sections) in cases {
+        assert_eq!(
+            model.predict(text, &sections, &reasons),
+            reference_predict(&artifact, text, &sections, &reasons),
+            "reference drift for synthetic case"
+        );
+    }
 }
 
 #[test]

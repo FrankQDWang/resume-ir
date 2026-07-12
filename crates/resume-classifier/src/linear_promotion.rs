@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::fs;
 use std::path::Path;
@@ -133,7 +133,8 @@ struct LinearModel {
     max_input_chars: usize,
     threshold: f64,
     intercept: f64,
-    features: BTreeMap<String, (f64, f64)>,
+    feature_ids: HashMap<Vec<char>, usize>,
+    feature_weights: Vec<(f64, f64)>,
 }
 
 impl LinearModel {
@@ -160,18 +161,28 @@ impl LinearModel {
                 || feature.idf <= 0.0
                 || !feature.coefficient.is_finite()
                 || features
-                    .insert(feature.ngram, (feature.idf, feature.coefficient))
+                    .insert(
+                        feature.ngram.chars().collect::<Vec<_>>(),
+                        (feature.idf, feature.coefficient),
+                    )
                     .is_some()
             {
                 return None;
             }
+        }
+        let mut feature_ids = HashMap::with_capacity(features.len());
+        let mut feature_weights = Vec::with_capacity(features.len());
+        for (feature_id, (ngram, weights)) in features.into_iter().enumerate() {
+            feature_ids.insert(ngram, feature_id);
+            feature_weights.push(weights);
         }
         Some(Self {
             classifier_epoch,
             max_input_chars: artifact.max_input_chars,
             threshold: artifact.threshold,
             intercept: artifact.intercept,
-            features,
+            feature_ids,
+            feature_weights,
         })
     }
 
@@ -185,21 +196,20 @@ impl LinearModel {
             bounded_feature_text(normalized_text, sections, reasons, self.max_input_chars);
         let normalized = collapse_whitespace(&feature_text.to_lowercase());
         let chars = normalized.chars().collect::<Vec<_>>();
-        let mut values = BTreeMap::<String, f64>::new();
+        let mut values = BTreeMap::<usize, f64>::new();
         for n in 3..=5 {
             if chars.len() < n {
                 continue;
             }
             for window in chars.windows(n) {
-                let ngram = window.iter().collect::<String>();
-                if self.features.contains_key(ngram.as_str()) {
-                    *values.entry(ngram).or_default() += 1.0;
+                if let Some(feature_id) = self.feature_ids.get(window) {
+                    *values.entry(*feature_id).or_default() += 1.0;
                 }
             }
         }
         let mut norm_squared = 0.0;
-        for (ngram, count) in &mut values {
-            let Some((idf, _)) = self.features.get(ngram.as_str()) else {
+        for (feature_id, count) in &mut values {
+            let Some((idf, _)) = self.feature_weights.get(*feature_id) else {
                 return false;
             };
             *count = (1.0 + count.ln()) * idf;
@@ -208,10 +218,10 @@ impl LinearModel {
         let norm = norm_squared.sqrt();
         let score = values
             .into_iter()
-            .fold(self.intercept, |score, (ngram, value)| {
+            .fold(self.intercept, |score, (feature_id, value)| {
                 let coefficient = self
-                    .features
-                    .get(ngram.as_str())
+                    .feature_weights
+                    .get(feature_id)
                     .map_or(0.0, |(_, coefficient)| *coefficient);
                 score
                     + if norm > 0.0 {
