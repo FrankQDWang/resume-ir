@@ -5,14 +5,14 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "beb0ab7ba5cb2cf99ada1bc7f5cd7fa4ce1f9629067640512de7aaf615b29728",
+    "active_goal_sha256": "c0971aee734f8ac4c4731879abb8690bcea0f09099c143a86f54ebb312c3e47a",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "a4ef03702eed923b8e0a318b146f915d3f7496ac"
   },
-  "current_slice": "#197 fuse linear-promotion lowercase and whitespace normalization",
+  "current_slice": "#199 stream post-lowercase whitespace collapse into feature chars",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -280,20 +280,24 @@
     {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s716"},
     {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/193#issuecomment-4949972295"},
     {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/193#issuecomment-4949972295"},
-    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/197"}
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/197"},
+    {"from":"slice_selected","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/197#issuecomment-4950011008"},
+    {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/197#issuecomment-4950011008"},
+    {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/197#issuecomment-4950011008"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/199"}
   ],
   "hypothesis": {
-    "id": "issue-197-linear-promotion-normalization-fusion-v1",
+    "id": "issue-199-post-lowercase-whitespace-stream-v1",
     "acceptance_cell": "private_mixed_profile",
-    "expected_effect": "one-pass Unicode lowercase and whitespace collapse removes intermediate normalization allocations while preserving the exact normalized character vector, model scores, decisions, and frozen private product counts",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/193#issuecomment-4949972295"
+    "expected_effect": "streaming post-lowercase whitespace collapse removes the temporary word vector and joined String while preserving whole-string contextual Unicode lowercase, the exact normalized character vector, model scores, decisions, and frozen private product counts",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/197#issuecomment-4950011008"
   },
   "verification": {
     "commands": [
       {
-        "command": "#193 merged with unchanged frozen product counts and reduced median isolated linear-promotion inference elapsed time by 88.356%",
+        "command": "#197 exact-equivalence test rejected per-character lowercase on contextual Greek final sigma and the change was fully reverted before private execution",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/193#issuecomment-4949972295"
+        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/197#issuecomment-4950011008"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
@@ -328,11 +332,11 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#197",
+    "primary_issue": "#199",
     "active_prs": [],
     "open_blockers": [
       "#37",
-      "#197"
+      "#199"
     ]
   }
 }

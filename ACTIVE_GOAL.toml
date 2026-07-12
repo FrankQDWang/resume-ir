@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#197"
-name = "linear_promotion_normalization_fusion"
+issue = "#199"
+name = "linear_promotion_post_lowercase_whitespace_stream"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = true
@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = true
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = false
-scope_exception_reason = "No exception is used. #193 removed per-window n-gram String allocation with unchanged frozen product counts and an 88.356% median isolated inference improvement. This bounded successor fuses Unicode lowercase and whitespace collapse directly into the final character vector while preserving exact normalized characters, artifact and feature contracts, lexical score accumulation order, threshold, classifier epoch, admission states, benchmark membership, parser/OCR behavior, workers, queues, DB/index, query semantics, and privacy boundary."
+scope_exception_reason = "No exception is used. #197 rejected per-character lowercase because it changed contextual Greek final sigma and was fully reverted before private execution. This bounded successor keeps whole-string contextual Unicode lowercase unchanged and streams only post-lowercase whitespace collapse into the final character vector, preserving exact normalized characters, artifact and feature contracts, lexical score accumulation order, threshold, classifier epoch, admission states, benchmark membership, parser/OCR behavior, workers, queues, DB/index, query semantics, and privacy boundary."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
