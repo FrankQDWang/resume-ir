@@ -7,15 +7,16 @@ use benchmark_runner::{
     evaluate_vector_quality_gate_json, run_dedupe_quality_jsonl, run_field_quality_jsonl,
     run_private_business_dedupe_quality_jsonl, run_private_business_field_quality_jsonl,
     run_private_business_vector_quality_jsonl, run_private_ocr_throughput_benchmark,
-    run_private_query_benchmark, run_synthetic_ocr_throughput_benchmark,
-    run_synthetic_query_benchmark, run_vector_quality_jsonl, BenchmarkError, BenchmarkGateConfig,
-    BenchmarkGateError, DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
+    run_private_query_benchmark, run_resident_public_query_load,
+    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark,
+    run_vector_quality_jsonl, BenchmarkError, BenchmarkGateConfig, BenchmarkGateError,
+    DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
     PrivateDedupeQualityManifestDigests, PrivateFieldQualityManifestDigests,
     PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests, PrivateOcrThroughputConfig,
     PrivatePdfRenderEngine, PrivateQueryBenchmarkCommand, PrivateQueryBenchmarkConfig,
     PrivateQueryCorpusSummary, PrivateQueryManifestDigests, PrivateVectorQualityManifestDigests,
-    SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig, SyntheticOcrBenchmarkEngine,
-    VectorQualityConfig, VectorQualityGateConfig,
+    ResidentQueryLoadConfig, SyntheticBenchmarkConfig, SyntheticOcrBenchmarkConfig,
+    SyntheticOcrBenchmarkEngine, VectorQualityConfig, VectorQualityGateConfig,
 };
 
 fn main() {
@@ -28,6 +29,7 @@ fn main() {
 fn run() -> Result<(), CliError> {
     match parse_command(std::env::args().skip(1))? {
         CliCommand::SyntheticQuery(args) => run_synthetic_query(args),
+        CliCommand::ResidentQueryLoad(args) => run_resident_query_load(args),
         CliCommand::PrivateQuery(args) => run_private_query(args),
         CliCommand::Gate(args) => run_gate(args),
         CliCommand::FieldQuality(args) => run_field_quality(args),
@@ -42,6 +44,23 @@ fn run() -> Result<(), CliError> {
     }
 }
 
+fn run_resident_query_load(args: ResidentQueryLoadArgs) -> Result<(), CliError> {
+    let config = if args.smoke {
+        ResidentQueryLoadConfig::smoke()
+    } else {
+        ResidentQueryLoadConfig::production()
+    };
+    let report = run_resident_public_query_load(
+        &args.data_dir,
+        &args.daemon_command,
+        &args.embedding_command,
+        config,
+    )
+    .map_err(CliError::benchmark)?;
+    println!("{}", report.to_redacted_json());
+    Ok(())
+}
+
 fn run_synthetic_query(args: SyntheticQueryArgs) -> Result<(), CliError> {
     let index_dir = args.index_dir.unwrap_or_else(|| {
         args.data_dir
@@ -52,6 +71,7 @@ fn run_synthetic_query(args: SyntheticQueryArgs) -> Result<(), CliError> {
     let _ = fs::remove_dir_all(&index_dir);
     fs::create_dir_all(&index_dir)
         .map_err(|_| CliError::user("unable to prepare benchmark scratch directory"))?;
+    set_owner_only_dir(&index_dir)?;
 
     let config = SyntheticBenchmarkConfig::new(args.documents, args.queries)
         .map_err(CliError::benchmark)?
@@ -64,6 +84,23 @@ fn run_synthetic_query(args: SyntheticQueryArgs) -> Result<(), CliError> {
             .map_err(|_| CliError::user("unable to clean benchmark scratch directory"))?;
     }
     println!("{}", report.to_redacted_json());
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_owner_only_dir(path: &std::path::Path) -> Result<(), CliError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = fs::metadata(path)
+        .map_err(|_| CliError::user("unable to inspect benchmark scratch directory"))?
+        .permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(path, permissions)
+        .map_err(|_| CliError::user("unable to protect benchmark scratch directory"))
+}
+
+#[cfg(not(unix))]
+fn set_owner_only_dir(_path: &std::path::Path) -> Result<(), CliError> {
     Ok(())
 }
 
@@ -339,6 +376,9 @@ where
 {
     let args = args.into_iter().collect::<Vec<_>>();
     match args.first().map(String::as_str) {
+        Some("resident-query-load") => {
+            parse_resident_query_load_args(&args[1..]).map(CliCommand::ResidentQueryLoad)
+        }
         Some("field-quality") => parse_field_quality_args(&args[1..]).map(CliCommand::FieldQuality),
         Some("field-gate") => parse_field_gate_args(&args[1..]).map(CliCommand::FieldGate),
         Some("dedupe-quality") => {
@@ -360,6 +400,43 @@ where
         Some("gate") => parse_gate_args(&args[1..]).map(CliCommand::Gate),
         _ => parse_synthetic_query_args(&args).map(CliCommand::SyntheticQuery),
     }
+}
+
+fn parse_resident_query_load_args(args: &[String]) -> Result<ResidentQueryLoadArgs, CliError> {
+    let mut data_dir = None;
+    let mut daemon_command = None;
+    let mut embedding_command = None;
+    let mut smoke = false;
+    let mut index = 0_usize;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--data-dir" => {
+                data_dir = args.get(index + 1).map(PathBuf::from);
+                index += 2;
+            }
+            "--daemon-command" => {
+                daemon_command = args.get(index + 1).map(PathBuf::from);
+                index += 2;
+            }
+            "--embedding-command" => {
+                embedding_command = args.get(index + 1).map(PathBuf::from);
+                index += 2;
+            }
+            "--smoke" => {
+                smoke = true;
+                index += 1;
+            }
+            "--json" => index += 1,
+            "--help" | "-h" => return Err(CliError::user(usage())),
+            _ => return Err(CliError::usage()),
+        }
+    }
+    Ok(ResidentQueryLoadArgs {
+        data_dir: data_dir.ok_or_else(CliError::usage)?,
+        daemon_command: daemon_command.ok_or_else(CliError::usage)?,
+        embedding_command: embedding_command.ok_or_else(CliError::usage)?,
+        smoke,
+    })
 }
 
 fn parse_synthetic_query_args(args: &[String]) -> Result<SyntheticQueryArgs, CliError> {
@@ -1325,12 +1402,13 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark private-query --query-set <jsonl> --resident-command <path> [--resident-command-arg <arg> ...] --corpus-summary <json> --dataset-manifest-sha256 <sha256> --model-manifest-sha256 <sha256> [--allow-partial-hot-index-for-smoke] [--synthetic-smoke-evidence] [--max-queries <n>] [--request-sample-count <n>] [--top-k <n>] [--timeout-ms <n>] [--index-size-bytes <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--allow-smoke-confidence] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--max-run-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--current-stage-baseline] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256> --model-manifest-sha256 <sha256>] [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
+    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark resident-query-load --data-dir <empty-path> --daemon-command <path> --embedding-command <path> [--smoke] [--json] OR resume-benchmark private-query --query-set <jsonl> --resident-command <path> [--resident-command-arg <arg> ...] --corpus-summary <json> --dataset-manifest-sha256 <sha256> --model-manifest-sha256 <sha256> [--allow-partial-hot-index-for-smoke] [--synthetic-smoke-evidence] [--max-queries <n>] [--request-sample-count <n>] [--top-k <n>] [--timeout-ms <n>] [--index-size-bytes <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--allow-smoke-confidence] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--max-run-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--current-stage-baseline] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256> --model-manifest-sha256 <sha256>] [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
 enum CliCommand {
     SyntheticQuery(SyntheticQueryArgs),
+    ResidentQueryLoad(ResidentQueryLoadArgs),
     PrivateQuery(PrivateQueryArgs),
     Gate(GateArgs),
     FieldQuality(FieldQualityArgs),
@@ -1342,6 +1420,14 @@ enum CliCommand {
     OcrGate(OcrGateArgs),
     VectorQuality(VectorQualityArgs),
     VectorGate(VectorGateArgs),
+}
+
+#[derive(Clone, Debug)]
+struct ResidentQueryLoadArgs {
+    data_dir: PathBuf,
+    daemon_command: PathBuf,
+    embedding_command: PathBuf,
+    smoke: bool,
 }
 
 #[derive(Clone, Debug)]

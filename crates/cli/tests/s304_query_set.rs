@@ -1,3 +1,5 @@
+mod support;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -8,13 +10,10 @@ use benchmark_runner::{
     PrivateQueryCorpusSummary, PrivateQueryManifestDigests,
 };
 use core_domain::{QuerySetSampleShape, QuerySetSourceKind, QUERY_SET_BUCKETS};
-use index_fulltext::{FullTextIndex, IndexDocument, IndexSection};
-use meta_store::{
-    Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId, EntityType,
-    FileExtension, MetaStore, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
-};
+use meta_store::EntityType;
 use privacy::ContactHasher;
 use sha2::{Digest, Sha256};
+use support::{assert_import_succeeded, import_existing_root};
 
 #[test]
 fn benchmark_query_set_rejects_removed_draft_source_path() {
@@ -2577,62 +2576,22 @@ fn seed_searchable_document_with_mentions_and_text(
     mentions: &[SeedMention],
     text: &str,
 ) {
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
-    let document_id = DocumentId::from_non_secret_parts(&["s304", file_name]);
-    let version_id = ResumeVersionId::from_non_secret_parts(&["s304", file_name, "version"]);
-    let now = UnixTimestamp::from_unix_seconds(1_800_304_000);
-    store
-        .upsert_document(&Document {
-            id: document_id.clone(),
-            source_uri: format!("synthetic://{file_name}"),
-            normalized_path: format!("synthetic/{file_name}"),
-            file_name: file_name.to_string(),
-            extension: FileExtension::Pdf,
-            byte_size: 256,
-            mtime: now,
-            content_hash: Some(format!("{file_name}-hash")),
-            text_hash: None,
-            is_deleted: false,
-            created_at: now,
-            updated_at: now,
-            status: DocumentStatus::Searchable,
-        })
-        .unwrap();
-    store
-        .upsert_resume_version(&ResumeVersion {
-            id: version_id.clone(),
-            document_id: document_id.clone(),
-            candidate_id: None,
-            parse_version: "parser-v1".to_string(),
-            schema_version: "schema-v1".to_string(),
-            language_set: vec!["en".to_string()],
-            page_count: Some(1),
-            raw_text: Some(text.to_string()),
-            clean_text: Some(text.to_string()),
-            quality_score: Some(0.8),
-            visibility: ResumeVisibility::Searchable,
-        })
-        .unwrap();
-    let mentions = mentions
-        .iter()
-        .enumerate()
-        .map(|(index, seed)| EntityMention {
-            id: EntityMentionId::from_non_secret_parts(&["s304", file_name, &index.to_string()]),
-            resume_version_id: version_id.clone(),
-            section_id: None,
-            entity_type: seed.entity_type.clone(),
-            raw_value: seed.raw_value.to_string(),
-            normalized_value: Some(seed.normalized_value.to_string()),
-            span_start: Some(index),
-            span_end: Some(index + seed.raw_value.len()),
-            confidence: seed.confidence,
-            extractor: "s304-synthetic".to_string(),
-        })
-        .collect::<Vec<_>>();
-    store
-        .replace_entity_mentions(&version_id, &mentions)
-        .unwrap();
+    let source_root = s304_source_root(data_dir);
+    fs::create_dir_all(&source_root).unwrap();
+    let mut content = String::from("SUMMARY\nSynthetic Query Candidate\n");
+    for mention in mentions {
+        content.push_str(seed_mention_label(&mention.entity_type));
+        content.push_str(": ");
+        content.push_str(mention.raw_value);
+        content.push('\n');
+    }
+    content.push_str("EXPERIENCE\n");
+    content.push_str("Built ");
+    content.push_str(text);
+    content.push_str(" systems");
+    content.push_str("\nSKILLS\n");
+    content.push_str(text);
+    fs::write(s304_source_path(data_dir, file_name), content).unwrap();
 }
 
 fn mention(
@@ -2644,36 +2603,75 @@ fn mention(
     SeedMention {
         entity_type,
         raw_value,
-        normalized_value,
-        confidence,
+        _normalized_value: normalized_value,
+        _confidence: confidence,
     }
 }
 
 struct SeedMention {
     entity_type: EntityType,
     raw_value: &'static str,
-    normalized_value: &'static str,
-    confidence: f32,
+    _normalized_value: &'static str,
+    _confidence: f32,
 }
 
-fn seed_fulltext_index(data_dir: &Path, documents: Vec<IndexDocument>) {
-    let index = FullTextIndex::open_or_create(&data_dir.join("search-index")).unwrap();
-    index.replace_documents(documents).unwrap();
-    index.commit().unwrap();
+#[derive(Clone)]
+struct SeedIndexDocument {
+    file_name: String,
+    text: String,
 }
 
-fn index_document(file_name: &str, text: &str) -> IndexDocument {
-    IndexDocument {
-        doc_id: DocumentId::from_non_secret_parts(&["s304", file_name]).to_string(),
-        version_id: ResumeVersionId::from_non_secret_parts(&["s304", file_name, "version"])
-            .to_string(),
+fn seed_fulltext_index(data_dir: &Path, documents: Vec<SeedIndexDocument>) {
+    for document in documents {
+        let path = s304_source_path(data_dir, &document.file_name);
+        let mut content = fs::read_to_string(&path).unwrap();
+        content.push_str("\nSEARCH\n");
+        content.push_str(&document.text);
+        fs::write(path, content).unwrap();
+    }
+    let output = import_existing_root(data_dir, &s304_source_root(data_dir));
+    assert_import_succeeded(&output);
+}
+
+fn index_document(file_name: &str, text: &str) -> SeedIndexDocument {
+    SeedIndexDocument {
         file_name: file_name.to_string(),
-        clean_text: text.to_string(),
-        sections: vec![IndexSection {
-            section_type: "summary".to_string(),
-            text: text.to_string(),
-        }],
-        is_deleted: false,
+        text: text.to_string(),
+    }
+}
+
+fn s304_source_root(data_dir: &Path) -> PathBuf {
+    data_dir.join("s304-source")
+}
+
+fn s304_source_path(data_dir: &Path, file_name: &str) -> PathBuf {
+    let source_name = Path::new(file_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(file_name);
+    s304_source_root(data_dir).join(format!("{source_name}.txt"))
+}
+
+fn seed_mention_label(entity_type: &EntityType) -> &'static str {
+    match entity_type {
+        EntityType::Name => "Name",
+        EntityType::Email => "Email",
+        EntityType::Phone => "Phone",
+        EntityType::WeChat => "WeChat",
+        EntityType::School => "School",
+        EntityType::SchoolTier => "School Tier",
+        EntityType::Degree => "Degree",
+        EntityType::Major => "Major",
+        EntityType::Company => "Company",
+        EntityType::Title => "Title",
+        EntityType::Education => "Education",
+        EntityType::Skills | EntityType::Skill => "Skills",
+        EntityType::Certificate => "Certificate",
+        EntityType::Date => "Date",
+        EntityType::DateRange => "Date Range",
+        EntityType::YearsExperience => "Years Experience",
+        EntityType::Location => "Location",
+        EntityType::Other(_) => "Other",
     }
 }
 

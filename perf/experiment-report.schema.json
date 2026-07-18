@@ -1860,8 +1860,10 @@
       "additionalProperties": false,
       "required": [
         "logical_rows",
-        "visible_rows",
-        "overscan_rows",
+        "visible_cards",
+        "buffered_cards",
+        "navigation_mode",
+        "stable_card_height",
         "input_to_paint_p95_ms",
         "frame_time_p95_ms",
         "scroll_dropped_frame_pct",
@@ -1872,14 +1874,23 @@
           "type": "integer",
           "minimum": 100000
         },
-        "visible_rows": {
+        "visible_cards": {
           "type": "integer",
-          "minimum": 20,
-          "maximum": 60
+          "const": 4
         },
-        "overscan_rows": {
+        "buffered_cards": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 8
+        },
+        "navigation_mode": {
+          "enum": [
+            "scroll",
+            "pagination"
+          ]
+        },
+        "stable_card_height": {
+          "const": true
         },
         "input_to_paint_p95_ms": {
           "type": "number",

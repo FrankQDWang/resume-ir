@@ -60,7 +60,7 @@ resume-cli --data-dir "$data_dir" fault-simulate \
   --scratch-dir "$scratch"
 ```
 
-Run full-text index active-snapshot corruption simulation:
+Run database Ready full-text generation corruption and startup-recovery simulation:
 
 ```bash
 resume-cli --data-dir "$data_dir" fault-simulate \

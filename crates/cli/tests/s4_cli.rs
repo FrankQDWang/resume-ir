@@ -406,7 +406,7 @@ fn import_rejects_overlapping_roots_without_path_leak() {
 }
 
 #[test]
-fn search_without_index_returns_unavailable_message_without_echoing_query() {
+fn search_without_validated_publication_fails_closed_without_echoing_query() {
     let data_dir = temp_path("search-data");
     let sensitive_query = "Java PRIVATE_TOKEN";
 
@@ -417,13 +417,12 @@ fn search_without_index_returns_unavailable_message_without_echoing_query() {
         .output()
         .expect("run resume-cli search");
 
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("search index not available yet"));
-    assert!(stdout.contains("results: 0"));
-    assert!(!stdout.contains(sensitive_query));
-    assert!(!data_dir.exists());
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("search service unavailable"));
+    assert!(!stderr.contains(sensitive_query));
+    assert!(!data_dir.join("search-index").exists());
 
     remove_dir(&data_dir);
 }

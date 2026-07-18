@@ -101,7 +101,7 @@ PID %CPU CSW TIME #TH STATE MEM
         self.assertEqual(parsed[1]["target_cpu_percent"], 200.0)
         self.assertEqual(parsed[1]["system_disk_read_bytes"], int(1.5 * 1024**3))
 
-    def test_short_daemon_burst_is_valid_but_sustained_overlap_is_not(self) -> None:
+    def test_shared_diagnostic_keeps_noisy_process_evidence_while_quiet_gate_rejects_it(self) -> None:
         base = {
             "telemetry_ok": True,
             "command_exit_code": 0,
@@ -113,10 +113,22 @@ PID %CPU CSW TIME #TH STATE MEM
         }
         short = dict(base, sustained_external_overlap_fraction=0.2)
         sustained = dict(base, sustained_external_overlap_fraction=0.6)
-        self.assertEqual(self.runner.classify_validity(short), {"valid": True, "reasons": []})
+        self.assertEqual(
+            self.runner.classify_validity(short),
+            {
+                "diagnostic": {"valid": True, "reasons": []},
+                "quiet_acceptance": {"valid": True, "reasons": []},
+            },
+        )
         self.assertEqual(
             self.runner.classify_validity(sustained),
-            {"valid": False, "reasons": ["sustained_external_cpu_overlap"]},
+            {
+                "diagnostic": {"valid": True, "reasons": []},
+                "quiet_acceptance": {
+                    "valid": False,
+                    "reasons": ["sustained_external_cpu_overlap"],
+                },
+            },
         )
 
     def test_thermal_memory_vm_and_telemetry_fail_closed(self) -> None:
@@ -131,9 +143,14 @@ PID %CPU CSW TIME #TH STATE MEM
             "sustained_external_overlap_fraction": 0.0,
         }
         validity = self.runner.classify_validity(observation)
-        self.assertFalse(validity["valid"])
+        self.assertFalse(validity["diagnostic"]["valid"])
+        self.assertFalse(validity["quiet_acceptance"]["valid"])
         self.assertEqual(
-            validity["reasons"],
+            validity["diagnostic"]["reasons"],
+            ["command_failed", "telemetry_failed", "semantic_drift"],
+        )
+        self.assertEqual(
+            validity["quiet_acceptance"]["reasons"],
             [
                 "command_failed",
                 "telemetry_failed",
@@ -151,7 +168,13 @@ PID %CPU CSW TIME #TH STATE MEM
             runs.append(
                 {
                     "run_id": f"formal-{index:02d}",
-                    "validity": {"valid": index != 5, "reasons": [] if index != 5 else ["thermal_pressure"]},
+                    "validity": {
+                        "diagnostic": {"valid": True, "reasons": []},
+                        "quiet_acceptance": {
+                            "valid": index != 5,
+                            "reasons": [] if index != 5 else ["thermal_pressure"],
+                        },
+                    },
                     "metrics": {
                         "full_import_ready_ms": full_ms,
                         "stage_parse_ms": full_ms - 10,
@@ -161,20 +184,44 @@ PID %CPU CSW TIME #TH STATE MEM
                     },
                 }
             )
-        summary = self.runner.summarize_formal_runs(runs)
+        summary = self.runner.summarize_formal_runs(runs, self.runner.QUIET_HOST_ACCEPTANCE)
         self.assertEqual(summary["formal_run_count"], 5)
-        self.assertEqual(summary["valid_run_count"], 4)
+        self.assertEqual(summary["diagnostic_valid_run_count"], 5)
+        self.assertEqual(summary["quiet_acceptance_valid_run_count"], 4)
+        self.assertEqual(summary["selected_valid_run_count"], 4)
         self.assertEqual(summary["median_valid_run_id"], "formal-02")
         self.assertEqual(summary["worst_valid_run_id"], "formal-04")
         self.assertIn("all_formal_runs", summary["variance"])
         self.assertIn("valid_formal_runs", summary["variance"])
 
+    def test_formal_summary_does_not_crash_when_invalid_telemetry_omits_metrics(self) -> None:
+        run = {
+            "run_id": "formal-01",
+            "validity": {
+                "diagnostic": {"valid": False, "reasons": ["telemetry_failed"]},
+                "quiet_acceptance": {"valid": False, "reasons": ["telemetry_failed"]},
+            },
+            "metrics": {"full_import_ready_ms": 100.0},
+        }
+        summary = self.runner.summarize_formal_runs(
+            [run], self.runner.SHARED_HOST_DIAGNOSTIC
+        )
+        self.assertEqual(summary["selected_valid_run_count"], 0)
+        self.assertIsNone(summary["variance"]["all_formal_runs"]["peak_rss_bytes"]["mean"])
+
     def test_public_summary_contains_no_private_fields(self) -> None:
         summary = self.runner.public_summary(
             experiment_id="opaque-experiment",
+            mode=self.runner.SHARED_HOST_DIAGNOSTIC,
             runs=[],
-            aggregate={"formal_run_count": 0, "valid_run_count": 0},
-            terminal="methodology_failed",
+            aggregate={
+                "formal_run_count": 0,
+                "diagnostic_valid_run_count": 0,
+                "quiet_acceptance_valid_run_count": 0,
+                "selected_valid_run_count": 0,
+            },
+            terminal="diagnostic_incomplete",
+            claim="no_conclusion",
         )
         encoded = self.runner.canonical_json(summary)
         for forbidden_value in ["/Users/", "/home/", "PRIVATE-", "resume-cli import"]:
@@ -183,6 +230,36 @@ PID %CPU CSW TIME #TH STATE MEM
         for key, value in summary["privacy"].items():
             if key != "aggregate_only":
                 self.assertFalse(value)
+
+    def test_shared_mode_can_never_emit_an_absolute_claim(self) -> None:
+        aggregate = {
+            "formal_run_count": 5,
+            "diagnostic_valid_run_count": 5,
+            "quiet_acceptance_valid_run_count": 0,
+            "selected_valid_run_count": 5,
+        }
+        terminal, claim = self.runner.conclusion_for_mode(
+            self.runner.SHARED_HOST_DIAGNOSTIC, aggregate
+        )
+        self.assertEqual((terminal, claim), ("diagnostic_observed", "diagnostic_only"))
+        self.assertNotIn("absolute", claim)
+
+    def test_quiet_mode_preserves_five_host_valid_run_gate(self) -> None:
+        failed = {
+            "formal_run_count": 5,
+            "diagnostic_valid_run_count": 5,
+            "quiet_acceptance_valid_run_count": 4,
+            "selected_valid_run_count": 4,
+        }
+        passed = dict(failed, quiet_acceptance_valid_run_count=5, selected_valid_run_count=5)
+        self.assertEqual(
+            self.runner.conclusion_for_mode(self.runner.QUIET_HOST_ACCEPTANCE, failed),
+            ("methodology_failed", "no_conclusion"),
+        )
+        self.assertEqual(
+            self.runner.conclusion_for_mode(self.runner.QUIET_HOST_ACCEPTANCE, passed),
+            ("quiet_host_accepted", "absolute_baseline_accepted"),
+        )
 
 
 if __name__ == "__main__":

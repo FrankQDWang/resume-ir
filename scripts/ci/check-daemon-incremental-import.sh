@@ -223,7 +223,7 @@ status_out="$tmpdir/status.out"
 run_cli "post-incremental status" "$status_out" status --watch-import
 require_text "$status_out" "searchable documents: 3"
 require_text "$status_out" "import tasks queued: 0"
-require_text "$status_out" "search index: available (full-text snapshot)"
+require_text "$status_out" "search index: available (database Ready full-text snapshot)"
 reject_paths "$status_out"
 
 stop_daemon

@@ -158,7 +158,7 @@ trap cleanup EXIT HUP INT TERM
 
 data_dir="$tmpdir/PRIVATE_DAEMON_CLOSED_LOOP_DATA"
 ocr_command="$tmpdir/daemon-ocr-fixture.sh"
-embedding_command="$tmpdir/daemon-embedding-fixture.sh"
+embedding_command="$tmpdir/daemon-embedding-fixture.py"
 daemon_stdout="$tmpdir/daemon.out"
 daemon_stderr="$tmpdir/daemon.err"
 ready_status_out="$tmpdir/status-ready.out"
@@ -174,20 +174,56 @@ printf 'SUMMARY\nSynthetic OCR profile.\nEXPERIENCE\nBuilt DaemonClosedLoopOCRTo
 SH
 chmod 700 "$ocr_command"
 
-cat >"$embedding_command" <<'SH'
-#!/usr/bin/env sh
-if [ ! -s "$RESUME_IR_EMBEDDING_INPUT_PATH" ]; then
-  exit 7
-fi
-printf 'resume-ir-embedding-v1\n'
-printf 'model_id=fixture-local-model\n'
-printf 'dimension=4\n'
-awk -F '\t' '/^input=/ {
-  id=$1;
-  sub(/^input=/, "", id);
-  printf "vector=%s\t1,0,0,0\n", id
-}' "$RESUME_IR_EMBEDDING_INPUT_PATH"
-SH
+cat >"$embedding_command" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import struct
+import sys
+
+SCHEMA = "resume-ir.embedding-stream.v1"
+MODEL_ID = os.environ["RESUME_IR_EMBEDDING_MODEL_ID"]
+DIMENSION = int(os.environ["RESUME_IR_EMBEDDING_DIMENSION"])
+
+def write_frame(payload):
+    encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    sys.stdout.buffer.write(struct.pack(">I", len(encoded)))
+    sys.stdout.buffer.write(encoded)
+    sys.stdout.buffer.flush()
+
+def read_frame():
+    prefix = sys.stdin.buffer.read(4)
+    if not prefix:
+        return None
+    if len(prefix) != 4:
+        raise RuntimeError("truncated frame")
+    size = struct.unpack(">I", prefix)[0]
+    payload = sys.stdin.buffer.read(size)
+    if len(payload) != size:
+        raise RuntimeError("truncated payload")
+    return json.loads(payload)
+
+if sys.argv[1:] != ["--resident"]:
+    raise SystemExit(2)
+
+write_frame({
+    "type": "ready",
+    "schema_version": SCHEMA,
+    "model_id": MODEL_ID,
+    "dimension": DIMENSION,
+})
+while True:
+    request = read_frame()
+    if request is None:
+        break
+    vectors = [[1.0] + [0.0] * (DIMENSION - 1) for _ in request["inputs"]]
+    write_frame({
+        "type": "result",
+        "schema_version": SCHEMA,
+        "request_id": request["request_id"],
+        "vectors": vectors,
+    })
+PY
 chmod 700 "$embedding_command"
 
 "$CARGO_BIN" run --quiet -p resume-daemon --locked -- \
@@ -196,15 +232,12 @@ chmod 700 "$embedding_command"
   --foreground \
   --work-imports \
   --work-ocr \
-  --work-embeddings \
   --work-index \
   --ocr-command "$ocr_command" \
   --ocr-engine-profile fixture-daemon-closed-loop \
   --embedding-command "$embedding_command" \
   --embedding-model-id fixture-local-model \
   --embedding-dimension 4 \
-  --embedding-max-docs 8 \
-  --embedding-max-text-bytes 100000 \
   --worker-interval-ms 25 \
   --ipc-listen 127.0.0.1:0 \
   --max-requests 300 \
@@ -255,15 +288,18 @@ reject_text "$hybrid_search_out" "SemanticOnlyToken" "hybrid raw query"
 reject_paths "$hybrid_search_out"
 
 doc_id="$(awk '/^doc_id: / { print $2; exit }' "$search_out")"
-if [ -z "$doc_id" ]; then
-  fail "daemon closed-loop search did not print a document id"
+version_id="$(awk '/^version_id: / { print $2; exit }' "$search_out")"
+visible_epoch="$(awk '/^visible_epoch: / { print $2; exit }' "$search_out")"
+if [ -z "$doc_id" ] || [ -z "$version_id" ] || [ -z "$visible_epoch" ]; then
+  fail "daemon closed-loop search did not print a complete selection"
 fi
 
 detail_out="$tmpdir/detail-ipc.out"
-run_cli "detail ipc" "$detail_out" detail --doc-id "$doc_id" --ipc auto
+run_cli "detail ipc" "$detail_out" detail --doc-id "$doc_id" --version-id "$version_id" --visible-epoch "$visible_epoch" --ipc auto
 require_text "$detail_out" "resume detail"
 require_text "$detail_out" "doc_id: $doc_id"
-require_text "$detail_out" "document status: searchable"
+require_text "$detail_out" "version_id: $version_id"
+require_text "$detail_out" "visible_epoch: $visible_epoch"
 require_text "$detail_out" "fields:"
 require_text "$detail_out" "snippet:"
 reject_text "$detail_out" "DaemonClosedLoopOCRToken" "OCR text"
@@ -274,7 +310,7 @@ run_cli "delete ipc" "$delete_out" delete --doc-id "$doc_id" --ipc auto
 require_text "$delete_out" "delete completed"
 require_text "$delete_out" "doc_id: $doc_id"
 require_text "$delete_out" "status: deleted"
-require_text "$delete_out" "index rebuilt: true"
+require_text "$delete_out" "publication committed: true"
 require_text "$delete_out" "indexed documents: 2"
 reject_paths "$delete_out"
 
@@ -285,7 +321,7 @@ reject_text "$post_delete_search_out" "$doc_id" "deleted doc id"
 reject_paths "$post_delete_search_out"
 
 post_delete_detail_out="$tmpdir/detail-ipc-after-delete.out"
-if "$CARGO_BIN" run --quiet -p resume-cli --locked -- --data-dir "$data_dir" detail --doc-id "$doc_id" --ipc auto >"$post_delete_detail_out" 2>&1; then
+if "$CARGO_BIN" run --quiet -p resume-cli --locked -- --data-dir "$data_dir" detail --doc-id "$doc_id" --version-id "$version_id" --visible-epoch "$visible_epoch" --ipc auto >"$post_delete_detail_out" 2>&1; then
   fail "daemon closed-loop detail returned deleted document"
 fi
 require_text "$post_delete_detail_out" "daemon detail ipc returned an error"
@@ -302,7 +338,7 @@ local_status_out="$tmpdir/status-local-after-workers.out"
 run_cli "local status after daemon workers" "$local_status_out" status
 require_text "$local_status_out" "searchable documents: 2"
 require_text "$local_status_out" "ocr queue: 0"
-require_text "$local_status_out" "search index: available (full-text snapshot)"
+require_text "$local_status_out" "search index: available (database Ready full-text snapshot)"
 require_text "$local_status_out" "vector index: available (hnsw ann vector snapshot)"
 reject_paths "$local_status_out"
 
@@ -310,7 +346,6 @@ require_text "$daemon_stdout" "resume-daemon foreground ready"
 require_text "$daemon_stdout" "ipc status endpoint: http://127.0.0.1:"
 require_text "$daemon_stdout" "import worker processed:"
 require_text "$daemon_stdout" "ocr worker processed:"
-require_text "$daemon_stdout" "embedding worker processed:"
 reject_text "$daemon_stdout" "DaemonClosedLoopOCRToken" "OCR text"
 reject_paths "$daemon_stdout"
 

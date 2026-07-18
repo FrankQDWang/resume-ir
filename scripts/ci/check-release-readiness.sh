@@ -83,10 +83,10 @@ require_text "$stdout_file" '"kind": "private_labeled_quality_dataset"'
 require_text "$stdout_file" '"kind": "release_platform_transcript"'
 require_text "$stdout_file" '"next_action":'
 require_text "$stdout_file" '"goal_gap_matrix": {'
-require_text "$stdout_file" '"schema_version": "resume-ir.goal-gap-matrix.v1"'
+require_text "$stdout_file" '"schema_version": "resume-ir.goal-gap-matrix.v2"'
 require_text "$stdout_file" '"complete_product": false'
-require_text "$stdout_file" '"current_stage": "core_import_search_closed_release_blocked"'
-require_text "$stdout_file" '"completion_statement": "core local import/search closure is verified; complete stable release remains blocked by evidence, credentials, platform transcripts, and deferred performance goals"'
+require_text "$stdout_file" '"current_stage": "tauri_desktop_product_incomplete_release_blocked"'
+require_text "$stdout_file" '"completion_statement": "core local import/search closure is verified; ordinary-user Tauri desktop installers are incomplete and stable release remains blocked by implementation, evidence, credentials, and platform transcripts"'
 require_text "$stdout_file" '"id": "P0_foundation"'
 require_text "$stdout_file" '"implementation_status": "production_complete"'
 require_text "$stdout_file" '"release_status": "covered_by_local_ci"'
@@ -99,12 +99,47 @@ require_text "$stdout_file" '"id": "P4_ocr"'
 require_text "$stdout_file" "stable-release OCR throughput evidence deferred to performance optimization goal"
 require_text "$stdout_file" "stable-release hot-index coverage evidence deferred to performance optimization goal"
 require_text "$stdout_file" '"id": "P5_cross_platform_release"'
+require_text "$stdout_file" '"legacy_cli_package_automation": {'
+require_text "$stdout_file" '"counts_as_tauri_desktop_installer": false'
+require_text "$stdout_file" '"tauri_v2_desktop_installers": {'
+require_text "$stdout_file" '"counts_as_tauri_desktop_installer": true'
+require_text "$stdout_file" '"product_scope": "ordinary-user macOS app/DMG and Windows per-user NSIS"'
+require_text "$stdout_file" '"Windows per-user Tauri NSIS setup.exe"'
+require_text "$stdout_file" '"Windows per-user NSIS self-contained runtime closure"'
+require_text "$stdout_file" '"self-contained macOS arm64 DMG and exact daemon/model/OCR/PDF runtime composition"'
 require_text "$stdout_file" "real signing/notarization credentials"
 require_text "$stdout_file" "signing/notarization fail-closed dry-run gates"
-require_text "$stdout_file" "hosted macOS/Windows build/test workflows"
+require_text "$stdout_file" "hosted Rust workspace build/test workflows"
 require_text "$stdout_file" '"id": "P6_performance_stability"'
 require_text "$stdout_file" '"implementation_status": "deferred_to_performance_optimization_goal"'
 require_text "$stdout_file" "500-query/full hot-index baseline deferred to performance optimization goal"
+
+python3 - "$stdout_file" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    report = json.load(handle)
+matrix = report["goal_gap_matrix"]
+p5 = next(row for row in matrix["rows"] if row["id"] == "P5_cross_platform_release")
+if p5["implementation_status"] != "incomplete":
+    raise SystemExit("P5 must remain implementation-incomplete until Tauri installers exist")
+legacy = p5["surfaces"]["legacy_cli_package_automation"]
+desktop = p5["surfaces"]["tauri_v2_desktop_installers"]
+blocker_labels = {blocker["label"] for blocker in report["blockers"]}
+if legacy["implementation_status"] != "production_complete":
+    raise SystemExit("legacy package automation status drifted")
+if legacy["counts_as_tauri_desktop_installer"] is not False:
+    raise SystemExit("legacy package automation must not count as a Tauri installer")
+if desktop["implementation_status"] != "incomplete":
+    raise SystemExit("Tauri desktop installer status drifted")
+if desktop["counts_as_tauri_desktop_installer"] is not True:
+    raise SystemExit("Tauri desktop installer identity drifted")
+if "Tauri v2 desktop installer composition" not in blocker_labels:
+    raise SystemExit("Tauri desktop installer composition blocker is missing")
+if "Windows service lifecycle" in blocker_labels:
+    raise SystemExit("legacy Windows service automation must not be a Tauri product blocker")
+PY
 require_text "$stdout_file" '"label": "signing certificates"'
 require_text "$stdout_file" "production signing certificates"
 require_text "$stdout_file" "certificate chain"
@@ -115,23 +150,24 @@ require_text "$stdout_file" "Apple Developer ID"
 require_text "$stdout_file" "notarization credentials"
 require_text "$stdout_file" "notarization ticket"
 require_text "$stdout_file" "Gatekeeper validation"
+require_text "$stdout_file" '"label": "Tauri v2 desktop installer composition"'
+require_text "$stdout_file" '"kind": "local_product_implementation"'
+require_text "$stdout_file" "legacy CLI/daemon package automation and lifecycle dry-runs do not prove ordinary-user Tauri installers"
+require_text "$stdout_file" "fresh self-contained macOS app/DMG and Windows per-user NSIS artifacts"
 require_text "$stdout_file" '"label": "GitHub Release publication"'
 require_text "$stdout_file" "human release approval"
 require_text "$stdout_file" "GitHub Actions release token"
 require_text "$stdout_file" "artifact upload evidence"
 require_text "$stdout_file" '"label": "Windows installer lifecycle"'
-require_text "$stdout_file" "dry-run automation exists"
-require_text "$stdout_file" "MSI install"
+require_text "$stdout_file" "legacy Windows MSI lifecycle dry-run automation exists but does not prove the target product"
+require_text "$stdout_file" "self-contained per-user Tauri NSIS setup on a clean H0 host"
+require_text "$stdout_file" "first run"
 require_text "$stdout_file" "upgrade"
 require_text "$stdout_file" "uninstall"
 require_text "$stdout_file" "rollback"
-require_text "$stdout_file" "administrator-elevated release Windows runner"
-require_text "$stdout_file" '"label": "Windows service lifecycle"'
-require_text "$stdout_file" "install/start/stop/status/uninstall/recovery"
 require_text "$stdout_file" '"label": "macOS installer lifecycle"'
-require_text "$stdout_file" "LaunchAgent dry-run automation exists"
-require_text "$stdout_file" "signed pkg/dmg"
-require_text "$stdout_file" "install/upgrade/uninstall/rollback"
+require_text "$stdout_file" "legacy macOS pkg and LaunchAgent lifecycle dry-runs are not product proof"
+require_text "$stdout_file" "signed and notarized Tauri app/DMG"
 require_text "$stdout_file" '"label": "private real-corpus performance evidence"'
 require_text "$stdout_file" "stable-release private real-corpus hot-index hybrid benchmark evidence is not available"
 require_text "$stdout_file" "available local private corpus"
@@ -175,11 +211,10 @@ require_text "$stdout_file" "model manifest"
 require_text "$stdout_file" "offline distribution"
 require_text "$stdout_file" "license review"
 require_text "$stdout_file" '"label": "cross-platform release validation"'
-require_text "$stdout_file" "hosted macOS/Windows build/test and dry-run packaging evidence exist"
-require_text "$stdout_file" "Windows and macOS release platforms"
-require_text "$stdout_file" "fresh release artifacts"
-require_text "$stdout_file" "install/upgrade/uninstall"
-require_text "$stdout_file" "service lifecycle"
+require_text "$stdout_file" "hosted Rust workspace checks and legacy dry-run packaging evidence exist"
+require_text "$stdout_file" "native Tauri product validation is incomplete"
+require_text "$stdout_file" "fresh self-contained macOS app/DMG and Windows per-user NSIS artifacts"
+require_text "$stdout_file" "clean hosts"
 require_text "$stdout_file" '"label": "redacted diagnostics evidence"'
 require_text "$stdout_file" "export-diagnostics --redact"
 require_text "$stdout_file" "diagnostics.v1"
@@ -281,7 +316,7 @@ cat > "$hardware_fault_evidence" <<'JSON'
 JSON
 cat > "$current_stage_evidence" <<'JSON'
 {
-  "schema_version": "resume-ir.current-stage-validation-evidence.v1",
+  "schema_version": "resume-ir.current-stage-validation-evidence.v2",
   "privacy_boundary": "local_only_redacted_evidence_manifest",
   "current_stage_target": "reproducible_local_10k_baseline",
   "runtime_distribution_mode": "bundled",
@@ -299,9 +334,12 @@ cat > "$current_stage_evidence" <<'JSON'
     "max_files": 10000,
     "max_queries": 500,
     "top_k": 10,
+    "private_query_timeout_ms": 30000,
     "embedding_dimension": 384,
+    "embedding_runtime_bin_dir_configured": true,
+    "reuse_imported_corpus": false,
     "ocr_worker_ticks": 10000,
-    "embedding_worker_ticks": 10000
+    "ocr_jobs_per_tick": 1
   },
   "preflight_probes": {
     "ocr_runtime_probe": "passed",
@@ -316,8 +354,7 @@ cat > "$current_stage_evidence" <<'JSON'
     {"id": "model_preflight", "status": "success"},
     {"id": "dataset_manifest", "status": "success"},
     {"id": "import_private_corpus", "status": "success"},
-    {"id": "ocr_worker_bounded_loop", "status": "success"},
-    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "ocr_search_publication_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
     {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
@@ -342,8 +379,7 @@ cat > "$current_stage_evidence" <<'JSON'
     {"file": "model-validate-manifest.stdout.txt", "sha256": "1616161616161616161616161616161616161616161616161616161616161616"},
     {"file": "model-preflight.json", "sha256": "1717171717171717171717171717171717171717171717171717171717171717"},
     {"file": "import.stdout.txt", "sha256": "1818181818181818181818181818181818181818181818181818181818181818"},
-    {"file": "ocr-worker.stdout.txt", "sha256": "1919191919191919191919191919191919191919191919191919191919191919"},
-    {"file": "embedding-worker.stdout.txt", "sha256": "2020202020202020202020202020202020202020202020202020202020202020"},
+    {"file": "ocr-search-publication.stdout.txt", "sha256": "1919191919191919191919191919191919191919191919191919191919191919"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "2121212121212121212121212121212121212121212121212121212121212121"},
     {"file": "private-query-set.local.jsonl", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
     {"file": "query-set-prepare.stdout.txt", "sha256": "2323232323232323232323232323232323232323232323232323232323232323"},
@@ -552,7 +588,7 @@ with open(path, "w", encoding="utf-8") as handle:
 PY
 cat > "$current_stage_blocked_summary" <<'JSON'
 {
-  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "schema_version": "resume-ir.current-stage-blocked-summary.v2",
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "full",
   "current_stage_target": "reproducible_local_10k_baseline",
@@ -562,7 +598,7 @@ cat > "$current_stage_blocked_summary" <<'JSON'
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
   "performance_optimization_deferred": true,
-  "blocked_step": "ocr_worker_bounded_loop",
+  "blocked_step": "ocr_search_publication_bounded_loop",
   "blocked_category": "ocr",
   "blocked_reason": "ocr_backlog_exceeds_current_stage_budget",
   "blocked_exit": 1,
@@ -576,10 +612,12 @@ cat > "$current_stage_blocked_summary" <<'JSON'
     "max_files": 10000,
     "max_queries": 500,
     "top_k": 10,
+    "private_query_timeout_ms": 30000,
     "embedding_dimension": 384,
     "embedding_runtime_bin_dir_configured": true,
+    "reuse_imported_corpus": false,
     "ocr_worker_ticks": 25,
-    "embedding_worker_ticks": 25,
+    "ocr_jobs_per_tick": 1,
     "query_set_min_queries": 500,
     "baseline_min_documents": 10000,
     "baseline_min_queries": 500
@@ -608,7 +646,7 @@ cat > "$current_stage_blocked_summary" <<'JSON'
     {"id": "model_preflight", "status": "success"},
     {"id": "dataset_manifest", "status": "success"},
     {"id": "import_private_corpus", "status": "success"},
-    {"id": "ocr_worker_bounded_loop", "status": "blocked", "exit_code": 1}
+    {"id": "ocr_search_publication_bounded_loop", "status": "blocked", "exit_code": 1}
   ],
   "redacted_outputs": [
     {"file": "dataset-manifest.local.json", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
@@ -616,7 +654,7 @@ cat > "$current_stage_blocked_summary" <<'JSON'
     {"file": "ocr-preflight.json", "sha256": "1212121212121212121212121212121212121212121212121212121212121212"},
     {"file": "model-manifest.local.json", "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
     {"file": "model-preflight.json", "sha256": "1717171717171717171717171717171717171717171717171717171717171717"},
-    {"file": "ocr-worker.stdout.txt", "sha256": "1919191919191919191919191919191919191919191919191919191919191919"},
+    {"file": "ocr-search-publication.stdout.txt", "sha256": "1919191919191919191919191919191919191919191919191919191919191919"},
     {"file": "private-query-set.local.jsonl", "sha256": null}
   ],
   "privacy_sentinels": {
@@ -710,7 +748,8 @@ require_text "$evidence_stdout_file" '"label": "signing certificates"'
 require_text "$evidence_stdout_file" '"label": "macOS notarization"'
 require_text "$evidence_stdout_file" '"label": "macOS installer lifecycle"'
 require_text "$evidence_stdout_file" '"label": "Windows installer lifecycle"'
-require_text "$evidence_stdout_file" '"label": "Windows service lifecycle"'
+require_text "$evidence_stdout_file" '"label": "Tauri v2 desktop installer composition"'
+reject_text "$evidence_stdout_file" '"label": "Windows service lifecycle"'
 require_text "$evidence_stdout_file" '"label": "cross-platform release validation"'
 require_text "$evidence_stderr_file" "release readiness blocked: stable release criteria are not met"
 reject_text "$evidence_stdout_file" "$tmpdir"

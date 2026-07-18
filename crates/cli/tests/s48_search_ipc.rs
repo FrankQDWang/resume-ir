@@ -8,15 +8,16 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use privacy::{ContactHasher, ContactKind};
 
+const TEST_INSTANCE_ID: &str = "abababababababababababababababababababababababababababababababab";
+
 #[test]
 fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without_local_store() {
     let data_dir = temp_path("search-ipc-data");
     let token_file = temp_file("search-ipc-token");
-    fs::write(
+    write_auth_file(
         &token_file,
         "1212121212121212121212121212121212121212121212121212121212121212\n",
-    )
-    .unwrap();
+    );
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -29,6 +30,11 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
         assert!(request.contains("Content-Type: application/json"));
         let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
         let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(payload["schema_version"], "resume-ir.ipc-request.v3");
+        assert_eq!(payload["client_capability"], "codex_validation");
+        assert_eq!(payload["deadline_ms"], 1_500);
+        let request_id = payload["request_id"].as_str().unwrap().to_string();
+        let payload = &payload["payload"];
         assert_eq!(payload["query"], "private-query-term");
         assert_eq!(payload["mode"], "fulltext");
         assert_eq!(payload["top_k"], 3);
@@ -75,17 +81,30 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
             serde_json::json!(["shanghai"])
         );
 
+        let long_file_name = format!(
+            "candidate@example.test-{}-PRIVATE_TRAILING.pdf",
+            "候".repeat(100)
+        );
         let response = serde_json::json!({
-            "schema_version": "daemon.search.v1",
+            "schema_version": "resume-ir.search-response.v3",
+            "request_id": request_id,
             "status": "ok",
-            "mode": "fulltext",
+            "visible_epoch": 1,
+            "query_mode": "keyword",
+            "partial": false,
+            "partial_reasons": [],
+            "latency_ms": 1.0,
+            "stage_latency_ms": {},
             "search_index": "available",
             "result_count": 1,
             "results": [{
                 "rank": 1,
-                "doc_id": "doc_s48",
-                "version_id": "ver_s48",
-                "file_name": "candidate@example.test-java.pdf",
+                "selection": {
+                    "doc_id": format!("doc_{}", "1".repeat(32)),
+                    "version_id": format!("ver_{}", "2".repeat(32)),
+                    "visible_epoch": 1
+                },
+                "file_name": long_file_name,
                 "snippet": "Java engineer candidate@example.test 155-555-0199"
             }]
         })
@@ -150,9 +169,15 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("results: 1"));
     assert!(stdout.contains("rank: 1"));
-    assert!(stdout.contains("doc_id: doc_s48"));
-    assert!(stdout.contains("version_id: ver_s48"));
+    assert!(stdout.contains(&format!("doc_id: doc_{}", "1".repeat(32))));
+    assert!(stdout.contains(&format!("version_id: ver_{}", "2".repeat(32))));
     assert!(stdout.contains("snippet:"));
+    let rendered_file_name = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("file_name: "))
+        .expect("rendered file name");
+    assert!(rendered_file_name.len() <= 160);
+    assert!(!rendered_file_name.contains("PRIVATE_TRAILING"));
     assert!(!stdout.contains("private-query-term"));
     assert!(!stdout.contains("candidate@example.test"));
     assert!(!stdout.contains("155-555-0199"));
@@ -168,11 +193,10 @@ fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without
 fn search_ipc_hashes_contact_filters_before_submitting_request() {
     let data_dir = temp_path("search-ipc-contact-data");
     let token_file = temp_file("search-ipc-contact-token");
-    fs::write(
+    write_auth_file(
         &token_file,
         "3434343434343434343434343434343434343434343434343434343434343434\n",
-    )
-    .unwrap();
+    );
     let hasher = ContactHasher::load_or_create(&data_dir).unwrap();
     let expected_email_hash = hasher
         .hash_contact(ContactKind::Email, "target-contact@example.test")
@@ -201,6 +225,8 @@ fn search_ipc_hashes_contact_filters_before_submitting_request() {
         assert!(!request.contains("+12125550199"));
         let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
         let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+        let request_id = payload["request_id"].as_str().unwrap().to_string();
+        let payload = &payload["payload"];
         assert_eq!(payload["query"], "private-contact-query");
         let mut actual_contact_hashes = payload["filters"]["contact_hashes_any"]
             .as_array()
@@ -222,9 +248,15 @@ fn search_ipc_hashes_contact_filters_before_submitting_request() {
         assert_eq!(actual_contact_hashes, expected_contact_hashes);
 
         let response = serde_json::json!({
-            "schema_version": "daemon.search.v1",
+            "schema_version": "resume-ir.search-response.v3",
+            "request_id": request_id,
             "status": "ok",
-            "mode": "fulltext",
+            "visible_epoch": 1,
+            "query_mode": "keyword",
+            "partial": false,
+            "partial_reasons": [],
+            "latency_ms": 1.0,
+            "stage_latency_ms": {},
             "search_index": "available",
             "result_count": 0,
             "results": []
@@ -304,20 +336,31 @@ fn search_ipc_auto_discovers_endpoint_and_token_file() {
         assert!(request.contains("Content-Type: application/json"));
         let body = request.split("\r\n\r\n").nth(1).unwrap_or_default();
         let payload: serde_json::Value = serde_json::from_str(body).unwrap();
+        let request_id = payload["request_id"].as_str().unwrap().to_string();
+        let payload = &payload["payload"];
         assert_eq!(payload["query"], "private-auto-query");
         assert_eq!(payload["mode"], "fulltext");
         assert_eq!(payload["top_k"], 3);
 
         let response = serde_json::json!({
-            "schema_version": "daemon.search.v1",
+            "schema_version": "resume-ir.search-response.v3",
+            "request_id": request_id,
             "status": "ok",
-            "mode": "fulltext",
+            "visible_epoch": 1,
+            "query_mode": "keyword",
+            "partial": false,
+            "partial_reasons": [],
+            "latency_ms": 1.0,
+            "stage_latency_ms": {},
             "search_index": "available",
             "result_count": 1,
             "results": [{
                 "rank": 1,
-                "doc_id": "doc_s48_auto",
-                "version_id": "ver_s48_auto",
+                "selection": {
+                    "doc_id": format!("doc_{}", "3".repeat(32)),
+                    "version_id": format!("ver_{}", "4".repeat(32)),
+                    "visible_epoch": 1
+                },
                 "file_name": "candidate@example.test-auto.pdf",
                 "snippet": "Auto query result candidate@example.test 155-555-0199"
             }]
@@ -356,7 +399,7 @@ fn search_ipc_auto_discovers_endpoint_and_token_file() {
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("results: 1"));
-    assert!(stdout.contains("doc_id: doc_s48_auto"));
+    assert!(stdout.contains(&format!("doc_id: doc_{}", "3".repeat(32))));
     assert!(!stdout.contains("private-auto-query"));
     assert!(!stdout.contains("candidate@example.test"));
     assert!(!stdout.contains("155-555-0199"));
@@ -422,11 +465,10 @@ fn search_ipc_auto_rejects_stale_manifest_without_sending_token_or_query() {
 fn search_ipc_errors_do_not_fallback_to_local_store_or_leak_inputs() {
     let data_dir = temp_path("search-ipc-error-data");
     let token_file = temp_file("search-ipc-error-token");
-    fs::write(
+    write_auth_file(
         &token_file,
         "3434343434343434343434343434343434343434343434343434343434343434\n",
-    )
-    .unwrap();
+    );
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -756,11 +798,10 @@ fn unused_loopback_search_url() -> String {
 
 fn temp_valid_token(label: &str) -> PathBuf {
     let token = temp_file(label);
-    fs::write(
+    write_auth_file(
         &token,
         "5656565656565656565656565656565656565656565656565656565656565656\n",
-    )
-    .unwrap();
+    );
     token
 }
 
@@ -768,16 +809,15 @@ fn write_auto_ipc_files(data_dir: &Path, addr: SocketAddr, token: &str) {
     fs::create_dir_all(data_dir).unwrap();
     fs::write(
         data_dir.join("ipc.endpoints.json"),
-        format!(
-            "{{\"schema_version\":\"resume-ir.daemon-ipc.v1\",\"status\":\"http://{addr}/status\",\"imports\":\"http://{addr}/imports\",\"search\":\"http://{addr}/search\",\"details\":\"http://{addr}/details\"}}"
-        ),
+        discovery_manifest(addr),
     )
     .unwrap();
-    fs::write(data_dir.join("ipc.auth"), format!("{token}\n")).unwrap();
+    write_auth_file(&data_dir.join("ipc.auth"), token);
 }
 
 fn write_auto_status_response(stream: &mut impl Write) {
-    let response = "{\"schema_version\":\"daemon.status.v1\",\"status\":\"ok\",\"index_health\":\"ready\",\"import_tasks_queued\":0,\"import_tasks_cancelled\":0}";
+    let response =
+        "{\"schema_version\":\"daemon.status.v2\",\"status\":\"ok\",\"process_state\":\"ready\"}";
     write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -785,6 +825,38 @@ fn write_auto_status_response(stream: &mut impl Write) {
         response
     )
     .expect("write fake status response");
+}
+
+fn write_auth_file(path: &Path, token: &str) {
+    fs::write(
+        path,
+        serde_json::json!({
+            "schema_version": "resume-ir.daemon-auth.v2",
+            "instance_id": TEST_INSTANCE_ID,
+            "token": token.trim(),
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
+fn discovery_manifest(addr: SocketAddr) -> String {
+    serde_json::json!({
+        "schema_version": "resume-ir.daemon-ipc.v2",
+        "instance_id": TEST_INSTANCE_ID,
+        "owner_mode": "standalone",
+        "status": format!("http://{addr}/status"),
+        "diagnostics": format!("http://{addr}/diagnostics"),
+        "imports": format!("http://{addr}/imports"),
+        "import_cancel": format!("http://{addr}/imports/cancel"),
+        "import_control": format!("http://{addr}/imports/control"),
+        "import_progress": format!("http://{addr}/imports/progress"),
+        "search": format!("http://{addr}/search"),
+        "search_batch": format!("http://{addr}/search/batch"),
+        "details": format!("http://{addr}/details"),
+        "delete": format!("http://{addr}/delete"),
+    })
+    .to_string()
 }
 
 fn temp_path(label: &str) -> PathBuf {

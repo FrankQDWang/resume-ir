@@ -24,6 +24,9 @@ MIN_FORMAL_REPEATS = 5
 EXTERNAL_CPU_CAPACITY_FRACTION = 0.20
 SUSTAINED_SAMPLE_FRACTION = 0.5
 MAX_PUBLIC_RUNS = 16
+SHARED_HOST_DIAGNOSTIC = "shared_host_diagnostic"
+QUIET_HOST_ACCEPTANCE = "quiet_host_acceptance"
+MODES = (SHARED_HOST_DIAGNOSTIC, QUIET_HOST_ACCEPTANCE)
 EXPERIMENT_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}\Z")
 TIME_FIELDS = {
     "maximum resident set size": "peak_rss_bytes",
@@ -262,24 +265,29 @@ def memory_free_percent(text: str) -> int:
 
 
 def classify_validity(observation: dict[str, Any]) -> dict[str, Any]:
-    reasons: list[str] = []
+    diagnostic_reasons: list[str] = []
     if observation["command_exit_code"] != 0:
-        reasons.append("command_failed")
+        diagnostic_reasons.append("command_failed")
     if not observation["telemetry_ok"]:
-        reasons.append("telemetry_failed")
+        diagnostic_reasons.append("telemetry_failed")
     if not observation.get("semantic_ok", True):
-        reasons.append("semantic_drift")
+        diagnostic_reasons.append("semantic_drift")
+
+    quiet_reasons = list(diagnostic_reasons)
     if any(value in {"serious", "critical", "unknown"} for value in observation["thermal_states"]):
-        reasons.append("thermal_pressure")
+        quiet_reasons.append("thermal_pressure")
     if any(value in {"warning", "critical", "unknown"} for value in observation["memory_pressure_events"]):
-        reasons.append("memory_pressure")
+        quiet_reasons.append("memory_pressure")
     if observation["pageouts_delta"] > 0:
-        reasons.append("pageout_growth")
+        quiet_reasons.append("pageout_growth")
     if observation["swapouts_delta"] > 0:
-        reasons.append("swapout_growth")
+        quiet_reasons.append("swapout_growth")
     if observation["sustained_external_overlap_fraction"] >= SUSTAINED_SAMPLE_FRACTION:
-        reasons.append("sustained_external_cpu_overlap")
-    return {"valid": not reasons, "reasons": reasons}
+        quiet_reasons.append("sustained_external_cpu_overlap")
+    return {
+        "diagnostic": {"valid": not diagnostic_reasons, "reasons": diagnostic_reasons},
+        "quiet_acceptance": {"valid": not quiet_reasons, "reasons": quiet_reasons},
+    }
 
 
 def variance(values: list[float]) -> dict[str, float | None]:
@@ -293,41 +301,90 @@ def variance(values: list[float]) -> dict[str, float | None]:
     }
 
 
-def summarize_formal_runs(runs: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize_formal_runs(runs: list[dict[str, Any]], mode: str) -> dict[str, Any]:
     if not runs:
-        return {"formal_run_count": 0, "valid_run_count": 0}
-    valid = [run for run in runs if run["validity"]["valid"]]
-    ordered = sorted(valid, key=lambda run: run["metrics"]["full_import_ready_ms"])
+        return {
+            "formal_run_count": 0,
+            "diagnostic_valid_run_count": 0,
+            "quiet_acceptance_valid_run_count": 0,
+            "selected_valid_run_count": 0,
+        }
+    validity_key = "diagnostic" if mode == SHARED_HOST_DIAGNOSTIC else "quiet_acceptance"
+    valid = [run for run in runs if run["validity"][validity_key]["valid"]]
+    diagnostic_valid = [run for run in runs if run["validity"]["diagnostic"]["valid"]]
+    quiet_valid = [run for run in runs if run["validity"]["quiet_acceptance"]["valid"]]
+    ordered = sorted(
+        (run for run in valid if "full_import_ready_ms" in run["metrics"]),
+        key=lambda run: run["metrics"]["full_import_ready_ms"],
+    )
     fields = ["full_import_ready_ms", "stage_parse_ms", "stage_db_ms", "stage_index_ms", "peak_rss_bytes"]
     return {
         "formal_run_count": len(runs),
-        "valid_run_count": len(valid),
+        "diagnostic_valid_run_count": len(diagnostic_valid),
+        "quiet_acceptance_valid_run_count": len(quiet_valid),
+        "selected_valid_run_count": len(valid),
         "median_valid_run_id": ordered[(len(ordered) - 1) // 2]["run_id"] if ordered else None,
         "worst_valid_run_id": ordered[-1]["run_id"] if ordered else None,
         "variance": {
-            "all_formal_runs": {field: variance([float(run["metrics"][field]) for run in runs]) for field in fields},
-            "valid_formal_runs": {field: variance([float(run["metrics"][field]) for run in valid]) for field in fields},
+            "all_formal_runs": {
+                field: variance(
+                    [float(run["metrics"][field]) for run in runs if field in run["metrics"]]
+                )
+                for field in fields
+            },
+            "valid_formal_runs": {
+                field: variance(
+                    [float(run["metrics"][field]) for run in valid if field in run["metrics"]]
+                )
+                for field in fields
+            },
         },
     }
 
 
+def conclusion_for_mode(mode: str, aggregate: dict[str, Any]) -> tuple[str, str]:
+    valid_count = int(aggregate["selected_valid_run_count"])
+    if mode == SHARED_HOST_DIAGNOSTIC:
+        return (
+            ("diagnostic_observed", "diagnostic_only")
+            if valid_count >= MIN_FORMAL_REPEATS
+            else ("diagnostic_incomplete", "no_conclusion")
+        )
+    return (
+        ("quiet_host_accepted", "absolute_baseline_accepted")
+        if valid_count >= MIN_FORMAL_REPEATS
+        else ("methodology_failed", "no_conclusion")
+    )
+
+
 def public_summary(
-    experiment_id: str, runs: list[dict[str, Any]], aggregate: dict[str, Any], terminal: str
+    experiment_id: str,
+    mode: str,
+    runs: list[dict[str, Any]],
+    aggregate: dict[str, Any],
+    terminal: str,
+    claim: str,
 ) -> dict[str, Any]:
+    validity_key = "diagnostic" if mode == SHARED_HOST_DIAGNOSTIC else "quiet_acceptance"
     bounded_runs = [
         {
             "run_id": run["run_id"],
-            "valid": run["validity"]["valid"],
-            "invalid_reasons": run["validity"]["reasons"],
+            "selected_valid": run["validity"][validity_key]["valid"],
+            "selected_invalid_reasons": run["validity"][validity_key]["reasons"],
+            "diagnostic_valid": run["validity"]["diagnostic"]["valid"],
+            "quiet_acceptance_valid": run["validity"]["quiet_acceptance"]["valid"],
+            "quiet_acceptance_invalid_reasons": run["validity"]["quiet_acceptance"]["reasons"],
             "metrics": run["metrics"],
             "telemetry": run.get("telemetry", {}),
         }
         for run in runs[:MAX_PUBLIC_RUNS]
     ]
     return {
-        "schema_version": "resume-ir.mixed-import-variance.v1",
+        "schema_version": "resume-ir.mixed-import-variance.v2",
         "experiment_id": experiment_id,
+        "mode": mode,
         "terminal": terminal,
+        "claim": claim,
         "blind_holdout_evaluated": False,
         "protocol": {
             "min_warmup_seconds": MIN_WARMUP_SECONDS,
@@ -336,6 +393,8 @@ def public_summary(
             "single_process_spike_veto": False,
             "sustained_external_cpu_capacity_fraction": EXTERNAL_CPU_CAPACITY_FRACTION,
             "sustained_sample_fraction": SUSTAINED_SAMPLE_FRACTION,
+            "shared_host_absolute_claim_allowed": False,
+            "quiet_host_thresholds_unchanged": True,
         },
         "runs": bounded_runs,
         "aggregate": aggregate,
@@ -425,15 +484,21 @@ def run_once(
     memory_after = memory_free_percent(command_output(["memory_pressure", "-Q"]))
     try:
         time_metrics = parse_time_output(time_path.read_text(encoding="utf-8"))
+    except (OSError, TelemetryFailed):
+        telemetry_ok = False
+        time_metrics = {}
+    try:
         top_summary = summarize_top_samples(parse_top_output(top_path.read_text(encoding="utf-8")), logical_cpus)
+    except (OSError, TelemetryFailed):
+        telemetry_ok = False
+        top_summary = {"sustained_external_overlap_fraction": 1.0}
+    try:
         thermal_states = monitor.thermal_states
         memory_events = monitor.memory_pressure_events
         if not thermal_states or not memory_events:
             raise TelemetryFailed("system pressure monitor captured no state")
-    except (OSError, TelemetryFailed):
+    except TelemetryFailed:
         telemetry_ok = False
-        time_metrics = {}
-        top_summary = {"sustained_external_overlap_fraction": 1.0}
         thermal_states, memory_events = ["unknown"], ["warning"]
     stage_metrics = parse_stage_output(stdout_path.read_text(encoding="utf-8"))
     required_stage_metrics = {*STAGE_FIELDS.values(), "classifier_artifact_enabled"}
@@ -492,13 +557,14 @@ def smoke_command() -> list[str]:
             "stage db ms: 50", "stage index ms: 20",
         ]
     )
-    return [sys.executable, "-c", f"import time; print({output!r}); time.sleep(2.2)"]
+    return [sys.executable, "-c", f"import time; print({output!r}); time.sleep(4.2)"]
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-dir", type=pathlib.Path, default=os.environ.get("RESUME_IR_LOCAL_EVIDENCE_DIR"))
     parser.add_argument("--experiment-id", required=True)
+    parser.add_argument("--mode", required=True, choices=MODES)
     parser.add_argument("--binary", type=pathlib.Path)
     parser.add_argument("--root", type=pathlib.Path)
     parser.add_argument("--model", type=pathlib.Path)
@@ -531,8 +597,9 @@ def main() -> int:
             raise ProtocolInvalid("classifier model must be owner-only")
     logical_cpus = int(command_output(["sysctl", "-n", "hw.logicalcpu"]).strip())
     spec = {
-        "schema_version": "resume-ir.mixed-import-variance-spec.v1",
+        "schema_version": "resume-ir.mixed-import-variance-spec.v2",
         "experiment_id": arguments.experiment_id,
+        "mode": arguments.mode,
         "warmup_seconds": arguments.warmup_seconds,
         "formal_repeats": arguments.formal_repeats,
         "synthetic_smoke": arguments.synthetic_smoke,
@@ -550,7 +617,7 @@ def main() -> int:
         warmup = run_once(run_id, experiment_dir / run_id, command, logical_cpus)
         warmup_elapsed += time.monotonic() - started
         secure_write_json(experiment_dir / f"{run_id}.local.json", warmup)
-        if warmup["validity"]["reasons"] and "command_failed" in warmup["validity"]["reasons"]:
+        if "command_failed" in warmup["validity"]["diagnostic"]["reasons"]:
             raise ProtocolInvalid("warm-up command failed")
         if arguments.synthetic_smoke:
             warmup_elapsed = arguments.warmup_seconds
@@ -561,11 +628,23 @@ def main() -> int:
         run = run_once(run_id, experiment_dir / run_id, command, logical_cpus)
         secure_write_json(experiment_dir / f"{run_id}.local.json", run)
         formal_runs.append(run)
-    aggregate = summarize_formal_runs(formal_runs)
-    terminal = "synthetic_smoke_complete" if arguments.synthetic_smoke else (
-        "variance_observed" if aggregate["valid_run_count"] >= MIN_FORMAL_REPEATS else "methodology_failed"
+    aggregate = summarize_formal_runs(formal_runs, arguments.mode)
+    terminal, claim = conclusion_for_mode(arguments.mode, aggregate)
+    if arguments.synthetic_smoke:
+        terminal = (
+            "synthetic_smoke_complete"
+            if aggregate["selected_valid_run_count"] >= MIN_FORMAL_REPEATS
+            else "synthetic_smoke_incomplete"
+        )
+        claim = "no_conclusion"
+    summary = public_summary(
+        arguments.experiment_id,
+        arguments.mode,
+        formal_runs,
+        aggregate,
+        terminal,
+        claim,
     )
-    summary = public_summary(arguments.experiment_id, formal_runs, aggregate, terminal)
     secure_write_json(experiment_dir / "public-redacted-aggregate.json", summary)
     print(canonical_json(summary))
     return 0

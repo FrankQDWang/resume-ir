@@ -167,8 +167,10 @@
   },
   "gui_manual": {
     "logical_rows": 100000,
-    "visible_rows": 40,
-    "overscan_rows": 80,
+    "visible_cards": 4,
+    "buffered_cards": 8,
+    "navigation_mode": "scroll",
+    "stable_card_height": true,
     "input_to_paint_p95_ms": 80,
     "frame_time_p95_ms": 15,
     "scroll_dropped_frame_pct": 0.5,

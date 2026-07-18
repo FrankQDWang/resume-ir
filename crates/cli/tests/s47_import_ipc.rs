@@ -8,16 +8,19 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use meta_store::ImportTaskId;
 
+mod support;
+
+use support::{ready_daemon_status_body, write_daemon_auth, write_daemon_discovery};
+
 #[test]
 fn import_ipc_submits_authenticated_request_without_touching_local_store() {
     let data_dir = temp_path("import-ipc-data");
     let root_dir = temp_dir("import-ipc-private-root");
     let token_file = temp_file("import-ipc-token");
-    fs::write(
+    write_daemon_auth(
         &token_file,
         "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\n",
-    )
-    .unwrap();
+    );
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
     let addr = listener.local_addr().unwrap();
     let expected_root = path_str(&root_dir).to_string();
@@ -181,11 +184,10 @@ fn import_ipc_auto_discovers_endpoint_and_token_file() {
 fn cancel_import_ipc_submits_authenticated_request_without_touching_local_store() {
     let data_dir = temp_path("cancel-import-ipc-data");
     let token_file = temp_file("cancel-import-ipc-token");
-    fs::write(
+    write_daemon_auth(
         &token_file,
         "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\n",
-    )
-    .unwrap();
+    );
     let task_id = ImportTaskId::from_non_secret_parts(&["s62", "cancel-import-ipc"]);
     let task_id_string = task_id.to_string();
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
@@ -327,11 +329,10 @@ fn import_ipc_preserves_local_discovery_preset_in_request() {
     let data_dir = temp_path("import-ipc-preset-data");
     let root_dir = temp_dir("import-ipc-preset-private-root");
     let token_file = temp_file("import-ipc-preset-token");
-    fs::write(
+    write_daemon_auth(
         &token_file,
         "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\n",
-    )
-    .unwrap();
+    );
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
     let addr = listener.local_addr().unwrap();
     let expected_root = path_str(&root_dir).to_string();
@@ -396,11 +397,10 @@ fn import_ipc_http_error_does_not_fallback_to_local_store() {
     let data_dir = temp_path("import-ipc-error-data");
     let root_dir = temp_dir("import-ipc-error-private-root");
     let token_file = temp_file("import-ipc-error-token");
-    fs::write(
+    write_daemon_auth(
         &token_file,
         "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\n",
-    )
-    .unwrap();
+    );
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -452,11 +452,10 @@ fn import_ipc_invalid_json_response_does_not_fallback_to_local_store() {
     let data_dir = temp_path("import-ipc-invalid-json-data");
     let root_dir = temp_dir("import-ipc-invalid-json-private-root");
     let token_file = temp_file("import-ipc-invalid-json-token");
-    fs::write(
+    write_daemon_auth(
         &token_file,
         "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\n",
-    )
-    .unwrap();
+    );
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -506,11 +505,10 @@ fn import_ipc_transport_failure_does_not_fallback_to_local_store() {
     let data_dir = temp_path("import-ipc-transport-failure-data");
     let root_dir = temp_dir("import-ipc-transport-failure-private-root");
     let token_file = temp_file("import-ipc-transport-failure-token");
-    fs::write(
+    write_daemon_auth(
         &token_file,
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
-    )
-    .unwrap();
+    );
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -552,11 +550,10 @@ fn import_ipc_malformed_response_does_not_fallback_to_local_store() {
     let data_dir = temp_path("import-ipc-malformed-response-data");
     let root_dir = temp_dir("import-ipc-malformed-response-private-root");
     let token_file = temp_file("import-ipc-malformed-response-token");
-    fs::write(
+    write_daemon_auth(
         &token_file,
         "abababababababababababababababababababababababababababababababab\n",
-    )
-    .unwrap();
+    );
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
@@ -718,19 +715,11 @@ fn accept_with_timeout(listener: &TcpListener) -> (std::net::TcpStream, std::net
 }
 
 fn write_auto_ipc_files(data_dir: &Path, addr: SocketAddr, token: &str) {
-    fs::create_dir_all(data_dir).unwrap();
-    fs::write(
-        data_dir.join("ipc.endpoints.json"),
-        format!(
-            "{{\"schema_version\":\"resume-ir.daemon-ipc.v1\",\"status\":\"http://{addr}/status\",\"imports\":\"http://{addr}/imports\",\"import_cancel\":\"http://{addr}/imports/cancel\",\"search\":\"http://{addr}/search\",\"details\":\"http://{addr}/details\"}}"
-        ),
-    )
-    .unwrap();
-    fs::write(data_dir.join("ipc.auth"), format!("{token}\n")).unwrap();
+    write_daemon_discovery(data_dir, addr, token);
 }
 
 fn write_auto_status_response(stream: &mut impl Write) {
-    let response = "{\"schema_version\":\"daemon.status.v1\",\"status\":\"ok\",\"index_health\":\"ready\",\"import_tasks_queued\":0,\"import_tasks_cancelled\":0}";
+    let response = ready_daemon_status_body();
     write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",

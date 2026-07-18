@@ -36,6 +36,119 @@ provide scripts, CI secret interfaces, fail-closed gates, and documentation, but
 real certificates, private keys, Apple Developer credentials, Windows signing
 credentials, and notarization credentials are human-provided release inputs.
 
+## macOS Small-Scale Internal Test Build
+
+An Apple Developer account is not required for the bounded internal-test build:
+
+```bash
+npm run bundle:macos:test --prefix apps/desktop
+```
+
+The command removes Apple credential/notarization variables from the child
+environment, uses the official Tauri v2 ad-hoc identity `-`, builds the exact
+arm64 self-contained DMG, and fails unless the mounted App has sealed resources,
+a valid deep ad-hoc signature, hardened runtime, matching bundled-runtime
+digests, and a bounded `resume-ir.macos-dmg-composition.v1` receipt whose
+`distribution_profile` is `internal_test`. The receipt
+includes the DMG SHA-256 for transfer verification but no local path or secret.
+
+This artifact is `internal_test_only`: it is not notarized and is not a stable
+release. A tester drags `resume-ir.app` into Applications. On first launch, if
+macOS blocks it, the tester opens System Settings > Privacy & Security, chooses
+Open Anyway for resume-ir, and confirms Open. No terminal command, Python,
+Rust, Node, repository checkout, model service, or environment variable is a
+product dependency. Do not present this flow as Gatekeeper-accepted distribution;
+Developer ID signing, notarization/stapling, signed updater, and clean-host
+release lifecycle evidence remain required before formal publication.
+
+## Windows x64 Build-Host Components
+
+The Windows resident embedding executable is built on a development/build host,
+not on the clean H0 validation machine. Install the pinned cross compiler once:
+
+```bash
+cargo install --locked cargo-xwin --version 0.22.0
+```
+
+Then build, inspect, and atomically stage the static-CRT x64 executable:
+
+```bash
+npm run bundle:windows:embedding-sidecar --prefix apps/desktop
+```
+
+The command invokes only the locked `resume-embedding-runtime` package for
+`x86_64-pc-windows-msvc`, rejects malformed PE, dynamic MSVC/UCRT/OpenMP or
+unknown imports, applies the release repository/home path remapping, rejects
+UTF-8 or UTF-16 build-host identity in the executable, restores the prior staged
+file after a failed promotion, and prints only a bounded path-free receipt. Its
+generated executable remains under ignored build output and is not committed.
+
+This component receipt does not prove the Windows daemon, ONNX Runtime/model
+pack, OCR/PDFium closure, Tauri NSIS composition, native H0 execution, signing,
+updater, or complete Windows readiness. The H0 machine receives only a final
+installer and never requires Git, Rust, Cargo, Node, Python, Docker, Visual
+Studio Build Tools, a repository checkout, or runtime environment overrides.
+
+The daemon has a separate, explicit process-only target boundary. The Tauri app
+and bundle remain `x86_64-pc-windows-msvc`; the independently executed daemon is
+built as `x86_64-pc-windows-gnu` and staged under Tauri's required MSVC bundle
+suffix. No FFI or shared Rust ABI crosses this boundary. On the Mac build host,
+install the pinned tools once:
+
+```bash
+cargo install --locked cargo-zigbuild --version 0.23.0
+rustup target add x86_64-pc-windows-gnu
+brew install zig
+```
+
+The reviewed Zig version is 0.16.0. Build and atomically stage the daemon with:
+
+```bash
+npm run bundle:windows:daemon-sidecar --prefix apps/desktop
+```
+
+The no-argument command builds only `resume-daemon`, uses an isolated
+owner-checked non-symlink target directory, and emits a bounded receipt that
+records both target triples. It accepts only a PE32+ x64 executable with the
+reviewed Windows 10 system DLL/UCRT API-set imports, statically closes
+SQLCipher/OpenSSL, rejects dynamic crypto/GNU/MSVC runtimes and exact build-host
+identity, and restores the prior staged daemon on failure. The UCRT API-set
+imports are operating-system components; this is not a claim that the executable
+has no system DLL imports.
+
+This component receipt still does not prove native H0 execution, ONNX/model,
+OCR/PDFium, Job Object containment, complete Tauri composition, NSIS lifecycle,
+signing, updater, or product readiness. Do not copy a partial component to H0;
+that machine receives only the final installer.
+
+The reviewed ONNX Runtime library is different: its release ABI is
+`x86_64-pc-windows-msvc`, so the accepted builder runs inside a native Windows
+x64 VS 2022 Developer Prompt. The current 8 GiB Windows machine may be reused
+in two strictly separate phases. While it has Git, Node, Python, CMake and VS
+Build Tools it is a build host and no H0 evidence from that installation is
+valid. After all Windows components and the installer are produced, Windows
+must be reset or reprovisioned; only after the developer dependencies are
+absent again may the same hardware become the H0 installer-validation host.
+OrbStack/Linux containers are not an accepted substitute for the MSVC build
+environment.
+
+On the provisioned build host, use an exact recursively initialized checkout of
+ONNX Runtime `v1.24.4` at commit
+`2d924974ef147392ced8409d36bd6d2e7fcc8a74`, open the VS 2022 Developer Prompt,
+and run the repository owner with absolute, non-overlapping paths:
+
+```powershell
+npm run build:windows:onnxruntime --prefix apps/desktop -- --source-root <onnxruntime-source> --destination <reviewed-runtime-root>
+```
+
+The owner invokes the official `tools/ci_build/build.py` with a one-job bound,
+requires its native tests to pass, rejects tracked/untracked source or submodule
+drift, rejects non-system or dynamic MSVC runtime imports, and atomically
+publishes only `onnxruntime.dll`, reviewed legal files and provenance v2. It
+prints one bounded path-free receipt. Before a real Windows run, this remains a
+builder contract, not evidence that the DLL, model pack, NSIS or H0 product
+exists.
+
 Embedding runtime work must use a real local offline runtime path with a model
 manifest, checksum, license record, and failure guidance. If a model weight
 license is not reviewed, mark the model as external/legal blocked; do not use a
@@ -45,7 +158,7 @@ placeholder model claim to clear release evidence.
 
 Use the current-stage validation script to generate a redacted operator plan
 before touching private resumes. The dry-run emits
-`resume-ir.current-stage-validation-plan.v1` with privacy boundary
+`resume-ir.current-stage-validation-plan.v2` with privacy boundary
 `local_only_redacted_plan`, placeholder paths, the ordered local commands, and
 `performance_optimization_deferred: true`. It does not scan, import, OCR,
 embed, benchmark, or read the private corpus:
@@ -84,7 +197,7 @@ omitted, execute mode computes the digest from
 If dataset manifest generation or private corpus import fails, execute mode
 writes `current-stage-blocked-summary.json` with
 `blocked_category: "import/parser"`, the blocked dataset/import step, and
-`private_corpus_read: true`, then stops before OCR workers, embedding workers,
+`private_corpus_read: true`, then stops before OCR and atomic search publication,
 query-set generation, benchmarks, diagnostics, or release-readiness. The
 summary records only basename-only digests for runtime preflight outputs, the
 redacted dataset manifest when present, and import stdout; it must not include
@@ -107,16 +220,16 @@ current-stage evidence blocked unless the later hot-index, 500-query, OCR
 throughput, diagnostics, fault, and release-readiness evidence all pass.
 
 The default `--validation-profile full` is the only profile intended to produce
-`resume-ir.current-stage-validation-evidence.v1` for `release-readiness
+`resume-ir.current-stage-validation-evidence.v2` for `release-readiness
 --current-stage-evidence`. The `--validation-profile smoke` profile is a
 bounded local command-wiring proof for situations where the local private corpus
 is dominated by OCR-required files and full OCR would make the current
 interaction run for too long. Smoke still performs runtime preflight, manifest
-validation, import, bounded OCR/embedding workers, query-set generation,
+validation, import, bounded OCR/atomic search publication, query-set generation,
 private-query benchmark protocol, a low-floor benchmark gate, and redacted
 diagnostics. It then runs the safe synthetic `fault-simulate --case
 disk-space-low --json` smoke probe and writes `current-stage-smoke-summary.json`
-with schema `resume-ir.current-stage-smoke-summary.v1`. Smoke output is
+with schema `resume-ir.current-stage-smoke-summary.v2`. Smoke output is
 explicitly not release-readiness evidence, must not be passed as proof of the
 10k/8000-document baseline, and must keep full baseline, 500-query baseline,
 P95/P99 optimization, 100k/1M validation, and stable release readiness marked
@@ -201,7 +314,7 @@ documents and the hot index is still not fully covered, the script writes
 `redacted-diagnostics.json` with `export-diagnostics --redact`, runs `doctor`
 against the same local data directory, then stops before query-set generation
 and writes `current-stage-blocked-summary.json` with
-`blocked_step: "ocr_worker_bounded_loop"`, `blocked_category: "ocr"`, and
+`blocked_step: "ocr_search_publication_bounded_loop"`, `blocked_category: "ocr"`, and
 `blocked_reason: "ocr_backlog_exceeds_current_stage_budget"`. The blocked
 summary records the diagnostics and doctor outputs only by basename and SHA-256
 digest. This is the expected current-stage handoff for an OCR-heavy private corpus; it is not
@@ -353,7 +466,7 @@ local data directory, and feeds the local evidence into the local safe synthetic
 fault probe before feeding the redacted local evidence into `release-readiness`.
 At the end it also writes
 `current-stage-validation-evidence.json` with schema
-`resume-ir.current-stage-validation-evidence.v1` and privacy boundary
+`resume-ir.current-stage-validation-evidence.v2` and privacy boundary
 `local_only_redacted_evidence_manifest`. That manifest contains step statuses,
 input digests, `preflight_probes` with `ocr_runtime_probe: "passed"` and
 `embedding_protocol: "passed"`, redacted `corpus_summary_observability`
@@ -396,7 +509,7 @@ reviewed; otherwise validation must fail closed.
 
 If the full profile reaches the private benchmark report but the baseline shape
 gate fails, execute mode writes `current-stage-blocked-summary.json` with schema
-`resume-ir.current-stage-blocked-summary.v1` and privacy boundary
+`resume-ir.current-stage-blocked-summary.v2` and privacy boundary
 `local_only_redacted_blocked_summary`, then exits non-zero before
 `release-readiness`. That file records the blocked step/category/reason, input
 digests, preflight probe statuses, completed step statuses,
@@ -611,10 +724,12 @@ SQLite databases, model caches, runtime binaries, or raw resumes.
 
 - signing certificates are not available for production installers
 - notarization credentials are not available for macOS release artifacts
-- Windows MSI install, upgrade, uninstall, and rollback are not proven
-- Windows service install, start, stop, status, uninstall, rollback, and recovery
-  are not proven
-- macOS signed pkg/dmg install, upgrade, uninstall, and rollback are not proven
+- self-contained Tauri v2 daemon, embedding/model, OCR, and PDF-renderer
+  composition is not complete for both target triples
+- Windows per-user Tauri NSIS install, first run, upgrade, uninstall, rollback,
+  and recovery are not proven on a clean H0 host
+- macOS signed and notarized Tauri app/DMG install, first run, upgrade,
+  uninstall, rollback, recovery, and Gatekeeper validation are not proven
 - GitHub Release publication is not approved or proven with a working GitHub
   Actions release token, Git credential path, and artifact upload evidence
 - private real-corpus hot-index hybrid benchmark baseline over the available
@@ -660,19 +775,22 @@ current-stage evidence, redacted local diagnostics evidence, or actual
 hardware-drill evidence.
 
 The JSON report must include `goal_gap_matrix` with schema
-`resume-ir.goal-gap-matrix.v1`. That matrix is the product-level P0-P6 gap view:
+`resume-ir.goal-gap-matrix.v2`. That matrix is the product-level P0-P6 gap view:
 P0/P1 can show local implementation covered by CI, P2/P3/P4 can show local
 implementation present while quality/runtime/baseline evidence remains blocked,
-P5 can show local release automation implementation complete while real signing,
-notarization, administrator-elevated platform transcripts, and release approval
-remain blocked, and P6 can be deferred to the performance-optimization goal
+P5 must keep the ordinary-user Tauri v2 installer implementation `incomplete`
+until both macOS app/DMG and Windows per-user NSIS are self-contained and proven
+on clean hosts. P5 separately records legacy CLI/daemon package automation as
+`production_complete` with `counts_as_tauri_desktop_installer: false`; MSI,
+Windows Service, pkg, and LaunchAgent dry-run evidence cannot clear the Tauri
+installer gap. P6 can be deferred to the performance-optimization goal
 until the 500-query/full hot-index baseline, quality datasets, hardware drills,
 and later external scale validation exist. The matrix must keep
 `complete_product: false`, `current_stage:
-"core_import_search_closed_release_blocked"`, and the completion statement that
-core local import/search closure is verified while complete stable release
-remains blocked by evidence, credentials, platform transcripts, and deferred
-performance goals.
+"tauri_desktop_product_incomplete_release_blocked"`, and the completion statement
+that core local import/search closure is verified while ordinary-user Tauri
+desktop installers remain incomplete and stable release remains blocked by
+implementation, evidence, credentials, and platform transcripts.
 
 After local redacted aggregate reports have been generated and reviewed, feed
 them into the readiness gate as evidence inputs. Reviewed model/OCR manifests
@@ -789,14 +907,15 @@ hardware-drill evidence items. The labels are:
 Those automation and dry-run manifest evidence entries prove only that
 fail-closed automation, schema checks, redacted artifact inventory, and redacted
 SBOM generation exist; they do not clear signing, notarization, installer
-lifecycle, service lifecycle, GitHub Release upload, or cross-platform release
-blockers. The command must still fail closed while signing, notarization,
-installer lifecycle, cross-platform release validation, hardware fault-drill
-blockers, or any missing local evidence remain unresolved. Do not upload or
-commit generated reports or manifests unless they have been separately reviewed
-to contain no raw resume text, filenames, local paths, queries, labels, sample
-IDs, document IDs, vectors, page images, secrets, diagnostics, indexes, model
-files, OCR runtime binaries, or model caches.
+lifecycle, GitHub Release upload, or cross-platform Tauri release blockers.
+Legacy MSI, Windows Service, pkg, and LaunchAgent evidence does not count as an
+ordinary-user Tauri desktop installer. The command must still fail closed while
+signing, notarization, installer lifecycle, cross-platform release validation,
+hardware fault-drill blockers, or any missing local evidence remain unresolved.
+Do not upload or commit generated reports or manifests unless they have been
+separately reviewed to contain no raw resume text, filenames, local paths,
+queries, labels, sample IDs, document IDs, vectors, page images, secrets,
+diagnostics, indexes, model files, OCR runtime binaries, or model caches.
 
 Actual hardware fault-drill evidence is separate from the dry-run and
 simulation paths. `--hardware-fault-evidence hardware-fault-drills.json`
@@ -1561,8 +1680,9 @@ scripts/release/create-windows-service-evidence.sh \
 
 This Windows Service evidence manifest is a fail-closed release evidence
 validator. It does not register a service, start/stop/query it, configure
-recovery, uninstall it, prove rollback, or clear the Windows service lifecycle
-blocker until administrator-elevated release-runner evidence exists.
+recovery, uninstall it, or prove rollback. It is legacy CLI/daemon automation
+evidence only and cannot clear Tauri runtime composition, per-user NSIS, or
+clean-H0 native lifecycle blockers.
 
 Release dry-runs must also write a Windows Service lifecycle dry-run operator
 plan:
@@ -1583,7 +1703,8 @@ administrator approval, and blocked release steps. It must not contain service
 tokens, administrator passwords, local paths, raw service logs, resume data,
 diagnostics, indexes, model caches, or runtime artifacts. This is an operator
 plan only; it does not register, start, stop, query, recover, uninstall, roll
-back, or otherwise clear the Windows service lifecycle blocker.
+back, or otherwise count as an ordinary-user Tauri installer. It cannot clear
+Tauri runtime composition, per-user NSIS, or clean-H0 native lifecycle blockers.
 
 Validate any proposed local model pack before worker configuration:
 

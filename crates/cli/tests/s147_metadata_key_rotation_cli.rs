@@ -16,7 +16,7 @@ fn privacy_cli_rotates_metadata_sqlcipher_key_without_output_leaks() {
     assert!(initialize.status.success());
     assert!(initialize.stderr.is_empty());
 
-    let db_path = metadata_store_path(&data_dir);
+    let db_path = metadata_store_path(&data_dir).unwrap();
     let key_path = metadata_encryption_key_path(&data_dir);
     let old_key_hex = fs::read_to_string(&key_path).unwrap();
     let old_key = decode_key(old_key_hex.trim());
@@ -46,7 +46,7 @@ fn privacy_cli_rotates_metadata_sqlcipher_key_without_output_leaks() {
     assert!(!String::from_utf8_lossy(&rotation.stdout).contains(new_key_hex.trim()));
     assert!(MetaStore::open_encrypted(&db_path, &old_key).is_err());
     let reopened = MetaStore::open_encrypted(&db_path, &new_key).unwrap();
-    assert_eq!(reopened.schema_version().unwrap(), 22);
+    assert_eq!(reopened.schema_version().unwrap(), 27);
 
     let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args(["--data-dir", path_str(&data_dir), "doctor"])

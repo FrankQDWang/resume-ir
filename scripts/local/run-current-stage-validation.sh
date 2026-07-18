@@ -27,7 +27,6 @@ usage: scripts/local/run-current-stage-validation.sh [--dry-run|--execute]
   [--private-query-request-sample-count N]
   [--private-query-timeout-ms N]
   [--worker-interval-ms N] [--ocr-worker-ticks N] [--ocr-jobs-per-tick N]
-  [--embedding-worker-ticks N]
   [--ocr-throughput-max-documents N] [--ocr-throughput-max-pages N]
   [--ocr-throughput-pages-per-document N] [--ocr-throughput-max-run-ms N]
   [--ocr-throughput-min-pages N]
@@ -877,7 +876,7 @@ EOF_STEPS
 
   cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
 {
-  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "schema_version": "resume-ir.current-stage-blocked-summary.v2",
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
@@ -907,7 +906,6 @@ EOF_STEPS
     "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
-    "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
     "baseline_min_queries": $baseline_min_queries
@@ -941,7 +939,7 @@ $steps_json
     "private corpus read",
     "runtime preflight",
     "dataset manifest",
-    "import/OCR/embedding workers",
+    "import/OCR/atomic search publication",
     "current-stage validation evidence",
     "stable release readiness"
   ],
@@ -1011,7 +1009,7 @@ EOF_STEPS
 
   cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
 {
-  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "schema_version": "resume-ir.current-stage-blocked-summary.v2",
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
@@ -1041,7 +1039,6 @@ EOF_STEPS
     "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
-    "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
     "baseline_min_queries": $baseline_min_queries
@@ -1077,7 +1074,7 @@ $steps_json
   "not_completed": [
     "successful private corpus import",
     "OCR worker bounded run",
-    "embedding worker bounded run",
+    "atomic search publication run",
     "corpus summary",
     "query-set prepare",
     "private query baseline",
@@ -1120,8 +1117,7 @@ write_query_set_blocked_summary() {
   model_validate_stdout_sha256=$(sha256_file "$out_dir/model-validate-manifest.stdout.txt")
   model_preflight_sha256=$(sha256_file "$out_dir/model-preflight.json")
   import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
-  ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
-  embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
+  ocr_search_publication_stdout_sha256=$(sha256_file "$out_dir/ocr-search-publication.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
   query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
@@ -1140,7 +1136,7 @@ EOF_PREFLIGHT_OUTPUT
 
   cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
 {
-  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "schema_version": "resume-ir.current-stage-blocked-summary.v2",
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
@@ -1170,7 +1166,6 @@ EOF_PREFLIGHT_OUTPUT
     "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
-    "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
     "baseline_min_queries": $baseline_min_queries
@@ -1190,8 +1185,7 @@ EOF_PREFLIGHT_OUTPUT
     {"id": "model_preflight", "status": "success"},
     {"id": "dataset_manifest", "status": "success"},
     {"id": "import_private_corpus", "status": "success"},
-    {"id": "ocr_worker_bounded_loop", "status": "success"},
-    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "ocr_search_publication_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
     {"id": "query_set_prepare", "status": "blocked", "exit_code": $blocked_exit}
   ],
@@ -1207,8 +1201,7 @@ EOF_PREFLIGHT_OUTPUT
     {"file": "model-validate-manifest.stdout.txt", "sha256": "$model_validate_stdout_sha256"},
     {"file": "model-preflight.json", "sha256": "$model_preflight_sha256"},
     {"file": "import.stdout.txt", "sha256": "$import_stdout_sha256"},
-    {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
-    {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
+    {"file": "ocr-search-publication.stdout.txt", "sha256": "$ocr_search_publication_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
 ${query_set_trace_preflight_redacted_output}
     {"file": "query-set-prepare.stdout.txt", "sha256": "$query_set_prepare_stdout_sha256"},
@@ -1261,8 +1254,7 @@ write_private_query_blocked_summary() {
   model_validate_stdout_sha256=$(sha256_file "$out_dir/model-validate-manifest.stdout.txt")
   model_preflight_sha256=$(sha256_file "$out_dir/model-preflight.json")
   import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
-  ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
-  embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
+  ocr_search_publication_stdout_sha256=$(sha256_file "$out_dir/ocr-search-publication.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
   query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
@@ -1272,7 +1264,7 @@ write_private_query_blocked_summary() {
 
   cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
 {
-  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "schema_version": "resume-ir.current-stage-blocked-summary.v2",
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
@@ -1302,7 +1294,6 @@ write_private_query_blocked_summary() {
     "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
-    "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
     "baseline_min_queries": $baseline_min_queries
@@ -1321,8 +1312,7 @@ write_private_query_blocked_summary() {
     {"id": "model_preflight", "status": "success"},
     {"id": "dataset_manifest", "status": "success"},
     {"id": "import_private_corpus", "status": "success"},
-    {"id": "ocr_worker_bounded_loop", "status": "success"},
-    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "ocr_search_publication_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
     {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "blocked", "exit_code": $blocked_exit}
@@ -1339,8 +1329,7 @@ write_private_query_blocked_summary() {
     {"file": "model-validate-manifest.stdout.txt", "sha256": "$model_validate_stdout_sha256"},
     {"file": "model-preflight.json", "sha256": "$model_preflight_sha256"},
     {"file": "import.stdout.txt", "sha256": "$import_stdout_sha256"},
-    {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
-    {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
+    {"file": "ocr-search-publication.stdout.txt", "sha256": "$ocr_search_publication_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
     {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},
@@ -1395,8 +1384,7 @@ write_ocr_throughput_blocked_summary() {
   model_validate_stdout_sha256=$(sha256_file "$out_dir/model-validate-manifest.stdout.txt")
   model_preflight_sha256=$(sha256_file "$out_dir/model-preflight.json")
   import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
-  ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
-  embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
+  ocr_search_publication_stdout_sha256=$(sha256_file "$out_dir/ocr-search-publication.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
   query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
@@ -1422,7 +1410,7 @@ EOF_STEPS
 
   cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
 {
-  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "schema_version": "resume-ir.current-stage-blocked-summary.v2",
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
@@ -1452,7 +1440,6 @@ EOF_STEPS
     "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
-    "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
     "baseline_min_queries": $baseline_min_queries,
@@ -1472,8 +1459,7 @@ EOF_STEPS
     {"id": "model_preflight", "status": "success"},
     {"id": "dataset_manifest", "status": "success"},
     {"id": "import_private_corpus", "status": "success"},
-    {"id": "ocr_worker_bounded_loop", "status": "success"},
-    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "ocr_search_publication_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
     {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
@@ -1492,8 +1478,7 @@ $ocr_throughput_steps
     {"file": "model-validate-manifest.stdout.txt", "sha256": "$model_validate_stdout_sha256"},
     {"file": "model-preflight.json", "sha256": "$model_preflight_sha256"},
     {"file": "import.stdout.txt", "sha256": "$import_stdout_sha256"},
-    {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
-    {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
+    {"file": "ocr-search-publication.stdout.txt", "sha256": "$ocr_search_publication_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
     {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},
@@ -1545,8 +1530,7 @@ write_ocr_backlog_blocked_summary() {
   model_validate_stdout_sha256=$(sha256_file "$out_dir/model-validate-manifest.stdout.txt")
   model_preflight_sha256=$(sha256_file "$out_dir/model-preflight.json")
   import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
-  ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
-  embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
+  ocr_search_publication_stdout_sha256=$(sha256_file "$out_dir/ocr-search-publication.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
   dataset_manifest_sha256_output=$(sha256_file "$dataset_manifest")
@@ -1571,7 +1555,7 @@ EOF_DIAGNOSTICS_STEP
 
   cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
 {
-  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "schema_version": "resume-ir.current-stage-blocked-summary.v2",
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
@@ -1581,7 +1565,7 @@ EOF_DIAGNOSTICS_STEP
   "full_baseline_satisfied": false,
   "release_readiness_evidence": false,
   "performance_optimization_deferred": true,
-  "blocked_step": "ocr_worker_bounded_loop",
+  "blocked_step": "ocr_search_publication_bounded_loop",
   "blocked_category": "ocr",
   "blocked_reason": "ocr_backlog_exceeds_current_stage_budget",
   "blocked_exit": $blocked_exit,
@@ -1601,7 +1585,6 @@ EOF_DIAGNOSTICS_STEP
     "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
-    "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
     "baseline_min_queries": $baseline_min_queries
@@ -1620,8 +1603,7 @@ EOF_DIAGNOSTICS_STEP
     {"id": "model_preflight", "status": "success"},
     {"id": "dataset_manifest", "status": "success"},
     {"id": "import_private_corpus", "status": "success"},
-    {"id": "ocr_worker_bounded_loop", "status": "blocked", "exit_code": $blocked_exit},
-    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "ocr_search_publication_bounded_loop", "status": "blocked", "exit_code": $blocked_exit},
     {"id": "corpus_summary", "status": "success"},
 $redacted_diagnostics_step_json,
 $doctor_step_json
@@ -1638,8 +1620,7 @@ $doctor_step_json
     {"file": "model-validate-manifest.stdout.txt", "sha256": "$model_validate_stdout_sha256"},
     {"file": "model-preflight.json", "sha256": "$model_preflight_sha256"},
     {"file": "import.stdout.txt", "sha256": "$import_stdout_sha256"},
-    {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
-    {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
+    {"file": "ocr-search-publication.stdout.txt", "sha256": "$ocr_search_publication_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "redacted-diagnostics.json", "sha256": $redacted_diagnostics_sha256_json},
     {"file": "doctor.out", "sha256": $doctor_sha256_json}
@@ -1693,8 +1674,7 @@ write_redacted_diagnostics_blocked_summary() {
   model_validate_stdout_sha256=$(sha256_file "$out_dir/model-validate-manifest.stdout.txt")
   model_preflight_sha256=$(sha256_file "$out_dir/model-preflight.json")
   import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
-  ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
-  embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
+  ocr_search_publication_stdout_sha256=$(sha256_file "$out_dir/ocr-search-publication.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
   query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
@@ -1708,7 +1688,7 @@ write_redacted_diagnostics_blocked_summary() {
 
   cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
 {
-  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "schema_version": "resume-ir.current-stage-blocked-summary.v2",
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
@@ -1738,7 +1718,6 @@ write_redacted_diagnostics_blocked_summary() {
     "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
-    "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
     "baseline_min_queries": $baseline_min_queries
@@ -1757,8 +1736,7 @@ write_redacted_diagnostics_blocked_summary() {
     {"id": "model_preflight", "status": "success"},
     {"id": "dataset_manifest", "status": "success"},
     {"id": "import_private_corpus", "status": "success"},
-    {"id": "ocr_worker_bounded_loop", "status": "success"},
-    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "ocr_search_publication_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
     {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
@@ -1779,8 +1757,7 @@ write_redacted_diagnostics_blocked_summary() {
     {"file": "model-validate-manifest.stdout.txt", "sha256": "$model_validate_stdout_sha256"},
     {"file": "model-preflight.json", "sha256": "$model_preflight_sha256"},
     {"file": "import.stdout.txt", "sha256": "$import_stdout_sha256"},
-    {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
-    {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
+    {"file": "ocr-search-publication.stdout.txt", "sha256": "$ocr_search_publication_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
     {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},
@@ -1836,8 +1813,7 @@ write_release_readiness_blocked_summary() {
   model_validate_stdout_sha256=$(sha256_file "$out_dir/model-validate-manifest.stdout.txt")
   model_preflight_sha256=$(sha256_file "$out_dir/model-preflight.json")
   import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
-  ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
-  embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
+  ocr_search_publication_stdout_sha256=$(sha256_file "$out_dir/ocr-search-publication.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
   query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
@@ -1856,7 +1832,7 @@ write_release_readiness_blocked_summary() {
 
   cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
 {
-  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "schema_version": "resume-ir.current-stage-blocked-summary.v2",
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
@@ -1886,7 +1862,6 @@ write_release_readiness_blocked_summary() {
     "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
-    "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
     "baseline_min_queries": $baseline_min_queries
@@ -1905,8 +1880,7 @@ write_release_readiness_blocked_summary() {
     {"id": "model_preflight", "status": "success"},
     {"id": "dataset_manifest", "status": "success"},
     {"id": "import_private_corpus", "status": "success"},
-    {"id": "ocr_worker_bounded_loop", "status": "success"},
-    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "ocr_search_publication_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
     {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
@@ -1931,8 +1905,7 @@ write_release_readiness_blocked_summary() {
     {"file": "model-validate-manifest.stdout.txt", "sha256": "$model_validate_stdout_sha256"},
     {"file": "model-preflight.json", "sha256": "$model_preflight_sha256"},
     {"file": "import.stdout.txt", "sha256": "$import_stdout_sha256"},
-    {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
-    {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
+    {"file": "ocr-search-publication.stdout.txt", "sha256": "$ocr_search_publication_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
     {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},
@@ -1991,8 +1964,7 @@ write_fault_simulation_blocked_summary() {
   model_validate_stdout_sha256=$(sha256_file "$out_dir/model-validate-manifest.stdout.txt")
   model_preflight_sha256=$(sha256_file "$out_dir/model-preflight.json")
   import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
-  ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
-  embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
+  ocr_search_publication_stdout_sha256=$(sha256_file "$out_dir/ocr-search-publication.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
   query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
@@ -2044,7 +2016,7 @@ EOF_STEPS
 
   cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
 {
-  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "schema_version": "resume-ir.current-stage-blocked-summary.v2",
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
@@ -2074,7 +2046,6 @@ EOF_STEPS
     "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
-    "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
     "baseline_min_queries": $baseline_min_queries
@@ -2093,8 +2064,7 @@ EOF_STEPS
     {"id": "model_preflight", "status": "success"},
     {"id": "dataset_manifest", "status": "success"},
     {"id": "import_private_corpus", "status": "success"},
-    {"id": "ocr_worker_bounded_loop", "status": "success"},
-    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "ocr_search_publication_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
     {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
@@ -2115,8 +2085,7 @@ $fault_step_statuses
     {"file": "model-validate-manifest.stdout.txt", "sha256": "$model_validate_stdout_sha256"},
     {"file": "model-preflight.json", "sha256": "$model_preflight_sha256"},
     {"file": "import.stdout.txt", "sha256": "$import_stdout_sha256"},
-    {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
-    {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
+    {"file": "ocr-search-publication.stdout.txt", "sha256": "$ocr_search_publication_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
     {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},
@@ -2218,12 +2187,9 @@ private_query_timeout_ms="30000"
 worker_interval_ms="1"
 ocr_worker_ticks="10000"
 ocr_jobs_per_tick="1"
-embedding_worker_ticks="10000"
 ocr_max_pages_per_document="20"
 ocr_page_timeout_ms="30000"
 ocr_render_dpi="150"
-embedding_max_docs="128"
-embedding_max_text_bytes="1000000"
 embedding_timeout_ms="30000"
 ocr_throughput_max_documents="900"
 ocr_throughput_max_pages="500"
@@ -2387,9 +2353,6 @@ $2"
     --ocr-jobs-per-tick)
       need_value "$@"; ocr_jobs_per_tick="$2"; shift 2
       ;;
-    --embedding-worker-ticks)
-      need_value "$@"; embedding_worker_ticks="$2"; shift 2
-      ;;
     --ocr-max-pages-per-document)
       need_value "$@"; ocr_max_pages_per_document="$2"; shift 2
       ;;
@@ -2398,12 +2361,6 @@ $2"
       ;;
     --ocr-render-dpi)
       need_value "$@"; ocr_render_dpi="$2"; shift 2
-      ;;
-    --embedding-max-docs)
-      need_value "$@"; embedding_max_docs="$2"; shift 2
-      ;;
-    --embedding-max-text-bytes)
-      need_value "$@"; embedding_max_text_bytes="$2"; shift 2
       ;;
     --embedding-timeout-ms)
       need_value "$@"; embedding_timeout_ms="$2"; shift 2
@@ -2472,12 +2429,9 @@ require_positive_int "--private-query-timeout-ms" "$private_query_timeout_ms"
 require_positive_int "--worker-interval-ms" "$worker_interval_ms"
 require_positive_int "--ocr-worker-ticks" "$ocr_worker_ticks"
 require_positive_int "--ocr-jobs-per-tick" "$ocr_jobs_per_tick"
-require_positive_int "--embedding-worker-ticks" "$embedding_worker_ticks"
 require_positive_int "--ocr-max-pages-per-document" "$ocr_max_pages_per_document"
 require_positive_int "--ocr-page-timeout-ms" "$ocr_page_timeout_ms"
 require_positive_int "--ocr-render-dpi" "$ocr_render_dpi"
-require_positive_int "--embedding-max-docs" "$embedding_max_docs"
-require_positive_int "--embedding-max-text-bytes" "$embedding_max_text_bytes"
 require_positive_int "--embedding-timeout-ms" "$embedding_timeout_ms"
 require_positive_int "--ocr-throughput-max-documents" "$ocr_throughput_max_documents"
 require_positive_int "--ocr-throughput-max-pages" "$ocr_throughput_max_pages"
@@ -2532,7 +2486,7 @@ EOF_STEPS
     },
     {
       "id": "redacted_evidence_manifest",
-      "command": "write <local-evidence-dir>/current-stage-validation-evidence.json with schema resume-ir.current-stage-validation-evidence.v1, file digests, step statuses, and privacy sentinels"
+      "command": "write <local-evidence-dir>/current-stage-validation-evidence.json with schema resume-ir.current-stage-validation-evidence.v2, file digests, step statuses, and privacy sentinels"
     },
     {
       "id": "current_stage_handoff",
@@ -2560,7 +2514,7 @@ EOF_STEPS
     ocr_throughput_plan_steps=""
     terminal_plan_steps='    {
       "id": "redacted_smoke_summary",
-      "command": "write <local-evidence-dir>/current-stage-smoke-summary.json with schema resume-ir.current-stage-smoke-summary.v1, file digests, step statuses, and explicit non-release-evidence blockers"
+      "command": "write <local-evidence-dir>/current-stage-smoke-summary.json with schema resume-ir.current-stage-smoke-summary.v2, file digests, step statuses, and explicit non-release-evidence blockers"
     },
     {
       "id": "current_stage_handoff",
@@ -2609,7 +2563,7 @@ fi
 if [ "$mode" = "dry-run" ]; then
   cat <<EOF
 {
-  "schema_version": "resume-ir.current-stage-validation-plan.v1",
+  "schema_version": "resume-ir.current-stage-validation-plan.v2",
   "mode": "dry-run",
   "validation_profile": "$validation_profile",
   "privacy_boundary": "local_only_redacted_plan",
@@ -2633,7 +2587,6 @@ if [ "$mode" = "dry-run" ]; then
     "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
-    "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
     "baseline_min_queries": $baseline_min_queries,
@@ -2677,20 +2630,12 @@ if [ "$mode" = "dry-run" ]; then
       "command": "$import_private_corpus_plan_command"
     },
     {
-      "id": "ocr_worker_once_primitive",
-      "command": "resume-daemon --data-dir <local-data-dir> run --foreground --once --work-ocr-once --ocr-tesseract-command <local-tesseract-command> --ocr-pdftoppm-command <local-pdftoppm-command>"
+      "id": "ocr_search_publication_once_primitive",
+      "command": "resume-daemon --data-dir <local-data-dir> run --foreground --once --work-ocr-once --ocr-tesseract-command <local-tesseract-command> --ocr-pdftoppm-command <local-pdftoppm-command> --embedding-command <local-embedding-command> --embedding-model-id <reviewed-local-model-id> --embedding-dimension <dimension>"
     },
     {
-      "id": "ocr_worker_bounded_loop",
-      "command": "resume-daemon --data-dir <local-data-dir> run --foreground --work-ocr --ocr-tesseract-command <local-tesseract-command> --ocr-pdftoppm-command <local-pdftoppm-command> --worker-interval-ms <bounded-interval-ms> --max-worker-ticks <bounded-worker-ticks> --ocr-jobs-per-tick <bounded-ocr-jobs-per-tick>"
-    },
-    {
-      "id": "embedding_worker_once_primitive",
-      "command": "resume-daemon --data-dir <local-data-dir> run --foreground --once --work-embeddings-once --embedding-command <local-embedding-command> --embedding-model-id <reviewed-local-model-id> --embedding-dimension <dimension>"
-    },
-    {
-      "id": "embedding_worker_bounded_loop",
-      "command": "resume-daemon --data-dir <local-data-dir> run --foreground --work-embeddings --embedding-command <local-embedding-command> --embedding-model-id <reviewed-local-model-id> --embedding-dimension <dimension> --worker-interval-ms <bounded-interval-ms> --max-worker-ticks <bounded-worker-ticks>"
+      "id": "ocr_search_publication_bounded_loop",
+      "command": "resume-daemon --data-dir <local-data-dir> run --foreground --work-ocr --ocr-tesseract-command <local-tesseract-command> --ocr-pdftoppm-command <local-pdftoppm-command> --embedding-command <local-embedding-command> --embedding-model-id <reviewed-local-model-id> --embedding-dimension <dimension> --worker-interval-ms <bounded-interval-ms> --max-worker-ticks <bounded-worker-ticks> --ocr-jobs-per-tick <bounded-ocr-jobs-per-tick>"
     },
     {
       "id": "corpus_summary",
@@ -3043,7 +2988,7 @@ else
   fi
 fi
 
-printf '%s\n' "current-stage validation: bounded ocr worker"
+printf '%s\n' "current-stage validation: bounded OCR and atomic search publication"
 "$resume_daemon" --data-dir "$data_dir" run --foreground \
   --work-ocr \
   --ocr-tesseract-command "$tesseract_command" \
@@ -3052,23 +2997,14 @@ printf '%s\n' "current-stage validation: bounded ocr worker"
   --ocr-render-dpi "$ocr_render_dpi" \
   --ocr-page-timeout-ms "$ocr_page_timeout_ms" \
   --ocr-max-pages-per-document "$ocr_max_pages_per_document" \
-  --worker-interval-ms "$worker_interval_ms" \
-  --max-worker-ticks "$ocr_worker_ticks" \
-  --ocr-jobs-per-tick "$ocr_jobs_per_tick" \
-  > "$out_dir/ocr-worker.stdout.txt"
-
-printf '%s\n' "current-stage validation: bounded embedding worker"
-"$resume_daemon" --data-dir "$data_dir" run --foreground \
-  --work-embeddings \
   --embedding-command "$embedding_command" \
   --embedding-model-id "$model_id" \
   --embedding-dimension "$dimension" \
-  --embedding-max-docs "$embedding_max_docs" \
-  --embedding-max-text-bytes "$embedding_max_text_bytes" \
   --embedding-timeout-ms "$embedding_timeout_ms" \
   --worker-interval-ms "$worker_interval_ms" \
-  --max-worker-ticks "$embedding_worker_ticks" \
-  > "$out_dir/embedding-worker.stdout.txt"
+  --max-worker-ticks "$ocr_worker_ticks" \
+  --ocr-jobs-per-tick "$ocr_jobs_per_tick" \
+  > "$out_dir/ocr-search-publication.stdout.txt"
 
 printf '%s\n' "current-stage validation: corpus summary"
 "$resume_cli" --data-dir "$data_dir" benchmark-corpus-summary --json \
@@ -3228,8 +3164,7 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
   model_validate_stdout_sha256=$(sha256_file "$out_dir/model-validate-manifest.stdout.txt")
   model_preflight_sha256=$(sha256_file "$out_dir/model-preflight.json")
   import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
-  ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
-  embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
+  ocr_search_publication_stdout_sha256=$(sha256_file "$out_dir/ocr-search-publication.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
   query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
@@ -3240,7 +3175,7 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
 
   cat > "$out_dir/current-stage-blocked-summary.json" <<EOF
 {
-  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "schema_version": "resume-ir.current-stage-blocked-summary.v2",
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "$validation_profile",
   "current_stage_target": "$current_stage_target",
@@ -3270,7 +3205,6 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
     "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
-    "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
     "baseline_min_queries": $baseline_min_queries
@@ -3289,8 +3223,7 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
     {"id": "model_preflight", "status": "success"},
     {"id": "dataset_manifest", "status": "success"},
     {"id": "import_private_corpus", "status": "success"},
-    {"id": "ocr_worker_bounded_loop", "status": "success"},
-    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "ocr_search_publication_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
     {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
@@ -3308,8 +3241,7 @@ if [ "$baseline_gate_status" -ne 0 ] && [ "$validation_profile" = "full" ]; then
     {"file": "model-validate-manifest.stdout.txt", "sha256": "$model_validate_stdout_sha256"},
     {"file": "model-preflight.json", "sha256": "$model_preflight_sha256"},
     {"file": "import.stdout.txt", "sha256": "$import_stdout_sha256"},
-    {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
-    {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
+    {"file": "ocr-search-publication.stdout.txt", "sha256": "$ocr_search_publication_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
     {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},
@@ -3508,8 +3440,7 @@ if [ "$validation_profile" = "smoke" ]; then
   model_validate_stdout_sha256=$(sha256_file "$out_dir/model-validate-manifest.stdout.txt")
   model_preflight_sha256=$(sha256_file "$out_dir/model-preflight.json")
   import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
-  ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
-  embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
+  ocr_search_publication_stdout_sha256=$(sha256_file "$out_dir/ocr-search-publication.stdout.txt")
   corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
   corpus_summary_observability=$(corpus_summary_observability_json "$out_dir/benchmark-corpus-summary.local.json")
   query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
@@ -3524,7 +3455,7 @@ if [ "$validation_profile" = "smoke" ]; then
 
   cat > "$out_dir/current-stage-smoke-summary.json" <<EOF
 {
-  "schema_version": "resume-ir.current-stage-smoke-summary.v1",
+  "schema_version": "resume-ir.current-stage-smoke-summary.v2",
   "privacy_boundary": "local_only_redacted_aggregate_summary",
   "validation_profile": "smoke",
   "current_stage_target": "local_real_corpus_smoke_chain",
@@ -3550,7 +3481,6 @@ if [ "$validation_profile" = "smoke" ]; then
     "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
     "ocr_jobs_per_tick": $ocr_jobs_per_tick,
-    "embedding_worker_ticks": $embedding_worker_ticks,
     "query_set_min_queries": $query_set_min_queries,
     "baseline_min_documents": $baseline_min_documents,
     "baseline_min_queries": $baseline_min_queries
@@ -3569,8 +3499,7 @@ if [ "$validation_profile" = "smoke" ]; then
     {"id": "model_preflight", "status": "success"},
     {"id": "dataset_manifest", "status": "success"},
     {"id": "import_private_corpus", "status": "success"},
-    {"id": "ocr_worker_bounded_loop", "status": "success"},
-    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "ocr_search_publication_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
     {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
@@ -3592,8 +3521,7 @@ if [ "$validation_profile" = "smoke" ]; then
     {"file": "model-validate-manifest.stdout.txt", "sha256": "$model_validate_stdout_sha256"},
     {"file": "model-preflight.json", "sha256": "$model_preflight_sha256"},
     {"file": "import.stdout.txt", "sha256": "$import_stdout_sha256"},
-    {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
-    {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
+    {"file": "ocr-search-publication.stdout.txt", "sha256": "$ocr_search_publication_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
     {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},
@@ -3683,8 +3611,7 @@ model_draft_stdout_sha256=$(sha256_file "$out_dir/model-draft-manifest.stdout.tx
 model_validate_stdout_sha256=$(sha256_file "$out_dir/model-validate-manifest.stdout.txt")
 model_preflight_sha256=$(sha256_file "$out_dir/model-preflight.json")
 import_stdout_sha256=$(sha256_file "$out_dir/import.stdout.txt")
-ocr_worker_stdout_sha256=$(sha256_file "$out_dir/ocr-worker.stdout.txt")
-embedding_worker_stdout_sha256=$(sha256_file "$out_dir/embedding-worker.stdout.txt")
+ocr_search_publication_stdout_sha256=$(sha256_file "$out_dir/ocr-search-publication.stdout.txt")
 corpus_summary_sha256=$(sha256_file "$out_dir/benchmark-corpus-summary.local.json")
 query_set_prepare_stdout_sha256=$(sha256_file "$out_dir/query-set-prepare.stdout.txt")
 private_benchmark_sha256=$(sha256_file "$out_dir/private-benchmark-local.json")
@@ -3704,7 +3631,7 @@ private_query_observability=$(private_query_observability_json "$out_dir/private
 
 cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
 {
-  "schema_version": "resume-ir.current-stage-validation-evidence.v1",
+  "schema_version": "resume-ir.current-stage-validation-evidence.v2",
   "privacy_boundary": "local_only_redacted_evidence_manifest",
   "current_stage_target": "reproducible_local_10k_baseline",
   "runtime_distribution_mode": "$runtime_distribution_mode",
@@ -3729,8 +3656,7 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     "embedding_runtime_bin_dir_configured": $embedding_runtime_bin_dir_configured,
     "reuse_imported_corpus": $reuse_imported_corpus,
     "ocr_worker_ticks": $ocr_worker_ticks,
-    "ocr_jobs_per_tick": $ocr_jobs_per_tick,
-    "embedding_worker_ticks": $embedding_worker_ticks
+    "ocr_jobs_per_tick": $ocr_jobs_per_tick
   },
   "preflight_probes": {
     "ocr_runtime_probe": "passed",
@@ -3747,8 +3673,7 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     {"id": "model_preflight", "status": "success"},
     {"id": "dataset_manifest", "status": "success"},
     {"id": "import_private_corpus", "status": "success"},
-    {"id": "ocr_worker_bounded_loop", "status": "success"},
-    {"id": "embedding_worker_bounded_loop", "status": "success"},
+    {"id": "ocr_search_publication_bounded_loop", "status": "success"},
     {"id": "corpus_summary", "status": "success"},
     {"id": "query_set_prepare", "status": "success"},
     {"id": "private_query_baseline", "status": "success"},
@@ -3773,8 +3698,7 @@ cat > "$out_dir/current-stage-validation-evidence.json" <<EOF
     {"file": "model-validate-manifest.stdout.txt", "sha256": "$model_validate_stdout_sha256"},
     {"file": "model-preflight.json", "sha256": "$model_preflight_sha256"},
     {"file": "import.stdout.txt", "sha256": "$import_stdout_sha256"},
-    {"file": "ocr-worker.stdout.txt", "sha256": "$ocr_worker_stdout_sha256"},
-    {"file": "embedding-worker.stdout.txt", "sha256": "$embedding_worker_stdout_sha256"},
+    {"file": "ocr-search-publication.stdout.txt", "sha256": "$ocr_search_publication_stdout_sha256"},
     {"file": "benchmark-corpus-summary.local.json", "sha256": "$corpus_summary_sha256"},
     {"file": "private-query-set.local.jsonl", "sha256": "$query_set_output_sha256"},
     {"file": "private-query-set.summary.json", "sha256": "$query_set_summary_sha256_output"},

@@ -238,23 +238,32 @@ fn process_file(
         return Ok(());
     }
 
-    let fingerprint =
-        match quick_fingerprint(file_system, path, &normalized_path, &metadata, control) {
-            Ok(fingerprint) => fingerprint,
-            Err(error) if error.kind == CrawlErrorKind::Cancelled => return Err(error),
-            Err(error) => {
-                report.errors.push(error);
-                return Ok(());
-            }
-        };
+    let fingerprint = match quick_fingerprint(file_system, path, &metadata, control) {
+        Ok(fingerprint) => fingerprint,
+        Err(error) if error.kind == CrawlErrorKind::Cancelled => return Err(error),
+        Err(error) => {
+            report.errors.push(error);
+            return Ok(());
+        }
+    };
 
     let mtime = unix_timestamp(metadata.modified);
     let byte_size = metadata.len;
-    let document_id = DocumentId::from_non_secret_parts(&[
-        fingerprint.value.as_str(),
-        byte_size.to_string().as_str(),
-        mtime.as_unix_seconds().to_string().as_str(),
-    ]);
+    let stable_file_id = metadata.stable_file_id;
+    let document_id = stable_file_id.as_ref().map_or_else(
+        || {
+            DocumentId::from_non_secret_parts(&[
+                "legacy-path-identity-v1",
+                normalized_path.as_str(),
+                fingerprint.value.as_str(),
+                byte_size.to_string().as_str(),
+                mtime.as_unix_seconds().to_string().as_str(),
+            ])
+        },
+        |stable_file_id| {
+            DocumentId::from_non_secret_parts(&["stable-file-identity-v1", stable_file_id.as_str()])
+        },
+    );
 
     report.files.push(DiscoveredFile {
         document_id,
@@ -266,6 +275,7 @@ fn process_file(
         permissions: FilePermissions {
             readonly: metadata.readonly,
         },
+        stable_file_id,
         fingerprint,
     });
 
@@ -275,14 +285,12 @@ fn process_file(
 fn quick_fingerprint(
     file_system: &impl FileSystem,
     path: &Path,
-    normalized_path: &NormalizedPath,
     metadata: &FsMetadata,
     control: ScanControl<'_>,
 ) -> Result<QuickFingerprint> {
     ensure_scan_not_cancelled(control)?;
     let mut hash = StableHash::new();
-    hash.update_str("fs-crawler-v1");
-    hash.update_str(normalized_path.as_str());
+    hash.update_str("fs-crawler-content-v2");
     hash.update_u64(metadata.len);
 
     let (mtime_seconds, mtime_nanos) = system_time_parts(metadata.modified);
@@ -651,6 +659,7 @@ pub struct DiscoveredFile {
     pub byte_size: u64,
     pub mtime: UnixTimestamp,
     pub permissions: FilePermissions,
+    pub stable_file_id: Option<StableFileId>,
     pub fingerprint: QuickFingerprint,
 }
 
@@ -665,6 +674,7 @@ impl fmt::Debug for DiscoveredFile {
             .field("byte_size", &self.byte_size)
             .field("mtime", &self.mtime)
             .field("permissions", &self.permissions)
+            .field("stable_file_id", &self.stable_file_id)
             .field("fingerprint", &self.fingerprint)
             .finish()
     }
@@ -722,6 +732,30 @@ impl fmt::Display for NormalizedPath {
 pub struct QuickFingerprint {
     value: String,
     pub sampled_bytes: u64,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct StableFileId(String);
+
+impl StableFileId {
+    pub fn from_non_secret_parts(parts: &[&str]) -> Self {
+        let mut hash = StableHash::new();
+        hash.update_str("stable-file-id-v1");
+        for part in parts {
+            hash.update_str(part);
+        }
+        Self(format!("sfi_{:016x}{:016x}", hash.first, hash.second))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for StableFileId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("<redacted-stable-file-id>")
+    }
 }
 
 impl QuickFingerprint {
@@ -878,12 +912,13 @@ impl fmt::Debug for FsEntry {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FsMetadata {
     pub kind: FsEntryKind,
     pub len: u64,
     pub modified: SystemTime,
     pub readonly: bool,
+    pub stable_file_id: Option<StableFileId>,
 }
 
 impl FsMetadata {
@@ -893,11 +928,17 @@ impl FsMetadata {
             len,
             modified,
             readonly: false,
+            stable_file_id: None,
         }
     }
 
     pub fn with_readonly(mut self, readonly: bool) -> Self {
         self.readonly = readonly;
+        self
+    }
+
+    pub fn with_stable_file_id(mut self, stable_file_id: StableFileId) -> Self {
+        self.stable_file_id = Some(stable_file_id);
         self
     }
 }
@@ -929,16 +970,77 @@ impl FileSystem for StdFileSystem {
 
     fn metadata(&self, path: &Path) -> io::Result<FsMetadata> {
         let metadata = fs::metadata(path)?;
-        Ok(FsMetadata::new(
+        let mut result = FsMetadata::new(
             entry_kind(metadata.file_type()),
             metadata.len(),
             metadata.modified()?,
         )
-        .with_readonly(metadata.permissions().readonly()))
+        .with_readonly(metadata.permissions().readonly());
+        if let Some(stable_file_id) = platform_stable_file_id(path, &metadata) {
+            result = result.with_stable_file_id(stable_file_id);
+        }
+        Ok(result)
     }
 
     fn open(&self, path: &Path) -> io::Result<Box<dyn ReadSeek>> {
         Ok(Box::new(fs::File::open(path)?))
+    }
+}
+
+#[cfg(unix)]
+fn platform_stable_file_id(_path: &Path, metadata: &fs::Metadata) -> Option<StableFileId> {
+    use std::os::unix::fs::MetadataExt;
+
+    let dev = metadata.dev().to_string();
+    let inode = metadata.ino().to_string();
+    let birthtime = metadata.created().ok().map(system_time_parts);
+    let birthtime_seconds =
+        birthtime.map_or_else(|| "unknown".to_string(), |value| value.0.to_string());
+    let birthtime_nanos =
+        birthtime.map_or_else(|| "unknown".to_string(), |value| value.1.to_string());
+    Some(StableFileId::from_non_secret_parts(&[
+        "unix",
+        &dev,
+        &inode,
+        &birthtime_seconds,
+        &birthtime_nanos,
+    ]))
+}
+
+#[cfg(windows)]
+fn platform_stable_file_id(path: &Path, metadata: &fs::Metadata) -> Option<StableFileId> {
+    use std::hash::Hash;
+    use std::os::windows::fs::MetadataExt;
+
+    let handle = same_file::Handle::from_path(path).ok()?;
+    let mut hash = StableHash::new();
+    hash.update_str("stable-file-id-v1");
+    hash.update_str("windows-volume-file-index");
+    handle.hash(&mut StableHashAdapter(&mut hash));
+    let created = metadata.creation_time().to_string();
+    hash.update_str(&created);
+    Some(StableFileId(format!(
+        "sfi_{:016x}{:016x}",
+        hash.first, hash.second
+    )))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn platform_stable_file_id(_path: &Path, _metadata: &fs::Metadata) -> Option<StableFileId> {
+    None
+}
+
+#[cfg(windows)]
+struct StableHashAdapter<'a>(&'a mut StableHash);
+
+#[cfg(windows)]
+impl std::hash::Hasher for StableHashAdapter<'_> {
+    fn finish(&self) -> u64 {
+        self.0.first
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        self.0.update_bytes(bytes);
     }
 }
 

@@ -670,10 +670,18 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
     required = query_semantics.get("required_query_buckets")
     if required != REQUIRED_BUCKETS:
         fail("matrix.query_semantics.required_query_buckets mismatch")
-    if matrix.get("gui_redlines", {}).get("visible_rows_min") != 20:
-        fail("matrix.gui_redlines.visible_rows_min must be 20")
-    if matrix.get("gui_redlines", {}).get("visible_rows_max") != 60:
-        fail("matrix.gui_redlines.visible_rows_max must be 60")
+    gui_redlines = require_mapping(matrix.get("gui_redlines"), "matrix.gui_redlines")
+    if gui_redlines.get("desktop_reference_visible_cards") != 4:
+        fail("matrix.gui_redlines.desktop_reference_visible_cards must be 4")
+    if gui_redlines.get("buffered_cards_max") != 8:
+        fail("matrix.gui_redlines.buffered_cards_max must be 8")
+    if gui_redlines.get("navigation_modes") != ["scroll", "pagination"]:
+        fail("matrix.gui_redlines.navigation_modes mismatch")
+    require_bool(
+        gui_redlines.get("stable_card_height_required"),
+        True,
+        "matrix.gui_redlines.stable_card_height_required",
+    )
 
     optimization_layers = require_mapping(matrix.get("optimization_layers"), "matrix.optimization_layers")
     if optimization_layers.get("allowed") != OPTIMIZATION_LAYERS:
@@ -988,8 +996,11 @@ def validate_gui_manual(report: Mapping[str, object], matrix: Mapping[str, objec
 
     gui = require_mapping(report.get("gui_manual"), f"{path}.gui_manual")
     require_number_at_least(gui.get("logical_rows"), matrix["gui_redlines"]["representative_rows"], f"{path}.gui_manual.logical_rows")
-    require_number_at_least(gui.get("visible_rows"), matrix["gui_redlines"]["visible_rows_min"], f"{path}.gui_manual.visible_rows")
-    require_number_at_most(gui.get("visible_rows"), matrix["gui_redlines"]["visible_rows_max"], f"{path}.gui_manual.visible_rows")
+    require_number_at_least(gui.get("visible_cards"), matrix["gui_redlines"]["desktop_reference_visible_cards"], f"{path}.gui_manual.visible_cards")
+    require_number_at_most(gui.get("visible_cards"), matrix["gui_redlines"]["desktop_reference_visible_cards"], f"{path}.gui_manual.visible_cards")
+    require_number_at_most(gui.get("buffered_cards"), matrix["gui_redlines"]["buffered_cards_max"], f"{path}.gui_manual.buffered_cards")
+    require_enum(gui.get("navigation_mode"), set(matrix["gui_redlines"]["navigation_modes"]), f"{path}.gui_manual.navigation_mode")
+    require_bool(gui.get("stable_card_height"), matrix["gui_redlines"]["stable_card_height_required"], f"{path}.gui_manual.stable_card_height")
     require_number_at_most(gui.get("input_to_paint_p95_ms"), matrix["gui_redlines"]["input_to_paint_p95_ms"], f"{path}.gui_manual.input_to_paint_p95_ms")
     require_number_at_most(gui.get("frame_time_p95_ms"), matrix["gui_redlines"]["frame_time_p95_ms"], f"{path}.gui_manual.frame_time_p95_ms")
     require_number_at_most(gui.get("scroll_dropped_frame_pct"), matrix["gui_redlines"]["scroll_dropped_frame_pct_max"], f"{path}.gui_manual.scroll_dropped_frame_pct")

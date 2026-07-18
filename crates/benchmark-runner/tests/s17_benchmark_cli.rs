@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 #[path = "support/private_query.rs"]
 mod private_query_support;
 
@@ -10,6 +13,26 @@ use private_query_support::{
     assert_private_query_stage_latency, private_query_corpus_summary_json, private_query_set_file,
     private_query_set_file_with_buckets, private_query_set_summary_path,
 };
+
+#[test]
+fn resident_query_load_rejects_incomplete_commands_without_echoing_paths() {
+    let private_path_sentinel = "/private/path/sentinel";
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-benchmark"))
+        .args([
+            "resident-query-load",
+            "--data-dir",
+            private_path_sentinel,
+            "--json",
+        ])
+        .output()
+        .expect("run resume-benchmark");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("usage"));
+    assert!(!stderr.contains(private_path_sentinel));
+}
 
 #[test]
 fn resume_benchmark_outputs_redacted_synthetic_json() {
@@ -3415,6 +3438,8 @@ fn temp_dir(label: &str) -> PathBuf {
         .as_nanos();
     let path = std::env::temp_dir().join(format!("resume-ir-s17-{label}-{unique}"));
     fs::create_dir_all(&path).unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
     path
 }
 

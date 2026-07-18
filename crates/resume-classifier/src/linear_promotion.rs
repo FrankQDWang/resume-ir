@@ -66,13 +66,12 @@ impl LinearPromotionPolicy {
         let Some(model) = &self.0 else {
             return deterministic;
         };
-        if !deterministic.is_conflict_free_safe_gray() {
-            return deterministic;
-        }
-        if model.predict(normalized_text, sections, deterministic.reason_codes()) {
+        if deterministic.is_conflict_free_safe_gray()
+            && model.predict(normalized_text, sections, deterministic.reason_codes())
+        {
             deterministic.promote_to_resume_candidate();
-            deterministic.set_classifier_epoch(&model.classifier_epoch);
         }
+        deterministic.set_classifier_epoch(&model.classifier_epoch);
         deterministic
     }
 

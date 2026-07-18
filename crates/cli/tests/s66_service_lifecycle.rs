@@ -10,8 +10,10 @@ fn service_install_writes_launch_agent_plist_without_cli_path_leaks() {
     let daemon_dir = temp_dir("daemon & private bin");
     let daemon_binary = daemon_dir.join("resume-daemon");
     let ocr_command = daemon_dir.join("ocr-worker");
+    let embedding_command = daemon_dir.join("embedding-runtime");
     fs::write(&daemon_binary, "#!/bin/sh\n").unwrap();
     fs::write(&ocr_command, "#!/bin/sh\n").unwrap();
+    fs::write(&embedding_command, "#!/bin/sh\n").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -27,6 +29,12 @@ fn service_install_writes_launch_agent_plist_without_cli_path_leaks() {
             path_str(&ocr_command),
             "--ocr-max-pages-per-document",
             "7",
+            "--embedding-command",
+            path_str(&embedding_command),
+            "--embedding-model-id",
+            "fixture-model",
+            "--embedding-dimension",
+            "4",
         ])
         .output()
         .expect("run service install");
@@ -46,6 +54,7 @@ fn service_install_writes_launch_agent_plist_without_cli_path_leaks() {
     assert!(!stdout.contains(path_str(&launch_agent_dir)));
     assert!(!stdout.contains(path_str(&daemon_binary)));
     assert!(!stdout.contains(path_str(&ocr_command)));
+    assert!(!stdout.contains(path_str(&embedding_command)));
 
     let plist_path = launch_agent_dir.join("com.resume-ir.daemon.plist");
     let plist = fs::read_to_string(&plist_path).expect("read launch agent plist");
@@ -63,6 +72,13 @@ fn service_install_writes_launch_agent_plist_without_cli_path_leaks() {
     assert!(plist.contains(&path_str(&ocr_command).replace('&', "&amp;")));
     assert!(plist.contains("--ocr-max-pages-per-document"));
     assert!(plist.contains("<string>7</string>"));
+    assert!(plist.contains("--embedding-command"));
+    assert!(plist.contains(&path_str(&embedding_command).replace('&', "&amp;")));
+    assert!(plist.contains("--embedding-model-id"));
+    assert!(plist.contains("--embedding-dimension"));
+    assert!(!plist.contains("--work-embeddings"));
+    assert!(!plist.contains("--embedding-max-docs"));
+    assert!(!plist.contains("--embedding-max-text-bytes"));
     assert!(plist.contains("<key>RunAtLoad</key>"));
     assert!(plist.contains("<key>KeepAlive</key>"));
     assert!(data_dir.join("logs").exists());

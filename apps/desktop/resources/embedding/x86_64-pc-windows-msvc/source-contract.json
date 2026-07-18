@@ -1,0 +1,68 @@
+{
+  "schema_version": "resume-ir.windows-embedding-source-contract.v1",
+  "target_triple": "x86_64-pc-windows-msvc",
+  "runtime_pack_schema": "resume-ir.embedding-runtime-pack.v1",
+  "runtime_pack_id": "intfloat-multilingual-e5-small-qint8-r1",
+  "product_runtime_network_access": "disabled",
+  "onnxruntime": {
+    "version": "1.24.4",
+    "api_version": 24,
+    "source_repository": "https://github.com/microsoft/onnxruntime",
+    "source_tag": "v1.24.4",
+    "source_commit": "2d924974ef147392ced8409d36bd6d2e7fcc8a74",
+    "license": "MIT",
+    "provenance_schema": "resume-ir.onnxruntime-windows-build-provenance.v2",
+    "build_arguments": [
+      "--config",
+      "Release",
+      "--build_shared_lib",
+      "--enable_msvc_static_runtime",
+      "--skip_submodule_sync",
+      "--parallel",
+      "1",
+      "--update",
+      "--build",
+      "--test"
+    ],
+    "provider": "cpu",
+    "telemetry": false,
+    "required_export": "OrtGetApiBase",
+    "forbidden_import_prefixes": [
+      "MSVCP",
+      "VCRUNTIME",
+      "CONCRT",
+      "UCRTBASE",
+      "API-MS-WIN-CRT-",
+      "ONNXRUNTIME_PROVIDERS_"
+    ],
+    "source_license_file": {
+      "file": "LICENSE",
+      "bytes": 1094,
+      "sha256": "c250d6278f0b47a6439fb7592b08b58a55eb9f535aa49a1db63211c3f982b674"
+    },
+    "source_notices_file": {
+      "file": "ThirdPartyNotices.txt",
+      "bytes": 331175,
+      "sha256": "fb0af774b4d7cffc5b9d046f2aaeade2f37df2f80abf8033c95dfffcc77a8866"
+    },
+    "official_prebuilt_observation": {
+      "asset_name": "onnxruntime-win-x64-1.24.4.zip",
+      "bytes": 74442783,
+      "sha256": "d2319fddfb6ea4db99ccc4b60c85c517bcd855721f5daa6a06d40d7cb2ee2357",
+      "imports_dynamic_msvc_runtime": true,
+      "accepted_as_self_contained": false
+    }
+  },
+  "model_assets": {
+    "source_manifest_schema": "resume-ir.embedding-runtime-pack.v1",
+    "source_runtime_pack_id": "intfloat-multilingual-e5-small-qint8-r1",
+    "source_manifest_sha256": "a3f400c03a45d4213318ffd9f02a99018ae12d0e233d8bca467e0416382fee39",
+    "model_id": "intfloat-multilingual-e5-small-qint8-r1",
+    "upstream_model_id": "intfloat/multilingual-e5-small",
+    "upstream_revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+    "upstream_model_file": "onnx/model_qint8_avx512_vnni.onnx",
+    "quantization": "dynamic_int8",
+    "dimension": 384,
+    "license": "MIT"
+  }
+}

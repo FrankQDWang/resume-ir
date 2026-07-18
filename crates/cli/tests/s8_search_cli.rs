@@ -1,92 +1,150 @@
+mod support;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use index_fulltext::{FullTextIndex, IndexDocument, IndexSection};
-use meta_store::{
-    Document, DocumentId, DocumentStatus, FileExtension, MetaStore, ResumeVersion, ResumeVersionId,
-    ResumeVisibility, UnixTimestamp,
-};
+use meta_store::MetaStore;
+
+use support::{assert_import_succeeded, import_text_resumes};
 
 #[test]
-fn search_cli_reads_existing_fulltext_index_without_query_echo() {
-    let data_dir = temp_dir("search-cli-data");
-    let document_id = DocumentId::from_non_secret_parts(&["s8", "cli-java"]);
-    let version_id = ResumeVersionId::from_non_secret_parts(&["s8", "cli-java-version"]);
-    seed_visible_metadata(&data_dir, document_id.clone(), version_id.clone());
+fn search_cli_rejects_query_bounds_before_index_access_without_query_echo() {
+    let data_dir = temp_dir("query-bounds");
+    let query = (0..17)
+        .map(|index| format!("private-term-{index}"))
+        .collect::<Vec<_>>()
+        .join(" ");
 
-    let index_dir = data_dir.join("search-index");
-    let index = FullTextIndex::open_or_create(&index_dir).unwrap();
-    index
-        .replace_documents([IndexDocument {
-            doc_id: document_id.to_string(),
-            version_id: version_id.to_string(),
-            file_name: "synthetic-cli-java.pdf".to_string(),
-            clean_text: "Java payment search platform".to_string(),
-            sections: vec![IndexSection {
-                section_type: "experience".to_string(),
-                text: "Java payment".to_string(),
-            }],
-            is_deleted: false,
-        }])
-        .unwrap();
-    index.commit().unwrap();
+    let output = search(&data_dir, &query);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
-        .args(["--data-dir", path_str(&data_dir), "search", "Java payment"])
-        .output()
-        .expect("run resume-cli search");
-
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("results: 1"));
-    assert!(stdout.contains("rank: 1"));
-    assert!(stdout.contains(&format!("doc_id: {document_id}")));
-    assert!(stdout.contains("file_name: synthetic-cli-java.pdf"));
-    assert!(stdout.contains("snippet:"));
-    assert!(!stdout.contains("query:"));
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("search query is outside semantic bounds"));
+    assert!(!stderr.contains(&query));
 
     remove_dir(&data_dir);
 }
 
-fn seed_visible_metadata(data_dir: &Path, document_id: DocumentId, version_id: ResumeVersionId) {
-    let now = UnixTimestamp::from_unix_seconds(1_800_001_000);
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
+#[test]
+fn search_cli_reads_the_atomically_published_generation_without_query_echo() {
+    let data_dir = temp_dir("published-generation");
+    let source_root = temp_dir("published-generation-source");
+    let long_file_name = format!(
+        "candidate@example.test-{}-PRIVATE_TRAILING.txt",
+        "候".repeat(60)
+    );
+    assert_import_succeeded(&import_text_resumes(
+        &data_dir,
+        &source_root,
+        &[(
+            long_file_name,
+            "SUMMARY\nSynthetic Candidate\nEXPERIENCE\nBuilt Java payment search systems\nSKILLS\nJava".to_string(),
+        )],
+    ));
+
+    let output = search(&data_dir, "Java payment");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("rank: 1"));
+    assert!(stdout.contains("doc_id: doc_"));
+    assert!(stdout.contains("version_id: ver_"));
+    assert!(stdout.contains("visible_epoch:"));
+    assert!(stdout.contains("snippet:"));
+    assert!(!stdout.contains("candidate@example.test"));
+    assert!(!stdout.contains("PRIVATE_TRAILING"));
+    assert!(!stdout.contains("query:"));
+
+    remove_dir(&data_dir);
+    remove_dir(&source_root);
+}
+
+#[test]
+fn search_cli_ignores_an_unpublished_artifact_directory() {
+    let data_dir = temp_dir("unpublished-generation");
+    let source_root = temp_dir("unpublished-generation-source");
+    assert_import_succeeded(&import_text_resumes(
+        &data_dir,
+        &source_root,
+        &[(
+            "published.txt",
+            "SUMMARY\nPublished Candidate\nEXPERIENCE\nBuilt Java committed generation sentinel\nSKILLS\nJava",
+        )],
+    ));
+    let unpublished = data_dir
+        .join("search-index")
+        .join("snapshots")
+        .join("unpublished-generation");
+    fs::create_dir_all(&unpublished).unwrap();
+    fs::write(
+        unpublished.join("PRIVATE_UNPUBLISHED_ARTIFACT"),
+        b"Rust unpublished generation sentinel",
+    )
+    .unwrap();
+
+    let output = search(&data_dir, "Java committed sentinel");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("results: 1"));
+    assert!(stdout.contains("published.txt"));
+    assert!(!stdout.contains("PRIVATE_UNPUBLISHED_ARTIFACT"));
+    assert!(!stdout.contains("unpublished generation"));
+
+    remove_dir(&data_dir);
+    remove_dir(&source_root);
+}
+
+#[test]
+fn search_cli_fails_closed_when_the_active_fulltext_artifact_is_corrupt() {
+    let data_dir = temp_dir("corrupt-generation");
+    let source_root = temp_dir("corrupt-generation-source");
+    assert_import_succeeded(&import_text_resumes(
+        &data_dir,
+        &source_root,
+        &[(
+            "private-corrupt.txt",
+            "SUMMARY\nCorrupt Candidate\nEXPERIENCE\nBuilt PRIVATE_CORRUPT_SENTINEL systems\nSKILLS\nRust",
+        )],
+    ));
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
-    store
-        .upsert_document(&Document {
-            id: document_id.clone(),
-            source_uri: "synthetic://cli-java".to_string(),
-            normalized_path: "synthetic/cli-java.pdf".to_string(),
-            file_name: "synthetic-cli-java.pdf".to_string(),
-            extension: FileExtension::Pdf,
-            byte_size: 123,
-            mtime: now,
-            content_hash: Some("synthetic-cli-java-hash".to_string()),
-            text_hash: None,
-            is_deleted: false,
-            created_at: now,
-            updated_at: now,
-            status: DocumentStatus::Searchable,
-        })
-        .unwrap();
-    store
-        .upsert_resume_version(&ResumeVersion {
-            id: version_id,
-            document_id,
-            candidate_id: None,
-            parse_version: "parser-v1".to_string(),
-            schema_version: "schema-v1".to_string(),
-            language_set: vec!["en".to_string()],
-            page_count: Some(1),
-            raw_text: Some("Java payment search platform".to_string()),
-            clean_text: Some("Java payment search platform".to_string()),
-            quality_score: Some(0.8),
-            visibility: ResumeVisibility::Searchable,
-        })
-        .unwrap();
+    let generation = store.search_projection_state().unwrap().generation.unwrap();
+    fs::write(
+        data_dir
+            .join("search-index")
+            .join("snapshots")
+            .join(generation)
+            .join("fulltext.snapshot.enc"),
+        b"corrupt active snapshot",
+    )
+    .unwrap();
+
+    let output = search(&data_dir, "PRIVATE_CORRUPT_SENTINEL");
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("PRIVATE_CORRUPT_SENTINEL"));
+
+    remove_dir(&data_dir);
+    remove_dir(&source_root);
+}
+
+fn search(data_dir: &Path, query: &str) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["--data-dir", path_str(data_dir), "search", query])
+        .output()
+        .expect("run resume-cli search")
 }
 
 fn temp_dir(label: &str) -> PathBuf {

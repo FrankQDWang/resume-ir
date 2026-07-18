@@ -3,12 +3,12 @@ use std::str::FromStr;
 
 use core_domain::{
     normalize_query_set_query, query_set_query_in_semantic_bounds, Candidate, CandidateId,
-    ContactHash, Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId, EntityType,
-    ErrorKind, FileExtension, IdParseError, QuerySetSampleShape, QuerySetSampleShapeMetadata,
-    QuerySetSourceKind, RedactionLevel, ResumeIrError, ResumeVersion, ResumeVersionId,
-    ResumeVisibility, Section, SectionId, SectionType, SourceComponent, UnixTimestamp,
-    VectorQuantization, VectorRecord, VectorRecordId, VectorScope, QUERY_SET_MAX_QUERY_BYTES,
-    QUERY_SET_MAX_TERMS,
+    ContactHash, ContentDigest, Document, DocumentId, DocumentStatus, EntityMention,
+    EntityMentionId, EntityType, ErrorKind, FileExtension, IdParseError, QuerySetSampleShape,
+    QuerySetSampleShapeMetadata, QuerySetSourceKind, RedactionLevel, ResumeIrError, ResumeVersion,
+    ResumeVersionId, Section, SectionId, SectionType, SourceComponent, SourceRevisionId,
+    UnixTimestamp, VectorQuantization, VectorRecord, VectorRecordId, VectorScope,
+    QUERY_SET_MAX_QUERY_BYTES, QUERY_SET_MAX_TERMS, QUERY_SET_MAX_TERM_BYTES,
 };
 
 #[test]
@@ -122,7 +122,13 @@ fn query_set_query_semantics_are_shared_execution_caps() {
     assert!(!query_set_query_in_semantic_bounds(&too_many_terms));
     assert!(!query_set_query_in_semantic_bounds(""));
 
-    let max_bytes = "a".repeat(QUERY_SET_MAX_QUERY_BYTES);
+    let mut max_byte_terms = vec!["a".repeat(QUERY_SET_MAX_TERM_BYTES); QUERY_SET_MAX_TERMS];
+    let final_term_bytes = QUERY_SET_MAX_QUERY_BYTES
+        - (QUERY_SET_MAX_TERM_BYTES * (QUERY_SET_MAX_TERMS - 1))
+        - (QUERY_SET_MAX_TERMS - 1);
+    max_byte_terms[QUERY_SET_MAX_TERMS - 1] = "a".repeat(final_term_bytes);
+    let max_bytes = max_byte_terms.join(" ");
+    assert_eq!(max_bytes.len(), QUERY_SET_MAX_QUERY_BYTES);
     assert!(query_set_query_in_semantic_bounds(&max_bytes));
 
     let too_many_bytes = "a".repeat(QUERY_SET_MAX_QUERY_BYTES + 1);
@@ -146,6 +152,9 @@ fn query_set_query_normalization_dedupes_normalized_logical_terms() {
         .collect::<Vec<_>>()
         .join(" ");
     assert_eq!(normalize_query_set_query(&too_many_terms).as_deref(), None);
+
+    let oversized_term = "a".repeat(257);
+    assert_eq!(normalize_query_set_query(&oversized_term).as_deref(), None);
 }
 
 #[test]
@@ -227,7 +236,11 @@ fn domain_models_match_design_required_fields() {
     let version = ResumeVersion {
         id: version_id.clone(),
         document_id: document.id.clone(),
-        candidate_id: Some(candidate.id.clone()),
+        source_revision_id: SourceRevisionId::from_content_identity(
+            &document.id,
+            &ContentDigest::from_bytes(b"synthetic source"),
+        ),
+        normalized_text_hash: ContentDigest::from_bytes(b"SYNTHETIC CLEAN TEXT"),
         parse_version: "parser-v1".to_string(),
         schema_version: "schema-v1".to_string(),
         language_set: vec!["en".to_string()],
@@ -235,7 +248,6 @@ fn domain_models_match_design_required_fields() {
         raw_text: Some("SYNTHETIC RAW TEXT".to_string()),
         clean_text: Some("SYNTHETIC CLEAN TEXT".to_string()),
         quality_score: Some(0.87),
-        visibility: ResumeVisibility::Searchable,
     };
     let section = Section {
         id: section_id.clone(),
@@ -271,13 +283,12 @@ fn domain_models_match_design_required_fields() {
         created_at: updated_at,
     };
 
-    assert_eq!(version.candidate_id, Some(candidate_id));
+    assert_eq!(candidate.id, candidate_id);
     assert_eq!(
         document.normalized_path,
         "/synthetic/resume-placeholder.txt"
     );
     assert_eq!(document.extension, FileExtension::Txt);
-    assert_eq!(version.visibility, ResumeVisibility::Searchable);
     assert_eq!(section.resume_version_id, version_id.clone());
     assert_eq!(mention.section_id, Some(section_id));
     assert_eq!(vector.resume_version_id, version_id);
@@ -323,7 +334,11 @@ fn pii_bearing_domain_debug_output_is_redacted() {
     let version = ResumeVersion {
         id: version_id.clone(),
         document_id: document_id.clone(),
-        candidate_id: Some(candidate_id),
+        source_revision_id: SourceRevisionId::from_content_identity(
+            &document_id,
+            &ContentDigest::from_bytes(b"synthetic debug source"),
+        ),
+        normalized_text_hash: ContentDigest::from_bytes(b"SYNTHETIC_CLEAN_RESUME_DEBUG_TEXT"),
         parse_version: "parser-v1".to_string(),
         schema_version: "schema-v1".to_string(),
         language_set: vec!["en".to_string()],
@@ -331,7 +346,6 @@ fn pii_bearing_domain_debug_output_is_redacted() {
         raw_text: Some("SYNTHETIC_RAW_RESUME_DEBUG_TEXT".to_string()),
         clean_text: Some("SYNTHETIC_CLEAN_RESUME_DEBUG_TEXT".to_string()),
         quality_score: Some(0.8),
-        visibility: ResumeVisibility::Partial,
     };
     let section = Section {
         id: section_id.clone(),
@@ -396,12 +410,13 @@ fn document_status_covers_lifecycle_state_machine() {
         DocumentStatus::EmbeddingDone,
         DocumentStatus::IndexedPartial,
         DocumentStatus::Searchable,
+        DocumentStatus::Excluded,
         DocumentStatus::FailedRetryable,
         DocumentStatus::FailedPermanent,
         DocumentStatus::Deleted,
     ];
 
-    assert_eq!(statuses.len(), 16);
+    assert_eq!(statuses.len(), 17);
 }
 
 #[test]

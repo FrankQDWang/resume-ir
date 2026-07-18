@@ -215,6 +215,58 @@ awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0
 SH
 chmod 700 "$tmpdir/protocol-embedding-fixture.sh"
 
+cat > "$tmpdir/protocol-publication-embedding-fixture.py" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import struct
+import sys
+
+SCHEMA = "resume-ir.embedding-stream.v1"
+MODEL_ID = os.environ["RESUME_IR_EMBEDDING_MODEL_ID"]
+DIMENSION = int(os.environ["RESUME_IR_EMBEDDING_DIMENSION"])
+
+def write_frame(payload):
+    encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    sys.stdout.buffer.write(struct.pack(">I", len(encoded)))
+    sys.stdout.buffer.write(encoded)
+    sys.stdout.buffer.flush()
+
+def read_frame():
+    prefix = sys.stdin.buffer.read(4)
+    if not prefix:
+        return None
+    if len(prefix) != 4:
+        raise RuntimeError("truncated frame")
+    size = struct.unpack(">I", prefix)[0]
+    payload = sys.stdin.buffer.read(size)
+    if len(payload) != size:
+        raise RuntimeError("truncated payload")
+    return json.loads(payload)
+
+if sys.argv[1:] != ["--resident"]:
+    raise SystemExit(2)
+
+write_frame({
+    "type": "ready",
+    "schema_version": SCHEMA,
+    "model_id": MODEL_ID,
+    "dimension": DIMENSION,
+})
+while True:
+    request = read_frame()
+    if request is None:
+        break
+    vectors = [[1.0] + [0.0] * (DIMENSION - 1) for _ in request["inputs"]]
+    write_frame({
+        "type": "result",
+        "schema_version": SCHEMA,
+        "request_id": request["request_id"],
+        "vectors": vectors,
+    })
+PY
+chmod 700 "$tmpdir/protocol-publication-embedding-fixture.py"
+
 mkdir -p "$tmpdir/query-protocol-private-input"
 "$CARGO_BIN" run --quiet -p resume-cli --bin resume-cli --locked -- \
   --data-dir "$tmpdir/query-protocol-data" \
@@ -222,21 +274,37 @@ mkdir -p "$tmpdir/query-protocol-private-input"
   --root "$(pwd -P)/tests/fixtures/resumes" \
   > "$tmpdir/query-protocol-import.stdout" \
   2> "$tmpdir/query-protocol-import.stderr"
-"$CARGO_BIN" run --quiet -p resume-cli --bin resume-cli --locked -- \
+set +e
+"$CARGO_BIN" run --quiet -p resume-daemon --locked -- \
   --data-dir "$tmpdir/query-protocol-data" \
-  embed-worker \
+  run \
+  --foreground \
   --once \
-  --command "$tmpdir/protocol-embedding-fixture.sh" \
-  --model-id fixture-local-model \
-  --dimension 4 \
-  --max-docs 8 \
-  --max-text-bytes 100000 \
-  > "$tmpdir/query-protocol-embed.stdout" \
-  2> "$tmpdir/query-protocol-embed.stderr"
+  --work-index-once \
+  --embedding-command "$tmpdir/protocol-publication-embedding-fixture.py" \
+  --embedding-model-id fixture-local-model \
+  --embedding-dimension 4 \
+  > "$tmpdir/query-protocol-publication.stdout" \
+  2> "$tmpdir/query-protocol-publication.stderr"
+publication_status=$?
+set -e
+if [ "$publication_status" -ne 0 ]; then
+  if grep -Fq "embedding_runtime" "$tmpdir/query-protocol-publication.stderr"; then
+    fail "benchmark atomic search publication failed: embedding_runtime"
+  fi
+  if grep -Fq "vector_contract" "$tmpdir/query-protocol-publication.stderr"; then
+    fail "benchmark atomic search publication failed: vector_contract"
+  fi
+  if grep -Fq "usage:" "$tmpdir/query-protocol-publication.stderr"; then
+    fail "benchmark atomic search publication failed: usage"
+  fi
+  fail "benchmark atomic search publication failed: unclassified"
+fi
 printf '%s\n' \
   '{"schema_version":"resume-ir.query-batch-request.v2","request_id":"synthetic-smoke-1","query":"SemanticOnlyToken"}' \
   '{"schema_version":"resume-ir.query-batch-request.v2","request_id":"synthetic-smoke-2","query":"SemanticOnlyToken"}' \
   > "$tmpdir/query-protocol-private-input/queries.jsonl"
+set +e
 env \
   RESUME_IR_QUERY_BATCH_INPUT_PATH="$tmpdir/query-protocol-private-input/queries.jsonl" \
   RESUME_IR_QUERY_TOP_K=20 \
@@ -250,6 +318,32 @@ env \
     --dimension 4 \
     > "$protocol_report" \
     2> "$tmpdir/query-protocol-smoke.stderr"
+protocol_status=$?
+set -e
+if [ "$protocol_status" -ne 0 ]; then
+  if grep -Fq "benchmark query input is unavailable" "$tmpdir/query-protocol-smoke.stderr"; then
+    fail "benchmark query protocol failed: input_unavailable"
+  fi
+  if grep -Fq "benchmark query search service unavailable" "$tmpdir/query-protocol-smoke.stderr"; then
+    fail "benchmark query protocol failed: query_service_unavailable"
+  fi
+  if grep -Fq "embedding runtime" "$tmpdir/query-protocol-smoke.stderr"; then
+    fail "benchmark query protocol failed: embedding_runtime"
+  fi
+  if grep -Fq "search runtime integrity failure" "$tmpdir/query-protocol-smoke.stderr"; then
+    fail "benchmark query protocol failed: search_runtime_integrity"
+  fi
+  if grep -Fq "semantic search unavailable" "$tmpdir/query-protocol-smoke.stderr"; then
+    fail "benchmark query protocol failed: semantic_disabled"
+  fi
+  if grep -Fq "QUERY_SERVICE_UNAVAILABLE" "$tmpdir/query-protocol-smoke.stderr"; then
+    fail "benchmark query protocol failed: query_service_unavailable"
+  fi
+  if grep -Fq "vector" "$tmpdir/query-protocol-smoke.stderr"; then
+    fail "benchmark query protocol failed: vector_contract"
+  fi
+  fail "benchmark query protocol failed: unclassified"
+fi
 assert_text_boundary "$protocol_report" "query protocol smoke report"
 require_text "$protocol_report" "resume-ir-query-v2"
 require_text "$protocol_report" "request_id=synthetic-smoke-1"

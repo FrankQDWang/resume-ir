@@ -137,6 +137,50 @@
   processes by PID unless the user asked to cancel or the command is clearly
   hung.
 
+## Tauri v2 GUI Discipline
+
+- Use only the currently locked Tauri v2 APIs and official v2 documentation. Do
+  not copy v1 allowlists, `@tauri-apps/api/tauri`, or APIs moved to plugins, and
+  do not force core, CLI, JS API, and plugin patch versions to use one number.
+- Treat the WebView as an untrusted caller. Every `#[tauri::command]` must
+  validate lengths, enums, paths/URLs, identifiers, and authorization in Rust,
+  and return only bounded, redacted data needed by the UI.
+- Custom commands are callable by every window by default. When adding or
+  changing one, review the single `invoke_handler`, `build.rs` `AppManifest`,
+  window capabilities, plugin permissions, and allow/deny scopes together. Do
+  not use wildcard windows, broad paths, or `core:default` without justification.
+- Use explicit serde request, response, and error types for IPC and keep JS/Rust
+  names aligned. Command arguments are camelCase unless
+  `rename_all = "snake_case"` is declared. Never register a second
+  `invoke_handler`.
+- Keep synchronous commands to short in-memory work. Put I/O, blocking
+  libraries, and CPU-heavy work behind async commands plus `spawn_blocking` or
+  a dedicated worker, with timeouts, cancellation, concurrency limits, and
+  bounded results. Never block the main thread or async executor.
+- Store only necessary shared data in `State`. Keep lock scopes short, copy
+  needed data before `.await`, never hold a lock across IPC, disk, network, or
+  callback work, and do not wrap Tauri-managed `State` in an unnecessary `Arc`.
+- Use events only for small, low-frequency broadcasts, channels for ordered
+  streams, and commands for request/response. Bound payload size, rate, and
+  queues; target the intended window and release listeners during cleanup.
+- Keep CSP strict and production assets bundled locally. Do not add remote
+  scripts, `unsafe-eval`, or remote capabilities. Any exception must document
+  its threat model and least-privilege scope.
+- Never depend on the current working directory. Resolve bundled resources
+  through `bundle.resources` and `BaseDirectory::Resource`; configure sidecars
+  with `externalBin`, target triples, bundle coverage, and exact argument
+  scopes. Never accept untrusted input through unrestricted `args: true`.
+- When changing config, plugins, or capabilities, update Rust/JS dependencies,
+  both lockfiles, `build.rs`, the v2 `$schema`, and generated schemas together.
+  Verify the merged release configuration with a target-platform `tauri build`.
+- Test at three layers: frontend `mockIPC` contract tests with `clearMocks`, Rust
+  command/state tests, and target-platform release binary/bundle native smoke or
+  E2E. Mock or dev-server success is not native evidence.
+- Before release, verify resources/sidecars, signing, notarization, and updater
+  end to end. Updater artifacts must be signed and served over HTTPS; private
+  signing keys belong only in protected CI secrets, never the repository,
+  frontend, logs, or diagnostics.
+
 ## Contract Surfaces
 
 - Treat these as integration contracts: CLI arguments and exit codes, daemon IPC,

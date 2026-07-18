@@ -13,21 +13,59 @@ use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
 };
 pub use core_domain::{
-    Candidate, CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention,
-    EntityMentionId, EntityType, FileExtension, ImportTaskId, IndexStateStatus, IngestJobId,
-    IngestJobKind, IngestJobStatus, ResumeVersion, ResumeVersionId, ResumeVisibility, SectionId,
-    UnixTimestamp,
+    ActiveSearchProjection, Candidate, CandidateId, ContactHash, ContentDigest, Document,
+    DocumentId, DocumentStatus, EntityMention, EntityMentionId, EntityType, FileExtension,
+    ImportTaskId, IndexStateStatus, IngestJobId, IngestJobKind, IngestJobStatus, ResumeVersion,
+    ResumeVersionId, SearchProjectionDigest, SearchSelection, SectionId, SourceRevision,
+    SourceRevisionId, UnixTimestamp,
 };
-use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension, Row};
+use rusqlite::{
+    params, params_from_iter, types::Value, Connection, OptionalExtension, Row, TransactionBehavior,
+};
 
 mod classification;
+mod immutable_search;
+mod import_root_control;
+mod migration_v27;
+mod privacy_maintenance;
+mod schema_v27;
+mod search_publication;
+mod search_snapshot;
 
 pub use classification::{
-    ClassificationStatus, DocumentClassificationCounts, DocumentClassificationRecord, ReasonCode,
-    ReviewDisposition,
+    ClassificationCounts, ClassificationStatus, ClassifierEpochSource, CurrentClassifierEpoch,
+    ReasonCode, ResumeVersionClassification, ReviewDisposition, SourceRevisionTriage,
 };
+pub use immutable_search::{
+    IdentityInsertOutcome, SearchProjectionServiceState, SearchProjectionState, SearchRepairReason,
+    SearchSelectionResolution,
+};
+pub use import_root_control::{ImportRootControlStatus, ImportRootControlUpdate};
+pub use privacy_maintenance::{PrivacyPurgeReport, PRIVACY_PURGE_BATCH_LIMIT};
 pub use resume_classifier::{
     classify as classify_resume, ClassificationResult, ClassifierInput, CLASSIFIER_EPOCH,
+};
+pub use search_publication::{
+    search_publication_fingerprint, EnabledVectorSnapshotDescriptor, FullTextSnapshotDescriptor,
+    SearchPublicationCommit, SearchPublicationDraft, SearchPublicationFailure,
+    SearchPublicationOutcome, SearchPublicationPrunePolicy, SearchPublicationRecord,
+    SearchPublicationState, SearchPublicationValidation, TerminalDocumentUpdate,
+    VectorSnapshotDescriptor, VectorSnapshotMode, FULLTEXT_INDEX_SCHEMA_V2,
+    FULLTEXT_MANIFEST_SCHEMA_V2, VECTOR_INDEX_SCHEMA_V3, VECTOR_MANIFEST_SCHEMA_V3,
+};
+pub use search_snapshot::{
+    BoundedFilterSelection, ExactHitHydration, ExactHitHydrationFailure,
+    ExactHitHydrationFailureKind, SearchFilterCase, SearchHitMetadata, SearchHitMetadataLimit,
+    SearchMetadataHead, SearchMetadataReadError, SearchMetadataSnapshot,
+    SearchMetadataTransactionError, SearchMetadataUnavailable, SearchProjectionFilter,
+    SearchProjectionFilterError, SearchProjectionPredicate, SearchSelectionDetailBundle,
+    SearchSelectionDetailResolution, SearchSelectionDetails, SearchSelectionDetailsResolution,
+    SearchSelectionLimit, SearchSelectionVersion, SearchTextBytePage, SearchTextBytePageRequest,
+    SearchTextBytePageResolution, SearchTextPage, SearchTextPageCursor, SearchTextPageCursorError,
+    SearchTextPageRequest, SearchTextPageRequestError, SearchTextPageResolution,
+    MAX_BOUNDED_FILTER_SELECTION, MAX_EXACT_HIT_HYDRATION, MAX_SEARCH_FILTER_PREDICATES,
+    MAX_SEARCH_FILTER_VALUES, MAX_SEARCH_SELECTION_MENTIONS, MAX_SEARCH_TEXT_BYTE_PAGE_BYTES,
+    MAX_SEARCH_TEXT_PAGE_CODE_POINTS,
 };
 
 const SCHEMA_VERSION_V1: u32 = 1;
@@ -52,6 +90,10 @@ const SCHEMA_VERSION_V19: u32 = 19;
 const SCHEMA_VERSION_V20: u32 = 20;
 const SCHEMA_VERSION_V21: u32 = 21;
 const SCHEMA_VERSION_V22: u32 = 22;
+const SCHEMA_VERSION_V23: u32 = 23;
+const SCHEMA_VERSION_V24: u32 = 24;
+const SCHEMA_VERSION_V25: u32 = 25;
+const SCHEMA_VERSION_V26: u32 = 26;
 const QUERY_OBSERVATION_RETENTION_ROWS: i64 = 10_000;
 const METADATA_STORE_FILE: &str = "metadata.sqlite3";
 const METADATA_ENCRYPTION_KEY_LEN: usize = 32;
@@ -65,15 +107,14 @@ const BACKUP_NONCE_LEN: usize = 24;
 const BACKUP_KDF_MEMORY_KIB: u32 = 19 * 1024;
 const BACKUP_KDF_ITERATIONS: u32 = 2;
 const BACKUP_KDF_PARALLELISM: u32 = 1;
-const INDEX_STATE_KEY: &str = "default";
 const CANDIDATE_COLUMNS: &str = "\
     id, primary_name, phone_hash, email_hash, dedupe_key, merge_confidence, version_count";
 const DOCUMENT_COLUMNS: &str = "\
     id, source_uri, normalized_path, file_name, extension, byte_size, mtime_seconds, \
     content_hash, text_hash, is_deleted, created_at_seconds, updated_at_seconds, status";
 const RESUME_VERSION_COLUMNS: &str = "\
-    id, document_id, candidate_id, parse_version, schema_version, language_set_json, \
-    page_count, raw_text, clean_text, quality_score, visibility";
+    id, document_id, source_revision_id, normalized_text_hash, parse_version, schema_version, \
+    language_set_json, page_count, raw_text, clean_text, quality_score";
 const INGEST_JOB_COLUMNS: &str = "\
     id, document_id, resume_version_id, kind, status, attempt_count, max_attempts, \
     queued_at_seconds, started_at_seconds, finished_at_seconds, updated_at_seconds, \
@@ -114,8 +155,8 @@ pub enum PendingImportTaskByRootDiagnostic {
     RowMaterializationFailure,
 }
 
-pub fn metadata_store_path(data_dir: &Path) -> PathBuf {
-    data_dir.join(METADATA_STORE_FILE)
+pub fn metadata_store_path(data_dir: &Path) -> Result<PathBuf> {
+    migration_v27::active_store_path(data_dir)
 }
 
 pub fn metadata_encryption_key_path(data_dir: &Path) -> PathBuf {
@@ -190,7 +231,7 @@ pub fn restore_metadata_encryption_key(
 pub fn rotate_metadata_encryption_key(data_dir: &Path) -> Result<MetadataEncryptionKeyRotation> {
     let key_path = metadata_encryption_key_path(data_dir);
     let old_key = read_metadata_encryption_key(&key_path)?;
-    let db_path = metadata_store_path(data_dir);
+    let db_path = metadata_store_path(data_dir)?;
 
     let connection = Connection::open(&db_path).map_err(MetaStoreError::storage)?;
     apply_sqlcipher_key(&connection, &old_key)?;
@@ -491,81 +532,6 @@ fn metadata_store_has_plaintext_header(path: &Path) -> Result<bool> {
     Ok(bytes_read == header.len() && header.starts_with(b"SQLite format 3"))
 }
 
-fn migrate_plaintext_metadata_store_to_encrypted(
-    db_path: &Path,
-    key: &[u8; METADATA_ENCRYPTION_KEY_LEN],
-) -> Result<()> {
-    let encrypted_temp_path =
-        private_replacement_path(db_path).map_err(MetaStoreError::io_storage)?;
-    let plaintext_backup_path =
-        private_replacement_path(db_path).map_err(MetaStoreError::io_storage)?;
-
-    export_plaintext_metadata_store_to_encrypted(db_path, &encrypted_temp_path, key)?;
-    if let Err(error) =
-        replace_plaintext_metadata_store(db_path, &encrypted_temp_path, &plaintext_backup_path)
-    {
-        let _ = fs::remove_file(&encrypted_temp_path);
-        return Err(MetaStoreError::io_storage(error));
-    }
-    let _ = fs::remove_file(&plaintext_backup_path);
-    remove_sqlite_sidecars(&plaintext_backup_path);
-
-    Ok(())
-}
-
-fn export_plaintext_metadata_store_to_encrypted(
-    db_path: &Path,
-    encrypted_temp_path: &Path,
-    key: &[u8; METADATA_ENCRYPTION_KEY_LEN],
-) -> Result<()> {
-    let connection = Connection::open(db_path).map_err(MetaStoreError::storage)?;
-    connection
-        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
-        .map_err(MetaStoreError::storage)?;
-    let encrypted_temp_literal = sql_string_literal(encrypted_temp_path)?;
-    let key_hex = encode_hex(key);
-    connection
-        .execute_batch(&format!(
-            "\
-            ATTACH DATABASE {encrypted_temp_literal} AS encrypted KEY \"x'{key_hex}'\";
-            SELECT sqlcipher_export('encrypted');
-            DETACH DATABASE encrypted;
-            "
-        ))
-        .map_err(MetaStoreError::storage)?;
-
-    let encrypted_connection =
-        Connection::open(encrypted_temp_path).map_err(MetaStoreError::storage)?;
-    apply_sqlcipher_key(&encrypted_connection, key)?;
-    verify_sqlcipher_key(&encrypted_connection)?;
-    encrypted_connection
-        .query_row(
-            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map_err(MetaStoreError::storage)?;
-    drop(encrypted_connection);
-
-    Ok(())
-}
-
-fn replace_plaintext_metadata_store(
-    db_path: &Path,
-    encrypted_temp_path: &Path,
-    plaintext_backup_path: &Path,
-) -> io::Result<()> {
-    fs::rename(db_path, plaintext_backup_path)?;
-    remove_sqlite_sidecars(db_path);
-
-    if let Err(error) = fs::rename(encrypted_temp_path, db_path) {
-        let _ = fs::rename(plaintext_backup_path, db_path);
-        return Err(error);
-    }
-
-    Ok(())
-}
-
 fn remove_sqlite_sidecars(path: &Path) {
     let _ = fs::remove_file(path.with_extension(format!(
         "{}-wal",
@@ -577,13 +543,6 @@ fn remove_sqlite_sidecars(path: &Path) {
     )));
     let _ = fs::remove_file(format!("{}-wal", path.display()));
     let _ = fs::remove_file(format!("{}-shm", path.display()));
-}
-
-fn sql_string_literal(path: &Path) -> Result<String> {
-    let value = path
-        .to_str()
-        .ok_or_else(|| MetaStoreError::invalid_value("metadata.store_path"))?;
-    Ok(format!("'{}'", value.replace('\'', "''")))
 }
 
 fn replace_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -647,12 +606,12 @@ fn write_new_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     }
 }
 
-fn restrict_private_file_permissions(path: &Path) -> Result<()> {
+fn restrict_private_file_permissions(_path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
 
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        fs::set_permissions(_path, fs::Permissions::from_mode(0o600))
             .map_err(MetaStoreError::io_storage)?;
     }
 
@@ -702,53 +661,27 @@ impl fmt::Debug for MetadataEncryptionKeyRotation {
 }
 
 #[derive(Clone, Copy)]
-pub struct SearchableImportDocument<'a> {
-    pub document: &'a Document,
-    pub version: &'a ResumeVersion,
-    pub mentions: &'a [EntityMention],
-    pub email_hash: Option<&'a ContactHash>,
-    pub phone_hash: Option<&'a ContactHash>,
-}
-
-#[derive(Clone, Copy)]
 pub struct OcrAttemptPublication<'a> {
     pub document: &'a Document,
-    pub classification: &'a DocumentClassificationRecord,
-    pub version: Option<&'a ResumeVersion>,
+    pub source_revision: &'a SourceRevision,
+    pub version: &'a ResumeVersion,
+    pub classification: &'a ResumeVersionClassification,
     pub mentions: &'a [EntityMention],
     pub email_hash: Option<&'a ContactHash>,
     pub phone_hash: Option<&'a ContactHash>,
-    pub index_state: &'a IndexState,
-}
-
-impl fmt::Debug for SearchableImportDocument<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("SearchableImportDocument")
-            .field("document", self.document)
-            .field("version", self.version)
-            .field("mention_count", &self.mentions.len())
-            .field("email_hash", &self.email_hash.map(|_| "<redacted>"))
-            .field("phone_hash", &self.phone_hash.map(|_| "<redacted>"))
-            .finish()
-    }
 }
 
 pub struct MetaStore {
     connection: RefCell<Connection>,
     metadata_encryption_state: MetadataEncryptionState,
+    file_backed: bool,
 }
 
 impl MetaStore {
     pub fn open_data_dir(data_dir: &Path) -> Result<Self> {
         fs::create_dir_all(data_dir).map_err(MetaStoreError::io_storage)?;
-        let db_path = metadata_store_path(data_dir);
-        let key = load_or_create_metadata_encryption_key(data_dir)?;
-        if metadata_store_has_plaintext_header(&db_path)? {
-            migrate_plaintext_metadata_store_to_encrypted(&db_path, &key)?;
-        }
-
-        Self::open_encrypted(db_path, &key)
+        let (db_path, key) = migration_v27::prepare_active_v27_store(data_dir)?;
+        Self::open_encrypted(&db_path, &key)
     }
 
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
@@ -790,10 +723,12 @@ impl MetaStore {
                     .map_err(MetaStoreError::storage)?;
             }
         }
+        privacy_maintenance::configure_privacy_maintenance(&connection, file_backed)?;
 
         Ok(Self {
             connection: RefCell::new(connection),
             metadata_encryption_state,
+            file_backed,
         })
     }
 
@@ -809,32 +744,13 @@ impl MetaStore {
             )
             .map_err(MetaStoreError::migration)?;
 
+        let initial_version = schema_version_in_connection(&connection)?;
+        if self.file_backed && (1..schema_v27::VERSION).contains(&initial_version) {
+            return Err(MetaStoreError::migration_ownership_required());
+        }
         let mut applied_versions = Vec::new();
 
-        for (version, schema) in [
-            (SCHEMA_VERSION_V1, SCHEMA_V1),
-            (SCHEMA_VERSION_V2, SCHEMA_V2),
-            (SCHEMA_VERSION_V3, SCHEMA_V3),
-            (SCHEMA_VERSION_V4, SCHEMA_V4),
-            (SCHEMA_VERSION_V5, SCHEMA_V5),
-            (SCHEMA_VERSION_V6, SCHEMA_V6),
-            (SCHEMA_VERSION_V7, SCHEMA_V7),
-            (SCHEMA_VERSION_V8, SCHEMA_V8),
-            (SCHEMA_VERSION_V9, SCHEMA_V9),
-            (SCHEMA_VERSION_V10, SCHEMA_V10),
-            (SCHEMA_VERSION_V11, SCHEMA_V11),
-            (SCHEMA_VERSION_V12, SCHEMA_V12),
-            (SCHEMA_VERSION_V13, SCHEMA_V13),
-            (SCHEMA_VERSION_V14, SCHEMA_V14),
-            (SCHEMA_VERSION_V15, SCHEMA_V15),
-            (SCHEMA_VERSION_V16, SCHEMA_V16),
-            (SCHEMA_VERSION_V17, SCHEMA_V17),
-            (SCHEMA_VERSION_V18, SCHEMA_V18),
-            (SCHEMA_VERSION_V19, SCHEMA_V19),
-            (SCHEMA_VERSION_V20, SCHEMA_V20),
-            (SCHEMA_VERSION_V21, SCHEMA_V21),
-            (SCHEMA_VERSION_V22, SCHEMA_V22),
-        ] {
+        for (version, schema) in legacy_migrations() {
             if !migration_applied(&connection, version)? {
                 let transaction = connection
                     .transaction()
@@ -853,6 +769,53 @@ impl MetaStore {
             }
         }
 
+        if !migration_applied(&connection, schema_v27::VERSION)? {
+            apply_v27_target_schema(&mut connection, &random_store_id_digest()?)?;
+            applied_versions.push(schema_v27::VERSION);
+        }
+
+        privacy_maintenance::complete_privacy_maintenance_after_migration(
+            &connection,
+            self.file_backed,
+        )?;
+
+        Ok(MigrationReport { applied_versions })
+    }
+
+    fn migrate_staging_store_to_v27(&self, store_id_digest: &str) -> Result<MigrationReport> {
+        let mut connection = self.connection.borrow_mut();
+        connection
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version INTEGER PRIMARY KEY,
+                    applied_at_seconds INTEGER NOT NULL
+                );",
+            )
+            .map_err(MetaStoreError::migration)?;
+        let mut applied_versions = Vec::new();
+        for (version, schema) in legacy_migrations() {
+            if !migration_applied(&connection, version)? {
+                let transaction = connection
+                    .transaction()
+                    .map_err(MetaStoreError::migration)?;
+                transaction
+                    .execute_batch(schema)
+                    .map_err(MetaStoreError::migration)?;
+                transaction
+                    .execute(
+                        "INSERT INTO schema_migrations (version, applied_at_seconds)
+                         VALUES (?1, 0)",
+                        params![i64::from(version)],
+                    )
+                    .map_err(MetaStoreError::migration)?;
+                transaction.commit().map_err(MetaStoreError::migration)?;
+                applied_versions.push(version);
+            }
+        }
+        if !migration_applied(&connection, schema_v27::VERSION)? {
+            apply_v27_target_schema(&mut connection, store_id_digest)?;
+            applied_versions.push(schema_v27::VERSION);
+        }
         Ok(MigrationReport { applied_versions })
     }
 
@@ -918,8 +881,16 @@ impl MetaStore {
     }
 
     pub fn upsert_document(&self, document: &Document) -> Result<()> {
-        let connection = self.connection.borrow();
-        upsert_document_in_connection(&connection, document)
+        if document.is_deleted || document.status == DocumentStatus::Deleted {
+            let mut connection = self.connection.borrow_mut();
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(MetaStoreError::storage)?;
+            upsert_document_in_connection(&transaction, document)?;
+            transaction.commit().map_err(MetaStoreError::storage)
+        } else {
+            upsert_document_in_connection(&self.connection.borrow(), document)
+        }
     }
 
     pub fn document_by_id(&self, id: &DocumentId) -> Result<Option<Document>> {
@@ -969,13 +940,13 @@ impl MetaStore {
     pub fn searchable_document_ids(&self) -> Result<Vec<DocumentId>> {
         let connection = self.connection.borrow();
         let mut statement = connection
-            .prepare("SELECT id FROM document WHERE is_deleted = 0 AND status = ?1 ORDER BY id")
+            .prepare(
+                "SELECT document_id
+                 FROM active_search_projection
+                 ORDER BY document_id",
+            )
             .map_err(MetaStoreError::storage)?;
-        let mut rows = statement
-            .query(params![document_status_to_storage(
-                DocumentStatus::Searchable
-            )])
-            .map_err(MetaStoreError::storage)?;
+        let mut rows = statement.query([]).map_err(MetaStoreError::storage)?;
         let mut document_ids = Vec::new();
 
         while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
@@ -985,146 +956,9 @@ impl MetaStore {
         Ok(document_ids)
     }
 
-    pub fn mark_document_deleted(
-        &self,
-        id: &DocumentId,
-        updated_at: UnixTimestamp,
-    ) -> Result<Option<Document>> {
-        let mut connection = self.connection.borrow_mut();
-        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        let current_document = {
-            let sql = format!("SELECT {DOCUMENT_COLUMNS} FROM document WHERE id = ?1");
-            let mut statement = transaction.prepare(&sql).map_err(MetaStoreError::storage)?;
-            let mut rows = statement
-                .query(params![id.as_str()])
-                .map_err(MetaStoreError::storage)?;
-
-            match rows.next().map_err(MetaStoreError::storage)? {
-                Some(row) => Some(read_document(row)?),
-                None => None,
-            }
-        };
-
-        let Some(mut document) = current_document else {
-            transaction.commit().map_err(MetaStoreError::storage)?;
-            return Ok(None);
-        };
-
-        transaction
-            .execute(
-                "\
-                UPDATE document
-                SET is_deleted = 1, status = ?1, updated_at_seconds = ?2
-                WHERE id = ?3",
-                params![
-                    document_status_to_storage(DocumentStatus::Deleted),
-                    updated_at.as_unix_seconds(),
-                    id.as_str(),
-                ],
-            )
-            .map_err(MetaStoreError::storage)?;
-        transaction
-            .execute(
-                "\
-                UPDATE resume_version
-                SET visibility = ?1
-                WHERE document_id = ?2",
-                params![
-                    resume_visibility_to_storage(ResumeVisibility::Hidden),
-                    id.as_str()
-                ],
-            )
-            .map_err(MetaStoreError::storage)?;
-        transaction.commit().map_err(MetaStoreError::storage)?;
-
-        document.is_deleted = true;
-        document.status = DocumentStatus::Deleted;
-        document.updated_at = updated_at;
-        Ok(Some(document))
-    }
-
     pub fn deleted_document_ids(&self) -> Result<Vec<DocumentId>> {
         let connection = self.connection.borrow();
         deleted_document_ids_from_connection(&connection)
-    }
-
-    pub fn quarantine_document_searchability(&self, document_id: &DocumentId) -> Result<()> {
-        let mut connection = self.connection.borrow_mut();
-        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        for table in ["candidate_contact_conflict", "entity_mention"] {
-            transaction
-                .execute(
-                    &format!(
-                        "DELETE FROM {table} WHERE resume_version_id IN (
-                            SELECT id FROM resume_version WHERE document_id = ?1
-                         )"
-                    ),
-                    params![document_id.as_str()],
-                )
-                .map_err(MetaStoreError::storage)?;
-        }
-        transaction
-            .execute(
-                "UPDATE resume_version
-                 SET visibility = 'hidden', candidate_id = NULL
-                 WHERE document_id = ?1",
-                params![document_id.as_str()],
-            )
-            .map_err(MetaStoreError::storage)?;
-        transaction
-            .execute_batch(
-                "UPDATE candidate SET version_count = (
-                    SELECT COUNT(*) FROM resume_version
-                    WHERE resume_version.candidate_id = candidate.id
-                 );
-                 DELETE FROM candidate WHERE version_count = 0;",
-            )
-            .map_err(MetaStoreError::storage)?;
-        transaction.commit().map_err(MetaStoreError::storage)
-    }
-
-    pub fn purge_deleted_documents(&self) -> Result<usize> {
-        let mut connection = self.connection.borrow_mut();
-        let document_ids = deleted_document_ids_from_connection(&connection)?;
-        if document_ids.is_empty() {
-            return Ok(0);
-        }
-
-        let placeholders = (0..document_ids.len())
-            .map(|index| format!("?{}", index + 1))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let delete_sql = format!("DELETE FROM document WHERE id IN ({placeholders})");
-        let delete_params = document_ids
-            .iter()
-            .map(|document_id| Value::Text(document_id.as_str().to_string()))
-            .collect::<Vec<_>>();
-
-        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        let deleted = transaction
-            .execute(&delete_sql, params_from_iter(delete_params))
-            .map_err(MetaStoreError::storage)?;
-        transaction
-            .execute(
-                "\
-                UPDATE candidate
-                SET version_count = (
-                    SELECT COUNT(*)
-                    FROM resume_version
-                    WHERE resume_version.candidate_id = candidate.id
-                )",
-                [],
-            )
-            .map_err(MetaStoreError::storage)?;
-        transaction
-            .execute("DELETE FROM candidate WHERE version_count = 0", [])
-            .map_err(MetaStoreError::storage)?;
-        transaction.commit().map_err(MetaStoreError::storage)?;
-
-        connection
-            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;")
-            .map_err(MetaStoreError::storage)?;
-        Ok(deleted)
     }
 
     pub fn purge_import_tasks_for_deleted_document_roots(
@@ -1341,50 +1175,6 @@ impl MetaStore {
         candidate_contact_conflicts_from_connection(&connection)
     }
 
-    pub fn assign_candidate_to_version(
-        &self,
-        version_id: &ResumeVersionId,
-        candidate_id: &CandidateId,
-    ) -> Result<Option<Candidate>> {
-        let mut connection = self.connection.borrow_mut();
-        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        let Some(candidate) = candidate_by_id_from_connection(&transaction, candidate_id)? else {
-            return Err(MetaStoreError::invalid_value("resume_version.candidate_id"));
-        };
-        let updated = transaction
-            .execute(
-                "UPDATE resume_version SET candidate_id = ?1 WHERE id = ?2",
-                params![candidate.id.as_str(), version_id.as_str()],
-            )
-            .map_err(MetaStoreError::storage)?;
-        if updated == 0 {
-            transaction.commit().map_err(MetaStoreError::storage)?;
-            return Ok(None);
-        }
-
-        refresh_candidate_version_count_in_connection(&transaction, &candidate.id)?;
-        let assigned = candidate_by_id_from_connection(&transaction, &candidate.id)?;
-        transaction.commit().map_err(MetaStoreError::storage)?;
-        Ok(assigned)
-    }
-
-    pub fn unassign_candidate_versions(&self, candidate_id: &CandidateId) -> Result<usize> {
-        let mut connection = self.connection.borrow_mut();
-        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        if candidate_by_id_from_connection(&transaction, candidate_id)?.is_none() {
-            return Err(MetaStoreError::invalid_value("candidate.id"));
-        }
-        let updated = transaction
-            .execute(
-                "UPDATE resume_version SET candidate_id = NULL WHERE candidate_id = ?1",
-                params![candidate_id.as_str()],
-            )
-            .map_err(MetaStoreError::storage)?;
-        refresh_candidate_version_count_in_connection(&transaction, candidate_id)?;
-        transaction.commit().map_err(MetaStoreError::storage)?;
-        Ok(updated)
-    }
-
     pub fn assign_candidate_from_hashed_contacts(
         &self,
         version_id: &ResumeVersionId,
@@ -1406,38 +1196,6 @@ impl MetaStore {
         )?;
         transaction.commit().map_err(MetaStoreError::storage)?;
         Ok(assigned)
-    }
-
-    pub fn upsert_searchable_import_document(
-        &self,
-        import: SearchableImportDocument<'_>,
-    ) -> Result<Option<Candidate>> {
-        let mut connection = self.connection.borrow_mut();
-        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        upsert_document_in_connection(&transaction, import.document)?;
-
-        let mut version = import.version.clone();
-        if version.candidate_id.is_none() {
-            version.candidate_id = resume_version_by_id_from_connection(&transaction, &version.id)?
-                .and_then(|existing| existing.candidate_id);
-        }
-        upsert_resume_version_in_connection(&transaction, &version)?;
-        replace_entity_mentions_in_connection(&transaction, &version.id, import.mentions)?;
-        let assigned = assign_candidate_from_hashed_contacts_in_connection(
-            &transaction,
-            &version.id,
-            import.email_hash,
-            import.phone_hash,
-            UnixTimestamp::from_unix_seconds(0),
-        )?;
-
-        transaction.commit().map_err(MetaStoreError::storage)?;
-        Ok(assigned)
-    }
-
-    pub fn upsert_resume_version(&self, version: &ResumeVersion) -> Result<()> {
-        let connection = self.connection.borrow();
-        upsert_resume_version_in_connection(&connection, version)
     }
 
     pub fn resume_version_by_id(&self, id: &ResumeVersionId) -> Result<Option<ResumeVersion>> {
@@ -1479,45 +1237,6 @@ impl MetaStore {
         Ok(versions)
     }
 
-    pub fn latest_visible_resume_version_for_document(
-        &self,
-        document_id: &DocumentId,
-    ) -> Result<Option<ResumeVersion>> {
-        let connection = self.connection.borrow();
-        let sql = format!(
-            "\
-            SELECT {RESUME_VERSION_COLUMNS}
-            FROM resume_version
-            WHERE document_id = ?1 AND visibility <> ?2
-            ORDER BY rowid DESC
-            LIMIT 1"
-        );
-        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
-        let mut rows = statement
-            .query(params![
-                document_id.as_str(),
-                resume_visibility_to_storage(ResumeVisibility::Hidden)
-            ])
-            .map_err(MetaStoreError::storage)?;
-
-        match rows.next().map_err(MetaStoreError::storage)? {
-            Some(row) => Ok(Some(read_resume_version(row)?)),
-            None => Ok(None),
-        }
-    }
-
-    pub fn replace_entity_mentions(
-        &self,
-        version_id: &ResumeVersionId,
-        mentions: &[EntityMention],
-    ) -> Result<()> {
-        let mut connection = self.connection.borrow_mut();
-        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        replace_entity_mentions_in_connection(&transaction, version_id, mentions)?;
-        transaction.commit().map_err(MetaStoreError::storage)?;
-        Ok(())
-    }
-
     pub fn entity_mentions_for_version(
         &self,
         version_id: &ResumeVersionId,
@@ -1551,17 +1270,14 @@ impl MetaStore {
         let sql = "\
             SELECT mention.entity_type, COUNT(*)
             FROM entity_mention AS mention
-            JOIN resume_version AS version ON version.id = mention.resume_version_id
-            WHERE version.document_id = ?1
-                AND version.visibility <> ?2
+            JOIN active_search_projection AS projection
+                ON projection.resume_version_id = mention.resume_version_id
+            WHERE projection.document_id = ?1
             GROUP BY mention.entity_type
             ORDER BY mention.entity_type";
         let mut statement = connection.prepare(sql).map_err(MetaStoreError::storage)?;
         let mut rows = statement
-            .query(params![
-                document_id.as_str(),
-                resume_visibility_to_storage(ResumeVisibility::Hidden),
-            ])
+            .query(params![document_id.as_str()])
             .map_err(MetaStoreError::storage)?;
         let mut counts = Vec::new();
 
@@ -1597,17 +1313,14 @@ impl MetaStore {
         };
         let sql = format!(
             "\
-            SELECT DISTINCT version.document_id
+            SELECT DISTINCT projection.document_id
             FROM entity_mention AS mention
-            JOIN resume_version AS version ON version.id = mention.resume_version_id
-            JOIN document AS document ON document.id = version.document_id
-            WHERE document.is_deleted = 0
-                AND document.status IN ('indexed_partial', 'searchable')
-                AND version.visibility = 'searchable'
-                AND mention.entity_type = ?1
+            JOIN active_search_projection AS projection
+                ON projection.resume_version_id = mention.resume_version_id
+            WHERE mention.entity_type = ?1
                 AND mention.confidence >= ?2
                 AND {value_expression} IN ({value_placeholders})
-            ORDER BY version.document_id"
+            ORDER BY projection.document_id"
         );
         let mut values = vec![
             Value::Text(entity_type_to_storage(&entity_type).to_string()),
@@ -1652,17 +1365,14 @@ impl MetaStore {
         let mut statement = connection
             .prepare(
                 "\
-                SELECT DISTINCT version.document_id
+                SELECT DISTINCT projection.document_id
                 FROM entity_mention AS mention
-                JOIN resume_version AS version ON version.id = mention.resume_version_id
-                JOIN document AS document ON document.id = version.document_id
-                WHERE document.is_deleted = 0
-                    AND document.status IN ('indexed_partial', 'searchable')
-                    AND version.visibility = 'searchable'
-                    AND mention.entity_type = ?1
+                JOIN active_search_projection AS projection
+                    ON projection.resume_version_id = mention.resume_version_id
+                WHERE mention.entity_type = ?1
                     AND mention.confidence >= ?2
                     AND CAST(mention.normalized_value AS REAL) >= ?3
-                ORDER BY version.document_id",
+                ORDER BY projection.document_id",
             )
             .map_err(MetaStoreError::storage)?;
         let mut rows = statement
@@ -1697,14 +1407,11 @@ impl MetaStore {
         let mut statement = connection
             .prepare(
                 "\
-                SELECT DISTINCT version.document_id
+                SELECT DISTINCT projection.document_id
                 FROM entity_mention AS mention
-                JOIN resume_version AS version ON version.id = mention.resume_version_id
-                JOIN document AS document ON document.id = version.document_id
-                WHERE document.is_deleted = 0
-                    AND document.status IN ('indexed_partial', 'searchable')
-                    AND version.visibility = 'searchable'
-                    AND mention.entity_type = 'date_range'
+                JOIN active_search_projection AS projection
+                    ON projection.resume_version_id = mention.resume_version_id
+                WHERE mention.entity_type = 'date_range'
                     AND mention.confidence >= ?1
                     AND mention.normalized_value IS NOT NULL
                     AND (
@@ -1724,7 +1431,7 @@ impl MetaStore {
                                 + CAST(substr(mention.normalized_value, 14, 2) AS INTEGER)
                         END
                     ) >= ?3
-                ORDER BY version.document_id",
+                ORDER BY projection.document_id",
             )
             .map_err(MetaStoreError::storage)?;
         let mut rows = statement
@@ -1757,18 +1464,17 @@ impl MetaStore {
             .join(", ");
         let sql = format!(
             "\
-            SELECT DISTINCT version.document_id
+            SELECT DISTINCT projection.document_id
             FROM candidate AS candidate
-            JOIN resume_version AS version ON version.candidate_id = candidate.id
-            JOIN document AS document ON document.id = version.document_id
-            WHERE document.is_deleted = 0
-                AND document.status IN ('indexed_partial', 'searchable')
-                AND version.visibility = 'searchable'
-                AND (
+            JOIN resume_version_candidate AS assignment
+                ON assignment.candidate_id = candidate.id
+            JOIN active_search_projection AS projection
+                ON projection.resume_version_id = assignment.resume_version_id
+            WHERE (
                     candidate.email_hash IN ({placeholders})
                     OR candidate.phone_hash IN ({placeholders})
                 )
-            ORDER BY version.document_id"
+            ORDER BY projection.document_id"
         );
         let values = contact_hashes
             .iter()
@@ -1800,16 +1506,13 @@ impl MetaStore {
         let mut statement = connection
             .prepare(
                 "\
-                SELECT DISTINCT document.id
-                FROM document AS document
-                JOIN resume_version AS version ON version.document_id = document.id
-                WHERE document.is_deleted = 0
-                    AND document.status IN ('indexed_partial', 'searchable')
-                    AND version.visibility = 'searchable'
-                    AND NOT EXISTS (
+                SELECT projection.document_id
+                FROM active_search_projection AS projection
+                JOIN document AS document ON document.id = projection.document_id
+                WHERE NOT EXISTS (
                         SELECT 1
                         FROM entity_mention AS mention
-                        WHERE mention.resume_version_id = version.id
+                        WHERE mention.resume_version_id = projection.resume_version_id
                             AND mention.entity_type = ?1
                             AND mention.confidence >= ?2
                     )
@@ -1995,6 +1698,11 @@ impl MetaStore {
     }
 
     pub fn insert_ingest_job(&self, job: &IngestJob) -> Result<()> {
+        if job.kind == IngestJobKind::OcrDocument {
+            return Err(MetaStoreError::invalid_value(
+                "ingest_job.ocr_job_requires_exact_source_triage",
+            ));
+        }
         let connection = self.connection.borrow();
         connection
             .execute(
@@ -2039,59 +1747,74 @@ impl MetaStore {
         }
     }
 
-    pub fn enqueue_ocr_job_for_document(
+    pub fn enqueue_ocr_job_for_source_triage(
         &self,
-        document_id: &DocumentId,
+        source_revision_id: &SourceRevisionId,
+        triage_epoch: CurrentClassifierEpoch<'_>,
         queued_at: UnixTimestamp,
     ) -> Result<EnqueuedIngestJob> {
-        let id = IngestJobId::from_non_secret_parts(&["ocr-document", document_id.as_str()]);
-        let job = IngestJob {
-            id,
-            document_id: document_id.clone(),
-            resume_version_id: None,
-            kind: IngestJobKind::OcrDocument,
-            status: IngestJobStatus::Queued,
-            attempt_count: 0,
-            max_attempts: 3,
-            queued_at,
-            started_at: None,
-            finished_at: None,
-            updated_at: queued_at,
-            failure_kind: None,
-        };
-        let scheduled = {
+        let triage_epoch = triage_epoch.as_str();
+        let (job_id, scheduled) = {
             let mut connection = self.connection.borrow_mut();
             let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+            let document_id = transaction
+                .query_row(
+                    "SELECT revision.document_id
+                     FROM source_revision_triage AS triage
+                     JOIN source_revision AS revision
+                       ON revision.id = triage.source_revision_id
+                     JOIN document
+                       ON document.id = revision.document_id
+                      AND document.content_hash = revision.content_hash
+                     WHERE triage.source_revision_id = ?1 AND triage.triage_epoch = ?2
+                       AND triage.status = 'ocr_backlog'
+                       AND document.is_deleted = 0 AND document.status = ?3",
+                    params![
+                        source_revision_id.as_str(),
+                        triage_epoch,
+                        document_status_to_storage(DocumentStatus::OcrRequired),
+                    ],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(MetaStoreError::storage)?
+                .ok_or_else(|| MetaStoreError::not_found("source_revision_triage"))?;
+            let document_id = DocumentId::from_str(&document_id)
+                .map_err(|_| MetaStoreError::invalid_value("source_revision.document_id"))?;
+            let job_id = IngestJobId::from_non_secret_parts(&[
+                "ocr-source-triage",
+                source_revision_id.as_str(),
+                triage_epoch,
+            ]);
             let existing = {
                 let mut statement = transaction
                     .prepare(
                         "\
-                        SELECT id, attempt_count
-                        FROM ingest_job
-                        WHERE document_id = ?1 AND kind = ?2
-                        ORDER BY rowid
-                        LIMIT 1",
+                        SELECT attempt_count
+                        FROM ingest_job AS job
+                        JOIN ocr_job_spec AS spec ON spec.ingest_job_id = job.id
+                        WHERE job.id = ?1 AND job.kind = ?2
+                          AND spec.source_revision_id = ?3 AND spec.triage_epoch = ?4",
                     )
                     .map_err(MetaStoreError::storage)?;
                 let mut rows = statement
                     .query(params![
-                        document_id.as_str(),
+                        job_id.as_str(),
                         ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
+                        source_revision_id.as_str(),
+                        triage_epoch,
                     ])
                     .map_err(MetaStoreError::storage)?;
                 match rows.next().map_err(MetaStoreError::storage)? {
-                    Some(row) => Some((
-                        read_string(row, 0)?,
-                        i64_to_u32(
-                            row.get(1).map_err(MetaStoreError::storage)?,
-                            "ingest_job.attempt_count",
-                        )?,
-                    )),
+                    Some(row) => Some(i64_to_u32(
+                        row.get(0).map_err(MetaStoreError::storage)?,
+                        "ingest_job.attempt_count",
+                    )?),
                     None => None,
                 }
             };
 
-            let scheduled = if let Some((existing_id, attempt_count)) = existing {
+            let scheduled = if let Some(attempt_count) = existing {
                 let renewed_max_attempts = attempt_count
                     .checked_add(3)
                     .ok_or_else(|| MetaStoreError::invalid_value("ingest_job.max_attempts"))?;
@@ -2102,37 +1825,50 @@ impl MetaStore {
                              queued_at_seconds = ?3, started_at_seconds = NULL,
                              finished_at_seconds = NULL, updated_at_seconds = ?3,
                              failure_kind = NULL
-                         WHERE id = ?4 AND (
-                             status IN (?5, ?6)
-                             OR (status IN (?7, ?8) AND attempt_count >= max_attempts)
+                         WHERE id = ?4 AND document_id = ?5 AND kind = ?6 AND (
+                             status IN (?7, ?8)
+                             OR (status IN (?9, ?10) AND attempt_count >= max_attempts)
                          ) AND EXISTS (
-                             SELECT 1
-                             FROM document
-                             JOIN document_classification AS classification
-                               ON classification.document_id = document.id
-                             WHERE document.id = ?9 AND document.is_deleted = 0
-                               AND document.status = ?10
-                               AND classification.status = ?11
-                               AND classification.classifier_epoch = ?12
+                             SELECT 1 FROM ocr_job_spec AS spec
+                             JOIN source_revision_triage AS triage
+                               ON triage.source_revision_id = spec.source_revision_id
+                              AND triage.triage_epoch = spec.triage_epoch
+                             JOIN source_revision AS revision ON revision.id = spec.source_revision_id
+                             JOIN document
+                               ON document.id = revision.document_id
+                              AND document.content_hash = revision.content_hash
+                             WHERE spec.ingest_job_id = ingest_job.id
+                               AND spec.source_revision_id = ?11 AND spec.triage_epoch = ?12
+                               AND triage.status = 'ocr_backlog'
+                               AND document.is_deleted = 0 AND document.status = ?13
                          )",
                         params![
                             ingest_job_status_to_storage(IngestJobStatus::Queued),
                             u32_to_i64(renewed_max_attempts),
                             queued_at.as_unix_seconds(),
-                            existing_id,
+                            job_id.as_str(),
+                            document_id.as_str(),
+                            ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
                             ingest_job_status_to_storage(IngestJobStatus::Completed),
                             ingest_job_status_to_storage(IngestJobStatus::FailedPermanent),
                             ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
                             ingest_job_status_to_storage(IngestJobStatus::Interrupted),
-                            document_id.as_str(),
+                            source_revision_id.as_str(),
+                            triage_epoch,
                             document_status_to_storage(DocumentStatus::OcrRequired),
-                            ClassificationStatus::OcrBacklog.as_str(),
-                            CLASSIFIER_EPOCH,
                         ],
                     )
                     .map_err(MetaStoreError::storage)?
                     == 1
             } else {
+                transaction
+                    .execute(
+                        "INSERT INTO ocr_job_spec (
+                            ingest_job_id, source_revision_id, triage_epoch
+                         ) VALUES (?1, ?2, ?3)",
+                        params![job_id.as_str(), source_revision_id.as_str(), triage_epoch],
+                    )
+                    .map_err(MetaStoreError::storage)?;
                 transaction
                     .execute(
                         "\
@@ -2143,29 +1879,29 @@ impl MetaStore {
                         )
                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                         params![
-                            job.id.as_str(),
-                            job.document_id.as_str(),
-                            job.resume_version_id.as_ref().map(ResumeVersionId::as_str),
-                            ingest_job_kind_to_storage(job.kind),
-                            ingest_job_status_to_storage(job.status),
-                            u32_to_i64(job.attempt_count),
-                            u32_to_i64(job.max_attempts),
-                            job.queued_at.as_unix_seconds(),
-                            job.started_at.map(UnixTimestamp::as_unix_seconds),
-                            job.finished_at.map(UnixTimestamp::as_unix_seconds),
-                            job.updated_at.as_unix_seconds(),
-                            job.failure_kind.map(ingest_job_failure_kind_to_storage),
+                            job_id.as_str(),
+                            document_id.as_str(),
+                            Option::<&str>::None,
+                            ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
+                            ingest_job_status_to_storage(IngestJobStatus::Queued),
+                            0_i64,
+                            3_i64,
+                            queued_at.as_unix_seconds(),
+                            Option::<i64>::None,
+                            Option::<i64>::None,
+                            queued_at.as_unix_seconds(),
+                            Option::<&str>::None,
                         ],
                     )
                     .map_err(MetaStoreError::storage)?;
                 true
             };
             transaction.commit().map_err(MetaStoreError::storage)?;
-            scheduled
+            (job_id, scheduled)
         };
 
         let job = self
-            .ocr_job_for_document(document_id)?
+            .ingest_job_by_id(&job_id)?
             .ok_or_else(|| MetaStoreError::not_found("ingest_job"))?;
         Ok(EnqueuedIngestJob { job, scheduled })
     }
@@ -2302,20 +2038,26 @@ impl MetaStore {
         })
     }
 
-    pub fn ocr_job_for_document(&self, document_id: &DocumentId) -> Result<Option<IngestJob>> {
+    pub fn ocr_job_for_source_triage(
+        &self,
+        source_revision_id: &SourceRevisionId,
+        triage_epoch: CurrentClassifierEpoch<'_>,
+    ) -> Result<Option<IngestJob>> {
         let connection = self.connection.borrow();
         let sql = format!(
             "\
-            SELECT {INGEST_JOB_COLUMNS}
-            FROM ingest_job
-            WHERE document_id = ?1 AND kind = ?2
-            ORDER BY rowid
+            SELECT {INGEST_JOB_COLUMNS_JOB_ALIAS}
+            FROM ingest_job AS job
+            JOIN ocr_job_spec AS spec ON spec.ingest_job_id = job.id
+            WHERE spec.source_revision_id = ?1 AND spec.triage_epoch = ?2
+              AND job.kind = ?3
             LIMIT 1"
         );
         let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
         let mut rows = statement
             .query(params![
-                document_id.as_str(),
+                source_revision_id.as_str(),
+                triage_epoch.as_str(),
                 ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
             ])
             .map_err(MetaStoreError::storage)?;
@@ -2324,6 +2066,31 @@ impl MetaStore {
             Some(row) => Ok(Some(read_ingest_job(row)?)),
             None => Ok(None),
         }
+    }
+
+    pub fn ocr_job_discard_reason(
+        &self,
+        ingest_job_id: &IngestJobId,
+    ) -> Result<Option<OcrJobDiscardReason>> {
+        self.connection
+            .borrow()
+            .query_row(
+                "SELECT discard.reason, job.status
+                 FROM ocr_job_discard AS discard
+                 JOIN ingest_job AS job ON job.id = discard.ingest_job_id
+                 WHERE discard.ingest_job_id = ?1",
+                params![ingest_job_id.as_str()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(MetaStoreError::storage)?
+            .map(|(reason, status)| {
+                if ingest_job_status_from_storage(&status)? != IngestJobStatus::Completed {
+                    return Err(MetaStoreError::storage_invariant());
+                }
+                ocr_job_discard_reason_from_storage(&reason)
+            })
+            .transpose()
     }
 
     fn embedding_job_for_resume_version(
@@ -2526,17 +2293,22 @@ impl MetaStore {
         failure: OcrAttemptFailure,
         now: UnixTimestamp,
     ) -> Result<OcrAttemptFailureOutcome> {
-        let claimed = &claimed.job;
-        if claimed.kind != IngestJobKind::OcrDocument
-            || claimed.status != IngestJobStatus::Running
-            || claimed.attempt_count == 0
+        let job = &claimed.job;
+        if job.kind != IngestJobKind::OcrDocument
+            || job.status != IngestJobStatus::Running
+            || job.attempt_count == 0
         {
             return Err(MetaStoreError::invalid_value("ingest_job.ocr_attempt"));
         }
         let mut connection = self.connection.borrow_mut();
         let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        let terminal = failure == OcrAttemptFailure::Permanent
-            || claimed.attempt_count >= claimed.max_attempts;
+        if !ocr_claim_is_current_in_connection(&transaction, claimed)? {
+            discard_superseded_ocr_claim_in_connection(&transaction, claimed, now)?;
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            return Ok(OcrAttemptFailureOutcome::Superseded);
+        }
+        let terminal =
+            failure == OcrAttemptFailure::Permanent || job.attempt_count >= job.max_attempts;
         let failure_kind = match failure {
             OcrAttemptFailure::RetryableWithKind(kind) => Some(kind),
             OcrAttemptFailure::Retryable | OcrAttemptFailure::Permanent => None,
@@ -2557,12 +2329,12 @@ impl MetaStore {
                     ingest_job_status_to_storage(next_status),
                     now.as_unix_seconds(),
                     failure_kind.map(ingest_job_failure_kind_to_storage),
-                    claimed.id.as_str(),
-                    claimed.document_id.as_str(),
+                    job.id.as_str(),
+                    job.document_id.as_str(),
                     ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
                     ingest_job_status_to_storage(IngestJobStatus::Running),
-                    u32_to_i64(claimed.attempt_count),
-                    u32_to_i64(claimed.max_attempts),
+                    u32_to_i64(job.attempt_count),
+                    u32_to_i64(job.max_attempts),
                 ],
             )
             .map_err(MetaStoreError::storage)?;
@@ -2571,11 +2343,6 @@ impl MetaStore {
             return Ok(OcrAttemptFailureOutcome::Superseded);
         }
         if terminal {
-            classification::transition_current_ocr_backlog_to_failed(
-                &transaction,
-                &claimed.document_id,
-                now,
-            )?;
             transaction
                 .execute(
                     "UPDATE document SET status = ?1, updated_at_seconds = ?2
@@ -2583,7 +2350,7 @@ impl MetaStore {
                     params![
                         document_status_to_storage(DocumentStatus::FailedPermanent),
                         now.as_unix_seconds(),
-                        claimed.document_id.as_str(),
+                        job.document_id.as_str(),
                         document_status_to_storage(DocumentStatus::OcrRequired),
                     ],
                 )
@@ -2603,7 +2370,7 @@ impl MetaStore {
         else {
             return Ok(None);
         };
-        self.claimed_ocr_job_from_job(job)
+        self.claimed_ocr_job_from_job(job).map(Some)
     }
 
     pub fn ocr_claim_is_current(&self, claimed: &ClaimedOcrJob) -> Result<bool> {
@@ -2623,17 +2390,18 @@ impl MetaStore {
             && job.attempt_count > 0
             && publication.document.id == job.document_id
             && publication.document.content_hash.as_deref() == Some(claimed.source_fingerprint())
-            && publication.classification.document_id == job.document_id
-            && publication.classification.classifier_epoch == CLASSIFIER_EPOCH
+            && publication.source_revision.document_id == job.document_id
+            && publication.source_revision.id == *claimed.source_revision_id()
+            && publication.source_revision.content_hash.as_str() == claimed.source_fingerprint()
+            && publication.version.document_id == job.document_id
+            && publication.version.source_revision_id == publication.source_revision.id
+            && publication.classification.resume_version_id == publication.version.id
+            && CurrentClassifierEpoch::parse(&publication.classification.classifier_epoch)
+                .is_some()
+            && publication.classification.classifier_epoch == claimed.triage_epoch()
             && publication.classification.status != ClassificationStatus::OcrBacklog
-            && (candidate == (publication.document.status == DocumentStatus::Searchable))
+            && (candidate == (publication.document.status == DocumentStatus::FieldsExtracted))
             && (candidate != (publication.document.status == DocumentStatus::OcrDone))
-            && publication.version.is_none_or(|version| {
-                version.document_id == job.document_id
-                    && (candidate == (version.visibility == ResumeVisibility::Searchable))
-            })
-            && (!candidate || publication.version.is_some())
-            && (publication.version.is_some() || publication.mentions.is_empty())
             && (candidate || publication.mentions.is_empty())
             && (candidate || publication.email_hash.is_none() && publication.phone_hash.is_none());
         if !valid {
@@ -2644,33 +2412,33 @@ impl MetaStore {
         let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
         let current = ocr_claim_is_current_in_connection(&transaction, claimed)?;
         if !current {
+            discard_superseded_ocr_claim_in_connection(&transaction, claimed, now)?;
             transaction.commit().map_err(MetaStoreError::storage)?;
             return Ok(OcrAttemptSuccessOutcome::Superseded);
         }
 
         upsert_document_in_connection(&transaction, publication.document)?;
-        classification::upsert_document_classification_in_connection(
+        immutable_search::insert_source_revision_in_connection(
+            &transaction,
+            publication.source_revision,
+        )?;
+        immutable_search::insert_resume_version_in_connection(&transaction, publication.version)?;
+        classification::insert_resume_version_classification_in_connection(
             &transaction,
             publication.classification,
         )?;
-        if let Some(version) = publication.version {
-            let mut version = version.clone();
-            if version.candidate_id.is_none() {
-                version.candidate_id =
-                    resume_version_by_id_from_connection(&transaction, &version.id)?
-                        .and_then(|existing| existing.candidate_id);
-            }
-            upsert_resume_version_in_connection(&transaction, &version)?;
-            replace_entity_mentions_in_connection(&transaction, &version.id, publication.mentions)?;
-            assign_candidate_from_hashed_contacts_in_connection(
-                &transaction,
-                &version.id,
-                publication.email_hash,
-                publication.phone_hash,
-                now,
-            )?;
-        }
-        upsert_index_state_in_connection(&transaction, publication.index_state)?;
+        immutable_search::insert_entity_mentions_in_connection(
+            &transaction,
+            &publication.version.id,
+            publication.mentions,
+        )?;
+        assign_candidate_from_hashed_contacts_in_connection(
+            &transaction,
+            &publication.version.id,
+            publication.email_hash,
+            publication.phone_hash,
+            now,
+        )?;
         let changed = transaction
             .execute(
                 "UPDATE ingest_job SET status = ?1, finished_at_seconds = ?2,
@@ -2815,6 +2583,7 @@ impl MetaStore {
         let claimed_id = {
             let mut connection = self.connection.borrow_mut();
             let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+            discard_stale_ocr_jobs_in_connection(&transaction, now)?;
             let candidate_id = {
                 let mut statement = transaction
                     .prepare(
@@ -2828,14 +2597,20 @@ impl MetaStore {
                             AND (?4 IS NULL OR kind = ?4)
                             AND (?5 = 0 OR resume_version_id IS NOT NULL)
                             AND (kind <> ?6 OR EXISTS (
-                                SELECT 1 FROM document
-                                JOIN document_classification AS classification
-                                  ON classification.document_id = document.id
-                                WHERE document.id = ingest_job.document_id
+                                SELECT 1 FROM ocr_job_spec AS spec
+                                JOIN source_revision_triage AS triage
+                                  ON triage.source_revision_id = spec.source_revision_id
+                                 AND triage.triage_epoch = spec.triage_epoch
+                                JOIN source_revision AS revision
+                                  ON revision.id = spec.source_revision_id
+                                JOIN document
+                                  ON document.id = revision.document_id
+                                 AND document.content_hash = revision.content_hash
+                                WHERE spec.ingest_job_id = ingest_job.id
+                                  AND document.id = ingest_job.document_id
                                   AND document.is_deleted = 0 AND document.status = 'ocr_required'
                                   AND document.content_hash IS NOT NULL
-                                  AND classification.status = 'ocr_backlog'
-                                  AND classification.classifier_epoch = ?7
+                                  AND triage.status = 'ocr_backlog'
                             ))
                         ORDER BY queued_at_seconds, rowid
                         LIMIT 1",
@@ -2849,7 +2624,6 @@ impl MetaStore {
                         kind_filter,
                         bool_to_i64(require_resume_version_id),
                         ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
-                        CLASSIFIER_EPOCH,
                     ])
                     .map_err(MetaStoreError::storage)?;
 
@@ -2946,7 +2720,13 @@ impl MetaStore {
         now: UnixTimestamp,
         stale_before: UnixTimestamp,
     ) -> Result<usize> {
-        let mut terminalized = 0_usize;
+        let mut terminalized = {
+            let mut connection = self.connection.borrow_mut();
+            let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+            let discarded = discard_stale_ocr_jobs_in_connection(&transaction, now)?;
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            discarded
+        };
         let exhausted_ocr = self.query_jobs(
             "WHERE kind = ?1 AND status = ?2 AND attempt_count >= max_attempts
                AND updated_at_seconds <= ?3 ORDER BY rowid",
@@ -2957,12 +2737,11 @@ impl MetaStore {
             ],
         )?;
         for job in exhausted_ocr {
-            if let Some(claimed) = self.claimed_ocr_job_from_job(job)? {
-                if self.finish_ocr_attempt_failure(&claimed, OcrAttemptFailure::Permanent, now)?
-                    == OcrAttemptFailureOutcome::FailedPermanent
-                {
-                    terminalized += 1;
-                }
+            let claimed = self.claimed_ocr_job_from_job(job)?;
+            if self.finish_ocr_attempt_failure(&claimed, OcrAttemptFailure::Permanent, now)?
+                == OcrAttemptFailureOutcome::FailedPermanent
+            {
+                terminalized += 1;
             }
         }
         let changed = self
@@ -2989,93 +2768,46 @@ impl MetaStore {
         Ok(terminalized.saturating_add(changed))
     }
 
-    fn claimed_ocr_job_from_job(&self, job: IngestJob) -> Result<Option<ClaimedOcrJob>> {
-        let source_fingerprint = self
+    fn claimed_ocr_job_from_job(&self, job: IngestJob) -> Result<ClaimedOcrJob> {
+        let spec = self
             .connection
             .borrow()
             .query_row(
-                "SELECT document.content_hash FROM ingest_job AS job
-                 JOIN document ON document.id = job.document_id WHERE job.id = ?1",
-                params![job.id.as_str()],
-                |row| row.get::<_, Option<String>>(0),
+                "SELECT spec.source_revision_id, spec.triage_epoch, revision.content_hash
+                 FROM ingest_job AS job
+                 JOIN ocr_job_spec AS spec ON spec.ingest_job_id = job.id
+                 JOIN source_revision AS revision ON revision.id = spec.source_revision_id
+                 WHERE job.id = ?1 AND job.kind = ?2",
+                params![
+                    job.id.as_str(),
+                    ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )
             .optional()
             .map_err(MetaStoreError::storage)?
-            .flatten();
-        Ok(source_fingerprint.map(|source_fingerprint| ClaimedOcrJob {
+            .ok_or_else(MetaStoreError::storage_invariant)?;
+        let source_revision_id = SourceRevisionId::from_str(&spec.0)
+            .map_err(|_| MetaStoreError::invalid_value("ocr_job_spec.source_revision_id"))?;
+        if CurrentClassifierEpoch::parse(&spec.1).is_none() {
+            return Err(MetaStoreError::invalid_value("ocr_job_spec.triage_epoch"));
+        }
+        Ok(ClaimedOcrJob {
             job,
-            source_fingerprint,
-        }))
+            source_revision_id,
+            triage_epoch: spec.1,
+            source_fingerprint: spec.2,
+        })
     }
 
     pub fn ingest_jobs(&self) -> Result<Vec<IngestJob>> {
         self.query_jobs("ORDER BY rowid", params![])
-    }
-
-    pub fn upsert_index_state(&self, state: &IndexState) -> Result<()> {
-        let connection = self.connection.borrow();
-        connection
-            .execute(
-                "\
-                INSERT INTO index_state (
-                    state_key,
-                    manifest_version,
-                    snapshot_token,
-                    status,
-                    updated_at_seconds,
-                    visible_epoch,
-                    manifest_document_count
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                ON CONFLICT(state_key) DO UPDATE SET
-                    manifest_version = excluded.manifest_version,
-                    snapshot_token = excluded.snapshot_token,
-                    status = excluded.status,
-                    updated_at_seconds = excluded.updated_at_seconds,
-                    visible_epoch = excluded.visible_epoch,
-                    manifest_document_count = excluded.manifest_document_count",
-                params![
-                    INDEX_STATE_KEY,
-                    state.manifest_version,
-                    state.snapshot_token,
-                    index_state_status_to_storage(state.status),
-                    state.updated_at.as_unix_seconds(),
-                    u64_to_i64(state.visible_epoch, "index_state.visible_epoch")?,
-                    u64_to_i64(
-                        state.manifest_document_count,
-                        "index_state.manifest_document_count",
-                    )?,
-                ],
-            )
-            .map_err(MetaStoreError::storage)?;
-
-        Ok(())
-    }
-
-    pub fn index_state(&self) -> Result<Option<IndexState>> {
-        let connection = self.connection.borrow();
-        let mut statement = connection
-            .prepare(
-                "\
-                SELECT
-                    manifest_version,
-                    snapshot_token,
-                    status,
-                    updated_at_seconds,
-                    visible_epoch,
-                    manifest_document_count
-                FROM index_state
-                WHERE state_key = ?1",
-            )
-            .map_err(MetaStoreError::storage)?;
-        let mut rows = statement
-            .query(params![INDEX_STATE_KEY])
-            .map_err(MetaStoreError::storage)?;
-
-        match rows.next().map_err(MetaStoreError::storage)? {
-            Some(row) => Ok(Some(read_index_state(row)?)),
-            None => Ok(None),
-        }
     }
 
     pub fn insert_import_task(&self, task: &ImportTask) -> Result<()> {
@@ -3110,92 +2842,9 @@ impl MetaStore {
         task: &ImportTask,
         scope: &ImportScanScope,
     ) -> Result<()> {
-        validate_import_task(task)?;
-        validate_import_scan_scope(scope)?;
-        if scope.import_task_id != task.id {
-            return Err(MetaStoreError::invalid_value(
-                "import_scan_scope.import_task_id",
-            ));
-        }
-        if scope.canonical_root_path != task.root_path {
-            return Err(MetaStoreError::invalid_value("import_task.root_path"));
-        }
-
         let mut connection = self.connection.borrow_mut();
         let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        transaction
-            .execute(
-                "\
-                INSERT INTO import_task (
-                    id, root_path, status, queued_at_seconds, started_at_seconds,
-                    finished_at_seconds, updated_at_seconds
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    task.id.as_str(),
-                    task.root_path,
-                    import_task_status_to_storage(task.status),
-                    task.queued_at.as_unix_seconds(),
-                    task.started_at.map(UnixTimestamp::as_unix_seconds),
-                    task.finished_at.map(UnixTimestamp::as_unix_seconds),
-                    task.updated_at.as_unix_seconds(),
-                ],
-            )
-            .map_err(MetaStoreError::storage)?;
-        transaction
-            .execute(
-                "\
-                INSERT INTO import_scan_scope (
-                    import_task_id, root_kind, root_preset, scan_profile, requested_root_path,
-                    canonical_root_path, files_discovered, ignored_entries, scan_errors,
-                    searchable_documents, ocr_required_documents, ocr_jobs_queued,
-                    failed_documents, deleted_documents, scan_budget_kind, scan_budget_limit,
-                    scan_budget_observed, scan_budget_exhausted, updated_at_seconds
-                )
-                VALUES (
-                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                    ?18, ?19
-                )",
-                params![
-                    scope.import_task_id.as_str(),
-                    import_root_kind_to_storage(scope.root_kind),
-                    scope.root_preset.map(import_root_preset_to_storage),
-                    import_scan_profile_to_storage(scope.scan_profile),
-                    scope.requested_root_path.as_str(),
-                    scope.canonical_root_path.as_str(),
-                    u64_to_i64(scope.files_discovered, "import_scan_scope.files_discovered")?,
-                    u64_to_i64(scope.ignored_entries, "import_scan_scope.ignored_entries")?,
-                    u64_to_i64(scope.scan_errors, "import_scan_scope.scan_errors")?,
-                    u64_to_i64(
-                        scope.searchable_documents,
-                        "import_scan_scope.searchable_documents"
-                    )?,
-                    u64_to_i64(
-                        scope.ocr_required_documents,
-                        "import_scan_scope.ocr_required_documents"
-                    )?,
-                    u64_to_i64(scope.ocr_jobs_queued, "import_scan_scope.ocr_jobs_queued")?,
-                    u64_to_i64(scope.failed_documents, "import_scan_scope.failed_documents")?,
-                    u64_to_i64(
-                        scope.deleted_documents,
-                        "import_scan_scope.deleted_documents"
-                    )?,
-                    scope
-                        .scan_budget_kind
-                        .map(import_scan_budget_kind_to_storage),
-                    scope
-                        .scan_budget_limit
-                        .map(|value| u64_to_i64(value, "import_scan_scope.scan_budget_limit"))
-                        .transpose()?,
-                    scope
-                        .scan_budget_observed
-                        .map(|value| u64_to_i64(value, "import_scan_scope.scan_budget_observed"))
-                        .transpose()?,
-                    bool_to_i64(scope.scan_budget_exhausted),
-                    scope.updated_at.as_unix_seconds(),
-                ],
-            )
-            .map_err(MetaStoreError::storage)?;
+        insert_import_task_with_scan_scope_in_connection(&transaction, task, scope)?;
         transaction.commit().map_err(MetaStoreError::storage)?;
 
         Ok(())
@@ -3407,6 +3056,12 @@ impl MetaStore {
                             WHERE cancellation.import_task_id = pending.id
                         )
                 )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM authorized_import_root AS root_control
+                    WHERE root_control.canonical_root_path = scope.canonical_root_path
+                        AND root_control.paused = 1
+                )
             ORDER BY task.finished_at_seconds, task.rowid";
         let mut statement = connection.prepare(sql).map_err(MetaStoreError::storage)?;
         let mut rows = statement
@@ -3482,6 +3137,12 @@ impl MetaStore {
                         SELECT 1
                         FROM import_task_cancellation AS cancellation
                         WHERE cancellation.import_task_id = import_task.id
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM authorized_import_root AS root_control
+                        WHERE root_control.canonical_root_path = import_task.root_path
+                            AND root_control.paused = 1
                     )
                     {excluded_clause}
                 ORDER BY CASE WHEN status = ? THEN 0 ELSE 1 END, queued_at_seconds, rowid
@@ -3572,8 +3233,10 @@ impl MetaStore {
     pub fn upsert_import_scan_scope(&self, scope: &ImportScanScope) -> Result<()> {
         validate_import_scan_scope(scope)?;
 
-        let connection = self.connection.borrow();
-        connection
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        upsert_authorized_import_root_in_connection(&transaction, scope)?;
+        transaction
             .execute(
                 "\
                 INSERT INTO import_scan_scope (
@@ -3646,6 +3309,7 @@ impl MetaStore {
                 ],
             )
             .map_err(MetaStoreError::storage)?;
+        transaction.commit().map_err(MetaStoreError::storage)?;
 
         Ok(())
     }
@@ -3876,8 +3540,8 @@ impl MetaStore {
             .query_row(
                 "\
                 SELECT
-                    COALESCE(SUM(CASE WHEN status IN ('indexed_partial', 'searchable') THEN 1 ELSE 0 END), 0),
-                    COALESCE(SUM(CASE WHEN status = 'searchable' THEN 1 ELSE 0 END), 0),
+                    (SELECT COUNT(*) FROM active_search_projection),
+                    (SELECT COUNT(*) FROM active_search_projection),
                     COALESCE(SUM(CASE WHEN status = 'indexed_partial' THEN 1 ELSE 0 END), 0),
                     COALESCE(SUM(CASE WHEN status = 'failed_retryable' THEN 1 ELSE 0 END), 0),
                     COALESCE(SUM(CASE WHEN status = 'failed_permanent' THEN 1 ELSE 0 END), 0),
@@ -3992,15 +3656,13 @@ impl MetaStore {
                     AND job.resume_version_id IS NOT NULL
                     AND document.is_deleted = 0
                     AND document.status <> ?2
-                    AND version.visibility <> ?3
                     AND (
-                        job.status IN (?4, ?5)
-                        OR (job.status = ?6 AND job.attempt_count < job.max_attempts)
+                        job.status IN (?3, ?4)
+                        OR (job.status = ?5 AND job.attempt_count < job.max_attempts)
                     )",
                 params![
                     ingest_job_kind_to_storage(IngestJobKind::UpdateIndex),
                     document_status_to_storage(DocumentStatus::Deleted),
-                    resume_visibility_to_storage(ResumeVisibility::Hidden),
                     ingest_job_status_to_storage(IngestJobStatus::Queued),
                     ingest_job_status_to_storage(IngestJobStatus::Interrupted),
                     ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
@@ -4061,34 +3723,26 @@ impl MetaStore {
                 "\
                 SELECT COUNT(*)
                 FROM entity_mention AS mention
-                JOIN resume_version AS version ON version.id = mention.resume_version_id
-                JOIN document AS document ON document.id = version.document_id
-                WHERE document.is_deleted = 0
-                    AND document.status <> ?1
-                    AND version.visibility <> ?2",
-                params![
-                    document_status_to_storage(DocumentStatus::Deleted),
-                    resume_visibility_to_storage(ResumeVisibility::Hidden),
-                ],
+                JOIN active_search_projection AS projection
+                    ON projection.resume_version_id = mention.resume_version_id",
+                [],
                 |row| row.get::<_, i64>(0),
             )
             .map_err(MetaStoreError::storage)?;
-        let index_state = connection
+        let search_state = connection
             .query_row(
                 "\
-                SELECT status, snapshot_token
-                FROM index_state
-                WHERE state_key = ?1",
-                params![INDEX_STATE_KEY],
+                SELECT service_state, generation
+                FROM search_projection_state
+                WHERE state_key = 'default'",
+                [],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
             )
-            .optional()
             .map_err(MetaStoreError::storage)?;
-        let (index_health, last_snapshot_id) = match index_state {
-            Some((status, snapshot_token)) => {
-                (index_state_status_from_storage(&status)?, snapshot_token)
-            }
-            None => (IndexStateStatus::Empty, None),
+        let (index_health, last_snapshot_id) = match search_state {
+            (state, generation) if state == "ready" => (IndexStateStatus::Ready, generation),
+            (_, Some(generation)) => (IndexStateStatus::Stale, Some(generation)),
+            (_, None) => (IndexStateStatus::Empty, None),
         };
 
         Ok(StoreStatusSummary {
@@ -4646,10 +4300,20 @@ pub struct IngestJob {
 #[derive(Clone, PartialEq, Eq)]
 pub struct ClaimedOcrJob {
     pub job: IngestJob,
+    source_revision_id: SourceRevisionId,
+    triage_epoch: String,
     source_fingerprint: String,
 }
 
 impl ClaimedOcrJob {
+    pub fn source_revision_id(&self) -> &SourceRevisionId {
+        &self.source_revision_id
+    }
+
+    pub fn triage_epoch(&self) -> &str {
+        &self.triage_epoch
+    }
+
     pub fn source_fingerprint(&self) -> &str {
         &self.source_fingerprint
     }
@@ -4664,6 +4328,11 @@ impl fmt::Debug for ClaimedOcrJob {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IngestJobFailureKind {
     OcrPageBudgetExceeded,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OcrJobDiscardReason {
+    SourceRevisionNoLongerCurrent,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4961,35 +4630,24 @@ impl fmt::Debug for IngestJob {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub struct IndexState {
-    pub manifest_version: String,
-    pub snapshot_token: Option<String>,
-    pub status: IndexStateStatus,
-    pub updated_at: UnixTimestamp,
-    pub visible_epoch: u64,
-    pub manifest_document_count: u64,
-}
-
-impl fmt::Debug for IndexState {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("IndexState")
-            .field("manifest_version", &"<redacted>")
-            .field(
-                "snapshot_token",
-                &self.snapshot_token.as_ref().map(|_| "<redacted>"),
-            )
-            .field("status", &self.status)
-            .field("updated_at", &self.updated_at)
-            .field("visible_epoch", &self.visible_epoch)
-            .field("manifest_document_count", &self.manifest_document_count)
-            .finish()
-    }
-}
-
-#[derive(Clone, PartialEq, Eq)]
 pub struct MetaStoreError {
     kind: MetaStoreErrorKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MetaStoreErrorClass {
+    Storage,
+    Migration,
+    MigrationOwnershipRequired,
+    InvalidValue,
+    NotFound,
+    InvalidTransition,
+    ImmutableIdentityConflict,
+    StorageInvariant,
+    WeakPassphrase,
+    InvalidBackup,
+    Crypto,
+    KeyAlreadyExists,
 }
 
 impl MetaStoreError {
@@ -5041,6 +4699,12 @@ impl MetaStoreError {
         }
     }
 
+    fn migration_ownership_required() -> Self {
+        Self {
+            kind: MetaStoreErrorKind::MigrationOwnershipRequired,
+        }
+    }
+
     fn invalid_value(field: &'static str) -> Self {
         Self {
             kind: MetaStoreErrorKind::InvalidPersistedValue { field },
@@ -5056,6 +4720,53 @@ impl MetaStoreError {
     fn invalid_transition() -> Self {
         Self {
             kind: MetaStoreErrorKind::InvalidTransition,
+        }
+    }
+
+    fn immutable_identity_conflict(entity: &'static str) -> Self {
+        Self {
+            kind: MetaStoreErrorKind::ImmutableIdentityConflict { entity },
+        }
+    }
+
+    fn storage_invariant() -> Self {
+        Self {
+            kind: MetaStoreErrorKind::StorageInvariant,
+        }
+    }
+
+    fn search_publication(failure: SearchPublicationFailure) -> Self {
+        Self {
+            kind: MetaStoreErrorKind::SearchPublication(failure),
+        }
+    }
+
+    pub fn search_publication_failure(&self) -> Option<SearchPublicationFailure> {
+        match self.kind {
+            MetaStoreErrorKind::SearchPublication(failure) => Some(failure),
+            _ => None,
+        }
+    }
+
+    pub fn class(&self) -> MetaStoreErrorClass {
+        match self.kind {
+            MetaStoreErrorKind::Storage => MetaStoreErrorClass::Storage,
+            MetaStoreErrorKind::Migration => MetaStoreErrorClass::Migration,
+            MetaStoreErrorKind::MigrationOwnershipRequired => {
+                MetaStoreErrorClass::MigrationOwnershipRequired
+            }
+            MetaStoreErrorKind::InvalidPersistedValue { .. } => MetaStoreErrorClass::InvalidValue,
+            MetaStoreErrorKind::NotFound { .. } => MetaStoreErrorClass::NotFound,
+            MetaStoreErrorKind::InvalidTransition => MetaStoreErrorClass::InvalidTransition,
+            MetaStoreErrorKind::ImmutableIdentityConflict { .. } => {
+                MetaStoreErrorClass::ImmutableIdentityConflict
+            }
+            MetaStoreErrorKind::StorageInvariant => MetaStoreErrorClass::StorageInvariant,
+            MetaStoreErrorKind::SearchPublication(_) => MetaStoreErrorClass::StorageInvariant,
+            MetaStoreErrorKind::WeakPassphrase => MetaStoreErrorClass::WeakPassphrase,
+            MetaStoreErrorKind::InvalidBackup => MetaStoreErrorClass::InvalidBackup,
+            MetaStoreErrorKind::Crypto => MetaStoreErrorClass::Crypto,
+            MetaStoreErrorKind::KeyAlreadyExists => MetaStoreErrorClass::KeyAlreadyExists,
         }
     }
 }
@@ -5076,6 +4787,9 @@ impl fmt::Display for MetaStoreError {
             MetaStoreErrorKind::Migration => {
                 formatter.write_str("metadata schema migration failed")
             }
+            MetaStoreErrorKind::MigrationOwnershipRequired => {
+                formatter.write_str("metadata migration requires the copy-on-write owner")
+            }
             MetaStoreErrorKind::InvalidPersistedValue { field } => {
                 write!(
                     formatter,
@@ -5090,6 +4804,18 @@ impl fmt::Display for MetaStoreError {
             }
             MetaStoreErrorKind::InvalidTransition => {
                 formatter.write_str("metadata store job status transition is invalid")
+            }
+            MetaStoreErrorKind::ImmutableIdentityConflict { entity } => {
+                write!(
+                    formatter,
+                    "immutable metadata identity conflict for {entity}"
+                )
+            }
+            MetaStoreErrorKind::StorageInvariant => {
+                formatter.write_str("metadata store invariant failed")
+            }
+            MetaStoreErrorKind::SearchPublication(_) => {
+                formatter.write_str("search publication contract failed")
             }
             MetaStoreErrorKind::WeakPassphrase => {
                 formatter.write_str("metadata key backup passphrase is too weak")
@@ -5111,9 +4837,13 @@ impl std::error::Error for MetaStoreError {}
 enum MetaStoreErrorKind {
     Storage,
     Migration,
+    MigrationOwnershipRequired,
     InvalidPersistedValue { field: &'static str },
     NotFound { entity: &'static str },
     InvalidTransition,
+    ImmutableIdentityConflict { entity: &'static str },
+    StorageInvariant,
+    SearchPublication(SearchPublicationFailure),
     WeakPassphrase,
     InvalidBackup,
     Crypto,
@@ -5148,6 +4878,7 @@ CREATE TABLE document (
         'embedding_done',
         'indexed_partial',
         'searchable',
+        'excluded',
         'failed_retryable',
         'failed_permanent',
         'deleted'
@@ -5774,6 +5505,257 @@ CREATE INDEX document_classification_review_idx
     ON document_classification(review_disposition, status);
 "#;
 
+const SCHEMA_V23: &str = r#"
+CREATE TEMP TABLE v23_legacy_searchability_quarantine (
+    document_id TEXT PRIMARY KEY
+);
+
+INSERT INTO v23_legacy_searchability_quarantine (document_id)
+SELECT document.id
+FROM document
+LEFT JOIN document_classification AS classification
+    ON classification.document_id = document.id
+WHERE document.is_deleted = 0
+  AND document.status IN ('searchable', 'indexed_partial')
+  AND (
+      classification.document_id IS NULL
+      OR NOT (
+          classification.status = 'resume_candidate'
+          AND (
+              classification.classifier_epoch = 'precision_first_v4'
+              OR (
+                  length(classification.classifier_epoch) = 38
+                  AND classification.classifier_epoch GLOB
+                      'precision_first_v4_linear_[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]'
+              )
+          )
+      )
+  );
+
+UPDATE index_state
+SET status = 'stale'
+WHERE EXISTS (SELECT 1 FROM v23_legacy_searchability_quarantine);
+
+DELETE FROM candidate_contact_conflict
+WHERE resume_version_id IN (
+    SELECT version.id
+    FROM resume_version AS version
+    JOIN v23_legacy_searchability_quarantine AS quarantine
+        ON quarantine.document_id = version.document_id
+);
+
+DELETE FROM entity_mention
+WHERE resume_version_id IN (
+    SELECT version.id
+    FROM resume_version AS version
+    JOIN v23_legacy_searchability_quarantine AS quarantine
+        ON quarantine.document_id = version.document_id
+);
+
+UPDATE resume_version
+SET visibility = 'hidden', candidate_id = NULL
+WHERE document_id IN (
+    SELECT document_id FROM v23_legacy_searchability_quarantine
+);
+
+UPDATE document
+SET status = CASE (
+    SELECT classification.status
+    FROM document_classification AS classification
+    WHERE classification.document_id = document.id
+)
+    WHEN 'ocr_backlog' THEN 'ocr_required'
+    WHEN 'failed' THEN 'failed_permanent'
+    ELSE 'text_cleaned'
+END
+WHERE id IN (SELECT document_id FROM v23_legacy_searchability_quarantine);
+
+UPDATE candidate
+SET version_count = (
+    SELECT COUNT(*)
+    FROM resume_version
+    WHERE resume_version.candidate_id = candidate.id
+);
+
+DELETE FROM candidate WHERE version_count = 0;
+
+DROP TABLE v23_legacy_searchability_quarantine;
+"#;
+
+const SCHEMA_V24: &str = r#"
+CREATE TEMP TABLE v24_legacy_content_generation (
+    document_id TEXT PRIMARY KEY
+);
+
+INSERT INTO v24_legacy_content_generation (document_id)
+SELECT id
+FROM document
+WHERE is_deleted = 0
+  AND status IN ('searchable', 'indexed_partial', 'ocr_required', 'ocr_running')
+  AND (
+      content_hash IS NULL
+      OR NOT (
+          length(content_hash) = 71
+          AND substr(content_hash, 1, 7) = 'sha256:'
+          AND substr(content_hash, 8) NOT GLOB '*[^0-9a-f]*'
+      )
+  );
+
+UPDATE index_state
+SET status = 'stale'
+WHERE EXISTS (SELECT 1 FROM v24_legacy_content_generation);
+
+DELETE FROM candidate_contact_conflict
+WHERE resume_version_id IN (
+    SELECT version.id
+    FROM resume_version AS version
+    JOIN v24_legacy_content_generation AS legacy
+        ON legacy.document_id = version.document_id
+);
+
+DELETE FROM entity_mention
+WHERE resume_version_id IN (
+    SELECT version.id
+    FROM resume_version AS version
+    JOIN v24_legacy_content_generation AS legacy
+        ON legacy.document_id = version.document_id
+);
+
+UPDATE resume_version
+SET visibility = 'hidden', candidate_id = NULL
+WHERE document_id IN (
+    SELECT document_id FROM v24_legacy_content_generation
+);
+
+UPDATE document
+SET status = 'text_cleaned'
+WHERE status IN ('searchable', 'indexed_partial')
+  AND id IN (SELECT document_id FROM v24_legacy_content_generation);
+
+UPDATE document
+SET content_hash = NULL
+WHERE id IN (SELECT document_id FROM v24_legacy_content_generation);
+
+UPDATE ingest_job
+SET status = 'failed_permanent',
+    started_at_seconds = COALESCE(started_at_seconds, queued_at_seconds),
+    finished_at_seconds = updated_at_seconds,
+    failure_kind = NULL
+WHERE kind = 'ocr_document'
+  AND status IN ('queued', 'running', 'interrupted', 'failed_retryable')
+  AND document_id IN (
+      SELECT document_id FROM v24_legacy_content_generation
+  );
+
+UPDATE candidate
+SET version_count = (
+    SELECT COUNT(*)
+    FROM resume_version
+    WHERE resume_version.candidate_id = candidate.id
+);
+
+DELETE FROM candidate WHERE version_count = 0;
+
+DROP TABLE v24_legacy_content_generation;
+"#;
+
+const SCHEMA_V25: &str = r#"
+CREATE TABLE index_publication (
+    generation TEXT PRIMARY KEY NOT NULL,
+    base_generation TEXT,
+    manifest_version TEXT NOT NULL,
+    manifest_document_count INTEGER NOT NULL CHECK (manifest_document_count >= 0),
+    state TEXT NOT NULL CHECK (state IN ('preparing', 'validated', 'ready', 'abandoned')),
+    created_at_seconds INTEGER NOT NULL CHECK (created_at_seconds >= 0),
+    updated_at_seconds INTEGER NOT NULL CHECK (updated_at_seconds >= created_at_seconds)
+);
+
+CREATE INDEX index_publication_recovery_idx
+    ON index_publication(state, updated_at_seconds);
+"#;
+
+fn legacy_migrations() -> [(u32, &'static str); 26] {
+    [
+        (SCHEMA_VERSION_V1, SCHEMA_V1),
+        (SCHEMA_VERSION_V2, SCHEMA_V2),
+        (SCHEMA_VERSION_V3, SCHEMA_V3),
+        (SCHEMA_VERSION_V4, SCHEMA_V4),
+        (SCHEMA_VERSION_V5, SCHEMA_V5),
+        (SCHEMA_VERSION_V6, SCHEMA_V6),
+        (SCHEMA_VERSION_V7, SCHEMA_V7),
+        (SCHEMA_VERSION_V8, SCHEMA_V8),
+        (SCHEMA_VERSION_V9, SCHEMA_V9),
+        (SCHEMA_VERSION_V10, SCHEMA_V10),
+        (SCHEMA_VERSION_V11, SCHEMA_V11),
+        (SCHEMA_VERSION_V12, SCHEMA_V12),
+        (SCHEMA_VERSION_V13, SCHEMA_V13),
+        (SCHEMA_VERSION_V14, SCHEMA_V14),
+        (SCHEMA_VERSION_V15, SCHEMA_V15),
+        (SCHEMA_VERSION_V16, SCHEMA_V16),
+        (SCHEMA_VERSION_V17, SCHEMA_V17),
+        (SCHEMA_VERSION_V18, SCHEMA_V18),
+        (SCHEMA_VERSION_V19, SCHEMA_V19),
+        (SCHEMA_VERSION_V20, SCHEMA_V20),
+        (SCHEMA_VERSION_V21, SCHEMA_V21),
+        (SCHEMA_VERSION_V22, SCHEMA_V22),
+        (SCHEMA_VERSION_V23, SCHEMA_V23),
+        (SCHEMA_VERSION_V24, SCHEMA_V24),
+        (SCHEMA_VERSION_V25, SCHEMA_V25),
+        (SCHEMA_VERSION_V26, import_root_control::SCHEMA_V26),
+    ]
+}
+
+fn apply_v27_target_schema(connection: &mut Connection, store_id_digest: &str) -> Result<()> {
+    if store_id_digest.len() != 64
+        || !store_id_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(MetaStoreError::invalid_value(
+            "metadata_store_identity.store_id_digest",
+        ));
+    }
+    let transaction = connection
+        .transaction()
+        .map_err(MetaStoreError::migration)?;
+    for schema in schema_v27::SCHEMA_PARTS {
+        transaction
+            .execute_batch(schema)
+            .map_err(MetaStoreError::migration)?;
+    }
+    transaction
+        .execute(
+            "INSERT INTO metadata_store_identity (state_key, store_id_digest)
+             VALUES ('default', ?1)",
+            params![store_id_digest],
+        )
+        .map_err(MetaStoreError::migration)?;
+    transaction
+        .execute(
+            "INSERT INTO schema_migrations (version, applied_at_seconds) VALUES (?1, 0)",
+            params![i64::from(schema_v27::VERSION)],
+        )
+        .map_err(MetaStoreError::migration)?;
+    transaction.commit().map_err(MetaStoreError::migration)
+}
+
+fn random_store_id_digest() -> Result<String> {
+    let mut bytes = [0_u8; 32];
+    getrandom::getrandom(&mut bytes).map_err(|_| MetaStoreError::random())?;
+    Ok(encode_hex(&bytes))
+}
+
+fn schema_version_in_connection(connection: &Connection) -> Result<u32> {
+    let version = connection
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(MetaStoreError::migration)?;
+    u32::try_from(version).map_err(|_| MetaStoreError::invalid_value("schema_migrations.version"))
+}
+
 fn migration_applied(connection: &Connection, version: u32) -> Result<bool> {
     let exists = connection
         .query_row(
@@ -5808,29 +5790,34 @@ fn read_document(row: &Row<'_>) -> Result<Document> {
 }
 
 fn read_resume_version(row: &Row<'_>) -> Result<ResumeVersion> {
-    let language_set_json = read_string(row, 5)?;
+    let language_set_json = read_string(row, 6)?;
     let language_set = serde_json::from_str::<Vec<String>>(&language_set_json)
         .map_err(|_| MetaStoreError::invalid_value("resume_version.language_set"))?;
-    let page_count = read_optional_i64(row, 6)?
+    let page_count = read_optional_i64(row, 7)?
         .map(|value| {
             u32::try_from(value)
                 .map_err(|_| MetaStoreError::invalid_value("resume_version.page_count"))
         })
         .transpose()?;
-    let quality_score = read_optional_f64(row, 9)?.map(|value| value as f32);
+    let quality_score = read_optional_f64(row, 10)?.map(|value| value as f32);
 
     Ok(ResumeVersion {
         id: read_id::<ResumeVersionId>(row, 0, "resume_version.id")?,
         document_id: read_id::<DocumentId>(row, 1, "resume_version.document_id")?,
-        candidate_id: read_optional_id::<CandidateId>(row, 2, "resume_version.candidate_id")?,
-        parse_version: read_string(row, 3)?,
-        schema_version: read_string(row, 4)?,
+        source_revision_id: read_id::<SourceRevisionId>(
+            row,
+            2,
+            "resume_version.source_revision_id",
+        )?,
+        normalized_text_hash: ContentDigest::from_str(&read_string(row, 3)?)
+            .map_err(|_| MetaStoreError::invalid_value("resume_version.normalized_text_hash"))?,
+        parse_version: read_string(row, 4)?,
+        schema_version: read_string(row, 5)?,
         language_set,
         page_count,
-        raw_text: read_optional_string(row, 7)?,
-        clean_text: read_optional_string(row, 8)?,
+        raw_text: read_optional_string(row, 8)?,
+        clean_text: read_optional_string(row, 9)?,
         quality_score,
-        visibility: resume_visibility_from_storage(&read_string(row, 10)?)?,
     })
 }
 
@@ -5880,20 +5867,6 @@ fn read_ingest_job(row: &Row<'_>) -> Result<IngestJob> {
             .as_deref()
             .map(ingest_job_failure_kind_from_storage)
             .transpose()?,
-    })
-}
-
-fn read_index_state(row: &Row<'_>) -> Result<IndexState> {
-    Ok(IndexState {
-        manifest_version: read_string(row, 0)?,
-        snapshot_token: read_optional_string(row, 1)?,
-        status: index_state_status_from_storage(&read_string(row, 2)?)?,
-        updated_at: UnixTimestamp::from_unix_seconds(read_i64(row, 3)?),
-        visible_epoch: i64_to_u64(read_i64(row, 4)?, "index_state.visible_epoch")?,
-        manifest_document_count: i64_to_u64(
-            read_i64(row, 5)?,
-            "index_state.manifest_document_count",
-        )?,
     })
 }
 
@@ -5959,6 +5932,136 @@ fn pending_import_task_by_root_sql() -> String {
         ORDER BY CASE WHEN status = ?3 THEN 0 ELSE 1 END, queued_at_seconds, rowid
         LIMIT 1"
     )
+}
+
+fn insert_import_task_with_scan_scope_in_connection(
+    connection: &Connection,
+    task: &ImportTask,
+    scope: &ImportScanScope,
+) -> Result<()> {
+    validate_import_task(task)?;
+    validate_import_scan_scope(scope)?;
+    if scope.import_task_id != task.id {
+        return Err(MetaStoreError::invalid_value(
+            "import_scan_scope.import_task_id",
+        ));
+    }
+    if scope.canonical_root_path != task.root_path {
+        return Err(MetaStoreError::invalid_value("import_task.root_path"));
+    }
+    upsert_authorized_import_root_in_connection(connection, scope)?;
+    connection
+        .execute(
+            "INSERT INTO import_task (
+                id, root_path, status, queued_at_seconds, started_at_seconds,
+                finished_at_seconds, updated_at_seconds
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                task.id.as_str(),
+                task.root_path,
+                import_task_status_to_storage(task.status),
+                task.queued_at.as_unix_seconds(),
+                task.started_at.map(UnixTimestamp::as_unix_seconds),
+                task.finished_at.map(UnixTimestamp::as_unix_seconds),
+                task.updated_at.as_unix_seconds(),
+            ],
+        )
+        .map_err(MetaStoreError::storage)?;
+    connection
+        .execute(
+            "INSERT INTO import_scan_scope (
+                import_task_id, root_kind, root_preset, scan_profile, requested_root_path,
+                canonical_root_path, files_discovered, ignored_entries, scan_errors,
+                searchable_documents, ocr_required_documents, ocr_jobs_queued,
+                failed_documents, deleted_documents, scan_budget_kind, scan_budget_limit,
+                scan_budget_observed, scan_budget_exhausted, updated_at_seconds
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                ?17, ?18, ?19
+            )",
+            params![
+                scope.import_task_id.as_str(),
+                import_root_kind_to_storage(scope.root_kind),
+                scope.root_preset.map(import_root_preset_to_storage),
+                import_scan_profile_to_storage(scope.scan_profile),
+                scope.requested_root_path,
+                scope.canonical_root_path,
+                u64_to_i64(scope.files_discovered, "import_scan_scope.files_discovered")?,
+                u64_to_i64(scope.ignored_entries, "import_scan_scope.ignored_entries")?,
+                u64_to_i64(scope.scan_errors, "import_scan_scope.scan_errors")?,
+                u64_to_i64(
+                    scope.searchable_documents,
+                    "import_scan_scope.searchable_documents"
+                )?,
+                u64_to_i64(
+                    scope.ocr_required_documents,
+                    "import_scan_scope.ocr_required_documents"
+                )?,
+                u64_to_i64(scope.ocr_jobs_queued, "import_scan_scope.ocr_jobs_queued")?,
+                u64_to_i64(scope.failed_documents, "import_scan_scope.failed_documents")?,
+                u64_to_i64(
+                    scope.deleted_documents,
+                    "import_scan_scope.deleted_documents"
+                )?,
+                scope
+                    .scan_budget_kind
+                    .map(import_scan_budget_kind_to_storage),
+                scope
+                    .scan_budget_limit
+                    .map(|value| u64_to_i64(value, "import_scan_scope.scan_budget_limit"))
+                    .transpose()?,
+                scope
+                    .scan_budget_observed
+                    .map(|value| u64_to_i64(value, "import_scan_scope.scan_budget_observed"))
+                    .transpose()?,
+                bool_to_i64(scope.scan_budget_exhausted),
+                scope.updated_at.as_unix_seconds(),
+            ],
+        )
+        .map_err(MetaStoreError::storage)?;
+    Ok(())
+}
+
+fn upsert_authorized_import_root_in_connection(
+    connection: &Connection,
+    scope: &ImportScanScope,
+) -> Result<()> {
+    connection
+        .execute(
+            "INSERT INTO authorized_import_root (
+                canonical_root_path, requested_root_path, root_kind, root_preset,
+                scan_profile, scan_budget_kind, scan_budget_limit, paused,
+                updated_at_seconds
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8)
+             ON CONFLICT(canonical_root_path) DO UPDATE SET
+                requested_root_path = excluded.requested_root_path,
+                root_kind = excluded.root_kind,
+                root_preset = excluded.root_preset,
+                scan_profile = excluded.scan_profile,
+                scan_budget_kind = excluded.scan_budget_kind,
+                scan_budget_limit = excluded.scan_budget_limit,
+                updated_at_seconds = MAX(
+                    authorized_import_root.updated_at_seconds,
+                    excluded.updated_at_seconds
+                )",
+            params![
+                scope.canonical_root_path,
+                scope.requested_root_path,
+                import_root_kind_to_storage(scope.root_kind),
+                scope.root_preset.map(import_root_preset_to_storage),
+                import_scan_profile_to_storage(scope.scan_profile),
+                scope
+                    .scan_budget_kind
+                    .map(import_scan_budget_kind_to_storage),
+                scope
+                    .scan_budget_limit
+                    .map(|value| u64_to_i64(value, "authorized_import_root.scan_budget_limit"))
+                    .transpose()?,
+                scope.updated_at.as_unix_seconds(),
+            ],
+        )
+        .map_err(MetaStoreError::storage)?;
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -6281,6 +6384,21 @@ fn read_import_scan_error(row: &Row<'_>) -> Result<ImportScanError> {
 }
 
 fn upsert_document_in_connection(connection: &Connection, document: &Document) -> Result<()> {
+    if document.is_deleted || document.status == DocumentStatus::Deleted {
+        let has_active_projection = connection
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM active_search_projection WHERE document_id = ?1
+                 )",
+                params![document.id.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(MetaStoreError::storage)?
+            != 0;
+        if has_active_projection {
+            return Err(MetaStoreError::invalid_transition());
+        }
+    }
     connection
         .execute(
             "\
@@ -6332,14 +6450,20 @@ fn ocr_claim_is_current_in_connection(
     connection
         .query_row(
             "SELECT EXISTS(SELECT 1 FROM ingest_job AS job
-             JOIN document ON document.id = job.document_id
-             JOIN document_classification AS classification
-               ON classification.document_id = document.id
+             JOIN ocr_job_spec AS spec ON spec.ingest_job_id = job.id
+             JOIN source_revision_triage AS triage
+               ON triage.source_revision_id = spec.source_revision_id
+              AND triage.triage_epoch = spec.triage_epoch
+             JOIN source_revision AS revision ON revision.id = spec.source_revision_id
+             JOIN document
+               ON document.id = job.document_id
+              AND document.id = revision.document_id
+              AND document.content_hash = revision.content_hash
              WHERE job.id = ?1 AND job.document_id = ?2 AND job.kind = ?3
                AND job.status = ?4 AND job.attempt_count = ?5 AND job.max_attempts = ?6
                AND document.is_deleted = 0 AND document.status = ?7
-               AND document.content_hash = ?8 AND classification.status = ?9
-               AND classification.classifier_epoch = ?10)",
+               AND document.content_hash = ?8 AND triage.status = ?9
+               AND spec.source_revision_id = ?10 AND spec.triage_epoch = ?11)",
             params![
                 job.id.as_str(),
                 job.document_id.as_str(),
@@ -6350,7 +6474,8 @@ fn ocr_claim_is_current_in_connection(
                 document_status_to_storage(DocumentStatus::OcrRequired),
                 claimed.source_fingerprint(),
                 ClassificationStatus::OcrBacklog.as_str(),
-                CLASSIFIER_EPOCH,
+                claimed.source_revision_id().as_str(),
+                claimed.triage_epoch(),
             ],
             |row| row.get::<_, i64>(0),
         )
@@ -6358,125 +6483,115 @@ fn ocr_claim_is_current_in_connection(
         .map_err(MetaStoreError::storage)
 }
 
-fn upsert_index_state_in_connection(connection: &Connection, state: &IndexState) -> Result<()> {
-    connection
+fn discard_superseded_ocr_claim_in_connection(
+    connection: &Connection,
+    claimed: &ClaimedOcrJob,
+    discarded_at: UnixTimestamp,
+) -> Result<()> {
+    let job = &claimed.job;
+    let changed = connection
         .execute(
-            "INSERT INTO index_state (
-                state_key, manifest_version, snapshot_token, status, updated_at_seconds,
-                visible_epoch, manifest_document_count
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(state_key) DO UPDATE SET
-                manifest_version = excluded.manifest_version,
-                snapshot_token = excluded.snapshot_token, status = excluded.status,
-                updated_at_seconds = excluded.updated_at_seconds,
-                visible_epoch = excluded.visible_epoch,
-                manifest_document_count = excluded.manifest_document_count",
+            "UPDATE ingest_job
+             SET status = ?1,
+                 started_at_seconds = COALESCE(started_at_seconds, ?2),
+                 finished_at_seconds = ?2, updated_at_seconds = ?2, failure_kind = NULL
+             WHERE id = ?3 AND document_id = ?4 AND kind = ?5 AND status = ?6
+               AND attempt_count = ?7 AND max_attempts = ?8
+               AND EXISTS (
+                 SELECT 1 FROM ocr_job_spec AS spec
+                 WHERE spec.ingest_job_id = ingest_job.id
+                   AND spec.source_revision_id = ?9 AND spec.triage_epoch = ?10
+               )",
             params![
-                INDEX_STATE_KEY,
-                state.manifest_version,
-                state.snapshot_token,
-                index_state_status_to_storage(state.status),
-                state.updated_at.as_unix_seconds(),
-                u64_to_i64(state.visible_epoch, "index_state.visible_epoch")?,
-                u64_to_i64(
-                    state.manifest_document_count,
-                    "index_state.manifest_document_count",
-                )?,
+                ingest_job_status_to_storage(IngestJobStatus::Completed),
+                discarded_at.as_unix_seconds(),
+                job.id.as_str(),
+                job.document_id.as_str(),
+                ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
+                ingest_job_status_to_storage(IngestJobStatus::Running),
+                u32_to_i64(job.attempt_count),
+                u32_to_i64(job.max_attempts),
+                claimed.source_revision_id().as_str(),
+                claimed.triage_epoch(),
             ],
         )
         .map_err(MetaStoreError::storage)?;
-    Ok(())
-}
-
-fn upsert_resume_version_in_connection(
-    connection: &Connection,
-    version: &ResumeVersion,
-) -> Result<()> {
-    let language_set_json = serde_json::to_string(&version.language_set)
-        .map_err(|_| MetaStoreError::invalid_value("resume_version.language_set"))?;
-    connection
-        .execute(
-            "\
-            INSERT INTO resume_version (
-                id, document_id, candidate_id, parse_version, schema_version,
-                language_set_json, page_count, raw_text, clean_text, quality_score, visibility
-            )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
-            ON CONFLICT(id) DO UPDATE SET
-                document_id = excluded.document_id,
-                candidate_id = excluded.candidate_id,
-                parse_version = excluded.parse_version,
-                schema_version = excluded.schema_version,
-                language_set_json = excluded.language_set_json,
-                page_count = excluded.page_count,
-                raw_text = excluded.raw_text,
-                clean_text = excluded.clean_text,
-                quality_score = excluded.quality_score,
-                visibility = excluded.visibility",
-            params![
-                version.id.as_str(),
-                version.document_id.as_str(),
-                version.candidate_id.as_ref().map(CandidateId::as_str),
-                version.parse_version,
-                version.schema_version,
-                language_set_json,
-                version.page_count.map(i64::from),
-                version.raw_text,
-                version.clean_text,
-                version.quality_score.map(f64::from),
-                resume_visibility_to_storage(version.visibility),
-            ],
-        )
-        .map_err(MetaStoreError::storage)?;
-
-    Ok(())
-}
-
-fn replace_entity_mentions_in_connection(
-    connection: &Connection,
-    version_id: &ResumeVersionId,
-    mentions: &[EntityMention],
-) -> Result<()> {
-    connection
-        .execute(
-            "DELETE FROM entity_mention WHERE resume_version_id = ?1",
-            params![version_id.as_str()],
-        )
-        .map_err(MetaStoreError::storage)?;
-
-    for mention in mentions {
-        validate_entity_mention(version_id, mention)?;
+    if changed == 1 {
         connection
             .execute(
-                "\
-                INSERT INTO entity_mention (
-                    id, resume_version_id, section_id, entity_type, raw_value,
-                    normalized_value, span_start, span_end, confidence, extractor
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO ocr_job_discard (ingest_job_id, reason, discarded_at_seconds)
+                 VALUES (?1, ?2, ?3)",
                 params![
-                    mention.id.as_str(),
-                    mention.resume_version_id.as_str(),
-                    mention.section_id.as_ref().map(SectionId::as_str),
-                    entity_type_to_storage(&mention.entity_type),
-                    entity_mention_raw_value_for_storage(mention),
-                    entity_mention_normalized_value_for_storage(mention),
-                    mention
-                        .span_start
-                        .map(|value| usize_to_i64(value, "entity_mention.span_start"))
-                        .transpose()?,
-                    mention
-                        .span_end
-                        .map(|value| usize_to_i64(value, "entity_mention.span_end"))
-                        .transpose()?,
-                    f64::from(mention.confidence),
-                    mention.extractor.as_str(),
+                    job.id.as_str(),
+                    ocr_job_discard_reason_to_storage(
+                        OcrJobDiscardReason::SourceRevisionNoLongerCurrent
+                    ),
+                    discarded_at.as_unix_seconds(),
                 ],
             )
             .map_err(MetaStoreError::storage)?;
     }
-
     Ok(())
+}
+
+fn discard_stale_ocr_jobs_in_connection(
+    connection: &Connection,
+    discarded_at: UnixTimestamp,
+) -> Result<usize> {
+    let discarded_at = discarded_at.as_unix_seconds();
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO ocr_job_discard (
+                ingest_job_id, reason, discarded_at_seconds
+             )
+             SELECT job.id, ?1, ?2
+             FROM ingest_job AS job
+             JOIN ocr_job_spec AS spec ON spec.ingest_job_id = job.id
+             WHERE job.kind = ?3 AND job.status IN (?4, ?5, ?6, ?7)
+               AND NOT EXISTS (
+                 SELECT 1
+                 FROM source_revision_triage AS triage
+                 JOIN source_revision AS revision ON revision.id = spec.source_revision_id
+                 JOIN document
+                   ON document.id = revision.document_id
+                  AND document.content_hash = revision.content_hash
+                 WHERE triage.source_revision_id = spec.source_revision_id
+                   AND triage.triage_epoch = spec.triage_epoch
+                   AND triage.status = 'ocr_backlog'
+                   AND document.id = job.document_id
+                   AND document.is_deleted = 0 AND document.status = 'ocr_required'
+               )",
+            params![
+                ocr_job_discard_reason_to_storage(
+                    OcrJobDiscardReason::SourceRevisionNoLongerCurrent
+                ),
+                discarded_at,
+                ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
+                ingest_job_status_to_storage(IngestJobStatus::Queued),
+                ingest_job_status_to_storage(IngestJobStatus::Running),
+                ingest_job_status_to_storage(IngestJobStatus::Interrupted),
+                ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
+            ],
+        )
+        .map_err(MetaStoreError::storage)?;
+    connection
+        .execute(
+            "UPDATE ingest_job
+             SET status = ?1,
+                 started_at_seconds = COALESCE(started_at_seconds, ?2),
+                 finished_at_seconds = ?2, updated_at_seconds = ?2, failure_kind = NULL
+             WHERE status IN (?3, ?4, ?5, ?6)
+               AND id IN (SELECT ingest_job_id FROM ocr_job_discard)",
+            params![
+                ingest_job_status_to_storage(IngestJobStatus::Completed),
+                discarded_at,
+                ingest_job_status_to_storage(IngestJobStatus::Queued),
+                ingest_job_status_to_storage(IngestJobStatus::Running),
+                ingest_job_status_to_storage(IngestJobStatus::Interrupted),
+                ingest_job_status_to_storage(IngestJobStatus::FailedRetryable),
+            ],
+        )
+        .map_err(MetaStoreError::storage)
 }
 
 fn assign_candidate_from_hashed_contacts_in_connection(
@@ -6493,6 +6608,7 @@ fn assign_candidate_from_hashed_contacts_in_connection(
     let Some(_version) = resume_version_by_id_from_connection(connection, version_id)? else {
         return Ok(None);
     };
+    immutable_search::require_unsealed_version(connection, version_id)?;
 
     let candidate =
         match candidate_contact_match_from_connection(connection, email_hash, phone_hash)? {
@@ -6500,7 +6616,7 @@ fn assign_candidate_from_hashed_contacts_in_connection(
                 email_candidate,
                 phone_candidate,
             } => {
-                upsert_candidate_contact_conflict_in_connection(
+                insert_candidate_contact_conflict_in_connection(
                     connection,
                     version_id,
                     &email_candidate.id,
@@ -6528,13 +6644,11 @@ fn assign_candidate_from_hashed_contacts_in_connection(
             }
         };
 
-    connection
-        .execute(
-            "UPDATE resume_version SET candidate_id = ?1 WHERE id = ?2",
-            params![candidate.id.as_str(), version_id.as_str()],
-        )
-        .map_err(MetaStoreError::storage)?;
-    clear_candidate_contact_conflict_in_connection(connection, version_id)?;
+    immutable_search::insert_candidate_assignment_in_connection(
+        connection,
+        version_id,
+        &candidate.id,
+    )?;
     refresh_candidate_version_count_in_connection(connection, &candidate.id)?;
     candidate_by_id_from_connection(connection, &candidate.id)
 }
@@ -6714,7 +6828,7 @@ fn candidate_contact_conflicts_from_connection(
     Ok(conflicts)
 }
 
-fn upsert_candidate_contact_conflict_in_connection(
+fn insert_candidate_contact_conflict_in_connection(
     connection: &Connection,
     version_id: &ResumeVersionId,
     email_candidate_id: &CandidateId,
@@ -6727,17 +6841,14 @@ fn upsert_candidate_contact_conflict_in_connection(
         ));
     }
 
-    connection
+    let changed = connection
         .execute(
             "\
             INSERT INTO candidate_contact_conflict (
                 resume_version_id, email_candidate_id, phone_candidate_id, updated_at_seconds
             )
             VALUES (?1, ?2, ?3, ?4)
-            ON CONFLICT(resume_version_id) DO UPDATE SET
-                email_candidate_id = excluded.email_candidate_id,
-                phone_candidate_id = excluded.phone_candidate_id,
-                updated_at_seconds = excluded.updated_at_seconds",
+            ON CONFLICT(resume_version_id) DO NOTHING",
             params![
                 version_id.as_str(),
                 email_candidate_id.as_str(),
@@ -6746,24 +6857,41 @@ fn upsert_candidate_contact_conflict_in_connection(
             ],
         )
         .map_err(MetaStoreError::storage)?;
-
-    Ok(())
-}
-
-fn clear_candidate_contact_conflict_in_connection(
-    connection: &Connection,
-    version_id: &ResumeVersionId,
-) -> Result<()> {
-    connection
-        .execute(
-            "DELETE FROM candidate_contact_conflict WHERE resume_version_id = ?1",
+    if changed == 1 {
+        return Ok(());
+    }
+    let existing = connection
+        .query_row(
+            "SELECT resume_version_id, email_candidate_id, phone_candidate_id, updated_at_seconds
+             FROM candidate_contact_conflict WHERE resume_version_id = ?1",
             params![version_id.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            },
         )
+        .optional()
         .map_err(MetaStoreError::storage)?;
-    Ok(())
+    let identical = existing.is_some_and(|(version, email, phone, timestamp)| {
+        version == version_id.as_str()
+            && email == email_candidate_id.as_str()
+            && phone == phone_candidate_id.as_str()
+            && timestamp == updated_at.as_unix_seconds()
+    });
+    if identical {
+        Ok(())
+    } else {
+        Err(MetaStoreError::immutable_identity_conflict(
+            "candidate_contact_conflict",
+        ))
+    }
 }
 
-fn resume_version_by_id_from_connection(
+pub(crate) fn resume_version_by_id_from_connection(
     connection: &Connection,
     id: &ResumeVersionId,
 ) -> Result<Option<ResumeVersion>> {
@@ -6789,11 +6917,31 @@ fn refresh_candidate_version_count_in_connection(
             UPDATE candidate
             SET version_count = (
                 SELECT COUNT(*)
-                FROM resume_version
-                WHERE candidate_id = ?1
+                FROM active_search_projection AS projection
+                JOIN resume_version_candidate AS assignment
+                  ON assignment.resume_version_id = projection.resume_version_id
+                WHERE assignment.candidate_id = ?1
             )
             WHERE id = ?1",
             params![candidate_id.as_str()],
+        )
+        .map_err(MetaStoreError::storage)?;
+    Ok(())
+}
+
+pub(crate) fn refresh_all_candidate_version_counts_in_connection(
+    connection: &Connection,
+) -> Result<()> {
+    connection
+        .execute(
+            "UPDATE candidate
+             SET version_count = (
+                 SELECT COUNT(*) FROM active_search_projection AS projection
+                 JOIN resume_version_candidate AS assignment
+                   ON assignment.resume_version_id = projection.resume_version_id
+                 WHERE assignment.candidate_id = candidate.id
+             )",
+            [],
         )
         .map_err(MetaStoreError::storage)?;
     Ok(())
@@ -7299,6 +7447,7 @@ fn document_status_to_storage(status: DocumentStatus) -> &'static str {
         DocumentStatus::EmbeddingDone => "embedding_done",
         DocumentStatus::IndexedPartial => "indexed_partial",
         DocumentStatus::Searchable => "searchable",
+        DocumentStatus::Excluded => "excluded",
         DocumentStatus::FailedRetryable => "failed_retryable",
         DocumentStatus::FailedPermanent => "failed_permanent",
         DocumentStatus::Deleted => "deleted",
@@ -7320,27 +7469,11 @@ fn document_status_from_storage(value: &str) -> Result<DocumentStatus> {
         "embedding_done" => Ok(DocumentStatus::EmbeddingDone),
         "indexed_partial" => Ok(DocumentStatus::IndexedPartial),
         "searchable" => Ok(DocumentStatus::Searchable),
+        "excluded" => Ok(DocumentStatus::Excluded),
         "failed_retryable" => Ok(DocumentStatus::FailedRetryable),
         "failed_permanent" => Ok(DocumentStatus::FailedPermanent),
         "deleted" => Ok(DocumentStatus::Deleted),
         _ => Err(MetaStoreError::invalid_value("document.status")),
-    }
-}
-
-fn resume_visibility_to_storage(visibility: ResumeVisibility) -> &'static str {
-    match visibility {
-        ResumeVisibility::Searchable => "searchable",
-        ResumeVisibility::Partial => "partial",
-        ResumeVisibility::Hidden => "hidden",
-    }
-}
-
-fn resume_visibility_from_storage(value: &str) -> Result<ResumeVisibility> {
-    match value {
-        "searchable" => Ok(ResumeVisibility::Searchable),
-        "partial" => Ok(ResumeVisibility::Partial),
-        "hidden" => Ok(ResumeVisibility::Hidden),
-        _ => Err(MetaStoreError::invalid_value("resume_version.visibility")),
     }
 }
 
@@ -7453,6 +7586,21 @@ fn ingest_job_failure_kind_from_storage(value: &str) -> Result<IngestJobFailureK
     match value {
         "ocr_page_budget_exceeded" => Ok(IngestJobFailureKind::OcrPageBudgetExceeded),
         _ => Err(MetaStoreError::invalid_value("ingest_job.failure_kind")),
+    }
+}
+
+fn ocr_job_discard_reason_to_storage(reason: OcrJobDiscardReason) -> &'static str {
+    match reason {
+        OcrJobDiscardReason::SourceRevisionNoLongerCurrent => "source_revision_no_longer_current",
+    }
+}
+
+fn ocr_job_discard_reason_from_storage(value: &str) -> Result<OcrJobDiscardReason> {
+    match value {
+        "source_revision_no_longer_current" => {
+            Ok(OcrJobDiscardReason::SourceRevisionNoLongerCurrent)
+        }
+        _ => Err(MetaStoreError::invalid_value("ocr_job_discard.reason")),
     }
 }
 
@@ -7660,25 +7808,6 @@ fn next_import_task_state(
         ImportTaskStatus::Queued => {}
     }
     next
-}
-
-fn index_state_status_to_storage(status: IndexStateStatus) -> &'static str {
-    match status {
-        IndexStateStatus::Empty => "empty",
-        IndexStateStatus::Building => "building",
-        IndexStateStatus::Ready => "ready",
-        IndexStateStatus::Stale => "stale",
-    }
-}
-
-fn index_state_status_from_storage(value: &str) -> Result<IndexStateStatus> {
-    match value {
-        "empty" => Ok(IndexStateStatus::Empty),
-        "building" => Ok(IndexStateStatus::Building),
-        "ready" => Ok(IndexStateStatus::Ready),
-        "stale" => Ok(IndexStateStatus::Stale),
-        _ => Err(MetaStoreError::invalid_value("index_state.status")),
-    }
 }
 
 fn import_task_status_to_storage(status: ImportTaskStatus) -> &'static str {

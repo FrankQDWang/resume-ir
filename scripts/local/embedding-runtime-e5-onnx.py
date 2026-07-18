@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local multilingual E5 ONNX adapter for resume-ir embedding workers.
+"""Local multilingual E5 ONNX adapter for resume-ir embedding runtimes.
 
 This command speaks the resume-ir-embedding-v1 stdout protocol for
 intfloat/multilingual-e5-small. It loads tokenizer and ONNX files from a local

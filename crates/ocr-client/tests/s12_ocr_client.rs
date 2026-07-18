@@ -1,8 +1,12 @@
 use ocr_client::{
     CancellationToken, DisabledOcrWorkerClient, LocalOcrCommandClient, LocalOcrCommandSpec,
-    LocalPdfRenderCommandClient, LocalPdfRenderCommandSpec, OcrCacheKey, OcrClient, OcrErrorKind,
-    OcrOptions, OcrPage, OcrPageRequest, OcrWorkerBudget, PdftoppmPdfRenderer, PdftoppmRenderSpec,
-    RenderedPage, TesseractOcrClient, TesseractOcrSpec,
+    OcrCacheKey, OcrClient, OcrErrorKind, OcrOptions, OcrPage, OcrPageRequest, OcrWorkerBudget,
+    RenderedPage,
+};
+#[cfg(unix)]
+use ocr_client::{
+    LocalPdfRenderCommandClient, LocalPdfRenderCommandSpec, PdftoppmPdfRenderer,
+    PdftoppmRenderSpec, TesseractOcrClient, TesseractOcrSpec,
 };
 
 #[cfg(unix)]

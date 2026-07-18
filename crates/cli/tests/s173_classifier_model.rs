@@ -7,7 +7,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 #[test]
-fn local_model_promotes_safe_gray_and_missing_model_fails_closed() {
+fn local_model_promotes_safe_gray_and_missing_model_fails_closed_on_fresh_stores() {
     let root = temp_dir("source");
     fs::write(
         root.join("synthetic-profile.txt"),
@@ -17,20 +17,29 @@ fn local_model_promotes_safe_gray_and_missing_model_fails_closed() {
     let artifact = root.parent().unwrap().join("synthetic-model.json");
     write_synthetic_artifact(&artifact);
 
-    let data = temp_dir("promotion-data");
-    let missing = run_import(&data, &root, &artifact.with_extension("missing"));
+    let missing_data = temp_dir("missing-model-data");
+    let missing = run_import(&missing_data, &root, &artifact.with_extension("missing"));
     assert!(missing.status.success());
     assert!(String::from_utf8_lossy(&missing.stdout).contains("searchable documents: 0"));
 
-    let enabled = run_import(&data, &root, &artifact);
-    assert!(enabled.status.success());
+    let enabled_data = temp_dir("promotion-data");
+    let enabled = run_import(&enabled_data, &root, &artifact);
+    assert!(
+        enabled.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&enabled.stdout),
+        String::from_utf8_lossy(&enabled.stderr)
+    );
     assert!(String::from_utf8_lossy(&enabled.stdout).contains("searchable documents: 1"));
 
-    let removed = run_import(&data, &root, &artifact.with_extension("missing"));
+    let removed_data = temp_dir("removed-model-data");
+    let removed = run_import(&removed_data, &root, &artifact.with_extension("missing"));
     assert!(removed.status.success());
     assert!(String::from_utf8_lossy(&removed.stdout).contains("searchable documents: 0"));
 
-    let _ = fs::remove_dir_all(data);
+    let _ = fs::remove_dir_all(missing_data);
+    let _ = fs::remove_dir_all(enabled_data);
+    let _ = fs::remove_dir_all(removed_data);
     let _ = fs::remove_dir_all(root);
     let _ = fs::remove_file(artifact);
 }

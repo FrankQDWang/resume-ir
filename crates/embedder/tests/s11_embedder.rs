@@ -1,16 +1,15 @@
+#[cfg(unix)]
 use std::path::PathBuf;
 #[cfg(unix)]
 use std::sync::{Arc, Barrier};
 #[cfg(unix)]
 use std::sync::{Mutex, MutexGuard, OnceLock};
 #[cfg(unix)]
-use std::time::{Duration, Instant};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use embedder::{
-    DeterministicTestEmbedder, Embedder, EmbeddingBudget, EmbeddingError, EmbeddingInput,
-    LocalEmbeddingCommandEmbedder, LocalEmbeddingCommandSpec,
-};
+use embedder::{DeterministicTestEmbedder, Embedder, EmbeddingBudget, EmbeddingInput};
+#[cfg(unix)]
+use embedder::{EmbeddingError, LocalEmbeddingCommandEmbedder, LocalEmbeddingCommandSpec};
 
 #[cfg(unix)]
 fn local_embedding_process_test_lock() -> MutexGuard<'static, ()> {

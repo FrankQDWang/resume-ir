@@ -76,7 +76,7 @@ bad_missing_full_observability="$tmpdir/PRIVATE-bad-missing-full-observability.j
 
 cat > "$smoke_summary" <<'JSON'
 {
-  "schema_version": "resume-ir.current-stage-smoke-summary.v1",
+  "schema_version": "resume-ir.current-stage-smoke-summary.v2",
   "privacy_boundary": "local_only_redacted_aggregate_summary",
   "validation_profile": "smoke",
   "current_stage_target": "local_real_corpus_smoke_chain",
@@ -140,7 +140,7 @@ python3 "$script" --input "$smoke_summary" --out "$smoke_out"
 python3 -m json.tool "$smoke_out" >/dev/null
 require_text "$smoke_out" '"schema_version": "resume-ir.current-stage-handoff.v1"'
 require_text "$smoke_out" '"privacy_boundary": "local_only_redacted_handoff"'
-require_text "$smoke_out" '"source_schema": "resume-ir.current-stage-smoke-summary.v1"'
+require_text "$smoke_out" '"source_schema": "resume-ir.current-stage-smoke-summary.v2"'
 require_text "$smoke_out" '"current_stage_status": "smoke_satisfied"'
 require_text "$smoke_out" '"validation_profile": "smoke"'
 require_text "$smoke_out" '"complete_product": false'
@@ -159,7 +159,7 @@ reject_regex "$smoke_out" '/Users/|/home/|[A-Za-z]:\\' "absolute local path"
 
 cat > "$bad_boundary_summary" <<'JSON'
 {
-  "schema_version": "resume-ir.current-stage-smoke-summary.v1",
+  "schema_version": "resume-ir.current-stage-smoke-summary.v2",
   "privacy_boundary": "unsafe_boundary",
   "validation_profile": "smoke",
   "current_stage_target": "local_real_corpus_smoke_chain",
@@ -185,7 +185,7 @@ fi
 
 cat > "$bad_missing_blocked_observability" <<'JSON'
 {
-  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "schema_version": "resume-ir.current-stage-blocked-summary.v2",
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "full",
   "current_stage_target": "reproducible_local_10k_baseline",
@@ -215,7 +215,7 @@ fi
 
 cat > "$blocked_summary" <<'JSON'
 {
-  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "schema_version": "resume-ir.current-stage-blocked-summary.v2",
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "full",
   "current_stage_target": "reproducible_local_10k_baseline",
@@ -276,7 +276,7 @@ JSON
 
 python3 "$script" --input "$blocked_summary" --out "$blocked_out"
 python3 -m json.tool "$blocked_out" >/dev/null
-require_text "$blocked_out" '"source_schema": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$blocked_out" '"source_schema": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$blocked_out" '"current_stage_status": "blocked"'
 require_text "$blocked_out" '"blocked_step": "import_private_corpus"'
 require_text "$blocked_out" '"blocked_category": "import/parser"'
@@ -293,7 +293,7 @@ reject_regex "$blocked_out" '/Users/|/home/|[A-Za-z]:\\' "absolute local path"
 
 cat > "$query_set_index_blocked_summary" <<'JSON'
 {
-  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "schema_version": "resume-ir.current-stage-blocked-summary.v2",
   "privacy_boundary": "local_only_redacted_blocked_summary",
   "validation_profile": "full",
   "current_stage_target": "reproducible_local_10k_baseline",
@@ -383,7 +383,7 @@ reject_regex "$query_set_index_blocked_comment_out" '/Users/|/home/|[A-Za-z]:\\'
 
 cat > "$bad_missing_full_observability" <<'JSON'
 {
-  "schema_version": "resume-ir.current-stage-validation-evidence.v1",
+  "schema_version": "resume-ir.current-stage-validation-evidence.v2",
   "privacy_boundary": "local_only_redacted_evidence_manifest",
   "current_stage_target": "reproducible_local_10k_baseline",
   "full_baseline_satisfied": true,
@@ -405,7 +405,7 @@ fi
 
 cat > "$full_evidence" <<'JSON'
 {
-  "schema_version": "resume-ir.current-stage-validation-evidence.v1",
+  "schema_version": "resume-ir.current-stage-validation-evidence.v2",
   "privacy_boundary": "local_only_redacted_evidence_manifest",
   "current_stage_target": "reproducible_local_10k_baseline",
   "full_baseline_satisfied": true,
@@ -603,7 +603,7 @@ JSON
 
 python3 "$script" --input "$full_evidence" --out "$full_out" --issue-comment-out "$full_comment_out"
 python3 -m json.tool "$full_out" >/dev/null
-require_text "$full_out" '"source_schema": "resume-ir.current-stage-validation-evidence.v1"'
+require_text "$full_out" '"source_schema": "resume-ir.current-stage-validation-evidence.v2"'
 require_text "$full_out" '"current_stage_status": "full_evidence_ready"'
 require_text "$full_out" '"validation_profile": "full"'
 require_text "$full_out" '"complete_product": false'
@@ -651,7 +651,7 @@ reject_regex "$full_comment_out" '/Users/|/home/|[A-Za-z]:\\' "absolute local pa
 
 cat > "$bad_summary" <<JSON
 {
-  "schema_version": "resume-ir.current-stage-smoke-summary.v1",
+  "schema_version": "resume-ir.current-stage-smoke-summary.v2",
   "privacy_boundary": "local_only_redacted_aggregate_summary",
   "validation_profile": "smoke",
   "current_stage_target": "$tmpdir/PRIVATE-current-stage-resumes",

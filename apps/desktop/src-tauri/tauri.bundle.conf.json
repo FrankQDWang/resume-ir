@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeDevCommand": { "script": "npm run dev:bundle", "cwd": ".." },
+    "beforeBuildCommand": { "script": "npm run build:bundle", "cwd": ".." }
+  },
+  "bundle": {
+    "active": true,
+    "externalBin": [
+      "../../../target/tauri-sidecars/resume-daemon",
+      "../../../target/tauri-sidecars/resume-embedding-runtime",
+      "../../../target/tauri-sidecars/resume-pdf-render-runtime"
+    ],
+    "resources": {
+      "../../../target/tauri-resources/embedding-runtime-pack/": "embedding/runtime-pack/",
+      "../../../target/tauri-resources/ocr-runtime-pack/": "ocr/runtime-pack/"
+    }
+  }
+}

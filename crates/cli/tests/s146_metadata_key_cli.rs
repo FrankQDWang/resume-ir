@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use meta_store::{MetaStore, MetadataEncryptionState};
+use meta_store::{metadata_store_path, MetaStore, MetadataEncryptionState};
 
 #[test]
 fn privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks() {
@@ -33,7 +33,7 @@ fn privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks
     assert!(initialize_stdout.contains("metadata encryption: sqlcipher"));
     assert!(!initialize_stdout.contains(path_str(&source_dir)));
 
-    let source_db = source_dir.join("metadata.sqlite3");
+    let source_db = metadata_store_path(&source_dir).unwrap();
     let key_path = source_dir
         .join("metadata-secrets")
         .join("metadata-sqlcipher-key-v1");
@@ -70,7 +70,7 @@ fn privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks
     assert!(!backup_material.contains(backup_passphrase));
     assert!(!backup_material.contains(key_material.trim()));
 
-    fs::copy(&source_db, restore_dir.join("metadata.sqlite3")).unwrap();
+    copy_active_store_without_key(&source_dir, &source_db, &restore_dir);
     let restore = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
             "--data-dir",
@@ -99,9 +99,9 @@ fn privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks
         restored.metadata_encryption_state(),
         MetadataEncryptionState::SqlCipher
     );
-    assert_eq!(restored.schema_version().unwrap(), 22);
+    assert_eq!(restored.schema_version().unwrap(), 27);
 
-    fs::copy(&source_db, wrong_restore_dir.join("metadata.sqlite3")).unwrap();
+    copy_active_store_without_key(&source_dir, &source_db, &wrong_restore_dir);
     let wrong_passphrase_restore = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
             "--data-dir",
@@ -170,6 +170,19 @@ fn temp_dir(label: &str) -> PathBuf {
 
 fn path_str(path: &Path) -> &str {
     path.to_str().unwrap()
+}
+
+fn copy_active_store_without_key(source_dir: &Path, source_db: &Path, target_dir: &Path) {
+    fs::copy(
+        source_db,
+        target_dir.join(source_db.file_name().expect("active store file name")),
+    )
+    .unwrap();
+    fs::copy(
+        source_dir.join("metadata-active.v1"),
+        target_dir.join("metadata-active.v1"),
+    )
+    .unwrap();
 }
 
 fn remove_dir(path: &PathBuf) {

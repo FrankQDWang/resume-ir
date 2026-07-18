@@ -42,7 +42,9 @@
 
 ## 当前活跃后续目标
 
-当前活跃后续目标是 `03_next_goal_高性能本地检索GUI闭环/`：在本地隐私边界内完成高性能检索、GUI、手工/Codex 结对闭环验证的执行合同和后续实现。经过 #132-#137 import L4 优化收口后，当前优先级先转向 mixed-directory import product correctness：用户授权混合嵌套目录时，系统必须只把高置信简历纳入 resume search index，并把 non-resume、needs-review、OCR backlog 和 failed 文件保留为本地 audit/review 记录。GUI、大规模 query hot-path 和新的 L4 import 微优化必须等该产品语义合同和证据闭环稳定后再推进。
+当前活跃后续目标是 `03_next_goal_高性能本地检索GUI闭环/`：在本地隐私边界内完成高性能检索、GUI、手工/Codex 结对闭环验证的执行合同和后续实现。mixed-directory import product correctness 已由本地 precision-first classifier、search admission、逐文件 audit/review、OCR reclassification 和脱敏聚合证据闭合；远端 #159 仅是 local-only 交付政策造成的历史滞后，不再作为继续扩展 classifier/import 的依据。当前主任务转入 query lane：先审计 keyword、field、semantic、hybrid 和 daemon IPC 的真实产品能力并冻结 query benchmark，再做 resident query hot-path baseline/profile；查询 IPC 的 batch、cancel、deadline 和 overload 状态稳定后，立即进入 GUI 垂直闭环。
+
+query 优化必须以冻结后的初始可用 resident baseline 为唯一 before：同一语料、同一 query set、同一语义版本和同一 H-tier/资源预算下，主查询 bucket 的 P95 至少降到 before 的 50% 以下，稳定负载能力至少提升到 before 的 2 倍。不得靠减少结果、改变 required-all/field-filter 语义、跳过 semantic/hybrid 层、放宽 deadline 或突破资源预算达成；P50/P99、正确性和资源红线必须同时报告。
 
 机器可读目标锁是 `ACTIVE_GOAL.toml`；性能验收红线是 `perf/acceptance-matrix.toml`。两者只定义公开可提交的合同与 redacted aggregate 证据形状，不授权提交私有 benchmark 数据。公开合同必须由 `python3 scripts/ci/check-performance-contracts.py` 和 PR CI 校验，不能只依赖 prose review。
 

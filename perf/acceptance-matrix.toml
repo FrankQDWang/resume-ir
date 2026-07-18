@@ -1,6 +1,6 @@
 schema_version = "resume-ir.perf.acceptance-matrix.v2"
 goal_id = "resume-ir.performance-gui-loop.2026-06"
-date = "2026-06-22"
+date = "2026-07-17"
 
 [evidence_lanes.smoke]
 data = "synthetic_or_public_tiny"
@@ -176,6 +176,35 @@ resident_daemon_required = true
 spawn_per_query = false
 persistent_connection_required = true
 raw_query_stream_local_only = true
+
+[correctness_recovery_v27]
+contract = "resume-ir.correctness-recovery.v27"
+schema_migration = "copy_on_write_v26_to_v27"
+search_selection = "doc_id_version_id_visible_epoch"
+immutable_resume_version_required = true
+active_search_projection_required = true
+atomic_metadata_fulltext_vector_publication_required = true
+doc_only_detail_fallback_allowed = false
+legacy_dual_reader_allowed = false
+automatic_business_request_replay_allowed = false
+request_local_socket_failure_may_exit_daemon = false
+desktop_supervisor_is_unique_process_owner = true
+startup_deadline_ms = 10000
+child_poll_ms = 100
+heartbeat_interval_ms = 5000
+heartbeat_timeout_ms = 2000
+heartbeat_failures_before_recycle = 3
+unexpected_exit_budget_count = 5
+unexpected_exit_budget_window_seconds = 600
+circuit_open_seconds = 300
+ready_reset_seconds = 300
+restart_backoff_ms = [250, 1000, 4000, 15000, 30000]
+rst_routes = ["status", "search", "batch", "detail", "hydrate", "progress"]
+mixed_connection_fault_count = 100
+synthetic_soak_minutes = 120
+macos_native_recovery_required = true
+windows_native_recovery_required = true
+windows_compile_only_cannot_close_native_gate = true
 
 [latency_p95_ms.D10K_private_calibration]
 single_term = 120
@@ -384,10 +413,10 @@ tier_source = "detected_total_memory_bytes"
 unknown_total_memory_tier = "H0_Eco"
 cpu_core_role = "caps_worker_count_only"
 parser_worker_cap_rule = "effective_parser_workers = min(profile.parser_concurrency, available_parallelism)"
-h0_total_memory_gib_max_inclusive = 8
-h1_total_memory_gib_min_exclusive = 8
-h1_total_memory_gib_max_inclusive = 24
-h2_total_memory_gib_min_exclusive = 24
+h0_total_memory_gib_max_inclusive = 12
+h1_total_memory_gib_min_exclusive = 12
+h1_total_memory_gib_max_inclusive = 20
+h2_total_memory_gib_min_exclusive = 20
 
 [governor_profiles.H0_Eco]
 content_read_concurrency = 1
@@ -452,9 +481,10 @@ agent_default_include_snippet = false
 
 [gui_redlines]
 representative_rows = 100000
-visible_rows_min = 20
-visible_rows_max = 60
-overscan_max_visible_multiplier = 2
+desktop_reference_visible_cards = 4
+buffered_cards_max = 8
+navigation_modes = ["scroll", "pagination"]
+stable_card_height_required = true
 scroll_update_hz_min = 10
 interactive_search_qps_min = 10
 idle_cpu_pct_max = 5

@@ -14,10 +14,7 @@ use benchmark_runner::{
     evaluate_vector_quality_gate_json, BenchmarkGateConfig, DedupeQualityGateConfig,
     FieldQualityGateConfig, OcrThroughputGateConfig, VectorQualityGateConfig,
 };
-use core_domain::{
-    normalize_query_set_query, query_set_query_in_semantic_bounds, QuerySetSampleShape,
-    QuerySetSourceKind,
-};
+use core_domain::{normalize_query_set_query, QuerySetSampleShape, QuerySetSourceKind};
 use embedder::{
     Embedder, EmbeddingBudget, EmbeddingInput, LocalEmbeddingCommandEmbedder,
     LocalEmbeddingCommandSpec,
@@ -26,32 +23,24 @@ use fs4::fs_std::FileExt;
 use fs_crawler::{crawl_directory_with_options, ScanOptions as CrawlerScanOptions};
 use import_pipeline::{
     detect_ocr_page_count, import_root_with_options, index_claimed_ocr_text,
-    rebuild_full_text_index, remove_documents_from_full_text_index, ImportFailureKind,
-    ImportHardwareTier, ImportMilestoneTimings, ImportOptions, ImportParseWorkers,
-    ImportResourcePolicy, ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary,
-    ImportTaskOwnerLock, LinearPromotionPolicy, ScanProfile,
-};
-use index_fulltext::{
-    inspect_snapshot_root, publish_snapshot, purge_obsolete_snapshots, redact_contact_values,
-    FullTextIndex, IndexDocument, IndexSection, SearchHit, SearchQuery, SnapshotReadTarget,
-    SnapshotRootState,
-};
-use index_vector::{
-    inspect_persistent_vector_document_coverage, inspect_persistent_vector_snapshot,
-    PersistentVectorIndex, PersistentVectorSnapshotInspection, PersistentVectorSnapshotState,
-    QueryVector, VectorDocument, VectorHit, VectorIndex, VectorSearchBackend,
+    publish_search_projection_removals, rebuild_search_artifacts, reconcile_search_artifacts,
+    ImportFailureKind, ImportHardwareTier, ImportMilestoneTimings, ImportOptions,
+    ImportParseWorkers, ImportResourcePolicy, ImportScanBudgetKind as PipelineImportScanBudgetKind,
+    ImportSummary, ImportTaskOwnerLock, LinearPromotionPolicy, ScanProfile,
+    SearchProjectionRemoval, SearchProjectionRemovalReason, SearchPublicationVectorization,
 };
 use meta_store::{
     backup_metadata_encryption_key, restore_metadata_encryption_key,
-    rotate_metadata_encryption_key, Candidate, CandidateId, ContactHash, Document, DocumentId,
-    DocumentStatus, EntityMention, EntityType, FileExtension,
-    ImportRootKind as StoreImportRootKind, ImportRootPreset as StoreImportRootPreset,
-    ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanErrorSummary,
-    ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
-    ImportTaskStatus, IndexStateStatus, IngestJobFailureKind, IngestJobKind, IngestJobStatus,
-    MetaStore, MetadataEncryptionState, OcrAttemptFailure, OcrPageCacheEntry, OcrPageCacheKey,
-    PendingImportTaskByRootDiagnostic, QueryLatencySummary, ResumeVersion, ResumeVersionId,
-    ResumeVisibility, UnixTimestamp, WorkerTaskKind,
+    rotate_metadata_encryption_key, CandidateId, ContactHash, Document, DocumentId, DocumentStatus,
+    EntityMention, EntityType, FileExtension, ImportRootKind as StoreImportRootKind,
+    ImportRootPreset as StoreImportRootPreset, ImportScanBudgetKind as StoreImportScanBudgetKind,
+    ImportScanErrorSummary, ImportScanProfile as StoreImportScanProfile, ImportScanScope,
+    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJobFailureKind,
+    IngestJobKind, IngestJobStatus, MetaStore, MetadataEncryptionState, OcrAttemptFailure,
+    OcrPageCacheEntry, OcrPageCacheKey, PendingImportTaskByRootDiagnostic, QueryLatencySummary,
+    ResumeVersion, ResumeVersionId, SearchFilterCase, SearchProjectionFilter,
+    SearchProjectionPredicate, SearchSelection, SearchSelectionDetailResolution,
+    SearchTextBytePageRequest, UnixTimestamp, VectorSnapshotMode, WorkerTaskKind,
 };
 use ocr_client::{
     inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
@@ -61,26 +50,41 @@ use ocr_client::{
     TesseractOcrSpec,
 };
 use privacy::{
-    backup_contact_hash_key, inspect_contact_hash_key, restore_contact_hash_key, ContactHasher,
-    ContactKind,
+    backup_contact_hash_key, inspect_contact_hash_key, redact_contact_values,
+    restore_contact_hash_key, ContactHasher, ContactKind,
 };
 use rank_fusion::{
     fuse_hybrid_rrf, soft_dedupe_score, DateRange, DedupeProfile, DegreeLevel, HybridRecall,
-    RankedHit, ResumeProfile, SchoolTier, SearchFilters,
+    RankedHit, SchoolTier, SearchFilters,
 };
 use rusqlite::Connection;
 use search_planner::plan_search;
-use sectionizer::Sectionizer;
+use search_runtime::{
+    FilterSelection, FullTextCandidate, HitLimit, HydratedSearchHit, QueryCoordinator, QueryScope,
+    SearchRuntimeError, SearchRuntimeErrorCode, SelectionLimit, SemanticCandidate,
+    SemanticContract, SemanticQueryVector,
+};
 use sha2::{Digest, Sha256};
 use sysinfo::{
     get_current_pid, DiskRefreshKind, Disks, ProcessRefreshKind, ProcessesToUpdate, System,
 };
 
+mod release_readiness_matrix;
+
+use release_readiness_matrix::release_readiness_goal_gap_matrix_json;
+
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
 const LOCAL_DISCOVERY_DEFAULT_MAX_FILES: usize = 10_000;
 const IPC_ENDPOINT_FILE: &str = "ipc.endpoints.json";
 const IPC_AUTH_TOKEN_FILE: &str = "ipc.auth";
-const IPC_ENDPOINT_SCHEMA_VERSION: &str = "resume-ir.daemon-ipc.v1";
+const IPC_ENDPOINT_SCHEMA_VERSION: &str = "resume-ir.daemon-ipc.v2";
+const IPC_AUTH_SCHEMA_VERSION: &str = "resume-ir.daemon-auth.v2";
+const SEARCH_IPC_REQUEST_SCHEMA_VERSION: &str = "resume-ir.ipc-request.v3";
+const SEARCH_IPC_RESPONSE_SCHEMA_VERSION: &str = "resume-ir.search-response.v3";
+const SEARCH_IPC_DEFAULT_DEADLINE_MS: u64 = 1_500;
+const DETAIL_SCHEMA_VERSION: &str = "resume-ir.detail-response.v3";
+const DETAIL_FIELD_LIMIT: usize = 256;
+const SEARCH_RESULT_FILE_NAME_MAX_BYTES: usize = 160;
 const DEFAULT_SERVICE_LABEL: &str = "com.resume-ir.daemon";
 const DEFAULT_SERVICE_IPC_LISTEN: &str = "127.0.0.1:0";
 const FAULT_PROBE_MAX_BYTES: u64 = 1024 * 1024;
@@ -167,7 +171,7 @@ const WITNESS_IMPORT_FAILURE_KINDS: &[ImportFailureKind] = &[
     ImportFailureKind::ParserInternal,
     ImportFailureKind::EmptyText,
 ];
-const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, benchmark-query-set, benchmark-query-protocol, benchmark-corpus-summary, detail, delete, purge, cancel, pause, resume, ocr-worker, embed-worker, candidate-review, model, ocr, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
+const TOP_LEVEL_USAGE: &str = "expected command: status, import, search, benchmark-query-set, benchmark-query-protocol, benchmark-corpus-summary, detail, delete, purge, cancel, pause, resume, ocr-worker, candidate-review, model, ocr, privacy, service, fault-simulate, witness, doctor, export-diagnostics, or release-readiness";
 const TOP_LEVEL_HELP: &str = "\
 resume-cli
 
@@ -188,7 +192,6 @@ Runtime and worker commands:
   ocr preflight         Check local OCR renderer/engine/language runtime.
   ocr-worker           Process queued scanned-PDF OCR jobs.
   model preflight       Check a local embedding command and reviewed model manifest.
-  embed-worker          Generate local embeddings and persistent vector snapshots.
   pause | resume        Pause or resume OCR work.
 
 Diagnostics and release evidence:
@@ -280,28 +283,28 @@ const RELEASE_READINESS_BLOCKERS: &[ReleaseReadinessBlocker] = &[
         next_action: "provide Apple notarization credentials through CI secrets and run the macOS notarization release gate",
     },
     ReleaseReadinessBlocker {
-        label: "Windows installer lifecycle",
-        detail: "Windows MSI install, upgrade, uninstall, and rollback dry-run automation exists, but actual lifecycle execution is not proven on an administrator-elevated release Windows runner with fresh release artifacts",
-        dependency_kind: "release_platform_transcript",
-        needed_from: "windows_release_runner",
-        dependency_summary: "administrator-elevated Windows MSI install, upgrade, repair, uninstall, and rollback transcripts for fresh release artifacts",
-        next_action: "run the Windows installer lifecycle plan on an administrator-elevated release runner and attach redacted evidence",
+        label: "Tauri v2 desktop installer composition",
+        detail: "legacy CLI/daemon package automation and lifecycle dry-runs do not prove ordinary-user Tauri installers; unsigned macOS arm64 app/DMG composition, local lifecycle, real-version upgrade, and injected post-swap rollback are now verified, while release still requires a Windows per-user NSIS runtime closure plus signed and notarized macOS distribution evidence",
+        dependency_kind: "local_product_implementation",
+        needed_from: "desktop_runtime_composition",
+        dependency_summary: "self-contained Windows per-user NSIS runtime closure and signed/notarized macOS release composition",
+        next_action: "finish the Windows target-triple runtime closure and NSIS artifact, then sign and notarize the verified macOS artifact before clean-host release lifecycle testing",
     },
     ReleaseReadinessBlocker {
-        label: "Windows service lifecycle",
-        detail: "Windows service install/start/stop/status/uninstall/recovery dry-run automation exists, but actual lifecycle execution is not proven on an administrator-elevated release Windows runner with fresh release artifacts",
+        label: "Windows installer lifecycle",
+        detail: "legacy Windows MSI lifecycle dry-run automation exists but does not prove the target product; release evidence requires a self-contained per-user Tauri NSIS setup on a clean H0 host with install, first run, upgrade, uninstall, rollback, and recovery transcripts",
         dependency_kind: "release_platform_transcript",
-        needed_from: "windows_release_runner",
-        dependency_summary: "administrator-elevated Windows Service install, start, status, stop, recovery, uninstall, and rollback transcripts",
-        next_action: "run the Windows service lifecycle plan on an administrator-elevated release runner and attach redacted evidence",
+        needed_from: "windows_h0_validation_host",
+        dependency_summary: "clean-H0 per-user Tauri NSIS install, first-run, upgrade, uninstall, rollback, and recovery transcripts for a fresh self-contained artifact",
+        next_action: "install the fresh per-user NSIS artifact on the clean H0 validation host and record bounded redacted lifecycle evidence",
     },
     ReleaseReadinessBlocker {
         label: "macOS installer lifecycle",
-        detail: "macOS pkg/dmg install, upgrade, uninstall, rollback, and LaunchAgent dry-run automation exists, but signed pkg/dmg install/upgrade/uninstall/rollback and Gatekeeper validation are not proven on fresh macOS release artifacts",
+        detail: "legacy macOS pkg and LaunchAgent lifecycle dry-runs are not product proof; local unsigned install, first run, data-preserving uninstall, reinstall, real-version upgrade, and injected post-swap rollback are verified, while release evidence still requires the same lifecycle on a signed and notarized Tauri app/DMG with clean-host recovery and Gatekeeper validation",
         dependency_kind: "release_platform_transcript",
         needed_from: "macos_release_runner",
-        dependency_summary: "fresh signed macOS pkg/dmg install, upgrade, uninstall, rollback, LaunchAgent, and Gatekeeper transcripts",
-        next_action: "run the macOS installer lifecycle plan on a release runner and attach redacted Gatekeeper/install evidence",
+        dependency_summary: "fresh signed and notarized Tauri app/DMG lifecycle and Gatekeeper transcripts",
+        next_action: "run the fresh Tauri app/DMG lifecycle on a clean macOS validation host and attach bounded redacted Gatekeeper/install evidence",
     },
     ReleaseReadinessBlocker {
         label: "GitHub Release publication",
@@ -369,11 +372,11 @@ const RELEASE_READINESS_BLOCKERS: &[ReleaseReadinessBlocker] = &[
     },
     ReleaseReadinessBlocker {
         label: "cross-platform release validation",
-        detail: "hosted macOS/Windows build/test and dry-run packaging evidence exist, but Windows and macOS release platforms validation is not complete; release evidence requires fresh release artifacts, install/upgrade/uninstall, and service lifecycle proof",
+        detail: "hosted Rust workspace checks and legacy dry-run packaging evidence exist, but native Tauri product validation is incomplete; release evidence requires fresh self-contained macOS app/DMG and Windows per-user NSIS artifacts plus Tauri GUI and installer lifecycle proof on clean hosts",
         dependency_kind: "release_platform_transcript",
         needed_from: "macos_windows_release_runners",
-        dependency_summary: "fresh Windows and macOS release artifact validation, install/upgrade/uninstall, and service lifecycle transcripts",
-        next_action: "run release-platform validation on fresh macOS and Windows runners and attach redacted lifecycle evidence",
+        dependency_summary: "fresh Tauri desktop artifact, GUI, and installer lifecycle validation on clean macOS and Windows hosts",
+        next_action: "run native Tauri desktop and installer validation on clean macOS and Windows hosts and attach bounded redacted lifecycle evidence",
     },
     ReleaseReadinessBlocker {
         label: RELEASE_READINESS_DIAGNOSTICS_LABEL,
@@ -445,7 +448,6 @@ fn run() -> Result<()> {
         "pause" => task_control_command(&data_dir, &args[1..], true),
         "resume" => task_control_command(&data_dir, &args[1..], false),
         "ocr-worker" => ocr_worker_command(&data_dir, &args[1..]),
-        "embed-worker" => embed_worker_command(&data_dir, &args[1..]),
         "candidate-review" => candidate_review_command(&data_dir, &args[1..]),
         "model" => model_command(&args[1..]),
         "ocr" => ocr_command(&args[1..]),
@@ -503,7 +505,6 @@ fn command_usage(topic: &str) -> Option<&'static str> {
         "cancel" => Some(cancel_usage_text()),
         "pause" | "resume" => Some(task_control_usage_text()),
         "ocr-worker" => Some(ocr_worker_usage_text()),
-        "embed-worker" => Some(embed_worker_usage_text()),
         "candidate-review" => Some(candidate_review_usage()),
         "model" => Some(model_usage()),
         "ocr" => Some(ocr_usage()),
@@ -602,127 +603,6 @@ fn release_readiness_command(args: &[String]) -> Result<()> {
     Err(CliError::user(
         "release readiness blocked: stable release criteria are not met",
     ))
-}
-
-fn release_readiness_goal_gap_matrix_json() -> serde_json::Value {
-    serde_json::json!({
-        "schema_version": "resume-ir.goal-gap-matrix.v1",
-        "complete_product": false,
-        "current_stage": "core_import_search_closed_release_blocked",
-        "stable_release": "blocked",
-        "completion_statement": "core local import/search closure is verified; complete stable release remains blocked by evidence, credentials, platform transcripts, and deferred performance goals",
-        "rows": [
-            {
-                "id": "P0_foundation",
-                "label": "Rust workspace, daemon, CLI, metadata, task queue, IPC, diagnostics skeleton, CI",
-                "implementation_status": "production_complete",
-                "release_status": "covered_by_local_ci",
-                "evidence": [
-                    "daemon/CLI/metadata/IPC tests",
-                    "kill/restart recovery tests",
-                    "PR rust workspace checks"
-                ],
-                "blocked_by": []
-            },
-            {
-                "id": "P1_text_import_fulltext",
-                "label": "file scan, docx/PDF text layer parsing, normalization, full-text index, snippets",
-                "implementation_status": "production_complete",
-                "release_status": "covered_by_local_ci",
-                "evidence": [
-                    "parser fixture tests",
-                    "import/search closed-loop checks",
-                    "persistent full-text index recovery tests"
-                ],
-                "blocked_by": []
-            },
-            {
-                "id": "P2_fields_dedupe",
-                "label": "field extraction, confidence/evidence, filters, soft dedupe, multi-version folding",
-                "implementation_status": "production_complete",
-                "release_status": "blocked",
-                "evidence": [
-                    "extractor/filter tests",
-                    "candidate folding tests",
-                    "field persistence tests"
-                ],
-                "blocked_by": [
-                    "private business labeled field/dedupe quality reports",
-                    "field F1 production threshold evidence",
-                    "dedupe precision/recall/F1 production threshold evidence"
-                ]
-            },
-            {
-                "id": "P3_semantic_vector",
-                "label": "local embedding protocol, vector persistence, semantic/hybrid search, RRF",
-                "implementation_status": "production_complete",
-                "release_status": "blocked",
-                "evidence": [
-                    "local embedding protocol tests",
-                    "persistent vector snapshot tests",
-                    "hybrid search tests"
-                ],
-                "blocked_by": [
-                    "final reviewed embedding model distribution decision",
-                    "private business vector quality report",
-                    "release model manifest evidence"
-                ]
-            },
-            {
-                "id": "P4_ocr",
-                "label": "scanned PDF detection, OCR worker, cache, pause/resume, retry, OCR result indexing",
-                "implementation_status": "production_complete",
-                "release_status": "blocked",
-                "evidence": [
-                    "OCR worker tests",
-                    "OCR manifest/preflight tests",
-                    "current-stage smoke local runtime probe"
-                ],
-                "blocked_by": [
-                    "stable-release OCR throughput evidence deferred to performance optimization goal",
-                    "stable-release hot-index coverage evidence deferred to performance optimization goal",
-                    "representative OCR backlog drain evidence deferred to performance optimization goal"
-                ]
-            },
-            {
-                "id": "P5_cross_platform_release",
-                "label": "Windows/macOS packages, install, upgrade, uninstall, rollback, service lifecycle, signing/notarization",
-                "implementation_status": "production_complete",
-                "release_status": "blocked",
-                "evidence": [
-                    "unsigned dry-run package manifests",
-                    "installer lifecycle dry-run plans",
-                    "Windows Service lifecycle dry-run plan",
-                    "signing/notarization fail-closed dry-run gates",
-                    "hosted macOS/Windows build/test workflows"
-                ],
-                "blocked_by": [
-                    "real signing/notarization credentials",
-                    "administrator-elevated Windows release-runner transcripts",
-                    "fresh macOS installer and Gatekeeper transcripts",
-                    "GitHub Release approval"
-                ]
-            },
-            {
-                "id": "P6_performance_stability",
-                "label": "performance baseline, regression gates, fault injection, diagnostics, 100k/1M validation",
-                "implementation_status": "deferred_to_performance_optimization_goal",
-                "release_status": "blocked",
-                "evidence": [
-                    "benchmark runner tests",
-                    "fault simulation tests",
-                    "diagnostics redaction tests",
-                    "current-stage smoke handoff"
-                ],
-                "blocked_by": [
-                    "500-query/full hot-index baseline deferred to performance optimization goal",
-                    "private labeled quality datasets",
-                    "real hardware/platform fault drill transcripts",
-                    "external 100k/1M real-corpus validation deferred to performance goal"
-                ]
-            }
-        ]
-    })
 }
 
 fn release_readiness_usage() -> &'static str {
@@ -2031,7 +1911,7 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
     require_release_evidence_string(
         object,
         "schema_version",
-        "resume-ir.current-stage-validation-evidence.v1",
+        "resume-ir.current-stage-validation-evidence.v2",
         CONTEXT,
     )?;
     require_release_evidence_string(
@@ -2096,9 +1976,12 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
             "max_files",
             "max_queries",
             "top_k",
+            "private_query_timeout_ms",
             "embedding_dimension",
+            "embedding_runtime_bin_dir_configured",
+            "reuse_imported_corpus",
             "ocr_worker_ticks",
-            "embedding_worker_ticks",
+            "ocr_jobs_per_tick",
         ],
         CONTEXT,
     )?;
@@ -2116,12 +1999,19 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
     )?;
     for key in [
         "top_k",
+        "private_query_timeout_ms",
         "embedding_dimension",
         "ocr_worker_ticks",
-        "embedding_worker_ticks",
+        "ocr_jobs_per_tick",
     ] {
         require_release_evidence_positive_u64(parameters, key, CONTEXT)?;
     }
+    require_release_evidence_bool_value(
+        parameters,
+        "embedding_runtime_bin_dir_configured",
+        CONTEXT,
+    )?;
+    require_release_evidence_bool_value(parameters, "reuse_imported_corpus", CONTEXT)?;
 
     let preflight_probes = require_release_evidence_object(object, "preflight_probes", CONTEXT)?;
     validate_release_evidence_allowed_keys(
@@ -2153,8 +2043,7 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
             ("model_preflight", "success"),
             ("dataset_manifest", "success"),
             ("import_private_corpus", "success"),
-            ("ocr_worker_bounded_loop", "success"),
-            ("embedding_worker_bounded_loop", "success"),
+            ("ocr_search_publication_bounded_loop", "success"),
             ("corpus_summary", "success"),
             ("query_set_prepare", "success"),
             ("private_query_baseline", "success"),
@@ -2190,8 +2079,7 @@ fn validate_current_stage_evidence_manifest(report: &str) -> Result<CurrentStage
         "model-validate-manifest.stdout.txt",
         "model-preflight.json",
         "import.stdout.txt",
-        "ocr-worker.stdout.txt",
-        "embedding-worker.stdout.txt",
+        "ocr-search-publication.stdout.txt",
         "benchmark-corpus-summary.local.json",
         "private-query-set.local.jsonl",
         "query-set-prepare.stdout.txt",
@@ -2477,7 +2365,7 @@ fn validate_current_stage_blocked_summary_manifest(
     require_release_evidence_string(
         object,
         "schema_version",
-        "resume-ir.current-stage-blocked-summary.v1",
+        "resume-ir.current-stage-blocked-summary.v2",
         CONTEXT,
     )?;
     require_release_evidence_string(
@@ -2551,13 +2439,16 @@ fn validate_current_stage_blocked_summary_manifest(
             "max_files",
             "max_queries",
             "top_k",
+            "private_query_timeout_ms",
             "embedding_dimension",
             "embedding_runtime_bin_dir_configured",
+            "reuse_imported_corpus",
             "ocr_worker_ticks",
-            "embedding_worker_ticks",
+            "ocr_jobs_per_tick",
             "query_set_min_queries",
             "baseline_min_documents",
             "baseline_min_queries",
+            "ocr_throughput_min_pages",
         ],
         CONTEXT,
     )?;
@@ -2587,9 +2478,10 @@ fn validate_current_stage_blocked_summary_manifest(
     )?;
     for key in [
         "top_k",
+        "private_query_timeout_ms",
         "embedding_dimension",
         "ocr_worker_ticks",
-        "embedding_worker_ticks",
+        "ocr_jobs_per_tick",
         "query_set_min_queries",
     ] {
         require_release_evidence_positive_u64(parameters, key, CONTEXT)?;
@@ -2599,6 +2491,10 @@ fn validate_current_stage_blocked_summary_manifest(
         "embedding_runtime_bin_dir_configured",
         CONTEXT,
     )?;
+    require_release_evidence_bool_value(parameters, "reuse_imported_corpus", CONTEXT)?;
+    if parameters.contains_key("ocr_throughput_min_pages") {
+        require_release_evidence_positive_u64(parameters, "ocr_throughput_min_pages", CONTEXT)?;
+    }
 
     let preflight_probes = require_release_evidence_object(object, "preflight_probes", CONTEXT)?;
     validate_release_evidence_allowed_keys(
@@ -5321,8 +5217,6 @@ fn candidate_review_command(data_dir: &Path, args: &[String]) -> Result<()> {
     match action {
         "list" => candidate_review_list_command(&store, &args[1..]),
         "conflicts" => candidate_review_conflicts_command(&store, &args[1..]),
-        "merge" => candidate_review_merge_command(&store, &args[1..]),
-        "split" => candidate_review_split_command(&store, &args[1..]),
         _ => Err(CliError::usage(candidate_review_usage())),
     }
 }
@@ -5368,58 +5262,9 @@ fn candidate_review_conflicts_command(store: &MetaStore, args: &[String]) -> Res
     Ok(())
 }
 
-fn candidate_review_merge_command(store: &MetaStore, args: &[String]) -> Result<()> {
-    let review_args = parse_candidate_review_merge_args(args)?;
-    let versions = candidate_review_versions_for_merge(store, &review_args.version_ids)?;
-    let candidate_id = candidate_review_candidate_id(&review_args.version_ids);
-    store
-        .upsert_candidate(&Candidate {
-            id: candidate_id.clone(),
-            primary_name: None,
-            phone_hash: None,
-            email_hash: None,
-            dedupe_key: Some("candidate-review-manual-v1".to_string()),
-            merge_confidence: Some(review_args.confidence),
-            version_count: 0,
-        })
-        .map_err(CliError::store)?;
-
-    for version in &versions {
-        store
-            .assign_candidate_to_version(&version.id, &candidate_id)
-            .map_err(CliError::store)?;
-    }
-
-    println!("candidate review merge: completed");
-    println!("candidate id: {candidate_id}");
-    println!("versions assigned: {}", versions.len());
-    println!("confidence: {:.2}", review_args.confidence);
-    println!("paths: <redacted>");
-    Ok(())
-}
-
-fn candidate_review_split_command(store: &MetaStore, args: &[String]) -> Result<()> {
-    let candidate_id = parse_candidate_review_split_args(args)?;
-    let unassigned = store
-        .unassign_candidate_versions(&candidate_id)
-        .map_err(CliError::store)?;
-
-    println!("candidate review split: completed");
-    println!("candidate id: {candidate_id}");
-    println!("versions unassigned: {unassigned}");
-    println!("paths: <redacted>");
-    Ok(())
-}
-
 #[derive(Debug, PartialEq, Eq)]
 struct CandidateReviewListArgs {
     limit: usize,
-}
-
-#[derive(Debug, PartialEq)]
-struct CandidateReviewMergeArgs {
-    version_ids: Vec<ResumeVersionId>,
-    confidence: f32,
 }
 
 #[derive(Debug, PartialEq)]
@@ -5453,82 +5298,11 @@ fn parse_candidate_review_list_args(args: &[String]) -> Result<CandidateReviewLi
     Ok(CandidateReviewListArgs { limit })
 }
 
-fn parse_candidate_review_merge_args(args: &[String]) -> Result<CandidateReviewMergeArgs> {
-    let mut version_ids = Vec::new();
-    let mut confidence = None;
-    let mut index = 0;
-
-    while index < args.len() {
-        match args[index].as_str() {
-            "--version" => {
-                let version_id =
-                    ResumeVersionId::from_str(take_candidate_review_value(args, &mut index)?)
-                        .map_err(|_| CliError::usage(candidate_review_usage()))?;
-                version_ids.push(version_id);
-            }
-            "--confidence" => {
-                if confidence.is_some() {
-                    return Err(CliError::usage(candidate_review_usage()));
-                }
-                confidence = Some(parse_candidate_review_confidence(
-                    take_candidate_review_value(args, &mut index)?,
-                )?);
-            }
-            _ => return Err(CliError::usage(candidate_review_usage())),
-        }
-    }
-
-    if version_ids.len() < 2 {
-        return Err(CliError::usage(candidate_review_usage()));
-    }
-    let unique_ids = version_ids.iter().collect::<BTreeSet<_>>();
-    if unique_ids.len() != version_ids.len() {
-        return Err(CliError::usage(candidate_review_usage()));
-    }
-
-    Ok(CandidateReviewMergeArgs {
-        version_ids,
-        confidence: confidence.ok_or_else(|| CliError::usage(candidate_review_usage()))?,
-    })
-}
-
-fn parse_candidate_review_split_args(args: &[String]) -> Result<CandidateId> {
-    let mut candidate_id = None;
-    let mut index = 0;
-
-    while index < args.len() {
-        match args[index].as_str() {
-            "--candidate" => {
-                if candidate_id.is_some() {
-                    return Err(CliError::usage(candidate_review_usage()));
-                }
-                candidate_id = Some(
-                    CandidateId::from_str(take_candidate_review_value(args, &mut index)?)
-                        .map_err(|_| CliError::usage(candidate_review_usage()))?,
-                );
-            }
-            _ => return Err(CliError::usage(candidate_review_usage())),
-        }
-    }
-
-    candidate_id.ok_or_else(|| CliError::usage(candidate_review_usage()))
-}
-
 fn parse_candidate_review_positive_usize(value: &str) -> Result<usize> {
     let parsed = value
         .parse::<usize>()
         .map_err(|_| CliError::usage(candidate_review_usage()))?;
     if parsed == 0 {
-        return Err(CliError::usage(candidate_review_usage()));
-    }
-    Ok(parsed)
-}
-
-fn parse_candidate_review_confidence(value: &str) -> Result<f32> {
-    let parsed = value
-        .parse::<f32>()
-        .map_err(|_| CliError::usage(candidate_review_usage()))?;
-    if !parsed.is_finite() || !(0.0..=1.0).contains(&parsed) {
         return Err(CliError::usage(candidate_review_usage()));
     }
     Ok(parsed)
@@ -5558,30 +5332,40 @@ fn candidate_review_suggestions(
         {
             continue;
         }
-        for version in store
-            .resume_versions_for_document(&document.id)
+        let Some(projection) = store
+            .active_search_projection_for_document(&document.id)
             .map_err(CliError::store)?
+        else {
+            continue;
+        };
+        let Some(version) = store
+            .resume_version_by_id(&projection.resume_version_id)
+            .map_err(CliError::store)?
+        else {
+            return Err(CliError::user("active search projection is invalid"));
+        };
+        if store
+            .candidate_assignment_for_version(&version.id)
+            .map_err(CliError::store)?
+            .is_some()
         {
-            if version.visibility != ResumeVisibility::Searchable || version.candidate_id.is_some()
-            {
-                continue;
-            }
-            let Some(profile) = dedupe_profile_for_review_version(store, &document.id, &version)?
-            else {
-                continue;
-            };
-            let Some(name) = profile.name().map(str::to_string) else {
-                continue;
-            };
-            profiles_by_name
-                .entry(name)
-                .or_default()
-                .push(CandidateReviewProfile {
-                    document_id: document.id.clone(),
-                    version_id: version.id,
-                    profile,
-                });
+            continue;
         }
+        let Some(profile) = dedupe_profile_for_review_version(store, &document.id, &version)?
+        else {
+            continue;
+        };
+        let Some(name) = profile.name().map(str::to_string) else {
+            continue;
+        };
+        profiles_by_name
+            .entry(name)
+            .or_default()
+            .push(CandidateReviewProfile {
+                document_id: document.id.clone(),
+                version_id: version.id,
+                profile,
+            });
     }
 
     let mut suggestions = Vec::new();
@@ -5643,54 +5427,45 @@ fn dedupe_profile_for_review_version(
     ))
 }
 
-fn candidate_review_versions_for_merge(
-    store: &MetaStore,
-    version_ids: &[ResumeVersionId],
-) -> Result<Vec<ResumeVersion>> {
-    let mut versions = Vec::with_capacity(version_ids.len());
-    for version_id in version_ids {
-        let Some(version) = store
-            .resume_version_by_id(version_id)
-            .map_err(CliError::store)?
-        else {
-            return Err(CliError::user("candidate review version is unavailable"));
-        };
-        if version.visibility != ResumeVisibility::Searchable || version.candidate_id.is_some() {
-            return Err(CliError::user(
-                "candidate review merge requires unassigned searchable versions",
-            ));
-        }
-        let Some(document) = store
-            .document_by_id(&version.document_id)
-            .map_err(CliError::store)?
-        else {
-            return Err(CliError::user("candidate review document is unavailable"));
-        };
-        if document.is_deleted
-            || !matches!(
-                document.status,
-                DocumentStatus::Searchable | DocumentStatus::IndexedPartial
-            )
-        {
-            return Err(CliError::user(
-                "candidate review merge requires visible searchable documents",
-            ));
-        }
-        versions.push(version);
-    }
-    Ok(versions)
+fn best_normalized_entity_value(
+    mentions: &[EntityMention],
+    entity_type: EntityType,
+) -> Option<String> {
+    mentions
+        .iter()
+        .filter(|mention| {
+            mention.entity_type == entity_type
+                && mention.confidence >= FIELD_FILTER_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|mention| {
+            Some((
+                mention.normalized_value.as_deref()?.to_string(),
+                mention.confidence,
+                mention.span_start.unwrap_or(usize::MAX),
+            ))
+        })
+        .max_by(|left, right| {
+            left.1
+                .partial_cmp(&right.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right.2.cmp(&left.2))
+                .then_with(|| right.0.cmp(&left.0))
+        })
+        .map(|candidate| candidate.0)
 }
 
-fn candidate_review_candidate_id(version_ids: &[ResumeVersionId]) -> CandidateId {
-    let mut parts = vec!["candidate-review-manual-v1".to_string()];
-    let mut sorted_ids = version_ids
+fn normalized_entity_values(mentions: &[EntityMention], entity_type: EntityType) -> Vec<String> {
+    mentions
         .iter()
-        .map(|version_id| version_id.as_str().to_string())
-        .collect::<Vec<_>>();
-    sorted_ids.sort();
-    parts.extend(sorted_ids);
-    let part_refs = parts.iter().map(String::as_str).collect::<Vec<_>>();
-    CandidateId::from_non_secret_parts(&part_refs)
+        .filter(|mention| {
+            mention.entity_type == entity_type
+                && mention.confidence >= FIELD_FILTER_CONFIDENCE_THRESHOLD
+        })
+        .filter_map(|mention| mention.normalized_value.as_deref())
+        .map(str::to_string)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 fn ordered_version_pair(
@@ -5705,7 +5480,7 @@ fn ordered_version_pair(
 }
 
 fn candidate_review_usage() -> &'static str {
-    "usage: resume-cli candidate-review <list --limit <count>|conflicts --limit <count>|merge --version <id> --version <id> [--version <id> ...] --confidence <0..1>|split --candidate <id>>"
+    "usage: resume-cli candidate-review <list --limit <count>|conflicts --limit <count>>"
 }
 
 fn take_data_dir(args: &mut Vec<String>) -> Result<PathBuf> {
@@ -8011,8 +7786,6 @@ struct ServiceInstallArgs {
     embedding_command: Option<PathBuf>,
     embedding_model_id: Option<String>,
     embedding_dimension: Option<String>,
-    embedding_max_docs: Option<String>,
-    embedding_max_text_bytes: Option<String>,
     embedding_timeout_ms: Option<String>,
 }
 
@@ -8033,8 +7806,6 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
     let mut embedding_command = None;
     let mut embedding_model_id = None;
     let mut embedding_dimension = None;
-    let mut embedding_max_docs = None;
-    let mut embedding_max_text_bytes = None;
     let mut embedding_timeout_ms = None;
     let mut index = 0;
 
@@ -8116,18 +7887,6 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
                     take_service_positive_number(args, &mut index)?,
                 )?;
             }
-            "--embedding-max-docs" => {
-                set_once_string(
-                    &mut embedding_max_docs,
-                    take_service_positive_number(args, &mut index)?,
-                )?;
-            }
-            "--embedding-max-text-bytes" => {
-                set_once_string(
-                    &mut embedding_max_text_bytes,
-                    take_service_positive_number(args, &mut index)?,
-                )?;
-            }
             "--embedding-timeout-ms" => {
                 set_once_string(
                     &mut embedding_timeout_ms,
@@ -8153,8 +7912,6 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
     if embedding_command.is_none()
         && (embedding_model_id.is_some()
             || embedding_dimension.is_some()
-            || embedding_max_docs.is_some()
-            || embedding_max_text_bytes.is_some()
             || embedding_timeout_ms.is_some())
     {
         return Err(CliError::usage(service_usage()));
@@ -8188,8 +7945,6 @@ fn parse_service_install_args(args: &[String]) -> Result<ServiceInstallArgs> {
         embedding_command,
         embedding_model_id,
         embedding_dimension,
-        embedding_max_docs,
-        embedding_max_text_bytes,
         embedding_timeout_ms,
     })
 }
@@ -8293,7 +8048,6 @@ fn service_program_arguments(
     }
 
     if let Some(command) = install_args.embedding_command.as_ref() {
-        arguments.push("--work-embeddings".to_string());
         arguments.push("--embedding-command".to_string());
         arguments.push(path_as_str(command)?.to_string());
         push_optional_pair(
@@ -8305,16 +8059,6 @@ fn service_program_arguments(
             &mut arguments,
             "--embedding-dimension",
             install_args.embedding_dimension.as_deref(),
-        );
-        push_optional_pair(
-            &mut arguments,
-            "--embedding-max-docs",
-            install_args.embedding_max_docs.as_deref(),
-        );
-        push_optional_pair(
-            &mut arguments,
-            "--embedding-max-text-bytes",
-            install_args.embedding_max_text_bytes.as_deref(),
         );
         push_optional_pair(
             &mut arguments,
@@ -8583,6 +8327,13 @@ fn take_service_identifier(args: &[String], index: &mut usize) -> Result<String>
     Ok(value.to_string())
 }
 
+fn valid_cli_identifier(value: &str) -> bool {
+    !value.trim().is_empty()
+        && !value.contains('\n')
+        && !value.contains('\r')
+        && !value.contains('\t')
+}
+
 fn take_service_positive_number(args: &[String], index: &mut usize) -> Result<String> {
     let value = take_service_value(args, index)?;
     if value
@@ -8783,15 +8534,16 @@ fn fault_simulation_report_for_args(
             } else {
                 "not reproduced"
             };
-            let active_snapshot = if result.active_snapshot_corrupt {
+            let ready_generation = if result.ready_generation_corrupt {
                 "corrupt"
             } else {
                 "not_corrupt"
             };
-            let fallback_snapshot = if result.fallback_recovered {
-                "recovered"
+            let recovery_rebuilt = if result.recovery_rebuilt { "yes" } else { "no" };
+            let previous_generation_retained = if result.previous_generation_retained {
+                "yes"
             } else {
-                "not_recovered"
+                "no"
             };
             let query_after_recovery = if result.query_after_recovery_passed {
                 "passed"
@@ -8802,15 +8554,17 @@ fn fault_simulation_report_for_args(
                 "index_snapshot_corrupt",
                 status,
                 serde_json::json!({
-                    "active_snapshot": active_snapshot,
-                    "fallback_snapshot": fallback_snapshot,
+                    "ready_generation": ready_generation,
+                    "recovery_rebuilt": recovery_rebuilt,
+                    "previous_generation_retained": previous_generation_retained,
                     "query_after_recovery": query_after_recovery
                 }),
                 vec![
                     "fault: index_snapshot_corrupt".to_string(),
                     format!("status: {status}"),
-                    format!("active snapshot: {active_snapshot}"),
-                    format!("fallback snapshot: {fallback_snapshot}"),
+                    format!("ready generation: {ready_generation}"),
+                    format!("recovery rebuilt: {recovery_rebuilt}"),
+                    format!("previous generation retained: {previous_generation_retained}"),
                     format!("query after recovery: {query_after_recovery}"),
                     "paths: <redacted>".to_string(),
                 ],
@@ -9832,8 +9586,9 @@ fn contend_file_lock_probe_file(path: &Path) -> std::io::Result<FileLockProbeRes
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct IndexSnapshotCorruptProbeResult {
     reproduced: bool,
-    active_snapshot_corrupt: bool,
-    fallback_recovered: bool,
+    ready_generation_corrupt: bool,
+    recovery_rebuilt: bool,
+    previous_generation_retained: bool,
     query_after_recovery_passed: bool,
 }
 
@@ -9860,84 +9615,108 @@ fn simulate_index_snapshot_corrupt_probe_dir(
     probe_dir: &Path,
 ) -> Result<IndexSnapshotCorruptProbeResult> {
     const QUERY_TOKEN: &str = "SYNTHETIC_INDEX_CORRUPT_PRIVATE_TOKEN";
-    const GOOD_SNAPSHOT: &str = "fulltext-1800003000-good";
-    const ACTIVE_SNAPSHOT: &str = "fulltext-1800003001-active";
-
-    let index_root = probe_dir.join("search-index");
-    publish_snapshot(
-        &index_root,
-        GOOD_SNAPSHOT,
-        [index_corrupt_probe_document(
-            "doc_recovered",
-            "ver_recovered",
-            "synthetic-recovered.pdf",
-            QUERY_TOKEN,
-        )],
-    )
-    .map_err(|_| CliError::user("fault simulation probe failed"))?;
-    publish_snapshot(
-        &index_root,
-        ACTIVE_SNAPSHOT,
-        [index_corrupt_probe_document(
-            "doc_active",
-            "ver_active",
-            "synthetic-corrupt-active.pdf",
-            "active snapshot text that should disappear after corruption",
-        )],
-    )
-    .map_err(|_| CliError::user("fault simulation probe failed"))?;
-
+    let first_now = UnixTimestamp::from_unix_seconds(1_800_003_000);
+    let input_root = probe_dir.join("input");
+    fs::create_dir_all(&input_root).map_err(|_| CliError::user("fault simulation probe failed"))?;
     fs::write(
-        index_root
-            .join("snapshots")
-            .join(ACTIVE_SNAPSHOT)
-            .join("fulltext.snapshot.enc"),
+        input_root.join("synthetic-resume.txt"),
+        format!(
+            "SUMMARY\nSynthetic recovery candidate\nEXPERIENCE\nBuilt {QUERY_TOKEN}\nSKILLS\nRust"
+        ),
+    )
+    .map_err(|_| CliError::user("fault simulation probe failed"))?;
+
+    let store = MetaStore::open_data_dir(probe_dir)
+        .and_then(|store| {
+            store.run_migrations()?;
+            Ok(store)
+        })
+        .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let task = ImportTask {
+        id: ImportTaskId::from_non_secret_parts(&["fault-probe", "snapshot-corrupt"]),
+        root_path: path_string(&input_root),
+        status: ImportTaskStatus::Queued,
+        queued_at: first_now,
+        started_at: None,
+        finished_at: None,
+        updated_at: first_now,
+    };
+    store
+        .insert_import_task(&task)
+        .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let imported = import_root_with_options(
+        probe_dir,
+        &store,
+        &task,
+        &input_root,
+        first_now,
+        ImportOptions {
+            scan_profile: ScanProfile::Explicit,
+            max_files: None,
+            parse_workers: ImportParseWorkers::sequential(),
+            index_writer_heap_bytes: ImportResourcePolicy::detect().index_writer_heap_bytes,
+            linear_promotion: LinearPromotionPolicy::default(),
+            search_vectorization: SearchPublicationVectorization::default(),
+        },
+    )
+    .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    if imported.searchable_documents != 1 {
+        return Err(CliError::user("fault simulation probe failed"));
+    }
+
+    let corrupt_generation = store
+        .search_projection_state()
+        .map_err(|_| CliError::user("fault simulation probe failed"))?
+        .generation
+        .ok_or_else(|| CliError::user("fault simulation probe failed"))?;
+    let corrupt_snapshot = probe_dir
+        .join("search-index")
+        .join("snapshots")
+        .join(&corrupt_generation)
+        .join("fulltext.snapshot.enc");
+    fs::write(
+        &corrupt_snapshot,
         b"not a valid encrypted full-text snapshot",
     )
     .map_err(|_| CliError::user("fault simulation probe failed"))?;
 
-    let inspection = inspect_snapshot_root(&index_root)
+    let ready_generation_corrupt = QueryCoordinator::open(probe_dir)
+        .and_then(|mut coordinator| coordinator.with_query(|_| Ok(())))
+        .is_err();
+    let recovery = reconcile_search_artifacts(
+        probe_dir,
+        &store,
+        UnixTimestamp::from_unix_seconds(1_800_003_002),
+        &SearchPublicationVectorization::default(),
+    )
+    .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let recovered_generation = store
+        .search_projection_state()
+        .map_err(|_| CliError::user("fault simulation probe failed"))?
+        .generation
+        .ok_or_else(|| CliError::user("fault simulation probe failed"))?;
+
+    let mut coordinator = QueryCoordinator::open(probe_dir)
         .map_err(|_| CliError::user("fault simulation probe failed"))?;
-    let active_snapshot_corrupt = inspection.active_snapshot().is_some()
-        && inspection.state() == SnapshotRootState::Recovered;
-    let fallback_recovered = inspection.fallback_snapshot().is_some()
-        && inspection.read_target() == Some(SnapshotReadTarget::PublishedSnapshot);
-    let query_after_recovery_passed = FullTextIndex::open_active(&index_root)
-        .map_err(|_| CliError::user("fault simulation probe failed"))?
-        .map(|index| {
-            index
-                .search(SearchQuery::new(QUERY_TOKEN).with_limit(5))
-                .map(|hits| hits.len() == 1 && hits[0].doc_id == "doc_recovered")
+    let query_after_recovery_passed = coordinator
+        .with_query(|scope| {
+            let hits = scope.fulltext_candidates(QUERY_TOKEN, HitLimit::new(5)?, None)?;
+            Ok(hits.len() == 1)
         })
-        .transpose()
-        .map_err(|_| CliError::user("fault simulation probe failed"))?
-        .unwrap_or(false);
+        .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let previous_generation_retained = corrupt_snapshot.exists();
 
     Ok(IndexSnapshotCorruptProbeResult {
-        reproduced: active_snapshot_corrupt && fallback_recovered && query_after_recovery_passed,
-        active_snapshot_corrupt,
-        fallback_recovered,
+        reproduced: ready_generation_corrupt
+            && recovery.active_generation_rebuilt
+            && corrupt_generation != recovered_generation
+            && previous_generation_retained
+            && query_after_recovery_passed,
+        ready_generation_corrupt,
+        recovery_rebuilt: recovery.active_generation_rebuilt,
+        previous_generation_retained,
         query_after_recovery_passed,
     })
-}
-
-fn index_corrupt_probe_document(
-    doc_id: &str,
-    version_id: &str,
-    file_name: &str,
-    clean_text: &str,
-) -> IndexDocument {
-    IndexDocument {
-        doc_id: doc_id.to_string(),
-        version_id: version_id.to_string(),
-        file_name: file_name.to_string(),
-        clean_text: clean_text.to_string(),
-        sections: vec![IndexSection {
-            section_type: "summary".to_string(),
-            text: clean_text.to_string(),
-        }],
-        is_deleted: false,
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10142,7 +9921,7 @@ fn simulate_ocr_crash_probe(scratch_dir: &Path, ocr_command: &Path) -> Result<Oc
     .map_err(CliError::ocr)?;
     let reproduced = match client.recognize_page(
         request,
-        OcrWorkerBudget::new(1_000).map_err(CliError::ocr)?,
+        OcrWorkerBudget::new(/* page_timeout_ms */ 10_000).map_err(CliError::ocr)?,
         &CancellationToken::new(),
     ) {
         Ok(_) => false,
@@ -10178,7 +9957,7 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let ocr_task = store
         .worker_task_control(WorkerTaskKind::Ocr)
         .map_err(CliError::store)?;
-    let index_diagnostic = inspect_search_index(data_dir);
+    let index_diagnostic = inspect_search_index(data_dir, &store);
     let vector_diagnostic = inspect_vector_index(data_dir);
 
     println!("resume-ir status");
@@ -10522,6 +10301,11 @@ fn parse_status_ipc_endpoint(value: &str) -> Result<IpcStatusEndpoint> {
 
 fn status_ipc_command(endpoint: &IpcStatusEndpoint) -> Result<()> {
     let body = request_status_ipc_body(endpoint)?;
+    if !valid_status_ipc_body(&body) {
+        return Err(CliError::user(
+            "daemon status ipc returned invalid protocol",
+        ));
+    }
     render_ipc_status(&body);
     Ok(())
 }
@@ -10602,12 +10386,19 @@ fn request_status_ipc_body(endpoint: &IpcStatusEndpoint) -> Result<serde_json::V
 fn verify_auto_ipc_status(endpoint: &IpcStatusEndpoint) -> Result<()> {
     let body = request_status_ipc_body(endpoint)
         .map_err(|_| CliError::user("daemon ipc auto-discovery is stale"))?;
-    if json_str(&body, "schema_version") != Some("daemon.status.v1")
-        || json_str(&body, "status") != Some("ok")
-    {
+    if !valid_status_ipc_body(&body) {
         return Err(CliError::user("daemon ipc auto-discovery is stale"));
     }
     Ok(())
+}
+
+fn valid_status_ipc_body(body: &serde_json::Value) -> bool {
+    json_str(body, "schema_version") == Some("daemon.status.v2")
+        && json_str(body, "process_state") == Some("ready")
+        && matches!(
+            json_str(body, "status"),
+            Some("ok" | "repairing" | "degraded")
+        )
 }
 
 fn render_ipc_status(body: &serde_json::Value) {
@@ -10857,12 +10648,52 @@ fn ensure_auto_ipc_same_daemon(status_addr: SocketAddr, command_addr: SocketAddr
 }
 
 fn discover_ipc_url(data_dir: &Path, key: &str) -> Result<String> {
-    let manifest = fs::read_to_string(data_dir.join(IPC_ENDPOINT_FILE))
+    let manifest_path = data_dir.join(IPC_ENDPOINT_FILE);
+    let manifest_text = fs::read_to_string(&manifest_path)
         .map_err(|_| CliError::user("daemon ipc auto-discovery is unavailable"))?;
-    let manifest: serde_json::Value = serde_json::from_str(&manifest)
+    let manifest: serde_json::Value = serde_json::from_str(&manifest_text)
         .map_err(|_| CliError::user("daemon ipc auto-discovery is invalid"))?;
-    if json_str(&manifest, "schema_version") != Some(IPC_ENDPOINT_SCHEMA_VERSION) {
+    let allowed_fields = [
+        "schema_version",
+        "instance_id",
+        "owner_mode",
+        "status",
+        "diagnostics",
+        "imports",
+        "import_cancel",
+        "import_control",
+        "import_progress",
+        "search",
+        "search_batch",
+        "details",
+        "delete",
+    ];
+    let valid_shape = manifest.as_object().is_some_and(|object| {
+        object.len() == allowed_fields.len()
+            && object
+                .keys()
+                .all(|field| allowed_fields.contains(&field.as_str()))
+    });
+    let instance_id = json_str(&manifest, "instance_id");
+    let owner_mode = json_str(&manifest, "owner_mode");
+    if !valid_shape
+        || json_str(&manifest, "schema_version") != Some(IPC_ENDPOINT_SCHEMA_VERSION)
+        || !instance_id.is_some_and(valid_daemon_generation_value)
+        || !matches!(owner_mode, Some("standalone" | "desktop_supervised"))
+        || allowed_fields[3..]
+            .iter()
+            .any(|field| json_str(&manifest, field).is_none())
+    {
         return Err(CliError::user("daemon ipc auto-discovery is invalid"));
+    }
+    let auth_text = fs::read_to_string(data_dir.join(IPC_AUTH_TOKEN_FILE))
+        .map_err(|_| CliError::user("daemon ipc auto-discovery is unavailable"))?;
+    let (auth_instance_id, _) =
+        parse_daemon_ipc_auth(&auth_text, "daemon ipc auto-discovery is invalid")?;
+    let stable_manifest = fs::read_to_string(manifest_path)
+        .map_err(|_| CliError::user("daemon ipc auto-discovery is unavailable"))?;
+    if auth_instance_id != instance_id.unwrap_or_default() || stable_manifest != manifest_text {
+        return Err(CliError::user("daemon ipc auto-discovery is stale"));
     }
     json_str(&manifest, key)
         .map(str::to_string)
@@ -10888,6 +10719,15 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
     let store = open_store(data_dir)?;
     let now = current_timestamp()?;
+    if !import_args.enqueue {
+        reconcile_search_artifacts(
+            data_dir,
+            &store,
+            now,
+            &SearchPublicationVectorization::default(),
+        )
+        .map_err(CliError::import)?;
+    }
     let mut tasks = Vec::new();
     let mut new_tasks = Vec::new();
 
@@ -10998,6 +10838,7 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
                 parse_workers: import_args.parse_workers,
                 index_writer_heap_bytes: import_args.index_writer_heap_bytes,
                 linear_promotion: linear_promotion.clone(),
+                search_vectorization: SearchPublicationVectorization::default(),
             },
         )
         .map_err(CliError::import)?;
@@ -11105,6 +10946,7 @@ fn witness_command(args: &[String]) -> Result<()> {
             parse_workers: ImportParseWorkers::default(),
             index_writer_heap_bytes: ImportResourcePolicy::detect().index_writer_heap_bytes,
             linear_promotion: LinearPromotionPolicy::default(),
+            search_vectorization: SearchPublicationVectorization::default(),
         },
     )
     .map_err(CliError::import)?;
@@ -11118,15 +10960,6 @@ fn witness_command(args: &[String]) -> Result<()> {
         )?
     } else {
         WitnessOcrStatus::NotRequested
-    };
-    let witness_embedding = if witness_args.run_embedding {
-        run_witness_embedding_jobs(
-            &temp_dirs.data_dir,
-            &store,
-            &witness_args.embedding_worker_args,
-        )?
-    } else {
-        WitnessEmbeddingStatus::NotRequested
     };
     let witness_benchmark_corpus = if witness_args.probe_benchmark_corpus {
         WitnessBenchmarkCorpusStatus::Completed {
@@ -11173,7 +11006,6 @@ fn witness_command(args: &[String]) -> Result<()> {
     println!("failed documents: {}", summary.failed_documents);
     print_import_failure_counts(&summary);
     print_witness_ocr_status(&witness_ocr);
-    print_witness_embedding_status(&witness_embedding);
     print_witness_benchmark_corpus_status(&witness_benchmark_corpus);
     print_witness_field_status(&witness_fields);
     print_witness_search_status(&witness_search);
@@ -11210,14 +11042,11 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
     let mut root_preset = None;
     let mut max_files = WITNESS_DEFAULT_MAX_FILES;
     let mut run_ocr = false;
-    let mut run_embedding = false;
     let mut probe_search = false;
     let mut probe_fields = false;
     let mut probe_benchmark_corpus = false;
     let mut seen_ocr_option = false;
-    let mut seen_embedding_option = false;
     let mut ocr_worker_args = default_ocr_worker_args();
-    let mut embedding_worker_args = default_embed_worker_args();
     let mut ocr_max_documents = None;
     let mut index = 0_usize;
 
@@ -11259,10 +11088,6 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
             }
             "--run-ocr" => {
                 run_ocr = true;
-                index += 1;
-            }
-            "--run-embedding" => {
-                run_embedding = true;
                 index += 1;
             }
             "--probe-search" => {
@@ -11407,89 +11232,11 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
                 );
                 index += 2;
             }
-            "--embedding-command" => {
-                seen_embedding_option = true;
-                let Some(value) = args.get(index + 1) else {
-                    return Err(witness_usage());
-                };
-                if embedding_worker_args.command.is_some() {
-                    return Err(witness_usage());
-                }
-                embedding_worker_args.command = Some(PathBuf::from(value));
-                index += 2;
-            }
-            "--embedding-model-id" => {
-                seen_embedding_option = true;
-                let Some(value) = args.get(index + 1) else {
-                    return Err(witness_usage());
-                };
-                if embedding_worker_args.model_id.is_some() || !valid_cli_identifier(value) {
-                    return Err(witness_usage());
-                }
-                embedding_worker_args.model_id = Some(value.clone());
-                index += 2;
-            }
-            "--embedding-dimension" => {
-                seen_embedding_option = true;
-                let Some(value) = args.get(index + 1) else {
-                    return Err(witness_usage());
-                };
-                if embedding_worker_args.dimension.is_some() {
-                    return Err(witness_usage());
-                }
-                embedding_worker_args.dimension = Some(
-                    value
-                        .parse::<usize>()
-                        .ok()
-                        .filter(|value| *value > 0)
-                        .ok_or_else(witness_usage)?,
-                );
-                index += 2;
-            }
-            "--embedding-max-docs" => {
-                seen_embedding_option = true;
-                let Some(value) = args.get(index + 1) else {
-                    return Err(witness_usage());
-                };
-                embedding_worker_args.max_docs = value
-                    .parse::<usize>()
-                    .ok()
-                    .filter(|value| *value > 0)
-                    .ok_or_else(witness_usage)?;
-                index += 2;
-            }
-            "--embedding-max-text-bytes" => {
-                seen_embedding_option = true;
-                let Some(value) = args.get(index + 1) else {
-                    return Err(witness_usage());
-                };
-                embedding_worker_args.max_text_bytes = value
-                    .parse::<usize>()
-                    .ok()
-                    .filter(|value| *value > 0)
-                    .ok_or_else(witness_usage)?;
-                index += 2;
-            }
-            "--embedding-timeout-ms" => {
-                seen_embedding_option = true;
-                let Some(value) = args.get(index + 1) else {
-                    return Err(witness_usage());
-                };
-                embedding_worker_args.timeout_ms = value
-                    .parse::<u64>()
-                    .ok()
-                    .filter(|value| *value > 0)
-                    .ok_or_else(witness_usage)?;
-                index += 2;
-            }
             _ => return Err(witness_usage()),
         }
     }
 
     if seen_ocr_option && !run_ocr {
-        return Err(witness_usage());
-    }
-    if seen_embedding_option && !run_embedding {
         return Err(witness_usage());
     }
     if ocr_worker_args.command.is_some() && ocr_worker_args.tesseract_command.is_some() {
@@ -11511,18 +11258,16 @@ fn parse_witness_args(args: &[String]) -> Result<WitnessArgs> {
         root_selection,
         max_files,
         run_ocr,
-        run_embedding,
         probe_search,
         probe_fields,
         probe_benchmark_corpus,
         ocr_max_documents,
         ocr_worker_args,
-        embedding_worker_args,
     })
 }
 
 fn witness_usage_text() -> &'static str {
-    "usage: resume-cli witness (--root <path>|--root-preset local-discovery) [--max-files <count>] [--probe-search] [--probe-fields] [--probe-benchmark-corpus] [--run-ocr [--ocr-max-documents <n>] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]] [--run-embedding [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>]]"
+    "usage: resume-cli witness (--root <path>|--root-preset local-discovery) [--max-files <count>] [--probe-search] [--probe-fields] [--probe-benchmark-corpus] [--run-ocr [--ocr-max-documents <n>] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>]]"
 }
 
 fn witness_usage() -> CliError {
@@ -11541,17 +11286,6 @@ fn default_ocr_worker_args() -> OcrWorkerArgs {
         render_dpi: 300,
         page_timeout_ms: 30_000,
         max_pages_per_document: DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT,
-    }
-}
-
-fn default_embed_worker_args() -> EmbedWorkerArgs {
-    EmbedWorkerArgs {
-        command: None,
-        model_id: None,
-        dimension: None,
-        max_docs: 64,
-        max_text_bytes: 1_000_000,
-        timeout_ms: 30_000,
     }
 }
 
@@ -11673,108 +11407,6 @@ fn print_witness_ocr_status(status: &WitnessOcrStatus) {
                 "ocr document budget exhausted: {}",
                 yes_no(*budget_exhausted)
             );
-        }
-    }
-}
-
-fn run_witness_embedding_jobs(
-    data_dir: &Path,
-    store: &MetaStore,
-    worker_args: &EmbedWorkerArgs,
-) -> Result<WitnessEmbeddingStatus> {
-    let Some(command) = worker_args.command.clone() else {
-        return Ok(WitnessEmbeddingStatus::Blocked {
-            reason: "local embedding command not configured",
-            documents_considered: 0,
-            documents_embedded: 0,
-            vector_inputs: 0,
-            vector_indexed_documents: 0,
-        });
-    };
-    let Some(model_id) = worker_args.model_id.as_deref() else {
-        return Ok(WitnessEmbeddingStatus::Blocked {
-            reason: "local embedding model not configured",
-            documents_considered: 0,
-            documents_embedded: 0,
-            vector_inputs: 0,
-            vector_indexed_documents: 0,
-        });
-    };
-    let Some(dimension) = worker_args.dimension else {
-        return Ok(WitnessEmbeddingStatus::Blocked {
-            reason: "local embedding dimension not configured",
-            documents_considered: 0,
-            documents_embedded: 0,
-            vector_inputs: 0,
-            vector_indexed_documents: 0,
-        });
-    };
-
-    let candidates = embedding_candidates(store, worker_args.max_docs)?;
-    let documents_considered = candidates.len();
-    match run_local_embedding_jobs(
-        data_dir,
-        &candidates,
-        command,
-        model_id,
-        dimension,
-        worker_args.max_text_bytes,
-        worker_args.timeout_ms,
-    ) {
-        Ok(summary) => {
-            let corpus_summary = benchmark_corpus_summary(data_dir, store)?;
-            Ok(WitnessEmbeddingStatus::Completed {
-                documents_considered: summary.documents_considered,
-                documents_embedded: summary.documents_embedded,
-                vector_inputs: summary.vector_inputs,
-                vector_indexed_documents: corpus_summary.vector_indexed_document_count,
-            })
-        }
-        Err(_) => Ok(WitnessEmbeddingStatus::Blocked {
-            reason: "local embedding command failed or unavailable",
-            documents_considered,
-            documents_embedded: 0,
-            vector_inputs: 0,
-            vector_indexed_documents: benchmark_corpus_summary(data_dir, store)?
-                .vector_indexed_document_count,
-        }),
-    }
-}
-
-fn print_witness_embedding_status(status: &WitnessEmbeddingStatus) {
-    match status {
-        WitnessEmbeddingStatus::NotRequested => {
-            println!("witness embedding status: not_requested");
-            println!("embedding documents considered: 0");
-            println!("embedding documents embedded: 0");
-            println!("embedding vector inputs: 0");
-            println!("embedding vector indexed documents: 0");
-        }
-        WitnessEmbeddingStatus::Completed {
-            documents_considered,
-            documents_embedded,
-            vector_inputs,
-            vector_indexed_documents,
-        } => {
-            println!("witness embedding status: completed");
-            println!("embedding documents considered: {documents_considered}");
-            println!("embedding documents embedded: {documents_embedded}");
-            println!("embedding vector inputs: {vector_inputs}");
-            println!("embedding vector indexed documents: {vector_indexed_documents}");
-        }
-        WitnessEmbeddingStatus::Blocked {
-            reason,
-            documents_considered,
-            documents_embedded,
-            vector_inputs,
-            vector_indexed_documents,
-        } => {
-            println!("witness embedding status: blocked");
-            println!("embedding block reason: {reason}");
-            println!("embedding documents considered: {documents_considered}");
-            println!("embedding documents embedded: {documents_embedded}");
-            println!("embedding vector inputs: {vector_inputs}");
-            println!("embedding vector indexed documents: {vector_indexed_documents}");
         }
     }
 }
@@ -11940,26 +11572,35 @@ fn run_witness_search_probe(data_dir: &Path, store: &MetaStore) -> Result<Witnes
         });
     }
 
-    let Some(index) =
-        FullTextIndex::open_active(&data_dir.join("search-index")).map_err(CliError::fulltext)?
-    else {
-        return Ok(WitnessSearchStatus::Blocked {
-            reason: "full-text index unavailable",
-            hits: 0,
-        });
+    let mut coordinator = match QueryCoordinator::open(data_dir) {
+        Ok(coordinator) => coordinator,
+        Err(_) => {
+            return Ok(WitnessSearchStatus::Blocked {
+                reason: "search service unavailable",
+                hits: 0,
+            });
+        }
     };
 
     let mut best_hits = 0_usize;
     for query in candidates {
-        let hits = index
-            .search(SearchQuery::new(query).with_limit(WITNESS_SEARCH_PROBE_LIMIT))
-            .map_err(CliError::fulltext)?;
-        let visible = visible_hits(store, hits, WITNESS_SEARCH_PROBE_LIMIT)?;
-        best_hits = best_hits.max(visible.len());
-        if !visible.is_empty() {
-            return Ok(WitnessSearchStatus::Completed {
-                hits: visible.len(),
-            });
+        let hits = coordinator
+            .with_query(|scope| {
+                let candidates = scope.fulltext_candidates(
+                    &query,
+                    HitLimit::new(WITNESS_SEARCH_PROBE_LIMIT)?,
+                    None,
+                )?;
+                let projections = candidates
+                    .iter()
+                    .map(|candidate| candidate.projection.clone())
+                    .collect::<Vec<_>>();
+                scope.hydrate_exact_hits(&projections)
+            })
+            .map_err(search_runtime_cli_error)?;
+        best_hits = best_hits.max(hits.len());
+        if !hits.is_empty() {
+            return Ok(WitnessSearchStatus::Completed { hits: hits.len() });
         }
     }
 
@@ -11973,23 +11614,22 @@ fn witness_search_probe_candidates(store: &MetaStore) -> Result<Vec<String>> {
     let mut candidates = Vec::new();
 
     for document in store.visible_documents().map_err(CliError::store)? {
-        for version in store
-            .resume_versions_for_document(&document.id)
+        let Some(projection) = store
+            .active_search_projection_for_document(&document.id)
             .map_err(CliError::store)?
-        {
-            if version.visibility != ResumeVisibility::Searchable {
-                continue;
-            }
-
-            if let Some(text) = version
-                .clean_text
-                .as_deref()
-                .or(version.raw_text.as_deref())
-            {
-                collect_witness_search_tokens(text, &mut candidates);
-                if candidates.len() >= WITNESS_SEARCH_PROBE_MAX_CANDIDATES {
-                    return Ok(candidates);
-                }
+        else {
+            continue;
+        };
+        let Some(version) = store
+            .resume_version_by_id(&projection.resume_version_id)
+            .map_err(CliError::store)?
+        else {
+            return Err(CliError::user("active search projection is invalid"));
+        };
+        if let Some(text) = version.clean_text.as_deref() {
+            collect_witness_search_tokens(text, &mut candidates);
+            if candidates.len() >= WITNESS_SEARCH_PROBE_MAX_CANDIDATES {
+                return Ok(candidates);
             }
         }
     }
@@ -12156,13 +11796,11 @@ struct WitnessArgs {
     root_selection: WitnessRootSelection,
     max_files: usize,
     run_ocr: bool,
-    run_embedding: bool,
     probe_search: bool,
     probe_fields: bool,
     probe_benchmark_corpus: bool,
     ocr_max_documents: Option<usize>,
     ocr_worker_args: OcrWorkerArgs,
-    embedding_worker_args: EmbedWorkerArgs,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -12204,23 +11842,6 @@ enum WitnessOcrStatus {
         cache_writes: usize,
         cache_hits: usize,
         budget_exhausted: bool,
-    },
-}
-
-enum WitnessEmbeddingStatus {
-    NotRequested,
-    Completed {
-        documents_considered: usize,
-        documents_embedded: usize,
-        vector_inputs: usize,
-        vector_indexed_documents: u64,
-    },
-    Blocked {
-        reason: &'static str,
-        documents_considered: usize,
-        documents_embedded: usize,
-        vector_inputs: usize,
-        vector_indexed_documents: u64,
     },
 }
 
@@ -12395,12 +12016,39 @@ fn import_ipc_command_with_token_file(
     Ok(())
 }
 
-fn validate_daemon_ipc_token<'a>(token: &'a str, invalid_message: &'static str) -> Result<&'a str> {
-    let token = token.trim();
-    if token.len() != 64 || !token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+fn validate_daemon_ipc_token(token: &str, invalid_message: &'static str) -> Result<String> {
+    parse_daemon_ipc_auth(token, invalid_message).map(|(_, token)| token)
+}
+
+fn parse_daemon_ipc_auth(value: &str, invalid_message: &'static str) -> Result<(String, String)> {
+    let value: serde_json::Value =
+        serde_json::from_str(value).map_err(|_| CliError::user(invalid_message))?;
+    let valid_shape = value.as_object().is_some_and(|object| {
+        object.len() == 3
+            && object.contains_key("schema_version")
+            && object.contains_key("instance_id")
+            && object.contains_key("token")
+    });
+    let instance_id = json_str(&value, "instance_id");
+    let token = json_str(&value, "token");
+    if !valid_shape
+        || json_str(&value, "schema_version") != Some(IPC_AUTH_SCHEMA_VERSION)
+        || !instance_id.is_some_and(valid_daemon_generation_value)
+        || !token.is_some_and(valid_daemon_generation_value)
+    {
         return Err(CliError::user(invalid_message));
     }
-    Ok(token)
+    Ok((
+        instance_id.unwrap_or_default().to_string(),
+        token.unwrap_or_default().to_string(),
+    ))
+}
+
+fn valid_daemon_generation_value(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn render_import_ipc_result(body: &serde_json::Value) {
@@ -12739,15 +12387,6 @@ fn print_import_worker_metrics(summary: &ImportSummary) {
                 .worker_metrics
                 .index_publication_timings
                 .encrypted_validation
-        )
-    );
-    println!(
-        "index publication active snapshot ms: {:.3}",
-        duration_millis(
-            summary
-                .worker_metrics
-                .index_publication_timings
-                .active_snapshot
         )
     );
     println!(
@@ -13370,8 +13009,8 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let query_started = Instant::now();
     let hits = match run_local_search(data_dir, &search_args)? {
         LocalSearchOutcome::Hits(hits) => hits,
-        LocalSearchOutcome::FullTextIndexUnavailable => {
-            println!("search index not available yet");
+        LocalSearchOutcome::SearchServiceUnavailable => {
+            println!("search service unavailable");
             println!("results: 0");
             return Ok(());
         }
@@ -13500,7 +13139,9 @@ fn run_benchmark_query_protocol_once(
     let hits = match run_benchmark_query_protocol_search(data_dir, search_args, &mut stage_timings)?
     {
         LocalSearchOutcome::Hits(hits) => hits,
-        LocalSearchOutcome::FullTextIndexUnavailable => Vec::new(),
+        LocalSearchOutcome::SearchServiceUnavailable => {
+            return Err(CliError::user("benchmark query search service unavailable"));
+        }
     };
     record_search_query_observation(
         data_dir,
@@ -13644,9 +13285,8 @@ fn benchmark_query_batch_line_request(line: &str) -> Result<BenchmarkQueryBatchR
         .filter(|query| !query.is_empty())
         .map(ToOwned::to_owned)
         .ok_or_else(|| CliError::user("benchmark query input is unavailable"))?;
-    if !query_set_query_in_semantic_bounds(&query) {
-        return Err(CliError::user("benchmark query input is unavailable"));
-    }
+    let query = normalize_query_set_query(&query)
+        .ok_or_else(|| CliError::user("benchmark query input is unavailable"))?;
     Ok(BenchmarkQueryBatchRequest { request_id, query })
 }
 
@@ -14365,9 +14005,13 @@ fn preflight_trace_backed_private_queries(
             "query set blocked: trace root is unavailable",
         ));
     }
-    let index =
-        FullTextIndex::open_active(&data_dir.join("search-index")).map_err(CliError::fulltext)?;
-    let query_index_available = index.is_some();
+    let mut coordinator = QueryCoordinator::open(data_dir).ok();
+    let query_index_available = coordinator
+        .as_mut()
+        .is_some_and(|coordinator| coordinator.with_query(|_| Ok(())).is_ok());
+    if !query_index_available {
+        coordinator = None;
+    }
     let corpus_summary = benchmark_corpus_summary(data_dir, store)?;
 
     let mut trace_paths = Vec::new();
@@ -14405,8 +14049,8 @@ fn preflight_trace_backed_private_queries(
                 &mut candidate_bucket_counts,
                 QuerySetSampleShape::from_query(&query).bucket(),
             );
-            if let Some(index) = index.as_ref() {
-                let has_local_hit = trace_query_has_local_hit(store, index, &query)?;
+            if let Some(coordinator) = coordinator.as_mut() {
+                let has_local_hit = trace_query_has_local_hit(coordinator, &query)?;
                 if !has_local_hit {
                     counts.zero_hit_queries_dropped += 1;
                     continue;
@@ -14477,7 +14121,7 @@ fn d10k_corpus_not_ready_message(summary: &BenchmarkCorpusSummary) -> String {
 
 fn freeze_trace_backed_private_queries(
     data_dir: &Path,
-    store: &MetaStore,
+    _store: &MetaStore,
     trace_root: &Path,
     max_queries: usize,
 ) -> Result<FrozenAgentReplayQueries> {
@@ -14486,13 +14130,11 @@ fn freeze_trace_backed_private_queries(
             "query set blocked: trace root is unavailable",
         ));
     }
-    let Some(index) =
-        FullTextIndex::open_active(&data_dir.join("search-index")).map_err(CliError::fulltext)?
-    else {
-        return Err(CliError::user(
-            "query set blocked: local search index is unavailable",
-        ));
-    };
+    let mut coordinator = QueryCoordinator::open(data_dir)
+        .map_err(|_| CliError::user("query set blocked: search service is unavailable"))?;
+    coordinator
+        .with_query(|_| Ok(()))
+        .map_err(|_| CliError::user("query set blocked: search service is unavailable"))?;
 
     let mut trace_paths = Vec::new();
     collect_runtime_trace_logs(trace_root, &mut trace_paths)?;
@@ -14541,7 +14183,7 @@ fn freeze_trace_backed_private_queries(
                 continue;
             }
             counts.candidate_queries_sampled += 1;
-            let has_local_hit = trace_query_has_local_hit(store, &index, &query)?;
+            let has_local_hit = trace_query_has_local_hit(&mut coordinator, &query)?;
             if !has_local_hit {
                 counts.zero_hit_queries_dropped += 1;
                 continue;
@@ -14878,19 +14520,27 @@ fn contains_sensitive_digit_run(value: &str) -> bool {
     false
 }
 
-fn trace_query_has_local_hit(
-    store: &MetaStore,
-    index: &FullTextIndex,
-    query: &str,
-) -> Result<bool> {
+fn trace_query_has_local_hit(coordinator: &mut QueryCoordinator, query: &str) -> Result<bool> {
     let plan = match plan_search(query, 1) {
         Ok(plan) => plan,
         Err(_) => return Ok(false),
     };
-    let hits = index
-        .search(SearchQuery::new(plan.query_text()).with_limit(plan.limit()))
-        .map_err(CliError::fulltext)?;
-    Ok(!visible_hits(store, hits, 1)?.is_empty())
+    coordinator
+        .with_query(|scope| {
+            let candidates =
+                scope.fulltext_candidates(plan.query_text(), HitLimit::new(plan.limit())?, None)?;
+            if candidates.is_empty() {
+                return Ok(false);
+            }
+            let projections = candidates
+                .iter()
+                .map(|candidate| candidate.projection.clone())
+                .collect::<Vec<_>>();
+            scope
+                .hydrate_exact_hits(&projections)
+                .map(|hits| !hits.is_empty())
+        })
+        .map_err(search_runtime_cli_error)
 }
 
 fn benchmark_corpus_summary_command(data_dir: &Path, args: &[String]) -> Result<()> {
@@ -14985,47 +14635,46 @@ struct BenchmarkCorpusSummary {
     ingest_job_failure_counts: BTreeMap<String, u64>,
 }
 
-fn benchmark_corpus_summary(data_dir: &Path, store: &MetaStore) -> Result<BenchmarkCorpusSummary> {
+fn benchmark_corpus_summary(_data_dir: &Path, store: &MetaStore) -> Result<BenchmarkCorpusSummary> {
     let document_count = store.visible_document_count().map_err(CliError::store)?;
-    let summary = store.status_summary().map_err(CliError::store)?;
     let documents = store.visible_documents().map_err(CliError::store)?;
     let ingest_jobs = store.ingest_jobs().map_err(CliError::store)?;
     let document_status_counts = benchmark_document_status_counts(&documents);
     let ingest_job_status_counts = benchmark_ingest_job_status_counts(&ingest_jobs);
     let ingest_job_kind_status_counts = benchmark_ingest_job_kind_status_counts(&ingest_jobs);
     let ingest_job_failure_counts = benchmark_ingest_job_failure_counts(&ingest_jobs);
-    let searchable_document_ids = store
-        .searchable_document_ids()
-        .map_err(CliError::store)?
-        .into_iter()
-        .map(|document_id| document_id.to_string())
-        .collect::<BTreeSet<_>>();
-    let vector_diagnostic = inspect_vector_index(data_dir);
-    let vector_coverage = inspect_persistent_vector_document_coverage(
-        data_dir.join("vector-index"),
-        &searchable_document_ids,
-    );
-    let vector_indexed_document_count = u64::try_from(vector_coverage.covered_document_count())
-        .map_err(|_| CliError::user("benchmark corpus vector coverage count is too large"))?;
-    let active_vector_document_count = u64::try_from(vector_coverage.active_document_count())
-        .map_err(|_| CliError::user("benchmark corpus vector document count is too large"))?;
-    let vector_count = u64::try_from(vector_diagnostic.vector_count())
-        .map_err(|_| CliError::user("benchmark corpus vector count is too large"))?;
-    let vector_deleted_count = u64::try_from(vector_diagnostic.deleted_count())
-        .map_err(|_| CliError::user("benchmark corpus vector tombstone count is too large"))?;
+    let projection = store.search_projection_state().map_err(CliError::store)?;
+    let publication = projection.publication.as_deref();
+    let searchable_document_count = publication
+        .and_then(|publication| publication.fulltext.as_ref())
+        .map(|fulltext| fulltext.document_count())
+        .unwrap_or(0);
+    let vector = publication.and_then(|publication| publication.vector.as_ref());
+    let vector_indexed_document_count = vector.map(|vector| vector.document_count()).unwrap_or(0);
+    let active_vector_document_count = vector_indexed_document_count;
+    let vector_count = vector.map(|vector| vector.vector_count()).unwrap_or(0);
+    let vector_deleted_count = 0;
+    let vector_enabled =
+        vector.is_some_and(|vector| matches!(vector.mode(), VectorSnapshotMode::Enabled { .. }));
+    let vector_index_state = if publication.is_some() {
+        "available"
+    } else {
+        "unavailable"
+    };
+    let vector_search_backend = if vector_enabled { "hnsw_ann" } else { "none" };
     let hot_index_fully_covered = document_count > 0
-        && summary.searchable_documents >= document_count
+        && searchable_document_count >= document_count
         && vector_indexed_document_count >= document_count;
 
     Ok(BenchmarkCorpusSummary {
         document_count,
-        searchable_document_count: summary.searchable_documents,
+        searchable_document_count,
         vector_indexed_document_count,
         active_vector_document_count,
         vector_count,
         vector_deleted_count,
-        vector_index_state: vector_diagnostic.state_label(),
-        vector_search_backend: vector_diagnostic.backend_json_label(),
+        vector_index_state,
+        vector_search_backend,
         hot_index_fully_covered,
         document_status_counts,
         ingest_job_status_counts,
@@ -15131,51 +14780,11 @@ fn benchmark_query_protocol_usage() -> &'static str {
 
 enum LocalSearchOutcome {
     Hits(Vec<SearchOutputHit>),
-    FullTextIndexUnavailable,
+    SearchServiceUnavailable,
 }
 
 fn run_local_search(data_dir: &Path, search_args: &SearchArgs) -> Result<LocalSearchOutcome> {
-    let candidate_limit = search_args
-        .top_k
-        .saturating_mul(5)
-        .clamp(search_args.top_k, 100);
-
-    let hits = match search_args.mode {
-        SearchMode::FullText => {
-            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
-                .map_err(CliError::fulltext)?
-            else {
-                return Ok(LocalSearchOutcome::FullTextIndexUnavailable);
-            };
-            let store = open_store(data_dir)?;
-            let fulltext_hits = run_fulltext_search(&index, &store, search_args, candidate_limit)?;
-            attach_soft_dedupe_hints(
-                &store,
-                fulltext_hits.into_iter().take(search_args.top_k).collect(),
-            )?
-        }
-        SearchMode::Semantic => {
-            let store = open_store(data_dir)?;
-            let hits = run_semantic_search(data_dir, &store, search_args, candidate_limit)?;
-            attach_soft_dedupe_hints(&store, hits)?
-        }
-        SearchMode::Hybrid => {
-            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
-                .map_err(CliError::fulltext)?
-            else {
-                return Err(CliError::user(
-                    "hybrid search unavailable: full-text index is not ready",
-                ));
-            };
-            let store = open_store(data_dir)?;
-            let fulltext_hits = run_fulltext_search(&index, &store, search_args, candidate_limit)?;
-            let vector_hits = run_semantic_search(data_dir, &store, search_args, candidate_limit)?;
-            let hits = fuse_hybrid_output_hits(fulltext_hits, vector_hits, search_args.top_k);
-            attach_soft_dedupe_hints(&store, hits)?
-        }
-    };
-
-    Ok(LocalSearchOutcome::Hits(hits))
+    execute_local_search(data_dir, search_args, None)
 }
 
 fn run_benchmark_query_protocol_search(
@@ -15183,70 +14792,358 @@ fn run_benchmark_query_protocol_search(
     search_args: &SearchArgs,
     timings: &mut BenchmarkQueryProtocolStageTimings,
 ) -> Result<LocalSearchOutcome> {
+    execute_local_search(data_dir, search_args, Some(timings))
+}
+
+#[derive(Clone)]
+struct PreparedSemanticQuery {
+    model_id: String,
+    dimension: usize,
+    query: SemanticQueryVector,
+}
+
+#[derive(Clone)]
+struct LocalRankedCandidate {
+    projection: core_domain::ActiveSearchProjection,
+    score: f32,
+    file_name: String,
+    snippet: String,
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum LocalFoldIdentity {
+    Candidate(CandidateId),
+    Version(ResumeVersionId),
+}
+
+fn execute_local_search(
+    data_dir: &Path,
+    search_args: &SearchArgs,
+    mut timings: Option<&mut BenchmarkQueryProtocolStageTimings>,
+) -> Result<LocalSearchOutcome> {
+    let mut coordinator = QueryCoordinator::open(data_dir).map_err(search_runtime_cli_error)?;
+    let semantic = prepare_local_semantic_query(&mut coordinator, search_args)?;
     let candidate_limit = search_args
         .top_k
         .saturating_mul(5)
         .clamp(search_args.top_k, 100);
+    let semantic_candidate_limit = search_args
+        .vector_top_k
+        .unwrap_or(candidate_limit)
+        .clamp(search_args.top_k, 100);
+    let plan_started = Instant::now();
+    let plan = plan_search(&search_args.query, candidate_limit)
+        .map_err(|_| CliError::user("search query is outside semantic bounds"))?;
+    if let Some(timings) = timings.as_deref_mut() {
+        timings.query_parse_ms += duration_ms(plan_started.elapsed());
+    }
+    let query = plan.query_text().to_string();
+    let filter = search_projection_filter(&search_args.filters)?;
+    let hit_limit = HitLimit::new(candidate_limit).map_err(search_runtime_cli_error)?;
+    let semantic_hit_limit =
+        HitLimit::new(semantic_candidate_limit).map_err(search_runtime_cli_error)?;
+    let selection_limit = SelectionLimit::new(meta_store::MAX_BOUNDED_FILTER_SELECTION)
+        .map_err(search_runtime_cli_error)?;
 
-    let hits = match search_args.mode {
-        SearchMode::FullText => {
-            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
-                .map_err(CliError::fulltext)?
-            else {
-                return Ok(LocalSearchOutcome::FullTextIndexUnavailable);
-            };
-            let store = open_store(data_dir)?;
-            let fulltext_hits = run_fulltext_search_for_benchmark(
-                &index,
-                &store,
-                search_args,
-                candidate_limit,
-                timings,
-            )?;
-            attach_soft_dedupe_hints_for_benchmark(&store, fulltext_hits, timings)?
+    let result = coordinator.with_query(|scope| {
+        validate_local_semantic_contract(scope.semantic_contract(), semantic.as_ref())?;
+        let filter_selection = if filter.predicates().is_empty() {
+            None
+        } else {
+            let started = Instant::now();
+            let selection = scope.filter_selection(&filter, selection_limit)?;
+            if let Some(timings) = timings.as_deref_mut() {
+                timings.prefilter_ms += duration_ms(started.elapsed());
+            }
+            Some(selection)
+        };
+
+        let candidates = match search_args.mode {
+            SearchMode::FullText => local_fulltext_candidates(
+                &scope,
+                &query,
+                semantic_hit_limit,
+                filter_selection.as_ref(),
+                timings.as_deref_mut(),
+            )?,
+            SearchMode::Semantic => local_semantic_candidates(
+                &scope,
+                semantic
+                    .as_ref()
+                    .ok_or_else(SearchRuntimeError::integrity_violation)?
+                    .query
+                    .clone(),
+                hit_limit,
+                filter_selection.as_ref(),
+                timings.as_deref_mut(),
+            )?,
+            SearchMode::Hybrid => {
+                let lexical = local_fulltext_candidates(
+                    &scope,
+                    &query,
+                    semantic_hit_limit,
+                    filter_selection.as_ref(),
+                    timings.as_deref_mut(),
+                )?;
+                let semantic_candidates = local_semantic_candidates(
+                    &scope,
+                    semantic
+                        .as_ref()
+                        .ok_or_else(SearchRuntimeError::integrity_violation)?
+                        .query
+                        .clone(),
+                    hit_limit,
+                    filter_selection.as_ref(),
+                    timings.as_deref_mut(),
+                )?;
+                let started = Instant::now();
+                let fused = fuse_local_candidates(lexical, semantic_candidates, candidate_limit);
+                if let Some(timings) = timings.as_deref_mut() {
+                    timings.fusion_ms += duration_ms(started.elapsed());
+                }
+                fused
+            }
+        };
+        hydrate_local_candidates(&scope, candidates, search_args.top_k, timings)
+    });
+    match result {
+        Ok(hits) => Ok(LocalSearchOutcome::Hits(hits)),
+        Err(error) if error.code() == SearchRuntimeErrorCode::Unavailable => {
+            Ok(LocalSearchOutcome::SearchServiceUnavailable)
         }
-        SearchMode::Semantic => {
-            let store = open_store(data_dir)?;
-            let hits = run_semantic_search_for_benchmark(
-                data_dir,
-                &store,
-                search_args,
-                candidate_limit,
-                timings,
-            )?;
-            attach_soft_dedupe_hints_for_benchmark(&store, hits, timings)?
-        }
-        SearchMode::Hybrid => {
-            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
-                .map_err(CliError::fulltext)?
-            else {
-                return Err(CliError::user(
-                    "hybrid search unavailable: full-text index is not ready",
-                ));
-            };
-            let store = open_store(data_dir)?;
-            let fulltext_hits = run_fulltext_search_for_benchmark(
-                &index,
-                &store,
-                search_args,
-                candidate_limit,
-                timings,
-            )?;
-            let vector_hits = run_semantic_search_for_benchmark(
-                data_dir,
-                &store,
-                search_args,
-                candidate_limit,
-                timings,
-            )?;
-            let fusion_started = Instant::now();
-            let hits = fuse_hybrid_output_hits(fulltext_hits, vector_hits, search_args.top_k);
-            timings.fusion_ms += duration_ms(fusion_started.elapsed());
-            attach_soft_dedupe_hints_for_benchmark(&store, hits, timings)?
-        }
+        Err(error) => Err(search_runtime_cli_error(error)),
+    }
+}
+
+fn prepare_local_semantic_query(
+    coordinator: &mut QueryCoordinator,
+    search_args: &SearchArgs,
+) -> Result<Option<PreparedSemanticQuery>> {
+    if search_args.mode == SearchMode::FullText {
+        return Ok(None);
+    }
+    let contract = coordinator
+        .with_query(|scope| Ok(scope.semantic_contract()))
+        .map_err(search_runtime_cli_error)?;
+    let SemanticContract::Enabled {
+        model_id: expected_model,
+        dimension: expected_dimension,
+    } = contract
+    else {
+        return Err(CliError::user(
+            "semantic search unavailable: SEMANTIC_DISABLED",
+        ));
     };
+    let command = search_args.embedding_command.clone().ok_or_else(|| {
+        CliError::user("semantic search unavailable: embedding runtime is not configured")
+    })?;
+    let model_id = search_args.model_id.as_deref().ok_or_else(|| {
+        CliError::user("semantic search unavailable: embedding model is not configured")
+    })?;
+    let dimension = search_args.dimension.unwrap_or(expected_dimension);
+    if model_id != expected_model || dimension != expected_dimension {
+        return Err(CliError::user(
+            "semantic search unavailable: embedding contract mismatch",
+        ));
+    }
+    let embedder = LocalEmbeddingCommandEmbedder::new(
+        LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), model_id, expected_dimension)
+            .map_err(CliError::embedding)?
+            .with_timeout_ms(search_args.embedding_timeout_ms)
+            .map_err(CliError::embedding)?,
+    );
+    let input = EmbeddingInput::new("query", search_args.query.as_str());
+    let query = embedder
+        .embed_batch(
+            &[input],
+            EmbeddingBudget::new(1, search_args.query.len().max(1)),
+        )
+        .map_err(CliError::embedding)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| CliError::user("semantic search query embedding is unavailable"))?;
+    Ok(Some(PreparedSemanticQuery {
+        model_id: model_id.to_string(),
+        dimension,
+        query: SemanticQueryVector::new(query.values().to_vec())
+            .map_err(search_runtime_cli_error)?,
+    }))
+}
 
-    Ok(LocalSearchOutcome::Hits(hits))
+fn validate_local_semantic_contract(
+    contract: SemanticContract,
+    prepared: Option<&PreparedSemanticQuery>,
+) -> std::result::Result<(), SearchRuntimeError> {
+    match (contract, prepared) {
+        (_, None) => Ok(()),
+        (SemanticContract::Disabled, Some(_)) => Err(SearchRuntimeError::integrity_violation()),
+        (
+            SemanticContract::Enabled {
+                model_id,
+                dimension,
+            },
+            Some(prepared),
+        ) if model_id == prepared.model_id && dimension == prepared.dimension => Ok(()),
+        (SemanticContract::Enabled { .. }, Some(_)) => {
+            Err(SearchRuntimeError::integrity_violation())
+        }
+    }
+}
+
+fn local_fulltext_candidates(
+    scope: &QueryScope<'_>,
+    query: &str,
+    limit: HitLimit,
+    selection: Option<&FilterSelection>,
+    timings: Option<&mut BenchmarkQueryProtocolStageTimings>,
+) -> std::result::Result<Vec<LocalRankedCandidate>, SearchRuntimeError> {
+    let started = Instant::now();
+    let hits = scope.fulltext_candidates(query, limit, selection)?;
+    if let Some(timings) = timings {
+        timings.bm25_ms += duration_ms(started.elapsed());
+    }
+    Ok(hits.into_iter().map(local_fulltext_candidate).collect())
+}
+
+fn local_fulltext_candidate(hit: FullTextCandidate) -> LocalRankedCandidate {
+    LocalRankedCandidate {
+        projection: hit.projection,
+        score: hit.score,
+        file_name: hit.file_name,
+        snippet: hit.snippet,
+    }
+}
+
+fn local_semantic_candidates(
+    scope: &QueryScope<'_>,
+    query: SemanticQueryVector,
+    limit: HitLimit,
+    selection: Option<&FilterSelection>,
+    timings: Option<&mut BenchmarkQueryProtocolStageTimings>,
+) -> std::result::Result<Vec<LocalRankedCandidate>, SearchRuntimeError> {
+    let started = Instant::now();
+    let hits = scope.semantic_candidates(query, limit, selection)?;
+    if let Some(timings) = timings {
+        timings.ann_ms += duration_ms(started.elapsed());
+    }
+    Ok(hits.into_iter().map(local_semantic_candidate).collect())
+}
+
+fn local_semantic_candidate(hit: SemanticCandidate) -> LocalRankedCandidate {
+    LocalRankedCandidate {
+        projection: hit.projection,
+        score: hit.score,
+        file_name: String::new(),
+        snippet: "semantic match".to_string(),
+    }
+}
+
+fn fuse_local_candidates(
+    lexical: Vec<LocalRankedCandidate>,
+    semantic: Vec<LocalRankedCandidate>,
+    limit: usize,
+) -> Vec<LocalRankedCandidate> {
+    let mut by_document = BTreeMap::<String, LocalRankedCandidate>::new();
+    for candidate in semantic.iter().chain(lexical.iter()) {
+        by_document
+            .entry(candidate.projection.document_id.to_string())
+            .and_modify(|stored| {
+                if stored.file_name.is_empty() && !candidate.file_name.is_empty() {
+                    stored.file_name.clone_from(&candidate.file_name);
+                    stored.snippet.clone_from(&candidate.snippet);
+                }
+            })
+            .or_insert_with(|| candidate.clone());
+    }
+    let recall = HybridRecall::new(
+        local_ranked_for_fusion(&lexical),
+        local_ranked_for_fusion(&semantic),
+    );
+    fuse_hybrid_rrf(recall, 60.0, limit)
+        .into_iter()
+        .filter_map(|ranked| {
+            by_document.remove(ranked.doc_id()).map(|mut candidate| {
+                candidate.score = ranked.score();
+                candidate
+            })
+        })
+        .collect()
+}
+
+fn local_ranked_for_fusion(candidates: &[LocalRankedCandidate]) -> Vec<RankedHit> {
+    candidates
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| {
+            RankedHit::new(
+                candidate.projection.document_id.to_string(),
+                index + 1,
+                candidate.score,
+            )
+        })
+        .collect()
+}
+
+fn hydrate_local_candidates(
+    scope: &QueryScope<'_>,
+    candidates: Vec<LocalRankedCandidate>,
+    top_k: usize,
+    timings: Option<&mut BenchmarkQueryProtocolStageTimings>,
+) -> std::result::Result<Vec<SearchOutputHit>, SearchRuntimeError> {
+    let projections = candidates
+        .iter()
+        .map(|candidate| candidate.projection.clone())
+        .collect::<Vec<_>>();
+    let started = Instant::now();
+    let hydrated = scope.hydrate_exact_hits(&projections)?;
+    if let Some(timings) = timings {
+        timings.bulk_hydrate_ms += duration_ms(started.elapsed());
+    }
+    let mut seen = BTreeSet::new();
+    let mut output = Vec::with_capacity(top_k.min(hydrated.len()));
+    for (candidate, metadata) in candidates.into_iter().zip(hydrated) {
+        if metadata.selection.document_id != candidate.projection.document_id
+            || metadata.selection.resume_version_id != candidate.projection.resume_version_id
+        {
+            return Err(SearchRuntimeError::integrity_violation());
+        }
+        if !seen.insert(local_fold_identity(&metadata)) {
+            continue;
+        }
+        output.push(SearchOutputHit {
+            rank: output.len() + 1,
+            selection: metadata.selection,
+            file_name: if candidate.file_name.is_empty() {
+                metadata.document.file_name
+            } else {
+                candidate.file_name
+            },
+            snippet: candidate.snippet,
+        });
+        if output.len() == top_k {
+            break;
+        }
+    }
+    Ok(output)
+}
+
+fn local_fold_identity(hit: &HydratedSearchHit) -> LocalFoldIdentity {
+    hit.candidate_id
+        .clone()
+        .map(LocalFoldIdentity::Candidate)
+        .unwrap_or_else(|| LocalFoldIdentity::Version(hit.selection.resume_version_id.clone()))
+}
+
+fn search_runtime_cli_error(error: SearchRuntimeError) -> CliError {
+    CliError::user(match error.code() {
+        SearchRuntimeErrorCode::Unavailable => "search service unavailable",
+        SearchRuntimeErrorCode::Integrity => "search runtime integrity failure",
+        SearchRuntimeErrorCode::SemanticDisabled => {
+            "semantic search unavailable: SEMANTIC_DISABLED"
+        }
+        SearchRuntimeErrorCode::SelectionTooLarge => "search filter selection is too large",
+        SearchRuntimeErrorCode::InvalidRequest => "search request is invalid",
+    })
 }
 
 fn record_search_query_observation(
@@ -15280,7 +15177,8 @@ fn search_ipc_command_with_token_file(
     let token = fs::read_to_string(token_file)
         .map_err(|_| CliError::user("unable to read daemon search ipc token"))?;
     let token = validate_daemon_ipc_token(&token, "daemon search ipc token is invalid")?;
-    let body = search_ipc_request_body(search_args);
+    let request_id = new_search_ipc_request_id()?;
+    let body = search_ipc_request_body(&request_id, search_args);
 
     let mut stream = TcpStream::connect_timeout(&endpoint.addr, Duration::from_secs(2))
         .map_err(|_| CliError::user("unable to connect to daemon search ipc"))?;
@@ -15315,18 +15213,35 @@ fn search_ipc_command_with_token_file(
 
     let body: serde_json::Value = serde_json::from_str(body)
         .map_err(|_| CliError::user("daemon search ipc returned invalid json"))?;
-    render_search_ipc_result(&body)?;
+    render_search_ipc_result(&body, &request_id)?;
     Ok(())
 }
 
-fn search_ipc_request_body(search_args: &SearchArgs) -> String {
+fn search_ipc_request_body(request_id: &str, search_args: &SearchArgs) -> String {
     serde_json::json!({
-        "query": search_args.query.as_str(),
-        "mode": search_args.mode.label(),
-        "top_k": search_args.top_k,
-        "filters": search_filters_json(&search_args.filters),
+        "schema_version": SEARCH_IPC_REQUEST_SCHEMA_VERSION,
+        "request_id": request_id,
+        "client_capability": "codex_validation",
+        "deadline_ms": SEARCH_IPC_DEFAULT_DEADLINE_MS,
+        "payload": {
+            "query": search_args.query.as_str(),
+            "mode": search_args.mode.label(),
+            "top_k": search_args.top_k,
+            "filters": search_filters_json(&search_args.filters),
+        },
     })
     .to_string()
+}
+
+fn new_search_ipc_request_id() -> Result<String> {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| CliError::user("system clock is before the Unix epoch"))?;
+    Ok(format!(
+        "cli-search-{}-{}",
+        std::process::id(),
+        duration.as_nanos()
+    ))
 }
 
 fn search_filters_json(filters: &SearchFilters) -> serde_json::Value {
@@ -15353,9 +15268,10 @@ fn search_filters_json(filters: &SearchFilters) -> serde_json::Value {
     })
 }
 
-fn render_search_ipc_result(body: &serde_json::Value) -> Result<()> {
-    if json_str(body, "schema_version") != Some("daemon.search.v1")
+fn render_search_ipc_result(body: &serde_json::Value, request_id: &str) -> Result<()> {
+    if json_str(body, "schema_version") != Some(SEARCH_IPC_RESPONSE_SCHEMA_VERSION)
         || json_str(body, "status") != Some("ok")
+        || json_str(body, "request_id") != Some(request_id)
     {
         return Err(CliError::user(
             "daemon search ipc returned invalid protocol",
@@ -15374,316 +15290,168 @@ fn render_search_ipc_result(body: &serde_json::Value) -> Result<()> {
             .get("rank")
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| CliError::user("daemon search ipc returned invalid protocol"))?;
-        let doc_id = json_str(result, "doc_id")
-            .ok_or_else(|| CliError::user("daemon search ipc returned invalid protocol"))?;
-        let version_id = json_str(result, "version_id")
+        let selection = result
+            .get("selection")
+            .and_then(parse_search_selection_json)
             .ok_or_else(|| CliError::user("daemon search ipc returned invalid protocol"))?;
         let file_name = json_str(result, "file_name")
             .ok_or_else(|| CliError::user("daemon search ipc returned invalid protocol"))?;
         let snippet = json_str(result, "snippet")
             .ok_or_else(|| CliError::user("daemon search ipc returned invalid protocol"))?;
         println!("rank: {rank}");
-        println!("doc_id: {doc_id}");
-        println!("version_id: {version_id}");
-        println!("file_name: {}", redact_contact_values(file_name));
+        println!("doc_id: {}", selection.document_id);
+        println!("version_id: {}", selection.resume_version_id);
+        println!("visible_epoch: {}", selection.visible_epoch);
+        println!("file_name: {}", redact_search_file_name(file_name));
         println!("snippet: {}", redact_contact_values(snippet));
-        if let Some(hint) = result.get("soft_dedupe") {
-            let suspected_versions = hint
-                .get("suspected_versions")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or_default();
-            let max_confidence = hint
-                .get("max_confidence")
-                .and_then(serde_json::Value::as_f64)
-                .unwrap_or_default();
-            if suspected_versions > 0 {
-                println!(
-                    "soft_dedupe: suspected_versions={} max_confidence={:.2} folded=false",
-                    suspected_versions, max_confidence
-                );
-            }
-        }
     }
     Ok(())
 }
 
-fn run_fulltext_search(
-    index: &FullTextIndex,
-    store: &MetaStore,
-    search_args: &SearchArgs,
-    candidate_limit: usize,
-) -> Result<Vec<SearchOutputHit>> {
-    let plan = plan_search(&search_args.query, candidate_limit)
-        .map_err(|_| CliError::user("search query is empty"))?;
-    let allowed_doc_ids = field_filter_doc_id_prefilter(store, &search_args.filters)?;
-    let query = SearchQuery::new(plan.query_text()).with_limit(plan.limit());
-    let hits = match &allowed_doc_ids {
-        Some(doc_ids) => index.search_allowed_doc_ids(query, doc_ids),
-        None => index.search(query),
-    }
-    .map_err(CliError::fulltext)?;
+fn search_selection_json(selection: &SearchSelection) -> serde_json::Value {
+    serde_json::json!({
+        "doc_id": selection.document_id.as_str(),
+        "version_id": selection.resume_version_id.as_str(),
+        "visible_epoch": selection.visible_epoch,
+    })
+}
 
-    if search_args.filters.is_empty() {
-        visible_hits(store, hits, candidate_limit)
+fn parse_search_selection_json(value: &serde_json::Value) -> Option<SearchSelection> {
+    let object = value.as_object()?;
+    if object.len() != 3 {
+        return None;
+    }
+    let document_id = DocumentId::from_str(json_str(value, "doc_id")?).ok()?;
+    let resume_version_id = ResumeVersionId::from_str(json_str(value, "version_id")?).ok()?;
+    let visible_epoch = value.get("visible_epoch")?.as_u64()?;
+    (visible_epoch > 0).then_some(SearchSelection {
+        document_id,
+        resume_version_id,
+        visible_epoch,
+    })
+}
+
+fn validate_search_selection_json(
+    value: &serde_json::Value,
+    expected: &SearchSelection,
+) -> Result<()> {
+    if parse_search_selection_json(value).as_ref() == Some(expected) {
+        Ok(())
     } else {
-        filter_hits(store, hits, &search_args.filters, candidate_limit)
+        Err(CliError::user(
+            "daemon detail ipc returned invalid protocol",
+        ))
     }
 }
 
-fn run_fulltext_search_for_benchmark(
-    index: &FullTextIndex,
-    store: &MetaStore,
-    search_args: &SearchArgs,
-    candidate_limit: usize,
-    timings: &mut BenchmarkQueryProtocolStageTimings,
-) -> Result<Vec<SearchOutputHit>> {
-    let plan_started = Instant::now();
-    let plan = plan_search(&search_args.query, candidate_limit)
-        .map_err(|_| CliError::user("search query is empty"))?;
-    timings.query_parse_ms += duration_ms(plan_started.elapsed());
-
-    let prefilter_started = Instant::now();
-    let allowed_doc_ids = field_filter_doc_id_prefilter(store, &search_args.filters)?;
-    timings.prefilter_ms += duration_ms(prefilter_started.elapsed());
-
-    let query = SearchQuery::new(plan.query_text()).with_limit(plan.limit());
-    let bm25_started = Instant::now();
-    let hits = match &allowed_doc_ids {
-        Some(doc_ids) => index.search_allowed_doc_ids(query, doc_ids),
-        None => index.search(query),
+fn search_projection_filter(filters: &SearchFilters) -> Result<SearchProjectionFilter> {
+    let mut predicates = Vec::new();
+    if let Some(degree) = filters.degree_min() {
+        predicates.push(SearchProjectionPredicate::EntityValuesAny {
+            entity_type: EntityType::Degree,
+            normalized_values: degree_filter_values(degree),
+            min_confidence: FIELD_FILTER_CONFIDENCE_THRESHOLD,
+            case: SearchFilterCase::Exact,
+        });
     }
-    .map_err(CliError::fulltext)?;
-    timings.bm25_ms += duration_ms(bm25_started.elapsed());
-
-    let hydrate_started = Instant::now();
-    let hits = if search_args.filters.is_empty() {
-        visible_hits(store, hits, candidate_limit)
-    } else {
-        filter_hits(store, hits, &search_args.filters, candidate_limit)
-    }?;
-    timings.bulk_hydrate_ms += duration_ms(hydrate_started.elapsed());
-    Ok(hits)
-}
-
-fn field_filter_doc_id_prefilter(
-    store: &MetaStore,
-    filters: &SearchFilters,
-) -> Result<Option<BTreeSet<String>>> {
-    if filters.is_empty() {
-        return Ok(None);
+    push_search_text_filter(&mut predicates, EntityType::Name, filters.names_any());
+    push_search_school_tier_filter(&mut predicates, filters.school_tiers_any());
+    push_search_text_filter(&mut predicates, EntityType::School, filters.schools_any());
+    push_search_text_filter(&mut predicates, EntityType::Major, filters.majors_any());
+    push_search_text_filter(
+        &mut predicates,
+        EntityType::Certificate,
+        filters.certificates_any(),
+    );
+    if let Some(range) = filters.date_range_overlaps() {
+        predicates.push(SearchProjectionPredicate::DateRangeOverlap {
+            start_month: range.start_month(),
+            end_month: range.end_month(),
+            min_confidence: FIELD_FILTER_CONFIDENCE_THRESHOLD,
+        });
     }
-
-    let mut allowed_doc_ids = None;
-    if let Some(degree_min) = filters.degree_min() {
-        merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Degree,
-                    &degree_filter_values(degree_min),
-                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
-                    false,
-                )
-                .map_err(CliError::store)?,
-        );
-    }
-    if !filters.names_any().is_empty() {
-        merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Name,
-                    filters.names_any(),
-                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(CliError::store)?,
-        );
-    }
-    if !filters.school_tiers_any().is_empty() {
-        merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            school_tier_filter_doc_ids(store, filters.school_tiers_any())
-                .map_err(CliError::store)?,
-        );
-    }
-    if !filters.schools_any().is_empty() {
-        merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::School,
-                    filters.schools_any(),
-                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(CliError::store)?,
-        );
-    }
-    if !filters.majors_any().is_empty() {
-        merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Major,
-                    filters.majors_any(),
-                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(CliError::store)?,
-        );
-    }
-    if !filters.certificates_any().is_empty() {
-        merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Certificate,
-                    filters.certificates_any(),
-                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(CliError::store)?,
-        );
-    }
-    if let Some(date_range) = filters.date_range_overlaps() {
-        merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_date_range_overlap(
-                    date_range.start_month(),
-                    date_range.end_month(),
-                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
-                )
-                .map_err(CliError::store)?,
-        );
-    }
-    if !filters.companies_any().is_empty() {
-        merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Company,
-                    filters.companies_any(),
-                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(CliError::store)?,
-        );
-    }
-    if !filters.titles_any().is_empty() {
-        merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Title,
-                    filters.titles_any(),
-                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(CliError::store)?,
-        );
-    }
-    if !filters.locations_any().is_empty() {
-        merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Location,
-                    filters.locations_any(),
-                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(CliError::store)?,
-        );
-    }
-    if !filters.skills_any().is_empty() {
-        merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Skill,
-                    filters.skills_any(),
-                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(CliError::store)?,
-        );
-    }
+    push_search_text_filter(
+        &mut predicates,
+        EntityType::Company,
+        filters.companies_any(),
+    );
+    push_search_text_filter(&mut predicates, EntityType::Title, filters.titles_any());
+    push_search_text_filter(
+        &mut predicates,
+        EntityType::Location,
+        filters.locations_any(),
+    );
+    push_search_text_filter(&mut predicates, EntityType::Skill, filters.skills_any());
     if !filters.contact_hashes_any().is_empty() {
-        merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_contact_hashes(&contact_hash_filter_values(
-                    filters.contact_hashes_any(),
-                )?)
-                .map_err(CliError::store)?,
-        );
+        let hashes = filters
+            .contact_hashes_any()
+            .iter()
+            .map(|value| {
+                ContactHash::from_keyed_digest(value.clone())
+                    .map_err(|_| CliError::user("search contact filter is invalid"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        predicates.push(SearchProjectionPredicate::ContactHashesAny(hashes));
     }
-    if let Some(years_min) = filters.years_experience_min() {
-        merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_numeric_entity_min(
-                    EntityType::YearsExperience,
-                    years_min,
-                    FIELD_FILTER_CONFIDENCE_THRESHOLD,
-                )
-                .map_err(CliError::store)?,
-        );
+    if let Some(minimum) = filters.years_experience_min() {
+        predicates.push(SearchProjectionPredicate::NumericEntityMinimum {
+            entity_type: EntityType::YearsExperience,
+            minimum,
+            min_confidence: FIELD_FILTER_CONFIDENCE_THRESHOLD,
+        });
     }
-
-    Ok(allowed_doc_ids)
+    SearchProjectionFilter::new(predicates)
+        .map_err(|_| CliError::user("search filters are invalid"))
 }
 
-fn contact_hash_filter_values(contact_hashes: &[String]) -> Result<Vec<ContactHash>> {
-    contact_hashes
-        .iter()
-        .map(|contact_hash| {
-            ContactHash::from_keyed_digest(contact_hash.clone())
-                .map_err(|_| CliError::user("search contact filter is invalid"))
-        })
-        .collect()
+fn push_search_text_filter(
+    predicates: &mut Vec<SearchProjectionPredicate>,
+    entity_type: EntityType,
+    values: &[String],
+) {
+    if !values.is_empty() {
+        predicates.push(SearchProjectionPredicate::EntityValuesAny {
+            entity_type,
+            normalized_values: values.to_vec(),
+            min_confidence: FIELD_FILTER_CONFIDENCE_THRESHOLD,
+            case: SearchFilterCase::AsciiInsensitive,
+        });
+    }
 }
 
-fn school_tier_filter_doc_ids(
-    store: &MetaStore,
-    school_tiers: &[SchoolTier],
-) -> meta_store::Result<Vec<DocumentId>> {
-    let known_values = school_tiers
+fn push_search_school_tier_filter(
+    predicates: &mut Vec<SearchProjectionPredicate>,
+    tiers: &[SchoolTier],
+) {
+    if tiers.is_empty() {
+        return;
+    }
+    let include_missing = tiers.contains(&SchoolTier::Unknown);
+    let values = tiers
         .iter()
-        .filter(|school_tier| **school_tier != SchoolTier::Unknown)
-        .map(|school_tier| school_tier.canonical().to_string())
+        .filter(|tier| **tier != SchoolTier::Unknown)
+        .map(|tier| tier.canonical().to_string())
         .collect::<Vec<_>>();
-    let mut document_ids = Vec::new();
-    if !known_values.is_empty() {
-        document_ids.extend(store.searchable_document_ids_with_entity_values(
-            EntityType::SchoolTier,
-            &known_values,
-            FIELD_FILTER_CONFIDENCE_THRESHOLD,
-            false,
-        )?);
-    }
-    if school_tiers.contains(&SchoolTier::Unknown) {
-        document_ids.extend(store.searchable_document_ids_without_entity_type(
-            EntityType::SchoolTier,
-            FIELD_FILTER_CONFIDENCE_THRESHOLD,
-        )?);
-    }
-    Ok(document_ids)
-}
-
-fn merge_filter_doc_ids(current: &mut Option<BTreeSet<String>>, next: Vec<DocumentId>) {
-    let next = next
-        .into_iter()
-        .map(|document_id| document_id.to_string())
-        .collect::<BTreeSet<_>>();
-    match current {
-        Some(current) => {
-            *current = current.intersection(&next).cloned().collect();
-        }
-        None => *current = Some(next),
-    }
+    let predicate = match (values.is_empty(), include_missing) {
+        (true, true) => SearchProjectionPredicate::MissingEntityType {
+            entity_type: EntityType::SchoolTier,
+            min_confidence: FIELD_FILTER_CONFIDENCE_THRESHOLD,
+        },
+        (false, true) => SearchProjectionPredicate::EntityValuesAnyOrMissing {
+            entity_type: EntityType::SchoolTier,
+            normalized_values: values,
+            min_confidence: FIELD_FILTER_CONFIDENCE_THRESHOLD,
+            case: SearchFilterCase::Exact,
+        },
+        (false, false) => SearchProjectionPredicate::EntityValuesAny {
+            entity_type: EntityType::SchoolTier,
+            normalized_values: values,
+            min_confidence: FIELD_FILTER_CONFIDENCE_THRESHOLD,
+            case: SearchFilterCase::Exact,
+        },
+        (true, false) => return,
+    };
+    predicates.push(predicate);
 }
 
 fn degree_filter_values(min_degree: DegreeLevel) -> Vec<String> {
@@ -15704,16 +15472,11 @@ fn print_search_hits(hits: Vec<SearchOutputHit>) {
     println!("results: {}", hits.len());
     for hit in hits {
         println!("rank: {}", hit.rank);
-        println!("doc_id: {}", hit.doc_id);
-        println!("version_id: {}", hit.version_id);
-        println!("file_name: {}", hit.file_name);
+        println!("doc_id: {}", hit.selection.document_id);
+        println!("version_id: {}", hit.selection.resume_version_id);
+        println!("visible_epoch: {}", hit.selection.visible_epoch);
+        println!("file_name: {}", redact_search_file_name(&hit.file_name));
         println!("snippet: {}", hit.snippet);
-        if let Some(hint) = hit.soft_dedupe_hint {
-            println!(
-                "soft_dedupe: suspected_versions={} max_confidence={:.2} folded=false",
-                hint.suspected_versions, hint.max_confidence
-            );
-        }
     }
 }
 
@@ -15731,13 +15494,21 @@ fn detail_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return detail_ipc_command(endpoint, &detail_args);
     }
 
-    let document_id = DocumentId::from_str(&detail_args.doc_id)
-        .map_err(|_| CliError::user("detail doc id is invalid"))?;
+    let selection = detail_selection(&detail_args)?;
     let store = open_store(data_dir)?;
-    let detail = build_resume_detail(&store, &document_id)?
-        .ok_or_else(|| CliError::user("detail document was not found"))?;
+    let detail = build_resume_detail(&store, &selection)?;
     print_resume_detail(&detail);
     Ok(())
+}
+
+fn detail_selection(args: &DetailArgs) -> Result<SearchSelection> {
+    Ok(SearchSelection {
+        document_id: DocumentId::from_str(&args.doc_id)
+            .map_err(|_| CliError::user("detail doc id is invalid"))?,
+        resume_version_id: ResumeVersionId::from_str(&args.version_id)
+            .map_err(|_| CliError::user("detail version id is invalid"))?,
+        visible_epoch: args.visible_epoch,
+    })
 }
 
 fn detail_ipc_command(endpoint: &IpcDetailEndpoint, detail_args: &DetailArgs) -> Result<()> {
@@ -15756,8 +15527,12 @@ fn detail_ipc_command_with_token_file(
     let token = fs::read_to_string(token_file)
         .map_err(|_| CliError::user("unable to read daemon detail ipc token"))?;
     let token = validate_daemon_ipc_token(&token, "daemon detail ipc token is invalid")?;
+    let request_id = new_search_ipc_request_id()?.replacen("cli-search", "cli-detail", 1);
+    let selection = detail_selection(detail_args)?;
     let body = serde_json::json!({
-        "doc_id": detail_args.doc_id.as_str(),
+        "schema_version": "resume-ir.detail-request.v3",
+        "request_id": request_id,
+        "selection": search_selection_json(&selection),
     })
     .to_string();
 
@@ -15794,86 +15569,123 @@ fn detail_ipc_command_with_token_file(
 
     let body: serde_json::Value = serde_json::from_str(body)
         .map_err(|_| CliError::user("daemon detail ipc returned invalid json"))?;
-    render_detail_ipc_result(&body, detail_args.doc_id.as_str())?;
+    render_detail_ipc_result(&body, &request_id, &selection)?;
     Ok(())
 }
 
-fn render_detail_ipc_result(body: &serde_json::Value, expected_doc_id: &str) -> Result<()> {
-    if json_str(body, "schema_version") != Some("daemon.detail.v1")
+fn render_detail_ipc_result(
+    body: &serde_json::Value,
+    expected_request_id: &str,
+    expected_selection: &SearchSelection,
+) -> Result<()> {
+    if json_str(body, "schema_version") != Some(DETAIL_SCHEMA_VERSION)
         || json_str(body, "status") != Some("ok")
+        || json_str(body, "request_id") != Some(expected_request_id)
     {
         return Err(CliError::user(
             "daemon detail ipc returned invalid protocol",
         ));
     }
+    let selection = body
+        .get("selection")
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    validate_search_selection_json(selection, expected_selection)?;
     let document = body
         .get("document")
         .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
-    let doc_id = json_str(document, "doc_id")
-        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
-    if doc_id != expected_doc_id || DocumentId::from_str(doc_id).is_err() {
-        return Err(CliError::user(
-            "daemon detail ipc returned invalid protocol",
-        ));
-    }
-    let version_id = json_str(document, "version_id")
-        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
-    if ResumeVersionId::from_str(version_id).is_err() {
-        return Err(CliError::user(
-            "daemon detail ipc returned invalid protocol",
-        ));
-    }
-    let file_name = json_str(document, "file_name")
-        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
-    let extension = json_str(document, "extension")
-        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
-    if !is_valid_detail_extension_label(extension) {
-        return Err(CliError::user(
-            "daemon detail ipc returned invalid protocol",
-        ));
-    }
-    let document_status = json_str(document, "document_status")
-        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
-    if !is_valid_detail_document_status_label(document_status) {
-        return Err(CliError::user(
-            "daemon detail ipc returned invalid protocol",
-        ));
-    }
-    let visibility = json_str(document, "visibility")
-        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
-    if !matches!(visibility, "searchable" | "partial") {
-        return Err(CliError::user(
-            "daemon detail ipc returned invalid protocol",
-        ));
-    }
-    let byte_size = document
-        .get("byte_size")
+    let source_byte_size = document
+        .get("source_byte_size")
         .and_then(serde_json::Value::as_u64)
         .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    let parse_version = json_str(document, "parse_version")
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    let schema_version = json_str(document, "schema_version")
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    let language_set = document
+        .get("language_set")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?
+        .iter()
+        .map(|language| {
+            language
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let page_count = document
+        .get("page_count")
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value
+                .as_u64()
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))
+        })
+        .transpose()?;
+    let quality_score = document
+        .get("quality_score")
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value
+                .as_f64()
+                .map(|value| value as f32)
+                .filter(|value| value.is_finite())
+                .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))
+        })
+        .transpose()?;
     let snippet = json_str(document, "snippet")
         .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
     let fields = document
         .get("fields")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    let field_limit = detail_ipc_count(document, "field_limit")?;
+    let field_count_total = detail_ipc_count(document, "field_count_total")?;
+    let field_count_returned = detail_ipc_count(document, "field_count_returned")?;
+    let fields_truncated = document
+        .get("fields_truncated")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))?;
+    if field_limit != DETAIL_FIELD_LIMIT
+        || fields.len() > DETAIL_FIELD_LIMIT
+        || field_count_returned != fields.len()
+        || field_count_total < field_count_returned
+        || fields_truncated != (field_count_returned < field_count_total)
+    {
+        return Err(CliError::user(
+            "daemon detail ipc returned invalid protocol",
+        ));
+    }
 
     let fields = fields
         .iter()
         .map(parse_detail_ipc_field)
         .collect::<Result<Vec<_>>>()?;
     let detail = ResumeDetail {
-        doc_id: doc_id.to_string(),
-        version_id: version_id.to_string(),
-        file_name: redact_short_text(file_name, 160),
-        extension: extension.to_string(),
-        document_status: document_status.to_string(),
-        visibility: visibility.to_string(),
-        byte_size,
+        selection: expected_selection.clone(),
+        source_byte_size,
+        parse_version: parse_version.to_string(),
+        schema_version: schema_version.to_string(),
+        language_set,
+        page_count,
+        quality_score,
+        field_count_total,
+        field_count_returned,
+        fields_truncated,
         fields,
         snippet: redact_short_text(snippet, 240),
     };
     print_resume_detail(&detail);
     Ok(())
+}
+
+fn detail_ipc_count(document: &serde_json::Value, key: &str) -> Result<usize> {
+    document
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| CliError::user("daemon detail ipc returned invalid protocol"))
 }
 
 fn parse_detail_ipc_field(value: &serde_json::Value) -> Result<ResumeDetailField> {
@@ -15909,31 +15721,6 @@ fn parse_detail_ipc_field(value: &serde_json::Value) -> Result<ResumeDetailField
     })
 }
 
-fn is_valid_detail_extension_label(value: &str) -> bool {
-    matches!(value, "docx" | "pdf" | "doc" | "txt" | "image" | "other")
-}
-
-fn is_valid_detail_document_status_label(value: &str) -> bool {
-    matches!(
-        value,
-        "discovered"
-            | "fingerprinted"
-            | "parse_queued"
-            | "parse_running"
-            | "text_extracted"
-            | "ocr_required"
-            | "ocr_running"
-            | "ocr_done"
-            | "text_cleaned"
-            | "fields_extracted"
-            | "embedding_done"
-            | "indexed_partial"
-            | "searchable"
-            | "failed_retryable"
-            | "failed_permanent"
-    )
-}
-
 fn is_valid_detail_field_type_label(value: &str) -> bool {
     matches!(
         value,
@@ -15958,52 +15745,48 @@ fn is_valid_detail_field_type_label(value: &str) -> bool {
     )
 }
 
-fn build_resume_detail(
-    store: &MetaStore,
-    document_id: &DocumentId,
-) -> Result<Option<ResumeDetail>> {
-    let Some(document) = store.document_by_id(document_id).map_err(CliError::store)? else {
-        return Ok(None);
+fn build_resume_detail(store: &MetaStore, selection: &SearchSelection) -> Result<ResumeDetail> {
+    let request = SearchTextBytePageRequest::new(selection.clone(), 0, 240)
+        .map_err(|_| CliError::user("detail selection is invalid"))?;
+    let bundle = match store.search_selection_detail(&request) {
+        Ok(SearchSelectionDetailResolution::Current(bundle)) => bundle,
+        Ok(SearchSelectionDetailResolution::Stale) => {
+            return Err(CliError::user("detail selection is stale; refresh search"));
+        }
+        Ok(SearchSelectionDetailResolution::NotFound) => {
+            return Err(CliError::user("detail selection was not found"));
+        }
+        Ok(SearchSelectionDetailResolution::InvalidOffset) => {
+            return Err(CliError::user("detail selection is invalid"));
+        }
+        Ok(SearchSelectionDetailResolution::LimitExceeded(_)) => {
+            return Err(CliError::user("detail response exceeds its limit"));
+        }
+        Err(_) => return Err(CliError::user("detail metadata is unavailable")),
     };
-    if document.is_deleted || document.status == DocumentStatus::Deleted {
-        return Ok(None);
-    }
-    let Some(version) = select_detail_version(store, document_id)? else {
-        return Ok(None);
-    };
-    let fields = store
-        .entity_mentions_for_version(&version.id)
-        .map_err(CliError::store)?
+    let field_count_total = bundle.details.mentions.len();
+    let fields = bundle
+        .details
+        .mentions
         .iter()
+        .take(DETAIL_FIELD_LIMIT)
         .map(resume_detail_field_from_mention)
         .collect::<Vec<_>>();
-    let snippet = version
-        .clean_text
-        .as_deref()
-        .or(version.raw_text.as_deref())
-        .map(|text| redact_short_text(text, 240))
-        .unwrap_or_else(|| "none".to_string());
-
-    Ok(Some(ResumeDetail {
-        doc_id: document.id.to_string(),
-        version_id: version.id.to_string(),
-        file_name: redact_short_text(&document.file_name, 160),
-        extension: file_extension_label(&document.extension).to_string(),
-        document_status: document_status_label(document.status).to_string(),
-        visibility: resume_visibility_label(version.visibility).to_string(),
-        byte_size: document.byte_size,
+    let field_count_returned = fields.len();
+    Ok(ResumeDetail {
+        selection: bundle.details.selection.clone(),
+        source_byte_size: bundle.details.version.source_byte_size,
+        parse_version: bundle.details.version.parse_version.clone(),
+        schema_version: bundle.details.version.schema_version.clone(),
+        language_set: bundle.details.version.language_set.clone(),
+        page_count: bundle.details.version.page_count,
+        quality_score: bundle.details.version.quality_score,
+        field_count_total,
+        field_count_returned,
+        fields_truncated: field_count_returned < field_count_total,
         fields,
-        snippet,
-    }))
-}
-
-fn select_detail_version(
-    store: &MetaStore,
-    document_id: &DocumentId,
-) -> Result<Option<ResumeVersion>> {
-    store
-        .latest_visible_resume_version_for_document(document_id)
-        .map_err(CliError::store)
+        snippet: redact_short_text(&bundle.text_page.text, 240),
+    })
 }
 
 fn resume_detail_field_from_mention(mention: &EntityMention) -> ResumeDetailField {
@@ -16023,14 +15806,30 @@ fn resume_detail_field_from_mention(mention: &EntityMention) -> ResumeDetailFiel
 
 fn print_resume_detail(detail: &ResumeDetail) {
     println!("resume detail");
-    println!("doc_id: {}", detail.doc_id);
-    println!("version_id: {}", detail.version_id);
-    println!("file_name: {}", detail.file_name);
-    println!("extension: {}", detail.extension);
-    println!("document status: {}", detail.document_status);
-    println!("visibility: {}", detail.visibility);
-    println!("byte_size: {}", detail.byte_size);
-    println!("fields: {}", detail.fields.len());
+    println!("doc_id: {}", detail.selection.document_id);
+    println!("version_id: {}", detail.selection.resume_version_id);
+    println!("visible_epoch: {}", detail.selection.visible_epoch);
+    println!("source_byte_size: {}", detail.source_byte_size);
+    println!("parse_version: {}", detail.parse_version);
+    println!("schema_version: {}", detail.schema_version);
+    println!("languages: {}", detail.language_set.join(","));
+    println!(
+        "page_count: {}",
+        detail
+            .page_count
+            .map_or_else(|| "none".to_string(), |value| value.to_string())
+    );
+    println!(
+        "quality_score: {}",
+        detail
+            .quality_score
+            .map_or_else(|| "none".to_string(), |value| format!("{value:.3}"))
+    );
+    println!(
+        "fields: {}/{}",
+        detail.field_count_returned, detail.field_count_total
+    );
+    println!("fields truncated: {}", detail.fields_truncated);
     for field in &detail.fields {
         println!(
             "field: {} | value: {} | confidence: {:.2} | evidence: {} | extractor: {}",
@@ -16044,6 +15843,25 @@ fn redact_short_text(value: &str, max_chars: usize) -> String {
     let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
     let redacted = redact_contact_values(&compact);
     truncate_chars(&redacted, max_chars)
+}
+
+fn redact_search_file_name(value: &str) -> String {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let redacted = redact_contact_values(&compact);
+    truncate_utf8_bytes(&redacted, SEARCH_RESULT_FILE_NAME_MAX_BYTES)
+}
+
+fn truncate_utf8_bytes(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+
+    const ELLIPSIS: &str = "...";
+    let mut end = max_bytes.saturating_sub(ELLIPSIS.len());
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{}", &value[..end], ELLIPSIS)
 }
 
 fn truncate_chars(value: &str, max_chars: usize) -> String {
@@ -16076,21 +15894,32 @@ fn delete_command(data_dir: &Path, args: &[String]) -> Result<()> {
         .map_err(|_| CliError::user("delete doc id is invalid"))?;
     let store = open_store(data_dir)?;
     let now = current_timestamp()?;
-    let Some(deleted_document) = store
-        .mark_document_deleted(&document_id, now)
+    let Some(document) = store
+        .document_by_id(&document_id)
         .map_err(CliError::store)?
     else {
         return Err(CliError::user("delete document was not found"));
     };
-    let deleted_doc_ids = BTreeSet::from([deleted_document.id.as_str().to_string()]);
-    let rebuild = remove_documents_from_full_text_index(data_dir, &store, &deleted_doc_ids, now)
-        .map_err(CliError::import)?;
+    if document.is_deleted || document.status == DocumentStatus::Deleted {
+        return Err(CliError::user("delete document was not found"));
+    }
+    let publication = publish_search_projection_removals(
+        data_dir,
+        &store,
+        &[SearchProjectionRemoval {
+            document_id: document_id.clone(),
+            reason: SearchProjectionRemovalReason::ConfirmedSourceDeletion,
+        }],
+        now,
+        &SearchPublicationVectorization::default(),
+    )
+    .map_err(CliError::import)?;
 
     println!("delete completed");
-    println!("doc_id: {}", deleted_document.id);
+    println!("doc_id: {document_id}");
     println!("status: deleted");
-    println!("index rebuilt: true");
-    println!("indexed documents: {}", rebuild.indexed_documents);
+    println!("publication committed: true");
+    println!("indexed documents: {}", publication.active_projection_count);
 
     Ok(())
 }
@@ -16249,7 +16078,7 @@ fn delete_ipc_command_with_token_file(
 }
 
 fn render_delete_ipc_result(body: &serde_json::Value, expected_doc_id: &str) -> Result<()> {
-    if json_str(body, "schema_version") != Some("daemon.delete.v1")
+    if json_str(body, "schema_version") != Some("resume-ir.delete-response.v2")
         || json_str(body, "status") != Some("ok")
     {
         return Err(CliError::user(
@@ -16263,10 +16092,15 @@ fn render_delete_ipc_result(body: &serde_json::Value, expected_doc_id: &str) -> 
             "daemon delete ipc returned invalid protocol",
         ));
     }
-    let index_rebuilt = body
-        .get("index_rebuilt")
+    let publication_committed = body
+        .get("publication_committed")
         .and_then(serde_json::Value::as_bool)
         .ok_or_else(|| CliError::user("daemon delete ipc returned invalid protocol"))?;
+    if !publication_committed {
+        return Err(CliError::user(
+            "daemon delete ipc returned invalid protocol",
+        ));
+    }
     let indexed_documents = body
         .get("indexed_documents")
         .and_then(serde_json::Value::as_u64)
@@ -16275,7 +16109,7 @@ fn render_delete_ipc_result(body: &serde_json::Value, expected_doc_id: &str) -> 
     println!("delete completed");
     println!("doc_id: {doc_id}");
     println!("status: deleted");
-    println!("index rebuilt: {index_rebuilt}");
+    println!("publication committed: true");
     println!("indexed documents: {indexed_documents}");
     Ok(())
 }
@@ -16310,7 +16144,6 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let residual_probe =
         PurgeResidualProbe::collect(&store, &deleted_document_ids, &ocr_cache_hashes)?;
 
-    let vector_documents_purged = purge_vector_documents(data_dir, &deleted_doc_id_set)?;
     let import_task_purge = store
         .purge_import_tasks_for_deleted_document_roots(&deleted_document_ids)
         .map_err(CliError::store)?;
@@ -16324,10 +16157,24 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let rebuild = if deleted_document_ids.is_empty() {
         None
     } else {
-        Some(rebuild_full_text_index(data_dir, &store, now).map_err(CliError::import)?)
+        Some(
+            rebuild_search_artifacts(
+                data_dir,
+                &store,
+                now,
+                &SearchPublicationVectorization::default(),
+            )
+            .map_err(CliError::import)?,
+        )
     };
-    let snapshot_purge =
-        purge_obsolete_snapshots(&data_dir.join("search-index")).map_err(CliError::fulltext)?;
+    let snapshot_purge = reconcile_search_artifacts(
+        data_dir,
+        &store,
+        now,
+        &SearchPublicationVectorization::default(),
+    )
+    .map_err(CliError::import)?;
+    let vector_documents_purged = deleted_doc_id_set.len();
     let purged_documents = store.purge_deleted_documents().map_err(CliError::store)?;
     let residual_scan = residual_probe.scan_data_dir(data_dir)?;
     if residual_scan.retained_markers > 0 {
@@ -16338,22 +16185,34 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
     println!("purge completed");
     println!("scope: deleted");
-    println!("purged documents: {purged_documents}");
+    println!("purged documents: {}", purged_documents.deleted_documents);
+    println!(
+        "remaining purge tombstones: {}",
+        purged_documents.remaining_tombstones
+    );
     println!("index rebuilt: {}", rebuild.is_some());
     println!(
         "indexed documents: {}",
         rebuild
             .as_ref()
-            .map(|summary| summary.indexed_documents)
+            .map(|summary| summary.active_projection_count)
             .unwrap_or(0)
     );
     println!(
         "full-text snapshots purged: {}",
-        snapshot_purge.removed_snapshots()
+        snapshot_purge.fulltext_generations_removed
     );
     println!(
         "full-text staging purged: {}",
-        snapshot_purge.removed_staging()
+        snapshot_purge.fulltext_staging_directories_removed
+    );
+    println!(
+        "vector generations purged: {}",
+        snapshot_purge.vector_generations_removed
+    );
+    println!(
+        "vector staging purged: {}",
+        snapshot_purge.vector_staging_directories_removed
     );
     println!("vector documents purged: {vector_documents_purged}");
     println!("purged import tasks: {}", import_task_purge.tasks());
@@ -16580,33 +16439,6 @@ fn purge_residual_window_contains_marker(buffer: &[u8], markers: &BTreeSet<Vec<u
     markers.iter().any(|marker| {
         marker.len() <= buffer.len() && buffer.windows(marker.len()).any(|window| window == marker)
     })
-}
-
-fn purge_vector_documents(data_dir: &Path, doc_ids: &BTreeSet<String>) -> Result<usize> {
-    if doc_ids.is_empty() {
-        return Ok(0);
-    }
-
-    let vector_root = data_dir.join("vector-index");
-    let inspection = inspect_persistent_vector_snapshot(&vector_root);
-    match (inspection.state(), inspection.snapshot()) {
-        (PersistentVectorSnapshotState::Missing, _) => Ok(0),
-        (
-            PersistentVectorSnapshotState::Ready | PersistentVectorSnapshotState::Recovered,
-            Some(snapshot),
-        ) => {
-            let index = PersistentVectorIndex::open(&vector_root, snapshot.dimension())
-                .map_err(CliError::vector)?;
-            index.purge_doc_ids(doc_ids).map_err(CliError::vector)
-        }
-        (PersistentVectorSnapshotState::Corrupt, _) => {
-            Err(CliError::user("purge blocked: vector index is corrupt"))
-        }
-        (PersistentVectorSnapshotState::Unreadable, _) => {
-            Err(CliError::user("purge blocked: vector index is unreadable"))
-        }
-        _ => Err(CliError::user("purge blocked: vector index is not ready")),
-    }
 }
 
 fn purge_usage() -> &'static str {
@@ -17087,6 +16919,7 @@ fn run_claimed_ocr_job(
         confidence,
         Some(page_count),
         now,
+        &SearchPublicationVectorization::default(),
     )
     .map_err(CliError::import)?;
     Ok(OcrWorkerSummary {
@@ -17309,401 +17142,6 @@ fn ocr_worker_usage() -> CliError {
     CliError::usage(ocr_worker_usage_text())
 }
 
-fn embed_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
-    let worker_args = parse_embed_worker_args(args)?;
-    let Some(command) = worker_args.command.clone() else {
-        return Err(CliError::user(
-            "embedding worker blocked: local embedding command not configured",
-        ));
-    };
-    let model_id = worker_args
-        .model_id
-        .as_deref()
-        .ok_or_else(embed_worker_usage)?;
-    let dimension = worker_args.dimension.ok_or_else(embed_worker_usage)?;
-    let store = open_store(data_dir)?;
-    let candidates = embedding_candidates(&store, worker_args.max_docs)?;
-    let embedding_summary = run_local_embedding_jobs(
-        data_dir,
-        &candidates,
-        command,
-        model_id,
-        dimension,
-        worker_args.max_text_bytes,
-        worker_args.timeout_ms,
-    )?;
-
-    if embedding_summary.documents_considered == 0 {
-        let vector_diagnostic = inspect_vector_index(data_dir);
-        println!("embedding worker: completed");
-        println!("model id: {model_id}");
-        println!("dimension: {dimension}");
-        println!("documents considered: 0");
-        println!("documents embedded: 0");
-        println!("vector index: {}", vector_diagnostic.index_label());
-        return Ok(());
-    }
-
-    let vector_diagnostic = inspect_vector_index(data_dir);
-    println!("embedding worker: completed");
-    println!("model id: {model_id}");
-    println!("dimension: {dimension}");
-    println!(
-        "documents considered: {}",
-        embedding_summary.documents_considered
-    );
-    println!(
-        "documents embedded: {}",
-        embedding_summary.documents_embedded
-    );
-    println!("vector inputs: {}", embedding_summary.vector_inputs);
-    println!("vector index: {}", vector_diagnostic.index_label());
-
-    Ok(())
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct LocalEmbeddingRunSummary {
-    documents_considered: usize,
-    documents_embedded: usize,
-    vector_inputs: usize,
-}
-
-fn run_local_embedding_jobs(
-    data_dir: &Path,
-    candidates: &[EmbedWorkerCandidate],
-    command: PathBuf,
-    model_id: &str,
-    dimension: usize,
-    max_text_bytes: usize,
-    timeout_ms: u64,
-) -> Result<LocalEmbeddingRunSummary> {
-    let documents_considered = candidates.len();
-    if candidates.is_empty() {
-        return Ok(LocalEmbeddingRunSummary {
-            documents_considered,
-            documents_embedded: 0,
-            vector_inputs: 0,
-        });
-    }
-
-    let embedder = LocalEmbeddingCommandEmbedder::new(
-        LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), model_id, dimension)
-            .map_err(CliError::embedding)?
-            .with_timeout_ms(timeout_ms)
-            .map_err(CliError::embedding)?,
-    );
-    let vector_inputs = embedding_inputs_for_candidates(candidates);
-    let inputs = vector_inputs
-        .iter()
-        .map(|input| EmbeddingInput::new(input.input_id.as_str(), input.text.as_str()))
-        .collect::<Vec<_>>();
-    let vectors = embedder
-        .embed_batch(&inputs, EmbeddingBudget::new(inputs.len(), max_text_bytes))
-        .map_err(CliError::embedding)?;
-    let vector_documents = vectors
-        .into_iter()
-        .zip(vector_inputs.iter())
-        .map(|(vector, input)| {
-            VectorDocument::new_for_model(
-                vector.model_id(),
-                format!("{}:{}", vector.model_id(), vector.id()),
-                input.document_id.as_str(),
-                vector.values().to_vec(),
-            )
-            .map_err(CliError::vector)
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let index = PersistentVectorIndex::open(data_dir.join("vector-index"), dimension)
-        .map_err(CliError::vector)?;
-    index.upsert(vector_documents).map_err(CliError::vector)?;
-
-    Ok(LocalEmbeddingRunSummary {
-        documents_considered,
-        documents_embedded: candidates.len(),
-        vector_inputs: inputs.len(),
-    })
-}
-
-#[derive(Clone, PartialEq, Eq)]
-struct EmbedWorkerCandidate {
-    document_id: DocumentId,
-    version_id: ResumeVersionId,
-    text: String,
-}
-
-impl fmt::Debug for EmbedWorkerCandidate {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("EmbedWorkerCandidate")
-            .field("document_id", &self.document_id)
-            .field("version_id", &self.version_id)
-            .field("text", &"<redacted>")
-            .field("text_bytes", &self.text.len())
-            .finish()
-    }
-}
-
-fn embedding_candidates(store: &MetaStore, max_docs: usize) -> Result<Vec<EmbedWorkerCandidate>> {
-    let mut candidates = Vec::new();
-    for document in store.visible_documents().map_err(CliError::store)? {
-        if !matches!(
-            document.status,
-            DocumentStatus::FieldsExtracted
-                | DocumentStatus::EmbeddingDone
-                | DocumentStatus::IndexedPartial
-                | DocumentStatus::Searchable
-        ) {
-            continue;
-        }
-
-        for version in store
-            .resume_versions_for_document(&document.id)
-            .map_err(CliError::store)?
-        {
-            if version.visibility != ResumeVisibility::Searchable {
-                continue;
-            }
-            let Some(text) = version
-                .clean_text
-                .as_deref()
-                .or(version.raw_text.as_deref())
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-            else {
-                continue;
-            };
-            candidates.push(EmbedWorkerCandidate {
-                document_id: document.id.clone(),
-                version_id: version.id,
-                text: text.to_string(),
-            });
-            if candidates.len() == max_docs {
-                return Ok(candidates);
-            }
-        }
-    }
-
-    Ok(candidates)
-}
-
-#[derive(Clone, PartialEq, Eq)]
-struct EmbedWorkerInput {
-    document_id: DocumentId,
-    input_id: String,
-    text: String,
-}
-
-impl fmt::Debug for EmbedWorkerInput {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("EmbedWorkerInput")
-            .field("document_id", &self.document_id)
-            .field("input_id", &self.input_id)
-            .field("text", &"<redacted>")
-            .field("text_bytes", &self.text.len())
-            .finish()
-    }
-}
-
-fn embedding_inputs_for_candidates(candidates: &[EmbedWorkerCandidate]) -> Vec<EmbedWorkerInput> {
-    let sectionizer = Sectionizer::default();
-    candidates
-        .iter()
-        .flat_map(|candidate| embedding_inputs_for_candidate(candidate, &sectionizer))
-        .collect()
-}
-
-fn embedding_inputs_for_candidate(
-    candidate: &EmbedWorkerCandidate,
-    sectionizer: &Sectionizer,
-) -> Vec<EmbedWorkerInput> {
-    let mut inputs = vec![EmbedWorkerInput {
-        document_id: candidate.document_id.clone(),
-        input_id: candidate.version_id.to_string(),
-        text: candidate.text.clone(),
-    }];
-    let sections = sectionizer.sectionize(&candidate.text);
-    let full_text = candidate.text.trim();
-    let should_embed_sections = sections.len() > 1
-        || sections
-            .iter()
-            .any(|section| section.text.trim() != full_text);
-
-    if should_embed_sections {
-        inputs.extend(sections.into_iter().filter_map(|section| {
-            let text = section.text.trim();
-            if text.is_empty() {
-                return None;
-            }
-
-            Some(EmbedWorkerInput {
-                document_id: candidate.document_id.clone(),
-                input_id: section_embedding_input_id(&candidate.version_id, section.order_no),
-                text: text.to_string(),
-            })
-        }));
-    }
-
-    inputs
-}
-
-fn section_embedding_input_id(version_id: &ResumeVersionId, order_no: u32) -> String {
-    format!("{version_id}:section:{order_no}")
-}
-
-#[derive(Clone, PartialEq, Eq)]
-struct EmbedWorkerArgs {
-    command: Option<PathBuf>,
-    model_id: Option<String>,
-    dimension: Option<usize>,
-    max_docs: usize,
-    max_text_bytes: usize,
-    timeout_ms: u64,
-}
-
-impl fmt::Debug for EmbedWorkerArgs {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("EmbedWorkerArgs")
-            .field("command_configured", &self.command.is_some())
-            .field("command", &self.command.as_ref().map(|_| "<redacted>"))
-            .field("model_id", &self.model_id)
-            .field("dimension", &self.dimension)
-            .field("max_docs", &self.max_docs)
-            .field("max_text_bytes", &self.max_text_bytes)
-            .field("timeout_ms", &self.timeout_ms)
-            .finish()
-    }
-}
-
-fn parse_embed_worker_args(args: &[String]) -> Result<EmbedWorkerArgs> {
-    let mut seen_once = false;
-    let mut command = None;
-    let mut model_id = None;
-    let mut dimension = None;
-    let mut max_docs = 64_usize;
-    let mut max_text_bytes = 1_000_000_usize;
-    let mut timeout_ms = 30_000_u64;
-    let mut index = 0;
-
-    while index < args.len() {
-        match args[index].as_str() {
-            "--once" => {
-                if seen_once {
-                    return Err(embed_worker_usage());
-                }
-                seen_once = true;
-                index += 1;
-            }
-            "--command" => {
-                index += 1;
-                let Some(value) = args.get(index) else {
-                    return Err(embed_worker_usage());
-                };
-                if command.is_some() {
-                    return Err(embed_worker_usage());
-                }
-                command = Some(PathBuf::from(value));
-                index += 1;
-            }
-            "--model-id" => {
-                index += 1;
-                let Some(value) = args.get(index) else {
-                    return Err(embed_worker_usage());
-                };
-                if model_id.is_some() || !valid_cli_identifier(value) {
-                    return Err(embed_worker_usage());
-                }
-                model_id = Some(value.clone());
-                index += 1;
-            }
-            "--dimension" => {
-                index += 1;
-                let Some(value) = args.get(index) else {
-                    return Err(embed_worker_usage());
-                };
-                if dimension.is_some() {
-                    return Err(embed_worker_usage());
-                }
-                dimension = Some(
-                    value
-                        .parse::<usize>()
-                        .ok()
-                        .filter(|value| *value > 0)
-                        .ok_or_else(embed_worker_usage)?,
-                );
-                index += 1;
-            }
-            "--max-docs" => {
-                index += 1;
-                let Some(value) = args.get(index) else {
-                    return Err(embed_worker_usage());
-                };
-                max_docs = value
-                    .parse::<usize>()
-                    .ok()
-                    .filter(|value| *value > 0)
-                    .ok_or_else(embed_worker_usage)?;
-                index += 1;
-            }
-            "--max-text-bytes" => {
-                index += 1;
-                let Some(value) = args.get(index) else {
-                    return Err(embed_worker_usage());
-                };
-                max_text_bytes = value
-                    .parse::<usize>()
-                    .ok()
-                    .filter(|value| *value > 0)
-                    .ok_or_else(embed_worker_usage)?;
-                index += 1;
-            }
-            "--timeout-ms" => {
-                index += 1;
-                let Some(value) = args.get(index) else {
-                    return Err(embed_worker_usage());
-                };
-                timeout_ms = value
-                    .parse::<u64>()
-                    .ok()
-                    .filter(|value| *value > 0)
-                    .ok_or_else(embed_worker_usage)?;
-                index += 1;
-            }
-            _ => return Err(embed_worker_usage()),
-        }
-    }
-
-    if !seen_once {
-        return Err(embed_worker_usage());
-    }
-
-    Ok(EmbedWorkerArgs {
-        command,
-        model_id,
-        dimension,
-        max_docs,
-        max_text_bytes,
-        timeout_ms,
-    })
-}
-
-fn valid_cli_identifier(value: &str) -> bool {
-    !value.trim().is_empty()
-        && !value.contains('\n')
-        && !value.contains('\r')
-        && !value.contains('\t')
-}
-
-fn embed_worker_usage_text() -> &'static str {
-    "usage: resume-cli embed-worker --once [--command <path>] [--model-id <id>] [--dimension <n>] [--max-docs <n>] [--max-text-bytes <bytes>] [--timeout-ms <ms>]"
-}
-
-fn embed_worker_usage() -> CliError {
-    CliError::usage(embed_worker_usage_text())
-}
-
 fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let diagnostic_args = parse_doctor_args(args)?;
     if let Some(root) = diagnostic_args
@@ -17726,7 +17164,7 @@ fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let scan_error_breakdown = store
         .import_scan_error_breakdown()
         .map_err(CliError::store)?;
-    let index_diagnostic = inspect_search_index(data_dir);
+    let index_diagnostic = inspect_search_index(data_dir, &store);
     let vector_diagnostic = inspect_vector_index(data_dir);
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
     let resource_telemetry = collect_resource_telemetry(data_dir);
@@ -17790,7 +17228,12 @@ fn doctor_command(data_dir: &Path, args: &[String]) -> Result<()> {
         "snapshot fallback: {}",
         index_diagnostic.snapshot_fallback_label()
     );
-    println!("staging orphans: {}", index_diagnostic.staging_orphans());
+    println!(
+        "staging orphans: {}",
+        index_diagnostic
+            .staging_orphans()
+            .map_or_else(|| "not_inspected".to_string(), |count| count.to_string())
+    );
     println!("contact hash key: {}", contact_key.state().label());
     println!("resource telemetry: {}", resource_telemetry.status_label());
     println!(
@@ -18132,7 +17575,7 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let scan_error_breakdown = store
         .import_scan_error_breakdown()
         .map_err(CliError::store)?;
-    let index_diagnostic = inspect_search_index(data_dir);
+    let index_diagnostic = inspect_search_index(data_dir, &store);
     let vector_diagnostic = inspect_vector_index(data_dir);
     let contact_key = inspect_contact_hash_key(data_dir).map_err(CliError::privacy)?;
     let resource_telemetry = collect_resource_telemetry(data_dir);
@@ -18244,7 +17687,9 @@ fn export_diagnostics_command(data_dir: &Path, args: &[String]) -> Result<()> {
     );
     println!(
         "  \"staging_orphans\": {},",
-        index_diagnostic.staging_orphans()
+        index_diagnostic
+            .staging_orphans()
+            .map_or_else(|| "null".to_string(), |count| count.to_string())
     );
     println!(
         "  \"snapshot_fallback\": \"{}\",",
@@ -19128,6 +18573,10 @@ fn parse_search_args(data_dir: &Path, args: &[String]) -> Result<SearchArgs> {
         filters = filters.with_contact_hashes_any(contact_hashes_any);
     }
     let query = query.ok_or_else(|| CliError::usage(search_usage()))?;
+    let query = plan_search(&query, top_k)
+        .map_err(|_| CliError::user("search query is outside semantic bounds"))?
+        .query_text()
+        .to_string();
 
     Ok(SearchArgs {
         query,
@@ -19258,6 +18707,8 @@ fn parse_search_ipc_endpoint(value: &str) -> Result<IpcSearchEndpoint> {
 
 fn parse_detail_args(args: &[String]) -> Result<DetailArgs> {
     let mut doc_id = None;
+    let mut version_id = None;
+    let mut visible_epoch = None;
     let mut ipc_auto = false;
     let mut ipc_endpoint = None;
     let mut ipc_token_file = None;
@@ -19276,6 +18727,29 @@ fn parse_detail_args(args: &[String]) -> Result<DetailArgs> {
                     return Err(CliError::usage(detail_usage()));
                 }
                 doc_id = Some(value.clone());
+                index += 2;
+            }
+            "--version-id" => {
+                if version_id.is_some() {
+                    return Err(CliError::usage(detail_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(detail_usage()));
+                };
+                version_id = Some(value.clone());
+                index += 2;
+            }
+            "--visible-epoch" => {
+                if visible_epoch.is_some() {
+                    return Err(CliError::usage(detail_usage()));
+                }
+                let Some(value) = args.get(index + 1) else {
+                    return Err(CliError::usage(detail_usage()));
+                };
+                visible_epoch = value.parse::<u64>().ok().filter(|epoch| *epoch > 0);
+                if visible_epoch.is_none() {
+                    return Err(CliError::usage(detail_usage()));
+                }
                 index += 2;
             }
             "--ipc" => {
@@ -19315,6 +18789,8 @@ fn parse_detail_args(args: &[String]) -> Result<DetailArgs> {
 
     Ok(DetailArgs {
         doc_id: doc_id.ok_or_else(|| CliError::usage(detail_usage()))?,
+        version_id: version_id.ok_or_else(|| CliError::usage(detail_usage()))?,
+        visible_epoch: visible_epoch.ok_or_else(|| CliError::usage(detail_usage()))?,
         ipc_auto,
         ipc_endpoint,
         ipc_token_file,
@@ -19322,7 +18798,7 @@ fn parse_detail_args(args: &[String]) -> Result<DetailArgs> {
 }
 
 fn detail_usage() -> &'static str {
-    "usage: resume-cli detail --doc-id <doc_id> [--ipc auto|<http://127.0.0.1:port/details|/status> --ipc-token-file <path>]"
+    "usage: resume-cli detail --doc-id <doc_id> --version-id <version_id> --visible-epoch <epoch> [--ipc auto|<http://127.0.0.1:port/details|/status> --ipc-token-file <path>]"
 }
 
 fn parse_detail_ipc_endpoint(value: &str) -> Result<IpcDetailEndpoint> {
@@ -19344,662 +18820,12 @@ fn parse_detail_ipc_endpoint(value: &str) -> Result<IpcDetailEndpoint> {
     Ok(IpcDetailEndpoint { addr })
 }
 
-fn run_semantic_search(
-    data_dir: &Path,
-    store: &MetaStore,
-    search_args: &SearchArgs,
-    candidate_limit: usize,
-) -> Result<Vec<SearchOutputHit>> {
-    let command = search_args.embedding_command.clone().ok_or_else(|| {
-        CliError::user("semantic search blocked: local embedding command not configured")
-    })?;
-    let model_id = search_args.model_id.as_deref().ok_or_else(|| {
-        CliError::user("semantic search blocked: embedding model id not configured")
-    })?;
-    let snapshot_dimension = vector_snapshot_dimension(data_dir)?;
-    let dimension = search_args.dimension.unwrap_or(snapshot_dimension);
-    let embedder = LocalEmbeddingCommandEmbedder::new(
-        LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), model_id, dimension)
-            .map_err(CliError::embedding)?
-            .with_timeout_ms(search_args.embedding_timeout_ms)
-            .map_err(CliError::embedding)?,
-    );
-    let input = EmbeddingInput::new("query", search_args.query.as_str());
-    let query_vectors = embedder
-        .embed_batch(
-            &[input],
-            EmbeddingBudget::new(1, search_args.query.len().max(1)),
-        )
-        .map_err(CliError::embedding)?;
-    let query_vector = query_vectors
-        .into_iter()
-        .next()
-        .ok_or_else(|| CliError::user("semantic search query embedding is unavailable"))?;
-    let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), dimension)
-        .map_err(CliError::vector)?;
-    let vector_limit = search_args.vector_top_k.unwrap_or(candidate_limit);
-    let allowed_doc_ids = field_filter_doc_id_prefilter(store, &search_args.filters)?;
-    let vector_hits = vector_index
-        .knn_for_model(
-            QueryVector::new(query_vector.values().to_vec()).map_err(CliError::vector)?,
-            vector_limit,
-            model_id,
-        )
-        .map_err(CliError::vector)?;
-
-    vector_output_hits(
-        store,
-        vector_hits,
-        &search_args.filters,
-        allowed_doc_ids.as_ref(),
-        search_args.top_k,
-    )
-}
-
-fn run_semantic_search_for_benchmark(
-    data_dir: &Path,
-    store: &MetaStore,
-    search_args: &SearchArgs,
-    candidate_limit: usize,
-    timings: &mut BenchmarkQueryProtocolStageTimings,
-) -> Result<Vec<SearchOutputHit>> {
-    let command = search_args.embedding_command.clone().ok_or_else(|| {
-        CliError::user("semantic search blocked: local embedding command not configured")
-    })?;
-    let model_id = search_args.model_id.as_deref().ok_or_else(|| {
-        CliError::user("semantic search blocked: embedding model id not configured")
-    })?;
-    let snapshot_dimension = vector_snapshot_dimension(data_dir)?;
-    let dimension = search_args.dimension.unwrap_or(snapshot_dimension);
-
-    let prefilter_started = Instant::now();
-    let allowed_doc_ids = field_filter_doc_id_prefilter(store, &search_args.filters)?;
-    timings.prefilter_ms += duration_ms(prefilter_started.elapsed());
-
-    let ann_started = Instant::now();
-    let embedder = LocalEmbeddingCommandEmbedder::new(
-        LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), model_id, dimension)
-            .map_err(CliError::embedding)?
-            .with_timeout_ms(search_args.embedding_timeout_ms)
-            .map_err(CliError::embedding)?,
-    );
-    let input = EmbeddingInput::new("query", search_args.query.as_str());
-    let query_vectors = embedder
-        .embed_batch(
-            &[input],
-            EmbeddingBudget::new(1, search_args.query.len().max(1)),
-        )
-        .map_err(CliError::embedding)?;
-    let query_vector = query_vectors
-        .into_iter()
-        .next()
-        .ok_or_else(|| CliError::user("semantic search query embedding is unavailable"))?;
-    let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), dimension)
-        .map_err(CliError::vector)?;
-    let vector_limit = search_args.vector_top_k.unwrap_or(candidate_limit);
-    let vector_hits = vector_index
-        .knn_for_model(
-            QueryVector::new(query_vector.values().to_vec()).map_err(CliError::vector)?,
-            vector_limit,
-            model_id,
-        )
-        .map_err(CliError::vector)?;
-    timings.ann_ms += duration_ms(ann_started.elapsed());
-
-    let hydrate_started = Instant::now();
-    let hits = vector_output_hits(
-        store,
-        vector_hits,
-        &search_args.filters,
-        allowed_doc_ids.as_ref(),
-        search_args.top_k,
-    )?;
-    timings.bulk_hydrate_ms += duration_ms(hydrate_started.elapsed());
-    Ok(hits)
-}
-
-fn vector_snapshot_dimension(data_dir: &Path) -> Result<usize> {
-    let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
-    match (inspection.state(), inspection.snapshot()) {
-        (
-            PersistentVectorSnapshotState::Ready | PersistentVectorSnapshotState::Recovered,
-            Some(snapshot),
-        ) => Ok(snapshot.dimension()),
-        (PersistentVectorSnapshotState::Missing, _) => Err(CliError::user(
-            "semantic search unavailable: vector index is missing",
-        )),
-        (PersistentVectorSnapshotState::Corrupt, _) => Err(CliError::user(
-            "semantic search unavailable: vector index is corrupt",
-        )),
-        (PersistentVectorSnapshotState::Unreadable, _) => Err(CliError::user(
-            "semantic search unavailable: vector index is unreadable",
-        )),
-        _ => Err(CliError::user(
-            "semantic search unavailable: vector index is not ready",
-        )),
-    }
-}
-
-fn vector_output_hits(
-    store: &MetaStore,
-    hits: Vec<VectorHit>,
-    filters: &SearchFilters,
-    allowed_doc_ids: Option<&BTreeSet<String>>,
-    top_k: usize,
-) -> Result<Vec<SearchOutputHit>> {
-    let mut visible = Vec::new();
-    let mut seen_candidate_keys = BTreeSet::new();
-
-    for (rank, hit) in hits.into_iter().enumerate() {
-        if let Some(allowed_doc_ids) = allowed_doc_ids {
-            if !allowed_doc_ids.contains(hit.doc_id()) {
-                continue;
-            }
-        }
-        let Some((document, version)) = hydrate_visible_document_version(store, hit.doc_id())?
-        else {
-            continue;
-        };
-        if !filters.is_empty()
-            && !filters.matches(&persisted_profile(store, hit.doc_id(), &version)?)
-        {
-            continue;
-        }
-
-        let candidate_key = candidate_fold_key(&version);
-        if !seen_candidate_keys.insert(candidate_key.clone()) {
-            continue;
-        }
-
-        visible.push(SearchOutputHit {
-            rank: rank + 1,
-            score: hit.score(),
-            doc_id: document.id.to_string(),
-            version_id: version.id.to_string(),
-            file_name: redact_contact_values(&document.file_name),
-            snippet: "semantic match".to_string(),
-            candidate_key,
-            soft_dedupe_hint: None,
-        });
-        if visible.len() == top_k {
-            break;
-        }
-    }
-
-    Ok(rerank_output_hits(visible))
-}
-
-fn fuse_hybrid_output_hits(
-    fulltext_hits: Vec<SearchOutputHit>,
-    vector_hits: Vec<SearchOutputHit>,
-    top_k: usize,
-) -> Vec<SearchOutputHit> {
-    let mut by_doc = BTreeMap::<String, SearchOutputHit>::new();
-    for hit in vector_hits.iter().chain(fulltext_hits.iter()) {
-        by_doc.insert(hit.doc_id.clone(), hit.clone());
-    }
-    let fulltext_ranked = ranked_hits_from_output(&fulltext_hits);
-    let vector_ranked = ranked_hits_from_output(&vector_hits);
-    let fused = fuse_hybrid_rrf(
-        HybridRecall::new(fulltext_ranked, vector_ranked),
-        60.0,
-        top_k.saturating_mul(5).max(top_k),
-    );
-    let mut output = Vec::new();
-    let mut seen_candidate_keys = BTreeSet::new();
-    for ranked in fused {
-        let Some(hit) = by_doc.get(ranked.doc_id()) else {
-            continue;
-        };
-        if !seen_candidate_keys.insert(hit.candidate_key.clone()) {
-            continue;
-        }
-        let mut hit = hit.clone();
-        hit.rank = output.len() + 1;
-        hit.score = ranked.score();
-        output.push(hit);
-        if output.len() == top_k {
-            break;
-        }
-    }
-
-    output
-}
-
-fn ranked_hits_from_output(hits: &[SearchOutputHit]) -> Vec<RankedHit> {
-    hits.iter()
-        .enumerate()
-        .map(|(index, hit)| {
-            RankedHit::new(hit.doc_id.clone(), index + 1, hit.score)
-                .with_candidate_key(hit.candidate_key.clone())
-        })
-        .collect()
-}
-
-fn visible_hits(
-    store: &MetaStore,
-    hits: Vec<SearchHit>,
-    top_k: usize,
-) -> Result<Vec<SearchOutputHit>> {
-    let mut visible = Vec::new();
-    let mut seen_candidate_keys = BTreeSet::new();
-
-    for hit in hits {
-        let Some(version) = hydrate_visible_version(store, &hit)? else {
-            continue;
-        };
-        let candidate_key = candidate_fold_key(&version);
-        if !seen_candidate_keys.insert(candidate_key.clone()) {
-            continue;
-        }
-
-        visible.push(SearchOutputHit::from_fulltext(hit, candidate_key));
-        if visible.len() == top_k {
-            break;
-        }
-    }
-
-    Ok(rerank_output_hits(visible))
-}
-
-fn filter_hits(
-    store: &MetaStore,
-    hits: Vec<SearchHit>,
-    filters: &SearchFilters,
-    top_k: usize,
-) -> Result<Vec<SearchOutputHit>> {
-    let mut filtered = Vec::new();
-    let mut seen_candidate_keys = BTreeSet::new();
-
-    for hit in hits {
-        let Some(version) = hydrate_visible_version(store, &hit)? else {
-            continue;
-        };
-        let profile = persisted_profile(store, &hit.doc_id, &version)?;
-        if !filters.matches(&profile) {
-            continue;
-        }
-        let candidate_key = candidate_fold_key(&version);
-        if !seen_candidate_keys.insert(candidate_key.clone()) {
-            continue;
-        }
-
-        filtered.push(SearchOutputHit::from_fulltext(hit, candidate_key));
-        if filtered.len() == top_k {
-            break;
-        }
-    }
-
-    Ok(rerank_output_hits(filtered))
-}
-
-fn rerank_output_hits(mut hits: Vec<SearchOutputHit>) -> Vec<SearchOutputHit> {
-    for (index, hit) in hits.iter_mut().enumerate() {
-        hit.rank = index + 1;
-    }
-    hits
-}
-
-fn attach_soft_dedupe_hints(
-    store: &MetaStore,
-    mut hits: Vec<SearchOutputHit>,
-) -> Result<Vec<SearchOutputHit>> {
-    let hints = hits
-        .iter()
-        .map(|hit| soft_dedupe_hint_for_hit(store, hit))
-        .collect::<Result<Vec<_>>>()?;
-    for (hit, hint) in hits.iter_mut().zip(hints) {
-        hit.soft_dedupe_hint = hint;
-    }
-    Ok(hits)
-}
-
-fn attach_soft_dedupe_hints_for_benchmark(
-    store: &MetaStore,
-    hits: Vec<SearchOutputHit>,
-    timings: &mut BenchmarkQueryProtocolStageTimings,
-) -> Result<Vec<SearchOutputHit>> {
-    let started = Instant::now();
-    let hits = attach_soft_dedupe_hints(store, hits)?;
-    timings.bulk_hydrate_ms += duration_ms(started.elapsed());
-    Ok(hits)
-}
-
-fn soft_dedupe_hint_for_hit(
-    store: &MetaStore,
-    hit: &SearchOutputHit,
-) -> Result<Option<SoftDedupeHint>> {
-    if hit.candidate_key.starts_with("candidate:") {
-        return Ok(None);
-    }
-    let Some(profile) = dedupe_profile_for_hit(store, hit)? else {
-        return Ok(None);
-    };
-    let Some(name) = profile.name() else {
-        return Ok(None);
-    };
-    let candidate_doc_ids = store
-        .searchable_document_ids_with_entity_values(
-            EntityType::Name,
-            &[name.to_string()],
-            FIELD_FILTER_CONFIDENCE_THRESHOLD,
-            true,
-        )
-        .map_err(CliError::store)?;
-    let mut suspected_versions = 0_usize;
-    let mut max_confidence = 0.0_f32;
-
-    for candidate_doc_id in candidate_doc_ids.into_iter().take(64) {
-        if candidate_doc_id.as_str() == hit.doc_id {
-            continue;
-        }
-        let versions = store
-            .resume_versions_for_document(&candidate_doc_id)
-            .map_err(CliError::store)?;
-        for version in versions {
-            if version.id.as_str() == hit.version_id
-                || version.visibility != ResumeVisibility::Searchable
-                || version.candidate_id.is_some()
-            {
-                continue;
-            }
-            let other_hit = SearchOutputHit {
-                rank: 0,
-                score: 0.0,
-                doc_id: version.document_id.to_string(),
-                version_id: version.id.to_string(),
-                file_name: String::new(),
-                snippet: String::new(),
-                candidate_key: candidate_fold_key(&version),
-                soft_dedupe_hint: None,
-            };
-            let Some(other_profile) = dedupe_profile_for_hit(store, &other_hit)? else {
-                continue;
-            };
-            if let Some(score) = soft_dedupe_score(&profile, &other_profile) {
-                suspected_versions += 1;
-                max_confidence = max_confidence.max(score.confidence());
-            }
-        }
-    }
-
-    Ok((suspected_versions > 0).then_some(SoftDedupeHint {
-        suspected_versions,
-        max_confidence,
-    }))
-}
-
-fn dedupe_profile_for_hit(
-    store: &MetaStore,
-    hit: &SearchOutputHit,
-) -> Result<Option<DedupeProfile>> {
-    let Ok(version_id) = ResumeVersionId::from_str(&hit.version_id) else {
-        return Ok(None);
-    };
-    let Some(version) = store
-        .resume_version_by_id(&version_id)
-        .map_err(CliError::store)?
-    else {
-        return Ok(None);
-    };
-    if version.document_id.as_str() != hit.doc_id || version.candidate_id.is_some() {
-        return Ok(None);
-    }
-    let mentions = store
-        .entity_mentions_for_version(&version.id)
-        .map_err(CliError::store)?;
-    let Some(name) = best_normalized_entity_value(&mentions, EntityType::Name) else {
-        return Ok(None);
-    };
-    let profile = DedupeProfile::new(hit.doc_id.clone())
-        .with_name(&name)
-        .with_schools(normalized_entity_values(&mentions, EntityType::School))
-        .with_companies(normalized_entity_values(&mentions, EntityType::Company))
-        .with_skills(normalized_entity_values(&mentions, EntityType::Skill));
-
-    Ok(Some(profile))
-}
-
-fn best_normalized_entity_value(
-    mentions: &[EntityMention],
-    entity_type: EntityType,
-) -> Option<String> {
-    mentions
-        .iter()
-        .filter(|mention| {
-            mention.entity_type == entity_type
-                && mention.confidence >= FIELD_FILTER_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|mention| {
-            Some((
-                mention.normalized_value.as_deref()?.to_string(),
-                mention.confidence,
-                mention.span_start.unwrap_or(usize::MAX),
-            ))
-        })
-        .max_by(|left, right| {
-            left.1
-                .partial_cmp(&right.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| right.2.cmp(&left.2))
-                .then_with(|| right.0.cmp(&left.0))
-        })
-        .map(|candidate| candidate.0)
-}
-
-fn normalized_entity_values(mentions: &[EntityMention], entity_type: EntityType) -> Vec<String> {
-    mentions
-        .iter()
-        .filter(|mention| {
-            mention.entity_type == entity_type
-                && mention.confidence >= FIELD_FILTER_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|mention| mention.normalized_value.as_deref())
-        .map(str::to_string)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
-fn candidate_fold_key(version: &ResumeVersion) -> String {
-    version
-        .candidate_id
-        .as_ref()
-        .map(|candidate_id| format!("candidate:{}", candidate_id.as_str()))
-        .unwrap_or_else(|| format!("doc:{}", version.document_id.as_str()))
-}
-
-fn hydrate_visible_version(store: &MetaStore, hit: &SearchHit) -> Result<Option<ResumeVersion>> {
-    let Ok(document_id) = DocumentId::from_str(&hit.doc_id) else {
-        return Ok(None);
-    };
-    let Some(document) = store
-        .document_by_id(&document_id)
-        .map_err(CliError::store)?
-    else {
-        return Ok(None);
-    };
-    if document.is_deleted
-        || !matches!(
-            document.status,
-            DocumentStatus::Searchable | DocumentStatus::IndexedPartial
-        )
-    {
-        return Ok(None);
-    }
-
-    let Ok(version_id) = ResumeVersionId::from_str(&hit.version_id) else {
-        return Ok(None);
-    };
-    let Some(version) = store
-        .resume_version_by_id(&version_id)
-        .map_err(CliError::store)?
-    else {
-        return Ok(None);
-    };
-    if version.document_id != document_id {
-        return Ok(None);
-    }
-    if version.visibility != ResumeVisibility::Searchable {
-        return Ok(None);
-    }
-
-    Ok(Some(version))
-}
-
-fn persisted_profile(
-    store: &MetaStore,
-    doc_id: &str,
-    version: &ResumeVersion,
-) -> Result<ResumeProfile> {
-    let fields = store
-        .entity_mentions_for_version(&version.id)
-        .map_err(CliError::store)?;
-    let names = fields
-        .iter()
-        .filter(|field| field.entity_type == EntityType::Name && field.confidence >= 0.75)
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let degree = fields
-        .iter()
-        .filter(|field| field.entity_type == EntityType::Degree && field.confidence >= 0.75)
-        .filter_map(|field| DegreeLevel::parse(field.normalized_value.as_deref()?))
-        .max();
-    let skills = fields
-        .iter()
-        .filter(|field| field.entity_type == EntityType::Skill && field.confidence >= 0.75)
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let certificates = fields
-        .iter()
-        .filter(|field| field.entity_type == EntityType::Certificate && field.confidence >= 0.75)
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let date_ranges = fields
-        .iter()
-        .filter(|field| field.entity_type == EntityType::DateRange && field.confidence >= 0.75)
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let schools = fields
-        .iter()
-        .filter(|field| field.entity_type == EntityType::School && field.confidence >= 0.75)
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let majors = fields
-        .iter()
-        .filter(|field| field.entity_type == EntityType::Major && field.confidence >= 0.75)
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let companies = fields
-        .iter()
-        .filter(|field| field.entity_type == EntityType::Company && field.confidence >= 0.75)
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let titles = fields
-        .iter()
-        .filter(|field| field.entity_type == EntityType::Title && field.confidence >= 0.75)
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let locations = fields
-        .iter()
-        .filter(|field| field.entity_type == EntityType::Location && field.confidence >= 0.75)
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let school_tiers = fields
-        .iter()
-        .filter(|field| field.entity_type == EntityType::SchoolTier && field.confidence >= 0.75)
-        .filter_map(|field| SchoolTier::parse(field.normalized_value.as_deref()?))
-        .collect::<Vec<_>>();
-    let years_experience = fields
-        .iter()
-        .filter(|field| {
-            field.entity_type == EntityType::YearsExperience && field.confidence >= 0.75
-        })
-        .filter_map(|field| field.normalized_value.as_deref()?.parse::<f32>().ok())
-        .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
-
-    let mut profile = ResumeProfile::new(doc_id)
-        .with_names(names)
-        .with_school_tiers(school_tiers)
-        .with_schools(schools)
-        .with_majors(majors)
-        .with_certificates(certificates)
-        .with_date_ranges(date_ranges)
-        .with_companies(companies)
-        .with_titles(titles)
-        .with_locations(locations)
-        .with_skills(skills);
-    if let Some(degree) = degree {
-        profile = profile.with_degree(degree);
-    }
-    if let Some(years_experience) = years_experience {
-        profile = profile.with_years_experience(years_experience);
-    }
-    Ok(profile)
-}
-
-fn hydrate_visible_document_version(
-    store: &MetaStore,
-    doc_id: &str,
-) -> Result<Option<(Document, ResumeVersion)>> {
-    let Ok(document_id) = DocumentId::from_str(doc_id) else {
-        return Ok(None);
-    };
-    let Some(document) = store
-        .document_by_id(&document_id)
-        .map_err(CliError::store)?
-    else {
-        return Ok(None);
-    };
-    if document.is_deleted
-        || !matches!(
-            document.status,
-            DocumentStatus::Searchable | DocumentStatus::IndexedPartial
-        )
-    {
-        return Ok(None);
-    }
-
-    let version = store
-        .resume_versions_for_document(&document_id)
-        .map_err(CliError::store)?
-        .into_iter()
-        .find(|version| version.visibility == ResumeVisibility::Searchable);
-
-    Ok(version.map(|version| (document, version)))
-}
-
 #[derive(Clone)]
 struct SearchOutputHit {
     rank: usize,
-    score: f32,
-    doc_id: String,
-    version_id: String,
+    selection: SearchSelection,
     file_name: String,
     snippet: String,
-    candidate_key: String,
-    soft_dedupe_hint: Option<SoftDedupeHint>,
-}
-
-impl SearchOutputHit {
-    fn from_fulltext(hit: SearchHit, candidate_key: String) -> Self {
-        Self {
-            rank: hit.rank,
-            score: hit.score,
-            doc_id: hit.doc_id,
-            version_id: hit.version_id,
-            file_name: hit.file_name,
-            snippet: hit.snippet,
-            candidate_key,
-            soft_dedupe_hint: None,
-        }
-    }
-}
-
-#[derive(Clone)]
-struct SoftDedupeHint {
-    suspected_versions: usize,
-    max_confidence: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -20068,19 +18894,24 @@ struct SearchArgs {
 
 struct DetailArgs {
     doc_id: String,
+    version_id: String,
+    visible_epoch: u64,
     ipc_auto: bool,
     ipc_endpoint: Option<IpcDetailEndpoint>,
     ipc_token_file: Option<PathBuf>,
 }
 
 struct ResumeDetail {
-    doc_id: String,
-    version_id: String,
-    file_name: String,
-    extension: String,
-    document_status: String,
-    visibility: String,
-    byte_size: u64,
+    selection: SearchSelection,
+    source_byte_size: u64,
+    parse_version: String,
+    schema_version: String,
+    language_set: Vec<String>,
+    page_count: Option<u32>,
+    quality_score: Option<f32>,
+    field_count_total: usize,
+    field_count_returned: usize,
+    fields_truncated: bool,
     fields: Vec<ResumeDetailField>,
     snippet: String,
 }
@@ -20093,77 +18924,42 @@ struct ResumeDetailField {
     extractor: String,
 }
 
-fn inspect_search_index(data_dir: &Path) -> SearchIndexDiagnostic {
-    let index_root = data_dir.join("search-index");
-    let inspection = match inspect_snapshot_root(&index_root) {
-        Ok(inspection) => inspection,
-        Err(_) => {
-            return SearchIndexDiagnostic::Corrupt {
-                read_target: None,
-                fallback_used: false,
-                staging_orphans: 0,
-            };
-        }
+fn inspect_search_index(data_dir: &Path, store: &MetaStore) -> SearchIndexDiagnostic {
+    let staging_orphans = None;
+    let Ok(state) = store.search_projection_state() else {
+        return SearchIndexDiagnostic::Corrupt { staging_orphans };
     };
-
-    match inspection.state() {
-        SnapshotRootState::Missing => {
-            return SearchIndexDiagnostic::Unavailable {
-                staging_orphans: inspection.staging_orphans(),
-            };
-        }
-        SnapshotRootState::Corrupt | SnapshotRootState::ActiveMissing => {
-            return SearchIndexDiagnostic::Corrupt {
-                read_target: inspection.read_target(),
-                fallback_used: inspection.fallback_snapshot().is_some(),
-                staging_orphans: inspection.staging_orphans(),
-            };
-        }
-        SnapshotRootState::Ready | SnapshotRootState::Recovered => {}
+    if state.service_state != meta_store::SearchProjectionServiceState::Ready {
+        return SearchIndexDiagnostic::Unavailable { staging_orphans };
     }
-
-    let fallback_used = inspection.fallback_snapshot().is_some();
-    let Ok(Some(index)) = FullTextIndex::open_active(&index_root) else {
-        return SearchIndexDiagnostic::Corrupt {
-            read_target: inspection.read_target(),
-            fallback_used,
-            staging_orphans: inspection.staging_orphans(),
-        };
+    let Ok(mut coordinator) = QueryCoordinator::open(data_dir) else {
+        return SearchIndexDiagnostic::Corrupt { staging_orphans };
     };
-
     let started_at = Instant::now();
-    match index.search(SearchQuery::new("diagnostic").with_limit(1)) {
+    match coordinator
+        .with_query(|scope| scope.fulltext_candidates("diagnostic", HitLimit::new(1)?, None))
+    {
         Ok(hits) => SearchIndexDiagnostic::Available {
             elapsed_ms: started_at.elapsed().as_millis(),
             results: hits.len(),
-            read_target: inspection.read_target(),
-            fallback_used,
-            staging_orphans: inspection.staging_orphans(),
+            staging_orphans,
         },
-        Err(_) => SearchIndexDiagnostic::Corrupt {
-            read_target: inspection.read_target(),
-            fallback_used,
-            staging_orphans: inspection.staging_orphans(),
-        },
+        Err(_) => SearchIndexDiagnostic::Corrupt { staging_orphans },
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SearchIndexDiagnostic {
     Unavailable {
-        staging_orphans: usize,
+        staging_orphans: Option<usize>,
     },
     Corrupt {
-        read_target: Option<SnapshotReadTarget>,
-        fallback_used: bool,
-        staging_orphans: usize,
+        staging_orphans: Option<usize>,
     },
     Available {
         elapsed_ms: u128,
         results: usize,
-        read_target: Option<SnapshotReadTarget>,
-        fallback_used: bool,
-        staging_orphans: usize,
+        staging_orphans: Option<usize>,
     },
 }
 
@@ -20171,30 +18967,14 @@ impl SearchIndexDiagnostic {
     fn index_label(self) -> String {
         match self {
             Self::Unavailable { .. } => "unavailable".to_string(),
-            Self::Corrupt { fallback_used, .. } if fallback_used => {
-                "recovered (full-text snapshot)".to_string()
-            }
             Self::Corrupt { .. } => "corrupt".to_string(),
-            Self::Available {
-                fallback_used: true,
-                ..
-            } => "recovered (full-text snapshot)".to_string(),
-            Self::Available {
-                read_target: Some(SnapshotReadTarget::PublishedSnapshot),
-                ..
-            } => "available (full-text snapshot)".to_string(),
-            Self::Available { .. } => "available (full-text)".to_string(),
+            Self::Available { .. } => "available (database Ready full-text snapshot)".to_string(),
         }
     }
 
     fn state_label(self) -> &'static str {
         match self {
             Self::Unavailable { .. } => "unavailable",
-            Self::Corrupt { fallback_used, .. } | Self::Available { fallback_used, .. }
-                if fallback_used =>
-            {
-                "recovered"
-            }
             Self::Corrupt { .. } => "corrupt",
             Self::Available { .. } => "available",
         }
@@ -20203,26 +18983,15 @@ impl SearchIndexDiagnostic {
     fn read_target_label(self) -> &'static str {
         match self {
             Self::Unavailable { .. } => "none",
-            Self::Corrupt { read_target, .. } | Self::Available { read_target, .. } => {
-                read_target.map(SnapshotReadTarget::label).unwrap_or("none")
-            }
+            Self::Corrupt { .. } | Self::Available { .. } => "database_ready_generation",
         }
     }
 
     fn snapshot_fallback_label(self) -> &'static str {
-        match self {
-            Self::Unavailable { .. } => "none",
-            Self::Corrupt { fallback_used, .. } | Self::Available { fallback_used, .. } => {
-                if fallback_used {
-                    "used"
-                } else {
-                    "none"
-                }
-            }
-        }
+        "none"
     }
 
-    fn staging_orphans(self) -> usize {
+    fn staging_orphans(self) -> Option<usize> {
         match self {
             Self::Unavailable { staging_orphans }
             | Self::Corrupt {
@@ -20258,71 +19027,78 @@ impl SearchIndexDiagnostic {
 }
 
 fn inspect_vector_index(data_dir: &Path) -> VectorIndexDiagnostic {
+    let Ok(store) = MetaStore::open_data_dir(data_dir) else {
+        return VectorIndexDiagnostic::unavailable();
+    };
+    let Ok(state) = store.search_projection_state() else {
+        return VectorIndexDiagnostic::corrupt();
+    };
+    let Some(vector) = state
+        .publication
+        .as_deref()
+        .and_then(|publication| publication.vector.as_ref())
+    else {
+        return VectorIndexDiagnostic::unavailable();
+    };
     VectorIndexDiagnostic {
-        inspection: inspect_persistent_vector_snapshot(data_dir.join("vector-index")),
+        state: "available",
+        backend: if matches!(vector.mode(), VectorSnapshotMode::Enabled { .. }) {
+            "hnsw_ann"
+        } else {
+            "none"
+        },
+        vector_count: vector.vector_count(),
+        deleted_count: 0,
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct VectorIndexDiagnostic {
-    inspection: PersistentVectorSnapshotInspection,
+    state: &'static str,
+    backend: &'static str,
+    vector_count: u64,
+    deleted_count: u64,
 }
 
 impl VectorIndexDiagnostic {
+    fn unavailable() -> Self {
+        Self {
+            state: "unavailable",
+            backend: "none",
+            vector_count: 0,
+            deleted_count: 0,
+        }
+    }
+
+    fn corrupt() -> Self {
+        Self {
+            state: "corrupt",
+            ..Self::unavailable()
+        }
+    }
+
     fn index_label(self) -> &'static str {
-        match self.inspection.state() {
-            PersistentVectorSnapshotState::Missing => "unavailable",
-            PersistentVectorSnapshotState::Ready => match self.search_backend() {
-                Some(VectorSearchBackend::HnswAnn) => "available (hnsw ann vector snapshot)",
-                Some(VectorSearchBackend::LinearScan) => "available (linear vector snapshot)",
-                None => "available (vector snapshot)",
-            },
-            PersistentVectorSnapshotState::Recovered => match self.search_backend() {
-                Some(VectorSearchBackend::HnswAnn) => "recovered (hnsw ann vector snapshot)",
-                Some(VectorSearchBackend::LinearScan) => "recovered (linear vector snapshot)",
-                None => "recovered (vector snapshot)",
-            },
-            PersistentVectorSnapshotState::Corrupt => "corrupt",
-            PersistentVectorSnapshotState::Unreadable => "unreadable",
+        match (self.state, self.backend) {
+            ("available", "hnsw_ann") => "available (hnsw ann vector snapshot)",
+            ("available", _) => "available (disabled vector snapshot)",
+            (state, _) => state,
         }
     }
 
     fn state_label(self) -> &'static str {
-        match self.inspection.state() {
-            PersistentVectorSnapshotState::Missing => "unavailable",
-            PersistentVectorSnapshotState::Ready => "available",
-            PersistentVectorSnapshotState::Recovered => "recovered",
-            PersistentVectorSnapshotState::Corrupt => "corrupt",
-            PersistentVectorSnapshotState::Unreadable => "unreadable",
-        }
+        self.state
     }
 
-    fn vector_count(self) -> usize {
-        self.inspection
-            .snapshot()
-            .map(|snapshot| snapshot.vector_count())
-            .unwrap_or(0)
+    fn vector_count(self) -> u64 {
+        self.vector_count
     }
 
-    fn deleted_count(self) -> usize {
-        self.inspection
-            .snapshot()
-            .map(|snapshot| snapshot.deleted_count())
-            .unwrap_or(0)
+    fn deleted_count(self) -> u64 {
+        self.deleted_count
     }
 
     fn backend_json_label(self) -> &'static str {
-        match self.search_backend() {
-            Some(VectorSearchBackend::HnswAnn) => "hnsw_ann",
-            Some(VectorSearchBackend::LinearScan) => "linear_scan",
-            None => "none",
-        }
-    }
-
-    fn search_backend(self) -> Option<VectorSearchBackend> {
-        self.inspection
-            .snapshot()
-            .map(|snapshot| snapshot.search_backend())
+        self.backend
     }
 }
 
@@ -20373,17 +19149,6 @@ fn metadata_encryption_remediation(state: MetadataEncryptionState) -> &'static s
     }
 }
 
-fn file_extension_label(extension: &FileExtension) -> &str {
-    match extension {
-        FileExtension::Docx => "docx",
-        FileExtension::Pdf => "pdf",
-        FileExtension::Doc => "doc",
-        FileExtension::Txt => "txt",
-        FileExtension::Image => "image",
-        FileExtension::Other(_) => "other",
-    }
-}
-
 fn document_status_label(status: DocumentStatus) -> &'static str {
     match status {
         DocumentStatus::Discovered => "discovered",
@@ -20399,6 +19164,7 @@ fn document_status_label(status: DocumentStatus) -> &'static str {
         DocumentStatus::EmbeddingDone => "embedding_done",
         DocumentStatus::IndexedPartial => "indexed_partial",
         DocumentStatus::Searchable => "searchable",
+        DocumentStatus::Excluded => "excluded",
         DocumentStatus::FailedRetryable => "failed_retryable",
         DocumentStatus::FailedPermanent => "failed_permanent",
         DocumentStatus::Deleted => "deleted",
@@ -20431,14 +19197,6 @@ fn ingest_job_status_label(status: IngestJobStatus) -> &'static str {
 fn ingest_job_failure_kind_label(kind: IngestJobFailureKind) -> &'static str {
     match kind {
         IngestJobFailureKind::OcrPageBudgetExceeded => "ocr_page_budget_exceeded",
-    }
-}
-
-fn resume_visibility_label(visibility: ResumeVisibility) -> &'static str {
-    match visibility {
-        ResumeVisibility::Searchable => "searchable",
-        ResumeVisibility::Partial => "partial",
-        ResumeVisibility::Hidden => "hidden",
     }
 }
 
@@ -20490,20 +19248,6 @@ impl CliError {
     }
 
     fn store(error: meta_store::MetaStoreError) -> Self {
-        Self {
-            message: error.to_string(),
-            exit_code: 1,
-        }
-    }
-
-    fn fulltext(error: index_fulltext::FullTextError) -> Self {
-        Self {
-            message: error.to_string(),
-            exit_code: 1,
-        }
-    }
-
-    fn vector(error: index_vector::VectorIndexError) -> Self {
         Self {
             message: error.to_string(),
             exit_code: 1,
@@ -20621,31 +19365,6 @@ mod tests {
 
         assert_eq!(status, ServiceRuntimeState::Unknown);
         assert_eq!(status.label(), "unknown");
-    }
-
-    #[test]
-    fn embed_worker_debug_output_redacts_candidate_text_and_command_path() {
-        let candidate = EmbedWorkerCandidate {
-            document_id: DocumentId::from_non_secret_parts(&["debug-doc"]),
-            version_id: ResumeVersionId::from_non_secret_parts(&["debug-version"]),
-            text: "PRIVATE resume text".to_string(),
-        };
-        let candidate_debug = format!("{candidate:?}");
-        assert!(!candidate_debug.contains("PRIVATE"));
-        assert!(candidate_debug.contains("text_bytes"));
-
-        let args = EmbedWorkerArgs {
-            command: Some(PathBuf::from("/private/local/embed-command")),
-            model_id: Some("local-model".to_string()),
-            dimension: Some(4),
-            max_docs: 8,
-            max_text_bytes: 1000,
-            timeout_ms: 5000,
-        };
-        let args_debug = format!("{args:?}");
-        assert!(!args_debug.contains("/private/local/embed-command"));
-        assert!(args_debug.contains("command_configured"));
-        assert!(args_debug.contains("<redacted>"));
     }
 
     fn strings(values: &[&str]) -> Vec<String> {

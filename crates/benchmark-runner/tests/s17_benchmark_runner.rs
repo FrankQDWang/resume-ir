@@ -2,6 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
 #[path = "support/private_query_runner.rs"]
 mod private_query_runner_support;
 #[path = "support/private_query.rs"]
@@ -67,6 +70,37 @@ fn synthetic_query_benchmark_reports_real_percentiles_without_raw_text() {
     assert!(!json.contains("Synthetic Candidate"));
     assert!(!json.contains("payment gateway"));
     assert!(!json.contains(path_str(&index_dir)));
+
+    remove_dir(&index_dir);
+}
+
+#[test]
+fn synthetic_query_benchmark_binds_the_frozen_public_workload_contract() {
+    let index_dir = temp_dir("frozen-public-query-workload");
+    let config = SyntheticBenchmarkConfig::new(500, 500).unwrap();
+    let canonical = SyntheticBenchmarkConfig::public_query_hot_path();
+
+    assert_eq!(canonical.document_count(), 10_000);
+    assert_eq!(canonical.query_count(), 500);
+
+    let report = run_synthetic_query_benchmark(&index_dir, config).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&report.to_redacted_json()).unwrap();
+
+    assert_eq!(
+        json["query_workload"]["version"],
+        "resume-ir.public-synthetic-query-hot-path.v1"
+    );
+    assert_eq!(json["query_workload"]["canonical_document_count"], 10_000);
+    assert_eq!(json["query_workload"]["cycle_query_count"], 500);
+    assert_eq!(json["query_workload"]["cycle_unique_query_count"], 500);
+    assert_eq!(json["query_workload"]["bucket_counts"]["single_term"], 50);
+    assert_eq!(json["query_workload"]["bucket_counts"]["and_2"], 75);
+    assert_eq!(json["query_workload"]["bucket_counts"]["and_3_5"], 150);
+    assert_eq!(json["query_workload"]["bucket_counts"]["and_6_16"], 50);
+    assert_eq!(json["query_workload"]["bucket_counts"]["field_filter"], 75);
+    assert_eq!(json["query_workload"]["bucket_counts"]["hybrid"], 75);
+    assert_eq!(json["query_workload"]["bucket_counts"]["semantic"], 25);
+    assert_eq!(json["zero_result_queries"], 0);
 
     remove_dir(&index_dir);
 }
@@ -5154,6 +5188,8 @@ fn temp_dir(label: &str) -> PathBuf {
         .as_nanos();
     let path = std::env::temp_dir().join(format!("resume-ir-s17-{label}-{unique}"));
     fs::create_dir_all(&path).unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
     path
 }
 

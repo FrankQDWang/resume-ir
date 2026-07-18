@@ -27,18 +27,25 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("notarization credentials"));
     assert!(stdout.contains("notarization ticket"));
     assert!(stdout.contains("Gatekeeper validation"));
+    assert!(stdout.contains("Tauri v2 desktop installer composition: blocked"));
+    assert!(stdout.contains("legacy CLI/daemon package automation"));
+    assert!(stdout.contains("unsigned macOS arm64 app/DMG composition"));
+    assert!(stdout.contains("Windows per-user NSIS runtime closure"));
+    assert!(stdout.contains("macOS app/DMG"));
+    assert!(stdout.contains("Windows per-user NSIS"));
     assert!(stdout.contains("Windows installer lifecycle: blocked"));
-    assert!(stdout.contains("MSI install"));
+    assert!(stdout.contains("legacy Windows MSI lifecycle dry-run automation"));
+    assert!(stdout.contains("self-contained per-user Tauri NSIS setup"));
+    assert!(stdout.contains("clean H0 host"));
+    assert!(stdout.contains("first run"));
     assert!(stdout.contains("upgrade"));
     assert!(stdout.contains("uninstall"));
     assert!(stdout.contains("rollback"));
-    assert!(stdout.contains("release Windows runner"));
-    assert!(stdout.contains("Windows service lifecycle: blocked"));
-    assert!(stdout.contains("install/start/stop/status/uninstall/recovery"));
-    assert!(stdout.contains("release Windows runner"));
+    assert!(!stdout.contains("Windows service lifecycle: blocked"));
     assert!(stdout.contains("macOS installer lifecycle: blocked"));
-    assert!(stdout.contains("signed pkg/dmg"));
-    assert!(stdout.contains("install/upgrade/uninstall/rollback"));
+    assert!(stdout.contains("legacy macOS pkg and LaunchAgent lifecycle dry-runs"));
+    assert!(stdout.contains("local unsigned install, first run, data-preserving uninstall, reinstall, real-version upgrade, and injected post-swap rollback"));
+    assert!(stdout.contains("signed and notarized Tauri app/DMG"));
     assert!(stdout.contains("Gatekeeper validation"));
     assert!(stdout.contains("GitHub Release publication: blocked"));
     assert!(stdout.contains("release approval"));
@@ -85,10 +92,10 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("offline distribution"));
     assert!(stdout.contains("license review"));
     assert!(stdout.contains("cross-platform release validation: blocked"));
-    assert!(stdout.contains("Windows and macOS release platforms"));
-    assert!(stdout.contains("fresh release artifacts"));
-    assert!(stdout.contains("install/upgrade/uninstall"));
-    assert!(stdout.contains("service lifecycle"));
+    assert!(stdout.contains("hosted Rust workspace checks"));
+    assert!(stdout.contains("legacy dry-run packaging evidence"));
+    assert!(stdout.contains("native Tauri product validation is incomplete"));
+    assert!(stdout.contains("clean hosts"));
     assert!(stdout.contains("redacted diagnostics evidence: blocked"));
     assert!(stdout.contains("export-diagnostics --redact"));
     assert!(stdout.contains("diagnostics.v1"));
@@ -138,8 +145,9 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
         .collect::<Vec<_>>();
     assert!(labels.contains(&"signing certificates"));
     assert!(labels.contains(&"macOS notarization"));
+    assert!(labels.contains(&"Tauri v2 desktop installer composition"));
     assert!(labels.contains(&"Windows installer lifecycle"));
-    assert!(labels.contains(&"Windows service lifecycle"));
+    assert!(!labels.contains(&"Windows service lifecycle"));
     assert!(labels.contains(&"macOS installer lifecycle"));
     assert!(labels.contains(&"GitHub Release publication"));
     assert!(labels.contains(&"private real-corpus performance evidence"));
@@ -256,35 +264,45 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
     assert!(notarization_detail.contains("notarization ticket"));
     assert!(notarization_detail.contains("Gatekeeper validation"));
 
+    let tauri_installer_blocker = blockers
+        .iter()
+        .find(|blocker| blocker["label"] == "Tauri v2 desktop installer composition")
+        .expect("Tauri desktop installer composition blocker");
+    let tauri_installer_detail = tauri_installer_blocker["detail"].as_str().unwrap();
+    assert!(tauri_installer_detail.contains("legacy CLI/daemon package automation"));
+    assert!(tauri_installer_detail.contains("do not prove"));
+    assert!(tauri_installer_detail.contains("macOS arm64 app/DMG"));
+    assert!(tauri_installer_detail.contains("Windows per-user NSIS"));
+    assert_eq!(
+        tauri_installer_blocker["blocked_dependency"]["kind"],
+        "local_product_implementation"
+    );
+
     let windows_installer_blocker = blockers
         .iter()
         .find(|blocker| blocker["label"] == "Windows installer lifecycle")
         .expect("Windows installer blocker");
     let windows_installer_detail = windows_installer_blocker["detail"].as_str().unwrap();
-    assert!(windows_installer_detail.contains("dry-run automation exists"));
-    assert!(windows_installer_detail.contains("MSI install"));
+    assert!(windows_installer_detail.contains("legacy Windows MSI lifecycle dry-run automation"));
+    assert!(windows_installer_detail.contains("self-contained per-user Tauri NSIS setup"));
+    assert!(windows_installer_detail.contains("clean H0 host"));
+    assert!(windows_installer_detail.contains("first run"));
     assert!(windows_installer_detail.contains("upgrade"));
     assert!(windows_installer_detail.contains("uninstall"));
     assert!(windows_installer_detail.contains("rollback"));
-    assert!(windows_installer_detail.contains("administrator-elevated release Windows runner"));
-
-    let windows_service_blocker = blockers
-        .iter()
-        .find(|blocker| blocker["label"] == "Windows service lifecycle")
-        .expect("Windows service blocker");
-    let windows_service_detail = windows_service_blocker["detail"].as_str().unwrap();
-    assert!(windows_service_detail.contains("dry-run automation exists"));
-    assert!(windows_service_detail.contains("install/start/stop/status/uninstall/recovery"));
-    assert!(windows_service_detail.contains("administrator-elevated release Windows runner"));
+    assert_eq!(
+        windows_installer_blocker["blocked_dependency"]["needed_from"],
+        "windows_h0_validation_host"
+    );
 
     let macos_installer_blocker = blockers
         .iter()
         .find(|blocker| blocker["label"] == "macOS installer lifecycle")
         .expect("macOS installer blocker");
     let macos_installer_detail = macos_installer_blocker["detail"].as_str().unwrap();
-    assert!(macos_installer_detail.contains("dry-run automation exists"));
-    assert!(macos_installer_detail.contains("signed pkg/dmg"));
-    assert!(macos_installer_detail.contains("install/upgrade/uninstall/rollback"));
+    assert!(macos_installer_detail.contains("legacy macOS pkg and LaunchAgent lifecycle dry-runs"));
+    assert!(macos_installer_detail.contains("signed and notarized Tauri app/DMG"));
+    assert!(macos_installer_detail.contains("first run"));
     assert!(macos_installer_detail.contains("Gatekeeper validation"));
 
     let field_blocker = blockers
@@ -353,12 +371,12 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
         .find(|blocker| blocker["label"] == "cross-platform release validation")
         .expect("cross-platform release validation blocker");
     let platform_detail = platform_blocker["detail"].as_str().unwrap();
-    assert!(platform_detail.contains("hosted macOS/Windows build/test"));
-    assert!(platform_detail.contains("dry-run packaging evidence"));
-    assert!(platform_detail.contains("Windows and macOS release platforms"));
-    assert!(platform_detail.contains("fresh release artifacts"));
-    assert!(platform_detail.contains("install/upgrade/uninstall"));
-    assert!(platform_detail.contains("service lifecycle"));
+    assert!(platform_detail.contains("hosted Rust workspace checks"));
+    assert!(platform_detail.contains("legacy dry-run packaging evidence"));
+    assert!(platform_detail.contains("native Tauri product validation is incomplete"));
+    assert!(platform_detail.contains("macOS app/DMG"));
+    assert!(platform_detail.contains("Windows per-user NSIS"));
+    assert!(platform_detail.contains("clean hosts"));
 
     let diagnostics_blocker = blockers
         .iter()
@@ -395,15 +413,15 @@ fn release_readiness_json_reports_goal_gap_matrix_without_claiming_complete_prod
         serde_json::from_str(&stdout).expect("release readiness json report");
 
     let matrix = &report["goal_gap_matrix"];
-    assert_eq!(matrix["schema_version"], "resume-ir.goal-gap-matrix.v1");
+    assert_eq!(matrix["schema_version"], "resume-ir.goal-gap-matrix.v2");
     assert_eq!(matrix["complete_product"], false);
     assert_eq!(
         matrix["current_stage"],
-        "core_import_search_closed_release_blocked"
+        "tauri_desktop_product_incomplete_release_blocked"
     );
     assert_eq!(
         matrix["completion_statement"],
-        "core local import/search closure is verified; complete stable release remains blocked by evidence, credentials, platform transcripts, and deferred performance goals"
+        "core local import/search closure is verified; ordinary-user Tauri desktop installers are incomplete and stable release remains blocked by implementation, evidence, credentials, and platform transcripts"
     );
 
     let rows = matrix["rows"].as_array().expect("goal matrix rows");
@@ -471,23 +489,57 @@ fn release_readiness_json_reports_goal_gap_matrix_without_claiming_complete_prod
         .iter()
         .find(|row| row["id"] == "P5_cross_platform_release")
         .expect("P5 row");
-    assert_eq!(p5["implementation_status"], "production_complete");
+    assert_eq!(p5["implementation_status"], "incomplete");
     assert_eq!(p5["release_status"], "blocked");
-    assert!(p5["evidence"]
+    let legacy = &p5["surfaces"]["legacy_cli_package_automation"];
+    assert_eq!(legacy["implementation_status"], "production_complete");
+    assert_eq!(legacy["counts_as_tauri_desktop_installer"], false);
+    assert!(legacy["evidence"]
         .as_array()
-        .expect("P5 evidence")
+        .expect("P5 legacy evidence")
         .iter()
         .any(|item| item == "installer lifecycle dry-run plans"));
-    assert!(p5["evidence"]
+    assert!(legacy["evidence"]
         .as_array()
-        .expect("P5 evidence")
+        .expect("P5 legacy evidence")
         .iter()
         .any(|item| item == "signing/notarization fail-closed dry-run gates"));
+    let desktop = &p5["surfaces"]["tauri_v2_desktop_installers"];
+    assert_eq!(desktop["implementation_status"], "incomplete");
+    assert_eq!(desktop["counts_as_tauri_desktop_installer"], true);
+    assert!(desktop["evidence"]
+        .as_array()
+        .expect("P5 Tauri evidence")
+        .iter()
+        .any(|item| item
+            == "unsigned macOS /Applications install, first-run, data-preserving uninstall, reinstall, and LaunchServices discovery"));
+    assert!(desktop["evidence"]
+        .as_array()
+        .expect("P5 Tauri evidence")
+        .iter()
+        .any(|item| item
+            == "unsigned macOS real-version upgrade and injected post-swap rollback with user-state preservation"));
+    assert!(desktop["evidence"]
+        .as_array()
+        .expect("P5 Tauri evidence")
+        .iter()
+        .any(|item| item == "Windows static Tesseract OCR source contract"));
+    assert!(desktop["missing"]
+        .as_array()
+        .expect("P5 Tauri missing")
+        .iter()
+        .any(|item| item == "Windows per-user Tauri NSIS setup.exe"));
     assert!(p5["blocked_by"]
         .as_array()
         .expect("P5 blockers")
         .iter()
-        .any(|item| item == "real signing/notarization credentials"));
+        .any(|item| item == "Windows per-user NSIS self-contained runtime closure"));
+    assert!(!p5["blocked_by"]
+        .as_array()
+        .expect("P5 blockers")
+        .iter()
+        .any(|item| item == "self-contained Tauri runtime closure on macOS and Windows"));
+    assert_ne!(p5["implementation_status"], "production_complete");
 
     let p6 = rows
         .iter()
@@ -699,7 +751,8 @@ fn release_readiness_json_accepts_blocked_release_automation_evidence_without_cl
     assert!(blocker_labels.contains(&"macOS notarization"));
     assert!(blocker_labels.contains(&"macOS installer lifecycle"));
     assert!(blocker_labels.contains(&"Windows installer lifecycle"));
-    assert!(blocker_labels.contains(&"Windows service lifecycle"));
+    assert!(blocker_labels.contains(&"Tauri v2 desktop installer composition"));
+    assert!(!blocker_labels.contains(&"Windows service lifecycle"));
     assert!(blocker_labels.contains(&"cross-platform release validation"));
     assert!(blocker_labels.contains(&"redacted diagnostics evidence"));
     assert!(!blocker_labels.contains(&"signing automation evidence"));
@@ -855,7 +908,8 @@ fn release_readiness_json_accepts_windows_service_lifecycle_plan_without_clearin
         .iter()
         .map(|blocker| blocker["label"].as_str().expect("blocker label"))
         .collect::<Vec<_>>();
-    assert!(blocker_labels.contains(&"Windows service lifecycle"));
+    assert!(blocker_labels.contains(&"Tauri v2 desktop installer composition"));
+    assert!(!blocker_labels.contains(&"Windows service lifecycle"));
     assert!(blocker_labels.contains(&"cross-platform release validation"));
     assert!(blocker_labels.contains(&"signing certificates"));
     assert!(!blocker_labels.contains(&"Windows service lifecycle plan evidence"));
@@ -1161,7 +1215,8 @@ fn release_readiness_json_accepts_release_artifact_and_sbom_evidence_without_cle
     assert!(blocker_labels.contains(&"macOS notarization"));
     assert!(blocker_labels.contains(&"macOS installer lifecycle"));
     assert!(blocker_labels.contains(&"Windows installer lifecycle"));
-    assert!(blocker_labels.contains(&"Windows service lifecycle"));
+    assert!(blocker_labels.contains(&"Tauri v2 desktop installer composition"));
+    assert!(!blocker_labels.contains(&"Windows service lifecycle"));
     assert!(blocker_labels.contains(&"cross-platform release validation"));
     assert!(blocker_labels.contains(&"redacted diagnostics evidence"));
     assert!(!blocker_labels.contains(&"release artifact manifest evidence"));
@@ -1808,7 +1863,8 @@ fn release_readiness_json_accepts_platform_package_manifest_evidence_without_cle
     assert!(blocker_labels.contains(&"macOS notarization"));
     assert!(blocker_labels.contains(&"macOS installer lifecycle"));
     assert!(blocker_labels.contains(&"Windows installer lifecycle"));
-    assert!(blocker_labels.contains(&"Windows service lifecycle"));
+    assert!(blocker_labels.contains(&"Tauri v2 desktop installer composition"));
+    assert!(!blocker_labels.contains(&"Windows service lifecycle"));
     assert!(blocker_labels.contains(&"cross-platform release validation"));
     assert!(!blocker_labels.contains(&"macOS package manifest evidence"));
     assert!(!blocker_labels.contains(&"Windows package manifest evidence"));
@@ -4250,7 +4306,7 @@ fn actual_hardware_fault_drills_evidence() -> String {
 fn current_stage_evidence_manifest() -> String {
     let base = concat!(
         "{",
-        "\"schema_version\":\"resume-ir.current-stage-validation-evidence.v1\",",
+        "\"schema_version\":\"resume-ir.current-stage-validation-evidence.v2\",",
         "\"privacy_boundary\":\"local_only_redacted_evidence_manifest\",",
         "\"current_stage_target\":\"reproducible_local_10k_baseline\",",
         "\"runtime_distribution_mode\":\"bundled\",",
@@ -4268,9 +4324,12 @@ fn current_stage_evidence_manifest() -> String {
         "\"max_files\":10000,",
         "\"max_queries\":500,",
         "\"top_k\":10,",
+        "\"private_query_timeout_ms\":30000,",
         "\"embedding_dimension\":384,",
+        "\"embedding_runtime_bin_dir_configured\":true,",
+        "\"reuse_imported_corpus\":false,",
         "\"ocr_worker_ticks\":10000,",
-        "\"embedding_worker_ticks\":10000",
+        "\"ocr_jobs_per_tick\":1",
         "},",
         "\"preflight_probes\":{",
         "\"ocr_runtime_probe\":\"passed\",",
@@ -4396,8 +4455,7 @@ fn current_stage_evidence_manifest() -> String {
         "{\"id\":\"model_preflight\",\"status\":\"success\"},",
         "{\"id\":\"dataset_manifest\",\"status\":\"success\"},",
         "{\"id\":\"import_private_corpus\",\"status\":\"success\"},",
-        "{\"id\":\"ocr_worker_bounded_loop\",\"status\":\"success\"},",
-        "{\"id\":\"embedding_worker_bounded_loop\",\"status\":\"success\"},",
+        "{\"id\":\"ocr_search_publication_bounded_loop\",\"status\":\"success\"},",
         "{\"id\":\"corpus_summary\",\"status\":\"success\"},",
         "{\"id\":\"query_set_prepare\",\"status\":\"success\"},",
         "{\"id\":\"private_query_baseline\",\"status\":\"success\"},",
@@ -4422,8 +4480,7 @@ fn current_stage_evidence_manifest() -> String {
         "{\"file\":\"model-validate-manifest.stdout.txt\",\"sha256\":\"1616161616161616161616161616161616161616161616161616161616161616\"},",
         "{\"file\":\"model-preflight.json\",\"sha256\":\"1717171717171717171717171717171717171717171717171717171717171717\"},",
         "{\"file\":\"import.stdout.txt\",\"sha256\":\"1818181818181818181818181818181818181818181818181818181818181818\"},",
-        "{\"file\":\"ocr-worker.stdout.txt\",\"sha256\":\"1919191919191919191919191919191919191919191919191919191919191919\"},",
-        "{\"file\":\"embedding-worker.stdout.txt\",\"sha256\":\"2020202020202020202020202020202020202020202020202020202020202020\"},",
+        "{\"file\":\"ocr-search-publication.stdout.txt\",\"sha256\":\"1919191919191919191919191919191919191919191919191919191919191919\"},",
         "{\"file\":\"benchmark-corpus-summary.local.json\",\"sha256\":\"2121212121212121212121212121212121212121212121212121212121212121\"},",
         "{\"file\":\"private-query-set.local.jsonl\",\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},",
         "{\"file\":\"query-set-prepare.stdout.txt\",\"sha256\":\"2323232323232323232323232323232323232323232323232323232323232323\"},",
@@ -4531,7 +4588,7 @@ fn current_stage_histogram_json(samples: u64) -> String {
 fn current_stage_blocked_summary() -> String {
     concat!(
         "{",
-        "\"schema_version\":\"resume-ir.current-stage-blocked-summary.v1\",",
+        "\"schema_version\":\"resume-ir.current-stage-blocked-summary.v2\",",
         "\"privacy_boundary\":\"local_only_redacted_blocked_summary\",",
         "\"validation_profile\":\"full\",",
         "\"current_stage_target\":\"reproducible_local_10k_baseline\",",
@@ -4541,7 +4598,7 @@ fn current_stage_blocked_summary() -> String {
         "\"full_baseline_satisfied\":false,",
         "\"release_readiness_evidence\":false,",
         "\"performance_optimization_deferred\":true,",
-        "\"blocked_step\":\"ocr_worker_bounded_loop\",",
+        "\"blocked_step\":\"ocr_search_publication_bounded_loop\",",
         "\"blocked_category\":\"ocr\",",
         "\"blocked_reason\":\"ocr_backlog_exceeds_current_stage_budget\",",
         "\"blocked_exit\":1,",
@@ -4555,10 +4612,12 @@ fn current_stage_blocked_summary() -> String {
         "\"max_files\":10000,",
         "\"max_queries\":500,",
         "\"top_k\":10,",
+        "\"private_query_timeout_ms\":30000,",
         "\"embedding_dimension\":384,",
         "\"embedding_runtime_bin_dir_configured\":true,",
+        "\"reuse_imported_corpus\":false,",
         "\"ocr_worker_ticks\":25,",
-        "\"embedding_worker_ticks\":25,",
+        "\"ocr_jobs_per_tick\":1,",
         "\"query_set_min_queries\":500,",
         "\"baseline_min_documents\":10000,",
         "\"baseline_min_queries\":500",
@@ -4587,7 +4646,7 @@ fn current_stage_blocked_summary() -> String {
         "{\"id\":\"model_preflight\",\"status\":\"success\"},",
         "{\"id\":\"dataset_manifest\",\"status\":\"success\"},",
         "{\"id\":\"import_private_corpus\",\"status\":\"success\"},",
-        "{\"id\":\"ocr_worker_bounded_loop\",\"status\":\"blocked\",\"exit_code\":1}",
+        "{\"id\":\"ocr_search_publication_bounded_loop\",\"status\":\"blocked\",\"exit_code\":1}",
         "],",
         "\"redacted_outputs\":[",
         "{\"file\":\"dataset-manifest.local.json\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},",
@@ -4595,7 +4654,7 @@ fn current_stage_blocked_summary() -> String {
         "{\"file\":\"ocr-preflight.json\",\"sha256\":\"1212121212121212121212121212121212121212121212121212121212121212\"},",
         "{\"file\":\"model-manifest.local.json\",\"sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"},",
         "{\"file\":\"model-preflight.json\",\"sha256\":\"1717171717171717171717171717171717171717171717171717171717171717\"},",
-        "{\"file\":\"ocr-worker.stdout.txt\",\"sha256\":\"1919191919191919191919191919191919191919191919191919191919191919\"},",
+        "{\"file\":\"ocr-search-publication.stdout.txt\",\"sha256\":\"1919191919191919191919191919191919191919191919191919191919191919\"},",
         "{\"file\":\"redacted-diagnostics.json\",\"sha256\":\"2020202020202020202020202020202020202020202020202020202020202020\"},",
         "{\"file\":\"private-query-set.local.jsonl\",\"sha256\":null}",
         "],",
@@ -4653,7 +4712,7 @@ fn current_stage_evidence_manifest_missing_runtime_manifest_outputs() -> String 
 fn current_stage_evidence_manifest_missing_dataset_output() -> String {
     concat!(
         "{",
-        "\"schema_version\":\"resume-ir.current-stage-validation-evidence.v1\",",
+        "\"schema_version\":\"resume-ir.current-stage-validation-evidence.v2\",",
         "\"privacy_boundary\":\"local_only_redacted_evidence_manifest\",",
         "\"current_stage_target\":\"reproducible_local_10k_baseline\",",
         "\"performance_optimization_deferred\":true,",
@@ -4669,9 +4728,12 @@ fn current_stage_evidence_manifest_missing_dataset_output() -> String {
         "\"max_files\":10000,",
         "\"max_queries\":500,",
         "\"top_k\":10,",
+        "\"private_query_timeout_ms\":30000,",
         "\"embedding_dimension\":384,",
+        "\"embedding_runtime_bin_dir_configured\":true,",
+        "\"reuse_imported_corpus\":false,",
         "\"ocr_worker_ticks\":10000,",
-        "\"embedding_worker_ticks\":10000",
+        "\"ocr_jobs_per_tick\":1",
         "},",
         "\"steps\":[",
         "{\"id\":\"ocr_preflight\",\"status\":\"success\"},",
@@ -4682,8 +4744,7 @@ fn current_stage_evidence_manifest_missing_dataset_output() -> String {
         "{\"id\":\"model_preflight\",\"status\":\"success\"},",
         "{\"id\":\"dataset_manifest\",\"status\":\"success\"},",
         "{\"id\":\"import_private_corpus\",\"status\":\"success\"},",
-        "{\"id\":\"ocr_worker_bounded_loop\",\"status\":\"success\"},",
-        "{\"id\":\"embedding_worker_bounded_loop\",\"status\":\"success\"},",
+        "{\"id\":\"ocr_search_publication_bounded_loop\",\"status\":\"success\"},",
         "{\"id\":\"corpus_summary\",\"status\":\"success\"},",
         "{\"id\":\"query_set_prepare\",\"status\":\"success\"},",
         "{\"id\":\"private_query_baseline\",\"status\":\"success\"},",

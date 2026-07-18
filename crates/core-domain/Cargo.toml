@@ -9,6 +9,7 @@ publish.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+sha2 = "0.10"
 unicode-normalization = "0.1"
 
 [lints]

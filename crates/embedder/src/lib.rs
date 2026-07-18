@@ -2,23 +2,30 @@ pub fn crate_name() -> &'static str {
     "embedder"
 }
 
+mod resident;
+
+pub use embedding_protocol::EmbeddingRole;
+pub use resident::{
+    EmbeddingPriority, ResidentEmbeddingClient, ResidentEmbeddingOwner, ResidentEmbeddingSpec,
+    ResidentEmbeddingStatus,
+};
+
 use std::{
     collections::BTreeMap,
     fmt,
     fs::{self, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
     thread::{self, JoinHandle},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
-use std::os::unix::{
-    fs::{DirBuilderExt, OpenOptionsExt},
-    process::CommandExt,
-};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+
+use process_containment::ContainedChild;
 
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -62,6 +69,7 @@ impl EmbeddingBudget {
 #[derive(Clone, PartialEq, Eq)]
 pub struct EmbeddingInput {
     id: String,
+    role: EmbeddingRole,
     text: String,
 }
 
@@ -69,6 +77,15 @@ impl EmbeddingInput {
     pub fn new(id: impl Into<String>, text: impl Into<String>) -> Self {
         Self {
             id: id.into(),
+            role: EmbeddingRole::Passage,
+            text: text.into(),
+        }
+    }
+
+    pub fn query(id: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            role: EmbeddingRole::Query,
             text: text.into(),
         }
     }
@@ -80,6 +97,10 @@ impl EmbeddingInput {
     pub fn text(&self) -> &str {
         &self.text
     }
+
+    pub fn role(&self) -> EmbeddingRole {
+        self.role
+    }
 }
 
 impl fmt::Debug for EmbeddingInput {
@@ -87,6 +108,7 @@ impl fmt::Debug for EmbeddingInput {
         formatter
             .debug_struct("EmbeddingInput")
             .field("id", &self.id)
+            .field("role", &self.role)
             .field("text", &"<redacted>")
             .field("text_bytes", &self.text.len())
             .finish()
@@ -207,6 +229,50 @@ impl LocalEmbeddingCommandEmbedder {
     pub fn new(spec: LocalEmbeddingCommandSpec) -> Self {
         Self { spec }
     }
+
+    pub fn embed_batch_with_cancel(
+        &self,
+        inputs: &[EmbeddingInput],
+        budget: EmbeddingBudget,
+        is_cancelled: impl Fn() -> bool,
+    ) -> Result<Vec<EmbeddingVector>, EmbeddingError> {
+        self.embed_batch_inner(inputs, budget, is_cancelled)
+    }
+
+    fn embed_batch_inner(
+        &self,
+        inputs: &[EmbeddingInput],
+        budget: EmbeddingBudget,
+        is_cancelled: impl Fn() -> bool,
+    ) -> Result<Vec<EmbeddingVector>, EmbeddingError> {
+        validate_embedding_inputs(inputs, budget)?;
+        if is_cancelled() {
+            return Err(EmbeddingError::Cancelled);
+        }
+        let input = EmbeddingTempInput::write(self, inputs)?;
+        let mut child = spawn_embedding_command(&self.spec, input.path(), inputs.len())?;
+        let stdout = child.take_stdout().ok_or(EmbeddingError::EngineFailed)?;
+        let stderr = child.take_stderr().ok_or(EmbeddingError::EngineFailed)?;
+        let stdout_reader = spawn_output_reader(stdout, EMBEDDING_OUTPUT_MAX_BYTES);
+        let stderr_reader = spawn_output_reader(stderr, EMBEDDING_OUTPUT_MAX_BYTES);
+
+        let status = match wait_for_embedding_child(&mut child, self.spec.timeout_ms, is_cancelled)
+        {
+            Ok(status) => status,
+            Err(error) => {
+                let _ = join_output_reader(stdout_reader);
+                let _ = join_output_reader(stderr_reader);
+                return Err(error);
+            }
+        };
+        let stdout = join_output_reader(stdout_reader)?;
+        let _stderr = join_output_reader(stderr_reader)?;
+        if !status.success() {
+            return Err(EmbeddingError::EngineFailed);
+        }
+
+        parse_embedding_output(inputs, &stdout, self.model_id(), self.dimension())
+    }
 }
 
 impl Embedder for LocalEmbeddingCommandEmbedder {
@@ -223,31 +289,7 @@ impl Embedder for LocalEmbeddingCommandEmbedder {
         inputs: &[EmbeddingInput],
         budget: EmbeddingBudget,
     ) -> Result<Vec<EmbeddingVector>, EmbeddingError> {
-        validate_embedding_inputs(inputs, budget)?;
-        let input = EmbeddingTempInput::write(self, inputs)?;
-        let mut child = spawn_embedding_command(&self.spec, input.path(), inputs.len())?;
-        let stdout = child.stdout.take().ok_or(EmbeddingError::EngineFailed)?;
-        let stderr = child.stderr.take().ok_or(EmbeddingError::EngineFailed)?;
-        let stdout_reader = spawn_output_reader(stdout, EMBEDDING_OUTPUT_MAX_BYTES);
-        let stderr_reader = spawn_output_reader(stderr, EMBEDDING_OUTPUT_MAX_BYTES);
-
-        let status = match wait_for_embedding_child(&mut child, self.spec.timeout_ms) {
-            Ok(status) => status,
-            Err(error) => {
-                let _ = join_output_reader(stdout_reader);
-                let _ = join_output_reader(stderr_reader);
-                return Err(error);
-            }
-        };
-        #[cfg(unix)]
-        terminate_process_group(child.id());
-        let stdout = join_output_reader(stdout_reader)?;
-        let _stderr = join_output_reader(stderr_reader)?;
-        if !status.success() {
-            return Err(EmbeddingError::EngineFailed);
-        }
-
-        parse_embedding_output(inputs, &stdout, self.model_id(), self.dimension())
+        self.embed_batch_inner(inputs, budget, || false)
     }
 }
 
@@ -319,6 +361,8 @@ pub enum EmbeddingError {
     InvalidRequest,
     WorkerUnavailable,
     EngineFailed,
+    Overloaded,
+    Cancelled,
     Timeout,
     BudgetExceeded { limit: usize, actual: usize },
     TextBudgetExceeded { limit: usize, actual: usize },
@@ -331,6 +375,8 @@ impl fmt::Display for EmbeddingError {
             Self::InvalidRequest => formatter.write_str("embedding request is invalid"),
             Self::WorkerUnavailable => formatter.write_str("embedding worker is unavailable"),
             Self::EngineFailed => formatter.write_str("embedding engine failed"),
+            Self::Overloaded => formatter.write_str("embedding worker is overloaded"),
+            Self::Cancelled => formatter.write_str("embedding request was cancelled"),
             Self::Timeout => formatter.write_str("embedding request timed out"),
             Self::BudgetExceeded { limit, actual } => {
                 write!(
@@ -384,7 +430,7 @@ fn spawn_embedding_command(
     spec: &LocalEmbeddingCommandSpec,
     input_path: &Path,
     input_count: usize,
-) -> Result<Child, EmbeddingError> {
+) -> Result<ContainedChild, EmbeddingError> {
     let mut command = Command::new(&spec.program);
     command
         .args(&spec.args)
@@ -395,9 +441,7 @@ fn spawn_embedding_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_process_isolation(&mut command);
-
-    command.spawn().map_err(|error| match error.kind() {
+    ContainedChild::spawn(&mut command).map_err(|error| match error.kind() {
         io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied => {
             EmbeddingError::WorkerUnavailable
         }
@@ -405,22 +449,19 @@ fn spawn_embedding_command(
     })
 }
 
-#[cfg(unix)]
-fn configure_process_isolation(command: &mut Command) {
-    command.process_group(0);
-}
-
-#[cfg(not(unix))]
-fn configure_process_isolation(_command: &mut Command) {}
-
 fn wait_for_embedding_child(
-    child: &mut Child,
+    child: &mut ContainedChild,
     timeout_ms: u64,
+    is_cancelled: impl Fn() -> bool,
 ) -> Result<std::process::ExitStatus, EmbeddingError> {
     let deadline = Instant::now()
         .checked_add(Duration::from_millis(timeout_ms))
         .ok_or(EmbeddingError::InvalidRequest)?;
     loop {
+        if is_cancelled() {
+            terminate_child(child);
+            return Err(EmbeddingError::Cancelled);
+        }
         match child.try_wait() {
             Ok(Some(status)) => return Ok(status),
             Ok(None) => {}
@@ -440,74 +481,8 @@ fn wait_for_embedding_child(
     }
 }
 
-fn terminate_child(child: &mut Child) {
-    #[cfg(unix)]
-    {
-        signal_process_group(child.id(), UnixSignal::Term);
-        if wait_for_child_exit(child, Duration::from_millis(100)) {
-            return;
-        }
-        signal_process_group(child.id(), UnixSignal::Kill);
-        if wait_for_child_exit(child, Duration::from_millis(100)) {
-            return;
-        }
-    }
-
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-#[cfg(unix)]
-fn terminate_process_group(process_group_id: u32) {
-    signal_process_group(process_group_id, UnixSignal::Term);
-    thread::sleep(Duration::from_millis(10));
-    signal_process_group(process_group_id, UnixSignal::Kill);
-}
-
-#[cfg(unix)]
-#[derive(Clone, Copy)]
-enum UnixSignal {
-    Term,
-    Kill,
-}
-
-#[cfg(unix)]
-impl UnixSignal {
-    fn as_kill_arg(self) -> &'static str {
-        match self {
-            Self::Term => "-TERM",
-            Self::Kill => "-KILL",
-        }
-    }
-}
-
-#[cfg(unix)]
-fn signal_process_group(process_group_id: u32, signal: UnixSignal) {
-    let _ = Command::new("/bin/kill")
-        .arg(signal.as_kill_arg())
-        .arg("--")
-        .arg(format!("-{process_group_id}"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-#[cfg(unix)]
-fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return true,
-            Ok(None) => {}
-            Err(_) => return true,
-        }
-
-        if Instant::now() >= deadline {
-            return false;
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
+fn terminate_child(child: &mut ContainedChild) {
+    child.terminate();
 }
 
 fn spawn_output_reader<R>(

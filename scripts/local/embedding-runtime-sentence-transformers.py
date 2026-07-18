@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local sentence-transformers adapter for resume-ir embedding workers.
+"""Local sentence-transformers adapter for resume-ir embedding runtimes.
 
 This command speaks the resume-ir-embedding-v1 stdout protocol. It is intended
 to run against a locally cached or locally installed sentence-transformers model
