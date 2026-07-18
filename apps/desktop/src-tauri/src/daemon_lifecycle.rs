@@ -8,6 +8,8 @@ use std::os::unix::fs::PermissionsExt;
 use crate::daemon_client::DesktopError;
 use crate::daemon_connection::ConnectionGenerationSource;
 
+#[path = "daemon_lifecycle/classifier.rs"]
+mod classifier;
 #[path = "daemon_lifecycle/policy.rs"]
 mod policy;
 #[path = "daemon_lifecycle/process.rs"]
@@ -46,6 +48,7 @@ impl DaemonLifecycleState {
         current_exe: &Path,
         embedding_resource_dir: &Path,
         ocr_resource_dir: &Path,
+        classifier_resource_dir: &Path,
     ) -> Result<Self, DesktopError> {
         Self::launch(
             ProductionDaemonRuntime::initialize(
@@ -53,6 +56,7 @@ impl DaemonLifecycleState {
                 current_exe,
                 embedding_resource_dir,
                 ocr_resource_dir,
+                classifier_resource_dir,
             ),
             LifecycleReceiptRecorder::initialize(data_dir),
         )
@@ -477,6 +481,7 @@ fn daemon_arguments(
     data_dir: &Path,
     embedding: Option<&EmbeddingRuntime>,
     ocr: Option<&OcrRuntime>,
+    classifier: Option<&classifier::ClassifierRuntime>,
 ) -> Vec<OsString> {
     let mut arguments: Vec<OsString> = [
         OsString::from("--data-dir"),
@@ -520,6 +525,12 @@ fn daemon_arguments(
             OsString::from(OCR_JOBS_PER_TICK.to_string()),
         ]);
     }
+    if let Some(classifier) = classifier {
+        arguments.extend([
+            OsString::from("--resume-classifier-model"),
+            classifier.model_path().as_os_str().to_os_string(),
+        ]);
+    }
     arguments
 }
 
@@ -532,7 +543,7 @@ mod tests {
 
     #[test]
     fn daemon_command_is_bounded_to_local_workers_and_loopback_ipc() {
-        let arguments = daemon_arguments(Path::new("synthetic-data"), None, None);
+        let arguments = daemon_arguments(Path::new("synthetic-data"), None, None, None);
         assert_eq!(
             arguments,
             [
@@ -566,7 +577,8 @@ mod tests {
             model_dir: None,
             runtime_dir: None,
         };
-        let arguments = daemon_arguments(Path::new("synthetic-data"), Some(&embedding), None);
+        let arguments =
+            daemon_arguments(Path::new("synthetic-data"), Some(&embedding), None, None);
         assert_eq!(
             &arguments[15..],
             [
@@ -696,7 +708,8 @@ mod tests {
             tessdata_environment.as_deref(),
             Some(ocr.tessdata_dir.as_path())
         );
-        let arguments = daemon_arguments(Path::new("synthetic-data"), None, Some(&ocr));
+        let arguments =
+            daemon_arguments(Path::new("synthetic-data"), None, Some(&ocr), None);
         assert_eq!(
             &arguments[15..],
             [

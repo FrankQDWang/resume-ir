@@ -3503,6 +3503,60 @@ guards, local runtime discovery, and PR #9 CI state.
   screenshots remain outside Git and public evidence. S806 does not include the
   model pack, OCR/PDFium, composition, NSIS, H0 GUI E2E, signing or updater.
 
+### 2026-07-16 macOS bundled classifier and icon (out of band)
+
+- Re-read the referenced Codex task and confirmed the shipped product path did
+  not use the trained TF-IDF/logistic-regression classifier by default: only a
+  synchronous CLI path accepted an owner-only model path, while daemon queued
+  imports, OCR completion and the GUI used the deterministic classifier alone.
+  The first daemon regression failed because `--resume-classifier-model` was an
+  unknown run argument.
+- The arm64 Mac internal-test composition now converts the single reviewed local
+  sklearn artifact into the existing bounded Rust envelope, stages it as a
+  read-only Tauri resource, binds it to an exact schema/size/SHA-256 manifest,
+  validates it again at desktop startup and passes it to every App-owned daemon.
+  Missing, writable, symlinked, incompatible or digest-mismatched model bytes
+  fail App startup instead of silently falling back. Daemon queued imports and
+  OCR reclassification share the same loaded policy, and OCR publication now
+  accepts only the already-defined bounded promoted classifier epoch.
+- The private-derived 240,000-feature model remains a user-authorized local
+  build input under the ignored `.cache` boundary; no joblib, converted model,
+  vocabulary, training text, local path or private evidence is tracked. Only
+  the reviewed aggregate composition manifest and deterministic converter are
+  checked in. This is an internal-test distribution boundary, not public model
+  release approval.
+- Replaced the Mac App icon from the user-provided artwork while preserving the
+  illustration and removing the black corner/border artifacts. A second native
+  Launchpad review caught that the first processed asset still presented as an
+  opaque square. The corrected 1024-pixel RGBA source uses a bounded rounded
+  silhouette with transparent corners and standard optical size. A portable
+  Node regression decodes the PNG and requires transparent corner samples,
+  opaque edge-center samples and a 5%-12% transparent-pixel ratio. The DMG
+  verifier keeps the volume icon bounded so the complete 2.48 MiB
+  multi-resolution ICNS is accepted without dropping its high-resolution layer.
+- Focused verification passed: classifier 14/14; meta-store unit/integration
+  suite; daemon OCR 12/12 and bundled-model import 1/1; desktop Rust 36/36;
+  desktop resource/DMG Node tests 42/42; focused root and standalone Tauri
+  strict Clippy; formatting, Ruff and diff whitespace checks. One OCR loop test
+  timed out only while two release builds and Clippy were saturating the host,
+  then passed alone and in the clean 12-test suite.
+- A fresh current-source arm64 internal-test DMG passed read-only composition,
+  exact digest, architecture, ad-hoc hardened-runtime signature, embedding-only
+  entitlement scope and build-path privacy checks. Its receipt reports the
+  20,942,422-byte classifier resource, and a final mounted-DMG smoke loaded that
+  bundled model with the bundled release daemon. The artifact remains
+  non-notarized, Gatekeeper-rejected and allow-list-only; no stable/public
+  release claim is made.
+- After the icon silhouette correction, the desktop frontend suite passed 20/20
+  and the complete packaging/resource/lifecycle Node suite passed 91/91. A new
+  125,966,360-byte DMG passed the same read-only composition contract with one
+  2,482,309-byte volume icon. The verified App was atomically refreshed in
+  `/Applications`, LaunchServices and Dock caches were refreshed, and native
+  Launchpad evidence showed the rounded icon beside the existing applications.
+  The installed ICNS exactly matches the checked-in asset, the App deep strict
+  signature verifies, the bundled classifier pack remains present, user data
+  was not removed and no refresh stage or backup remains.
+
 ### 2026-07-16 macOS internal-test lifecycle remediation (out of band)
 
 - Investigated two `launchd`-adopted resident embedding processes and confirmed

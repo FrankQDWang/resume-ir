@@ -193,11 +193,15 @@ fn main() {
             let ocr_resource_dir = app
                 .path()
                 .resolve("ocr/runtime-pack", BaseDirectory::Resource)?;
+            let classifier_resource_dir = app
+                .path()
+                .resolve("classifier/runtime-pack", BaseDirectory::Resource)?;
             app.manage(DaemonLifecycleState::initialize(
                 &data_dir,
                 &current_exe,
                 &embedding_resource_dir,
                 &ocr_resource_dir,
+                &classifier_resource_dir,
             )?);
             Ok(())
         })

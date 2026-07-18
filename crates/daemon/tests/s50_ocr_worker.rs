@@ -11,6 +11,58 @@ use meta_store::{
     IngestJobStatus, MetaStore, OcrPageCacheKey, OcrPageCacheStatus, UnixTimestamp, WorkerTaskKind,
 };
 use search_runtime::{HitLimit, QueryCoordinator};
+use serde_json::json;
+use sha2::{Digest, Sha256};
+
+#[cfg(unix)]
+#[test]
+fn daemon_ocr_worker_reuses_the_bundled_classifier_model() {
+    let data_dir = temp_dir("ocr-worker-classifier-data");
+    seed_scanned_document(&data_dir);
+    let command = write_fixture_executable(
+        "fixture-daemon-ocr-classifier",
+        r#"#!/bin/sh
+printf 'resume-ir-ocr-v1\n'
+printf 'confidence=0.80\n'
+printf 'text:\n'
+printf 'PROFILE\n'
+printf 'Platform engineer with Rust experience.\n'
+printf 'INVOICE\n'
+"#,
+    );
+    let model = data_dir.join("bundled-classifier-model.json");
+    write_synthetic_bundled_model(&model);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--once",
+            "--work-ocr-once",
+            "--ocr-command",
+            path_str(&command),
+            "--resume-classifier-model",
+            path_str(&model),
+        ])
+        .output()
+        .expect("run daemon OCR worker with bundled classifier model");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        scanned_document(&MetaStore::open_data_dir(&data_dir).unwrap()).status,
+        DocumentStatus::Searchable
+    );
+
+    remove_dir(&data_dir);
+}
 
 #[cfg(unix)]
 #[test]
@@ -96,6 +148,34 @@ printf 'Rust search systems.\n'
     assert_eq!(hits[0].file_name, "synthetic-scanned-resume.pdf");
 
     remove_dir(&data_dir);
+}
+
+fn write_synthetic_bundled_model(path: &Path) {
+    let model = json!({
+        "schema": "resume_ir_linear_promotion_v1",
+        "classifier_epoch": "precision_first_v4",
+        "feature_contract": "bounded_normalized_text_plus_structure_v1",
+        "max_input_chars": 128,
+        "threshold": 0.7,
+        "intercept": 0.0,
+        "features": [{"ngram": "pla", "idf": 1.0, "coefficient": 12.0}]
+    });
+    let model_json = serde_json::to_string(&model).unwrap();
+    let model_sha256 = format!("{:x}", Sha256::digest(model_json.as_bytes()));
+    fs::write(
+        path,
+        serde_json::to_vec(&json!({
+            "model_json": model_json,
+            "model_sha256": model_sha256
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o644)).unwrap();
+    }
 }
 
 #[cfg(unix)]

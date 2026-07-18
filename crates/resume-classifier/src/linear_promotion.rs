@@ -46,7 +46,14 @@ impl LinearPromotionPolicy {
     /// Loads an owner-only local artifact. Every validation failure disables
     /// promotion rather than changing deterministic classifier behavior.
     pub fn load_local(path: &Path) -> Self {
-        Self::try_load(path).unwrap_or_default()
+        Self::try_load(path, ArtifactAccess::OwnerOnly).unwrap_or_default()
+    }
+
+    /// Loads a reviewed, immutable artifact from an application bundle.
+    /// Group/world readability is allowed, but symlinks and writable bundle
+    /// artifacts fail closed.
+    pub fn load_bundled(path: &Path) -> Self {
+        Self::try_load(path, ArtifactAccess::BundledReadOnly).unwrap_or_default()
     }
 
     pub fn enabled(&self) -> bool {
@@ -75,15 +82,23 @@ impl LinearPromotionPolicy {
         deterministic
     }
 
-    fn try_load(path: &Path) -> Option<Self> {
-        let metadata = fs::metadata(path).ok()?;
-        if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_ARTIFACT_BYTES {
+    fn try_load(path: &Path, access: ArtifactAccess) -> Option<Self> {
+        let metadata = fs::symlink_metadata(path).ok()?;
+        if !metadata.is_file()
+            || metadata.file_type().is_symlink()
+            || metadata.len() == 0
+            || metadata.len() > MAX_ARTIFACT_BYTES
+        {
             return None;
         }
         #[cfg(unix)]
         {
             use std::os::unix::fs::MetadataExt;
-            if metadata.mode() & 0o077 != 0 {
+            let forbidden_mode = match access {
+                ArtifactAccess::OwnerOnly => 0o077,
+                ArtifactAccess::BundledReadOnly => 0o022,
+            };
+            if metadata.mode() & forbidden_mode != 0 {
                 return None;
             }
         }
@@ -98,6 +113,12 @@ impl LinearPromotionPolicy {
         let model = LinearModel::from_artifact(artifact, epoch)?;
         Some(Self(Some(Arc::new(model))))
     }
+}
+
+#[derive(Clone, Copy)]
+enum ArtifactAccess {
+    OwnerOnly,
+    BundledReadOnly,
 }
 
 #[derive(Deserialize, serde::Serialize)]

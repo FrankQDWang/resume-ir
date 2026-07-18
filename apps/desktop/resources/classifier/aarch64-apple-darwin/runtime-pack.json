@@ -1,0 +1,15 @@
+{
+  "schema_version": "resume-ir.desktop-classifier-model-pack.v1",
+  "classifier_epoch": "precision_first_v4",
+  "feature_contract": "bounded_normalized_text_plus_structure_v1",
+  "distribution_scope": "user_authorized_internal_test",
+  "network_access": "disabled",
+  "files": [
+    {
+      "role": "linear_promotion_model",
+      "file": "linear-promotion-model.json",
+      "bytes": 20942422,
+      "sha256": "3048fb78d27c0d96872f9d799e9e7a1195cfa517ff73b21031eac87b87cd443a"
+    }
+  ]
+}

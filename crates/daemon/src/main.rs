@@ -18,10 +18,10 @@ use embedder::{
     ResidentEmbeddingClient, ResidentEmbeddingOwner, ResidentEmbeddingSpec,
 };
 use import_pipeline::{
-    detect_ocr_page_count, import_root_with_options, index_claimed_ocr_text,
+    detect_ocr_page_count, import_root_with_options, index_claimed_ocr_text_with_policy,
     reconcile_search_artifacts, ImportOptions, ImportPipelineErrorClass, ImportResourcePolicy,
     ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ImportTaskOwnerLock,
-    ScanProfile, SearchArtifactRecoverySummary, SearchProjectionRemoval,
+    LinearPromotionPolicy, ScanProfile, SearchArtifactRecoverySummary, SearchProjectionRemoval,
     SearchProjectionRemovalReason, SearchPublicationEmbeddingFailure,
     SearchPublicationEmbeddingInput, SearchPublicationEmbeddingOutput,
     SearchPublicationVectorization, SearchPublicationVectorizer,
@@ -571,6 +571,24 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                     Some(parse_nonnegative_i64_run_value(args.get(index + 1))?);
                 index += 2;
             }
+            "--resume-classifier-model" => {
+                if options.classifier_model_configured {
+                    return Err(DaemonError::usage(run_usage()));
+                }
+                let path = PathBuf::from(parse_non_empty_run_value(args.get(index + 1))?);
+                if !path.is_absolute() {
+                    return Err(DaemonError::usage(run_usage()));
+                }
+                let policy = LinearPromotionPolicy::load_bundled(&path);
+                if !policy.enabled() {
+                    return Err(DaemonError::user(
+                        "resume classifier model is invalid or incompatible",
+                    ));
+                }
+                options.linear_promotion = policy;
+                options.classifier_model_configured = true;
+                index += 2;
+            }
             "--work-ocr-once" => {
                 options.work_ocr_once = true;
                 index += 1;
@@ -761,7 +779,7 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
 }
 
 fn run_usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--parent-lifecycle-stdin] [--once] [--work-imports-once|--work-imports [--rescan-completed-imports] [--watch-import-roots] [--import-rescan-min-age-seconds <n>] [--stale-import-task-seconds <n>] [--import-retry-backoff-seconds <n>]] [--work-ocr-once|--work-ocr] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--ocr-jobs-per-tick <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--expected-ipc-protocol <version>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--parent-lifecycle-stdin] [--once] [--work-imports-once|--work-imports [--rescan-completed-imports] [--watch-import-roots] [--import-rescan-min-age-seconds <n>] [--stale-import-task-seconds <n>] [--import-retry-backoff-seconds <n>]] [--resume-classifier-model <absolute-path>] [--work-ocr-once|--work-ocr] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--ocr-jobs-per-tick <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--expected-ipc-protocol <version>] [--max-requests <n>]"
 }
 
 fn parse_non_empty_run_value(value: Option<&String>) -> Result<String> {
@@ -1393,7 +1411,7 @@ fn run_claimed_ocr_job(
 
     let combined_text = page_texts.join("\n");
     let confidence = (confidence_count > 0).then_some(confidence_sum / confidence_count as f32);
-    let outcome = match index_claimed_ocr_text(
+    let outcome = match index_claimed_ocr_text_with_policy(
         data_dir,
         store,
         job,
@@ -1401,6 +1419,7 @@ fn run_claimed_ocr_job(
         confidence,
         Some(page_count),
         now,
+        &options.linear_promotion,
         &options.search_vectorization,
     ) {
         Ok(outcome) => outcome,
@@ -1776,6 +1795,7 @@ fn import_options_from_scope(
                 ))
             }
         },
+        linear_promotion: options.linear_promotion.clone(),
         search_vectorization: options.search_vectorization.clone(),
         ..ImportOptions::default()
     })
@@ -4292,6 +4312,8 @@ struct RunOptions {
     import_rescan_min_age_seconds: Option<i64>,
     stale_import_task_seconds: Option<i64>,
     import_retry_backoff_seconds: Option<i64>,
+    classifier_model_configured: bool,
+    linear_promotion: LinearPromotionPolicy,
     work_ocr_once: bool,
     work_ocr: bool,
     work_index_once: bool,
@@ -4333,6 +4355,8 @@ impl Default for RunOptions {
             import_rescan_min_age_seconds: None,
             stale_import_task_seconds: None,
             import_retry_backoff_seconds: None,
+            classifier_model_configured: false,
+            linear_promotion: LinearPromotionPolicy::default(),
             work_ocr_once: false,
             work_ocr: false,
             work_index_once: false,

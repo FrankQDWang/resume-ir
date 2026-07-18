@@ -2398,7 +2398,6 @@ impl MetaStore {
             && publication.classification.resume_version_id == publication.version.id
             && CurrentClassifierEpoch::parse(&publication.classification.classifier_epoch)
                 .is_some()
-            && publication.classification.classifier_epoch == claimed.triage_epoch()
             && publication.classification.status != ClassificationStatus::OcrBacklog
             && (candidate == (publication.document.status == DocumentStatus::FieldsExtracted))
             && (candidate != (publication.document.status == DocumentStatus::OcrDone))
