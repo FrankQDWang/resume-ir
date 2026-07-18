@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 
+import { stageClassifierResourcePack } from "./classifier-pack.mjs";
 import { stageOcrResourcePack } from "./ocr-pack.mjs";
 import { readWindowsEmbeddingSourceContract } from "./windows-embedding-pack.mjs";
 import { readWindowsOcrSourceContract } from "./windows-ocr-pack.mjs";
@@ -185,6 +186,11 @@ export function createDesktopCompositionPlan({
   debug,
   sourcePackRoot = path.join(repoRoot, ".cache", "resume-ir-native-e5-qint8-pack"),
   sourceOcrPackRoot = path.join(repoRoot, ".cache", "resume-ir-macos-ocr-runtime-pack"),
+  sourceClassifierPackRoot = path.join(
+    repoRoot,
+    ".cache",
+    "resume-ir-classifier-model-pack",
+  ),
   expectedManifest = path.join(
     repoRoot,
     "apps",
@@ -200,6 +206,15 @@ export function createDesktopCompositionPlan({
     "desktop",
     "resources",
     "ocr",
+    targetTriple ?? "missing-target",
+    "runtime-pack.json",
+  ),
+  expectedClassifierManifest = path.join(
+    repoRoot,
+    "apps",
+    "desktop",
+    "resources",
+    "classifier",
     targetTriple ?? "missing-target",
     "runtime-pack.json",
   ),
@@ -253,11 +268,16 @@ export function createDesktopCompositionPlan({
     throw new Error("embedding resource target is not supported");
   }
   if (
-    ![sourcePackRoot, expectedManifest, sourceOcrPackRoot, expectedOcrManifest].every(
-      path.isAbsolute,
-    )
+    ![
+      sourcePackRoot,
+      expectedManifest,
+      sourceOcrPackRoot,
+      expectedOcrManifest,
+      sourceClassifierPackRoot,
+      expectedClassifierManifest,
+    ].every(path.isAbsolute)
   ) {
-    throw new Error("embedding resource paths must be absolute");
+    throw new Error("desktop resource paths must be absolute");
   }
   const sidecarOptions = { repoRoot, buildTargetDir, targetTriple, debug };
   return Object.freeze({
@@ -274,6 +294,17 @@ export function createDesktopCompositionPlan({
       destination: path.join(repoRoot, "target", "tauri-resources", "ocr-runtime-pack"),
       expectedManifest: expectedOcrManifest,
       sourcePackRoot: sourceOcrPackRoot,
+      targetTriple,
+    }),
+    classifierResourcePack: Object.freeze({
+      destination: path.join(
+        repoRoot,
+        "target",
+        "tauri-resources",
+        "classifier-model-pack",
+      ),
+      expectedManifest: expectedClassifierManifest,
+      sourcePackRoot: sourceClassifierPackRoot,
       targetTriple,
     }),
     resourcePack: Object.freeze({
@@ -646,6 +677,7 @@ async function main() {
   }
   await stageEmbeddingResourcePack(plan.resourcePack);
   await stageOcrResourcePack(plan.ocrResourcePack);
+  await stageClassifierResourcePack(plan.classifierResourcePack);
   console.log(
     `prepared bundled desktop runtime composition for ${plan.targetTriple}`,
   );

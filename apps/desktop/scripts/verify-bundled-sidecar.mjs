@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import os from "node:os";
 import path from "node:path";
 
+import { validateClassifierPackManifest } from "./classifier-pack.mjs";
 import { validateRuntimePackManifest } from "./prepare-sidecar.mjs";
 import { verifyOcrResourcePack } from "./ocr-pack.mjs";
 
@@ -151,6 +152,15 @@ export async function verifyBundledSidecar({
     "desktop",
     "resources",
     "ocr",
+    targetTriple,
+    "runtime-pack.json",
+  ),
+  expectedClassifierManifest = path.join(
+    repoRoot,
+    "apps",
+    "desktop",
+    "resources",
+    "classifier",
     targetTriple,
     "runtime-pack.json",
   ),
@@ -331,6 +341,89 @@ export async function verifyBundledSidecar({
     throw new Error("embedding resource manifest contains a build-machine identity path marker");
   }
 
+  const stagedClassifierPack = path.join(
+    repoRoot,
+    "target",
+    "tauri-resources",
+    "classifier-model-pack",
+  );
+  const bundledClassifierPack = path.join(
+    appBundle,
+    "Contents",
+    "Resources",
+    "classifier",
+    "runtime-pack",
+  );
+  let expectedClassifier;
+  let stagedClassifier;
+  let bundledClassifier;
+  try {
+    expectedClassifier = validateClassifierPackManifest(
+      JSON.parse(await readFile(expectedClassifierManifest, "utf8")),
+    );
+    stagedClassifier = validateClassifierPackManifest(
+      JSON.parse(await readFile(path.join(stagedClassifierPack, "runtime-pack.json"), "utf8")),
+    );
+    bundledClassifier = validateClassifierPackManifest(
+      JSON.parse(await readFile(path.join(bundledClassifierPack, "runtime-pack.json"), "utf8")),
+    );
+  } catch {
+    throw new Error("required classifier model pack is missing or invalid");
+  }
+  const expectedClassifierJson = JSON.stringify(expectedClassifier);
+  if (
+    JSON.stringify(stagedClassifier) !== expectedClassifierJson ||
+    JSON.stringify(bundledClassifier) !== expectedClassifierJson
+  ) {
+    throw new Error("classifier model manifest does not match reviewed composition");
+  }
+  const classifierEntries = [
+    "runtime-pack.json",
+    ...expectedClassifier.files.map(({ file }) => file),
+  ].sort();
+  const [stagedClassifierEntries, bundledClassifierEntries] = await Promise.all([
+    readdir(stagedClassifierPack),
+    readdir(bundledClassifierPack),
+  ]);
+  if (
+    JSON.stringify(stagedClassifierEntries.sort()) !== JSON.stringify(classifierEntries) ||
+    JSON.stringify(bundledClassifierEntries.sort()) !== JSON.stringify(classifierEntries)
+  ) {
+    throw new Error("classifier model pack must contain exactly the reviewed files");
+  }
+  let classifierResourceBytes = 0;
+  for (const entry of expectedClassifier.files) {
+    const stagedFile = path.join(stagedClassifierPack, entry.file);
+    const bundledFile = path.join(bundledClassifierPack, entry.file);
+    const [stagedMetadata, bundledMetadata] = await Promise.all([
+      lstat(stagedFile),
+      lstat(bundledFile),
+    ]);
+    if (
+      !stagedMetadata.isFile() ||
+      !bundledMetadata.isFile() ||
+      stagedMetadata.isSymbolicLink() ||
+      bundledMetadata.isSymbolicLink() ||
+      stagedMetadata.size !== entry.bytes ||
+      bundledMetadata.size !== entry.bytes ||
+      (stagedMetadata.mode & 0o022) !== 0 ||
+      (bundledMetadata.mode & 0o022) !== 0
+    ) {
+      throw new Error("classifier model bundle composition is invalid");
+    }
+    const [stagedDigest, bundledDigest] = await Promise.all([
+      sha256(stagedFile),
+      sha256(bundledFile),
+    ]);
+    if (stagedDigest !== entry.sha256 || bundledDigest !== entry.sha256) {
+      throw new Error("classifier model does not match reviewed bytes");
+    }
+    if (await containsAnyMarker(bundledFile, buildMachineIdentityPrefixes)) {
+      throw new Error("classifier model contains a build-machine identity path marker");
+    }
+    classifierResourceBytes += bundledMetadata.size;
+  }
+
   const stagedOcrPack = path.join(
     repoRoot,
     "target",
@@ -392,6 +485,8 @@ export async function verifyBundledSidecar({
     pdf_renderer_sidecar_count: 1,
     embedding_resource_file_count: expectedEntries.length,
     embedding_resource_bytes: resourceBytes,
+    classifier_resource_file_count: classifierEntries.length,
+    classifier_resource_bytes: classifierResourceBytes,
     ocr_resource_file_count: bundledOcrManifest.files.length + 1,
     ocr_resource_bytes: ocrResourceBytes,
     digest_match: true,

@@ -12,8 +12,8 @@ use super::supervisor::{
     SupervisedChild,
 };
 use super::{
-    configured_daemon_binary, configured_embedding_runtime, configured_ocr_runtime,
-    daemon_arguments,
+    classifier::configured_classifier_runtime, configured_daemon_binary,
+    configured_embedding_runtime, configured_ocr_runtime, daemon_arguments,
 };
 use crate::daemon_client;
 
@@ -82,6 +82,7 @@ pub(super) struct ProductionDaemonRuntime {
     current_exe: PathBuf,
     embedding_resource_dir: PathBuf,
     ocr_resource_dir: PathBuf,
+    classifier_resource_dir: PathBuf,
 }
 
 impl ProductionDaemonRuntime {
@@ -90,12 +91,14 @@ impl ProductionDaemonRuntime {
         current_exe: &Path,
         embedding_resource_dir: &Path,
         ocr_resource_dir: &Path,
+        classifier_resource_dir: &Path,
     ) -> Self {
         Self {
             data_dir: data_dir.to_path_buf(),
             current_exe: current_exe.to_path_buf(),
             embedding_resource_dir: embedding_resource_dir.to_path_buf(),
             ocr_resource_dir: ocr_resource_dir.to_path_buf(),
+            classifier_resource_dir: classifier_resource_dir.to_path_buf(),
         }
     }
 }
@@ -111,12 +114,15 @@ impl DaemonRuntime for ProductionDaemonRuntime {
                 .map_err(|_| RuntimeFailure::Blocked(DaemonBlockedReason::ConfigurationInvalid))?;
         let ocr = configured_ocr_runtime(&self.current_exe, &self.ocr_resource_dir)
             .map_err(|_| RuntimeFailure::Blocked(DaemonBlockedReason::ConfigurationInvalid))?;
+        let classifier = configured_classifier_runtime(&self.classifier_resource_dir)
+            .map_err(|_| RuntimeFailure::Blocked(DaemonBlockedReason::ConfigurationInvalid))?;
         let mut command = Command::new(binary);
         command
             .args(daemon_arguments(
                 &self.data_dir,
                 embedding.as_ref(),
                 ocr.as_ref(),
+                classifier.as_ref(),
             ))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())

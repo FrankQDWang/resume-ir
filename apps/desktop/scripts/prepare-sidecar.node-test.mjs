@@ -27,6 +27,10 @@ import {
   stageBuiltSidecar,
   validateWindowsProcessContainmentContract,
 } from "./prepare-sidecar.mjs";
+import {
+  stageClassifierResourcePack,
+  validateClassifierPackManifest,
+} from "./classifier-pack.mjs";
 import { stageOcrResourcePack } from "./ocr-pack.mjs";
 import {
   createTauriBuildEnvironment,
@@ -136,6 +140,39 @@ async function createSyntheticPack(root, { sourceSymlink = false } = {}) {
   return { expectedManifest, manifest, source };
 }
 
+async function createSyntheticClassifierPack(root, { sourceSymlink = false } = {}) {
+  const source = path.join(root, "source-classifier-pack");
+  const expectedManifest = path.join(root, "expected-classifier-runtime-pack.json");
+  await mkdir(source, { recursive: true });
+  const modelFile = "linear-promotion-model.json";
+  const modelBody = Buffer.from('{"synthetic_classifier":true}\n');
+  await writeFile(path.join(source, modelFile), modelBody);
+  if (sourceSymlink) {
+    await writeFile(path.join(root, "outside-classifier"), modelBody);
+    await rm(path.join(source, modelFile));
+    await symlink(path.join(root, "outside-classifier"), path.join(source, modelFile));
+  }
+  const manifest = {
+    schema_version: "resume-ir.desktop-classifier-model-pack.v1",
+    classifier_epoch: "precision_first_v4",
+    feature_contract: "bounded_normalized_text_plus_structure_v1",
+    distribution_scope: "user_authorized_internal_test",
+    network_access: "disabled",
+    files: [
+      {
+        role: "linear_promotion_model",
+        file: modelFile,
+        bytes: modelBody.length,
+        sha256: sha256(modelBody),
+      },
+    ],
+  };
+  const manifestBody = `${JSON.stringify(manifest, null, 2)}\n`;
+  await writeFile(path.join(source, "runtime-pack.json"), manifestBody);
+  await writeFile(expectedManifest, manifestBody);
+  return { expectedManifest, manifest, source };
+}
+
 async function createSyntheticOcrPack(root) {
   const source = path.join(root, "source-ocr-pack");
   const expectedManifest = path.join(root, "expected-ocr-runtime-pack.json");
@@ -213,6 +250,7 @@ async function prepareSyntheticBundleComposition(
   const targetTriple = "aarch64-apple-darwin";
   const pack = await createSyntheticPack(repoRoot);
   const ocrPack = await createSyntheticOcrPack(repoRoot);
+  const classifierPack = await createSyntheticClassifierPack(repoRoot);
   const plan = createDesktopCompositionPlan({
     repoRoot,
     targetTriple,
@@ -221,6 +259,8 @@ async function prepareSyntheticBundleComposition(
     expectedManifest: pack.expectedManifest,
     sourceOcrPackRoot: ocrPack.source,
     expectedOcrManifest: ocrPack.expectedManifest,
+    sourceClassifierPackRoot: classifierPack.source,
+    expectedClassifierManifest: classifierPack.expectedManifest,
   });
   const macosDirectory = path.join(appBundle, "Contents", "MacOS");
   await mkdir(macosDirectory, { recursive: true });
@@ -237,6 +277,7 @@ async function prepareSyntheticBundleComposition(
   }
   await stageEmbeddingResourcePack(plan.resourcePack);
   await stageOcrResourcePack(plan.ocrResourcePack);
+  await stageClassifierResourcePack(plan.classifierResourcePack);
   const bundledPack = path.join(
     appBundle,
     "Contents",
@@ -259,7 +300,16 @@ async function prepareSyntheticBundleComposition(
     "runtime-pack",
   );
   await copyTree(plan.ocrResourcePack.destination, bundledOcrPack);
+  const bundledClassifierPack = path.join(
+    appBundle,
+    "Contents",
+    "Resources",
+    "classifier",
+    "runtime-pack",
+  );
+  await copyTree(plan.classifierResourcePack.destination, bundledClassifierPack);
   return {
+    expectedClassifierManifest: classifierPack.expectedManifest,
     expectedManifest: pack.expectedManifest,
     expectedOcrManifest: ocrPack.expectedManifest,
     plan,
@@ -470,7 +520,7 @@ test("fails closed for an unsupported or missing target triple", () => {
   );
 });
 
-test("plans three sidecars and immutable arm64 embedding and OCR packs", async (context) => {
+test("plans three sidecars and immutable arm64 runtime packs", async (context) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "resume-ir-composition-plan-"));
   context.after(async () => {
     const { rm } = await import("node:fs/promises");
@@ -496,6 +546,10 @@ test("plans three sidecars and immutable arm64 embedding and OCR packs", async (
   assert.equal(
     plan.resourcePack.destination,
     path.join(repoRoot, "target", "tauri-resources", "embedding-runtime-pack"),
+  );
+  assert.equal(
+    plan.classifierResourcePack.destination,
+    path.join(repoRoot, "target", "tauri-resources", "classifier-model-pack"),
   );
   const renderer = createPdfRendererPlan({
     repoRoot,
@@ -561,6 +615,57 @@ test("stages only the exact reviewed embedding pack and rejects symlinks", async
     stageEmbeddingResourcePack(badPlan.resourcePack),
     /regular non-symlink file/,
   );
+});
+
+test("stages only the reviewed private-derived classifier pack", async (context) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "resume-ir-classifier-stage-"));
+  context.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+  });
+  const pack = await createSyntheticClassifierPack(repoRoot);
+  await writeFile(path.join(pack.source, "private-training-data.json"), "must-not-copy");
+  const plan = createDesktopCompositionPlan({
+    repoRoot,
+    targetTriple: "aarch64-apple-darwin",
+    debug: false,
+    sourceClassifierPackRoot: pack.source,
+    expectedClassifierManifest: pack.expectedManifest,
+  });
+
+  const receipt = await stageClassifierResourcePack(plan.classifierResourcePack);
+  assert.deepEqual(receipt, {
+    schema_version: "resume-ir.classifier-resource-stage.v1",
+    target_triple: "aarch64-apple-darwin",
+    resource_file_count: 2,
+  });
+  assert.deepEqual((await readdir(plan.classifierResourcePack.destination)).sort(), [
+    "linear-promotion-model.json",
+    "runtime-pack.json",
+  ]);
+  assert.equal(
+    (await stat(path.join(plan.classifierResourcePack.destination, "linear-promotion-model.json")))
+      .mode & 0o022,
+    0,
+  );
+  assert.throws(
+    () => validateClassifierPackManifest({ ...pack.manifest, unexpected: true }),
+    /manifest contract is invalid/,
+  );
+
+  const badRoot = await mkdtemp(path.join(os.tmpdir(), "resume-ir-classifier-symlink-"));
+  const badPack = await createSyntheticClassifierPack(badRoot, { sourceSymlink: true });
+  const badPlan = createDesktopCompositionPlan({
+    repoRoot,
+    targetTriple: "aarch64-apple-darwin",
+    debug: false,
+    sourceClassifierPackRoot: badPack.source,
+    expectedClassifierManifest: badPack.expectedManifest,
+  });
+  await assert.rejects(
+    stageClassifierResourcePack(badPlan.classifierResourcePack),
+    /regular non-symlink file/,
+  );
+  await rm(badRoot, { recursive: true, force: true });
 });
 
 test(
@@ -648,7 +753,7 @@ test("a failed Cargo build cannot replace a previously staged daemon", async (co
   assert.equal(await readFile(plan.destination, "utf8"), "previous-daemon");
 });
 
-test("desktop config prepares three sidecars and two resource packs", async () => {
+test("desktop config prepares three sidecars and three resource packs", async () => {
   const configPath = new URL("../src-tauri/tauri.conf.json", import.meta.url);
   const bundleConfigPath = new URL(
     "../src-tauri/tauri.bundle.conf.json",
@@ -687,6 +792,8 @@ test("desktop config prepares three sidecars and two resource packs", async () =
     "../../../target/tauri-sidecars/resume-pdf-render-runtime",
   ]);
   assert.deepEqual(bundleConfig.bundle.resources, {
+    "../../../target/tauri-resources/classifier-model-pack/":
+      "classifier/runtime-pack/",
     "../../../target/tauri-resources/embedding-runtime-pack/":
       "embedding/runtime-pack/",
     "../../../target/tauri-resources/ocr-runtime-pack/": "ocr/runtime-pack/",
@@ -761,12 +868,14 @@ test("verifies exact native sidecars and embedding resources in a macOS app", as
     appBundle,
     expectedManifest: composition.expectedManifest,
     expectedOcrManifest: composition.expectedOcrManifest,
+    expectedClassifierManifest: composition.expectedClassifierManifest,
   });
 
   assert.equal(receipt.daemon_sidecar_count, 1);
   assert.equal(receipt.embedding_sidecar_count, 1);
   assert.equal(receipt.pdf_renderer_sidecar_count, 1);
   assert.equal(receipt.embedding_resource_file_count, 7);
+  assert.equal(receipt.classifier_resource_file_count, 2);
   assert.equal(receipt.ocr_resource_file_count, 31);
   assert.equal(receipt.digest_match, true);
   assert.equal(receipt.architecture, "arm64");
@@ -804,6 +913,7 @@ test("rejects mismatched or duplicate bundled daemon sidecars", async (context) 
       appBundle,
       expectedManifest: composition.expectedManifest,
       expectedOcrManifest: composition.expectedOcrManifest,
+      expectedClassifierManifest: composition.expectedClassifierManifest,
     }),
     /does not match/,
   );
@@ -822,6 +932,7 @@ test("rejects mismatched or duplicate bundled daemon sidecars", async (context) 
       appBundle,
       expectedManifest: composition.expectedManifest,
       expectedOcrManifest: composition.expectedOcrManifest,
+      expectedClassifierManifest: composition.expectedClassifierManifest,
     }),
     /exactly one/,
   );
@@ -855,6 +966,7 @@ test("matches executable payload while allowing only the Mach-O signature blob t
     appBundle,
     expectedManifest: composition.expectedManifest,
     expectedOcrManifest: composition.expectedOcrManifest,
+    expectedClassifierManifest: composition.expectedClassifierManifest,
   });
   assert.equal(receipt.digest_match, true);
 
@@ -869,6 +981,7 @@ test("matches executable payload while allowing only the Mach-O signature blob t
       appBundle,
       expectedManifest: composition.expectedManifest,
       expectedOcrManifest: composition.expectedOcrManifest,
+      expectedClassifierManifest: composition.expectedClassifierManifest,
     }),
     /does not match the staged binary/,
   );
@@ -906,6 +1019,7 @@ test("rejects a bundled daemon containing a build-machine identity path", async 
       appBundle,
       expectedManifest: composition.expectedManifest,
       expectedOcrManifest: composition.expectedOcrManifest,
+      expectedClassifierManifest: composition.expectedClassifierManifest,
     }),
     /build-machine identity path marker/,
   );

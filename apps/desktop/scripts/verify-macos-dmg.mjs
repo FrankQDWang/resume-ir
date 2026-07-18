@@ -492,6 +492,8 @@ export async function verifyMacosDmg({
       pdf_renderer_sidecar_count: appReceipt.pdf_renderer_sidecar_count,
       embedding_resource_file_count: appReceipt.embedding_resource_file_count,
       embedding_resource_bytes: appReceipt.embedding_resource_bytes,
+      classifier_resource_file_count: appReceipt.classifier_resource_file_count,
+      classifier_resource_bytes: appReceipt.classifier_resource_bytes,
       ocr_resource_file_count: appReceipt.ocr_resource_file_count,
       ocr_resource_bytes: appReceipt.ocr_resource_bytes,
       digest_match: appReceipt.digest_match,

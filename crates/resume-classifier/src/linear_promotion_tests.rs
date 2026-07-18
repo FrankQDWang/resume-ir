@@ -256,3 +256,23 @@ fn missing_corrupt_incompatible_checksum_and_permissions_fail_closed() {
         assert!(!LinearPromotionPolicy::load_local(exposed.path()).enabled());
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn bundled_artifact_allows_readability_but_rejects_writes_and_symlinks() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let bundled = write_artifact(synthetic_model());
+    fs::set_permissions(bundled.path(), fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(LinearPromotionPolicy::load_bundled(bundled.path()).enabled());
+    assert!(!LinearPromotionPolicy::load_local(bundled.path()).enabled());
+
+    fs::set_permissions(bundled.path(), fs::Permissions::from_mode(0o664)).unwrap();
+    assert!(!LinearPromotionPolicy::load_bundled(bundled.path()).enabled());
+
+    fs::set_permissions(bundled.path(), fs::Permissions::from_mode(0o644)).unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let link = root.path().join("model.json");
+    std::os::unix::fs::symlink(bundled.path(), &link).unwrap();
+    assert!(!LinearPromotionPolicy::load_bundled(&link).enabled());
+}
