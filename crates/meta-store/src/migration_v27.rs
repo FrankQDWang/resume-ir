@@ -109,7 +109,7 @@ fn ensure_active_v27_store_locked(
     discard_unpublished_cleanup(data_dir)?;
 
     let legacy_path = data_dir.join(METADATA_STORE_FILE);
-    let legacy_exists = owner_regular_file_exists(&legacy_path)?;
+    let legacy_exists = legacy_owner_regular_file_exists(&legacy_path)?;
     let source_is_plaintext =
         legacy_exists && super::metadata_store_has_plaintext_header(&legacy_path)?;
     let mut source = if legacy_exists {
@@ -399,6 +399,22 @@ fn owner_regular_file_exists(path: &Path) -> Result<bool> {
     }
 }
 
+fn legacy_owner_regular_file_exists(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+                return Err(MetaStoreError::invalid_value("metadata.owner_file"));
+            }
+            restrict_private_file_permissions(path)?;
+            let restricted = fs::symlink_metadata(path).map_err(MetaStoreError::io_storage)?;
+            validate_owner_regular_metadata(&restricted)?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(MetaStoreError::io_storage(error)),
+    }
+}
+
 fn validate_owner_regular_metadata(metadata: &fs::Metadata) -> Result<()> {
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
         return Err(MetaStoreError::invalid_value("metadata.owner_file"));
@@ -433,6 +449,9 @@ fn sync_parent_directory(_data_dir: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use crate::{legacy_migrations, migration_applied};
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     const LEGACY_PII_MARKER: &str = "SYNTHETIC_V26_PRIVATE_DERIVED_MARKER_7f4e";
 
@@ -800,6 +819,22 @@ mod tests {
                 .store_id_digest,
         )
         .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn legacy_v26_owner_permissions_are_tightened_before_copy_on_write_migration() {
+        let fixture = LegacyFixture::create("legacy-owner-permissions");
+        fs::set_permissions(&fixture.path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let active = ensure_active_v27_store(fixture.directory.path(), &fixture.key).unwrap();
+
+        assert_ne!(active, fixture.path);
+        assert_legacy_artifacts_retired(&fixture);
+        assert_eq!(
+            fs::metadata(active).unwrap().permissions().mode() & 0o077,
+            0
+        );
     }
 
     #[test]

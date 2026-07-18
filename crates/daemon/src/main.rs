@@ -55,6 +55,7 @@ mod detail_ipc;
 mod diagnostics_ipc;
 mod import_root_control;
 mod ipc;
+mod migration_repair;
 mod query_runtime;
 mod query_timing;
 mod search_batch;
@@ -895,6 +896,10 @@ fn run_worker_loop(
                 )?,
                 ..ImportWorkerSummary::default()
             };
+            if ticks == 1 {
+                import_summary.repair_requeued =
+                    migration_repair::enqueue_authorized_roots(store, now)?;
+            }
             if options.rescan_completed_imports {
                 let min_age_seconds = if ticks == 1 {
                     0
@@ -4393,6 +4398,7 @@ impl RunOptions {
 #[derive(Default)]
 struct ImportWorkerSummary {
     stale_recovered: usize,
+    repair_requeued: usize,
     completed_requeued: usize,
     watcher_active_roots: Option<usize>,
     watcher_events: usize,
@@ -4409,6 +4415,7 @@ struct ImportWorkerSummary {
 impl ImportWorkerSummary {
     fn has_activity(&self) -> bool {
         self.stale_recovered > 0
+            || self.repair_requeued > 0
             || self.completed_requeued > 0
             || self.watcher_active_roots.is_some()
             || self.watcher_events > 0
@@ -4423,6 +4430,7 @@ impl ImportWorkerSummary {
 
     fn extend(&mut self, other: Self) {
         self.stale_recovered += other.stale_recovered;
+        self.repair_requeued += other.repair_requeued;
         self.completed_requeued += other.completed_requeued;
         if other.watcher_active_roots.is_some() {
             self.watcher_active_roots = other.watcher_active_roots;
@@ -4458,6 +4466,10 @@ fn print_import_worker_summary(import_summary: &ImportWorkerSummary) -> Result<(
     println!(
         "import worker requeued completed imports: {}",
         import_summary.completed_requeued
+    );
+    println!(
+        "import worker queued migration repairs: {}",
+        import_summary.repair_requeued
     );
     if let Some(active_roots) = import_summary.watcher_active_roots {
         println!("import watcher active roots: {active_roots}");
