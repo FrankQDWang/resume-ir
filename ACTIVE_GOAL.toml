@@ -1,42 +1,75 @@
 schema_version = "resume-ir.active-goal.v1"
 goal_id = "resume-ir.performance-gui-loop.2026-06"
-date = "2026-06-26"
+date = "2026-07-17"
 
 [authority]
 root_goal = "GOAL.md"
 active_goal_docs_root = "03_next_goal_高性能本地检索GUI闭环"
-spec = "docs/superpowers/specs/2026-06-22-performance-goal-doc-contract.md"
-plan = "docs/superpowers/plans/2026-06-22-performance-goal-doc-contract.md"
+spec = "docs/superpowers/specs/2026-07-17-daemon-reliability-detail-snapshot-v27.md"
+plan = "docs/superpowers/plans/2026-07-17-daemon-reliability-detail-snapshot-v27.md"
 review_ledger = "03_next_goal_高性能本地检索GUI闭环/12_Review问题映射与修复责任.md"
 loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md"
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#199"
-name = "linear_promotion_post_lowercase_whitespace_stream"
+issue = "#138"
+name = "daemon_reliability_detail_snapshot_correctness_v27"
 contract_change_allowed = true
 production_code_allowed = true
-private_benchmark_allowed = true
-configured_private_roots_required = true
+private_benchmark_allowed = false
+configured_private_roots_required = false
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = true
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = false
-scope_exception_reason = "No exception is used. #197 rejected per-character lowercase because it changed contextual Greek final sigma and was fully reverted before private execution. This bounded successor keeps whole-string contextual Unicode lowercase unchanged and streams only post-lowercase whitespace collapse into the final character vector, preserving exact normalized characters, artifact and feature contracts, lexical score accumulation order, threshold, classifier epoch, admission states, benchmark membership, parser/OCR behavior, workers, queues, DB/index, query semantics, and privacy boundary."
+scope_exception_reason = "S807 is the user-prioritized local correctness train after a truthful evidence-only S806 checkpoint. A deterministic peer-reset witness proved that a request-local response write failure can terminate the resident daemon, while static inspection proved that the desktop has no runtime supervisor and that mutable resume-version identity plus non-atomic metadata/index publication can make one search result resolve to unavailable or changed detail content. The approved hard cut crosses daemon IPC, Tauri lifecycle, metadata schema v27, import publication, fulltext/vector version binding and GUI detail contracts; these boundaries cannot be safely shipped as compatibility shims or dual truth sources. GitHub capability attestation on 2026-07-17 found an invalid gh token and unavailable API connectivity, so a new linked issue cannot be created truthfully; closed historical #138 remains only the local umbrella reference and remote issue/PR/push actions remain blocked until credentials and network are restored. S806 Windows ONNX work remains same-lane deferred and is not claimed complete. This slice may use only synthetic fixtures and redacted bounded evidence, must preserve query semantics and privacy redlines, and must not claim Windows H0, installer, signing, updater, scale or product completion."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
+  "03_next_goal_高性能本地检索GUI闭环/03_数据模型与存储协议.md",
+  "03_next_goal_高性能本地检索GUI闭环/04_数据流与状态机.md",
+  "design-qa.md",
+  "03_next_goal_高性能本地检索GUI闭环/05_Query_Benchmark与真实Query种子.md",
+  "03_next_goal_高性能本地检索GUI闭环/06_Daemon_IPC与Diagnostics契约.md",
+  "03_next_goal_高性能本地检索GUI闭环/07_GUI与手工Codex闭环.md",
+  "03_next_goal_高性能本地检索GUI闭环/08_失败模式与恢复策略.md",
+  "03_next_goal_高性能本地检索GUI闭环/10_实施切片与验收门槛.md",
+  "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md",
+  "03_next_goal_高性能本地检索GUI闭环/15_性能观测与Profiling工具链.md",
+  "Cargo.toml",
+  "Cargo.lock",
+  "docs/superpowers/specs/",
+  "docs/superpowers/plans/",
+  "docs/reports/",
+  "docs/runbooks/release-blockers.md",
+  "UI-reference/",
+  "apps/",
+  "crates/benchmark-runner/",
+  "crates/cli/",
+  "crates/core-domain/",
+  "crates/daemon/",
+  "crates/embedding-runtime/",
+  "crates/embedding-protocol/",
+  "crates/embedder/",
+  "crates/import-pipeline/",
+  "crates/index-fulltext/",
+  "crates/index-vector/",
+  "crates/ocr-client/",
+  "crates/meta-store/",
+  "crates/pdf-render-runtime/",
+  "crates/privacy/",
+  "crates/process-containment/",
+  "scripts/ci/",
+  "perf/acceptance-matrix.toml",
   "perf/current-loop-state.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-  "crates/resume-classifier/src/linear_promotion.rs",
-  "crates/resume-classifier/src/linear_promotion_tests.rs",
 ]
 
 [contracts]
 query_semantics = "simple_text_required_all_terms_v1"
-ipc_contract = "resume-ir.ipc.v2"
-diagnostics_contract = "resume-ir.diagnostics.v2"
+ipc_contract = "resume-ir.ipc.v3"
+diagnostics_contract = "resume-ir.diagnostics.v3"
 evidence_matrix = "resume-ir.perf.acceptance-matrix.v2"
 loop_state_schema = "perf/loop-state.schema.json"
 experiment_report_schema = "perf/experiment-report.schema.json"

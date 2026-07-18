@@ -1,18 +1,18 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
-  "experiment_state": "hypothesis_registered",
-  "evidence_lane": "w1_private",
+  "workflow_state": "branch_active",
+  "experiment_state": "contract_locked",
+  "evidence_lane": "soak_fault",
   "contract_pins": {
-    "active_goal_sha256": "c0971aee734f8ac4c4731879abb8690bcea0f09099c143a86f54ebb312c3e47a",
+    "active_goal_sha256": "8cbdec71c8a9646d6de3049fb7c9c9838965f0a6ef72f91670903ab927093508",
     "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "a4ef03702eed923b8e0a318b146f915d3f7496ac"
+    "git_head_sha": "88519486545803bf698046d7f7e8bcd24a4308ca"
   },
-  "current_slice": "#199 stream post-lowercase whitespace collapse into feature chars",
+  "current_slice": "#138 S807 daemon reliability and detail snapshot correctness v27 local train",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -284,14 +284,13 @@
     {"from":"slice_selected","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/197#issuecomment-4950011008"},
     {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/197#issuecomment-4950011008"},
     {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/197#issuecomment-4950011008"},
-    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/199"}
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/199"},
+    {"from":"slice_selected","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/199#issuecomment-4950048099"},
+    {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/199#issuecomment-4950048099"},
+    {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/199#issuecomment-4950048099"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/138"},
+    {"from":"slice_selected","to":"branch_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/138"}
   ],
-  "hypothesis": {
-    "id": "issue-199-post-lowercase-whitespace-stream-v1",
-    "acceptance_cell": "private_mixed_profile",
-    "expected_effect": "streaming post-lowercase whitespace collapse removes the temporary word vector and joined String while preserving whole-string contextual Unicode lowercase, the exact normalized character vector, model scores, decisions, and frozen private product counts",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/197#issuecomment-4950011008"
-  },
   "verification": {
     "commands": [
       {
@@ -332,11 +331,10 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#199",
+    "primary_issue": "#138",
     "active_prs": [],
     "open_blockers": [
-      "#37",
-      "#199"
+      "#53"
     ]
   }
 }
