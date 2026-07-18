@@ -34,6 +34,44 @@ pub struct ImportRootControlUpdate {
 }
 
 impl MetaStore {
+    pub fn active_authorized_import_roots(&self) -> Result<Vec<String>> {
+        let connection = self.connection.borrow();
+        let mut statement = connection
+            .prepare(
+                "SELECT canonical_root_path
+                 FROM authorized_import_root
+                 WHERE paused = 0
+                 ORDER BY canonical_root_path",
+            )
+            .map_err(MetaStoreError::storage)?;
+        let roots = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(MetaStoreError::storage)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(MetaStoreError::storage)?;
+        Ok(roots)
+    }
+
+    pub fn enqueue_authorized_import_root(
+        &self,
+        canonical_root_path: &str,
+        task_id: &ImportTaskId,
+        updated_at: UnixTimestamp,
+    ) -> Result<bool> {
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        if require_known_root(&transaction, canonical_root_path)? == ImportRootControlStatus::Paused
+            || pending_import_exists(&transaction, canonical_root_path)?
+        {
+            return Ok(false);
+        }
+        let scope =
+            catch_up_scope_for_root(&transaction, canonical_root_path, task_id, updated_at)?;
+        insert_catch_up_import(&transaction, &scope, task_id, updated_at)?;
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(true)
+    }
+
     pub fn import_root_control_status(
         &self,
         canonical_root_path: &str,
@@ -134,30 +172,7 @@ impl MetaStore {
                 params![updated_at.as_unix_seconds(), canonical_root_path],
             )
             .map_err(MetaStoreError::storage)?;
-        let pending_exists = transaction
-            .query_row(
-                "\
-                SELECT EXISTS(
-                    SELECT 1
-                    FROM import_task
-                    WHERE root_path = ?1
-                        AND status IN (?2, ?3, ?4)
-                        AND NOT EXISTS (
-                            SELECT 1
-                            FROM import_task_cancellation AS cancellation
-                            WHERE cancellation.import_task_id = import_task.id
-                        )
-                )",
-                params![
-                    canonical_root_path,
-                    import_task_status_to_storage(ImportTaskStatus::Queued),
-                    import_task_status_to_storage(ImportTaskStatus::Running),
-                    import_task_status_to_storage(ImportTaskStatus::FailedRetryable),
-                ],
-                |row| row.get::<_, i64>(0),
-            )
-            .map_err(MetaStoreError::storage)?
-            == 1;
+        let pending_exists = pending_import_exists(&transaction, canonical_root_path)?;
         let catch_up_queued = if pending_exists {
             false
         } else {
@@ -179,6 +194,33 @@ impl MetaStore {
             catch_up_queued,
         })
     }
+}
+
+fn pending_import_exists(connection: &Connection, canonical_root_path: &str) -> Result<bool> {
+    connection
+        .query_row(
+            "\
+            SELECT EXISTS(
+                SELECT 1
+                FROM import_task
+                WHERE root_path = ?1
+                    AND status IN (?2, ?3, ?4)
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM import_task_cancellation AS cancellation
+                        WHERE cancellation.import_task_id = import_task.id
+                    )
+            )",
+            params![
+                canonical_root_path,
+                import_task_status_to_storage(ImportTaskStatus::Queued),
+                import_task_status_to_storage(ImportTaskStatus::Running),
+                import_task_status_to_storage(ImportTaskStatus::FailedRetryable),
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|exists| exists == 1)
+        .map_err(MetaStoreError::storage)
 }
 
 fn require_known_root(

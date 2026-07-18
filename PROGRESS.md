@@ -28,6 +28,11 @@ production-ready scope source.
   user-authorized local resume sample directory through temporary witness
   copies; no real resume data, filenames, paths, raw text, or diagnostics were
   committed or uploaded.
+  S807 installation acceptance also used a temporary local copy-on-write
+  witness of the user-authorized desktop runtime store plus bounded redacted
+  diagnostics. The witness and App rollback copies were deleted after native
+  verification; no database, index, resume data, root path, query, token, raw
+  diagnostics, runtime receipt, or model artifact was committed or uploaded.
   S264 also used a private local-only OCR throughput smoke against the
   user-authorized local resume sample directory with temporary redacted
   manifests and local Tesseract/Poppler commands; no real resume data,
@@ -3474,6 +3479,36 @@ guards, local runtime discovery, and PR #9 CI state.
   evidence, reviewed runtime/model distribution, cross-platform transcripts,
   redacted validation diagnostics and hardware drills. None is reclassified as
   satisfied by the S807 synthetic soak or internal-test App witness.
+- Post-merge native installation exposed two v26-to-v27 acceptance defects that
+  synthetic fixtures had hidden. A legacy encrypted store created with normal
+  `0644` permissions was rejected before the migration owner could tighten it,
+  and the successful hard cut retained authorized roots while intentionally
+  deleting the completed import scopes that the existing rescan/watcher paths
+  required. The first defect is fixed by validating the fixed legacy store as a
+  regular non-symlink, tightening it to owner-only permissions under the
+  migration lock, and then preserving the existing copy-on-write publication
+  path. The second is fixed by a dedicated daemon migration-repair module that
+  queues each active authorized root exactly once on the first
+  `repairing/migration_rebuild` worker tick, skips paused or already-pending
+  roots, and never replays roots for other repair reasons.
+- The permission regression was red before the fix with
+  `metadata.owner_file_permissions` and green afterward. The focused v27
+  migration suite passed 10 tests, the v27 data-contract integration suite
+  passed 32 tests, daemon unit tests passed 26 tests, and daemon IPC integration
+  passed 27 tests with the two-hour soak remaining intentionally ignored.
+  Strict all-target/all-feature Clippy passed for `meta-store` and
+  `resume-daemon`. A temporary local copy of the installed legacy store then
+  completed schema 27 migration without exposing private content.
+- The rebuilt arm64 internal-test DMG passed the bounded composition contract,
+  resource digest checks, ad-hoc deep signature, hardened runtime and exact
+  classifier/icon checks with SHA-256
+  `661fe41e71ae323bf64fb09da855b0aea1bd9a62f205d10708de8819a9ed2dcf`.
+  Native launch reached lifecycle `ready` at generation 1 with no restart or
+  blocked reason, IPC v2 and diagnostics v3 stayed responsive with zero request
+  or response failures, and the migration repair task entered the worker path.
+  Query service truthfully remains `repairing` until the first rebuilt search
+  publication; this is install/manual-test evidence, not stable-release or
+  cross-platform completion.
 
 ### S806
 
