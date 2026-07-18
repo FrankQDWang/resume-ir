@@ -1,0 +1,227 @@
+{
+  "schema_version": "resume-ir.desktop-ocr-runtime-pack.v1",
+  "runtime_pack_id": "tesseract-5.5.2-tessdata-fast-4.1.0-macos-arm64-r1",
+  "target_triple": "aarch64-apple-darwin",
+  "engine": "tesseract",
+  "engine_version": "5.5.2",
+  "renderer": "macos-pdfkit-coregraphics",
+  "languages": [
+    "eng",
+    "chi_sim"
+  ],
+  "network_access": "disabled",
+  "license_reviewed": true,
+  "third_party_notice": "THIRD-PARTY-NOTICES.json",
+  "files": [
+    {
+      "role": "license_text",
+      "file": "LICENSES/0BSD.txt",
+      "bytes": 663,
+      "sha256": "570d1995f89099e006c07968e1148e0aad5e20fc797027f3947fbffeaeb5e408",
+      "executable": false
+    },
+    {
+      "role": "license_text",
+      "file": "LICENSES/Apache-2.0.txt",
+      "bytes": 10279,
+      "sha256": "c274f80372d90c012937370f0e1f15087d22e308ef98b27cea5dc0d2d088366c",
+      "executable": false
+    },
+    {
+      "role": "license_text",
+      "file": "LICENSES/BSD-2-Clause.txt",
+      "bytes": 1444,
+      "sha256": "ffcd6a8c421ee58d9f85b115ee0642805be3b497d2023565739622f044dc11e2",
+      "executable": false
+    },
+    {
+      "role": "license_text",
+      "file": "LICENSES/BSD-3-Clause.txt",
+      "bytes": 1693,
+      "sha256": "0fe4dd6931c4c2fc418940de41074fa3c506cad24bfd891743ea7f2fcfe631ef",
+      "executable": false
+    },
+    {
+      "role": "license_text",
+      "file": "LICENSES/CC0-1.0.txt",
+      "bytes": 7007,
+      "sha256": "e0456cbab4f7b5e7203e678faff37eadbdfef02e822db3b7a52a1dd9d3dc514a",
+      "executable": false
+    },
+    {
+      "role": "license_text",
+      "file": "LICENSES/IJG.txt",
+      "bytes": 4256,
+      "sha256": "5824398035dffc6d56a6960ad7ae57a1e94bf3699ef8ca222058f6bc380639e4",
+      "executable": false
+    },
+    {
+      "role": "license_text",
+      "file": "LICENSES/MIT.txt",
+      "bytes": 1077,
+      "sha256": "c3b1b78bc8bd3ea13aa4bc9778442d16560270afa235006d816e5e88cef24db4",
+      "executable": false
+    },
+    {
+      "role": "license_text",
+      "file": "LICENSES/Zlib.txt",
+      "bytes": 842,
+      "sha256": "e21f5c0f66a0103c75f120a8864ef885d2f5922862d8ce168709451a2964972b",
+      "executable": false
+    },
+    {
+      "role": "license_text",
+      "file": "LICENSES/libpng-2.0.txt",
+      "bytes": 5345,
+      "sha256": "bdb0a645ea18c60507d0368379b1ac5474b92255fcc2d115e07486a7672ba526",
+      "executable": false
+    },
+    {
+      "role": "license_text",
+      "file": "LICENSES/libtiff.txt",
+      "bytes": 1139,
+      "sha256": "a6ecaa20c8c1b7a8215ed05e5f58764f821596e36d31acc05282c6154cf0dc44",
+      "executable": false
+    },
+    {
+      "role": "third_party_notice",
+      "file": "THIRD-PARTY-NOTICES.json",
+      "bytes": 2561,
+      "sha256": "78ef4619f3623541bea83c6fb0e96dfc6e1e810d4a42d25cecbbe48c51f4a557",
+      "executable": false
+    },
+    {
+      "role": "engine_library",
+      "file": "lib/libarchive.13.dylib",
+      "bytes": 706848,
+      "sha256": "3aa9e2494bdb4087b47e91a7db2a5648fa995b442d63066fdf6684029d3ec245",
+      "executable": false
+    },
+    {
+      "role": "engine_library",
+      "file": "lib/libb2.1.dylib",
+      "bytes": 85968,
+      "sha256": "a4b5505ad394d1ec96c70aa6ea1d54839fc3b26d6b31186f69375273c9df646b",
+      "executable": false
+    },
+    {
+      "role": "engine_library",
+      "file": "lib/libgif.7.2.0.dylib",
+      "bytes": 72976,
+      "sha256": "506ef755418db1daad26baeebef7774c531c447fda873531f1fcd87dac718c3c",
+      "executable": false
+    },
+    {
+      "role": "engine_library",
+      "file": "lib/libjpeg.8.3.2.dylib",
+      "bytes": 489424,
+      "sha256": "c7010a5808053603b8ae01da7a177301e87bfeaca610166f5e0541eaf5827ddd",
+      "executable": false
+    },
+    {
+      "role": "engine_library",
+      "file": "lib/libleptonica.6.dylib",
+      "bytes": 2221232,
+      "sha256": "bc3d7dc9032e591e304095f82c66682602fa20834b1efa63ca58a93840a018e2",
+      "executable": false
+    },
+    {
+      "role": "engine_library",
+      "file": "lib/liblz4.1.10.0.dylib",
+      "bytes": 176960,
+      "sha256": "d9e6ce1be89650df664f0ec401cb21de8ee69441d1f08112a32a618676221255",
+      "executable": false
+    },
+    {
+      "role": "engine_library",
+      "file": "lib/liblzma.5.dylib",
+      "bytes": 185472,
+      "sha256": "fa4ee889394d94d2220685bd53758add5b35277db3eb654b0577004ee26a0f9c",
+      "executable": false
+    },
+    {
+      "role": "engine_library",
+      "file": "lib/libopenjp2.2.5.4.dylib",
+      "bytes": 325952,
+      "sha256": "7ebdd9920cd83aa1fc93104caeed7f400ec150f0f48d9d15488369476f1d8334",
+      "executable": false
+    },
+    {
+      "role": "engine_library",
+      "file": "lib/libpng16.16.dylib",
+      "bytes": 209392,
+      "sha256": "932a4dcdfe249b801d76b79c94786827a17ad1a5392c61d3ae7ad585be888491",
+      "executable": false
+    },
+    {
+      "role": "engine_library",
+      "file": "lib/libsharpyuv.0.1.2.dylib",
+      "bytes": 69856,
+      "sha256": "795ebdb579db81f7c5f5f7863d095d9b4e3d0f8786881b382e75ad4451c78a6d",
+      "executable": false
+    },
+    {
+      "role": "engine_library",
+      "file": "lib/libtesseract.5.dylib",
+      "bytes": 2818720,
+      "sha256": "56f671469edbb995cc16701d8cd7b5e852738746d5ed69a6e425fcca0463be60",
+      "executable": false
+    },
+    {
+      "role": "engine_library",
+      "file": "lib/libtiff.6.dylib",
+      "bytes": 542288,
+      "sha256": "65bc4362aba0f7ee6e1cae566531d51b885ae28e92c73ddc2e05e61708276086",
+      "executable": false
+    },
+    {
+      "role": "engine_library",
+      "file": "lib/libwebp.7.2.0.dylib",
+      "bytes": 354272,
+      "sha256": "56b00a7db06f2b7ae5c2ec1639a61b00f6dc64eac37f6ada37d4e585bf0569ae",
+      "executable": false
+    },
+    {
+      "role": "engine_library",
+      "file": "lib/libwebpmux.3.1.2.dylib",
+      "bytes": 73552,
+      "sha256": "7b1bb5cc868b860c2ec772af707039180670c8cb871877c31014eec22495cf1e",
+      "executable": false
+    },
+    {
+      "role": "engine_library",
+      "file": "lib/libzstd.1.5.7.dylib",
+      "bytes": 653328,
+      "sha256": "cec886cdf62d64ed810e82a98e10db8cf430084e24033be0808b97de25aabb67",
+      "executable": false
+    },
+    {
+      "role": "language_chi_sim",
+      "file": "tessdata/chi_sim.traineddata",
+      "bytes": 2469156,
+      "sha256": "a5fcb6f0db1e1d6d8522f39db4e848f05984669172e584e8d76b6b3141e1f730",
+      "executable": false
+    },
+    {
+      "role": "engine_config",
+      "file": "tessdata/configs/tsv",
+      "bytes": 22,
+      "sha256": "59d079bb75d8b3d7c839a3564580cb559e362c93a9d70f234e421c0c3e767e04",
+      "executable": false
+    },
+    {
+      "role": "language_eng",
+      "file": "tessdata/eng.traineddata",
+      "bytes": 4113088,
+      "sha256": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2",
+      "executable": false
+    },
+    {
+      "role": "engine_binary",
+      "file": "tesseract",
+      "bytes": 103248,
+      "sha256": "5a1bb765e58ea715ce24e8b66ea2a299475aa518f43fd48d0e64b9602da6e5e3",
+      "executable": true
+    }
+  ]
+}

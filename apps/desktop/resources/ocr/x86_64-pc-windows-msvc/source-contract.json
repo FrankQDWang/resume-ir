@@ -1,0 +1,141 @@
+{
+  "schema_version": "resume-ir.windows-ocr-source-contract.v1",
+  "target_triple": "x86_64-pc-windows-msvc",
+  "runtime_pack_schema": "resume-ir.desktop-ocr-runtime-pack.v1",
+  "runtime_pack_id": "tesseract-5.5.2-tessdata-fast-4.1.0-windows-x64-static-r1",
+  "product_runtime_network_access": "disabled",
+  "process_containment_owner": "ocr_tesseract",
+  "protocol": {
+    "input_format": "ppm-p6-rgb8",
+    "input_max_bytes": 33554432,
+    "arguments": [
+      "<bounded-absolute-ppm-path>",
+      "stdout",
+      "--psm",
+      "6",
+      "-l",
+      "eng+chi_sim",
+      "tsv"
+    ],
+    "languages": [
+      "eng",
+      "chi_sim"
+    ],
+    "page_segmentation_mode": 6,
+    "stdout_format": "tesseract-tsv",
+    "stdout_max_bytes": 4194304,
+    "stderr": "bounded-generic-only",
+    "poll_interval_ms": 10
+  },
+  "tesseract": {
+    "version": "5.5.2",
+    "source_repository": "https://github.com/tesseract-ocr/tesseract",
+    "source_tag": "5.5.2",
+    "source_commit": "6e1d56a847e697de07b38619356550e5cf4e8633",
+    "license": "Apache-2.0",
+    "source_license_file": {
+      "file": "LICENSE",
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "build_provenance_schema": "resume-ir.tesseract-windows-build-provenance.v1",
+    "cmake_generator": "Ninja",
+    "cmake_arguments": [
+      "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW",
+      "-DCMAKE_BUILD_TYPE=Release",
+      "-DBUILD_SHARED_LIBS=OFF",
+      "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
+      "-DSW_BUILD=OFF",
+      "-DBUILD_TRAINING_TOOLS=OFF",
+      "-DGRAPHICS_DISABLED=ON",
+      "-DOPENMP_BUILD=OFF",
+      "-DDISABLE_TIFF=ON",
+      "-DLEPT_TIFF_RESULT=1",
+      "-DLEPT_TIFF_COMPILE_SUCCESS=TRUE",
+      "-DDISABLE_ARCHIVE=ON",
+      "-DDISABLE_CURL=ON",
+      "-DENABLE_LTO=ON",
+      "-DFAST_FLOAT=ON"
+    ],
+    "build_target": "tesseract",
+    "final_binary_file": "tesseract.exe",
+    "engine_config_file": {
+      "role": "engine_config",
+      "file": "tessdata/configs/tsv",
+      "bytes": 22,
+      "sha256": "59d079bb75d8b3d7c839a3564580cb559e362c93a9d70f234e421c0c3e767e04"
+    }
+  },
+  "leptonica": {
+    "version": "1.87.0",
+    "source_repository": "https://github.com/DanBloomberg/leptonica",
+    "source_tag": "1.87.0",
+    "source_commit": "13275a278eb55b5746e33f95fbf5a2c8f604b3ab",
+    "license": "BSD-2-Clause",
+    "source_license_file": {
+      "file": "leptonica-license.txt",
+      "bytes": 1521,
+      "sha256": "87829abb5bbb00b55a107365da89e9a33f86c4250169e5a1e5588505be7d5806"
+    },
+    "cmake_generator": "Ninja",
+    "cmake_arguments": [
+      "-DCMAKE_POLICY_DEFAULT_CMP0091=NEW",
+      "-DCMAKE_BUILD_TYPE=Release",
+      "-DBUILD_SHARED_LIBS=OFF",
+      "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
+      "-DSW_BUILD=OFF",
+      "-DENABLE_PNG=OFF",
+      "-DBUILD_PROG=OFF",
+      "-DENABLE_ZLIB=OFF",
+      "-DENABLE_GIF=OFF",
+      "-DENABLE_JPEG=OFF",
+      "-DENABLE_TIFF=OFF",
+      "-DENABLE_WEBP=OFF",
+      "-DENABLE_OPENJPEG=OFF"
+    ],
+    "required_input_decoder": "pnm"
+  },
+  "traineddata": {
+    "version": "4.1.0",
+    "source_repository": "https://github.com/tesseract-ocr/tessdata_fast",
+    "source_tag": "4.1.0",
+    "source_commit": "65727574dfcd264acbb0c3e07860e4e9e9b22185",
+    "license": "Apache-2.0",
+    "source_license_file": {
+      "file": "LICENSE",
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "files": [
+      {
+        "role": "language_eng",
+        "file": "eng.traineddata",
+        "bytes": 4113088,
+        "sha256": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2"
+      },
+      {
+        "role": "language_chi_sim",
+        "file": "chi_sim.traineddata",
+        "bytes": 2469156,
+        "sha256": "a5fcb6f0db1e1d6d8522f39db4e848f05984669172e584e8d76b6b3141e1f730"
+      }
+    ]
+  },
+  "final_artifact": {
+    "file": "tesseract.exe",
+    "machine": "x86_64",
+    "max_bytes": 67108864,
+    "msvc_runtime": "static",
+    "required_dependency_closure": "windows-system-dlls-only",
+    "forbidden_import_prefixes": [
+      "MSVCP",
+      "VCRUNTIME",
+      "CONCRT",
+      "UCRTBASE",
+      "API-MS-WIN-CRT-",
+      "LIBGOMP",
+      "VCOMP"
+    ],
+    "runtime_download_allowed": false
+  }
+}

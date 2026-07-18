@@ -16,7 +16,9 @@ use embedder::{
     LocalEmbeddingCommandSpec,
 };
 use extractor_rules::{extract_strong_fields, FieldType};
-use index_fulltext::{FullTextIndex, IndexDocument, IndexSection, SearchQuery};
+use index_fulltext::{
+    publish_snapshot, FullTextIndex, IndexDocument, IndexSection, SearchQuery, SnapshotReadLease,
+};
 use ocr_client::{
     CancellationToken, LocalOcrCommandClient, LocalOcrCommandSpec, LocalPdfRenderCommandClient,
     LocalPdfRenderCommandSpec, OcrClient, OcrOptions, OcrPageRequest, OcrWorkerBudget,
@@ -25,6 +27,15 @@ use ocr_client::{
 use rank_fusion::{soft_dedupe_score, DedupeProfile};
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use sha2::{Digest, Sha256};
+
+mod resident_query_client;
+mod resident_query_fixture;
+mod resident_query_load;
+mod synthetic_query_workload;
+
+pub use resident_query_load::{
+    run_resident_public_query_load, ResidentQueryLoadConfig, ResidentQueryLoadReport,
+};
 
 pub fn crate_name() -> &'static str {
     "benchmark-runner"
@@ -121,6 +132,14 @@ impl SyntheticBenchmarkConfig {
     pub fn with_top_k(mut self, top_k: usize) -> Self {
         self.top_k = top_k.clamp(1, MAX_TOP_K);
         self
+    }
+
+    pub fn public_query_hot_path() -> Self {
+        Self {
+            document_count: synthetic_query_workload::CANONICAL_DOCUMENT_COUNT,
+            query_count: synthetic_query_workload::CYCLE_QUERY_COUNT,
+            top_k: DEFAULT_TOP_K,
+        }
     }
 
     pub fn document_count(self) -> usize {
@@ -959,6 +978,7 @@ impl BenchmarkReport {
                 "\"generation_mode\":\"streaming\",",
                 "\"document_count\":{},",
                 "\"query_count\":{},",
+                "\"query_workload\":{},",
                 "\"top_k\":{},",
                 "\"build_ms\":{},",
                 "\"query_total_ms\":{},",
@@ -986,6 +1006,7 @@ impl BenchmarkReport {
             self.dataset_kind,
             self.document_count,
             self.query_count,
+            synthetic_query_workload::redacted_contract_json(),
             self.top_k,
             format_ms(self.build_ms),
             format_ms(self.query_total_ms),
@@ -2139,12 +2160,19 @@ pub fn run_synthetic_query_benchmark(
     config: SyntheticBenchmarkConfig,
 ) -> Result<BenchmarkReport> {
     let build_started = Instant::now();
-    let index = FullTextIndex::open_or_create(index_dir).map_err(BenchmarkError::fulltext)?;
-    index
-        .replace_documents((0..config.document_count).map(synthetic_document))
-        .map_err(BenchmarkError::fulltext)?;
-    index.commit().map_err(BenchmarkError::fulltext)?;
-    index.reload().map_err(BenchmarkError::fulltext)?;
+    const GENERATION: &str = "synthetic-query-benchmark-v27";
+    publish_snapshot(
+        index_dir,
+        GENERATION,
+        (0..config.document_count).map(|index| synthetic_document(index, config.document_count)),
+    )
+    .map_err(BenchmarkError::fulltext)?;
+    let lease = SnapshotReadLease::acquire(index_dir)
+        .map_err(BenchmarkError::fulltext)?
+        .ok_or_else(|| BenchmarkError::invalid_config("synthetic_query_snapshot_lease"))?;
+    let index = FullTextIndex::open_snapshot_with_lease(index_dir, GENERATION, lease)
+        .map_err(BenchmarkError::fulltext)?
+        .ok_or_else(|| BenchmarkError::invalid_config("synthetic_query_snapshot_missing"))?;
     let build_ms = elapsed_ms(build_started);
 
     let mut latencies = Vec::with_capacity(config.query_count);
@@ -2154,7 +2182,10 @@ pub fn run_synthetic_query_benchmark(
     for index_offset in 0..config.query_count {
         let query_started = Instant::now();
         let hits = index
-            .search(SearchQuery::new(synthetic_query(index_offset)).with_limit(config.top_k))
+            .search(
+                SearchQuery::new(synthetic_query_workload::query(index_offset))
+                    .with_limit(config.top_k),
+            )
             .map_err(BenchmarkError::fulltext)?;
         latencies.push(elapsed_ms(query_started));
         if hits.is_empty() {
@@ -6303,7 +6334,7 @@ fn percentile(sorted_samples: &[f64], percentile: f64) -> f64 {
     sorted_samples[index]
 }
 
-fn synthetic_document(index: usize) -> IndexDocument {
+pub(crate) fn synthetic_document(index: usize, document_count: usize) -> IndexDocument {
     let skill = ["Java", "Rust", "Python", "Spring Cloud", "Kubernetes"][index % 5];
     let domain = [
         "payment gateway",
@@ -6313,13 +6344,22 @@ fn synthetic_document(index: usize) -> IndexDocument {
         "index operations",
     ][index % 5];
     let degree = ["Bachelor", "Master", "Bachelor", "Associate"][index % 4];
+    let workload_terms = if document_count < synthetic_query_workload::CYCLE_QUERY_COUNT {
+        (index..synthetic_query_workload::CYCLE_QUERY_COUNT)
+            .step_by(document_count)
+            .map(synthetic_query_workload::document_terms)
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        synthetic_query_workload::document_terms(index)
+    };
     let clean_text = format!(
-        "Synthetic Candidate {index}\nEducation\nSynthetic University\n{degree} of Computer Science\nExperience\nBuilt {skill} services for {domain} and resume retrieval.\n2020.01 - 2024.03\nSkills: {skill}, SQLite, Tantivy"
+        "Synthetic Candidate {index}\nEducation\nSynthetic University\n{degree} of Computer Science\nExperience\nBuilt {skill} services for {domain} and resume retrieval.\n2020.01 - 2024.03\nSkills: {skill}, SQLite, Tantivy\nBenchmark terms: {workload_terms}"
     );
 
     IndexDocument {
-        doc_id: format!("bench_doc_{index:08}"),
-        version_id: format!("bench_ver_{index:08}"),
+        doc_id: format!("doc_{index:032x}"),
+        resume_version_id: format!("ver_{index:032x}"),
         file_name: format!("synthetic-benchmark-{index:08}.pdf"),
         clean_text: clean_text.clone(),
         sections: vec![
@@ -6332,18 +6372,7 @@ fn synthetic_document(index: usize) -> IndexDocument {
                 text: format!("Skills: {skill}, SQLite, Tantivy"),
             },
         ],
-        is_deleted: false,
     }
-}
-
-fn synthetic_query(index: usize) -> &'static str {
-    [
-        "Java payment gateway",
-        "Rust local search",
-        "Python data governance",
-        "Kubernetes platform",
-        "Spring Cloud indexing",
-    ][index % 5]
 }
 
 fn synthetic_ocr_page_bytes(index: usize) -> Vec<u8> {

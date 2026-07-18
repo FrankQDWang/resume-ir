@@ -1,10 +1,16 @@
 use std::fs;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+mod support;
+
+use support::{ready_daemon_status_body, write_daemon_discovery};
+
+const DEFAULT_TEST_TOKEN: &str = "abababababababababababababababababababababababababababababababab";
 
 #[test]
 fn status_can_read_redacted_daemon_status_over_loopback_ipc() {
@@ -16,7 +22,7 @@ fn status_can_read_redacted_daemon_status_over_loopback_ipc() {
         let request = read_http_request(&mut stream);
         assert!(request.starts_with("GET /status HTTP/1.1"));
 
-        let body = "{\"schema_version\":\"daemon.status.v1\",\"status\":\"ok\",\"index_health\":\"ready\",\"import_tasks_queued\":0,\"import_tasks_cancelled\":1,\"ocr_page_budget_blocked\":1,\"ocr_language_unavailable\":1,\"latest_import_scan\":{\"files_discovered\":9,\"ignored_entries\":2,\"scan_errors\":1,\"searchable_documents\":4,\"ocr_required_documents\":1,\"ocr_jobs_queued\":1,\"failed_documents\":1,\"deleted_documents\":0,\"scan_budget_observed\":9,\"scan_budget_limit\":10,\"scan_budget_exhausted\":false}}";
+        let body = "{\"schema_version\":\"daemon.status.v2\",\"status\":\"ok\",\"process_state\":\"ready\",\"index_health\":\"ready\",\"import_tasks_queued\":0,\"import_tasks_cancelled\":1,\"ocr_page_budget_blocked\":1,\"ocr_language_unavailable\":1,\"latest_import_scan\":{\"files_discovered\":9,\"ignored_entries\":2,\"scan_errors\":1,\"searchable_documents\":4,\"ocr_required_documents\":1,\"ocr_jobs_queued\":1,\"failed_documents\":1,\"deleted_documents\":0,\"scan_budget_observed\":9,\"scan_budget_limit\":10,\"scan_budget_exhausted\":false}}";
         write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -65,13 +71,13 @@ fn status_ipc_auto_discovers_endpoint_without_path_leak() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
     listener.set_nonblocking(true).unwrap();
     let addr = listener.local_addr().unwrap();
-    write_ipc_endpoint_file(&data_dir, addr);
+    write_daemon_discovery(&data_dir, addr, DEFAULT_TEST_TOKEN);
     let server = thread::spawn(move || {
         let (mut stream, _) = accept_with_timeout(&listener);
         let request = read_http_request(&mut stream);
         assert!(request.starts_with("GET /status HTTP/1.1"));
 
-        let body = "{\"schema_version\":\"daemon.status.v1\",\"status\":\"ok\",\"index_health\":\"ready\",\"import_tasks_queued\":0,\"import_tasks_cancelled\":0}";
+        let body = ready_daemon_status_body();
         write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -111,13 +117,13 @@ fn status_watch_import_ipc_auto_streams_redacted_progress_without_local_store() 
     listener.set_nonblocking(true).unwrap();
     let addr = listener.local_addr().unwrap();
     let token = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
-    write_ipc_endpoint_file_with_token(&data_dir, addr, token);
+    write_daemon_discovery(&data_dir, addr, token);
     let server = thread::spawn(move || {
         let (mut status_stream, _) = accept_with_timeout(&listener);
         let status_request = read_http_request(&mut status_stream);
         assert!(status_request.starts_with("GET /status HTTP/1.1"));
         assert!(!status_request.contains("Authorization:"));
-        let status_body = "{\"schema_version\":\"daemon.status.v1\",\"status\":\"ok\",\"index_health\":\"ready\",\"import_tasks_queued\":1,\"import_tasks_cancelled\":0}";
+        let status_body = "{\"schema_version\":\"daemon.status.v2\",\"status\":\"ok\",\"process_state\":\"ready\",\"index_health\":\"ready\",\"import_tasks_queued\":1,\"import_tasks_cancelled\":0}";
         write!(
             status_stream,
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -304,22 +310,6 @@ fn accept_with_timeout(listener: &TcpListener) -> (std::net::TcpStream, std::net
             Err(error) => panic!("accept status request: {error}"),
         }
     }
-}
-
-fn write_ipc_endpoint_file(data_dir: &Path, addr: SocketAddr) {
-    fs::create_dir_all(data_dir).unwrap();
-    fs::write(
-        data_dir.join("ipc.endpoints.json"),
-        format!(
-            "{{\"schema_version\":\"resume-ir.daemon-ipc.v1\",\"status\":\"http://{addr}/status\",\"imports\":\"http://{addr}/imports\",\"import_cancel\":\"http://{addr}/imports/cancel\",\"import_progress\":\"http://{addr}/imports/progress\",\"search\":\"http://{addr}/search\",\"details\":\"http://{addr}/details\"}}"
-        ),
-    )
-    .unwrap();
-}
-
-fn write_ipc_endpoint_file_with_token(data_dir: &Path, addr: SocketAddr, token: &str) {
-    write_ipc_endpoint_file(data_dir, addr);
-    fs::write(data_dir.join("ipc.auth"), format!("{token}\n")).unwrap();
 }
 
 fn reserved_unbound_loopback_status_url(reservation: &TcpListener) -> String {

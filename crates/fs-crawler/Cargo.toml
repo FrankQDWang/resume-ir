@@ -11,5 +11,8 @@ path = "src/lib.rs"
 [dependencies]
 core-domain = { path = "../core-domain" }
 
+[target.'cfg(windows)'.dependencies]
+same-file = "1.0.6"
+
 [lints]
 workspace = true

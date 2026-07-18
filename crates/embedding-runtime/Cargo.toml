@@ -1,0 +1,27 @@
+[package]
+name = "resume-embedding-runtime"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "resume-embedding-runtime"
+path = "src/main.rs"
+
+[dependencies]
+embedding-protocol = { path = "../embedding-protocol" }
+ort = { git = "https://github.com/pykeio/ort.git", rev = "17ed727770746447620d0d76e9893ed1a3d7c221", version = "=2.0.0-rc.12", default-features = false, features = ["api-24", "load-dynamic", "ndarray", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokenizers = { version = "=0.22.2", default-features = false, features = ["fancy-regex"] }
+
+[target.'cfg(unix)'.dependencies]
+process-containment = { path = "../process-containment" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

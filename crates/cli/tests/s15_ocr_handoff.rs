@@ -3,10 +3,10 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    ClassificationStatus, Document, DocumentClassificationRecord, DocumentId, DocumentStatus,
-    FileExtension, IngestJobFailureKind, IngestJobKind, IngestJobStatus, MetaStore,
-    OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, ReasonCode, ReviewDisposition,
-    UnixTimestamp, CLASSIFIER_EPOCH,
+    ClassificationStatus, ContentDigest, CurrentClassifierEpoch, Document, DocumentId,
+    DocumentStatus, FileExtension, IngestJobFailureKind, IngestJobKind, IngestJobStatus, MetaStore,
+    OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, ReasonCode, SourceRevision,
+    SourceRevisionTriage, UnixTimestamp, CLASSIFIER_EPOCH,
 };
 
 #[test]
@@ -302,7 +302,8 @@ printf 'OCRS31UniqueToken worker text bytes=%s page=%s\n' "$input_size" "$RESUME
     assert_eq!(cache_entry.engine_profile(), Some("fixture-engine"));
     assert!(cache_entry.text().unwrap().contains("OCRS31UniqueToken"));
 
-    let metadata_bytes = std::fs::read(data_dir.join("metadata.sqlite3")).unwrap();
+    let metadata_bytes =
+        std::fs::read(meta_store::metadata_store_path(&data_dir).unwrap()).unwrap();
     assert!(!metadata_bytes.starts_with(b"SQLite format 3"));
     assert!(!bytes_contain(&metadata_bytes, b"OCRS31UniqueToken"));
     assert!(!bytes_contain(&metadata_bytes, b"fixture-engine"));
@@ -427,8 +428,12 @@ esac
         assert!(cache_entry.text().unwrap().contains(token));
     }
 
+    let projection = store
+        .active_search_projection_for_document(&scanned.id)
+        .unwrap()
+        .expect("OCR search projection");
     let version = store
-        .latest_visible_resume_version_for_document(&scanned.id)
+        .resume_version_by_id(&projection.resume_version_id)
         .unwrap()
         .expect("OCR resume version");
     assert_eq!(version.page_count, Some(2));
@@ -932,8 +937,18 @@ exit 17
         store.run_migrations().unwrap();
         let scanned = scanned_document(&store);
         let job = store.ingest_job_by_id(&job_id).unwrap().unwrap();
+        let source_revision = SourceRevision::for_content(
+            scanned.id.clone(),
+            scanned
+                .content_hash
+                .as_deref()
+                .unwrap()
+                .parse::<ContentDigest>()
+                .unwrap(),
+            scanned.byte_size,
+        );
         let classification = store
-            .document_classification_by_id(&scanned.id)
+            .source_revision_triage(&source_revision.id, CLASSIFIER_EPOCH)
             .unwrap()
             .unwrap();
         assert_eq!(job.attempt_count, attempt);
@@ -944,8 +959,8 @@ exit 17
         } else {
             assert_eq!(job.status, IngestJobStatus::FailedPermanent);
             assert_eq!(scanned.status, DocumentStatus::FailedPermanent);
-            assert_eq!(classification.status, ClassificationStatus::Failed);
-            assert_eq!(classification.reason_codes, vec![ReasonCode::ParserFailed]);
+            assert_eq!(classification.status, ClassificationStatus::OcrBacklog);
+            assert_eq!(classification.reason_codes, vec![ReasonCode::OcrRequired]);
         }
     }
 
@@ -1199,7 +1214,7 @@ exit 42
 
 #[cfg(unix)]
 #[test]
-fn ocr_worker_empty_success_keeps_document_non_searchable() {
+fn ocr_worker_empty_success_excludes_document_without_publishing_a_version() {
     let data_dir = temp_dir("ocr-worker-empty-text-data");
     let fixture_root = fixture_root();
     let command = write_fixture_executable(
@@ -1243,11 +1258,11 @@ printf '    \n'
     let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
     let scanned = scanned_document(&store);
-    assert_eq!(scanned.status, DocumentStatus::OcrDone);
+    assert_eq!(scanned.status, DocumentStatus::Excluded);
     assert!(store
-        .resume_versions_for_document(&scanned.id)
+        .active_search_projection_for_document(&scanned.id)
         .unwrap()
-        .is_empty());
+        .is_none());
     assert!(store.retryable_jobs().unwrap().is_empty());
 
     let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
@@ -1407,10 +1422,11 @@ fn seed_ocr_pdf_document_with_bytes(
     content_hash: &str,
 ) -> PathBuf {
     let now = UnixTimestamp::from_unix_seconds(1_900_000_092);
+    let content_digest = ContentDigest::from_bytes(&bytes);
     let private_root = data_dir.join("private-resumes");
     std::fs::create_dir_all(&private_root).unwrap();
     let document_path = private_root.join("synthetic-scanned-resume.pdf");
-    std::fs::write(&document_path, bytes).unwrap();
+    std::fs::write(&document_path, &bytes).unwrap();
     let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
     let doc_id = DocumentId::from_non_secret_parts(&["s15", content_hash]);
@@ -1423,7 +1439,7 @@ fn seed_ocr_pdf_document_with_bytes(
             extension: FileExtension::Pdf,
             byte_size: std::fs::metadata(&document_path).unwrap().len(),
             mtime: now,
-            content_hash: Some(content_hash.to_string()),
+            content_hash: Some(content_digest.as_str().to_string()),
             text_hash: None,
             is_deleted: false,
             created_at: now,
@@ -1431,17 +1447,28 @@ fn seed_ocr_pdf_document_with_bytes(
             status: DocumentStatus::OcrRequired,
         })
         .unwrap();
+    let source_revision = SourceRevision::for_content(
+        doc_id.clone(),
+        content_digest,
+        std::fs::metadata(&document_path).unwrap().len(),
+    );
+    store.insert_source_revision(&source_revision).unwrap();
     store
-        .upsert_document_classification(&DocumentClassificationRecord {
-            document_id: doc_id.clone(),
+        .insert_source_revision_triage(&SourceRevisionTriage {
+            source_revision_id: source_revision.id.clone(),
             status: ClassificationStatus::OcrBacklog,
-            classifier_epoch: CLASSIFIER_EPOCH.to_string(),
+            triage_epoch: CLASSIFIER_EPOCH.to_string(),
             reason_codes: vec![ReasonCode::OcrRequired],
-            classified_at: now,
-            review_disposition: ReviewDisposition::NotRequired,
+            triaged_at: now,
         })
         .unwrap();
-    store.enqueue_ocr_job_for_document(&doc_id, now).unwrap();
+    store
+        .enqueue_ocr_job_for_source_triage(
+            &source_revision.id,
+            CurrentClassifierEpoch::parse(CLASSIFIER_EPOCH).unwrap(),
+            now,
+        )
+        .unwrap();
     document_path
 }
 

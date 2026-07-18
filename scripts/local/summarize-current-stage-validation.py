@@ -18,14 +18,14 @@ HANDOFF_SCHEMA = "resume-ir.current-stage-handoff.v1"
 HANDOFF_PRIVACY_BOUNDARY = "local_only_redacted_handoff"
 D10K_PRIVATE_SCALE_GATE = "D10K_private_calibration"
 SUPPORTED_SCHEMAS = {
-    "resume-ir.current-stage-smoke-summary.v1",
-    "resume-ir.current-stage-blocked-summary.v1",
-    "resume-ir.current-stage-validation-evidence.v1",
+    "resume-ir.current-stage-smoke-summary.v2",
+    "resume-ir.current-stage-blocked-summary.v2",
+    "resume-ir.current-stage-validation-evidence.v2",
 }
 EXPECTED_SOURCE_PRIVACY_BOUNDARIES = {
-    "resume-ir.current-stage-smoke-summary.v1": "local_only_redacted_aggregate_summary",
-    "resume-ir.current-stage-blocked-summary.v1": "local_only_redacted_blocked_summary",
-    "resume-ir.current-stage-validation-evidence.v1": "local_only_redacted_evidence_manifest",
+    "resume-ir.current-stage-smoke-summary.v2": "local_only_redacted_aggregate_summary",
+    "resume-ir.current-stage-blocked-summary.v2": "local_only_redacted_blocked_summary",
+    "resume-ir.current-stage-validation-evidence.v2": "local_only_redacted_evidence_manifest",
 }
 PRIVATE_QUERY_BASELINE_COPY_KEYS = (
     "privacy_boundary",
@@ -176,9 +176,9 @@ def optional_string(document: dict[str, Any], name: str) -> str | None:
 
 
 def source_status(document: dict[str, Any], schema: str) -> str:
-    if schema == "resume-ir.current-stage-blocked-summary.v1":
+    if schema == "resume-ir.current-stage-blocked-summary.v2":
         return "blocked"
-    if schema == "resume-ir.current-stage-smoke-summary.v1":
+    if schema == "resume-ir.current-stage-smoke-summary.v2":
         return "smoke_satisfied" if bool_field(document, "smoke_satisfied") else "smoke_failed"
     return "full_evidence_ready"
 
@@ -187,7 +187,7 @@ def validation_profile(document: dict[str, Any], schema: str) -> str:
     value = document.get("validation_profile")
     if isinstance(value, str) and value:
         return value
-    if schema == "resume-ir.current-stage-validation-evidence.v1":
+    if schema == "resume-ir.current-stage-validation-evidence.v2":
         return "full"
     fail("validation profile is missing")
 
@@ -220,7 +220,7 @@ def not_complete_items(document: dict[str, Any]) -> list[dict[str, str]]:
         if not isinstance(item, str) or not item:
             fail("not_completed entries must be strings")
         output.append({"kind": "not_complete", "item": item})
-    if document.get("schema_version") == "resume-ir.current-stage-blocked-summary.v1":
+    if document.get("schema_version") == "resume-ir.current-stage-blocked-summary.v2":
         output.insert(
             0,
             {
@@ -235,11 +235,11 @@ def not_complete_items(document: dict[str, Any]) -> list[dict[str, str]]:
 
 def source_requires_observability(document: dict[str, Any], schema: str) -> bool:
     if schema in {
-        "resume-ir.current-stage-smoke-summary.v1",
-        "resume-ir.current-stage-validation-evidence.v1",
+        "resume-ir.current-stage-smoke-summary.v2",
+        "resume-ir.current-stage-validation-evidence.v2",
     }:
         return True
-    if schema == "resume-ir.current-stage-blocked-summary.v1":
+    if schema == "resume-ir.current-stage-blocked-summary.v2":
         steps = document.get("steps", [])
         if not isinstance(steps, list):
             fail("steps must be an array")
@@ -390,7 +390,7 @@ def baseline_artifact_refs(document: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def blocked_artifact_refs(document: dict[str, Any], schema: str) -> list[dict[str, str]]:
-    if schema != "resume-ir.current-stage-blocked-summary.v1":
+    if schema != "resume-ir.current-stage-blocked-summary.v2":
         return []
     value = document.get("redacted_outputs", [])
     if not isinstance(value, list):
@@ -836,7 +836,7 @@ def must_not_upload(document: dict[str, Any]) -> list[str]:
 
 
 def next_action(document: dict[str, Any], schema: str) -> dict[str, str]:
-    if schema == "resume-ir.current-stage-blocked-summary.v1":
+    if schema == "resume-ir.current-stage-blocked-summary.v2":
         category = string_field(document, "blocked_category")
         blocked_reason = string_field(document, "blocked_reason")
         if blocked_reason == "query_set_index_unavailable":
@@ -880,7 +880,7 @@ def next_action(document: dict[str, Any], schema: str) -> dict[str, str]:
                 "validation in current stage"
             ),
         }
-    if schema == "resume-ir.current-stage-smoke-summary.v1":
+    if schema == "resume-ir.current-stage-smoke-summary.v2":
         return {
             "status": "smoke_only",
             "recommended_next_step": "run full current-stage validation when local runtime and corpus are ready",
@@ -905,7 +905,7 @@ def build_handoff(document: dict[str, Any]) -> dict[str, Any]:
     reject_private_markers(document)
 
     blocked = None
-    if schema == "resume-ir.current-stage-blocked-summary.v1":
+    if schema == "resume-ir.current-stage-blocked-summary.v2":
         blocked = {
             "blocked_step": string_field(document, "blocked_step"),
             "blocked_category": string_field(document, "blocked_category"),

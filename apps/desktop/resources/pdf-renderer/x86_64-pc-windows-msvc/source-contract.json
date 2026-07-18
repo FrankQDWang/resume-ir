@@ -1,0 +1,90 @@
+{
+  "schema_version": "resume-ir.windows-pdf-renderer-source-contract.v1",
+  "target_triple": "x86_64-pc-windows-msvc",
+  "product_runtime_network_access": "disabled",
+  "rejected_platform_api": {
+    "name": "Windows.Data.Pdf",
+    "official_support_document": "https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/winrt-api-desktop-app-support",
+    "desktop_package_identity_required": true,
+    "target_installer_identity": "tauri-nsis-unpackaged-win32",
+    "accepted": false
+  },
+  "wrapper": {
+    "crate": "resume-pdf-render-runtime",
+    "dependency": "pdfium-render",
+    "dependency_version": "0.9.3",
+    "dependency_feature": "pdfium_7881",
+    "cargo_feature": "windows-static-pdfium",
+    "link_mode": "complete-static-library",
+    "workspace_unsafe_code_allowed": false
+  },
+  "protocol": {
+    "arguments": [],
+    "environment": [
+      "RESUME_IR_PDF_RENDER_INPUT_PATH",
+      "RESUME_IR_PDF_RENDER_PAGE_NO",
+      "RESUME_IR_PDF_RENDER_DPI"
+    ],
+    "input_max_bytes": 67108864,
+    "path_max_utf16_units": 32767,
+    "page_min": 1,
+    "page_max": 512,
+    "dpi_min": 72,
+    "dpi_max": 600,
+    "dimension_max_pixels": 10000,
+    "page_max_pixels": 10000000,
+    "stdout_max_bytes": 33554432,
+    "stdout_format": "ppm-p6-rgb8",
+    "stderr": "bounded-generic-only",
+    "exit_codes": {
+      "success": 0,
+      "unavailable": 1,
+      "invalid_request": 2,
+      "resource_limit": 3
+    }
+  },
+  "pdfium": {
+    "release": "chromium/7881",
+    "source_repository": "https://pdfium.googlesource.com/pdfium.git",
+    "source_commit": "91b9d569b34be4f38eed7b3c49b227356c3aadad",
+    "source_build_dependency_revision": "613f5c13bccbc15bd7ce8da9acb13ac06459f8cb",
+    "license": "LicenseRef-PDFium-Root-LICENSE",
+    "source_license_file": {
+      "file": "LICENSE",
+      "bytes": 12896,
+      "sha256": "1fe9dea718fbd75cf149adaf4d8a22a4335604d964ddb76d1b45383dec8668c9"
+    },
+    "build_provenance_schema": "resume-ir.pdfium-windows-build-provenance.v1",
+    "gn_arguments": [
+      "target_os=\"win\"",
+      "target_cpu=\"x64\"",
+      "is_debug=false",
+      "is_official_build=true",
+      "is_component_build=false",
+      "pdf_is_standalone=true",
+      "pdf_is_complete_lib=true",
+      "pdf_enable_v8=false",
+      "pdf_enable_xfa=false",
+      "pdf_use_skia=false",
+      "pdf_use_partition_alloc=false",
+      "pdf_bundle_freetype=true",
+      "use_custom_libcxx=false",
+      "symbol_level=0"
+    ],
+    "build_targets": [
+      "pdfium",
+      "pdfium_unittests",
+      "pdfium_embeddertests"
+    ],
+    "static_library_file": "pdfium.lib",
+    "final_binary_file": "resume-pdf-render-runtime.exe",
+    "required_final_dependency_closure": "windows-system-dlls-only",
+    "forbidden_final_import_prefixes": [
+      "MSVCP",
+      "VCRUNTIME",
+      "CONCRT",
+      "UCRTBASE",
+      "API-MS-WIN-CRT-"
+    ]
+  }
+}

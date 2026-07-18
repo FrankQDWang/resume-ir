@@ -125,10 +125,54 @@ fn reference_predict(
 fn valid_synthetic_artifact_promotes_only_safe_gray() {
     let artifact = write_artifact(synthetic_model());
     let policy = LinearPromotionPolicy::load_local(artifact.path());
+    let model_epoch = policy.classifier_epoch().unwrap().to_string();
     let text = "PROFILE\nPlatform engineer with Rust and distributed systems experience.\nINVOICE";
     let gray = classify(ClassifierInput::NormalizedText(text));
     let promoted = policy.apply(text, &[PromotionSection::Profile], gray);
     assert_eq!(promoted.status(), ClassificationStatus::ResumeCandidate);
+    assert_eq!(promoted.classifier_epoch(), model_epoch);
+}
+
+#[test]
+fn enabled_model_stamps_unchanged_non_gray_result_with_model_epoch() {
+    let artifact = write_artifact(synthetic_model());
+    let policy = LinearPromotionPolicy::load_local(artifact.path());
+    let model_epoch = policy.classifier_epoch().unwrap().to_string();
+    let text = "PROFILE\nEngineer.\nEXPERIENCE\nBuilt tools.";
+    let baseline = classify(ClassifierInput::NormalizedText(text));
+    assert_eq!(baseline.status(), ClassificationStatus::ResumeCandidate);
+
+    let classified = policy.apply(text, &[PromotionSection::Profile], baseline);
+
+    assert_eq!(classified.status(), ClassificationStatus::ResumeCandidate);
+    assert_eq!(classified.classifier_epoch(), model_epoch);
+}
+
+#[test]
+fn enabled_model_stamps_gray_result_even_when_not_promoted() {
+    let artifact = write_artifact(synthetic_model());
+    let policy = LinearPromotionPolicy::load_local(artifact.path());
+    let model_epoch = policy.classifier_epoch().unwrap().to_string();
+    let text = "PROFILE\nEngineer.";
+    let baseline = classify(ClassifierInput::NormalizedText(text));
+    assert_eq!(baseline.status(), ClassificationStatus::NeedsReview);
+
+    let classified = policy.apply(text, &[PromotionSection::Profile], baseline);
+
+    assert_eq!(classified.status(), ClassificationStatus::NeedsReview);
+    assert_eq!(classified.classifier_epoch(), model_epoch);
+}
+
+#[test]
+fn disabled_policy_retains_deterministic_classifier_epoch() {
+    let policy = LinearPromotionPolicy::default();
+    let text = "PROFILE\nEngineer.";
+    let baseline = classify(ClassifierInput::NormalizedText(text));
+
+    let classified = policy.apply(text, &[PromotionSection::Profile], baseline);
+
+    assert_eq!(classified.status(), ClassificationStatus::NeedsReview);
+    assert_eq!(classified.classifier_epoch(), CLASSIFIER_EPOCH);
 }
 
 #[test]

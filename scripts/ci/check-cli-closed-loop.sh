@@ -83,7 +83,6 @@ trap cleanup EXIT HUP INT TERM
 
 data_dir="$tmpdir/PRIVATE_CLI_CLOSED_LOOP_DATA"
 ocr_command="$tmpdir/ocr-fixture.sh"
-embedding_command="$tmpdir/embedding-fixture.sh"
 
 cat >"$ocr_command" <<'SH'
 #!/usr/bin/env sh
@@ -93,22 +92,6 @@ printf 'text:\n'
 printf 'SUMMARY\nSynthetic OCR profile.\nEXPERIENCE\nBuilt CLIClosedLoopOCRToken systems on page %s.\nSKILLS\nSearch.\n' "$RESUME_IR_OCR_PAGE_NO"
 SH
 chmod 700 "$ocr_command"
-
-cat >"$embedding_command" <<'SH'
-#!/usr/bin/env sh
-if [ ! -s "$RESUME_IR_EMBEDDING_INPUT_PATH" ]; then
-  exit 7
-fi
-printf 'resume-ir-embedding-v1\n'
-printf 'model_id=fixture-local-model\n'
-printf 'dimension=4\n'
-awk -F '\t' '/^input=/ {
-  id=$1;
-  sub(/^input=/, "", id);
-  printf "vector=%s\t1,0,0,0\n", id
-}' "$RESUME_IR_EMBEDDING_INPUT_PATH"
-SH
-chmod 700 "$embedding_command"
 
 import_out="$tmpdir/import.out"
 run_cli "import" "$import_out" import --root "$fixture_root"
@@ -125,7 +108,7 @@ require_text "$status_after_import_out" "searchable documents: 2"
 require_text "$status_after_import_out" "ocr queue: 1"
 require_text "$status_after_import_out" "import tasks queued: 0"
 require_text "$status_after_import_out" "index health: ready"
-require_text "$status_after_import_out" "search index: available (full-text snapshot)"
+require_text "$status_after_import_out" "search index: available (database Ready full-text snapshot)"
 reject_paths "$status_after_import_out"
 
 fulltext_out="$tmpdir/fulltext-search.out"
@@ -155,41 +138,10 @@ require_text "$ocr_search_out" "results: 1"
 reject_text "$ocr_search_out" "query:" "raw query label"
 reject_paths "$ocr_search_out"
 
-embed_out="$tmpdir/embed-worker.out"
-run_cli "embed worker" "$embed_out" embed-worker --once --command "$embedding_command" --model-id fixture-local-model --dimension 4 --max-docs 8 --max-text-bytes 100000
-require_text "$embed_out" "embedding worker: completed"
-require_text "$embed_out" "model id: fixture-local-model"
-require_text "$embed_out" "dimension: 4"
-require_text "$embed_out" "documents considered: 3"
-require_text "$embed_out" "documents embedded: 3"
-require_text "$embed_out" "vector index: available (hnsw ann vector snapshot)"
-reject_paths "$embed_out"
-
-status_after_embed_out="$tmpdir/status-after-embed.out"
-run_cli "status after embedding" "$status_after_embed_out" status
-require_text "$status_after_embed_out" "searchable documents: 3"
-require_text "$status_after_embed_out" "ocr queue: 0"
-require_text "$status_after_embed_out" "vector index: available (hnsw ann vector snapshot)"
-require_text "$status_after_embed_out" "search index: available (full-text snapshot)"
-reject_paths "$status_after_embed_out"
-
-semantic_out="$tmpdir/semantic-search.out"
-run_cli "semantic search" "$semantic_out" search SemanticOnlyToken --mode semantic --embedding-command "$embedding_command" --model-id fixture-local-model --dimension 4 --top-k 20
-require_text "$semantic_out" "results: 3"
-reject_text "$semantic_out" "SemanticOnlyToken" "semantic raw query"
-reject_paths "$semantic_out"
-
-hybrid_out="$tmpdir/hybrid-search.out"
-run_cli "hybrid search" "$hybrid_out" search SemanticOnlyToken --mode hybrid --embedding-command "$embedding_command" --model-id fixture-local-model --dimension 4 --top-k 20
-require_text "$hybrid_out" "results: 3"
-reject_text "$hybrid_out" "SemanticOnlyToken" "hybrid raw query"
-reject_paths "$hybrid_out"
-
 doctor_out="$tmpdir/doctor.out"
 run_cli "doctor" "$doctor_out" doctor
 require_text "$doctor_out" "resume-ir doctor"
-require_text "$doctor_out" "search index: available (full-text snapshot)"
-require_text "$doctor_out" "vector index: available (hnsw ann vector snapshot)"
+require_text "$doctor_out" "search index: available (database Ready full-text snapshot)"
 require_text "$doctor_out" "metadata encryption: sqlcipher"
 reject_text "$doctor_out" "CLIClosedLoopOCRToken" "OCR text"
 reject_text "$doctor_out" "SemanticOnlyToken" "raw query"

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-select-import-root"
+description = "Enables the select_import_root command without any pre-configured scope."
+commands.allow = ["select_import_root"]
+
+[[permission]]
+identifier = "deny-select-import-root"
+description = "Denies the select_import_root command without any pre-configured scope."
+commands.deny = ["select_import_root"]

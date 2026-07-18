@@ -1,6 +1,6 @@
 # Complete Product Status Report
 
-Last updated: 2026-06-20
+Last updated: 2026-07-15
 
 完整产品尚未完成。
 
@@ -18,7 +18,7 @@ follow-up goals that must happen before the product can be called complete.
 | P2_fields_dedupe | implementation production complete, release evidence blocked | email/phone/contact redaction, school, degree, major, company, title, skills, certificate, location, date ranges, confidence/evidence, filters, candidate folding, soft dedupe |
 | P3_semantic_vector | implementation production complete, release evidence blocked | local embedding command protocol, model manifest/preflight, persistent vector snapshot, semantic search, hybrid search, RRF, query embedding attestation; runtime bundle guards now require packaged `embedding-model` payload/SBOM coverage |
 | P4_ocr | implementation production complete, release evidence blocked | scanned PDF OCR queue, pdftoppm renderer path, Tesseract worker path, OCR cache, page budget, pause/resume, retry, OCR result indexing, runtime manifest/preflight |
-| P5_cross_platform_release | automation production complete, release evidence blocked | macOS/Windows package dry-runs, install/upgrade/uninstall/rollback plans, Windows service dry-run plan, signing/notarization fail-closed gates, SBOM/runtime bundle checks, GitHub Release dry-run and verified execute-gate evidence intake |
+| P5_cross_platform_release | ordinary-user Tauri v2 installer implementation incomplete | Legacy CLI/daemon package automation is complete but explicitly does not count as Tauri installer proof; partial target-triple runtime composition and macOS unsigned app smoke exist, while macOS app/DMG and Windows per-user NSIS remain incomplete |
 
 ## 未完成/阻塞项
 
@@ -28,9 +28,9 @@ follow-up goals that must happen before the product can be called complete.
 | P3_semantic_vector release quality | BLOCKED | Final reviewed embedding model distribution/license evidence and private labeled vector quality report are not available. |
 | P4_ocr throughput and backlog release evidence | BLOCKED/deferred | Current-stage smoke proves wiring, but stable-release OCR throughput, backlog drain, and hot-index coverage are deferred to the performance optimization goal. |
 | P5 signing/notarization/publication | BLOCKED | Human release credentials, Apple/Windows signing material, notarization credentials, and human release approval are not available. |
-| P5 platform lifecycle transcripts | BLOCKED | Fresh administrator-elevated Windows and release-runner macOS install/upgrade/uninstall/rollback transcripts are not available. |
+| P5 platform lifecycle transcripts | BLOCKED | Fresh clean-H0 Windows per-user NSIS and macOS Tauri app/DMG install/upgrade/uninstall/rollback transcripts are not available. |
 | P6_performance_stability | not complete, deferred | 500-query full hot-index private benchmark, P95/P99 reduction, actual hardware drills, and external 100k/1M real-corpus validation are deferred or externally blocked. |
-| UI/manual usage | deferred | The CLI/daemon product surface exists; a visual UI/manual usage goal remains separate follow-up work. |
+| Tauri GUI/manual usage | implementation present, native product evidence incomplete | The approved macOS GUI flow and synthetic contract/visual evidence exist, but ordinary-user installers, Windows native GUI evidence, and full clean-start daily-use recovery evidence remain incomplete. |
 
 ## 每项阻塞原因和需要提供什么
 
@@ -38,9 +38,9 @@ follow-up goals that must happen before the product can be called complete.
 |---|---|
 | signing certificates | Production certificate chain, private-key custody policy, and artifact signature verification evidence from the human release owner. |
 | macOS notarization | Apple Developer ID credentials, notarization CI secrets, stapled ticket evidence, and Gatekeeper transcript on fresh artifacts. |
-| Windows installer lifecycle | Administrator-elevated Windows runner transcript for MSI install, upgrade, repair, uninstall, and rollback using fresh release artifacts. |
-| Windows service lifecycle | Administrator-elevated Windows Service install/start/status/stop/recovery/uninstall/rollback transcript. |
-| macOS installer lifecycle | Fresh signed pkg/dmg install, upgrade, uninstall, rollback, LaunchAgent, and Gatekeeper transcript. |
+| Windows Tauri installer lifecycle | Clean H0 transcript for a self-contained per-user NSIS install, first run, upgrade, uninstall, rollback, and recovery using fresh release artifacts. |
+| Legacy Windows service lifecycle | Existing Windows Service evidence remains legacy CLI/daemon automation only and does not clear the Tauri installer gap. |
+| macOS Tauri installer lifecycle | Fresh signed/notarized Tauri app/DMG install, first run, upgrade, uninstall, rollback, and Gatekeeper transcript. |
 | GitHub Release publication | Human release approval plus working GitHub release token or Git credential path and artifact upload/download verification. Verified execute-mode `release.github_publication_gate.v1` evidence is classified as `verified_release_evidence_manifest`, but it does not clear signing, notarization, platform lifecycle, or private evidence blockers by itself. |
 | private real-corpus performance evidence | Follow-up performance optimization goal: reviewed local OCR/model manifests, hot-index coverage, 500 query samples, and aggregate latency report. |
 | field extraction quality | Private business-labeled field dataset with aggregate precision/recall/F1 across required fields. |

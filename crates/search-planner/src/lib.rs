@@ -4,7 +4,7 @@ pub fn crate_name() -> &'static str {
 
 use std::fmt;
 
-const STOP_WORDS: &[&str] = &["and", "the", "or", "的", "了", "和"];
+use core_domain::normalize_query_set_query;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct SearchPlan {
@@ -43,15 +43,15 @@ impl fmt::Debug for SearchPlan {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SearchPlanError {
     EmptyQuery,
-    NoSearchableTerms,
+    InvalidQueryBounds,
 }
 
 impl fmt::Display for SearchPlanError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SearchPlanError::EmptyQuery => formatter.write_str("search query is empty"),
-            SearchPlanError::NoSearchableTerms => {
-                formatter.write_str("search query has no searchable terms")
+            SearchPlanError::InvalidQueryBounds => {
+                formatter.write_str("search query is outside semantic bounds")
             }
         }
     }
@@ -60,28 +60,19 @@ impl fmt::Display for SearchPlanError {
 impl std::error::Error for SearchPlanError {}
 
 pub fn plan_search(query: &str, limit: usize) -> Result<SearchPlan, SearchPlanError> {
-    let query_text = query.split_whitespace().collect::<Vec<_>>().join(" ");
-    if query_text.is_empty() {
+    if query.trim().is_empty() {
         return Err(SearchPlanError::EmptyQuery);
     }
 
+    let query_text = normalize_query_set_query(query).ok_or(SearchPlanError::InvalidQueryBounds)?;
     let terms = query_text
         .split_whitespace()
-        .filter(|term| !is_stop_word(term))
         .map(str::to_string)
         .collect::<Vec<_>>();
-    if terms.is_empty() {
-        return Err(SearchPlanError::NoSearchableTerms);
-    }
 
     Ok(SearchPlan {
         query_text,
         terms,
         limit: limit.clamp(1, SearchPlan::MAX_LIMIT),
     })
-}
-
-fn is_stop_word(term: &str) -> bool {
-    let normalized = term.to_ascii_lowercase();
-    STOP_WORDS.iter().any(|stop_word| *stop_word == normalized)
 }

@@ -5,5 +5,12 @@ version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[dependencies]
+embedding-protocol = { path = "../embedding-protocol" }
+process-containment = { path = "../process-containment" }
+
+[dev-dependencies]
+tempfile = "3"
+
 [lints]
 workspace = true

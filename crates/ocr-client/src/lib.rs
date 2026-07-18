@@ -7,7 +7,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc, Arc,
@@ -17,15 +17,13 @@ use std::{
 };
 
 #[cfg(unix)]
-use std::os::unix::{
-    fs::{DirBuilderExt, OpenOptionsExt},
-    process::CommandExt,
-};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+
+use process_containment::ContainedChild;
 
 const OCR_OUTPUT_MAX_BYTES: usize = 4 * 1024 * 1024;
 const OCR_RENDER_OUTPUT_MAX_BYTES: usize = 32 * 1024 * 1024;
 const OCR_POLL_INTERVAL_MS: u64 = 10;
-const OCR_OUTPUT_DRAIN_GRACE_MS: u64 = 500;
 
 pub trait OcrClient {
     fn recognize_page(
@@ -126,12 +124,10 @@ impl OcrClient for LocalOcrCommandClient {
         let started_at = Instant::now();
         let mut child = spawn_ocr_command(&self.spec, &request, input.path())?;
         let stdout = child
-            .stdout
-            .take()
+            .take_stdout()
             .ok_or_else(|| OcrError::new(OcrErrorKind::EngineFailed))?;
         let stderr = child
-            .stderr
-            .take()
+            .take_stderr()
             .ok_or_else(|| OcrError::new(OcrErrorKind::EngineFailed))?;
         let stdout_reader = spawn_output_reader(stdout, OCR_OUTPUT_MAX_BYTES);
         let stderr_reader = spawn_output_reader(stderr, OCR_OUTPUT_MAX_BYTES);
@@ -144,8 +140,7 @@ impl OcrClient for LocalOcrCommandClient {
                 return Err(error);
             }
         };
-        let (stdout, _stderr) =
-            collect_child_outputs_after_exit(child.id(), stdout_reader, stderr_reader)?;
+        let (stdout, _stderr) = collect_child_outputs_after_exit(stdout_reader, stderr_reader)?;
         if !status.success() {
             return Err(OcrError::new(OcrErrorKind::EngineFailed));
         }
@@ -226,12 +221,10 @@ impl OcrClient for TesseractOcrClient {
         let started_at = Instant::now();
         let mut child = spawn_tesseract_command(&self.spec, &request, input.path())?;
         let stdout = child
-            .stdout
-            .take()
+            .take_stdout()
             .ok_or_else(|| OcrError::new(OcrErrorKind::EngineFailed))?;
         let stderr = child
-            .stderr
-            .take()
+            .take_stderr()
             .ok_or_else(|| OcrError::new(OcrErrorKind::EngineFailed))?;
         let stdout_reader = spawn_output_reader(stdout, OCR_OUTPUT_MAX_BYTES);
         let stderr_reader = spawn_output_reader(stderr, OCR_OUTPUT_MAX_BYTES);
@@ -244,8 +237,7 @@ impl OcrClient for TesseractOcrClient {
                 return Err(error);
             }
         };
-        let (stdout, _stderr) =
-            collect_child_outputs_after_exit(child.id(), stdout_reader, stderr_reader)?;
+        let (stdout, _stderr) = collect_child_outputs_after_exit(stdout_reader, stderr_reader)?;
         if !status.success() {
             return Err(OcrError::new(OcrErrorKind::EngineFailed));
         }
@@ -318,12 +310,10 @@ impl LocalPdfRenderCommandClient {
         let input = OcrTempInput::write(document_bytes)?;
         let mut child = spawn_pdf_render_command(&self.spec, page_no, render_dpi, input.path())?;
         let stdout = child
-            .stdout
-            .take()
+            .take_stdout()
             .ok_or_else(|| OcrError::new(OcrErrorKind::EngineFailed))?;
         let stderr = child
-            .stderr
-            .take()
+            .take_stderr()
             .ok_or_else(|| OcrError::new(OcrErrorKind::EngineFailed))?;
         let stdout_reader = spawn_output_reader(stdout, OCR_RENDER_OUTPUT_MAX_BYTES);
         let stderr_reader = spawn_output_reader(stderr, OCR_OUTPUT_MAX_BYTES);
@@ -336,8 +326,7 @@ impl LocalPdfRenderCommandClient {
                 return Err(error);
             }
         };
-        let (page_bytes, _stderr) =
-            collect_child_outputs_after_exit(child.id(), stdout_reader, stderr_reader)?;
+        let (page_bytes, _stderr) = collect_child_outputs_after_exit(stdout_reader, stderr_reader)?;
         if !status.success() || page_bytes.is_empty() {
             return Err(OcrError::new(OcrErrorKind::EngineFailed));
         }
@@ -406,12 +395,10 @@ impl PdftoppmPdfRenderer {
             output.prefix(),
         )?;
         let stdout = child
-            .stdout
-            .take()
+            .take_stdout()
             .ok_or_else(|| OcrError::new(OcrErrorKind::EngineFailed))?;
         let stderr = child
-            .stderr
-            .take()
+            .take_stderr()
             .ok_or_else(|| OcrError::new(OcrErrorKind::EngineFailed))?;
         let stdout_reader = spawn_output_reader(stdout, OCR_OUTPUT_MAX_BYTES);
         let stderr_reader = spawn_output_reader(stderr, OCR_OUTPUT_MAX_BYTES);
@@ -424,8 +411,7 @@ impl PdftoppmPdfRenderer {
                 return Err(error);
             }
         };
-        let (_stdout, _stderr) =
-            collect_child_outputs_after_exit(child.id(), stdout_reader, stderr_reader)?;
+        let (_stdout, _stderr) = collect_child_outputs_after_exit(stdout_reader, stderr_reader)?;
         if !status.success() {
             return Err(OcrError::new(OcrErrorKind::EngineFailed));
         }
@@ -938,7 +924,7 @@ fn spawn_ocr_command(
     spec: &LocalOcrCommandSpec,
     request: &OcrPageRequest,
     input_path: &Path,
-) -> Result<Child, OcrError> {
+) -> Result<ContainedChild, OcrError> {
     let mut command = Command::new(&spec.program);
     command
         .args(&spec.args)
@@ -957,9 +943,7 @@ fn spawn_ocr_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_process_isolation(&mut command);
-
-    command.spawn().map_err(|error| match error.kind() {
+    ContainedChild::spawn(&mut command).map_err(|error| match error.kind() {
         io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied => {
             OcrError::new(OcrErrorKind::WorkerUnavailable)
         }
@@ -971,7 +955,7 @@ fn spawn_tesseract_command(
     spec: &TesseractOcrSpec,
     request: &OcrPageRequest,
     input_path: &Path,
-) -> Result<Child, OcrError> {
+) -> Result<ContainedChild, OcrError> {
     let mut command = Command::new(&spec.program);
     command
         .arg(input_path.as_os_str())
@@ -984,9 +968,7 @@ fn spawn_tesseract_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_process_isolation(&mut command);
-
-    command.spawn().map_err(|error| match error.kind() {
+    ContainedChild::spawn(&mut command).map_err(|error| match error.kind() {
         io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied => {
             OcrError::new(OcrErrorKind::WorkerUnavailable)
         }
@@ -999,7 +981,7 @@ fn spawn_pdf_render_command(
     page_no: u32,
     render_dpi: u32,
     input_path: &Path,
-) -> Result<Child, OcrError> {
+) -> Result<ContainedChild, OcrError> {
     if page_no == 0 || render_dpi == 0 {
         return Err(OcrError::new(OcrErrorKind::InvalidRequest));
     }
@@ -1013,9 +995,7 @@ fn spawn_pdf_render_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_process_isolation(&mut command);
-
-    command.spawn().map_err(|error| match error.kind() {
+    ContainedChild::spawn(&mut command).map_err(|error| match error.kind() {
         io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied => {
             OcrError::new(OcrErrorKind::WorkerUnavailable)
         }
@@ -1029,7 +1009,7 @@ fn spawn_pdftoppm_command(
     render_dpi: u32,
     input_path: &Path,
     output_prefix: &Path,
-) -> Result<Child, OcrError> {
+) -> Result<ContainedChild, OcrError> {
     let mut command = Command::new(&spec.program);
     command
         .arg("-q")
@@ -1045,9 +1025,7 @@ fn spawn_pdftoppm_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    configure_process_isolation(&mut command);
-
-    command.spawn().map_err(|error| match error.kind() {
+    ContainedChild::spawn(&mut command).map_err(|error| match error.kind() {
         io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied => {
             OcrError::new(OcrErrorKind::WorkerUnavailable)
         }
@@ -1055,16 +1033,8 @@ fn spawn_pdftoppm_command(
     })
 }
 
-#[cfg(unix)]
-fn configure_process_isolation(command: &mut Command) {
-    command.process_group(0);
-}
-
-#[cfg(not(unix))]
-fn configure_process_isolation(_command: &mut Command) {}
-
 fn wait_for_ocr_child(
-    child: &mut Child,
+    child: &mut ContainedChild,
     budget: OcrWorkerBudget,
     cancellation: &CancellationToken,
 ) -> Result<std::process::ExitStatus, OcrError> {
@@ -1096,74 +1066,8 @@ fn wait_for_ocr_child(
     }
 }
 
-fn terminate_child(child: &mut Child) {
-    #[cfg(unix)]
-    {
-        let process_id = child.id();
-        signal_process_group(process_id, UnixSignal::Term);
-        thread::sleep(Duration::from_millis(10));
-        signal_process_group(process_id, UnixSignal::Kill);
-        if wait_for_child_exit(child, Duration::from_millis(100)) {
-            return;
-        }
-    }
-
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-#[cfg(unix)]
-fn terminate_process_group(process_group_id: u32) {
-    signal_process_group(process_group_id, UnixSignal::Term);
-    thread::sleep(Duration::from_millis(10));
-    signal_process_group(process_group_id, UnixSignal::Kill);
-}
-
-#[cfg(unix)]
-#[derive(Clone, Copy)]
-enum UnixSignal {
-    Term,
-    Kill,
-}
-
-#[cfg(unix)]
-impl UnixSignal {
-    fn as_kill_arg(self) -> &'static str {
-        match self {
-            Self::Term => "-TERM",
-            Self::Kill => "-KILL",
-        }
-    }
-}
-
-#[cfg(unix)]
-fn signal_process_group(process_group_id: u32, signal: UnixSignal) {
-    let _ = Command::new("/bin/kill")
-        .arg(signal.as_kill_arg())
-        .arg("--")
-        .arg(format!("-{process_group_id}"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-#[cfg(unix)]
-fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return true,
-            Ok(None) => {}
-            Err(_) => return true,
-        }
-
-        let now = Instant::now();
-        if now >= deadline {
-            return false;
-        }
-        thread::sleep(Duration::from_millis(OCR_POLL_INTERVAL_MS).min(deadline - now));
-    }
+fn terminate_child(child: &mut ContainedChild) {
+    child.terminate();
 }
 
 struct OutputReader {
@@ -1214,60 +1118,13 @@ where
 }
 
 fn collect_child_outputs_after_exit(
-    process_group_id: u32,
     stdout_reader: OutputReader,
     stderr_reader: OutputReader,
 ) -> Result<(Vec<u8>, Vec<u8>), OcrError> {
-    #[cfg(unix)]
-    {
-        let mut stdout_reader = Some(stdout_reader);
-        let mut stderr_reader = Some(stderr_reader);
-        let grace = Duration::from_millis(OCR_OUTPUT_DRAIN_GRACE_MS);
-        let stdout = try_join_output_reader(&mut stdout_reader, grace);
-        let stderr = try_join_output_reader(&mut stderr_reader, grace);
-
-        if stdout.is_none() || stderr.is_none() {
-            terminate_process_group(process_group_id);
-        }
-
-        let stdout = match stdout {
-            Some(result) => result?,
-            None => join_output_reader(stdout_reader.take().expect("stdout reader present"))?,
-        };
-        let stderr = match stderr {
-            Some(result) => result?,
-            None => join_output_reader(stderr_reader.take().expect("stderr reader present"))?,
-        };
-
-        Ok((stdout, stderr))
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = process_group_id;
-        Ok((
-            join_output_reader(stdout_reader)?,
-            join_output_reader(stderr_reader)?,
-        ))
-    }
-}
-
-fn try_join_output_reader(
-    reader: &mut Option<OutputReader>,
-    timeout: Duration,
-) -> Option<Result<Vec<u8>, OcrError>> {
-    let result = match reader.as_ref()?.receiver.recv_timeout(timeout) {
-        Ok(result) => result,
-        Err(mpsc::RecvTimeoutError::Timeout) => return None,
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            return Some(Err(OcrError::new(OcrErrorKind::EngineFailed)));
-        }
-    };
-    let reader = reader.take().expect("output reader present");
-    if reader.handle.join().is_err() {
-        return Some(Err(OcrError::new(OcrErrorKind::EngineFailed)));
-    }
-    Some(result.map_err(|_| OcrError::new(OcrErrorKind::EngineFailed)))
+    Ok((
+        join_output_reader(stdout_reader)?,
+        join_output_reader(stderr_reader)?,
+    ))
 }
 
 fn join_output_reader(reader: OutputReader) -> Result<Vec<u8>, OcrError> {

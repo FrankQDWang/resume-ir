@@ -246,7 +246,7 @@ if ids.index("dataset_manifest") > ids.index("import_private_corpus"):
 PY
 fi
 
-require_text "$plan" '"schema_version": "resume-ir.current-stage-validation-plan.v1"'
+require_text "$plan" '"schema_version": "resume-ir.current-stage-validation-plan.v2"'
 require_text "$plan" '"mode": "dry-run"'
 require_text "$plan" '"privacy_boundary": "local_only_redacted_plan"'
 require_text "$plan" '"resume_root": "<local-resume-root>"'
@@ -271,7 +271,8 @@ require_text "$plan" 'resume-cli --data-dir <local-data-dir> import --root <loca
 require_text "$plan" 'RESUME_IR_LOCAL_EVIDENCE_DIR=<local-evidence-dir> RESUME_IR_QUERY_ARTIFACT_ROOT=$RESUME_IR_QUERY_ARTIFACT_ROOT resume-cli --data-dir <local-data-dir> benchmark-query-set freeze-agent-replay --max-queries 500 --min-queries 500'
 require_text "$plan" 'resume-daemon --data-dir <local-data-dir> run --foreground --once --work-ocr-once'
 require_text "$plan" '--ocr-jobs-per-tick <bounded-ocr-jobs-per-tick>'
-require_text "$plan" 'resume-daemon --data-dir <local-data-dir> run --foreground --once --work-embeddings-once'
+require_text "$plan" '--work-ocr-once --ocr-tesseract-command <local-tesseract-command> --ocr-pdftoppm-command <local-pdftoppm-command> --embedding-command <local-embedding-command>'
+reject_text "$plan" '--work-embeddings'
 require_text "$plan" 'resume-cli --data-dir <local-data-dir> benchmark-corpus-summary --json > <local-evidence-dir>/benchmark-corpus-summary.local.json'
 require_text "$plan" 'resume-benchmark private-query'
 require_text "$plan" '--resident-command-arg benchmark-query-protocol'
@@ -514,7 +515,7 @@ PATH="$auto_ocr_bin_dir:$PATH" "$script" --dry-run \
   --top-k 10 \
   > "$auto_ocr_plan"
 
-require_text "$auto_ocr_plan" '"schema_version": "resume-ir.current-stage-validation-plan.v1"'
+require_text "$auto_ocr_plan" '"schema_version": "resume-ir.current-stage-validation-plan.v2"'
 require_text "$auto_ocr_plan" 'resume-cli --data-dir <local-data-dir> ocr preflight --json'
 require_text "$auto_ocr_plan" '--tesseract-command <local-tesseract-command>'
 require_text "$auto_ocr_plan" '--pdftoppm-command <local-pdftoppm-command>'
@@ -1043,11 +1044,11 @@ cat > "$fake_resume_daemon" <<'SH'
 set -eu
 if [ -n "${FAKE_REQUIRED_EMBEDDING_RUNTIME_BIN_DIR:-}" ]; then
   case " $* " in
-    *" --work-embeddings "*)
+    *" --embedding-command "*)
       case ":$PATH:" in
         *":$FAKE_REQUIRED_EMBEDDING_RUNTIME_BIN_DIR:"*) ;;
         *)
-          printf 'embedding worker PATH prefix missing\n' >&2
+          printf 'embedding runtime PATH prefix missing\n' >&2
           exit 1
           ;;
       esac
@@ -1509,7 +1510,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$evidence_manifest" >/dev/null
 fi
-require_text "$evidence_manifest" '"schema_version": "resume-ir.current-stage-validation-evidence.v1"'
+require_text "$evidence_manifest" '"schema_version": "resume-ir.current-stage-validation-evidence.v2"'
 require_text "$evidence_manifest" '"privacy_boundary": "local_only_redacted_evidence_manifest"'
 require_text "$evidence_manifest" '"current_stage_target": "reproducible_local_10k_baseline"'
 require_text "$evidence_manifest" '"runtime_distribution_mode": "bundled"'
@@ -1570,7 +1571,7 @@ require_text "$evidence_manifest" '"model_bytes_included": false'
 require_text "$evidence_manifest" '"runtime_binaries_included": false'
 require_current_stage_handoff \
   "full_evidence_ready" \
-  "resume-ir.current-stage-validation-evidence.v1"
+  "resume-ir.current-stage-validation-evidence.v2"
 issue_comment="$execute_out_dir/current-stage-issue-comment.md"
 require_text "$issue_comment" "#53 Current-Stage Private Query Baseline Handoff"
 require_text "$issue_comment" "query_source: trace_source_search_v1"
@@ -1637,7 +1638,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$smoke_summary" >/dev/null
 fi
-require_text "$smoke_summary" '"schema_version": "resume-ir.current-stage-smoke-summary.v1"'
+require_text "$smoke_summary" '"schema_version": "resume-ir.current-stage-smoke-summary.v2"'
 require_text "$smoke_summary" '"privacy_boundary": "local_only_redacted_aggregate_summary"'
 require_text "$smoke_summary" '"validation_profile": "smoke"'
 require_text "$smoke_summary" '"current_stage_target": "local_real_corpus_smoke_chain"'
@@ -1664,7 +1665,7 @@ require_fault_suite_evidence "$execute_out_dir/fault-simulation-suite-local-safe
 require_text "$smoke_summary" '"full 10k/8000-document current-stage baseline"'
 require_current_stage_handoff \
   "smoke_satisfied" \
-  "resume-ir.current-stage-smoke-summary.v1"
+  "resume-ir.current-stage-smoke-summary.v2"
 reject_text "$smoke_summary" "$tmpdir"
 reject_text "$smoke_summary" "PRIVATE-current-stage"
 reject_text "$smoke_summary" "private fake query"
@@ -1689,7 +1690,7 @@ require_text "$smoke_low_hot_summary" '"private_query_baseline"'
 require_partial_hot_index_observability "$smoke_low_hot_summary"
 require_current_stage_handoff \
   "smoke_satisfied" \
-  "resume-ir.current-stage-smoke-summary.v1"
+  "resume-ir.current-stage-smoke-summary.v2"
 handoff="$execute_out_dir/current-stage-handoff.json"
 require_text "$handoff" '"kind": "derived_blocker"'
 require_text "$handoff" '"category": "ocr"'
@@ -1743,7 +1744,7 @@ require_text "$execute_out_dir/dataset-manifest.stdout.txt" "privacy boundary: l
 require_reused_import_stdout "$execute_out_dir/import.stdout.txt"
 require_current_stage_handoff \
   "smoke_satisfied" \
-  "resume-ir.current-stage-smoke-summary.v1"
+  "resume-ir.current-stage-smoke-summary.v2"
 reject_text "$reuse_summary" "$tmpdir"
 reject_text "$reuse_summary" "PRIVATE-current-stage"
 reject_text "$reuse_summary" "private fake query"
@@ -1779,7 +1780,7 @@ require_text "$reuse_recoverable_summary" '"private_corpus_read": false'
 require_text "$execute_out_dir/import.stdout.txt" "import tasks recoverable: 1"
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 require_text "$tmpdir/execute-reuse-imported-corpus-recoverable-stderr.txt" "current-stage validation blocked: reusable data-dir still has recoverable import work"
 reject_text "$reuse_recoverable_summary" "$tmpdir"
 reject_text "$reuse_recoverable_summary" "PRIVATE-current-stage"
@@ -1809,7 +1810,7 @@ require_text "$external_smoke_summary" '"runtime_package_binaries_included": fal
 require_text "$external_smoke_summary" '"runtime_binaries_included": false'
 require_current_stage_handoff \
   "smoke_satisfied" \
-  "resume-ir.current-stage-smoke-summary.v1"
+  "resume-ir.current-stage-smoke-summary.v2"
 reject_text "$external_smoke_summary" "$tmpdir"
 reject_text "$external_smoke_summary" "PRIVATE-current-stage"
 
@@ -1842,13 +1843,13 @@ if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$ocr_backlog_summary" >/dev/null
   python3 -m json.tool "$ocr_backlog_diagnostics" >/dev/null
 fi
-require_text "$ocr_backlog_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$ocr_backlog_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$ocr_backlog_summary" '"privacy_boundary": "local_only_redacted_blocked_summary"'
 require_text "$ocr_backlog_summary" '"validation_profile": "full"'
 require_text "$ocr_backlog_summary" '"current_stage_target": "reproducible_local_10k_baseline"'
 require_text "$ocr_backlog_summary" '"full_baseline_satisfied": false'
 require_text "$ocr_backlog_summary" '"release_readiness_evidence": false'
-require_text "$ocr_backlog_summary" '"blocked_step": "ocr_worker_bounded_loop"'
+require_text "$ocr_backlog_summary" '"blocked_step": "ocr_search_publication_bounded_loop"'
 require_text "$ocr_backlog_summary" '"blocked_category": "ocr"'
 require_text "$ocr_backlog_summary" '"blocked_reason": "ocr_backlog_exceeds_current_stage_budget"'
 require_text "$ocr_backlog_summary" '"ocr_runtime_probe": "passed"'
@@ -1863,7 +1864,7 @@ require_text "$ocr_backlog_summary" '"doctor.out"'
 require_text "$ocr_backlog_summary" '"full 10k/8000-document current-stage baseline"'
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 require_text "$ocr_backlog_diagnostics" '"schema_version":"diagnostics.v1"'
 require_text "$ocr_backlog_diagnostics" '"redacted":true'
 reject_text "$ocr_backlog_summary" "$tmpdir"
@@ -1896,7 +1897,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$blocked_summary" >/dev/null
 fi
-require_text "$blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$blocked_summary" '"privacy_boundary": "local_only_redacted_blocked_summary"'
 require_text "$blocked_summary" '"validation_profile": "full"'
 require_text "$blocked_summary" '"current_stage_target": "reproducible_local_10k_baseline"'
@@ -1915,7 +1916,7 @@ require_text "$blocked_summary" '"private-benchmark-gate.stdout.txt"'
 require_text "$blocked_summary" '"full 10k/8000-document current-stage baseline"'
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 reject_text "$blocked_summary" "$tmpdir"
 reject_text "$blocked_summary" "PRIVATE-current-stage"
 reject_text "$blocked_summary" "private fake query"
@@ -1946,7 +1947,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$private_ocr_blocked_summary" >/dev/null
 fi
-require_text "$private_ocr_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$private_ocr_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$private_ocr_blocked_summary" '"blocked_step": "private_ocr_throughput_baseline"'
 require_text "$private_ocr_blocked_summary" '"blocked_category": "ocr"'
 require_text "$private_ocr_blocked_summary" '"blocked_reason": "private_ocr_throughput_failed"'
@@ -1956,7 +1957,7 @@ require_text "$private_ocr_blocked_summary" '"ocr-throughput-gate.stdout.txt"'
 require_summary_observability "$private_ocr_blocked_summary"
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 reject_text "$private_ocr_blocked_summary" "$tmpdir"
 reject_text "$private_ocr_blocked_summary" "PRIVATE-current-stage"
 reject_text "$private_ocr_blocked_summary" "private fake query"
@@ -1990,14 +1991,14 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$private_ocr_invalid_summary" >/dev/null
 fi
-require_text "$private_ocr_invalid_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$private_ocr_invalid_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$private_ocr_invalid_summary" '"blocked_step": "private_ocr_throughput_baseline"'
 require_text "$private_ocr_invalid_summary" '"blocked_category": "ocr"'
 require_text "$private_ocr_invalid_summary" '"blocked_reason": "private_ocr_throughput_invalid"'
 require_text "$private_ocr_invalid_summary" '"private-ocr-throughput.json"'
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 reject_text "$private_ocr_invalid_summary" "$tmpdir"
 reject_text "$private_ocr_invalid_summary" "PRIVATE-current-stage"
 reject_text "$private_ocr_invalid_summary" "private fake query"
@@ -2028,7 +2029,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$ocr_gate_blocked_summary" >/dev/null
 fi
-require_text "$ocr_gate_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$ocr_gate_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$ocr_gate_blocked_summary" '"blocked_step": "ocr_throughput_baseline_gate"'
 require_text "$ocr_gate_blocked_summary" '"blocked_category": "ocr"'
 require_text "$ocr_gate_blocked_summary" '"blocked_reason": "ocr_throughput_baseline_gate_failed"'
@@ -2037,7 +2038,7 @@ require_text "$ocr_gate_blocked_summary" '"ocr-throughput-gate.stdout.txt"'
 require_summary_observability "$ocr_gate_blocked_summary"
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 reject_text "$ocr_gate_blocked_summary" "$tmpdir"
 reject_text "$ocr_gate_blocked_summary" "PRIVATE-current-stage"
 reject_text "$ocr_gate_blocked_summary" "private fake query"
@@ -2062,7 +2063,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$query_set_blocked_summary" >/dev/null
 fi
-require_text "$query_set_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$query_set_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$query_set_blocked_summary" '"blocked_step": "query_set_prepare"'
 require_text "$query_set_blocked_summary" '"blocked_category": "query-set"'
 require_text "$query_set_blocked_summary" '"blocked_reason": "query_set_corpus_or_trace_coverage_insufficient"'
@@ -2076,7 +2077,7 @@ require_text "$query_set_blocked_summary" '"query-set-prepare.stdout.txt"'
 require_summary_observability "$query_set_blocked_summary"
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 require_text "$execute_out_dir/current-stage-handoff.json" '"file": "query-set-trace-preflight.local.json"'
 require_text "$execute_out_dir/current-stage-handoff.json" '"query_set_trace_preflight"'
 require_text "$execute_out_dir/current-stage-handoff.json" '"d10k_corpus_ready": false'
@@ -2135,7 +2136,7 @@ require_text "$query_set_corpus_not_ready_summary" '"document_count": 1'
 require_text "$query_set_corpus_not_ready_summary" '"corpus_valid_bucket_deficits"'
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 require_text "$execute_out_dir/current-stage-handoff.json" '"d10k_corpus_ready": false'
 require_text "$execute_out_dir/current-stage-issue-comment.md" "blocked_reason: query_set_corpus_or_trace_coverage_insufficient"
 require_text "$execute_out_dir/current-stage-issue-comment.md" "d10k_corpus_deficits: document_count=1"
@@ -2173,7 +2174,7 @@ require_text "$query_set_index_blocked_summary" '"query-set-prepare.stderr.txt"'
 require_summary_observability "$query_set_index_blocked_summary"
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 query_set_index_issue_comment="$execute_out_dir/current-stage-issue-comment.md"
 require_text "$query_set_index_issue_comment" "#53 Current-Stage Blocked Handoff"
 require_text "$query_set_index_issue_comment" "blocked_step: query_set_prepare"
@@ -2219,7 +2220,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$private_query_blocked_summary" >/dev/null
 fi
-require_text "$private_query_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$private_query_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$private_query_blocked_summary" '"blocked_step": "private_query_baseline"'
 require_text "$private_query_blocked_summary" '"blocked_category": "benchmark"'
 require_text "$private_query_blocked_summary" '"blocked_reason": "private_query_baseline_failed"'
@@ -2227,7 +2228,7 @@ require_text "$private_query_blocked_summary" '"private-benchmark-local.json"'
 require_summary_observability "$private_query_blocked_summary"
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 reject_text "$private_query_blocked_summary" "$tmpdir"
 reject_text "$private_query_blocked_summary" "PRIVATE-current-stage"
 reject_text "$private_query_blocked_summary" "private fake query"
@@ -2261,14 +2262,14 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$private_query_invalid_summary" >/dev/null
 fi
-require_text "$private_query_invalid_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$private_query_invalid_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$private_query_invalid_summary" '"blocked_step": "private_query_baseline"'
 require_text "$private_query_invalid_summary" '"blocked_category": "benchmark"'
 require_text "$private_query_invalid_summary" '"blocked_reason": "private_query_baseline_invalid"'
 require_text "$private_query_invalid_summary" '"private-benchmark-local.json"'
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 reject_text "$private_query_invalid_summary" "$tmpdir"
 reject_text "$private_query_invalid_summary" "PRIVATE-current-stage"
 reject_text "$private_query_invalid_summary" "private fake query"
@@ -2353,7 +2354,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$diagnostics_blocked_summary" >/dev/null
 fi
-require_text "$diagnostics_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$diagnostics_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$diagnostics_blocked_summary" '"blocked_step": "redacted_diagnostics"'
 require_text "$diagnostics_blocked_summary" '"blocked_category": "diagnostics"'
 require_text "$diagnostics_blocked_summary" '"blocked_reason": "redacted_diagnostics_failed"'
@@ -2362,7 +2363,7 @@ require_text "$diagnostics_blocked_summary" '"private-benchmark-gate.stdout.txt"
 require_summary_observability "$diagnostics_blocked_summary"
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 reject_text "$diagnostics_blocked_summary" "$tmpdir"
 reject_text "$diagnostics_blocked_summary" "PRIVATE-current-stage"
 reject_text "$diagnostics_blocked_summary" "private fake query"
@@ -2390,7 +2391,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$diagnostics_invalid_summary" >/dev/null
 fi
-require_text "$diagnostics_invalid_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$diagnostics_invalid_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$diagnostics_invalid_summary" '"blocked_step": "redacted_diagnostics"'
 require_text "$diagnostics_invalid_summary" '"blocked_category": "diagnostics"'
 require_text "$diagnostics_invalid_summary" '"blocked_reason": "redacted_diagnostics_invalid"'
@@ -2399,7 +2400,7 @@ require_text "$diagnostics_invalid_summary" '"private-benchmark-gate.stdout.txt"
 require_summary_observability "$diagnostics_invalid_summary"
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 reject_text "$diagnostics_invalid_summary" "$tmpdir"
 reject_text "$diagnostics_invalid_summary" "PRIVATE-current-stage"
 reject_text "$diagnostics_invalid_summary" "private fake query"
@@ -2427,7 +2428,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$fault_simulation_blocked_summary" >/dev/null
 fi
-require_text "$fault_simulation_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$fault_simulation_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$fault_simulation_blocked_summary" '"blocked_step": "fault_simulation_smoke"'
 require_text "$fault_simulation_blocked_summary" '"blocked_category": "fault-injection"'
 require_text "$fault_simulation_blocked_summary" '"blocked_reason": "fault_simulation_smoke_failed"'
@@ -2436,7 +2437,7 @@ require_text "$fault_simulation_blocked_summary" '"fault-simulation-storage-low.
 require_summary_observability "$fault_simulation_blocked_summary"
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 reject_text "$fault_simulation_blocked_summary" "$tmpdir"
 reject_text "$fault_simulation_blocked_summary" "PRIVATE-current-stage"
 reject_text "$fault_simulation_blocked_summary" "private fake query"
@@ -2464,14 +2465,14 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$fault_simulation_invalid_summary" >/dev/null
 fi
-require_text "$fault_simulation_invalid_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$fault_simulation_invalid_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$fault_simulation_invalid_summary" '"blocked_step": "fault_simulation_suite"'
 require_text "$fault_simulation_invalid_summary" '"blocked_category": "fault-injection"'
 require_text "$fault_simulation_invalid_summary" '"blocked_reason": "fault_simulation_suite_invalid"'
 require_text "$fault_simulation_invalid_summary" '"fault-simulation-suite-local-safe.json"'
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 reject_text "$fault_simulation_invalid_summary" "$tmpdir"
 reject_text "$fault_simulation_invalid_summary" "PRIVATE-current-stage"
 reject_text "$fault_simulation_invalid_summary" "private fake query"
@@ -2493,7 +2494,7 @@ fi
 require_text "$tmpdir/execute-ocr-digest-mismatch-stderr.txt" "OCR runtime manifest digest mismatch"
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 reject_text "$tmpdir/execute-ocr-digest-mismatch-stdout.txt" "$tmpdir"
 reject_text "$tmpdir/execute-ocr-digest-mismatch-stderr.txt" "$tmpdir"
 reject_text "$tmpdir/execute-ocr-digest-mismatch-stdout.txt" "PRIVATE-current-stage"
@@ -2514,7 +2515,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$ocr_failed_summary" >/dev/null
 fi
-require_text "$ocr_failed_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$ocr_failed_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$ocr_failed_summary" '"blocked_step": "ocr_preflight"'
 require_text "$ocr_failed_summary" '"blocked_category": "ocr"'
 require_text "$ocr_failed_summary" '"blocked_reason": "ocr_runtime_preflight_failed"'
@@ -2522,7 +2523,7 @@ require_text "$ocr_failed_summary" '"private_corpus_read": false'
 require_text "$ocr_failed_summary" '"ocr-preflight.json"'
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 reject_text "$ocr_failed_summary" "$tmpdir"
 reject_text "$ocr_failed_summary" "PRIVATE-current-stage"
 require_text "$tmpdir/execute-ocr-failed-stderr.txt" "current-stage validation blocked: runtime preflight failed before reading private corpus"
@@ -2549,7 +2550,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$model_failed_summary" >/dev/null
 fi
-require_text "$model_failed_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$model_failed_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$model_failed_summary" '"blocked_step": "model_preflight"'
 require_text "$model_failed_summary" '"blocked_category": "embedding"'
 require_text "$model_failed_summary" '"blocked_reason": "embedding_runtime_preflight_failed"'
@@ -2558,7 +2559,7 @@ require_text "$model_failed_summary" '"model-preflight.json"'
 require_text "$model_failed_summary" '"ocr-runtime-manifest.local.json"'
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 reject_text "$model_failed_summary" "$tmpdir"
 reject_text "$model_failed_summary" "PRIVATE-current-stage"
 require_text "$tmpdir/execute-model-failed-stderr.txt" "current-stage validation blocked: runtime preflight failed before reading private corpus"
@@ -2576,7 +2577,7 @@ import_failed_summary="$execute_out_dir/current-stage-blocked-summary.json"
 if [ ! -s "$import_failed_summary" ]; then
   fail "current-stage execute did not write redacted blocked summary on private corpus import failure"
 fi
-if [ -e "$execute_out_dir/ocr-worker.stdout.txt" ]; then
+if [ -e "$execute_out_dir/ocr-search-publication.stdout.txt" ]; then
   fail "current-stage execute ran OCR worker after private corpus import failure"
 fi
 if [ -e "$execute_out_dir/private-query-set.local.jsonl" ]; then
@@ -2585,7 +2586,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$import_failed_summary" >/dev/null
 fi
-require_text "$import_failed_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$import_failed_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$import_failed_summary" '"blocked_step": "import_private_corpus"'
 require_text "$import_failed_summary" '"blocked_category": "import/parser"'
 require_text "$import_failed_summary" '"blocked_reason": "import_private_corpus_failed"'
@@ -2594,7 +2595,7 @@ require_text "$import_failed_summary" '"dataset-manifest.local.json"'
 require_text "$import_failed_summary" '"import.stdout.txt"'
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 reject_text "$import_failed_summary" "$tmpdir"
 reject_text "$import_failed_summary" "PRIVATE-current-stage"
 reject_text "$import_failed_summary" "private fake query"
@@ -2657,7 +2658,7 @@ fi
 if command -v python3 >/dev/null 2>&1; then
   python3 -m json.tool "$release_readiness_blocked_summary" >/dev/null
 fi
-require_text "$release_readiness_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v1"'
+require_text "$release_readiness_blocked_summary" '"schema_version": "resume-ir.current-stage-blocked-summary.v2"'
 require_text "$release_readiness_blocked_summary" '"blocked_step": "release_readiness_intake"'
 require_text "$release_readiness_blocked_summary" '"blocked_category": "release-readiness"'
 require_text "$release_readiness_blocked_summary" '"blocked_reason": "release_readiness_evidence_failed_validation"'
@@ -2667,7 +2668,7 @@ require_text "$release_readiness_blocked_summary" '"redacted-diagnostics.json"'
 require_summary_observability "$release_readiness_blocked_summary"
 require_current_stage_handoff \
   "blocked" \
-  "resume-ir.current-stage-blocked-summary.v1"
+  "resume-ir.current-stage-blocked-summary.v2"
 reject_text "$release_readiness_blocked_summary" "$tmpdir"
 reject_text "$release_readiness_blocked_summary" "PRIVATE-current-stage"
 reject_text "$release_readiness_blocked_summary" "private fake query"

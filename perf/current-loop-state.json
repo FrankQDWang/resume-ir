@@ -1,14 +1,14 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "branch_active",
+  "workflow_state": "evidence_review",
   "experiment_state": "contract_locked",
   "evidence_lane": "soak_fault",
   "contract_pins": {
-    "active_goal_sha256": "8cbdec71c8a9646d6de3049fb7c9c9838965f0a6ef72f91670903ab927093508",
-    "acceptance_matrix_sha256": "de7e3f432682e9273aa89fc35958a8f2197d466b4e60e78f1ea655be78cb7404",
+    "active_goal_sha256": "e9edac122d23a3ba3c3080ee2719322aab3ca2cb68f7e3657c894a472ac8bc10",
+    "acceptance_matrix_sha256": "d59a157554790ae432d1006953322f17ae056bd0a70665851acd777404f21311",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
-    "experiment_report_schema_sha256": "b180ec7669f568059b2f0c507ec733ce0e0befbe2c7fc9df56acfbd60419d8af",
+    "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "88519486545803bf698046d7f7e8bcd24a4308ca"
   },
@@ -288,36 +288,2506 @@
     {"from":"slice_selected","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/199#issuecomment-4950048099"},
     {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/199#issuecomment-4950048099"},
     {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/199#issuecomment-4950048099"},
-    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/138"},
-    {"from":"slice_selected","to":"branch_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/138"}
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/201"},
+    {"from":"slice_selected","to":"branch_active","evidence_ref":"local-main"},
+    {"from":"branch_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s719"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s719"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s719"},
+    {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"PROGRESS.md#s719"},
+    {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"PROGRESS.md#s719"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s720"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s720"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s720"},
+    {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"PROGRESS.md#s720"},
+    {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"PROGRESS.md#s720"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s721"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s721"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s721"},
+    {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"PROGRESS.md#s721"},
+    {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"PROGRESS.md#s721"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s722"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s722"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s722"},
+    {"from":"evidence_review","to":"issue_reconciled_with_evidence","evidence_ref":"PROGRESS.md#s722"},
+    {"from":"issue_reconciled_with_evidence","to":"next_issue_or_goal_complete","evidence_ref":"PROGRESS.md#s722"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/159"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s723"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s723"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s723"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s724"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s724"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s724"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s724"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s725"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s725"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s725"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s725"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s726"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s726"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s726"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s726"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s727"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s727"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s727"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s727"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s728"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s728"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s728"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s728"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s729"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s729"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s729"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s729"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s730"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s730"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s730"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s730"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s731"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s731"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s731"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s731"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s732"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s732"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s732"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s732"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s733"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s733"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s733"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s733"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s734"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s734"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s734"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s734"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s735"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s735"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s735"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s735"},
+    {"from":"evidence_review","to":"next_issue_or_goal_complete","evidence_ref":"PROGRESS.md#s736"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/37"},
+    {"from":"slice_selected","to":"blocked_external_retryable","evidence_ref":"PROGRESS.md#s737"},
+    {"from":"blocked_external_retryable","to":"evidence_review","evidence_ref":"PROGRESS.md#s738"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s738"},
+    {"from":"slice_selected","to":"evidence_review","evidence_ref":"PROGRESS.md#s739"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s739"},
+    {"from":"slice_selected","to":"evidence_review","evidence_ref":"PROGRESS.md#s740"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s740"},
+    {"from":"slice_selected","to":"evidence_review","evidence_ref":"PROGRESS.md#s741"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s741"},
+    {"from":"slice_selected","to":"evidence_review","evidence_ref":"PROGRESS.md#s742"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s742"},
+    {"from":"slice_selected","to":"evidence_review","evidence_ref":"PROGRESS.md#s743"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s743"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s744"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s744"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s744"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s744"},
+    {"from":"slice_selected","to":"evidence_review","evidence_ref":"PROGRESS.md#s745"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s745"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s746"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s746"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s746"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s746"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s747"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s747"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s747"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s747"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s748"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s748"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s748"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s749"},
+    {"from":"slice_selected","to":"evidence_review","evidence_ref":"PROGRESS.md#s750"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s750"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s751"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s751"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s751"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s751"},
+    {"from":"slice_selected","to":"evidence_review","evidence_ref":"PROGRESS.md#s752"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s752"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s753"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s753"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s753"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s753"},
+    {"from":"slice_selected","to":"contract_conflict","evidence_ref":"PROGRESS.md#s754"},
+    {"from":"contract_conflict","to":"slice_selected","evidence_ref":"PROGRESS.md#s754"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s755"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s755"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s755"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s755"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s756"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s756"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s756"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s756"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s757"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s757"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s757"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s757"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s758"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s758"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s758"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s758"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s759"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s759"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s759"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s759"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s760"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s760"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s760"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s760"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s761"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s761"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s761"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s761"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s762"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s762"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s762"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s762"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s763"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s763"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s763"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s763"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s764"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s764"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s764"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s764"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s765"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s765"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s765"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s765"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s766"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s766"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s766"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s766"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s767"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s767"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s767"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s767"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s768"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s768"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"design-qa.md"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s768"},
+    {"from":"slice_complete","to":"slice_selected","evidence_ref":"PROGRESS.md#s769"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s770"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s770"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s770"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s770"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s771"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s772"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s772"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s772"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s773"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s773"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s773"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s773"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s774"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s774"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s774"},
+    {"from":"evidence_review","to":"slice_selected","evidence_ref":"PROGRESS.md#s774"},
+    {"from":"slice_selected","to":"verification_active","evidence_ref":"PROGRESS.md#s775"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s775"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s775"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s776"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s776"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s776"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s776"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s776"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s776"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s777"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s777"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s777"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s777"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s777"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s777"},
+    {"from":"slice_complete","to":"slice_selected","evidence_ref":"PROGRESS.md#s778"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s778"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s778"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s778"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s778"},
+    {"from":"slice_complete","to":"slice_selected","evidence_ref":"PROGRESS.md#s779"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s779"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s779"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s779"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s779"},
+    {"from":"slice_complete","to":"slice_selected","evidence_ref":"PROGRESS.md#s780"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s780"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s780"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s780"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s780"},
+    {"from":"slice_complete","to":"slice_selected","evidence_ref":"PROGRESS.md#s781"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s781"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s781"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s781"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s781"},
+    {"from":"slice_complete","to":"slice_selected","evidence_ref":"PROGRESS.md#s782"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#s782"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s782"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s782"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s782"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s783"},
+    {"from":"slice_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s783"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s783"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s783"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s783"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s784"},
+    {"from":"slice_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s784"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s784"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s784"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s784"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s785"},
+    {"from":"slice_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s785"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s785"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s785"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s785"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s786"},
+    {"from":"slice_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s786"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s786"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s786"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s786"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s787"},
+    {"from":"slice_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s787"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s787"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s787"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s787"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s788"},
+    {"from":"slice_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s788"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s788"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s788"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s788"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s789"},
+    {"from":"slice_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s789"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s789"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s789"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s789"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s790"},
+    {"from":"slice_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s790"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s790"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s790"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s790"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s791"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s791"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s791"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s791"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s791"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s791"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s792"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s792"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s792"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s792"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s792"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s792"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s793"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s793"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s793"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s793"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s793"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s793"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s794"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s794"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s794"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s794"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s794"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s794"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s795"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s795"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s795"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s795"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s795"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s795"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s796"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s796"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s796"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s796"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s796"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s796"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s797"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s797"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s797"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s797"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s797"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s797"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s798"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s798"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s798"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s798"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s798"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s798"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s799"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s799"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s799"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s799"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s799"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s799"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s800"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s800-red"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s800"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s800"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s800"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s800"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s801"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s801-red"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s801"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s801"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s801"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s801"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s802"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s802-red"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s802"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s802"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s802"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s802"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s803"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s803-red"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s803"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s803"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s803"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s803"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s804"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s804-red"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s804"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s804"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s804"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s804"},
+    {"from":"slice_complete","to":"slice_active","evidence_ref":"PROGRESS.md#s805"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s805-red"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s805"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s805"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s805"},
+    {"from":"evidence_review","to":"slice_complete","evidence_ref":"PROGRESS.md#s805"},
+    {"from":"slice_complete","to":"plan_ready","evidence_ref":"PROGRESS.md#s807"},
+    {"from":"plan_ready","to":"plan_reviewed","evidence_ref":"PROGRESS.md#s807"},
+    {"from":"plan_reviewed","to":"slice_active","evidence_ref":"PROGRESS.md#s807"},
+    {"from":"slice_active","to":"branch_active","evidence_ref":"PROGRESS.md#s807"},
+    {"from":"branch_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s807"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s807"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s807"}
   ],
   "verification": {
     "commands": [
       {
-        "command": "#197 exact-equivalence test rejected per-character lowercase on contextual Greek final sigma and the change was fully reverted before private execution",
+        "command": "cargo test -p search-planner --locked",
         "exit_code": 0,
-        "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/197#issuecomment-4950011008"
+        "evidence_ref": "PROGRESS.md#s751"
+      },
+      {
+        "command": "cargo test -p index-fulltext --test s8_fulltext --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s751"
+      },
+      {
+        "command": "cargo test -p resume-cli --test s8_search_cli --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s751"
+      },
+      {
+        "command": "cargo test -p resume-cli --test s39_embedding_worker semantic_and_hybrid_search --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s751"
+      },
+      {
+        "command": "cargo test -p resume-cli --test s39_embedding_worker benchmark_query_protocol --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s751"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s48_search_ipc --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s751"
+      },
+      {
+        "command": "cargo test -p benchmark-runner private_query --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s751"
       },
       {
         "command": "python3 scripts/ci/check-performance-contracts.py",
         "exit_code": 0,
-        "evidence_ref": "perf/current-loop-state.json"
+        "evidence_ref": "PROGRESS.md#s751"
       },
       {
         "command": "python3 scripts/ci/check-autonomous-goal.py",
         "exit_code": 0,
-        "evidence_ref": "perf/current-loop-state.json"
+        "evidence_ref": "PROGRESS.md#s751"
       },
       {
         "command": "python3 scripts/ci/check-loop-state.py",
         "exit_code": 0,
-        "evidence_ref": "perf/current-loop-state.json"
+        "evidence_ref": "PROGRESS.md#s751"
       },
       {
         "command": "./scripts/ci/guard-public-repo.sh",
         "exit_code": 0,
-        "evidence_ref": "scripts/ci/guard-public-repo.sh"
-      }
+        "evidence_ref": "PROGRESS.md#s751"
+      },
+      {
+        "command": "cargo test -p benchmark-runner --test s17_benchmark_runner --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s753"
+      },
+      {
+        "command": "cargo test -p benchmark-runner --test s17_benchmark_cli --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s753"
+      },
+      {
+        "command": "./scripts/ci/check-benchmark-smoke.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s753"
+      },
+      {
+        "command": "cargo clippy -p benchmark-runner --all-targets -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s753"
+      },
+      {
+        "command": "rust-analyzer diagnostics . --severity warning",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s753"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s754"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s754"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s754"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s754"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s48_search_ipc --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s755"
+      },
+      {
+        "command": "cargo test -p resume-cli --test s48_search_ipc --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s755"
+      },
+      {
+        "command": "cargo clippy -p resume-daemon -p resume-cli --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s755"
+      },
+      {
+        "command": "rust-analyzer diagnostics . --severity warning",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s755"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s755"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s755"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s755"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s755"
+      },
+      {
+        "command": "cargo test -p benchmark-runner --lib resident_query_load --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s756"
+      },
+      {
+        "command": "cargo test -p benchmark-runner --test s17_benchmark_cli resident_query_load_rejects_incomplete_commands_without_echoing_paths --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s756"
+      },
+      {
+        "command": "cargo clippy -p benchmark-runner --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s756"
+      },
+      {
+        "command": "cargo build -p resume-daemon -p benchmark-runner --release --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s756"
+      },
+      {
+        "command": "rust-analyzer diagnostics . --severity warning",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s756"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s756"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s756"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s756"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s756"
+      },
+      {
+        "command": "cargo test -p resume-daemon --bin resume-daemon search_ipc::tests --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s759"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s48_search_ipc --locked -- --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s759"
+      },
+      {
+        "command": "cargo test -p resume-cli --test s48_search_ipc --locked -- --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s759"
+      },
+      {
+        "command": "cargo test -p benchmark-runner --lib resident_query_load --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s759"
+      },
+      {
+        "command": "cargo test -p benchmark-runner --lib resident_query_client::tests --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s759"
+      },
+      {
+        "command": "cargo check -p resume-daemon -p resume-cli -p benchmark-runner --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s759"
+      },
+      {
+        "command": "cargo clippy -p resume-daemon -p resume-cli -p benchmark-runner --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s759"
+      },
+      {
+        "command": "rust-analyzer diagnostics . --severity warning",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s759"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s759"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s759"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s759"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s759"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s48_search_ipc --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s760"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s20_ipc --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s760"
+      },
+      {
+        "command": "cargo test -p resume-cli --test s48_search_ipc --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s760"
+      },
+      {
+        "command": "cargo test -p benchmark-runner resident_query_client --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s760"
+      },
+      {
+        "command": "cargo test -p benchmark-runner load --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s760"
+      },
+      {
+        "command": "cargo check -p resume-daemon -p resume-cli -p benchmark-runner --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s760"
+      },
+      {
+        "command": "cargo clippy -p resume-daemon -p resume-cli -p benchmark-runner --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s760"
+      },
+      {
+        "command": "rust-analyzer diagnostics . --severity warning",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s760"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s760"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s760"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s760"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s760"
+      },
+      {
+        "command": "cargo test -p resume-daemon --bin resume-daemon search_ipc::tests --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s761"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s48_search_ipc --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s761"
+      },
+      {
+        "command": "cargo test -p benchmark-runner --lib resident_query --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s761"
+      },
+      {
+        "command": "cargo build -p resume-daemon -p benchmark-runner --release --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s761"
+      },
+      {
+        "command": "resume-benchmark resident-query-load --data-dir <redacted-temp> --daemon-command <release-daemon> --embedding-command <local-hash-runtime> --smoke --json",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s761"
+      },
+      {
+        "command": "cargo clippy -p resume-daemon -p benchmark-runner --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s761"
+      },
+      {
+        "command": "rust-analyzer diagnostics . --severity warning",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s761"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s761"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s761"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s761"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s761"
+      },
+      {
+        "command": "cargo test -p embedder --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s762"
+      },
+      {
+        "command": "cargo test -p resume-daemon --bin resume-daemon search_ipc::tests --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s762"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s48_search_ipc --locked -- --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s762"
+      },
+      {
+        "command": "cargo test -p benchmark-runner --lib resident_query --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s762"
+      },
+      {
+        "command": "cargo build -p resume-daemon -p benchmark-runner --release --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s762"
+      },
+      {
+        "command": "resume-benchmark resident-query-load --data-dir <redacted-temp> --daemon-command <release-daemon> --embedding-command <local-hash-runtime> --smoke --json",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s762"
+      },
+      {
+        "command": "cargo clippy -p resume-daemon -p embedder --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s762"
+      },
+      {
+        "command": "rust-analyzer diagnostics . --severity warning",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s762"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s762"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s762"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s762"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s762"
+      },
+      {
+        "command": "cargo test -p resume-daemon --bin resume-daemon search_batch::tests --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s763"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s48_search_ipc --locked -- --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s763"
+      },
+      {
+        "command": "cargo test -p resume-cli --test s48_search_ipc --locked -- --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s763"
+      },
+      {
+        "command": "cargo clippy -p resume-daemon --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s763"
+      },
+      {
+        "command": "rust-analyzer diagnostics . --severity warning",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s763"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s763"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s763"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s763"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s763"
+      },
+      {
+        "command": "npm test --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s764"
+      },
+      {
+        "command": "npm run build --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s764"
+      },
+      {
+        "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s764"
+      },
+      {
+        "command": "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s764"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --debug --no-bundle",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s764"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s764"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s764"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s764"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s764"
+      },
+      {
+        "command": "npm test --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s765"
+      },
+      {
+        "command": "npm run build --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s765"
+      },
+      {
+        "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s765"
+      },
+      {
+        "command": "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s765"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --debug --no-bundle",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s765"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s20_ipc daemon_authenticates_and_queues_import_command_over_ipc --locked -- --exact --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s765"
+      },
+      {
+        "command": "rust-analyzer diagnostics . --severity warning",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s765"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s765"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s765"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s765"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s765"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s20_ipc daemon_serves_only_authenticated_redacted_v2_diagnostics --locked -- --exact --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s766"
+      },
+      {
+        "command": "cargo clippy -p resume-daemon --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s766"
+      },
+      {
+        "command": "npm test --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s766"
+      },
+      {
+        "command": "npm run build --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s766"
+      },
+      {
+        "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s766"
+      },
+      {
+        "command": "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s766"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --debug --no-bundle",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s766"
+      },
+      {
+        "command": "rust-analyzer diagnostics . --severity warning",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s766-root"
+      },
+      {
+        "command": "rust-analyzer diagnostics . --severity warning",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s766-tauri"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s766"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s766"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s766"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s766"
+      },
+      {
+        "command": "npm test --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s768"
+      },
+      {
+        "command": "npm run build --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s768"
+      },
+      {
+        "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s768"
+      },
+      {
+        "command": "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s768"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --debug --no-bundle",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s768"
+      },
+      {
+        "command": "rust-analyzer diagnostics apps/desktop/src-tauri",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s768"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s768"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s768"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s768"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s768"
+      },
+      {
+        "command": "npm test --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s772"
+      },
+      {
+        "command": "npm run build --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s772"
+      },
+      {
+        "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s772"
+      },
+      {
+        "command": "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s772"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --debug --bundles app",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s772"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --bundles app",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s772"
+      },
+      {
+        "command": "rust-analyzer diagnostics apps/desktop/src-tauri",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s772"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s772"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s772"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s772"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s772"
+      },
+      {
+        "command": "npm test --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s773"
+      },
+      {
+        "command": "npm run build --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s773"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --debug --bundles app",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s773"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --bundles app",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s773"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s773"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s773"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s773"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s773"
+      },
+      {
+        "command": "npm test --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s774"
+      },
+      {
+        "command": "npm run build --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s774"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --debug --bundles app",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s774"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --bundles app",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s774"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s774"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s774"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s774"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s774"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s775"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s775"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s775"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s775"
+      },
+      {
+        "command": "rust-analyzer diagnostics .",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s776"
+      },
+      {
+        "command": "cargo check -p import-pipeline -p benchmark-runner --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s776"
+      },
+      {
+        "command": "cargo test -p import-pipeline --lib --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s776"
+      },
+      {
+        "command": "cargo test -p benchmark-runner --lib --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s776"
+      },
+      {
+        "command": "cargo clippy -p import-pipeline -p benchmark-runner --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s776"
+      },
+      {
+        "command": "cargo build -p import-pipeline -p benchmark-runner --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s776"
+      },
+      {
+        "command": "cargo fmt --all -- --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s776"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s776"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s776"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s776"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s776"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s776"
+      },
+      {
+        "command": "npm test --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s777"
+      },
+      {
+        "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s777"
+      },
+      {
+        "command": "cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s777"
+      },
+      {
+        "command": "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s777"
+      },
+      {
+        "command": "cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s777"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --bundles app --ci",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s777"
+      },
+      {
+        "command": "node apps/desktop/scripts/verify-bundled-sidecar.mjs --target aarch64-apple-darwin --app-bundle <local-app>",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s777"
+      },
+      {
+        "command": "desktop native clean-environment smoke with isolated HOME",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s777"
+      },
+      {
+        "command": "fresh isolated cargo check with staged desktop sidecar absent",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s777"
+      },
+      {
+        "command": "cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s777"
+      },
+      {
+        "command": "rust-analyzer diagnostics apps/desktop/src-tauri",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s777-known-tauri-macro-expansion"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s777"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s777"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s777"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s777"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s777"
+      },
+      {
+        "command": "cargo test -p resume-embedding-runtime --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "cargo test -p embedder --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s52_embedding_jobs --locked -- --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s51_embedding_worker --locked -- --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s48_search_ipc daemon_search_ipc_supports_semantic_and_hybrid_with_configured_embedding_runtime --locked -- --exact --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "cargo test -p resume-cli --test s39_embedding_worker model_preflight --locked -- --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "cargo build -p resume-embedding-runtime --release --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "clean-environment native model preflight with reviewed local pack",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "synthetic daemon import plus semantic/hybrid E2E with native release runtime",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "full-lifetime four-input macOS vmmap and bounded vector-parity witness",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "cargo check -p resume-embedding-runtime -p resume-daemon -p resume-cli --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "cargo clippy -p resume-embedding-runtime -p resume-daemon -p resume-cli --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "cargo build -p resume-embedding-runtime -p resume-daemon -p resume-cli --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "./scripts/ci/check-licenses.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "cargo tree native-runtime no-download-feature guard",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "rust-analyzer diagnostics .",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "cargo fmt --all -- --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s778"
+      },
+      {
+        "command": "cargo test -p embedding-protocol --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "cargo test -p embedder --locked -- --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "cargo test -p resume-embedding-runtime --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s48_search_ipc --locked -- --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s51_embedding_worker --locked -- --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "cargo test -p resume-daemon --test s52_embedding_jobs --locked -- --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "cargo test -p resume-daemon search_ipc::tests --locked -- --test-threads=1",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "controlled real native-model resident reuse and shutdown witness with repository synthetic fixtures",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "cargo check -p embedding-protocol -p embedder -p resume-embedding-runtime -p resume-daemon -p resume-cli --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "cargo clippy -p embedding-protocol -p embedder -p resume-embedding-runtime -p resume-daemon -p resume-cli --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "cargo build -p resume-embedding-runtime -p resume-daemon -p resume-cli --release --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "./scripts/ci/check-licenses.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "rust-analyzer diagnostics .",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "cargo fmt --all -- --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "cargo run --quiet -p resume-cli --locked -- release-readiness --json",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s779"
+      },
+      {
+        "command": "npm test --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "npm run build --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --bundles app --ci",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "node apps/desktop/scripts/verify-bundled-sidecar.mjs --target aarch64-apple-darwin --app-bundle <local-app>",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "clean-environment packaged macOS semantic/hybrid resident-reuse and process-reclaim witness",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "./scripts/ci/check-licenses.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "rust-analyzer diagnostics apps/desktop/src-tauri",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s780-known-tauri-macro-expansion"
+      },
+      {
+        "command": "cargo fmt --all -- --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "cargo run --quiet -p resume-cli --locked -- release-readiness --json",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s780"
+      },
+      {
+        "command": "npm test --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "npm run build --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --target aarch64-apple-darwin",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "node apps/desktop/scripts/verify-bundled-sidecar.mjs --target aarch64-apple-darwin --app-bundle <local-app>",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "isolated-HOME native App synthetic image-only PDF OCR-to-search and redacted-diagnostics witness",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "./scripts/ci/check-licenses.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "rust-analyzer diagnostics apps/desktop/src-tauri",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s781-known-tauri-macro-expansion"
+      },
+      {
+        "command": "cargo fmt --all -- --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "cargo run --quiet -p resume-cli --locked -- release-readiness --json",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s781"
+      },
+      {
+        "command": "npm test --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "cd apps/desktop && node node_modules/@tauri-apps/cli/tauri.js build --config src-tauri/tauri.windows.conf.json --no-bundle --ci",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "node apps/desktop/scripts/prepare-sidecar.mjs --target x86_64-pc-windows-msvc --release",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s782-expected-partial-installer-rejection"
+      },
+      {
+        "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "npm run build --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --target aarch64-apple-darwin --bundles app --ci",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "node apps/desktop/scripts/verify-bundled-sidecar.mjs --target aarch64-apple-darwin --app-bundle <local-app>",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "./scripts/ci/check-licenses.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "cargo fmt --all -- --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "cargo run --quiet -p resume-cli --locked -- release-readiness --json",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s782"
+      },
+      {
+        "command": "cargo test -p process-containment -p embedder -p ocr-client --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "cargo check -p process-containment -p embedder -p ocr-client --target x86_64-pc-windows-msvc --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "cargo clippy -p process-containment -p embedder -p ocr-client --target x86_64-pc-windows-msvc --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "cargo clippy -p process-containment -p embedder -p ocr-client --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "npm test --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --release --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "npm run build --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --target aarch64-apple-darwin --bundles app --ci",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "node apps/desktop/scripts/verify-bundled-sidecar.mjs --target aarch64-apple-darwin --app-bundle <local-app>",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "node apps/desktop/scripts/prepare-sidecar.mjs --target x86_64-pc-windows-msvc --release",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s783-expected-partial-installer-rejection"
+      },
+      {
+        "command": "./scripts/ci/check-licenses.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "rust-analyzer diagnostics . --severity warning",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783-root"
+      },
+      {
+        "command": "rust-analyzer diagnostics apps/desktop/src-tauri --severity warning",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s783-known-tauri-macro-expansion"
+      },
+      {
+        "command": "cargo fmt --all -- --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s783"
+      },
+      {
+        "command": "cargo run --quiet -p resume-cli --locked -- release-readiness --json",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s783-expected-product-blocked"
+      },
+      {
+        "command": "node --check apps/desktop/scripts/windows-embedding-pack.mjs",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "official ONNX Runtime 1.24.4 x64 PE dependency-closure witness",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784-expected-dynamic-crt-rejection"
+      },
+      {
+        "command": "npm test --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "cargo test -p resume-embedding-runtime --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "cargo check -p resume-embedding-runtime --target x86_64-pc-windows-msvc --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "cargo clippy -p resume-embedding-runtime --target x86_64-pc-windows-msvc --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --release --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "npm run build --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "npm run tauri --prefix apps/desktop -- build --target aarch64-apple-darwin --bundles app --ci",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "node apps/desktop/scripts/verify-bundled-sidecar.mjs --target aarch64-apple-darwin --app-bundle <local-app>",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "node apps/desktop/scripts/prepare-sidecar.mjs --target x86_64-pc-windows-msvc --release",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s784-expected-partial-installer-rejection"
+      },
+      {
+        "command": "./scripts/ci/check-licenses.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "target/debug/resume-cli release-readiness --json",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s784-expected-product-blocked"
+      },
+      {
+        "command": "cargo fmt --all -- --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s784"
+      },
+      {
+        "command": "npm test --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785"
+      },
+      {
+        "command": "cargo test -p resume-pdf-render-runtime --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785"
+      },
+      {
+        "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785"
+      },
+      {
+        "command": "cargo test -p ocr-client --test s12_ocr_client --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785"
+      },
+      {
+        "command": "cargo check -p resume-pdf-render-runtime --target x86_64-pc-windows-msvc --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785"
+      },
+      {
+        "command": "cargo clippy -p resume-pdf-render-runtime --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785"
+      },
+      {
+        "command": "cargo clippy -p resume-pdf-render-runtime --target x86_64-pc-windows-msvc --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785"
+      },
+      {
+        "command": "rust-analyzer diagnostics crates/pdf-render-runtime/src/lib.rs",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785-host-inactive-windows-code"
+      },
+      {
+        "command": "rust-analyzer diagnostics crates/pdf-render-runtime/src/main.rs",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785-host-inactive-windows-code"
+      },
+      {
+        "command": "node apps/desktop/scripts/prepare-sidecar.mjs --target x86_64-pc-windows-msvc --release",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s785-expected-partial-installer-rejection"
+      },
+      {
+        "command": "./scripts/ci/check-licenses.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785"
+      },
+      {
+        "command": "cargo fmt --all -- --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s785"
+      },
+      {
+        "command": "cargo run --quiet -p resume-cli --locked -- release-readiness --json",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s785-expected-product-blocked"
+      },
+      {
+        "command": "cargo test -p resume-cli --test s161_release_readiness --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786"
+      },
+      {
+        "command": "./scripts/ci/check-release-readiness.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786"
+      },
+      {
+        "command": "./scripts/ci/check-runbooks.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786"
+      },
+      {
+        "command": "cargo check -p resume-cli --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786"
+      },
+      {
+        "command": "cargo clippy -p resume-cli --all-targets --locked -- -D warnings",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786"
+      },
+      {
+        "command": "cargo build -p resume-cli --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786"
+      },
+      {
+        "command": "rust-analyzer diagnostics crates/cli/src/main.rs",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786-known-cfg-inactive-workspace-warnings"
+      },
+      {
+        "command": "rust-analyzer diagnostics crates/cli/src/release_readiness_matrix.rs",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786-known-cfg-inactive-workspace-warnings"
+      },
+      {
+        "command": "npm test --prefix apps/desktop",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786"
+      },
+      {
+        "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786"
+      },
+      {
+        "command": "cargo fmt --all -- --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786"
+      },
+      {
+        "command": "git diff --check",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786"
+      },
+      {
+        "command": "python3 scripts/ci/check-performance-contracts.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786"
+      },
+      {
+        "command": "python3 scripts/ci/check-autonomous-goal.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786"
+      },
+      {
+        "command": "python3 scripts/ci/check-loop-state.py",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786"
+      },
+      {
+        "command": "./scripts/ci/guard-public-repo.sh",
+        "exit_code": 0,
+        "evidence_ref": "PROGRESS.md#s786"
+      },
+      {
+        "command": "cargo run --quiet -p resume-cli --locked -- release-readiness --json",
+        "exit_code": 1,
+        "evidence_ref": "PROGRESS.md#s786-expected-product-blocked"
+      },
+      {"command":"npm test --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s787"},
+      {"command":"npm run build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s787"},
+      {"command":"cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s787"},
+      {"command":"cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s787"},
+      {"command":"cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s787"},
+      {"command":"cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release","exit_code":0,"evidence_ref":"PROGRESS.md#s787"},
+      {"command":"rust-analyzer diagnostics . --severity warning","exit_code":1,"evidence_ref":"PROGRESS.md#s787-known-tauri-macro-expansion"},
+      {"command":"npm run tauri --prefix apps/desktop -- build --target aarch64-apple-darwin --bundles app --ci","exit_code":0,"evidence_ref":"PROGRESS.md#s787"},
+      {"command":"node apps/desktop/scripts/verify-bundled-sidecar.mjs --target aarch64-apple-darwin --app-bundle <local-app>","exit_code":0,"evidence_ref":"PROGRESS.md#s787"},
+      {"command":"cargo fmt --all -- --check","exit_code":0,"evidence_ref":"PROGRESS.md#s787"},
+      {"command":"git diff --check","exit_code":0,"evidence_ref":"PROGRESS.md#s787"},
+      {"command":"python3 scripts/ci/check-performance-contracts.py","exit_code":0,"evidence_ref":"PROGRESS.md#s787"},
+      {"command":"python3 scripts/ci/check-autonomous-goal.py","exit_code":0,"evidence_ref":"PROGRESS.md#s787"},
+      {"command":"python3 scripts/ci/check-loop-state.py","exit_code":0,"evidence_ref":"PROGRESS.md#s787"},
+      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s787"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s787-expected-product-blocked"},
+      {"command":"npm test --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"npm run build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"rust-analyzer diagnostics . --severity warning","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"rust-analyzer diagnostics apps/desktop/src-tauri --severity warning","exit_code":1,"evidence_ref":"PROGRESS.md#s788-known-tauri-macro-expansion"},
+      {"command":"npm run tauri --prefix apps/desktop -- build --target aarch64-apple-darwin --bundles app --ci","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"node apps/desktop/scripts/verify-bundled-sidecar.mjs --target aarch64-apple-darwin --app-bundle <local-app>","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"isolated-HOME target-platform native app smoke","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"cargo fmt --all -- --check","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"git diff --check","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"python3 scripts/ci/check-performance-contracts.py","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"python3 scripts/ci/check-autonomous-goal.py","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"python3 scripts/ci/check-loop-state.py","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s788"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s788-expected-product-blocked"},
+      {"command":"cargo test -p resume-daemon --test s4_daemon foreground_import_scheduler_catches_up_recent_completed_root_on_startup --locked -- --exact","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"cargo test -p resume-daemon --test s4_daemon --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"cargo test -p resume-daemon --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"cargo check -p resume-daemon --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"cargo clippy -p resume-daemon --all-targets --locked -- -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"cargo build -p resume-daemon --release --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"npm test --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"npm run build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"rust-analyzer diagnostics . --severity warning","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"rust-analyzer diagnostics apps/desktop/src-tauri --severity warning","exit_code":1,"evidence_ref":"PROGRESS.md#s789-known-tauri-macro-expansion"},
+      {"command":"npm run tauri --prefix apps/desktop -- build --target aarch64-apple-darwin --bundles app --ci","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"node apps/desktop/scripts/verify-bundled-sidecar.mjs --target aarch64-apple-darwin --app-bundle <local-app>","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"isolated-HOME native app startup catch-up over authenticated IPC","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"cargo fmt --all -- --check","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"git diff --check","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"python3 scripts/ci/check-performance-contracts.py","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"python3 scripts/ci/check-autonomous-goal.py","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"python3 scripts/ci/check-loop-state.py","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s789"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s789-expected-product-blocked"},
+      {"command":"cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml native_import::tests --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"npm test --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"npm run build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"rust-analyzer diagnostics . --severity warning","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"rust-analyzer diagnostics apps/desktop/src-tauri --severity warning","exit_code":1,"evidence_ref":"PROGRESS.md#s790-known-tauri-macro-expansion"},
+      {"command":"npm run tauri --prefix apps/desktop -- build --target aarch64-apple-darwin --bundles app --ci","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"node apps/desktop/scripts/verify-bundled-sidecar.mjs --target aarch64-apple-darwin --app-bundle <local-app>","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"isolated-user-data native managed-root select, quit, restart, and automatic restore","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"cargo fmt --all -- --check","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"git diff --check","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"python3 scripts/ci/check-performance-contracts.py","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"python3 scripts/ci/check-autonomous-goal.py","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"python3 scripts/ci/check-loop-state.py","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s790"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s790-expected-product-blocked"},
+      {"command":"node --test apps/desktop/scripts/macos-dmg.node-test.mjs","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"npm test --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"npm run build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"cargo fmt --all -- --check","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"npm run tauri --prefix apps/desktop -- build --target aarch64-apple-darwin --ci","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"node apps/desktop/scripts/verify-macos-dmg.mjs --target aarch64-apple-darwin --dmg <local-dmg>","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"isolated-user-data DMG mount, app copy, LaunchServices startup, authenticated status, native quit, and owned-process cleanup","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"git diff --check","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"python3 scripts/ci/check-performance-contracts.py","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"python3 scripts/ci/check-autonomous-goal.py","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"python3 scripts/ci/check-loop-state.py","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s791"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s791-expected-product-blocked"},
+      {"command":"node --test apps/desktop/scripts/macos-install-lifecycle.node-test.mjs apps/desktop/scripts/macos-dmg.node-test.mjs","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"npm test --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"npm run build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --all-targets -- -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --locked --release","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"npm run tauri --prefix apps/desktop -- build --target aarch64-apple-darwin --ci","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"node apps/desktop/scripts/verify-macos-dmg.mjs --target aarch64-apple-darwin --dmg <local-dmg>","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"verified /Applications install, LaunchServices and Spotlight discovery, authenticated native start, quit, uninstall with persistent-state retention, reinstall, and second start","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"cargo test -p resume-cli --test s161_release_readiness --locked -- --test-threads=1","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"cargo check -p resume-cli --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"cargo clippy -p resume-cli --all-targets --locked -- -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"cargo build -p resume-cli --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"rust-analyzer diagnostics crates/cli/src/main.rs","exit_code":0,"evidence_ref":"PROGRESS.md#s792-known-cfg-inactive-workspace-warnings"},
+      {"command":"rust-analyzer diagnostics crates/cli/src/release_readiness_matrix.rs","exit_code":0,"evidence_ref":"PROGRESS.md#s792-known-cfg-inactive-workspace-warnings"},
+      {"command":"cargo fmt --all -- --check","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"git diff --check","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"python3 scripts/ci/check-performance-contracts.py","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"python3 scripts/ci/check-autonomous-goal.py","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"python3 scripts/ci/check-loop-state.py","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s792"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s792-expected-product-blocked"},
+      {"command":"node --test apps/desktop/scripts/macos-upgrade-lifecycle.node-test.mjs apps/desktop/scripts/macos-install-lifecycle.node-test.mjs apps/desktop/scripts/macos-dmg.node-test.mjs","exit_code":0,"evidence_ref":"PROGRESS.md#s793"},
+      {"command":"npm test --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s793"},
+      {"command":"npm run build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s793"},
+      {"command":"cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s793"},
+      {"command":"desktop Cargo check, clippy -D warnings, and release build","exit_code":0,"evidence_ref":"PROGRESS.md#s793"},
+      {"command":"two real-version target Tauri DMG builds and exact composition verification","exit_code":0,"evidence_ref":"PROGRESS.md#s793"},
+      {"command":"native real-version upgrade, authenticated launch, injected post-swap rollback, restored launch, and owned-process cleanup","exit_code":0,"evidence_ref":"PROGRESS.md#s793"},
+      {"command":"cargo test -p resume-cli --test s161_release_readiness --locked -- --test-threads=1","exit_code":0,"evidence_ref":"PROGRESS.md#s793"},
+      {"command":"resume-cli Cargo check, clippy -D warnings, and build","exit_code":0,"evidence_ref":"PROGRESS.md#s793"},
+      {"command":"rust-analyzer diagnostics for both changed Rust files","exit_code":0,"evidence_ref":"PROGRESS.md#s793-known-cfg-inactive-workspace-warnings"},
+      {"command":"cargo fmt --all -- --check and git diff --check","exit_code":0,"evidence_ref":"PROGRESS.md#s793"},
+      {"command":"python3 scripts/ci/check-performance-contracts.py","exit_code":0,"evidence_ref":"PROGRESS.md#s793"},
+      {"command":"python3 scripts/ci/check-autonomous-goal.py","exit_code":0,"evidence_ref":"PROGRESS.md#s793"},
+      {"command":"python3 scripts/ci/check-loop-state.py","exit_code":0,"evidence_ref":"PROGRESS.md#s793"},
+      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s793"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s793-expected-product-blocked"},
+      {"command":"node --test apps/desktop/scripts/windows-ocr-pack.node-test.mjs apps/desktop/scripts/prepare-sidecar.node-test.mjs","exit_code":0,"evidence_ref":"PROGRESS.md#s794"},
+      {"command":"TAURI_ENV_TARGET_TRIPLE=x86_64-pc-windows-msvc TAURI_ENV_DEBUG=false node apps/desktop/scripts/prepare-sidecar.mjs","exit_code":1,"evidence_ref":"PROGRESS.md#s794-expected-partial-nsis-refusal"},
+      {"command":"npm test --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s794"},
+      {"command":"npm run build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s794"},
+      {"command":"cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s794"},
+      {"command":"desktop Cargo check, clippy -D warnings, and release build","exit_code":0,"evidence_ref":"PROGRESS.md#s794"},
+      {"command":"cargo test -p resume-cli --test s161_release_readiness --locked -- --test-threads=1","exit_code":0,"evidence_ref":"PROGRESS.md#s794"},
+      {"command":"resume-cli Cargo check, clippy -D warnings, and build","exit_code":0,"evidence_ref":"PROGRESS.md#s794"},
+      {"command":"rust-analyzer diagnostics for both changed Rust files","exit_code":0,"evidence_ref":"PROGRESS.md#s794-known-cfg-inactive-workspace-warnings"},
+      {"command":"npm run tauri --prefix apps/desktop -- build --target aarch64-apple-darwin --bundles app --ci","exit_code":0,"evidence_ref":"PROGRESS.md#s794"},
+      {"command":"node apps/desktop/scripts/verify-bundled-sidecar.mjs --target aarch64-apple-darwin --app-bundle <local-app>","exit_code":0,"evidence_ref":"PROGRESS.md#s794"},
+      {"command":"cargo fmt --all -- --check","exit_code":0,"evidence_ref":"PROGRESS.md#s794"},
+      {"command":"python3 scripts/ci/check-performance-contracts.py","exit_code":0,"evidence_ref":"PROGRESS.md#s794"},
+      {"command":"python3 scripts/ci/check-autonomous-goal.py","exit_code":0,"evidence_ref":"PROGRESS.md#s794"},
+      {"command":"python3 scripts/ci/check-loop-state.py","exit_code":0,"evidence_ref":"PROGRESS.md#s794"},
+      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s794"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s794-expected-product-blocked"},
+      {"command":"focused Windows OCR source, artifact and shared PE regression tests","exit_code":0,"evidence_ref":"PROGRESS.md#s795"},
+      {"command":"official-public-input candidate assembly with synthetic static x64 PE","exit_code":0,"evidence_ref":"PROGRESS.md#s795"},
+      {"command":"npm test and build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s795"},
+      {"command":"desktop Cargo test, check, clippy -D warnings and release build","exit_code":0,"evidence_ref":"PROGRESS.md#s795"},
+      {"command":"Windows planner expected partial-NSIS refusal","exit_code":1,"evidence_ref":"PROGRESS.md#s795-expected-partial-nsis-refusal"},
+      {"command":"target arm64 Tauri App build and exact composition verification","exit_code":0,"evidence_ref":"PROGRESS.md#s795"},
+      {"command":"four mandatory local goal and public-boundary gates","exit_code":0,"evidence_ref":"PROGRESS.md#s795"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s795-expected-product-blocked"},
+      {"command":"focused Windows OCR builder, source and artifact tests plus Dockerfile static check","exit_code":0,"evidence_ref":"PROGRESS.md#s796"},
+      {"command":"pinned linux/amd64 compile-output build and bounded PE/data/receipt verification","exit_code":0,"evidence_ref":"PROGRESS.md#s796"},
+      {"command":"npm test and build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s796"},
+      {"command":"desktop Cargo test, check, clippy -D warnings and release build","exit_code":0,"evidence_ref":"PROGRESS.md#s796"},
+      {"command":"release-readiness tests and resume-cli check, clippy -D warnings and build","exit_code":0,"evidence_ref":"PROGRESS.md#s796"},
+      {"command":"Windows planner expected partial-NSIS refusal","exit_code":1,"evidence_ref":"PROGRESS.md#s796-expected-partial-nsis-refusal"},
+      {"command":"target arm64 Tauri App build and exact composition verification","exit_code":0,"evidence_ref":"PROGRESS.md#s796"},
+      {"command":"four mandatory local goal and public-boundary gates","exit_code":0,"evidence_ref":"PROGRESS.md#s796"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s796-expected-product-blocked"},
+      {"command":"focused managed-root rescan mockIPC RED then GREEN tests","exit_code":0,"evidence_ref":"PROGRESS.md#s797"},
+      {"command":"npm test and build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s797"},
+      {"command":"desktop Cargo test, check and clippy -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s797"},
+      {"command":"synthetic 1440x900 import preview layout and rescan interaction inspection","exit_code":0,"evidence_ref":"PROGRESS.md#s797"},
+      {"command":"target arm64 Tauri App build and exact composition verification","exit_code":0,"evidence_ref":"PROGRESS.md#s797"},
+      {"command":"native App and owned-daemon startup plus native-quit cleanup smoke","exit_code":0,"evidence_ref":"PROGRESS.md#s797"},
+      {"command":"cargo fmt --all -- --check and git diff --check","exit_code":0,"evidence_ref":"PROGRESS.md#s797"},
+      {"command":"four mandatory local goal and public-boundary gates","exit_code":0,"evidence_ref":"PROGRESS.md#s797"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s797-expected-product-blocked"},
+      {"command":"focused managed-root reauthorization Rust RED test","exit_code":101,"evidence_ref":"PROGRESS.md#s798-red"},
+      {"command":"focused managed-root reauthorization mockIPC RED test","exit_code":1,"evidence_ref":"PROGRESS.md#s798-red"},
+      {"command":"focused managed-root reauthorization Rust GREEN test","exit_code":0,"evidence_ref":"PROGRESS.md#s798"},
+      {"command":"focused managed-root reauthorization mockIPC GREEN tests","exit_code":0,"evidence_ref":"PROGRESS.md#s798"},
+      {"command":"npm test and build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s798"},
+      {"command":"desktop Cargo test, check, clippy -D warnings and release build","exit_code":0,"evidence_ref":"PROGRESS.md#s798"},
+      {"command":"rust-analyzer diagnostics apps/desktop/src-tauri --severity warning","exit_code":1,"evidence_ref":"PROGRESS.md#s798-known-tauri-macro-false-positive"},
+      {"command":"synthetic 1440x900 managed-root reauthorization interaction inspection","exit_code":0,"evidence_ref":"PROGRESS.md#s798"},
+      {"command":"target arm64 Tauri App build and exact composition verification","exit_code":0,"evidence_ref":"PROGRESS.md#s798"},
+      {"command":"isolated-HOME native App and owned-daemon startup plus native-quit cleanup smoke","exit_code":0,"evidence_ref":"PROGRESS.md#s798"},
+      {"command":"cargo fmt --all -- --check, git diff --check and machine contract parsing","exit_code":0,"evidence_ref":"PROGRESS.md#s798"},
+      {"command":"four mandatory local goal and public-boundary gates","exit_code":0,"evidence_ref":"PROGRESS.md#s798"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s798-expected-product-blocked"},
+      {"command":"focused strict style CSP Node RED contract","exit_code":1,"evidence_ref":"PROGRESS.md#s799-red"},
+      {"command":"focused strict style CSP Node GREEN contract","exit_code":0,"evidence_ref":"PROGRESS.md#s799"},
+      {"command":"npm test and build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s799"},
+      {"command":"synthetic 1440x900 strict-CSP progress visual and console inspection","exit_code":0,"evidence_ref":"PROGRESS.md#s799"},
+      {"command":"target arm64 Tauri App build, exact composition verification and compiled CSP inspection","exit_code":0,"evidence_ref":"PROGRESS.md#s799"},
+      {"command":"isolated-HOME native App and owned-daemon startup plus native-quit cleanup smoke","exit_code":0,"evidence_ref":"PROGRESS.md#s799"},
+      {"command":"contract parsing and git diff --check","exit_code":0,"evidence_ref":"PROGRESS.md#s799"},
+      {"command":"four mandatory local goal and public-boundary gates","exit_code":0,"evidence_ref":"PROGRESS.md#s799"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s799-expected-product-blocked"},
+      {"command":"cargo test -p meta-store --test s26_import_root_control --locked -- --nocapture","exit_code":101,"evidence_ref":"PROGRESS.md#s800-red"},
+      {"command":"cargo test -p resume-daemon --test s800_import_root_control authenticated_root_pause_persists_and_resume_queues_one_path_free_catch_up --locked -- --exact","exit_code":101,"evidence_ref":"PROGRESS.md#s800-red"},
+      {"command":"focused V26 root-control and migration tests","exit_code":0,"evidence_ref":"PROGRESS.md#s800"},
+      {"command":"full meta-store and clean serial daemon test suites","exit_code":0,"evidence_ref":"PROGRESS.md#s800"},
+      {"command":"focused Cargo check, clippy -D warnings and release daemon build","exit_code":0,"evidence_ref":"PROGRESS.md#s800"},
+      {"command":"rust-analyzer diagnostics, formatting and git diff checks","exit_code":0,"evidence_ref":"PROGRESS.md#s800"},
+      {"command":"npm test and build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s800"},
+      {"command":"target arm64 Tauri App build, exact composition verification and isolated-HOME native lifecycle smoke","exit_code":0,"evidence_ref":"PROGRESS.md#s800"},
+      {"command":"four mandatory local goal and public-boundary gates","exit_code":0,"evidence_ref":"PROGRESS.md#s800"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s800-expected-product-blocked"},
+      {"command":"npx vitest run src/daemon.test.ts -t controls managed-root control","exit_code":1,"evidence_ref":"PROGRESS.md#s801-red"},
+      {"command":"cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml root_control --locked","exit_code":101,"evidence_ref":"PROGRESS.md#s801-red"},
+      {"command":"focused managed-root control mockIPC and Rust GREEN tests","exit_code":0,"evidence_ref":"PROGRESS.md#s801"},
+      {"command":"focused stale legacy endpoint recovery Rust RED test","exit_code":101,"evidence_ref":"PROGRESS.md#s801-red"},
+      {"command":"focused stale legacy endpoint recovery Rust GREEN test","exit_code":0,"evidence_ref":"PROGRESS.md#s801"},
+      {"command":"npm test and build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s801"},
+      {"command":"desktop Cargo test, check, clippy -D warnings and release build","exit_code":0,"evidence_ref":"PROGRESS.md#s801"},
+      {"command":"rust-analyzer diagnostics apps/desktop/src-tauri --severity warning","exit_code":1,"evidence_ref":"PROGRESS.md#s801-known-tauri-macro-false-positive"},
+      {"command":"synthetic 1440x900 managed-root pause/resume interaction and console inspection","exit_code":0,"evidence_ref":"PROGRESS.md#s801"},
+      {"command":"target arm64 Tauri DMG build and exact composition verification","exit_code":0,"evidence_ref":"PROGRESS.md#s801"},
+      {"command":"installed-App retained-manifest recovery, owned-daemon startup and native-quit cleanup smoke","exit_code":0,"evidence_ref":"PROGRESS.md#s801"},
+      {"command":"Tauri command/handler/config audit, formatting and git diff checks","exit_code":0,"evidence_ref":"PROGRESS.md#s801"},
+      {"command":"four mandatory local goal and public-boundary gates","exit_code":0,"evidence_ref":"PROGRESS.md#s801"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s801-expected-product-blocked"},
+      {"command":"node --test scripts/macos-dmg.node-test.mjs","exit_code":1,"evidence_ref":"PROGRESS.md#s802-red"},
+      {"command":"focused macOS DMG, lifecycle, wrapper and signed-payload Node tests","exit_code":0,"evidence_ref":"PROGRESS.md#s802"},
+      {"command":"npm test and build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s802"},
+      {"command":"desktop Cargo test, check, clippy -D warnings and release build","exit_code":0,"evidence_ref":"PROGRESS.md#s802"},
+      {"command":"npm run bundle:macos:test --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s802"},
+      {"command":"final internal-test DMG install, strict codesign, authenticated native status and native-quit cleanup","exit_code":0,"evidence_ref":"PROGRESS.md#s802"},
+      {"command":"git diff --check and four mandatory local goal/public-boundary gates","exit_code":0,"evidence_ref":"PROGRESS.md#s802"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s802-expected-product-blocked"},
+      {"command":"node --test scripts/windows-rust-sidecars.node-test.mjs","exit_code":1,"evidence_ref":"PROGRESS.md#s803-red"},
+      {"command":"cargo xwin build --release --target x86_64-pc-windows-msvc -p resume-daemon -p resume-embedding-runtime","exit_code":101,"evidence_ref":"PROGRESS.md#s803-two-sidecar-hypothesis-falsified"},
+      {"command":"actual initial Windows sidecar build-machine identity marker scan","exit_code":1,"evidence_ref":"PROGRESS.md#s803-red"},
+      {"command":"node --test scripts/windows-embedding-sidecar.node-test.mjs","exit_code":0,"evidence_ref":"PROGRESS.md#s803"},
+      {"command":"npm run bundle:windows:embedding-sidecar --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s803"},
+      {"command":"actual remapped Windows sidecar UTF-8 and UTF-16 build-machine identity marker scan","exit_code":0,"evidence_ref":"PROGRESS.md#s803"},
+      {"command":"npm test and build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s803"},
+      {"command":"embedding runtime host tests and host/Windows warnings-denied clippy","exit_code":0,"evidence_ref":"PROGRESS.md#s803"},
+      {"command":"desktop Cargo test, check, clippy -D warnings and release build","exit_code":0,"evidence_ref":"PROGRESS.md#s803"},
+      {"command":"target arm64 Tauri App build and exact composition verification","exit_code":0,"evidence_ref":"PROGRESS.md#s803"},
+      {"command":"four mandatory local goal and public-boundary gates","exit_code":0,"evidence_ref":"PROGRESS.md#s803"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s803-expected-product-blocked"},
+      {"command":"node --test scripts/windows-daemon-sidecar.node-test.mjs","exit_code":1,"evidence_ref":"PROGRESS.md#s804-red"},
+      {"command":"focused Windows daemon build-plan, PE/import/path, target-directory and rollback tests","exit_code":0,"evidence_ref":"PROGRESS.md#s804"},
+      {"command":"two clean npm run bundle:windows:daemon-sidecar builds with identical bounded receipts","exit_code":0,"evidence_ref":"PROGRESS.md#s804"},
+      {"command":"npm test and build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s804"},
+      {"command":"focused privacy and meta-store host tests","exit_code":0,"evidence_ref":"PROGRESS.md#s804"},
+      {"command":"resume-daemon host Cargo check, clippy -D warnings and build","exit_code":0,"evidence_ref":"PROGRESS.md#s804"},
+      {"command":"Windows privacy cfg clippy and full cargo-zigbuild -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s804"},
+      {"command":"direct non-Zig Windows meta-store clippy diagnostic","exit_code":101,"evidence_ref":"PROGRESS.md#s804-expected-vendored-openssl-toolchain-diagnostic"},
+      {"command":"rust-analyzer diagnostics workspace","exit_code":0,"evidence_ref":"PROGRESS.md#s804-known-cfg-inactive-workspace-warnings"},
+      {"command":"cargo fmt --all -- --check and git diff --check","exit_code":0,"evidence_ref":"PROGRESS.md#s804"},
+      {"command":"four mandatory local goal and public-boundary gates","exit_code":0,"evidence_ref":"PROGRESS.md#s804"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s804-expected-product-blocked"},
+      {"command":"node --test scripts/windows-onnxruntime-builder.node-test.mjs","exit_code":1,"evidence_ref":"PROGRESS.md#s805-red"},
+      {"command":"focused Windows ONNX Runtime builder and pack GREEN tests","exit_code":0,"evidence_ref":"PROGRESS.md#s805"},
+      {"command":"native Mac builder invocation expected platform refusal","exit_code":1,"evidence_ref":"PROGRESS.md#s805-expected-platform-refusal"},
+      {"command":"npm test and build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s805"},
+      {"command":"desktop Tauri Rust command and state tests","exit_code":0,"evidence_ref":"PROGRESS.md#s805"},
+      {"command":"git diff --check","exit_code":0,"evidence_ref":"PROGRESS.md#s805"},
+      {"command":"four mandatory local goal and public-boundary gates","exit_code":0,"evidence_ref":"PROGRESS.md#s805"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s805-expected-product-blocked"},
+      {"command":"python3 scripts/ci/check-performance-contracts.py","exit_code":0,"evidence_ref":"PROGRESS.md#s807-g0"},
+      {"command":"python3 scripts/ci/check-autonomous-goal.py","exit_code":0,"evidence_ref":"PROGRESS.md#s807-g0"},
+      {"command":"python3 scripts/ci/check-loop-state.py","exit_code":0,"evidence_ref":"PROGRESS.md#s807-g0"},
+      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s807-g0"},
+      {"command":"git diff --check","exit_code":0,"evidence_ref":"PROGRESS.md#s807-g0"},
+      {"command":"focused daemon request-reset, selection, publication, migration and supervisor tests","exit_code":0,"evidence_ref":"PROGRESS.md#s807"},
+      {"command":"cargo test -p resume-daemon --test s20_ipc daemon_survives_two_hour_mixed_connection_fault_soak --locked -- --ignored --exact --nocapture","exit_code":0,"evidence_ref":"PROGRESS.md#s807"},
+      {"command":"native macOS owned-daemon strong-kill recovery and native-quit zero-residual witness","exit_code":0,"evidence_ref":"PROGRESS.md#s807"},
+      {"command":"npm run bundle:macos:test --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s807"},
+      {"command":"cargo test -p resume-cli --test s71_fault_injection --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s807"},
+      {"command":"focused overload recovery, import cancel and v27 publication failure tests","exit_code":0,"evidence_ref":"PROGRESS.md#s807"},
+      {"command":"npm test and build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s807"},
+      {"command":"cargo fmt --all -- --check and workspace all-target all-feature clippy -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s807"},
+      {"command":"./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s807"},
+      {"command":"final performance contract, autonomous goal, loop state and public boundary gates","exit_code":0,"evidence_ref":"PROGRESS.md#s807"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s807-expected-product-blocked"}
     ],
     "all_required_commands_ran": false,
     "claim": "partial"

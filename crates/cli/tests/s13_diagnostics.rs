@@ -1,16 +1,17 @@
+mod support;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use import_pipeline::ImportTaskOwnerLock;
-use index_fulltext::{publish_snapshot, IndexDocument, IndexSection};
-use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
 use meta_store::{
     ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus,
-    IndexState, IndexStateStatus, MetaStore, UnixTimestamp,
+    MetaStore, UnixTimestamp,
 };
 use rusqlite::{params, Connection};
+use support::{assert_import_succeeded, import_text_resumes};
 
 #[test]
 fn doctor_uses_sqlcipher_metadata_by_default_without_key_or_path_leak() {
@@ -29,13 +30,14 @@ fn doctor_uses_sqlcipher_metadata_by_default_without_key_or_path_leak() {
     assert!(!stdout.contains("enable SQLCipher metadata encryption before production release"));
     assert!(!stdout.contains(path_str(&data_dir)));
 
-    let encrypted_bytes = fs::read(data_dir.join("metadata.sqlite3")).unwrap();
+    let metadata_path = meta_store::metadata_store_path(&data_dir).unwrap();
+    let encrypted_bytes = fs::read(&metadata_path).unwrap();
     assert!(!encrypted_bytes.starts_with(b"SQLite format 3"));
     let metadata_key =
         fs::read_to_string(data_dir.join("metadata-secrets/metadata-sqlcipher-key-v1"))
             .expect("metadata SQLCipher key");
     assert!(!stdout.contains(metadata_key.trim()));
-    assert!(MetaStore::open(data_dir.join("metadata.sqlite3"))
+    assert!(MetaStore::open(metadata_path)
         .and_then(|store| store.schema_version().map(|_| ()))
         .is_err());
 
@@ -70,28 +72,6 @@ fn doctor_reports_no_index_without_path_or_fake_benchmark() {
         .join("contact-hash-key-v1")
         .exists());
     assert!(!stdout.contains("p95"));
-
-    remove_dir(&data_dir);
-}
-
-#[test]
-fn doctor_handles_corrupt_index_snapshot_without_path_leak() {
-    let data_dir = temp_dir("doctor-corrupt-private-data");
-    let index_dir = data_dir.join("search-index");
-    fs::create_dir_all(&index_dir).unwrap();
-    fs::write(index_dir.join("meta.json"), b"not a tantivy index").unwrap();
-
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
-        .args(["--data-dir", path_str(&data_dir), "doctor"])
-        .output()
-        .expect("run resume-cli doctor with corrupt index");
-
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("search index: corrupt"));
-    assert!(stdout.contains("query smoke: skipped (index unavailable)"));
-    assert!(!stdout.contains(path_str(&data_dir)));
 
     remove_dir(&data_dir);
 }
@@ -433,29 +413,29 @@ fn doctor_reports_non_executable_ocr_tools_as_missing_without_paths() {
 }
 
 #[test]
-fn doctor_and_diagnostics_report_persistent_vector_snapshot_without_path_or_values() {
-    let data_dir = temp_dir("diagnostics-vector-private-data");
-    let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), 4).unwrap();
-    vector_index
-        .upsert(vec![
-            VectorDocument::new("vec_java", "doc_java", vec![1.0, 0.0, 0.0, 0.0]).unwrap(),
-            VectorDocument::new("vec_data", "doc_data", vec![0.0, 1.0, 0.0, 0.0]).unwrap(),
-        ])
-        .unwrap();
-    vector_index.mark_deleted(&["vec_data"]).unwrap();
+fn doctor_and_diagnostics_report_the_generation_bound_disabled_vector_snapshot() {
+    let data_dir = temp_dir("diagnostics-vector-v3-data");
+    let source_root = temp_dir("diagnostics-vector-v3-source");
+    assert_import_succeeded(&import_text_resumes(
+        &data_dir,
+        &source_root,
+        &[(
+            "diagnostic-vector.txt",
+            "SUMMARY\nDiagnostic Candidate\nEXPERIENCE\nBuilt diagnostic Rust systems\nSKILLS\nRust",
+        )],
+    ));
 
     let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args(["--data-dir", path_str(&data_dir), "doctor"])
         .output()
-        .expect("run resume-cli doctor with vector index");
+        .expect("run resume-cli doctor with v3 vector descriptor");
     assert!(doctor.status.success());
-    assert!(doctor.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&doctor.stdout);
-    assert!(stdout.contains("vector index: available (hnsw ann vector snapshot)"));
-    assert!(stdout.contains("vector index vectors: 2"));
-    assert!(stdout.contains("vector index tombstones: 1"));
+    assert!(stdout.contains("vector index: available (disabled vector snapshot)"));
+    assert!(stdout.contains("vector index vectors: 0"));
+    assert!(stdout.contains("vector index tombstones: 0"));
     assert!(!stdout.contains(path_str(&data_dir)));
-    assert!(!stdout.contains("1.0"));
+    assert!(!stdout.contains(path_str(&source_root)));
 
     let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -465,80 +445,18 @@ fn doctor_and_diagnostics_report_persistent_vector_snapshot_without_path_or_valu
             "--redact",
         ])
         .output()
-        .expect("run resume-cli export-diagnostics with vector index");
+        .expect("run resume-cli export-diagnostics with v3 vector descriptor");
     assert!(export.status.success());
-    assert!(export.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&export.stdout);
     assert!(stdout.contains("\"vector_index_state\": \"available\""));
-    assert!(stdout.contains("\"vector_index_backend\": \"hnsw_ann\""));
-    assert!(stdout.contains("\"vector_index_vectors\": 2"));
-    assert!(stdout.contains("\"vector_index_tombstones\": 1"));
+    assert!(stdout.contains("\"vector_index_backend\": \"none\""));
+    assert!(stdout.contains("\"vector_index_vectors\": 0"));
+    assert!(stdout.contains("\"vector_index_tombstones\": 0"));
     assert!(!stdout.contains(path_str(&data_dir)));
-    assert!(!stdout.contains("1.0"));
+    assert!(!stdout.contains(path_str(&source_root)));
 
     remove_dir(&data_dir);
-}
-
-#[test]
-fn doctor_and_diagnostics_report_recovered_vector_snapshot_without_path_or_values() {
-    let data_dir = temp_dir("diagnostics-vector-recovered-private-data");
-    let vector_root = data_dir.join("vector-index");
-    let vector_index = PersistentVectorIndex::open(&vector_root, 4).unwrap();
-    vector_index
-        .upsert(vec![VectorDocument::new(
-            "vec_recovered",
-            "doc_recovered",
-            vec![1.0, 0.0, 0.0, 0.0],
-        )
-        .unwrap()])
-        .unwrap();
-    vector_index
-        .upsert(vec![VectorDocument::new(
-            "vec_corrupt_active",
-            "doc_corrupt_active",
-            vec![0.0, 1.0, 0.0, 0.0],
-        )
-        .unwrap()])
-        .unwrap();
-    fs::write(
-        vector_root.join("vector.snapshot"),
-        "not a valid encrypted vector snapshot",
-    )
-    .unwrap();
-
-    let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
-        .args(["--data-dir", path_str(&data_dir), "doctor"])
-        .output()
-        .expect("run resume-cli doctor with recovered vector index");
-    assert!(doctor.status.success());
-    assert!(doctor.stderr.is_empty());
-    let stdout = String::from_utf8_lossy(&doctor.stdout);
-    assert!(stdout.contains("vector index: recovered (hnsw ann vector snapshot)"));
-    assert!(stdout.contains("vector index vectors: 1"));
-    assert!(!stdout.contains(path_str(&data_dir)));
-    assert!(!stdout.contains("1.0"));
-    assert!(!stdout.contains("vec_recovered"));
-
-    let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
-        .args([
-            "--data-dir",
-            path_str(&data_dir),
-            "export-diagnostics",
-            "--redact",
-        ])
-        .output()
-        .expect("run resume-cli export-diagnostics with recovered vector index");
-    assert!(export.status.success());
-    assert!(export.stderr.is_empty());
-    let stdout = String::from_utf8_lossy(&export.stdout);
-    assert!(stdout.contains("\"vector_index_state\": \"recovered\""));
-    assert!(stdout.contains("\"vector_index_backend\": \"hnsw_ann\""));
-    assert!(stdout.contains("\"vector_index_vectors\": 1"));
-    assert!(!stdout.contains(path_str(&data_dir)));
-    assert!(!stdout.contains("1.0"));
-    assert!(!stdout.contains("vec_recovered"));
-
-    remove_dir(&data_dir);
+    remove_dir(&source_root);
 }
 
 #[test]
@@ -622,51 +540,30 @@ fn doctor_reports_unreadable_contact_hash_key_without_leaks() {
 }
 
 #[test]
-fn doctor_and_diagnostics_report_metadata_index_health_with_active_snapshot() {
+fn doctor_and_diagnostics_report_the_atomic_search_publication() {
     let data_dir = temp_dir("diagnostics-index-health");
-    publish_snapshot(
-        &data_dir.join("search-index"),
-        "fulltext-1800002000-1-0-0",
-        [IndexDocument {
-            doc_id: "doc_diagnostic".to_string(),
-            version_id: "ver_diagnostic".to_string(),
-            file_name: "synthetic-diagnostic.pdf".to_string(),
-            clean_text: "diagnostic Java search text".to_string(),
-            sections: vec![IndexSection {
-                section_type: "experience".to_string(),
-                text: "diagnostic Java".to_string(),
-            }],
-            is_deleted: false,
-        }],
-    )
-    .unwrap();
-    fs::create_dir_all(data_dir.join("search-index").join("staging").join("orphan")).unwrap();
-
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
-    store
-        .upsert_index_state(&IndexState {
-            manifest_version: "fulltext-s25-test".to_string(),
-            snapshot_token: Some("fulltext-1800002000-1-0-0".to_string()),
-            status: IndexStateStatus::Stale,
-            updated_at: UnixTimestamp::from_unix_seconds(1_800_002_000),
-            visible_epoch: 0,
-            manifest_document_count: 0,
-        })
-        .unwrap();
+    let source_root = temp_dir("diagnostics-index-health-source");
+    assert_import_succeeded(&import_text_resumes(
+        &data_dir,
+        &source_root,
+        &[(
+            "synthetic-diagnostic.txt",
+            "SUMMARY\nDiagnostic Candidate\nEXPERIENCE\nBuilt diagnostic Java search systems\nSKILLS\nJava",
+        )],
+    ));
 
     let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args(["--data-dir", path_str(&data_dir), "doctor"])
         .output()
-        .expect("run resume-cli doctor with active snapshot");
+        .expect("run resume-cli doctor with atomic search publication");
     assert!(doctor.status.success());
-    assert!(doctor.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&doctor.stdout);
-    assert!(stdout.contains("search index: available (full-text snapshot)"));
-    assert!(stdout.contains("index health: stale"));
+    assert!(stdout.contains("search index: available (database Ready full-text snapshot)"));
+    assert!(stdout.contains("index health: ready"));
     assert!(stdout.contains("last snapshot: present"));
-    assert!(stdout.contains("staging orphans: 1"));
+    assert!(stdout.contains("search index read target: database_ready_generation"));
     assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&source_root)));
 
     let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -676,93 +573,70 @@ fn doctor_and_diagnostics_report_metadata_index_health_with_active_snapshot() {
             "--redact",
         ])
         .output()
-        .expect("run resume-cli export-diagnostics with active snapshot");
+        .expect("run resume-cli export-diagnostics with atomic search publication");
     assert!(export.status.success());
-    assert!(export.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&export.stdout);
     assert!(stdout.contains("\"search_index_state\": \"available\""));
-    assert!(stdout.contains("\"search_index_read_target\": \"published_snapshot\""));
-    assert!(stdout.contains("\"index_health\": \"stale\""));
+    assert!(stdout.contains("\"search_index_read_target\": \"database_ready_generation\""));
+    assert!(stdout.contains("\"index_health\": \"ready\""));
     assert!(stdout.contains("\"last_snapshot\": \"present\""));
-    assert!(stdout.contains("\"staging_orphans\": 1"));
-    assert!(!stdout.contains("fulltext-1800002000-1-0-0"));
     assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&source_root)));
 
     remove_dir(&data_dir);
+    remove_dir(&source_root);
 }
 
 #[test]
-fn doctor_and_search_use_last_good_snapshot_after_active_snapshot_corruption() {
-    let data_dir = temp_dir("diagnostics-snapshot-recovered");
-    let index_root = data_dir.join("search-index");
-    let (recovered_doc_id, recovered_version_id) = seed_searchable_metadata(&data_dir);
-    publish_snapshot(
-        &index_root,
-        "fulltext-1800003000-1-0-0",
-        [IndexDocument {
-            doc_id: recovered_doc_id.clone(),
-            version_id: recovered_version_id,
-            file_name: "synthetic-recovered.pdf".to_string(),
-            clean_text: "diagnostic recovered Java snapshot".to_string(),
-            sections: vec![IndexSection {
-                section_type: "experience".to_string(),
-                text: "diagnostic recovered Java".to_string(),
-            }],
-            is_deleted: false,
-        }],
-    )
-    .unwrap();
-    publish_snapshot(
-        &index_root,
-        "fulltext-1800004000-1-0-0",
-        [IndexDocument {
-            doc_id: "doc_corrupt_active".to_string(),
-            version_id: "ver_corrupt_active".to_string(),
-            file_name: "synthetic-corrupt-active.pdf".to_string(),
-            clean_text: "diagnostic corrupt active Rust snapshot".to_string(),
-            sections: vec![IndexSection {
-                section_type: "experience".to_string(),
-                text: "diagnostic corrupt active Rust".to_string(),
-            }],
-            is_deleted: false,
-        }],
-    )
-    .unwrap();
+fn doctor_and_search_fail_closed_when_the_published_generation_is_corrupt() {
+    let data_dir = temp_dir("diagnostics-snapshot-corrupt");
+    let source_root = temp_dir("diagnostics-snapshot-corrupt-source");
+    assert_import_succeeded(&import_text_resumes(
+        &data_dir,
+        &source_root,
+        &[(
+            "synthetic-corrupt.txt",
+            "SUMMARY\nCorrupt Candidate\nEXPERIENCE\nBuilt PRIVATE_DIAGNOSTIC_SENTINEL systems\nSKILLS\nRust",
+        )],
+    ));
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let generation = store.search_projection_state().unwrap().generation.unwrap();
     fs::write(
-        index_root
+        data_dir
+            .join("search-index")
             .join("snapshots")
-            .join("fulltext-1800004000-1-0-0")
+            .join(&generation)
             .join("fulltext.snapshot.enc"),
-        b"not a valid active snapshot",
+        b"not a valid Ready generation",
     )
     .unwrap();
 
     let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
-        .args(["--data-dir", path_str(&data_dir), "search", "Java"])
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "search",
+            "PRIVATE_DIAGNOSTIC_SENTINEL",
+        ])
         .output()
-        .expect("run resume-cli search with recovered snapshot");
-    assert!(search.status.success());
-    assert!(search.stderr.is_empty());
-    let stdout = String::from_utf8_lossy(&search.stdout);
-    assert!(stdout.contains("results: 1"));
-    assert!(stdout.contains(&format!("doc_id: {recovered_doc_id}")));
-    assert!(!stdout.contains("doc_corrupt_active"));
-    assert!(!stdout.contains(path_str(&data_dir)));
+        .expect("run resume-cli search with corrupt publication");
+    assert!(!search.status.success());
+    assert!(search.stdout.is_empty());
+    assert!(!String::from_utf8_lossy(&search.stderr).contains("PRIVATE_DIAGNOSTIC_SENTINEL"));
 
     let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args(["--data-dir", path_str(&data_dir), "doctor"])
         .output()
-        .expect("run resume-cli doctor with recovered snapshot");
+        .expect("run resume-cli doctor with corrupt publication");
     assert!(doctor.status.success());
-    assert!(doctor.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&doctor.stdout);
-    assert!(stdout.contains("search index: recovered (full-text snapshot)"));
-    assert!(stdout.contains("search index read target: published_snapshot"));
-    assert!(stdout.contains("snapshot fallback: used"));
-    assert!(stdout.contains("query smoke: ok"));
-    assert!(!stdout.contains("fulltext-1800004000-1-0-0"));
-    assert!(!stdout.contains("fulltext-1800003000-1-0-0"));
+    assert!(stdout.contains("search index: corrupt"));
+    assert!(stdout.contains("search index read target: database_ready_generation"));
+    assert!(stdout.contains("snapshot fallback: none"));
+    assert!(!stdout.contains(&generation));
     assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&source_root)));
 
     let export = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -772,64 +646,17 @@ fn doctor_and_search_use_last_good_snapshot_after_active_snapshot_corruption() {
             "--redact",
         ])
         .output()
-        .expect("run resume-cli export-diagnostics with recovered snapshot");
+        .expect("run resume-cli export-diagnostics with corrupt publication");
     assert!(export.status.success());
-    assert!(export.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&export.stdout);
-    assert!(stdout.contains("\"search_index_state\": \"recovered\""));
-    assert!(stdout.contains("\"snapshot_fallback\": \"used\""));
-    assert!(!stdout.contains("fulltext-1800004000-1-0-0"));
-    assert!(!stdout.contains("fulltext-1800003000-1-0-0"));
+    assert!(stdout.contains("\"search_index_state\": \"corrupt\""));
+    assert!(stdout.contains("\"snapshot_fallback\": \"none\""));
+    assert!(!stdout.contains(&generation));
     assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&source_root)));
 
     remove_dir(&data_dir);
-}
-
-fn seed_searchable_metadata(data_dir: &Path) -> (String, String) {
-    use meta_store::{
-        Document, DocumentId, DocumentStatus, FileExtension, ResumeVersion, ResumeVersionId,
-        ResumeVisibility,
-    };
-
-    let now = UnixTimestamp::from_unix_seconds(1_800_003_000);
-    let document_id = DocumentId::from_non_secret_parts(&["s26", "recovered"]);
-    let version_id = ResumeVersionId::from_non_secret_parts(&["s26", "recovered-version"]);
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
-    store
-        .upsert_document(&Document {
-            id: document_id.clone(),
-            source_uri: "synthetic://recovered".to_string(),
-            normalized_path: "synthetic/recovered.pdf".to_string(),
-            file_name: "synthetic-recovered.pdf".to_string(),
-            extension: FileExtension::Pdf,
-            byte_size: 128,
-            mtime: now,
-            content_hash: Some("synthetic-recovered-content-hash".to_string()),
-            text_hash: Some("synthetic-recovered-text-hash".to_string()),
-            is_deleted: false,
-            created_at: now,
-            updated_at: now,
-            status: DocumentStatus::Searchable,
-        })
-        .unwrap();
-    store
-        .upsert_resume_version(&ResumeVersion {
-            id: version_id.clone(),
-            document_id: document_id.clone(),
-            candidate_id: None,
-            parse_version: "parser-v1".to_string(),
-            schema_version: "schema-v1".to_string(),
-            language_set: vec!["en".to_string()],
-            page_count: Some(1),
-            raw_text: Some("diagnostic recovered Java snapshot".to_string()),
-            clean_text: Some("diagnostic recovered Java snapshot".to_string()),
-            quality_score: Some(0.8),
-            visibility: ResumeVisibility::Searchable,
-        })
-        .unwrap();
-
-    (document_id.to_string(), version_id.to_string())
+    remove_dir(&source_root);
 }
 
 #[test]
@@ -1307,8 +1134,8 @@ fn temp_dir(label: &str) -> PathBuf {
 fn open_encrypted_metadata_connection(data_dir: &Path) -> Connection {
     let metadata_key = fs::read_to_string(meta_store::metadata_encryption_key_path(data_dir))
         .expect("read metadata SQLCipher key");
-    let connection =
-        Connection::open(meta_store::metadata_store_path(data_dir)).expect("open metadata db");
+    let connection = Connection::open(meta_store::metadata_store_path(data_dir).unwrap())
+        .expect("open metadata db");
     connection
         .execute_batch(&format!("PRAGMA key = \"x'{}'\";", metadata_key.trim()))
         .expect("apply metadata SQLCipher key");

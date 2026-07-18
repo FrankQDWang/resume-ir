@@ -8,16 +8,19 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use meta_store::DocumentId;
 
+mod support;
+
+use support::write_daemon_auth;
+
 #[test]
 fn delete_ipc_submits_authenticated_request_without_touching_local_store() {
     let data_dir = temp_path("delete-ipc-data");
     let doc_id = DocumentId::from_non_secret_parts(&["s50", "delete-ipc-doc"]);
     let token_file = temp_file("delete-ipc-token");
-    fs::write(
+    write_daemon_auth(
         &token_file,
         "9090909090909090909090909090909090909090909090909090909090909090\n",
-    )
-    .unwrap();
+    );
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
     let addr = listener.local_addr().unwrap();
     let expected_doc_id = doc_id.to_string();
@@ -34,10 +37,10 @@ fn delete_ipc_submits_authenticated_request_without_touching_local_store() {
         assert_eq!(payload["doc_id"], expected_doc_id);
 
         let response = serde_json::json!({
-            "schema_version": "daemon.delete.v1",
+            "schema_version": "resume-ir.delete-response.v2",
             "status": "ok",
             "doc_id": expected_doc_id,
-            "index_rebuilt": true,
+            "publication_committed": true,
             "indexed_documents": 2
         })
         .to_string();
@@ -77,7 +80,7 @@ fn delete_ipc_submits_authenticated_request_without_touching_local_store() {
     assert!(stdout.contains("delete completed"));
     assert!(stdout.contains(&format!("doc_id: {doc_id}")));
     assert!(stdout.contains("status: deleted"));
-    assert!(stdout.contains("index rebuilt: true"));
+    assert!(stdout.contains("publication committed: true"));
     assert!(stdout.contains("indexed documents: 2"));
     assert!(!stdout.contains(path_str(&token_file)));
     assert!(!stdout.contains("90909090"));
@@ -217,11 +220,10 @@ fn temp_file(label: &str) -> PathBuf {
 
 fn temp_valid_token(label: &str) -> PathBuf {
     let path = temp_file(label);
-    fs::write(
+    write_daemon_auth(
         &path,
         "1212121212121212121212121212121212121212121212121212121212121212\n",
-    )
-    .unwrap();
+    );
     path
 }
 

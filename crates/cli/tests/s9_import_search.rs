@@ -114,7 +114,6 @@ fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
         "index publication plaintext validation ms:",
         "index publication encrypted publication ms:",
         "index publication encrypted validation ms:",
-        "index publication active snapshot ms:",
         "pdf parse document load ms:",
         "pdf parse page content fetch ms:",
         "pdf parse text operator prefilter ms:",
@@ -150,7 +149,7 @@ fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
     assert!(status_stdout.contains("ocr queue: 1"));
     assert!(status_stdout.contains("import tasks queued: 0"));
     assert!(status_stdout.contains("index health: ready"));
-    assert!(status_stdout.contains("search index: available (full-text snapshot)"));
+    assert!(status_stdout.contains("search index: available (database Ready full-text snapshot)"));
 
     let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args(["--data-dir", path_str(&data_dir), "search", "Java"])
@@ -424,155 +423,6 @@ fn witness_probe_fields_reports_aggregate_counts_without_values_or_paths() {
     assert!(!stdout.contains(path_str(&canonical_private_root)));
     assert!(!stdout.contains("real-person"));
     assert!(!stdout.contains("synthetic-java-engineer.docx"));
-    assert!(!data_dir.join("metadata.sqlite3").exists());
-
-    remove_dir(&data_dir);
-    remove_dir(&private_root);
-}
-
-#[cfg(unix)]
-#[test]
-fn witness_run_embedding_and_benchmark_probe_reports_hot_index_without_leaks() {
-    serialize_windows_s9_import_test!();
-    let data_dir = temp_dir("witness-embedding-unused-data-dir");
-    let private_root = temp_dir("witness-embedding-private-root");
-    fs::copy(
-        fixture_root().join("synthetic-java-platform.pdf"),
-        private_root.join("real-person-platform.pdf"),
-    )
-    .unwrap();
-    fs::copy(
-        fixture_root().join("synthetic-java-engineer.docx"),
-        private_root.join("real-person-engineer.docx"),
-    )
-    .unwrap();
-    let command = write_fixture_executable(
-        "fixture-witness-embedding",
-        r#"#!/bin/sh
-if [ ! -s "$RESUME_IR_EMBEDDING_INPUT_PATH" ]; then
-  exit 7
-fi
-printf 'resume-ir-embedding-v1\n'
-printf 'model_id=fixture-witness-model\n'
-printf 'dimension=4\n'
-awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t0.25,0.25,0.25,0.25\n", id }' "$RESUME_IR_EMBEDDING_INPUT_PATH"
-"#,
-    );
-    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
-
-    let witness = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
-        .args([
-            "--data-dir",
-            path_str(&data_dir),
-            "witness",
-            "--root",
-            path_str(&private_root),
-            "--run-embedding",
-            "--embedding-command",
-            path_str(&command),
-            "--embedding-model-id",
-            "fixture-witness-model",
-            "--embedding-dimension",
-            "4",
-            "--embedding-max-docs",
-            "8",
-            "--embedding-max-text-bytes",
-            "100000",
-            "--probe-benchmark-corpus",
-        ])
-        .output()
-        .expect("run resume-cli local witness with embedding and corpus probe");
-
-    assert!(
-        witness.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&witness.stdout),
-        String::from_utf8_lossy(&witness.stderr)
-    );
-    assert!(witness.stderr.is_empty());
-    let stdout = String::from_utf8_lossy(&witness.stdout);
-    assert!(stdout.contains("witness embedding status: completed"));
-    assert!(stdout.contains("embedding documents considered: 2"));
-    assert!(stdout.contains("embedding documents embedded: 2"));
-    assert!(stdout.contains("embedding vector indexed documents: 2"));
-    let vector_inputs = stdout_value(&stdout, "embedding vector inputs: ")
-        .parse::<usize>()
-        .expect("numeric embedding vector input count");
-    assert!(vector_inputs >= 2, "stdout:\n{stdout}");
-    assert!(stdout.contains("witness benchmark corpus status: completed"));
-    assert!(stdout.contains("benchmark corpus documents: 2"));
-    assert!(stdout.contains("benchmark corpus searchable documents: 2"));
-    assert!(stdout.contains("benchmark corpus vector indexed documents: 2"));
-    assert!(stdout.contains("benchmark corpus hot index fully covered: yes"));
-    assert!(stdout.contains("private witness data: removed"));
-    assert!(!stdout.contains(path_str(&data_dir)));
-    assert!(!stdout.contains(path_str(&private_root)));
-    assert!(!stdout.contains(path_str(&canonical_private_root)));
-    assert!(!stdout.contains(path_str(&command)));
-    assert!(!stdout.contains("real-person"));
-    assert!(!stdout.contains("synthetic-java-platform.pdf"));
-    assert!(!stdout.contains("synthetic-java-engineer.docx"));
-    assert!(!data_dir.join("metadata.sqlite3").exists());
-
-    remove_dir(&data_dir);
-    remove_dir(&private_root);
-    remove_dir(command.parent().unwrap());
-}
-
-#[test]
-fn witness_run_embedding_without_command_reports_blocked_without_persisting_private_data() {
-    serialize_windows_s9_import_test!();
-    let data_dir = temp_dir("witness-embedding-blocked-unused-data-dir");
-    let private_root = temp_dir("witness-embedding-blocked-private-root");
-    fs::copy(
-        fixture_root().join("synthetic-java-platform.pdf"),
-        private_root.join("real-person-platform.pdf"),
-    )
-    .unwrap();
-    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
-
-    let witness = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
-        .args([
-            "--data-dir",
-            path_str(&data_dir),
-            "witness",
-            "--root",
-            path_str(&private_root),
-            "--run-embedding",
-            "--embedding-model-id",
-            "fixture-witness-model",
-            "--embedding-dimension",
-            "4",
-            "--probe-benchmark-corpus",
-        ])
-        .output()
-        .expect("run resume-cli local witness with blocked embedding");
-
-    assert!(
-        witness.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&witness.stdout),
-        String::from_utf8_lossy(&witness.stderr)
-    );
-    assert!(witness.stderr.is_empty());
-    let stdout = String::from_utf8_lossy(&witness.stdout);
-    assert!(stdout.contains("witness embedding status: blocked"));
-    assert!(stdout.contains("embedding block reason: local embedding command not configured"));
-    assert!(stdout.contains("embedding documents considered: 0"));
-    assert!(stdout.contains("embedding documents embedded: 0"));
-    assert!(stdout.contains("embedding vector inputs: 0"));
-    assert!(stdout.contains("embedding vector indexed documents: 0"));
-    assert!(stdout.contains("witness benchmark corpus status: completed"));
-    assert!(stdout.contains("benchmark corpus documents: 1"));
-    assert!(stdout.contains("benchmark corpus searchable documents: 1"));
-    assert!(stdout.contains("benchmark corpus vector indexed documents: 0"));
-    assert!(stdout.contains("benchmark corpus hot index fully covered: no"));
-    assert!(stdout.contains("private witness data: removed"));
-    assert!(!stdout.contains(path_str(&data_dir)));
-    assert!(!stdout.contains(path_str(&private_root)));
-    assert!(!stdout.contains(path_str(&canonical_private_root)));
-    assert!(!stdout.contains("real-person"));
-    assert!(!stdout.contains("synthetic-java-platform.pdf"));
     assert!(!data_dir.join("metadata.sqlite3").exists());
 
     remove_dir(&data_dir);
@@ -1017,8 +867,12 @@ fn import_txt_resume_builds_searchable_index_without_path_leakage() {
         .into_iter()
         .find(|document| document.file_name == "synthetic-rust-search.txt")
         .unwrap();
+    let projection = store
+        .active_search_projection_for_document(&document.id)
+        .unwrap()
+        .unwrap();
     let version = store
-        .latest_visible_resume_version_for_document(&document.id)
+        .resume_version_by_id(&projection.resume_version_id)
         .unwrap()
         .unwrap();
     let mentions = store.entity_mentions_for_version(&version.id).unwrap();
@@ -1037,7 +891,7 @@ fn import_txt_resume_builds_searchable_index_without_path_leakage() {
 }
 
 #[test]
-fn import_rebuilds_from_metadata_when_active_snapshot_is_unreadable() {
+fn import_rebuilds_from_metadata_when_ready_generation_is_unreadable() {
     serialize_windows_s9_import_test!();
     let data_dir = temp_dir("incremental-corrupt-active-data");
     let private_root = temp_dir("incremental-corrupt-active-root");
@@ -1057,7 +911,7 @@ fn import_rebuilds_from_metadata_when_active_snapshot_is_unreadable() {
             path_str(&private_root),
         ])
         .output()
-        .expect("run first import before corrupting active snapshot");
+        .expect("run first import before corrupting Ready generation");
     assert!(
         first_import.status.success(),
         "stdout:\n{}\nstderr:\n{}",
@@ -1065,17 +919,16 @@ fn import_rebuilds_from_metadata_when_active_snapshot_is_unreadable() {
         String::from_utf8_lossy(&first_import.stderr)
     );
 
-    let active_snapshot = fs::read_to_string(data_dir.join("search-index").join("active-snapshot"))
-        .unwrap()
-        .trim()
-        .to_string();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let ready_generation = store.search_projection_state().unwrap().generation.unwrap();
     write_snapshot_test_file_with_retry(
         &data_dir
             .join("search-index")
             .join("snapshots")
-            .join(active_snapshot)
+            .join(ready_generation)
             .join("fulltext.snapshot.enc"),
-        b"corrupted active snapshot envelope",
+        b"corrupted Ready generation envelope",
     )
     .unwrap();
     fs::write(
@@ -1093,7 +946,7 @@ fn import_rebuilds_from_metadata_when_active_snapshot_is_unreadable() {
             path_str(&private_root),
         ])
         .output()
-        .expect("run import after corrupting active snapshot");
+        .expect("run import after corrupting Ready generation");
     assert!(
         second_import.status.success(),
         "stdout:\n{}\nstderr:\n{}",
@@ -1232,11 +1085,11 @@ fn import_enqueue_persists_task_without_running_foreground_import() {
         .args(["--data-dir", path_str(&data_dir), "search", "Java"])
         .output()
         .expect("search before daemon import worker");
-    assert!(search.status.success());
-    assert!(search.stderr.is_empty());
-    let search_stdout = String::from_utf8_lossy(&search.stdout);
-    assert!(search_stdout.contains("search index not available yet"));
-    assert!(search_stdout.contains("results: 0"));
+    assert!(!search.status.success());
+    assert!(search.stdout.is_empty());
+    let search_stderr = String::from_utf8_lossy(&search.stderr);
+    assert!(search_stderr.contains("search service unavailable"));
+    assert!(!search_stderr.contains("Java"));
 
     remove_dir(&data_dir);
 }

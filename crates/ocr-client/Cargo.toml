@@ -5,6 +5,9 @@ version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[dependencies]
+process-containment = { path = "../process-containment" }
+
 [lints]
 workspace = true
 

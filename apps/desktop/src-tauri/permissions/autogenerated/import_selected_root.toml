@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-import-selected-root"
+description = "Enables the import_selected_root command without any pre-configured scope."
+commands.allow = ["import_selected_root"]
+
+[[permission]]
+identifier = "deny-import-selected-root"
+description = "Denies the import_selected_root command without any pre-configured scope."
+commands.deny = ["import_selected_root"]

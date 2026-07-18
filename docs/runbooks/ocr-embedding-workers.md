@@ -1,9 +1,9 @@
-# OCR and Embedding Worker Runbook
+# OCR and Atomic Search Publication Runbook
 
 ## Scope
 
-Local-only runbook for the configured OCR and embedding command workers. Do not
-upload command input files, worker logs, model caches, vector snapshots,
+Local-only runbook for the configured OCR worker and daemon-owned atomic search
+publication. Do not upload command input files, runtime logs, model caches, vector snapshots,
 databases, indexes, or local data directories. Synthetic fixtures are required
 for public reproduction.
 
@@ -40,8 +40,8 @@ commit or upload runtime binaries.
 For the current-stage private 10k validation flow, use
 `scripts/local/run-current-stage-validation.sh` as the orchestration entrypoint.
 Its dry-run prints a redacted local-only plan; execute mode runs the same
-preflight, manifest, OCR worker, embedding worker, benchmark, diagnostics, and
-release-readiness steps locally without uploading evidence.
+preflight, manifest, OCR and atomic search-publication, benchmark, diagnostics,
+and release-readiness steps locally without uploading evidence.
 
 ## PDF Renderer License Boundary
 
@@ -219,8 +219,8 @@ bytes, or complete digests.
 Canonical local command form:
 `resume-cli model preflight --json`.
 
-Before running embedding workers or semantic search, verify the reviewed model
-manifest and local embedding command without printing paths:
+Before enabling vector publication or semantic search, verify the reviewed
+model manifest and local embedding command without printing paths:
 
 ```bash
 resume-cli --data-dir <local-data-dir> model preflight --json \
@@ -483,26 +483,27 @@ cargo test -p resume-cli --test s15_ocr_handoff --locked
 cargo test -p resume-daemon --test s50_ocr_worker --locked
 ```
 
-## Embedding Worker
+## Atomic Search Publication
 
-Foreground one-shot embedding worker:
+Vector construction is part of the same publication boundary as metadata,
+full-text, and the active document-to-version projection. There is no separate
+embedding job queue or mutable vector backfill worker. A publication failure
+leaves the previous active projection and both index generations readable.
 
-```bash
-resume-cli --data-dir <local-data-dir> embed-worker --once \
-  --command <local-embedding-command> \
-  --model-id <reviewed-model-id> \
-  --dimension <dimension>
-```
-
-Daemon one-shot embedding worker:
+For a bounded local reconcile after a direct CLI import, run the daemon with the
+reviewed resident embedding runtime:
 
 ```bash
 resume-daemon --data-dir <local-data-dir> run --foreground --once \
-  --work-embeddings-once \
+  --work-index-once \
   --embedding-command <local-embedding-command> \
   --embedding-model-id <reviewed-model-id> \
   --embedding-dimension <dimension>
 ```
+
+Normal import and OCR daemon runs use the same three embedding options. New or
+changed immutable resume versions are embedded before the metadata CAS publishes
+the new active projection; unchanged exact-version vectors are retained.
 
 Use only reviewed local commands. Do not use commands that call a network API or
 download model weights at runtime. Do not upload model outputs or vector
@@ -510,7 +511,7 @@ snapshots.
 
 ## Recovery Checks
 
-After a worker failure:
+After an OCR or atomic publication failure:
 
 ```bash
 resume-cli --data-dir <local-data-dir> status
@@ -531,4 +532,4 @@ command paths, OCR text, or vector values.
   complete
 - real large-corpus OCR throughput proof is not complete
 - Windows command process-tree validation is not complete
-- macOS and Windows service-level worker validation is not complete
+- macOS and Windows service-level runtime validation is not complete

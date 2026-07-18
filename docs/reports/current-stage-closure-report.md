@@ -41,7 +41,7 @@ captured in `PROGRESS.md`.
 | P2_fields_dedupe | Production implementation exists, stable release evidence blocked | Field extraction, confidence/evidence, filters, candidate folding, soft dedupe, multi-version folding tests |
 | P3_semantic_vector | Production implementation exists, stable release evidence blocked | Local embedding command protocol, persistent vector snapshot, semantic search, hybrid search, RRF tests |
 | P4_ocr | Production implementation exists, stable release evidence blocked | Scanned PDF detection, OCR queue, OCR worker, cache, pause/resume, retry, OCR result indexing, OCR runtime preflight and manifest tests |
-| P5_cross_platform_release | Automation and dry-run implementation exists, stable release evidence blocked | Windows/macOS package scripts, installer lifecycle dry-run plans, signing/notarization fail-closed gates, hosted macOS/Windows build/test workflows |
+| P5_cross_platform_release | Ordinary-user Tauri v2 installers incomplete; legacy automation does not count as product installer proof | Legacy CLI/daemon package and lifecycle dry-runs are tracked separately; partial Tauri target-triple composition contracts and macOS unsigned native app smoke exist, while macOS app/DMG and Windows per-user NSIS remain incomplete |
 | P6_performance_stability | Current-stage smoke and diagnostics exist; full performance work deferred | Benchmark runner, synthetic smoke gates, fault simulation, redacted diagnostics, current-stage smoke handoff |
 
 ## Real Local Current-Stage Smoke Evidence
@@ -104,7 +104,7 @@ data/evidence directory was removed after aggregate extraction.
 | OCR throughput release evidence | Deferred/BLOCKED | Representative OCR throughput run with observed page latency percentiles and throughput |
 | bundled OCR/PDF/model distribution | BLOCKED | Reviewed runtime/model manifests, license approvals, checksums, notices, SBOM, and source-offer evidence where required |
 | signing and notarization | BLOCKED | Human-provided Apple/Windows signing credentials, private key custody policy, notarization credentials, and CI secrets |
-| Windows/macOS installer lifecycle | BLOCKED | Fresh release artifacts and administrator or release-runner install/upgrade/uninstall/rollback transcripts |
+| Windows/macOS Tauri installer lifecycle | BLOCKED | Self-contained macOS app/DMG and Windows per-user NSIS artifacts plus clean-host install/upgrade/uninstall/rollback transcripts |
 | hardware fault drills | BLOCKED | Dedicated release-platform transcripts for actual ENOSPC, daemon kill, battery-mode, and external-drive disconnect scenarios |
 | GitHub Release publication | BLOCKED | Human release approval plus working release-token or Git credential path and artifact upload evidence |
 

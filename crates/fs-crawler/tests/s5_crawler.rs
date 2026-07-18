@@ -294,6 +294,45 @@ fn quick_fingerprint_samples_head_and_tail_without_reading_entire_large_file() {
 }
 
 #[test]
+fn rename_preserves_stable_identity_and_content_fingerprint() {
+    let root = TestDir::new("fs-crawler-rename-identity");
+    root.write("before/synthetic-resume.txt", b"synthetic resume content");
+
+    let before = crawl_directory(root.path()).unwrap().files.remove(0);
+    fs::create_dir_all(root.path().join("after")).unwrap();
+    fs::rename(
+        root.path().join("before/synthetic-resume.txt"),
+        root.path().join("after/renamed-resume.txt"),
+    )
+    .unwrap();
+    let after = crawl_directory(root.path()).unwrap().files.remove(0);
+
+    assert_ne!(before.normalized_path, after.normalized_path);
+    assert!(before.stable_file_id.is_some());
+    assert_eq!(before.stable_file_id, after.stable_file_id);
+    assert_eq!(before.document_id, after.document_id);
+    assert_eq!(before.fingerprint.as_str(), after.fingerprint.as_str());
+    assert!(!format!("{before:?}").contains("sfi_"));
+}
+
+#[test]
+fn replacement_at_same_path_changes_identity_and_content_fingerprint() {
+    let root = TestDir::new("fs-crawler-replacement-identity");
+    let path = root.path().join("synthetic-resume.txt");
+    root.write("synthetic-resume.txt", b"first synthetic content");
+
+    let before = crawl_directory(root.path()).unwrap().files.remove(0);
+    fs::remove_file(&path).unwrap();
+    fs::write(&path, b"replacement synthetic content").unwrap();
+    let after = crawl_directory(root.path()).unwrap().files.remove(0);
+
+    assert_eq!(before.normalized_path, after.normalized_path);
+    assert_ne!(before.stable_file_id, after.stable_file_id);
+    assert_ne!(before.document_id, after.document_id);
+    assert_ne!(before.fingerprint.as_str(), after.fingerprint.as_str());
+}
+
+#[test]
 fn classifies_permission_unavailable_and_locked_errors_with_fake_filesystem() {
     let fs = FakeFileSystem::new()
         .dir("/fixture")

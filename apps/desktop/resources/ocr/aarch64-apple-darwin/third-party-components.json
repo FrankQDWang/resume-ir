@@ -1,0 +1,95 @@
+{
+  "schema_version": "resume-ir.ocr-third-party-components.v1",
+  "target_triple": "aarch64-apple-darwin",
+  "renderer": {
+    "id": "macos-pdfkit-coregraphics",
+    "distribution": "operating_system_frameworks",
+    "bundled": false
+  },
+  "components": [
+    {
+      "id": "tesseract",
+      "version": "5.5.2",
+      "license": "Apache-2.0",
+      "source": "https://github.com/tesseract-ocr/tesseract/tree/5.5.2"
+    },
+    {
+      "id": "tessdata-fast-eng-chi-sim",
+      "version": "4.1.0",
+      "license": "Apache-2.0",
+      "source": "https://github.com/tesseract-ocr/tessdata_fast/tree/4.1.0"
+    },
+    {
+      "id": "leptonica",
+      "version": "1.87.0",
+      "license": "BSD-2-Clause",
+      "source": "https://github.com/DanBloomberg/leptonica/tree/1.87.0"
+    },
+    {
+      "id": "libarchive",
+      "version": "3.8.8",
+      "license": "BSD-2-Clause",
+      "source": "https://github.com/libarchive/libarchive/tree/v3.8.8"
+    },
+    {
+      "id": "libb2",
+      "version": "0.98.1",
+      "license": "CC0-1.0",
+      "source": "https://github.com/BLAKE2/libb2/tree/v0.98.1"
+    },
+    {
+      "id": "giflib",
+      "version": "6.1.3",
+      "license": "MIT",
+      "source": "https://sourceforge.net/projects/giflib/files/"
+    },
+    {
+      "id": "libjpeg-turbo",
+      "version": "3.2.0",
+      "license": "IJG AND Zlib AND BSD-3-Clause",
+      "source": "https://github.com/libjpeg-turbo/libjpeg-turbo/tree/3.2.0"
+    },
+    {
+      "id": "lz4",
+      "version": "1.10.0",
+      "license": "BSD-2-Clause",
+      "source": "https://github.com/lz4/lz4/tree/v1.10.0"
+    },
+    {
+      "id": "liblzma",
+      "version": "5.8.3",
+      "license": "0BSD",
+      "source": "https://github.com/tukaani-project/xz/tree/v5.8.3"
+    },
+    {
+      "id": "openjpeg",
+      "version": "2.5.4",
+      "license": "BSD-2-Clause",
+      "source": "https://github.com/uclouvain/openjpeg/tree/v2.5.4"
+    },
+    {
+      "id": "libpng",
+      "version": "1.6.58",
+      "license": "libpng-2.0",
+      "source": "https://github.com/pnggroup/libpng/tree/v1.6.58"
+    },
+    {
+      "id": "libtiff",
+      "version": "4.7.2",
+      "license": "libtiff",
+      "source": "https://gitlab.com/libtiff/libtiff/-/tree/v4.7.2"
+    },
+    {
+      "id": "libwebp",
+      "version": "1.6.0",
+      "license": "BSD-3-Clause",
+      "source": "https://chromium.googlesource.com/webm/libwebp/+/v1.6.0"
+    },
+    {
+      "id": "zstd",
+      "version": "1.5.7",
+      "license": "BSD-3-Clause",
+      "source": "https://github.com/facebook/zstd/tree/v1.5.7"
+    }
+  ]
+}

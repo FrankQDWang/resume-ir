@@ -2,6 +2,13 @@ use std::{collections::BTreeSet, fmt, str::FromStr};
 
 use unicode_normalization::UnicodeNormalization;
 
+mod content_identity;
+
+pub use content_identity::{
+    ActiveSearchProjection, ContentDigest, ContentDigestParseError, SearchProjectionDigest,
+    SearchProjectionDigestError, SearchSelection, SourceRevision,
+};
+
 const FNV_OFFSET_A: u64 = 0xcbf29ce484222325;
 const FNV_OFFSET_B: u64 = 0x6c62272e07bb0142;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -72,6 +79,7 @@ macro_rules! stable_id_type {
 }
 
 stable_id_type!(DocumentId, "doc_");
+stable_id_type!(SourceRevisionId, "rev_");
 stable_id_type!(ResumeVersionId, "ver_");
 stable_id_type!(CandidateId, "cand_");
 stable_id_type!(SectionId, "sec_");
@@ -79,6 +87,22 @@ stable_id_type!(EntityMentionId, "ent_");
 stable_id_type!(VectorRecordId, "vec_");
 stable_id_type!(IngestJobId, "job_");
 stable_id_type!(ImportTaskId, "imp_");
+
+impl SourceRevisionId {
+    fn from_content_hex_digest(digest: String) -> Self {
+        debug_assert_eq!(digest.len(), ID_DIGEST_HEX_LEN);
+        debug_assert!(digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        Self(format!("rev_{digest}"))
+    }
+}
+
+impl ResumeVersionId {
+    fn from_content_hex_digest(digest: String) -> Self {
+        debug_assert_eq!(digest.len(), ID_DIGEST_HEX_LEN);
+        debug_assert!(digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        Self(format!("ver_{digest}"))
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IdParseError {
@@ -178,6 +202,7 @@ pub const QUERY_SET_BUCKETS: [&str; 7] = [
     "semantic",
 ];
 pub const QUERY_SET_MAX_QUERY_BYTES: usize = 4096;
+pub const QUERY_SET_MAX_TERM_BYTES: usize = 256;
 pub const QUERY_SET_MAX_TERMS: usize = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -224,21 +249,35 @@ impl fmt::Display for QuerySetSourceKindParseError {
 impl std::error::Error for QuerySetSourceKindParseError {}
 
 pub fn query_set_query_in_semantic_bounds(query: &str) -> bool {
-    let term_count = QuerySetSampleShape::from_query(query).term_count();
-    query.len() <= QUERY_SET_MAX_QUERY_BYTES && term_count > 0 && term_count <= QUERY_SET_MAX_TERMS
+    let terms = query_set_logical_terms(query);
+    let searchable_terms = terms
+        .iter()
+        .filter(|term| !term.quoted && !is_query_set_explicit_boolean_operator(term.value))
+        .chain(terms.iter().filter(|term| term.quoted))
+        .collect::<Vec<_>>();
+    query.len() <= QUERY_SET_MAX_QUERY_BYTES
+        && !searchable_terms.is_empty()
+        && searchable_terms.len() <= QUERY_SET_MAX_TERMS
+        && searchable_terms
+            .iter()
+            .all(|term| !term.value.is_empty() && term.value.len() <= QUERY_SET_MAX_TERM_BYTES)
 }
 
 pub fn normalize_query_set_query(query: &str) -> Option<String> {
     let normalized = query.nfkc().collect::<String>();
+    let logical_terms = query_set_logical_terms(&normalized);
+    let has_explicit_boolean = logical_terms
+        .iter()
+        .any(|term| !term.quoted && is_query_set_explicit_boolean_operator(term.value));
     let mut seen = BTreeSet::new();
     let mut terms = Vec::new();
-    for term in query_set_logical_terms(&normalized) {
+    for term in logical_terms {
         let value = term.value.split_whitespace().collect::<Vec<_>>().join(" ");
         if value.is_empty() {
             continue;
         }
         let key = (term.quoted, value.clone());
-        if !seen.insert(key) {
+        if !has_explicit_boolean && !seen.insert(key) {
             continue;
         }
         if term.quoted {
@@ -627,6 +666,7 @@ pub enum DocumentStatus {
     EmbeddingDone,
     IndexedPartial,
     Searchable,
+    Excluded,
     FailedRetryable,
     FailedPermanent,
     Deleted,
@@ -665,7 +705,8 @@ pub enum IndexStateStatus {
 pub struct ResumeVersion {
     pub id: ResumeVersionId,
     pub document_id: DocumentId,
-    pub candidate_id: Option<CandidateId>,
+    pub source_revision_id: SourceRevisionId,
+    pub normalized_text_hash: ContentDigest,
     pub parse_version: String,
     pub schema_version: String,
     pub language_set: Vec<String>,
@@ -673,7 +714,6 @@ pub struct ResumeVersion {
     pub raw_text: Option<String>,
     pub clean_text: Option<String>,
     pub quality_score: Option<f32>,
-    pub visibility: ResumeVisibility,
 }
 
 impl fmt::Debug for ResumeVersion {
@@ -682,7 +722,8 @@ impl fmt::Debug for ResumeVersion {
             .debug_struct("ResumeVersion")
             .field("id", &self.id)
             .field("document_id", &self.document_id)
-            .field("candidate_id", &self.candidate_id)
+            .field("source_revision_id", &self.source_revision_id)
+            .field("normalized_text_hash", &self.normalized_text_hash)
             .field("parse_version", &self.parse_version)
             .field("schema_version", &self.schema_version)
             .field("language_set", &self.language_set)
@@ -693,16 +734,8 @@ impl fmt::Debug for ResumeVersion {
                 &self.clean_text.as_ref().map(|_| "<redacted>"),
             )
             .field("quality_score", &self.quality_score)
-            .field("visibility", &self.visibility)
             .finish()
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ResumeVisibility {
-    Searchable,
-    Partial,
-    Hidden,
 }
 
 #[derive(Clone, PartialEq)]

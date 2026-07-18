@@ -1,5 +1,134 @@
 # Query Benchmark 与真实 Query 种子
 
+## 0. 2026-07-13 实现审计
+
+当前仓库已经具备 query benchmark 的 schema、静态 query-set freezer、
+tune/holdout 分层、7 个 bucket、redacted aggregate、stage histogram 和
+`resume-ir-query-v2` resident-batch command harness；这些是可执行框架，不是已
+冻结的生产 baseline。公开 synthetic smoke 只有 2 个 batch request，明确
+`resident_daemon_observed=false`、`percentile_confidence=smoke` 和
+`target_claim=not_evaluated`。本地 500-query D10K query set、同语义 resident
+daemon baseline 和负载曲线尚未形成，不能用于 before/after 优化声明。
+
+冻结前必须先消除下列实现漂移：
+
+| Surface | 当前代码事实 | 结论 |
+|---|---|---|
+| query-set normalization | `core-domain` 对 freeze 输入执行 NFKC、逻辑 term 去重、4096-byte/16-term cap | implemented for freezer only |
+| runtime keyword semantics | `search-planner` 仅压缩空白并删除内置 stopword；full-text 使用 Tantivy lenient parser，未启用 default conjunction | contract mismatch: runtime 不是冻结的 required-all 语义 |
+| field filter | CLI/daemon 在 BM25/ANN 前通过 searchable entity lookup 求交，并在 hydrate 后复核 | implemented；仍要求非空文本 query |
+| semantic | direct CLI/daemon 可用持久化 vector snapshot 和本地 embedding command 查询 | partial；每次 query 建立 command embedder并打开 vector index |
+| hybrid | direct CLI/daemon 对 full-text 与 vector 结果做 RRF，再做 candidate fold | partial；继承 keyword 语义和 semantic runtime 问题 |
+| benchmark resident batch | 一个 CLI 子进程顺序处理整批 JSONL，并报告每条 record 的 stage timing | command-resident only；不是 daemon IPC resident baseline |
+
+因此不得先冻结 query set 再修 runtime semantics。下一步必须让 direct CLI、
+daemon 和 benchmark execution 共用同一 canonical query semantics，并以
+metamorphic tests 证明 required-all、explicit OR、phrase、field-filter subset、
+NFKC、dedupe 和 size/term caps；完成后才能执行静态 freeze。
+
+## 0.1 2026-07-14 Public synthetic query hot-path freeze
+
+S751 已完成上述 runtime semantics 对齐。S752 的 fresh preflight 随后证明，当前
+私有 `agent_query_replay` 仍不能严格冻结：没有 retained D10K-ready corpus，且
+2,167 个允许的 source-search events 去重后只有 21 条唯一候选，7-bucket 覆盖
+严重不足。该 500-query private gate 保持不变且继续阻塞；不得用 synthetic
+query 替代它，也不得据此声明 W1、D10K、agent replay 或生产 workload 已验收。
+
+为了在无真实用户历史的个人项目阶段建立可重复的工程起点，另行冻结公开
+`query_hot_path` workload `resume-ir.public-synthetic-query-hot-path.v1`：
+
+| Contract | Frozen value |
+|---|---:|
+| synthetic documents | 10,000 |
+| unique query cycle | 500 |
+| single_term | 50 |
+| and_2 | 75 |
+| and_3_5 | 150 |
+| and_6_16 | 50 |
+| field_filter | 75 |
+| hybrid | 75 |
+| semantic | 25 |
+| allowed zero-result queries | 0 |
+
+文档与 query 都由版本化确定性生成器产生；benchmark 的 redacted JSON 只公开
+版本、规范规模、唯一数和 bucket aggregate，不输出逐条 query 或结果。任何
+query 文本、分布或生成规则变化都必须升级 workload version，旧版 before/after
+不得混用。规范验证命令是：
+
+```bash
+resume-benchmark synthetic-query --index-dir <redacted-temp-index> \
+  --documents 10000 --queries 500 --top-k 10 --json
+```
+
+该命令仍是 in-process synthetic harness，不是 resident daemon/load baseline。
+单次运行产生的 P95/QPS 只能证明 harness 可执行，不能冻结性能目标。下一 slice
+必须在相同 workload/version、语义、top-k、H-tier 和资源预算下建立 resident
+query baseline 与负载曲线；用户要求的 P95 降至初始可用 baseline 的 50% 以下、
+稳定负载至少 2 倍，只能相对该 accepted baseline 判定，不能相对本节的一次性
+smoke 数字判定。
+
+## 0.2 2026-07-14 Resident public-synthetic before baseline
+
+S756 新增 `resume-benchmark resident-query-load`，它先在空数据目录生成并发布
+10,000 份确定性 synthetic 文档、完整 full-text snapshot、10,000 份 vector records
+和 field-filter entities，再启动真实 release `resume-daemon` 并通过 authenticated
+loopback `/search` 执行冻结 workload。正式方法固定为 30 秒 warmup、每个
+closed-loop 并发点 5 次、每个 open-loop 容量点 5 次、top-k 10、30/70/100/120%
+容量点，并以 scheduled-start-to-completion 计算 arrival latency。closed-loop QPS
+使用包含尾部请求排空的真实 elapsed；跨重复连续推进与 500 互质的 query-cycle
+permutation，不能反复只测 cycle 前缀。
+
+报告 schema 固定为 `resume-ir.resident-query-load.v1`。输出只包含固定上限的
+全局和 per-bucket P50/P95/P99、七阶段 latency/histogram、bucket/mode counts、
+RSS/CPU aggregate 和隐私布尔值；不包含 query、候选结果、token 或路径。七个
+代表 query 还必须在 warmup 前全部通过，保证 fulltext、field-filter、hybrid 和
+semantic 产品路径真实可用。当前 IPC 明确是每请求新建并关闭连接，semantic/
+hybrid 明确每 query 启动本地 embedding command；benchmark 不隐藏这些现状。
+
+稳定容量定义在 baseline 前冻结为：实际吞吐至少达到 target QPS 的 95%，
+arrival P95 不超过 1500ms，且所有 response/result contract 均一致。三次校准运行
+分别因 closed-loop 分母/重复合同、per-bucket/semantic 覆盖不足和只建立 500 份
+vector records 而被拒绝，均不能作为 before。最终 accepted public-synthetic
+aggregate 是：
+
+| Metric | Accepted before |
+|---|---:|
+| calibrated capacity | 2.831 QPS |
+| stable capacity | 1.982 QPS |
+| 30% arrival/service P95 | 1380.280 / 1374.130ms |
+| 70% arrival/service P95 | 1387.538 / 1379.628ms |
+| 100% arrival/service P95 | 1755.418 / 1747.631ms |
+| 120% arrival/service P95 | 1902.207 / 1892.170ms |
+| daemon RSS peak / H2 budget | 192.906 / 1536 MiB |
+| host CPU mean / peak during measured phase | 44.990% / 82.979% |
+
+70% 稳定点的 service P95 按 bucket 为：single-term 938.350ms、and-2
+1003.099ms、and-3-5 615.417ms、and-6-16 161.743ms、field-filter 256.485ms、
+hybrid 1392.958ms、semantic 1199.138ms。后续性能验收必须使用同一 workload、
+语义、top-k、H2 预算和方法；每个有样本的主 bucket P95 目标不高于上述 before
+的 50%，稳定容量目标至少 3.963 QPS。不得靠减少结果、改变 required-all/
+field-filter 语义、跳过 semantic/hybrid 或放宽稳定容量条件达标。
+
+该 baseline 的 `evidence_lane=smoke` 仅表示公开 synthetic 工程证据，不是
+W1、D10K、agent replay、真实用户 workload、IPC readiness 或 GUI readiness。
+本地报告保持 owner-only；公开仓库只记录本节的 redacted aggregate。
+该 before 刻意保留开发机并行负载，不把其他进程消耗从 latency 中扣除；后续
+after 必须继续报告 host/daemon CPU，并以 50% latency / 2x capacity 的大幅门槛
+覆盖当前约数个百分点的跨运行波动，不能用单次微小变化作成功声明。
+
+S757 将 vector snapshot 升级为 generation-bound v2，并在共享发布锁下
+复用 resident HNSW。正式 after 的 calibrated/stable capacity 为 7.319/7.319
+QPS，70% arrival/service/ANN P95 为 239.811/233.376/90.585ms。七个
+bucket 中六个已低于 before 的 50%，但 single-term 572.567ms 仍高于
+469.175ms 上限，因此只接受 ANN 瓶颈优化，不接受整体目标完成声明。
+
+S758 复用 daemon metadata store 并按数据库 Ready generation 缓存 immutable
+full-text reader 后，正式 after calibrated/stable capacity 达到
+74.612/52.228 QPS，70% arrival/service P95 为 73.922/67.198ms。七个
+bucket P95 为 60.317/56.138/49.608/29.750/28.560/78.916/71.793ms，
+全部低于 S756 before 的 50%。该结果接受 initial resident query speed/load
+目标，但不代表 IPC batch/cancel/deadline/overload 或 GUI readiness。
+
 ## 1. 来源边界
 
 当前阶段只定义 `agent_query_replay` 静态基准。它只有一个允许来源：

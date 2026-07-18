@@ -5,7 +5,6 @@ use std::str::FromStr;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use index_vector::{PersistentVectorIndex, VectorDocument, VectorIndex};
 use meta_store::{
     DocumentId, ImportTaskId, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrWordBox,
     UnixTimestamp,
@@ -43,7 +42,7 @@ fn delete_soft_tombstones_document_and_removes_it_from_default_search() {
     let delete_stdout = String::from_utf8_lossy(&delete.stdout);
     assert!(delete_stdout.contains("delete completed"));
     assert!(delete_stdout.contains("status: deleted"));
-    assert!(delete_stdout.contains("index rebuilt: true"));
+    assert!(delete_stdout.contains("publication committed: true"));
     assert!(!delete_stdout.contains(path_str(&fixture_root)));
     assert!(!delete_stdout.contains(path_str(&data_dir)));
 
@@ -268,34 +267,6 @@ fn discovery_profile_reuses_root_scan_without_deleting_skipped_directories() {
 }
 
 #[test]
-fn default_search_hydrates_metadata_to_hide_deleted_stale_index_hits() {
-    let _guard = s14_test_lock();
-    let data_dir = temp_dir("stale-index-delete-data");
-    let fixture_root = fixture_root();
-    import_fixtures(&data_dir, &fixture_root);
-
-    let before = search(&data_dir, "Java");
-    assert!(before.contains("results: 2"));
-    let deleted_doc_id = doc_id_for_file(&before, "synthetic-java-engineer.docx");
-
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
-    store
-        .mark_document_deleted(
-            &DocumentId::from_str(&deleted_doc_id).unwrap(),
-            UnixTimestamp::from_unix_seconds(1_900_000_000),
-        )
-        .unwrap();
-
-    let after = search(&data_dir, "Java");
-    assert!(after.contains("results: 1"));
-    assert!(!after.contains("synthetic-java-engineer.docx"));
-    assert!(after.contains("synthetic-java-platform.pdf"));
-
-    remove_dir(&data_dir);
-}
-
-#[test]
 fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_path_leak() {
     let _guard = s14_test_lock();
     let data_dir = temp_dir("purge-deleted-data");
@@ -307,29 +278,8 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
     let deleted_doc_id = doc_id_for_file(&before, "synthetic-java-engineer.docx");
     let live_doc_id = doc_id_for_file(&before, "synthetic-java-platform.pdf");
 
-    let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), 4).unwrap();
-    vector_index
-        .upsert(vec![
-            VectorDocument::new_for_model(
-                "fixture-model",
-                "fixture-model:deleted-doc",
-                deleted_doc_id.clone(),
-                vec![1.0, 0.0, 0.0, 0.0],
-            )
-            .unwrap(),
-            VectorDocument::new_for_model(
-                "fixture-model",
-                "fixture-model:live-doc",
-                live_doc_id.clone(),
-                vec![0.0, 1.0, 0.0, 0.0],
-            )
-            .unwrap(),
-        ])
-        .unwrap();
-    assert_eq!(vector_index.snapshot().unwrap().vector_count(), 2);
-
     let deleted_document_id = DocumentId::from_str(&deleted_doc_id).unwrap();
-    let (ocr_cache_key, ocr_job_id, embedding_job_id) = {
+    let (ocr_cache_key, embedding_job_id) = {
         let store = MetaStore::open_data_dir(&data_dir).unwrap();
         store.run_migrations().unwrap();
         let deleted_document = store
@@ -356,13 +306,6 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
         .unwrap();
         assert_eq!(ocr_cache_entry.word_boxes().len(), 1);
         store.upsert_ocr_page_cache_entry(&ocr_cache_entry).unwrap();
-        let ocr_job = store
-            .enqueue_ocr_job_for_document(
-                &deleted_document.id,
-                UnixTimestamp::from_unix_seconds(1_800_014_001),
-            )
-            .unwrap()
-            .job;
         let embedding_job = store
             .enqueue_embedding_job_for_resume_version(
                 &deleted_document.id,
@@ -373,7 +316,7 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
             )
             .unwrap()
             .job;
-        (ocr_cache_key, ocr_job.id, embedding_job.id)
+        (ocr_cache_key, embedding_job.id)
     };
 
     let delete = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
@@ -407,7 +350,7 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
     assert!(stdout.contains("purged documents: 1"));
     assert!(stdout.contains("index rebuilt: true"));
     assert!(stdout.contains("vector documents purged: 1"));
-    assert!(stdout.contains("ingest jobs purged: 2"));
+    assert!(stdout.contains("ingest jobs purged: 1"));
     assert!(stdout.contains("embedding job specs purged: 1"));
     assert!(stdout.contains("ocr cache entries purged: 1"));
     assert!(stdout.contains("ocr word boxes purged: 1"));
@@ -440,11 +383,8 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
         .ocr_page_cache_entry(&ocr_cache_key)
         .unwrap()
         .is_none());
-    assert!(store.ingest_job_by_id(&ocr_job_id).unwrap().is_none());
     assert!(store.ingest_job_by_id(&embedding_job_id).unwrap().is_none());
-    assert_eq!(snapshot_dir_count(&data_dir), 1);
-    let reopened_vector = PersistentVectorIndex::open(data_dir.join("vector-index"), 4).unwrap();
-    assert_eq!(reopened_vector.snapshot().unwrap().vector_count(), 1);
+    assert_eq!(snapshot_dir_count(&data_dir), 2);
 
     let after = search(&data_dir, "Java");
     assert!(after.contains("results: 1"));

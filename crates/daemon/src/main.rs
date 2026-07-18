@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -14,29 +14,24 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use embedder::{
-    Embedder, EmbeddingBudget, EmbeddingInput, LocalEmbeddingCommandEmbedder,
-    LocalEmbeddingCommandSpec,
+    EmbeddingBudget, EmbeddingError, EmbeddingInput, EmbeddingPriority, LocalEmbeddingCommandSpec,
+    ResidentEmbeddingClient, ResidentEmbeddingOwner, ResidentEmbeddingSpec,
 };
 use import_pipeline::{
     detect_ocr_page_count, import_root_with_options, index_claimed_ocr_text,
-    rebuild_full_text_index, ImportOptions, ImportScanBudgetKind as PipelineImportScanBudgetKind,
-    ImportSummary, ImportTaskOwnerLock, ScanProfile,
-};
-use index_fulltext::{
-    inspect_snapshot_root, redact_contact_values, FullTextIndex, SearchHit, SearchQuery,
-    SnapshotReadTarget, SnapshotRootState,
-};
-use index_vector::{
-    inspect_persistent_vector_snapshot, reset_persistent_vector_snapshots_for_rebuild,
-    PersistentVectorIndex, PersistentVectorSnapshotState, QueryVector, VectorDocument, VectorHit,
-    VectorIndex,
+    reconcile_search_artifacts, ImportOptions, ImportPipelineErrorClass, ImportResourcePolicy,
+    ImportScanBudgetKind as PipelineImportScanBudgetKind, ImportSummary, ImportTaskOwnerLock,
+    ScanProfile, SearchArtifactRecoverySummary, SearchProjectionRemoval,
+    SearchProjectionRemovalReason, SearchPublicationEmbeddingFailure,
+    SearchPublicationEmbeddingInput, SearchPublicationEmbeddingOutput,
+    SearchPublicationVectorization, SearchPublicationVectorizer,
 };
 use meta_store::{
-    ContactHash, Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
-    ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportScanScope,
-    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobFailureKind,
-    IngestJobStatus, MetaStore, OcrAttemptFailure, OcrPageCacheEntry, OcrPageCacheKey,
-    OcrPageCacheStatus, ResumeVersion, ResumeVersionId, ResumeVisibility, UnixTimestamp,
+    ContactHash, DocumentId, DocumentStatus, EntityType, ImportRootKind, ImportRootPreset,
+    ImportScanBudgetKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexStateStatus, IngestJobFailureKind, MetaStore, MetaStoreErrorClass,
+    OcrAttemptFailure, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, SearchFilterCase,
+    SearchProjectionFilter, SearchProjectionPredicate, SearchProjectionServiceState, UnixTimestamp,
     WorkerTaskKind,
 };
 use notify::{
@@ -49,23 +44,31 @@ use ocr_client::{
     OcrOptions, OcrPageRequest, OcrWorkerBudget, PdftoppmPdfRenderer, PdftoppmRenderSpec,
     RenderedPage, TesseractLanguageAvailability, TesseractOcrClient, TesseractOcrSpec,
 };
-use rank_fusion::{
-    fuse_hybrid_rrf, soft_dedupe_score, DateRange, DedupeProfile, DegreeLevel, HybridRecall,
-    RankedHit, ResumeProfile, SchoolTier, SearchFilters,
-};
+use privacy::redact_contact_values;
+#[cfg(unix)]
+use process_containment::CurrentProcessGroupLeader;
+use rank_fusion::{DateRange, DegreeLevel, SchoolTier, SearchFilters};
 use search_planner::plan_search;
-use sectionizer::Sectionizer;
+
+mod detail_hydrate;
+mod detail_ipc;
+mod diagnostics_ipc;
+mod import_root_control;
+mod ipc;
+mod query_runtime;
+mod query_timing;
+mod search_batch;
+mod search_ipc;
+
+use query_timing::{QueryStage, QueryStageTiming};
 
 const IMPORT_RETRY_BACKOFF_SECONDS: i64 = 60;
 const DEFAULT_IMPORT_RESCAN_MIN_AGE_SECONDS: i64 = 300;
 const IMPORT_TASK_HEARTBEAT_SECONDS: u64 = 30;
 const STALE_IMPORT_TASK_SECONDS: i64 = 15 * 60;
 const STALE_INGEST_JOB_SECONDS: i64 = 15 * 60;
-const IPC_AUTH_TOKEN_FILE: &str = "ipc.auth";
-const IPC_ENDPOINT_FILE: &str = "ipc.endpoints.json";
-const IPC_ENDPOINT_SCHEMA_VERSION: &str = "resume-ir.daemon-ipc.v1";
-const IPC_AUTH_TOKEN_BYTES: usize = 32;
 const IPC_MAX_REQUEST_BYTES: usize = 64 * 1024;
+const SEARCH_RESULT_FILE_NAME_MAX_BYTES: usize = 160;
 const IPC_METADATA_READ_ATTEMPTS: usize = 40;
 const IPC_METADATA_READ_RETRY_MS: u64 = 25;
 const IMPORT_PROGRESS_STREAM_EVENTS: usize = 3;
@@ -81,17 +84,14 @@ const OCR_PAGE_BUDGET_REMEDIATION: &str =
     "raise OCR max pages per document or skip oversized scanned PDFs";
 const OCR_LANGUAGE_REMEDIATION: &str =
     "install requested OCR language packs or choose an installed OCR language";
-const DEFAULT_EMBEDDING_MAX_DOCS: usize = 64;
-const DEFAULT_EMBEDDING_MAX_TEXT_BYTES: usize = 1_000_000;
 const DEFAULT_EMBEDDING_TIMEOUT_MS: u64 = 30_000;
 const FIELD_CONFIDENCE_THRESHOLD: f32 = 0.75;
-
 #[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+const PARENT_LIFECYCLE_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("resume-daemon: {error}");
+        eprintln!("{}", error.fatal_event_json());
         std::process::exit(error.exit_code());
     }
 }
@@ -131,7 +131,15 @@ fn take_data_dir(args: &mut Vec<String>) -> Result<PathBuf> {
 }
 
 fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
-    let options = parse_run_options(args)?;
+    let mut options = parse_run_options(args)?;
+
+    if options
+        .expected_ipc_protocol
+        .as_deref()
+        .is_some_and(|protocol| protocol != ipc::IPC_PROTOCOL_VERSION)
+    {
+        return Err(DaemonError::protocol_mismatch());
+    }
 
     if !options.foreground {
         return Err(DaemonError::usage(run_usage()));
@@ -169,21 +177,6 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
             "usage: choose either --work-ocr or --work-ocr-once",
         ));
     }
-    if options.work_embeddings_once && !options.once {
-        return Err(DaemonError::usage(
-            "usage: --work-embeddings-once requires --once",
-        ));
-    }
-    if options.work_embeddings && options.once {
-        return Err(DaemonError::usage(
-            "usage: --work-embeddings cannot be combined with --once",
-        ));
-    }
-    if options.work_embeddings && options.work_embeddings_once {
-        return Err(DaemonError::usage(
-            "usage: choose either --work-embeddings or --work-embeddings-once",
-        ));
-    }
     if options.work_index_once && !options.once {
         return Err(DaemonError::usage(
             "usage: --work-index-once requires --once",
@@ -205,7 +198,7 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
         && !options.has_worker_loop()
     {
         return Err(DaemonError::usage(
-            "usage: worker loop options require --work-imports, --work-ocr, --work-embeddings, or --work-index",
+            "usage: worker loop options require --work-imports, --work-ocr, or --work-index",
         ));
     }
     if options.ocr_jobs_per_tick.is_some() && !options.work_ocr {
@@ -250,24 +243,45 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
         && options.ocr_command.is_none()
         && options.ocr_tesseract_command.is_none()
     {
-        return Err(DaemonError::user(
+        return Err(DaemonError::configuration_invalid(
             "ocr worker blocked: local OCR command not configured",
         ));
     }
-    if (options.work_embeddings_once || options.work_embeddings)
-        && options.embedding_command.is_none()
-    {
-        return Err(DaemonError::user(
-            "embedding worker blocked: local embedding command not configured",
-        ));
-    }
-    if (options.work_embeddings_once || options.work_embeddings)
-        && (options.embedding_model_id.is_none() || options.embedding_dimension.is_none())
-    {
-        return Err(DaemonError::usage(run_usage()));
-    }
+    let daemon_owner = if options.once {
+        None
+    } else {
+        let owner_mode = match options.parent_lifecycle {
+            ParentLifecycleMode::Unmanaged => ipc::OwnerMode::Standalone,
+            ParentLifecycleMode::Stdin => ipc::OwnerMode::DesktopSupervised,
+        };
+        Some(
+            match ipc::DaemonGenerationOwner::acquire(data_dir, owner_mode) {
+                Ok(owner) => owner,
+                Err(ipc::GenerationError::OwnershipConflict) => {
+                    return Err(DaemonError::ownership_conflict());
+                }
+                Err(ipc::GenerationError::RuntimeIntegrity) => {
+                    return Err(DaemonError::runtime_integrity());
+                }
+                Err(ipc::GenerationError::Storage) => {
+                    return Err(DaemonError::recoverable_dependency(
+                        "daemon generation storage unavailable",
+                    ));
+                }
+            },
+        )
+    };
+    let parent_shutdown = start_parent_lifecycle_watch(options.parent_lifecycle)?;
+    let _resident_embedding_owner = start_resident_embedding(&mut options)?;
 
     let store = open_store(data_dir)?;
+    reconcile_search_artifacts(
+        data_dir,
+        &store,
+        current_timestamp()?,
+        &options.search_vectorization,
+    )
+    .map_err(DaemonError::import)?;
     let summary = store.status_summary().map_err(DaemonError::store)?;
 
     println!("resume-daemon foreground ready");
@@ -277,45 +291,203 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("import tasks cancelled: {}", summary.import_tasks_cancelled);
     io::stdout()
         .flush()
-        .map_err(|_| DaemonError::user("unable to write daemon status"))?;
+        .map_err(|_| DaemonError::control_plane("unable to write daemon status"))?;
 
     if options.work_imports_once {
-        let import_summary = run_import_worker_once(data_dir, &store)?;
+        let import_summary = run_import_worker_once(data_dir, &store, &options)?;
         print_import_worker_summary(&import_summary)?;
     }
     if options.work_ocr_once {
         let ocr_summary = run_ocr_worker_once(data_dir, &store, &options)?;
         print_ocr_worker_summary(&ocr_summary)?;
     }
-    if options.work_embeddings_once {
-        let embedding_summary = run_embedding_worker_once(data_dir, &store, &options)?;
-        print_embedding_worker_summary(&embedding_summary)?;
-    }
     if options.work_index_once {
-        let index_summary = run_index_worker_once(data_dir, &store, true)?;
-        print_index_worker_summary(&index_summary)?;
+        let recovery = run_search_artifact_worker_once(data_dir, &store, &options)?;
+        print_search_artifact_worker_summary(&recovery)?;
     }
 
     if options.once {
         return Ok(());
     }
     if options.has_worker_loop() && options.ipc_listen.is_some() {
-        run_worker_with_ipc(data_dir, &options)?;
+        run_worker_with_ipc(
+            data_dir,
+            &options,
+            parent_shutdown.as_ref(),
+            daemon_owner
+                .as_ref()
+                .expect("persistent daemon owns its data directory"),
+        )?;
         return Ok(());
     }
     if options.has_worker_loop() {
-        run_worker_loop(data_dir, &store, &options, None)?;
+        run_worker_loop(data_dir, &store, &options, parent_shutdown)?;
         return Ok(());
     }
     if let Some(ipc_addr) = options.ipc_listen {
-        serve_ipc(data_dir, ipc_addr, options.max_requests, &options)?;
-        if options.max_requests.is_some() {
+        serve_ipc(
+            data_dir,
+            ipc_addr,
+            options.max_requests,
+            &options,
+            parent_shutdown.as_ref(),
+            daemon_owner
+                .as_ref()
+                .expect("persistent daemon owns its data directory"),
+        )?;
+        if options.max_requests.is_some() || parent_shutdown.is_some() {
             return Ok(());
         }
     }
 
     loop {
-        thread::sleep(Duration::from_secs(3_600));
+        if parent_shutdown
+            .as_ref()
+            .is_some_and(|shutdown| shutdown.load(Ordering::Acquire))
+        {
+            return Ok(());
+        }
+        thread::sleep(if parent_shutdown.is_some() {
+            Duration::from_millis(25)
+        } else {
+            Duration::from_secs(3_600)
+        });
+    }
+}
+
+fn start_parent_lifecycle_watch(mode: ParentLifecycleMode) -> Result<Option<Arc<AtomicBool>>> {
+    if mode != ParentLifecycleMode::Stdin {
+        return Ok(None);
+    }
+    #[cfg(unix)]
+    let process_group_leader = CurrentProcessGroupLeader::acquire().map_err(|_| {
+        DaemonError::user("parent lifecycle stdin requires an isolated process group")
+    })?;
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let watcher_shutdown = Arc::clone(&shutdown);
+    thread::spawn(move || {
+        let mut stdin = io::stdin().lock();
+        let mut buffer = [0_u8; 1];
+        loop {
+            match stdin.read(&mut buffer) {
+                Ok(0) | Err(_) => {
+                    watcher_shutdown.store(true, Ordering::Release);
+                    #[cfg(unix)]
+                    {
+                        thread::sleep(PARENT_LIFECYCLE_SHUTDOWN_GRACE);
+                        let _ = process_group_leader.kill_process_group();
+                    }
+                    return;
+                }
+                Ok(_) => {}
+            }
+        }
+    });
+    Ok(Some(shutdown))
+}
+
+fn start_resident_embedding(options: &mut RunOptions) -> Result<Option<ResidentEmbeddingOwner>> {
+    if options.embedding_command.is_none() {
+        return Ok(None);
+    }
+    let command = options
+        .embedding_command
+        .clone()
+        .ok_or_else(|| DaemonError::usage(run_usage()))?;
+    let model_id = options
+        .embedding_model_id
+        .as_deref()
+        .ok_or_else(|| DaemonError::usage(run_usage()))?;
+    let dimension = options
+        .embedding_dimension
+        .ok_or_else(|| DaemonError::usage(run_usage()))?;
+    let command =
+        LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), model_id, dimension)
+            .map_err(DaemonError::embedding)?
+            .with_timeout_ms(options.embedding_timeout_ms)
+            .map_err(DaemonError::embedding)?;
+    let inference_threads = ImportResourcePolicy::detect().parse_workers.get();
+    let owner = ResidentEmbeddingOwner::start(
+        ResidentEmbeddingSpec::new(command)
+            .with_intra_threads(inference_threads)
+            .map_err(DaemonError::embedding)?,
+    )
+    .map_err(DaemonError::embedding)?;
+    let client = owner.client();
+    options.search_vectorization =
+        SearchPublicationVectorization::enabled(Arc::new(ResidentPublicationVectorizer {
+            client: client.clone(),
+            timeout_ms: options.embedding_timeout_ms,
+        }));
+    options.resident_embedding = Some(client);
+    Ok(Some(owner))
+}
+
+struct ResidentPublicationVectorizer {
+    client: ResidentEmbeddingClient,
+    timeout_ms: u64,
+}
+
+impl SearchPublicationVectorizer for ResidentPublicationVectorizer {
+    fn model_id(&self) -> &str {
+        self.client.model_id()
+    }
+
+    fn dimension(&self) -> usize {
+        self.client.dimension()
+    }
+
+    fn max_batch_inputs(&self) -> usize {
+        embedding_protocol::MAX_INPUTS
+    }
+
+    fn max_text_bytes(&self) -> usize {
+        embedding_protocol::MAX_TEXT_BYTES
+    }
+
+    fn embed_batch(
+        &self,
+        inputs: &[SearchPublicationEmbeddingInput],
+        is_cancelled: &dyn Fn() -> bool,
+    ) -> std::result::Result<Vec<SearchPublicationEmbeddingOutput>, SearchPublicationEmbeddingFailure>
+    {
+        let resident_inputs = inputs
+            .iter()
+            .map(|input| EmbeddingInput::new(input.id(), input.text()))
+            .collect::<Vec<_>>();
+        self.client
+            .embed_batch_with_cancel(
+                EmbeddingPriority::Background,
+                &resident_inputs,
+                EmbeddingBudget::new(resident_inputs.len(), embedding_protocol::MAX_TEXT_BYTES),
+                self.timeout_ms,
+                is_cancelled,
+            )
+            .map(|outputs| {
+                outputs
+                    .into_iter()
+                    .map(|output| {
+                        SearchPublicationEmbeddingOutput::new(
+                            output.id(),
+                            output.model_id(),
+                            output.values().to_vec(),
+                        )
+                    })
+                    .collect()
+            })
+            .map_err(|error| match error {
+                EmbeddingError::Cancelled => SearchPublicationEmbeddingFailure::Cancelled,
+                EmbeddingError::InvalidDimension
+                | EmbeddingError::InvalidRequest
+                | EmbeddingError::BudgetExceeded { .. }
+                | EmbeddingError::TextBudgetExceeded { .. } => {
+                    SearchPublicationEmbeddingFailure::InvalidOutput
+                }
+                EmbeddingError::WorkerUnavailable
+                | EmbeddingError::EngineFailed
+                | EmbeddingError::Overloaded
+                | EmbeddingError::Timeout => SearchPublicationEmbeddingFailure::RuntimeUnavailable,
+            })
     }
 }
 
@@ -329,6 +501,13 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                 options.foreground = true;
                 index += 1;
             }
+            "--parent-lifecycle-stdin" => {
+                if options.parent_lifecycle != ParentLifecycleMode::Unmanaged {
+                    return Err(DaemonError::usage(run_usage()));
+                }
+                options.parent_lifecycle = ParentLifecycleMode::Stdin;
+                index += 1;
+            }
             "--once" => {
                 options.once = true;
                 index += 1;
@@ -338,6 +517,14 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                     return Err(DaemonError::usage(run_usage()));
                 };
                 options.ipc_listen = Some(parse_loopback_addr(value)?);
+                index += 2;
+            }
+            "--expected-ipc-protocol" => {
+                if options.expected_ipc_protocol.is_some() {
+                    return Err(DaemonError::usage(run_usage()));
+                }
+                options.expected_ipc_protocol =
+                    Some(parse_non_empty_run_value(args.get(index + 1))?);
                 index += 2;
             }
             "--max-requests" => {
@@ -390,14 +577,6 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
             }
             "--work-ocr" => {
                 options.work_ocr = true;
-                index += 1;
-            }
-            "--work-embeddings-once" => {
-                options.work_embeddings_once = true;
-                index += 1;
-            }
-            "--work-embeddings" => {
-                options.work_embeddings = true;
                 index += 1;
             }
             "--work-index-once" => {
@@ -525,20 +704,6 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
                 options.embedding_dimension = Some(parse_positive_usize_run_value(value)?);
                 index += 2;
             }
-            "--embedding-max-docs" => {
-                let Some(value) = args.get(index + 1) else {
-                    return Err(DaemonError::usage(run_usage()));
-                };
-                options.embedding_max_docs = parse_positive_usize_run_value(value)?;
-                index += 2;
-            }
-            "--embedding-max-text-bytes" => {
-                let Some(value) = args.get(index + 1) else {
-                    return Err(DaemonError::usage(run_usage()));
-                };
-                options.embedding_max_text_bytes = parse_positive_usize_run_value(value)?;
-                index += 2;
-            }
             "--embedding-timeout-ms" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(DaemonError::usage(run_usage()));
@@ -596,7 +761,7 @@ fn parse_run_options(args: &[String]) -> Result<RunOptions> {
 }
 
 fn run_usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--once] [--work-imports-once|--work-imports [--rescan-completed-imports] [--watch-import-roots] [--import-rescan-min-age-seconds <n>] [--stale-import-task-seconds <n>] [--import-retry-backoff-seconds <n>]] [--work-ocr-once|--work-ocr] [--work-embeddings-once|--work-embeddings] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--ocr-jobs-per-tick <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-max-docs <n>] [--embedding-max-text-bytes <bytes>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--parent-lifecycle-stdin] [--once] [--work-imports-once|--work-imports [--rescan-completed-imports] [--watch-import-roots] [--import-rescan-min-age-seconds <n>] [--stale-import-task-seconds <n>] [--import-retry-backoff-seconds <n>]] [--work-ocr-once|--work-ocr] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--ocr-jobs-per-tick <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--expected-ipc-protocol <version>] [--max-requests <n>]"
 }
 
 fn parse_non_empty_run_value(value: Option<&String>) -> Result<String> {
@@ -633,16 +798,20 @@ fn valid_run_identifier(value: &str) -> bool {
         && !value.contains('\t')
 }
 
-fn run_worker_with_ipc(data_dir: &Path, options: &RunOptions) -> Result<()> {
+fn run_worker_with_ipc(
+    data_dir: &Path,
+    options: &RunOptions,
+    parent_shutdown: Option<&Arc<AtomicBool>>,
+    daemon_owner: &ipc::DaemonGenerationOwner,
+) -> Result<()> {
     let ipc_addr = options
         .ipc_listen
         .expect("validated combined worker/ipc mode has ipc address");
-    let listener = bind_ipc_listener(data_dir, ipc_addr)?;
-    listener
-        .set_nonblocking(true)
-        .map_err(|_| DaemonError::user("unable to configure daemon ipc listener"))?;
+    let listener = bind_ipc_listener(ipc_addr, daemon_owner)?;
     let ipc_store = open_store(data_dir)?;
-    let stop_worker = Arc::new(AtomicBool::new(false));
+    let stop_worker = parent_shutdown
+        .cloned()
+        .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
     let worker_stop = Arc::clone(&stop_worker);
     let worker_data_dir = data_dir.to_path_buf();
     let worker_options = options.clone();
@@ -655,19 +824,22 @@ fn run_worker_with_ipc(data_dir: &Path, options: &RunOptions) -> Result<()> {
         let _ = worker_result_sender.send(result);
     });
 
-    let ipc_result = serve_ipc_listener_with_worker_monitor(
-        data_dir,
-        &ipc_store,
+    let ipc_result = serve_ipc_listener(
         &listener,
-        options.max_requests,
-        options,
-        &worker_result_receiver,
+        IpcServerContext {
+            data_dir,
+            store: &ipc_store,
+            max_requests: options.max_requests,
+            options,
+            shutdown: Some(&stop_worker),
+            worker_result_receiver: Some(&worker_result_receiver),
+            daemon_owner,
+        },
     );
-    remove_ipc_endpoint_manifest(data_dir);
     stop_worker.store(true, Ordering::Relaxed);
     worker_handle
         .join()
-        .map_err(|_| DaemonError::user("worker thread panicked"))?;
+        .map_err(|_| DaemonError::control_plane("worker thread panicked"))?;
     ipc_result
 }
 
@@ -706,13 +878,15 @@ fn run_worker_loop(
                 ..ImportWorkerSummary::default()
             };
             if options.rescan_completed_imports {
-                import_summary.completed_requeued = requeue_completed_imports(
-                    store,
-                    now,
+                let min_age_seconds = if ticks == 1 {
+                    0
+                } else {
                     options
                         .import_rescan_min_age_seconds
-                        .unwrap_or(DEFAULT_IMPORT_RESCAN_MIN_AGE_SECONDS),
-                )?;
+                        .unwrap_or(DEFAULT_IMPORT_RESCAN_MIN_AGE_SECONDS)
+                };
+                import_summary.completed_requeued =
+                    requeue_completed_imports(store, now, min_age_seconds)?;
             }
             if let Some(watcher) = import_watcher.as_mut() {
                 import_summary.extend_watcher(watcher.sync_and_requeue(store, now)?);
@@ -720,6 +894,7 @@ fn run_worker_loop(
             import_summary.extend(run_import_worker_once_with_retry_due(
                 data_dir,
                 store,
+                options,
                 timestamp_minus_seconds(
                     now,
                     options
@@ -744,16 +919,10 @@ fn run_worker_loop(
                 print_ocr_worker_summary(&ocr_summary)?;
             }
         }
-        if options.work_embeddings {
-            let embedding_summary = run_embedding_worker_once(data_dir, store, options)?;
-            if embedding_summary.has_activity() {
-                print_embedding_worker_summary(&embedding_summary)?;
-            }
-        }
         if options.work_index {
-            let index_summary = run_index_worker_once(data_dir, store, false)?;
-            if index_summary.has_activity() {
-                print_index_worker_summary(&index_summary)?;
+            let recovery = run_search_artifact_worker_once(data_dir, store, options)?;
+            if search_artifact_recovery_has_activity(&recovery) {
+                print_search_artifact_worker_summary(&recovery)?;
             }
         }
         if options
@@ -781,44 +950,33 @@ fn sleep_worker_interval(interval: Duration, stop_signal: Option<&Arc<AtomicBool
     }
 }
 
-fn run_import_worker_once(data_dir: &Path, store: &MetaStore) -> Result<ImportWorkerSummary> {
-    let retryable_due_at = current_timestamp()?;
-    run_import_worker_once_with_retry_due(data_dir, store, retryable_due_at)
-}
-
-fn run_index_worker_once(
+fn run_import_worker_once(
     data_dir: &Path,
     store: &MetaStore,
-    force_rebuild: bool,
-) -> Result<IndexWorkerSummary> {
-    if !force_rebuild && !full_text_index_needs_rebuild(data_dir) {
-        return Ok(IndexWorkerSummary::default());
-    }
-
-    let summary = rebuild_full_text_index(data_dir, store, current_timestamp()?)
-        .map_err(DaemonError::import)?;
-    Ok(IndexWorkerSummary {
-        rebuilt: true,
-        indexed_documents: summary.indexed_documents,
-    })
+    options: &RunOptions,
+) -> Result<ImportWorkerSummary> {
+    let retryable_due_at = current_timestamp()?;
+    run_import_worker_once_with_retry_due(data_dir, store, options, retryable_due_at)
 }
 
-fn full_text_index_needs_rebuild(data_dir: &Path) -> bool {
-    match inspect_snapshot_root(&data_dir.join("search-index")) {
-        Ok(inspection) => !matches!(
-            (inspection.state(), inspection.read_target()),
-            (
-                SnapshotRootState::Ready,
-                Some(SnapshotReadTarget::PublishedSnapshot),
-            )
-        ),
-        Err(_) => true,
-    }
+fn run_search_artifact_worker_once(
+    data_dir: &Path,
+    store: &MetaStore,
+    options: &RunOptions,
+) -> Result<SearchArtifactRecoverySummary> {
+    reconcile_search_artifacts(
+        data_dir,
+        store,
+        current_timestamp()?,
+        &options.search_vectorization,
+    )
+    .map_err(DaemonError::import)
 }
 
 fn run_import_worker_once_with_retry_due(
     data_dir: &Path,
     store: &MetaStore,
+    options: &RunOptions,
     retryable_due_at: UnixTimestamp,
 ) -> Result<ImportWorkerSummary> {
     let mut worker_summary = ImportWorkerSummary::default();
@@ -843,7 +1001,7 @@ fn run_import_worker_once_with_retry_due(
             continue;
         };
 
-        let import_options = match import_options_from_scope(&scope) {
+        let import_options = match import_options_from_scope(&scope, options) {
             Ok(import_options) => import_options,
             Err(_) => {
                 mark_import_task_failed_permanent(store, &task, now)?;
@@ -876,7 +1034,8 @@ fn run_import_worker_once_with_retry_due(
         drop(owner_lock);
         let import_summary = match import_result {
             Ok(import_summary) => import_summary,
-            Err(_) => {
+            Err(error) => {
+                worker_summary.failure_class = Some(error.class());
                 if store
                     .is_import_task_cancelled(&task.id)
                     .map_err(DaemonError::store)?
@@ -917,7 +1076,7 @@ fn run_ocr_worker_once(
     }
 
     if options.ocr_command.is_none() && options.ocr_tesseract_command.is_none() {
-        return Err(DaemonError::user(
+        return Err(DaemonError::configuration_invalid(
             "ocr worker blocked: local OCR command not configured",
         ));
     }
@@ -1189,7 +1348,7 @@ fn run_claimed_ocr_job(
         } else if let Some(client) = &tesseract_client {
             client.recognize_page(request, budget, &cancellation)
         } else {
-            return Err(DaemonError::user(
+            return Err(DaemonError::configuration_invalid(
                 "ocr worker blocked: local OCR command not configured",
             ));
         };
@@ -1242,6 +1401,7 @@ fn run_claimed_ocr_job(
         confidence,
         Some(page_count),
         now,
+        &options.search_vectorization,
     ) {
         Ok(outcome) => outcome,
         Err(error) => {
@@ -1311,137 +1471,6 @@ fn mark_ocr_job_failed_permanent(
         .map_err(DaemonError::store)
 }
 
-fn run_embedding_worker_once(
-    data_dir: &Path,
-    store: &MetaStore,
-    options: &RunOptions,
-) -> Result<EmbeddingWorkerSummary> {
-    let Some(command) = options.embedding_command.clone() else {
-        return Err(DaemonError::user(
-            "embedding worker blocked: local embedding command not configured",
-        ));
-    };
-    let model_id = options
-        .embedding_model_id
-        .as_deref()
-        .ok_or_else(|| DaemonError::usage(run_usage()))?;
-    let dimension = options
-        .embedding_dimension
-        .ok_or_else(|| DaemonError::usage(run_usage()))?;
-    let now = current_timestamp()?;
-    let stale_recovered = recover_stale_ingest_jobs(store, now)?;
-    let rebuild_vector_snapshot = vector_snapshot_requires_embedding_rebuild(data_dir);
-    let completed_requeued = if rebuild_vector_snapshot {
-        store
-            .requeue_completed_embedding_jobs_for_model(model_id, dimension, now)
-            .map_err(DaemonError::store)?
-    } else {
-        0
-    };
-    if rebuild_vector_snapshot {
-        reset_persistent_vector_snapshots_for_rebuild(data_dir.join("vector-index"))
-            .map_err(DaemonError::vector)?;
-    }
-    enqueue_embedding_jobs_for_candidates(
-        store,
-        options.embedding_max_docs,
-        model_id,
-        dimension,
-        now,
-    )?;
-    let jobs = claim_embedding_jobs(store, options.embedding_max_docs, model_id, dimension, now)?;
-    let documents_considered = jobs.len();
-    if jobs.is_empty() {
-        return Ok(EmbeddingWorkerSummary {
-            stale_recovered,
-            completed_requeued,
-            ..EmbeddingWorkerSummary::default()
-        });
-    }
-
-    let mut candidates = Vec::new();
-    for job in jobs {
-        match embedding_candidate_for_job(store, &job)? {
-            Some(candidate) => candidates.push((job, candidate)),
-            None => store
-                .update_job_status(&job.id, IngestJobStatus::Completed, now)
-                .map_err(DaemonError::store)?,
-        }
-    }
-    if candidates.is_empty() {
-        return Ok(EmbeddingWorkerSummary {
-            stale_recovered,
-            completed_requeued,
-            documents_considered,
-            processed: 0,
-            vector_writes: 0,
-            failed: 0,
-        });
-    }
-
-    let embedder = LocalEmbeddingCommandEmbedder::new(
-        LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), model_id, dimension)
-            .map_err(DaemonError::embedding)?
-            .with_timeout_ms(options.embedding_timeout_ms)
-            .map_err(DaemonError::embedding)?,
-    );
-    let vector_inputs = embedding_inputs_for_candidates(&candidates);
-    let inputs = vector_inputs
-        .iter()
-        .map(|input| EmbeddingInput::new(input.input_id.as_str(), input.text.as_str()))
-        .collect::<Vec<_>>();
-    let vectors = match embedder.embed_batch(
-        &inputs,
-        EmbeddingBudget::new(inputs.len(), options.embedding_max_text_bytes),
-    ) {
-        Ok(vectors) => vectors,
-        Err(error) => {
-            mark_embedding_jobs_failed_retryable(store, &candidates, now)?;
-            return Err(DaemonError::embedding(error));
-        }
-    };
-    let vector_writes = vectors.len();
-    let vector_documents = vectors
-        .into_iter()
-        .zip(vector_inputs.iter())
-        .map(|(vector, input)| {
-            VectorDocument::new_for_model(
-                vector.model_id(),
-                format!("{}:{}", vector.model_id(), vector.id()),
-                input.document_id.as_str(),
-                vector.values().to_vec(),
-            )
-            .map_err(DaemonError::vector)
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let index = match PersistentVectorIndex::open(data_dir.join("vector-index"), dimension) {
-        Ok(index) => index,
-        Err(error) => {
-            mark_embedding_jobs_failed_retryable(store, &candidates, now)?;
-            return Err(DaemonError::vector(error));
-        }
-    };
-    if let Err(error) = index.upsert(vector_documents) {
-        mark_embedding_jobs_failed_retryable(store, &candidates, now)?;
-        return Err(DaemonError::vector(error));
-    }
-
-    for (job, _) in &candidates {
-        store
-            .update_job_status(&job.id, IngestJobStatus::Completed, now)
-            .map_err(DaemonError::store)?;
-    }
-
-    Ok(EmbeddingWorkerSummary {
-        stale_recovered,
-        completed_requeued,
-        documents_considered,
-        processed: candidates.len(),
-        vector_writes,
-        failed: 0,
-    })
-}
-
 fn recover_stale_ingest_jobs(store: &MetaStore, now: UnixTimestamp) -> Result<usize> {
     store
         .recover_stale_running_ingest_jobs(
@@ -1449,232 +1478,6 @@ fn recover_stale_ingest_jobs(store: &MetaStore, now: UnixTimestamp) -> Result<us
             timestamp_minus_seconds(now, STALE_INGEST_JOB_SECONDS),
         )
         .map_err(DaemonError::store)
-}
-
-fn vector_snapshot_requires_embedding_rebuild(data_dir: &Path) -> bool {
-    let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
-    match (inspection.state(), inspection.snapshot()) {
-        (PersistentVectorSnapshotState::Ready | PersistentVectorSnapshotState::Recovered, _) => {
-            false
-        }
-        (
-            PersistentVectorSnapshotState::Missing
-            | PersistentVectorSnapshotState::Corrupt
-            | PersistentVectorSnapshotState::Unreadable,
-            _,
-        ) => true,
-    }
-}
-
-fn enqueue_embedding_jobs_for_candidates(
-    store: &MetaStore,
-    max_docs: usize,
-    model_id: &str,
-    dimension: usize,
-    now: UnixTimestamp,
-) -> Result<usize> {
-    let mut pending_jobs = 0_usize;
-    for document in store.visible_documents().map_err(DaemonError::store)? {
-        if !matches!(
-            document.status,
-            DocumentStatus::FieldsExtracted
-                | DocumentStatus::EmbeddingDone
-                | DocumentStatus::IndexedPartial
-                | DocumentStatus::Searchable
-        ) {
-            continue;
-        }
-
-        for version in store
-            .resume_versions_for_document(&document.id)
-            .map_err(DaemonError::store)?
-        {
-            if version.visibility != ResumeVisibility::Searchable {
-                continue;
-            }
-            if embedding_text_for_version(&version).is_none() {
-                continue;
-            };
-            let enqueued = store
-                .enqueue_embedding_job_for_resume_version(
-                    &document.id,
-                    &version.id,
-                    model_id,
-                    dimension,
-                    now,
-                )
-                .map_err(DaemonError::store)?;
-            if embedding_job_is_retryable(&enqueued.job) {
-                pending_jobs += 1;
-                if pending_jobs == max_docs {
-                    return Ok(pending_jobs);
-                }
-            }
-        }
-    }
-
-    Ok(pending_jobs)
-}
-
-fn claim_embedding_jobs(
-    store: &MetaStore,
-    max_docs: usize,
-    model_id: &str,
-    dimension: usize,
-    now: UnixTimestamp,
-) -> Result<Vec<IngestJob>> {
-    let mut jobs = Vec::new();
-    while jobs.len() < max_docs {
-        let Some(job) = store
-            .claim_next_embedding_job(model_id, dimension, now)
-            .map_err(DaemonError::store)?
-        else {
-            break;
-        };
-        jobs.push(job);
-    }
-    Ok(jobs)
-}
-
-fn embedding_candidate_for_job(
-    store: &MetaStore,
-    job: &IngestJob,
-) -> Result<Option<EmbeddingWorkerCandidate>> {
-    let Some(version_id) = job.resume_version_id.as_ref() else {
-        return Ok(None);
-    };
-    let Some(document) = store
-        .document_by_id(&job.document_id)
-        .map_err(DaemonError::store)?
-    else {
-        return Ok(None);
-    };
-    if document.is_deleted
-        || document.status == DocumentStatus::Deleted
-        || !matches!(
-            document.status,
-            DocumentStatus::FieldsExtracted
-                | DocumentStatus::EmbeddingDone
-                | DocumentStatus::IndexedPartial
-                | DocumentStatus::Searchable
-        )
-    {
-        return Ok(None);
-    }
-    let Some(version) = store
-        .resume_version_by_id(version_id)
-        .map_err(DaemonError::store)?
-    else {
-        return Ok(None);
-    };
-    if version.document_id != document.id || version.visibility != ResumeVisibility::Searchable {
-        return Ok(None);
-    }
-    let Some(text) = embedding_text_for_version(&version) else {
-        return Ok(None);
-    };
-    Ok(Some(EmbeddingWorkerCandidate {
-        document_id: document.id,
-        version_id: version.id,
-        text,
-    }))
-}
-
-fn embedding_text_for_version(version: &ResumeVersion) -> Option<String> {
-    version
-        .clean_text
-        .as_deref()
-        .or(version.raw_text.as_deref())
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(str::to_string)
-}
-
-#[derive(Clone, PartialEq, Eq)]
-struct EmbeddingWorkerInput {
-    document_id: DocumentId,
-    input_id: String,
-    text: String,
-}
-
-impl fmt::Debug for EmbeddingWorkerInput {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("EmbeddingWorkerInput")
-            .field("document_id", &self.document_id)
-            .field("input_id", &self.input_id)
-            .field("text", &"<redacted>")
-            .field("text_bytes", &self.text.len())
-            .finish()
-    }
-}
-
-fn embedding_inputs_for_candidates(
-    candidates: &[(IngestJob, EmbeddingWorkerCandidate)],
-) -> Vec<EmbeddingWorkerInput> {
-    let sectionizer = Sectionizer::default();
-    candidates
-        .iter()
-        .flat_map(|(_, candidate)| embedding_inputs_for_candidate(candidate, &sectionizer))
-        .collect()
-}
-
-fn embedding_inputs_for_candidate(
-    candidate: &EmbeddingWorkerCandidate,
-    sectionizer: &Sectionizer,
-) -> Vec<EmbeddingWorkerInput> {
-    let mut inputs = vec![EmbeddingWorkerInput {
-        document_id: candidate.document_id.clone(),
-        input_id: candidate.version_id.to_string(),
-        text: candidate.text.clone(),
-    }];
-    let sections = sectionizer.sectionize(&candidate.text);
-    let full_text = candidate.text.trim();
-    let should_embed_sections = sections.len() > 1
-        || sections
-            .iter()
-            .any(|section| section.text.trim() != full_text);
-
-    if should_embed_sections {
-        inputs.extend(sections.into_iter().filter_map(|section| {
-            let text = section.text.trim();
-            if text.is_empty() {
-                return None;
-            }
-
-            Some(EmbeddingWorkerInput {
-                document_id: candidate.document_id.clone(),
-                input_id: section_embedding_input_id(&candidate.version_id, section.order_no),
-                text: text.to_string(),
-            })
-        }));
-    }
-
-    inputs
-}
-
-fn section_embedding_input_id(version_id: &ResumeVersionId, order_no: u32) -> String {
-    format!("{version_id}:section:{order_no}")
-}
-
-fn embedding_job_is_retryable(job: &IngestJob) -> bool {
-    matches!(
-        job.status,
-        IngestJobStatus::Queued | IngestJobStatus::Interrupted
-    ) || (job.status == IngestJobStatus::FailedRetryable && job.attempt_count < job.max_attempts)
-}
-
-fn mark_embedding_jobs_failed_retryable(
-    store: &MetaStore,
-    candidates: &[(IngestJob, EmbeddingWorkerCandidate)],
-    now: UnixTimestamp,
-) -> Result<()> {
-    for (job, _) in candidates {
-        store
-            .update_job_status(&job.id, IngestJobStatus::FailedRetryable, now)
-            .map_err(DaemonError::store)?;
-    }
-    Ok(())
 }
 
 fn recover_stale_import_tasks(
@@ -1766,7 +1569,9 @@ impl ImportWatcher {
             },
             NotifyConfig::default(),
         )
-        .map_err(|_| DaemonError::user("import watcher blocked: local watcher unavailable"))?;
+        .map_err(|_| {
+            DaemonError::recoverable_dependency("import watcher blocked: local watcher unavailable")
+        })?;
 
         Ok(Self {
             watcher,
@@ -1953,7 +1758,10 @@ fn mark_import_task_failed_permanent(
         .map_err(DaemonError::store)
 }
 
-fn import_options_from_scope(scope: &ImportScanScope) -> Result<ImportOptions> {
+fn import_options_from_scope(
+    scope: &ImportScanScope,
+    options: &RunOptions,
+) -> Result<ImportOptions> {
     Ok(ImportOptions {
         scan_profile: match scope.scan_profile {
             ImportScanProfile::Explicit => ScanProfile::Explicit,
@@ -1968,6 +1776,7 @@ fn import_options_from_scope(scope: &ImportScanScope) -> Result<ImportOptions> {
                 ))
             }
         },
+        search_vectorization: options.search_vectorization.clone(),
         ..ImportOptions::default()
     })
 }
@@ -2039,171 +1848,153 @@ fn serve_ipc(
     addr: SocketAddr,
     max_requests: Option<usize>,
     options: &RunOptions,
+    shutdown: Option<&Arc<AtomicBool>>,
+    daemon_owner: &ipc::DaemonGenerationOwner,
 ) -> Result<()> {
-    let listener = bind_ipc_listener(data_dir, addr)?;
-    let result = serve_ipc_listener(data_dir, &listener, max_requests, options);
-    remove_ipc_endpoint_manifest(data_dir);
-    result
+    let listener = bind_ipc_listener(addr, daemon_owner)?;
+    let ipc_store = open_store(data_dir)?;
+    serve_ipc_listener(
+        &listener,
+        IpcServerContext {
+            data_dir,
+            store: &ipc_store,
+            max_requests,
+            options,
+            shutdown,
+            worker_result_receiver: None,
+            daemon_owner,
+        },
+    )
 }
 
-fn bind_ipc_listener(data_dir: &Path, addr: SocketAddr) -> Result<TcpListener> {
-    let _ = load_or_create_ipc_auth_token(data_dir)?;
+fn bind_ipc_listener(
+    addr: SocketAddr,
+    daemon_owner: &ipc::DaemonGenerationOwner,
+) -> Result<TcpListener> {
     let listener = TcpListener::bind(addr)
-        .map_err(|_| DaemonError::user("unable to bind daemon ipc listener"))?;
+        .map_err(|_| DaemonError::control_plane("unable to bind daemon ipc listener"))?;
+    listener
+        .set_nonblocking(true)
+        .map_err(|_| DaemonError::control_plane("unable to configure daemon ipc listener"))?;
     let local_addr = listener
         .local_addr()
-        .map_err(|_| DaemonError::user("unable to inspect daemon ipc listener"))?;
-    write_ipc_endpoint_manifest(data_dir, local_addr)?;
+        .map_err(|_| DaemonError::control_plane("unable to inspect daemon ipc listener"))?;
+    daemon_owner
+        .publish(local_addr)
+        .map_err(|error| match error {
+            ipc::GenerationError::RuntimeIntegrity => DaemonError::runtime_integrity(),
+            ipc::GenerationError::OwnershipConflict => DaemonError::ownership_conflict(),
+            ipc::GenerationError::Storage => {
+                DaemonError::control_plane("unable to publish daemon ipc discovery")
+            }
+        })?;
     println!("ipc status endpoint: http://{local_addr}/status");
     io::stdout()
         .flush()
-        .map_err(|_| DaemonError::user("unable to write daemon status"))?;
+        .map_err(|_| DaemonError::control_plane("unable to write daemon status"))?;
     Ok(listener)
 }
 
-fn write_ipc_endpoint_manifest(data_dir: &Path, addr: SocketAddr) -> Result<()> {
-    fs::create_dir_all(data_dir)
-        .map_err(|_| DaemonError::user("unable to prepare daemon ipc auto-discovery"))?;
-    let body = serde_json::json!({
-        "schema_version": IPC_ENDPOINT_SCHEMA_VERSION,
-        "status": format!("http://{addr}/status"),
-        "imports": format!("http://{addr}/imports"),
-        "import_cancel": format!("http://{addr}/imports/cancel"),
-        "import_progress": format!("http://{addr}/imports/progress"),
-        "search": format!("http://{addr}/search"),
-        "details": format!("http://{addr}/details"),
-        "delete": format!("http://{addr}/delete"),
-    })
-    .to_string();
-    let path = data_dir.join(IPC_ENDPOINT_FILE);
-    reject_unsafe_ipc_endpoint_manifest_path(&path)?;
-    let temp_path = ipc_endpoint_temp_path(data_dir);
-    let mut options = OpenOptions::new();
-    options.create_new(true).write(true);
-    #[cfg(unix)]
-    {
-        options.mode(0o600);
-    }
-    let mut file = options
-        .open(&temp_path)
-        .map_err(|_| DaemonError::user("unable to write daemon ipc auto-discovery"))?;
-    file.write_all(body.as_bytes())
-        .map_err(|_| DaemonError::user("unable to write daemon ipc auto-discovery"))?;
-    file.flush()
-        .map_err(|_| DaemonError::user("unable to write daemon ipc auto-discovery"))?;
-    #[cfg(unix)]
-    {
-        fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o600))
-            .map_err(|_| DaemonError::user("unable to secure daemon ipc auto-discovery"))?;
-    }
-    if fs::rename(&temp_path, &path).is_err() {
-        let _ = fs::remove_file(&temp_path);
-        return Err(DaemonError::user(
-            "unable to publish daemon ipc auto-discovery",
-        ));
-    }
-    Ok(())
-}
-
-fn reject_unsafe_ipc_endpoint_manifest_path(path: &Path) -> Result<()> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            let file_type = metadata.file_type();
-            if file_type.is_symlink() || !file_type.is_file() {
-                return Err(DaemonError::user(
-                    "unable to secure daemon ipc auto-discovery",
-                ));
-            }
-            Ok(())
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(DaemonError::user(
-            "unable to inspect daemon ipc auto-discovery",
-        )),
-    }
-}
-
-fn ipc_endpoint_temp_path(data_dir: &Path) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    data_dir.join(format!(
-        ".ipc.endpoints.{}.{}.tmp",
-        std::process::id(),
-        unique
-    ))
-}
-
-fn remove_ipc_endpoint_manifest(data_dir: &Path) {
-    let _ = fs::remove_file(data_dir.join(IPC_ENDPOINT_FILE));
-}
-
-fn serve_ipc_listener(
-    data_dir: &Path,
-    listener: &TcpListener,
+struct IpcServerContext<'a> {
+    data_dir: &'a Path,
+    store: &'a MetaStore,
     max_requests: Option<usize>,
-    options: &RunOptions,
-) -> Result<()> {
-    let request_limit = max_requests.unwrap_or(usize::MAX);
-    let ipc_store = open_store(data_dir)?;
-    for _ in 0..request_limit {
-        let (stream, _) = listener
-            .accept()
-            .map_err(|_| DaemonError::user("unable to accept daemon ipc request"))?;
-        handle_ipc_stream(data_dir, &ipc_store, stream, options)?;
-    }
-
-    Ok(())
+    options: &'a RunOptions,
+    shutdown: Option<&'a Arc<AtomicBool>>,
+    worker_result_receiver: Option<&'a Receiver<Result<()>>>,
+    daemon_owner: &'a ipc::DaemonGenerationOwner,
 }
 
-fn serve_ipc_listener_with_worker_monitor(
-    data_dir: &Path,
-    ipc_store: &MetaStore,
-    listener: &TcpListener,
-    max_requests: Option<usize>,
-    options: &RunOptions,
-    worker_result_receiver: &Receiver<Result<()>>,
-) -> Result<()> {
-    let request_limit = max_requests.unwrap_or(usize::MAX);
+fn serve_ipc_listener(listener: &TcpListener, context: IpcServerContext<'_>) -> Result<()> {
+    let request_limit = context.max_requests.unwrap_or(usize::MAX);
     let mut handled_requests = 0_usize;
-
+    let query_service = search_ipc::SearchService::start(context.data_dir, context.options)?;
     while handled_requests < request_limit {
-        match worker_result_receiver.try_recv() {
-            Ok(Ok(())) => {
-                return Err(DaemonError::user(
-                    "import worker exited while daemon ipc was still running",
-                ))
-            }
-            Ok(Err(error)) => return Err(error),
-            Err(TryRecvError::Disconnected) => {
-                return Err(DaemonError::user(
-                    "import worker thread stopped unexpectedly",
-                ))
-            }
-            Err(TryRecvError::Empty) => {}
+        if context
+            .shutdown
+            .is_some_and(|shutdown| shutdown.load(Ordering::Acquire))
+        {
+            break;
         }
-
+        if let Some(worker_result_receiver) = context.worker_result_receiver {
+            match poll_import_worker(worker_result_receiver, context.shutdown)? {
+                WorkerMonitorOutcome::Running => {}
+                WorkerMonitorOutcome::ShutdownComplete => break,
+            }
+        }
+        query_service.check_health()?;
         match listener.accept() {
             Ok((stream, _)) => {
-                handle_ipc_stream(data_dir, ipc_store, stream, options)?;
+                ipc::process_metrics().record_accepted();
+                let connection_outcome = handle_ipc_stream(
+                    context.data_dir,
+                    context.store,
+                    stream,
+                    &query_service,
+                    context.daemon_owner,
+                )?;
+                ipc::process_metrics().record_connection_outcome(connection_outcome);
                 handled_requests += 1;
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(25));
             }
-            Err(_) => return Err(DaemonError::user("unable to accept daemon ipc request")),
+            Err(_) => {
+                return Err(DaemonError::control_plane(
+                    "unable to accept daemon ipc request",
+                ));
+            }
         }
     }
+    query_service.finish()
+}
 
-    Ok(())
+enum WorkerMonitorOutcome {
+    Running,
+    ShutdownComplete,
+}
+
+fn poll_import_worker(
+    worker_result_receiver: &Receiver<Result<()>>,
+    shutdown: Option<&Arc<AtomicBool>>,
+) -> Result<WorkerMonitorOutcome> {
+    match worker_result_receiver.try_recv() {
+        Ok(Ok(())) if shutdown.is_some_and(|shutdown| shutdown.load(Ordering::Acquire)) => {
+            Ok(WorkerMonitorOutcome::ShutdownComplete)
+        }
+        Ok(Ok(())) => Err(DaemonError::control_plane(
+            "import worker exited while daemon ipc was still running",
+        )),
+        Ok(Err(error)) => Err(error),
+        Err(TryRecvError::Disconnected) => Err(DaemonError::control_plane(
+            "import worker thread stopped unexpectedly",
+        )),
+        Err(TryRecvError::Empty) => Ok(WorkerMonitorOutcome::Running),
+    }
 }
 
 fn handle_ipc_stream(
     data_dir: &Path,
     ipc_store: &MetaStore,
+    stream: TcpStream,
+    query_service: &search_ipc::SearchService,
+    daemon_owner: &ipc::DaemonGenerationOwner,
+) -> Result<ipc::ConnectionOutcome> {
+    match handle_ipc_request(data_dir, ipc_store, stream, query_service, daemon_owner) {
+        Ok(()) => Ok(ipc::ConnectionOutcome::Completed),
+        Err(error) => match error.into_request_failure() {
+            Ok(error) => Ok(ipc::ConnectionOutcome::from_request_result(Err(error))),
+            Err(fatal) => Err(fatal),
+        },
+    }
+}
+
+fn handle_ipc_request(
+    data_dir: &Path,
+    ipc_store: &MetaStore,
     mut stream: TcpStream,
-    options: &RunOptions,
+    query_service: &search_ipc::SearchService,
+    daemon_owner: &ipc::DaemonGenerationOwner,
 ) -> Result<()> {
     stream
         .set_nonblocking(false)
@@ -2211,6 +2002,7 @@ fn handle_ipc_stream(
     stream
         .set_read_timeout(Some(Duration::from_secs(2)))
         .map_err(|_| DaemonError::user("unable to set daemon ipc timeout"))?;
+    ipc::response::configure(&stream).map_err(DaemonError::response_sink)?;
     let request = match read_ipc_request(&mut stream)? {
         IpcReadOutcome::Request(request) => request,
         IpcReadOutcome::TooLarge => {
@@ -2225,53 +2017,160 @@ fn handle_ipc_stream(
         && request.path == "/status"
         && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
     {
-        let body = status_json(ipc_store)?;
+        let body = status_json(ipc_store);
         return write_http_response(&mut stream, 200, "application/json", &body);
+    }
+
+    if request.method == "GET"
+        && request.path == "/diagnostics"
+        && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
+    {
+        return handle_diagnostics_ipc(ipc_store, daemon_owner.auth_token(), &request, &mut stream);
     }
 
     if request.method == "POST"
         && request.path == "/imports"
         && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
     {
-        return handle_import_command_ipc(data_dir, &request, &mut stream);
+        return handle_import_command_ipc(
+            data_dir,
+            daemon_owner.auth_token(),
+            &request,
+            &mut stream,
+        );
     }
 
     if request.method == "POST"
         && request.path == "/imports/cancel"
         && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
     {
-        return handle_import_cancel_command_ipc(data_dir, &request, &mut stream);
+        return handle_import_cancel_command_ipc(
+            data_dir,
+            daemon_owner.auth_token(),
+            &request,
+            &mut stream,
+        );
+    }
+
+    if request.method == "POST"
+        && request.path == "/imports/control"
+        && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
+    {
+        return import_root_control::handle_ipc(
+            data_dir,
+            daemon_owner.auth_token(),
+            &request,
+            &mut stream,
+        );
     }
 
     if request.method == "GET"
         && request.path == "/imports/progress"
         && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
     {
-        return handle_import_progress_stream_ipc(data_dir, &request, &mut stream);
+        return handle_import_progress_stream_ipc(
+            data_dir,
+            daemon_owner.auth_token(),
+            &request,
+            &mut stream,
+        );
     }
 
     if request.method == "POST"
         && request.path == "/search"
         && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
     {
-        return handle_search_command_ipc(data_dir, &request, &mut stream, options);
+        return handle_search_command_ipc(
+            ipc_store,
+            daemon_owner.auth_token(),
+            &request,
+            stream,
+            query_service,
+        );
+    }
+
+    if request.method == "POST"
+        && request.path == "/search/batch"
+        && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
+    {
+        return handle_search_batch_ipc(
+            ipc_store,
+            daemon_owner.auth_token(),
+            &request,
+            stream,
+            query_service,
+        );
+    }
+
+    if request.method == "POST"
+        && request.path == "/search/cancel"
+        && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
+    {
+        return handle_search_cancel_ipc(
+            daemon_owner.auth_token(),
+            &request,
+            stream,
+            query_service,
+        );
     }
 
     if request.method == "POST"
         && request.path == "/details"
         && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
     {
-        return handle_detail_command_ipc(data_dir, &request, &mut stream);
+        return handle_detail_command_ipc(
+            ipc_store,
+            daemon_owner.auth_token(),
+            &request,
+            &mut stream,
+        );
+    }
+
+    if request.method == "POST"
+        && request.path == "/details/hydrate"
+        && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
+    {
+        return handle_detail_hydrate_command_ipc(
+            ipc_store,
+            daemon_owner.auth_token(),
+            &request,
+            &mut stream,
+        );
     }
 
     if request.method == "POST"
         && request.path == "/delete"
         && (request.version == "HTTP/1.1" || request.version == "HTTP/1.0")
     {
-        return handle_delete_command_ipc(data_dir, &request, &mut stream);
+        return handle_delete_command_ipc(
+            data_dir,
+            daemon_owner.auth_token(),
+            &request,
+            &mut stream,
+        );
     }
 
     write_http_response(&mut stream, 404, "text/plain", "not found")
+}
+
+fn query_service_error(store: &MetaStore) -> Option<ipc::ServiceErrorCode> {
+    match store.search_projection_state() {
+        Ok(state) => projection_query_error(Some(state.service_state)),
+        Err(_) => projection_query_error(None),
+    }
+}
+
+fn projection_query_error(
+    state: Option<SearchProjectionServiceState>,
+) -> Option<ipc::ServiceErrorCode> {
+    match state {
+        Some(SearchProjectionServiceState::Ready) => None,
+        Some(SearchProjectionServiceState::Repairing) => Some(ipc::ServiceErrorCode::Repairing),
+        Some(SearchProjectionServiceState::RepairBlocked) => {
+            Some(ipc::ServiceErrorCode::QueryServiceUnavailable)
+        }
+        None => Some(ipc::ServiceErrorCode::MetadataUnavailable),
+    }
 }
 
 fn read_ipc_request(stream: &mut TcpStream) -> Result<IpcReadOutcome> {
@@ -2370,10 +2269,11 @@ fn parse_content_length(value: &str) -> Option<usize> {
 
 fn handle_import_command_ipc(
     data_dir: &Path,
+    auth_token: &str,
     request: &IpcRequest,
     stream: &mut TcpStream,
 ) -> Result<()> {
-    if !ipc_command_authorized(data_dir, &request.headers)? {
+    if !ipc_command_authorized(auth_token, &request.headers) {
         let body = serde_json::json!({
             "schema_version": "daemon.error.v1",
             "status": "unauthorized",
@@ -2411,16 +2311,31 @@ fn handle_import_command_ipc(
             .to_string();
             write_http_response(stream, 404, "application/json", &body)
         }
-        Err(IpcCommandError::Internal(error)) => Err(error),
+        Err(IpcCommandError::TooLarge(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "too_large",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 413, "application/json", &body)
+        }
+        Err(IpcCommandError::ServiceUnavailable(_)) => {
+            write_service_unavailable(stream, ipc::ServiceErrorCode::QueryServiceUnavailable)
+        }
+        Err(IpcCommandError::Internal(_error)) => {
+            write_service_unavailable(stream, ipc::ServiceErrorCode::MetadataUnavailable)
+        }
     }
 }
 
 fn handle_import_cancel_command_ipc(
     data_dir: &Path,
+    auth_token: &str,
     request: &IpcRequest,
     stream: &mut TcpStream,
 ) -> Result<()> {
-    if !ipc_command_authorized(data_dir, &request.headers)? {
+    if !ipc_command_authorized(auth_token, &request.headers) {
         let body = serde_json::json!({
             "schema_version": "daemon.error.v1",
             "status": "unauthorized",
@@ -2458,16 +2373,31 @@ fn handle_import_cancel_command_ipc(
             .to_string();
             write_http_response(stream, 404, "application/json", &body)
         }
-        Err(IpcCommandError::Internal(error)) => Err(error),
+        Err(IpcCommandError::TooLarge(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "too_large",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 413, "application/json", &body)
+        }
+        Err(IpcCommandError::ServiceUnavailable(_)) => {
+            write_service_unavailable(stream, ipc::ServiceErrorCode::QueryServiceUnavailable)
+        }
+        Err(IpcCommandError::Internal(_error)) => {
+            write_service_unavailable(stream, ipc::ServiceErrorCode::MetadataUnavailable)
+        }
     }
 }
 
 fn handle_import_progress_stream_ipc(
     data_dir: &Path,
+    auth_token: &str,
     request: &IpcRequest,
     stream: &mut TcpStream,
 ) -> Result<()> {
-    if !ipc_command_authorized(data_dir, &request.headers)? {
+    if !ipc_command_authorized(auth_token, &request.headers) {
         let body = serde_json::json!({
             "schema_version": "daemon.error.v1",
             "status": "unauthorized",
@@ -2476,18 +2406,27 @@ fn handle_import_progress_stream_ipc(
         return write_http_response(stream, 401, "application/json", &body);
     }
 
-    stream
-        .write_all(
-            b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\n\r\n",
-        )
-        .map_err(|_| DaemonError::user("unable to write daemon import progress stream"))?;
+    let first_event = match import_progress_stream_event_json(data_dir) {
+        Ok(event) => event,
+        Err(_) => {
+            return write_service_unavailable(stream, ipc::ServiceErrorCode::MetadataUnavailable);
+        }
+    };
+    ipc::response::write_all(
+        stream,
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\n\r\n",
+    )
+    .map_err(DaemonError::response_sink)?;
     for event_index in 0..IMPORT_PROGRESS_STREAM_EVENTS {
-        let event = import_progress_stream_event_json(data_dir)?;
-        stream
-            .write_all(event.as_bytes())
-            .and_then(|_| stream.write_all(b"\n"))
-            .and_then(|_| stream.flush())
-            .map_err(|_| DaemonError::user("unable to write daemon import progress stream"))?;
+        let event = if event_index == 0 {
+            first_event.clone()
+        } else {
+            import_progress_stream_event_json(data_dir)?
+        };
+        ipc::response::write_all(stream, event.as_bytes())
+            .and_then(|_| ipc::response::write_all(stream, b"\n"))
+            .and_then(|_| ipc::response::flush(stream))
+            .map_err(DaemonError::response_sink)?;
         if event_index + 1 < IMPORT_PROGRESS_STREAM_EVENTS {
             thread::sleep(Duration::from_millis(IMPORT_PROGRESS_STREAM_INTERVAL_MS));
         }
@@ -2495,121 +2434,386 @@ fn handle_import_progress_stream_ipc(
     Ok(())
 }
 
-fn ipc_command_authorized(data_dir: &Path, headers: &[(String, String)]) -> Result<bool> {
-    let expected = load_or_create_ipc_auth_token(data_dir)?;
+fn ipc_command_authorized(expected: &str, headers: &[(String, String)]) -> bool {
     let Some(header) = header_value(headers, "authorization") else {
-        return Ok(false);
+        return false;
     };
     let Some(token) = header.strip_prefix("Bearer ") else {
-        return Ok(false);
+        return false;
     };
 
-    Ok(constant_time_eq(
-        token.trim().as_bytes(),
-        expected.as_bytes(),
-    ))
+    constant_time_eq(token.trim().as_bytes(), expected.as_bytes())
+}
+
+fn handle_diagnostics_ipc(
+    store: &MetaStore,
+    auth_token: &str,
+    request: &IpcRequest,
+    stream: &mut TcpStream,
+) -> Result<()> {
+    if !ipc_command_authorized(auth_token, &request.headers) {
+        let body = serde_json::json!({
+            "schema_version": "daemon.error.v1",
+            "status": "unauthorized",
+        })
+        .to_string();
+        return write_http_response(stream, 401, "application/json", &body);
+    }
+    let body = diagnostics_ipc::render(store);
+    write_http_response(stream, 200, "application/json", &body)
 }
 
 fn handle_search_command_ipc(
-    data_dir: &Path,
+    store: &MetaStore,
+    auth_token: &str,
     request: &IpcRequest,
-    stream: &mut TcpStream,
-    options: &RunOptions,
+    mut stream: TcpStream,
+    query_service: &search_ipc::SearchService,
 ) -> Result<()> {
-    if !ipc_command_authorized(data_dir, &request.headers)? {
+    if !ipc_command_authorized(auth_token, &request.headers) {
         let body = serde_json::json!({
             "schema_version": "daemon.error.v1",
             "status": "unauthorized",
         })
         .to_string();
-        return write_http_response(stream, 401, "application/json", &body);
+        return write_http_response(&mut stream, 401, "application/json", &body);
     }
 
-    match execute_search_command(data_dir, &request.body, options) {
-        Ok(body) => write_http_response(stream, 200, "application/json", &body),
-        Err(IpcCommandError::BadRequest(message)) => {
+    let request_started = Instant::now();
+    let envelope = match search_ipc::parse_request(&request.body) {
+        Ok(envelope) => envelope,
+        Err(message) => {
             let body = serde_json::json!({
                 "schema_version": "daemon.error.v1",
                 "status": "bad_request",
                 "message": message,
             })
             .to_string();
-            write_http_response(stream, 400, "application/json", &body)
+            return write_http_response(&mut stream, 400, "application/json", &body);
         }
-        Err(IpcCommandError::Conflict(message)) => {
-            let body = serde_json::json!({
-                "schema_version": "daemon.error.v1",
-                "status": "conflict",
-                "message": message,
-            })
-            .to_string();
-            write_http_response(stream, 409, "application/json", &body)
+    };
+    let query_parse_started = Instant::now();
+    let args = match parse_search_command(&envelope.payload) {
+        Ok(args) => args,
+        Err(IpcCommandError::BadRequest(message)) => {
+            return write_search_command_error(
+                &mut stream,
+                &envelope.request_id,
+                400,
+                "BAD_REQUEST",
+                message,
+            );
         }
-        Err(IpcCommandError::NotFound(message)) => {
-            let body = serde_json::json!({
-                "schema_version": "daemon.error.v1",
-                "status": "not_found",
-                "message": message,
-            })
-            .to_string();
-            write_http_response(stream, 404, "application/json", &body)
+        Err(_) => {
+            return write_search_command_error(
+                &mut stream,
+                &envelope.request_id,
+                500,
+                "INTERNAL",
+                "search request validation failed",
+            );
         }
-        Err(IpcCommandError::Internal(error)) => Err(error),
+    };
+    if let Some(code) = query_service_error(store) {
+        return write_search_command_error(
+            &mut stream,
+            &envelope.request_id,
+            503,
+            code.label(),
+            "search service is unavailable",
+        );
     }
+    let query_parse_duration = query_parse_started.elapsed();
+    query_service.dispatch(
+        stream,
+        envelope,
+        args,
+        query_parse_duration,
+        request_started,
+    )
+}
+
+fn handle_search_cancel_ipc(
+    auth_token: &str,
+    request: &IpcRequest,
+    mut stream: TcpStream,
+    query_service: &search_ipc::SearchService,
+) -> Result<()> {
+    if !ipc_command_authorized(auth_token, &request.headers) {
+        let body = serde_json::json!({
+            "schema_version": "daemon.error.v1",
+            "status": "unauthorized",
+        })
+        .to_string();
+        return write_http_response(&mut stream, 401, "application/json", &body);
+    }
+    let cancel_request = match search_ipc::parse_cancel_request(&request.body) {
+        Ok(request) => request,
+        Err(message) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "bad_request",
+                "message": message,
+            })
+            .to_string();
+            return write_http_response(&mut stream, 400, "application/json", &body);
+        }
+    };
+    query_service.cancel(stream, cancel_request)
+}
+
+fn handle_search_batch_ipc(
+    store: &MetaStore,
+    auth_token: &str,
+    request: &IpcRequest,
+    mut stream: TcpStream,
+    query_service: &search_ipc::SearchService,
+) -> Result<()> {
+    if !ipc_command_authorized(auth_token, &request.headers) {
+        let body = serde_json::json!({
+            "schema_version": "daemon.error.v1",
+            "status": "unauthorized",
+        })
+        .to_string();
+        return write_http_response(&mut stream, 401, "application/json", &body);
+    }
+
+    let request_started = Instant::now();
+    let batch = match search_batch::parse_request(&request.body) {
+        Ok(batch) => batch,
+        Err(message) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "bad_request",
+                "message": message,
+            })
+            .to_string();
+            return write_http_response(&mut stream, 400, "application/json", &body);
+        }
+    };
+    let mut children = Vec::with_capacity(batch.requests.len());
+    for envelope in batch.requests {
+        let query_parse_started = Instant::now();
+        let args = match parse_search_command(&envelope.payload) {
+            Ok(args) => args,
+            Err(IpcCommandError::BadRequest(message)) => {
+                let body = serde_json::json!({
+                    "schema_version": "daemon.error.v1",
+                    "status": "bad_request",
+                    "message": message,
+                })
+                .to_string();
+                return write_http_response(&mut stream, 400, "application/json", &body);
+            }
+            Err(_) => {
+                let body = serde_json::json!({
+                    "schema_version": "daemon.error.v1",
+                    "status": "internal",
+                })
+                .to_string();
+                return write_http_response(&mut stream, 500, "application/json", &body);
+            }
+        };
+        children.push((envelope, args, query_parse_started.elapsed()));
+    }
+    if let Some(code) = query_service_error(store) {
+        let body = search_ipc::error_body(
+            &batch.batch_id,
+            code.label(),
+            "search service is unavailable",
+        );
+        return write_http_response(&mut stream, 503, "application/json", &body);
+    }
+    let Some(admission) = query_service.acquire_batch() else {
+        let body = search_batch::overload_body(&batch.batch_id);
+        return write_http_response(&mut stream, 503, "application/json", &body);
+    };
+    let writer =
+        search_batch::BatchWriter::start(stream, batch.batch_id, children.len(), admission)?;
+    for (sequence, (envelope, args, query_parse_duration)) in children.into_iter().enumerate() {
+        query_service.dispatch_batch_child(
+            writer.child(sequence, envelope.request_id.clone()),
+            envelope,
+            args,
+            query_parse_duration,
+            request_started,
+        )?;
+    }
+    Ok(())
+}
+
+fn write_search_command_error(
+    stream: &mut TcpStream,
+    request_id: &str,
+    status_code: u16,
+    code: &str,
+    message: &str,
+) -> Result<()> {
+    let body = search_ipc::error_body(request_id, code, message);
+    write_http_response(stream, status_code, "application/json", &body)
 }
 
 fn handle_detail_command_ipc(
-    data_dir: &Path,
+    store: &MetaStore,
+    auth_token: &str,
     request: &IpcRequest,
     stream: &mut TcpStream,
 ) -> Result<()> {
-    if !ipc_command_authorized(data_dir, &request.headers)? {
-        let body = serde_json::json!({
-            "schema_version": "daemon.error.v1",
-            "status": "unauthorized",
-        })
-        .to_string();
-        return write_http_response(stream, 401, "application/json", &body);
+    let request_id = detail_ipc::request_id(&request.body);
+    if !ipc_command_authorized(auth_token, &request.headers) {
+        return write_detail_error(
+            stream,
+            request_id.as_deref(),
+            401,
+            "UNAUTHORIZED",
+            "authenticate",
+        );
     }
 
-    match execute_detail_command(data_dir, &request.body) {
+    match detail_ipc::execute(store, &request.body) {
         Ok(body) => write_http_response(stream, 200, "application/json", &body),
-        Err(IpcCommandError::BadRequest(message)) => {
-            let body = serde_json::json!({
-                "schema_version": "daemon.error.v1",
-                "status": "bad_request",
-                "message": message,
-            })
-            .to_string();
-            write_http_response(stream, 400, "application/json", &body)
-        }
-        Err(IpcCommandError::Conflict(message)) => {
-            let body = serde_json::json!({
-                "schema_version": "daemon.error.v1",
-                "status": "conflict",
-                "message": message,
-            })
-            .to_string();
-            write_http_response(stream, 409, "application/json", &body)
-        }
-        Err(IpcCommandError::NotFound(_message)) => {
-            let body = serde_json::json!({
-                "schema_version": "daemon.error.v1",
-                "status": "not_found",
-            })
-            .to_string();
-            write_http_response(stream, 404, "application/json", &body)
-        }
-        Err(IpcCommandError::Internal(error)) => Err(error),
+        Err(detail_ipc::DetailError::BadRequest) => write_detail_error(
+            stream,
+            request_id.as_deref(),
+            400,
+            "BAD_REQUEST",
+            "correct_request",
+        ),
+        Err(detail_ipc::DetailError::StaleSelection) => write_detail_error(
+            stream,
+            request_id.as_deref(),
+            409,
+            "STALE_SELECTION",
+            "refresh_search",
+        ),
+        Err(detail_ipc::DetailError::NotFound) => write_detail_error(
+            stream,
+            request_id.as_deref(),
+            404,
+            "NOT_FOUND",
+            "refresh_search",
+        ),
+        Err(detail_ipc::DetailError::ResponseTooLarge) => write_detail_error(
+            stream,
+            request_id.as_deref(),
+            413,
+            "RESPONSE_TOO_LARGE",
+            "reduce_page_size",
+        ),
+        Err(detail_ipc::DetailError::Repairing) => write_detail_service_unavailable(
+            stream,
+            request_id.as_deref(),
+            ipc::ServiceErrorCode::Repairing,
+        ),
+        Err(detail_ipc::DetailError::QueryServiceUnavailable) => write_detail_service_unavailable(
+            stream,
+            request_id.as_deref(),
+            ipc::ServiceErrorCode::QueryServiceUnavailable,
+        ),
+        Err(detail_ipc::DetailError::MetadataUnavailable) => write_detail_service_unavailable(
+            stream,
+            request_id.as_deref(),
+            ipc::ServiceErrorCode::MetadataUnavailable,
+        ),
     }
+}
+
+fn handle_detail_hydrate_command_ipc(
+    store: &MetaStore,
+    auth_token: &str,
+    request: &IpcRequest,
+    stream: &mut TcpStream,
+) -> Result<()> {
+    let request_id = detail_ipc::request_id(&request.body);
+    if !ipc_command_authorized(auth_token, &request.headers) {
+        return write_detail_error(
+            stream,
+            request_id.as_deref(),
+            401,
+            "UNAUTHORIZED",
+            "authenticate",
+        );
+    }
+
+    match detail_hydrate::execute(store, &request.body) {
+        Ok(body) => write_http_response(stream, 200, "application/json", &body),
+        Err(detail_hydrate::DetailHydrateError::BadRequest) => write_detail_error(
+            stream,
+            request_id.as_deref(),
+            400,
+            "BAD_REQUEST",
+            "correct_request",
+        ),
+        Err(detail_hydrate::DetailHydrateError::StaleSelection) => write_detail_error(
+            stream,
+            request_id.as_deref(),
+            409,
+            "STALE_SELECTION",
+            "refresh_search",
+        ),
+        Err(detail_hydrate::DetailHydrateError::NotFound) => write_detail_error(
+            stream,
+            request_id.as_deref(),
+            404,
+            "NOT_FOUND",
+            "refresh_search",
+        ),
+        Err(detail_hydrate::DetailHydrateError::ResponseTooLarge) => write_detail_error(
+            stream,
+            request_id.as_deref(),
+            413,
+            "RESPONSE_TOO_LARGE",
+            "reduce_page_size",
+        ),
+        Err(detail_hydrate::DetailHydrateError::Repairing) => write_detail_service_unavailable(
+            stream,
+            request_id.as_deref(),
+            ipc::ServiceErrorCode::Repairing,
+        ),
+        Err(detail_hydrate::DetailHydrateError::QueryServiceUnavailable) => {
+            write_detail_service_unavailable(
+                stream,
+                request_id.as_deref(),
+                ipc::ServiceErrorCode::QueryServiceUnavailable,
+            )
+        }
+        Err(detail_hydrate::DetailHydrateError::MetadataUnavailable) => {
+            write_detail_service_unavailable(
+                stream,
+                request_id.as_deref(),
+                ipc::ServiceErrorCode::MetadataUnavailable,
+            )
+        }
+    }
+}
+
+fn write_detail_error(
+    stream: &mut TcpStream,
+    request_id: Option<&str>,
+    status_code: u16,
+    code: &'static str,
+    action: &'static str,
+) -> Result<()> {
+    let body = unified_error_body(request_id, code, action);
+    write_http_response(stream, status_code, "application/json", &body)
+}
+
+fn write_detail_service_unavailable(
+    stream: &mut TcpStream,
+    request_id: Option<&str>,
+    code: ipc::ServiceErrorCode,
+) -> Result<()> {
+    let body = unified_error_body(request_id, code.label(), code.action());
+    write_http_response(stream, 503, "application/json", &body)
 }
 
 fn handle_delete_command_ipc(
     data_dir: &Path,
+    auth_token: &str,
     request: &IpcRequest,
     stream: &mut TcpStream,
 ) -> Result<()> {
-    if !ipc_command_authorized(data_dir, &request.headers)? {
+    if !ipc_command_authorized(auth_token, &request.headers) {
         let body = serde_json::json!({
             "schema_version": "daemon.error.v1",
             "status": "unauthorized",
@@ -2646,102 +2850,253 @@ fn handle_delete_command_ipc(
             .to_string();
             write_http_response(stream, 404, "application/json", &body)
         }
-        Err(IpcCommandError::Internal(error)) => Err(error),
+        Err(IpcCommandError::TooLarge(message)) => {
+            let body = serde_json::json!({
+                "schema_version": "daemon.error.v1",
+                "status": "too_large",
+                "message": message,
+            })
+            .to_string();
+            write_http_response(stream, 413, "application/json", &body)
+        }
+        Err(IpcCommandError::ServiceUnavailable(_)) => {
+            write_service_unavailable(stream, ipc::ServiceErrorCode::QueryServiceUnavailable)
+        }
+        Err(IpcCommandError::Internal(_error)) => {
+            write_service_unavailable(stream, ipc::ServiceErrorCode::MetadataUnavailable)
+        }
     }
 }
 
+struct DaemonSearchOutput {
+    body: String,
+    stage_timing: QueryStageTiming,
+    cancelled: bool,
+}
+
+struct DaemonSearchExecution<'a> {
+    request_id: &'a str,
+    args: &'a DaemonSearchArgs,
+    query_parse_duration: Duration,
+    deadline: &'a search_ipc::RequestDeadline,
+    cancellation: &'a search_ipc::RequestCancellation,
+}
+
 fn execute_search_command(
-    data_dir: &Path,
-    body: &[u8],
+    store: &MetaStore,
+    execution: &DaemonSearchExecution<'_>,
     options: &RunOptions,
-) -> std::result::Result<String, IpcCommandError> {
-    let payload = serde_json::from_slice::<serde_json::Value>(body)
-        .map_err(|_| IpcCommandError::BadRequest("invalid json"))?;
-    let args = parse_search_command(&payload)?;
+    query_runtime: &mut query_runtime::DaemonQueryRuntime,
+) -> std::result::Result<DaemonSearchOutput, IpcCommandError> {
+    let args = execution.args;
+    let deadline = execution.deadline;
+    let mut stage_timing = QueryStageTiming::default();
+    stage_timing.record_duration(QueryStage::QueryParse, execution.query_parse_duration);
+    if execution.cancellation.is_cancelled() {
+        return Ok(daemon_search_cancelled_output(
+            execution.request_id,
+            0,
+            args.mode,
+            deadline.elapsed(),
+            execution.query_parse_duration,
+        ));
+    }
+    if deadline.expired() {
+        return Ok(daemon_search_deadline_output(
+            execution.request_id,
+            0,
+            args.mode,
+            deadline.elapsed(),
+            stage_timing,
+            Vec::new(),
+        ));
+    }
     let query_started = Instant::now();
-    let store = open_store(data_dir).map_err(IpcCommandError::Internal)?;
-    let hits = match args.mode {
-        DaemonSearchMode::FullText => {
-            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
-                .map_err(DaemonError::fulltext)
-                .map_err(IpcCommandError::Internal)?
-            else {
-                return Ok(daemon_search_not_ready_body(args.mode));
-            };
-            daemon_fulltext_search(&index, &store, &args)?
+    let outcome = query_runtime
+        .execute(
+            args,
+            options,
+            deadline,
+            execution.cancellation,
+            &mut stage_timing,
+        )
+        .map_err(map_query_failure)?;
+    match outcome {
+        query_runtime::SearchExecutionOutcome::Complete(search) => {
+            record_daemon_query_observation(
+                store,
+                args.mode,
+                query_started.elapsed(),
+                search.hits.len(),
+            );
+            Ok(DaemonSearchOutput {
+                body: daemon_search_ok_body(
+                    execution.request_id,
+                    search.visible_epoch,
+                    args.mode,
+                    deadline.elapsed(),
+                    &stage_timing,
+                    &search.hits,
+                    search.partial_reasons,
+                ),
+                stage_timing,
+                cancelled: false,
+            })
         }
-        DaemonSearchMode::Semantic => {
-            let Some(hits) = daemon_semantic_search(data_dir, &store, &args, options)? else {
-                return Ok(daemon_search_not_ready_body(args.mode));
-            };
-            hits
+        query_runtime::SearchExecutionOutcome::Cancelled { visible_epoch } => {
+            Ok(daemon_search_cancelled_output(
+                execution.request_id,
+                visible_epoch,
+                args.mode,
+                deadline.elapsed(),
+                execution.query_parse_duration,
+            ))
         }
-        DaemonSearchMode::Hybrid => {
-            let Some(index) = FullTextIndex::open_active(&data_dir.join("search-index"))
-                .map_err(DaemonError::fulltext)
-                .map_err(IpcCommandError::Internal)?
-            else {
-                return Ok(daemon_search_not_ready_body(args.mode));
-            };
-            let fulltext_hits = daemon_fulltext_search(&index, &store, &args)?;
-            let Some(vector_hits) = daemon_semantic_search(data_dir, &store, &args, options)?
-            else {
-                return Ok(daemon_search_not_ready_body(args.mode));
-            };
-            daemon_fuse_hybrid_hits(fulltext_hits, vector_hits, args.top_k)
+        query_runtime::SearchExecutionOutcome::DeadlineExceeded(search) => {
+            Ok(daemon_search_deadline_output(
+                execution.request_id,
+                search.visible_epoch,
+                args.mode,
+                deadline.elapsed(),
+                stage_timing,
+                search.hits,
+            ))
         }
-    };
-    record_daemon_query_observation(&store, args.mode, query_started.elapsed(), hits.len());
-    Ok(daemon_search_ok_body(args.mode, &hits))
+    }
 }
 
-fn daemon_search_not_ready_body(mode: DaemonSearchMode) -> String {
-    serde_json::json!({
-        "schema_version": "daemon.search.v1",
-        "status": "ok",
-        "mode": mode.label(),
-        "search_index": "not_ready",
-        "result_count": 0,
-        "results": [],
-    })
-    .to_string()
+fn map_query_failure(error: query_runtime::QueryFailure) -> IpcCommandError {
+    match error {
+        query_runtime::QueryFailure::BadRequest => {
+            IpcCommandError::BadRequest("semantic query configuration is invalid")
+        }
+        query_runtime::QueryFailure::SelectionTooLarge => {
+            IpcCommandError::TooLarge("search filter selection exceeds the bounded limit")
+        }
+        query_runtime::QueryFailure::SemanticDisabled => {
+            IpcCommandError::ServiceUnavailable("SEMANTIC_DISABLED")
+        }
+        query_runtime::QueryFailure::Integrity | query_runtime::QueryFailure::Unavailable => {
+            IpcCommandError::ServiceUnavailable("QUERY_SERVICE_UNAVAILABLE")
+        }
+    }
 }
 
-fn daemon_search_ok_body(mode: DaemonSearchMode, hits: &[DaemonSearchHit]) -> String {
+fn daemon_search_ok_body(
+    request_id: &str,
+    visible_epoch: u64,
+    mode: DaemonSearchMode,
+    elapsed: Duration,
+    stage_timing: &QueryStageTiming,
+    hits: &[query_runtime::SearchHit],
+    partial_reasons: Vec<&'static str>,
+) -> String {
     let results = hits
         .iter()
         .map(|hit| {
-            let mut result = serde_json::json!({
+            serde_json::json!({
                 "rank": hit.rank,
-                "doc_id": hit.doc_id,
-                "version_id": hit.version_id,
+                "selection": {
+                    "doc_id": hit.selection.document_id.as_str(),
+                    "version_id": hit.selection.resume_version_id.as_str(),
+                    "visible_epoch": hit.selection.visible_epoch,
+                },
                 "file_name": hit.file_name,
                 "snippet": hit.snippet,
-            });
-            if let Some(hint) = &hit.soft_dedupe_hint {
-                result["soft_dedupe"] = serde_json::json!({
-                    "suspected_versions": hint.suspected_versions,
-                    "max_confidence": format_confidence(hint.max_confidence),
-                    "folded": false,
-                });
-            }
-            result
+            })
         })
         .collect::<Vec<_>>();
-    serde_json::json!({
-        "schema_version": "daemon.search.v1",
-        "status": "ok",
-        "mode": mode.label(),
-        "search_index": "available",
-        "result_count": results.len(),
-        "results": results,
+    search_ipc::response_body(search_ipc::SearchResponse {
+        request_id: request_id.to_string(),
+        status: "ok",
+        visible_epoch,
+        query_mode: mode.response_label(),
+        partial_reasons,
+        latency_ms: elapsed.as_secs_f64() * 1_000.0,
+        stage_latency_ms: search_stage_latency_json(stage_timing),
+        search_index: "available",
+        results,
     })
-    .to_string()
+}
+
+fn daemon_search_deadline_output(
+    request_id: &str,
+    visible_epoch: u64,
+    mode: DaemonSearchMode,
+    elapsed: Duration,
+    stage_timing: QueryStageTiming,
+    hits: Vec<query_runtime::SearchHit>,
+) -> DaemonSearchOutput {
+    let body = daemon_search_ok_body(
+        request_id,
+        visible_epoch,
+        mode,
+        elapsed,
+        &stage_timing,
+        &hits,
+        vec!["deadline_exceeded"],
+    );
+    DaemonSearchOutput {
+        body,
+        stage_timing,
+        cancelled: false,
+    }
+}
+
+fn daemon_search_cancelled_output(
+    request_id: &str,
+    visible_epoch: u64,
+    mode: DaemonSearchMode,
+    elapsed: Duration,
+    query_parse_duration: Duration,
+) -> DaemonSearchOutput {
+    let mut stage_timing = QueryStageTiming::default();
+    stage_timing.record_duration(QueryStage::QueryParse, query_parse_duration);
+    let body = search_ipc::response_body(search_ipc::SearchResponse {
+        request_id: request_id.to_string(),
+        status: "cancelled",
+        visible_epoch,
+        query_mode: mode.response_label(),
+        partial_reasons: Vec::new(),
+        latency_ms: elapsed.as_secs_f64() * 1_000.0,
+        stage_latency_ms: search_stage_latency_json(&stage_timing),
+        search_index: "not_observed",
+        results: Vec::new(),
+    });
+    DaemonSearchOutput {
+        body,
+        stage_timing,
+        cancelled: true,
+    }
+}
+
+fn search_stage_latency_json(stage_timing: &QueryStageTiming) -> serde_json::Value {
+    serde_json::json!({
+        "parse": stage_timing.duration_ms(QueryStage::QueryParse),
+        "prefilter": stage_timing.duration_ms(QueryStage::Prefilter),
+        "bm25": stage_timing.duration_ms(QueryStage::Bm25),
+        "ann": stage_timing.duration_ms(QueryStage::Ann),
+        "fusion": stage_timing.duration_ms(QueryStage::Fusion),
+        "bulk_hydrate": stage_timing.duration_ms(QueryStage::BulkHydrate),
+        "snippet": stage_timing.duration_ms(QueryStage::Snippet),
+    })
 }
 
 fn parse_search_command(
     payload: &serde_json::Value,
 ) -> std::result::Result<DaemonSearchArgs, IpcCommandError> {
+    let object = payload.as_object().ok_or(IpcCommandError::BadRequest(
+        "search payload must be an object",
+    ))?;
+    const ALLOWED_FIELDS: &[&str] = &["query", "mode", "top_k", "filters"];
+    if object
+        .keys()
+        .any(|field| !ALLOWED_FIELDS.contains(&field.as_str()))
+    {
+        return Err(IpcCommandError::BadRequest(
+            "search payload contains an unknown field",
+        ));
+    }
     let query = payload
         .get("query")
         .and_then(serde_json::Value::as_str)
@@ -2765,27 +3120,55 @@ fn parse_search_command(
             .ok_or(IpcCommandError::BadRequest("top_k must be positive"))?,
         None => 10,
     };
-    let filters = parse_search_filters(payload.get("filters"))?;
+    let query = plan_search(&query, top_k)
+        .map_err(|_| IpcCommandError::BadRequest("query is outside semantic bounds"))?
+        .query_text()
+        .to_string();
+    let filter = parse_search_filters(payload.get("filters"))?;
     Ok(DaemonSearchArgs {
         query,
         mode,
         top_k,
-        filters,
+        filter,
     })
 }
 
 fn parse_search_filters(
     filters: Option<&serde_json::Value>,
-) -> std::result::Result<SearchFilters, IpcCommandError> {
+) -> std::result::Result<SearchProjectionFilter, IpcCommandError> {
     let Some(filters) = filters else {
-        return Ok(SearchFilters::default());
+        return Ok(SearchProjectionFilter::default());
     };
     if filters.is_null() {
-        return Ok(SearchFilters::default());
+        return Ok(SearchProjectionFilter::default());
     }
     let Some(object) = filters.as_object() else {
         return Err(IpcCommandError::BadRequest("filters must be an object"));
     };
+
+    const ALLOWED_FIELDS: &[&str] = &[
+        "degree_min",
+        "skills_any",
+        "contact_hashes_any",
+        "school_tiers_any",
+        "names_any",
+        "schools_any",
+        "majors_any",
+        "certificates_any",
+        "date_range_overlaps",
+        "companies_any",
+        "titles_any",
+        "locations_any",
+        "years_experience_min",
+    ];
+    if object
+        .keys()
+        .any(|field| !ALLOWED_FIELDS.contains(&field.as_str()))
+    {
+        return Err(IpcCommandError::BadRequest(
+            "filters contain an unknown field",
+        ));
+    }
 
     let mut parsed = SearchFilters::default();
     if let Some(value) = object.get("degree_min") {
@@ -3015,453 +3398,129 @@ fn parse_search_filters(
                 .ok_or(IpcCommandError::BadRequest(
                     "years_experience_min is invalid",
                 ))? as f32;
+            if !years.is_finite() {
+                return Err(IpcCommandError::BadRequest(
+                    "years_experience_min is invalid",
+                ));
+            }
             parsed = parsed.with_years_experience_min(years);
         }
     }
-    Ok(parsed)
+    search_projection_filter(&parsed)
 }
 
-fn daemon_fulltext_search(
-    index: &FullTextIndex,
-    store: &MetaStore,
-    args: &DaemonSearchArgs,
-) -> std::result::Result<Vec<DaemonSearchHit>, IpcCommandError> {
-    let candidate_limit = args.top_k.saturating_mul(5).clamp(args.top_k, 100);
-    let plan = plan_search(&args.query, candidate_limit)
-        .map_err(|_| IpcCommandError::BadRequest("query must have searchable terms"))?;
-    let allowed_doc_ids = daemon_field_filter_doc_id_prefilter(store, &args.filters)?;
-    let query = SearchQuery::new(plan.query_text()).with_limit(plan.limit());
-    let hits = match &allowed_doc_ids {
-        Some(doc_ids) => index.search_allowed_doc_ids(query, doc_ids),
-        None => index.search(query),
-    }
-    .map_err(DaemonError::fulltext)
-    .map_err(IpcCommandError::Internal)?;
-    daemon_visible_hits(store, hits, &args.filters, args.top_k)
-}
-
-fn daemon_semantic_search(
-    data_dir: &Path,
-    store: &MetaStore,
-    args: &DaemonSearchArgs,
-    options: &RunOptions,
-) -> std::result::Result<Option<Vec<DaemonSearchHit>>, IpcCommandError> {
-    let Some(snapshot_dimension) = daemon_vector_snapshot_dimension(data_dir) else {
-        return Ok(None);
-    };
-    let command = options
-        .embedding_command
-        .clone()
-        .ok_or(IpcCommandError::BadRequest(
-            "semantic search blocked: local embedding command not configured",
-        ))?;
-    let model_id = options
-        .embedding_model_id
-        .as_deref()
-        .ok_or(IpcCommandError::BadRequest(
-            "semantic search blocked: embedding model id not configured",
-        ))?;
-    let dimension = options
-        .embedding_dimension
-        .ok_or(IpcCommandError::BadRequest(
-            "semantic search blocked: embedding dimension not configured",
-        ))?;
-    if dimension != snapshot_dimension {
-        return Err(IpcCommandError::BadRequest(
-            "semantic search blocked: embedding dimension does not match vector index",
-        ));
-    }
-
-    let embedder = LocalEmbeddingCommandEmbedder::new(
-        LocalEmbeddingCommandSpec::new(command, Vec::<String>::new(), model_id, dimension)
-            .map_err(DaemonError::embedding)
-            .map_err(IpcCommandError::Internal)?
-            .with_timeout_ms(options.embedding_timeout_ms)
-            .map_err(DaemonError::embedding)
-            .map_err(IpcCommandError::Internal)?,
-    );
-    let input = EmbeddingInput::new("query", args.query.as_str());
-    let query_vectors = embedder
-        .embed_batch(&[input], EmbeddingBudget::new(1, args.query.len().max(1)))
-        .map_err(DaemonError::embedding)
-        .map_err(IpcCommandError::Internal)?;
-    let query_vector = query_vectors
-        .into_iter()
-        .next()
-        .ok_or(IpcCommandError::BadRequest(
-            "semantic search query embedding is unavailable",
-        ))?;
-    let vector_index = PersistentVectorIndex::open(data_dir.join("vector-index"), dimension)
-        .map_err(DaemonError::vector)
-        .map_err(IpcCommandError::Internal)?;
-    let candidate_limit = args.top_k.saturating_mul(5).clamp(args.top_k, 100);
-    let allowed_doc_ids = daemon_field_filter_doc_id_prefilter(store, &args.filters)?;
-    let vector_hits = vector_index
-        .knn_for_model(
-            QueryVector::new(query_vector.values().to_vec())
-                .map_err(DaemonError::vector)
-                .map_err(IpcCommandError::Internal)?,
-            candidate_limit,
-            model_id,
-        )
-        .map_err(DaemonError::vector)
-        .map_err(IpcCommandError::Internal)?;
-
-    daemon_vector_hits(
-        store,
-        vector_hits,
-        &args.filters,
-        allowed_doc_ids.as_ref(),
-        args.top_k,
-    )
-    .map(Some)
-}
-
-fn daemon_vector_snapshot_dimension(data_dir: &Path) -> Option<usize> {
-    let inspection = inspect_persistent_vector_snapshot(data_dir.join("vector-index"));
-    match (inspection.state(), inspection.snapshot()) {
-        (
-            PersistentVectorSnapshotState::Ready | PersistentVectorSnapshotState::Recovered,
-            Some(snapshot),
-        ) => Some(snapshot.dimension()),
-        _ => None,
-    }
-}
-
-fn daemon_vector_hits(
-    store: &MetaStore,
-    hits: Vec<VectorHit>,
+fn search_projection_filter(
     filters: &SearchFilters,
-    allowed_doc_ids: Option<&BTreeSet<String>>,
-    top_k: usize,
-) -> std::result::Result<Vec<DaemonSearchHit>, IpcCommandError> {
-    let mut visible = Vec::new();
-    let mut seen_candidate_keys = BTreeSet::new();
-
-    for (rank, hit) in hits.into_iter().enumerate() {
-        if let Some(allowed_doc_ids) = allowed_doc_ids {
-            if !allowed_doc_ids.contains(hit.doc_id()) {
-                continue;
-            }
-        }
-        let Some((document, version)) =
-            daemon_hydrate_visible_document_version(store, hit.doc_id())?
-        else {
-            continue;
-        };
-        if !filters.is_empty()
-            && !filters.matches(&daemon_persisted_profile(store, hit.doc_id(), &version)?)
-        {
-            continue;
-        }
-        let candidate_key = daemon_candidate_fold_key(&version);
-        if !seen_candidate_keys.insert(candidate_key.clone()) {
-            continue;
-        }
-
-        visible.push(DaemonSearchHit {
-            rank: rank + 1,
-            score: hit.score(),
-            doc_id: document.id.to_string(),
-            version_id: version.id.to_string(),
-            file_name: redact_contact_values(&document.file_name),
-            snippet: "semantic match".to_string(),
-            candidate_key,
-            soft_dedupe_hint: None,
+) -> std::result::Result<SearchProjectionFilter, IpcCommandError> {
+    let mut predicates = Vec::new();
+    if let Some(degree) = filters.degree_min() {
+        predicates.push(SearchProjectionPredicate::EntityValuesAny {
+            entity_type: EntityType::Degree,
+            normalized_values: degree_filter_values(degree),
+            min_confidence: FIELD_CONFIDENCE_THRESHOLD,
+            case: SearchFilterCase::Exact,
         });
-        if visible.len() == top_k {
-            break;
-        }
     }
-
-    daemon_attach_soft_dedupe_hints(store, daemon_rerank_search_hits(visible))
-}
-
-fn daemon_fuse_hybrid_hits(
-    fulltext_hits: Vec<DaemonSearchHit>,
-    vector_hits: Vec<DaemonSearchHit>,
-    top_k: usize,
-) -> Vec<DaemonSearchHit> {
-    let mut by_doc = BTreeMap::<String, DaemonSearchHit>::new();
-    for hit in vector_hits.iter().chain(fulltext_hits.iter()) {
-        by_doc.insert(hit.doc_id.clone(), hit.clone());
-    }
-    let fused = fuse_hybrid_rrf(
-        HybridRecall::new(
-            daemon_ranked_hits_from_output(&fulltext_hits),
-            daemon_ranked_hits_from_output(&vector_hits),
-        ),
-        60.0,
-        top_k.saturating_mul(5).max(top_k),
+    push_text_filter(&mut predicates, EntityType::Name, filters.names_any());
+    push_school_tier_filter(&mut predicates, filters.school_tiers_any());
+    push_text_filter(&mut predicates, EntityType::School, filters.schools_any());
+    push_text_filter(&mut predicates, EntityType::Major, filters.majors_any());
+    push_text_filter(
+        &mut predicates,
+        EntityType::Certificate,
+        filters.certificates_any(),
     );
-    let mut output = Vec::new();
-    let mut seen_candidate_keys = BTreeSet::new();
-    for ranked in fused {
-        let Some(hit) = by_doc.get(ranked.doc_id()) else {
-            continue;
-        };
-        if !seen_candidate_keys.insert(hit.candidate_key.clone()) {
-            continue;
-        }
-        let mut hit = hit.clone();
-        hit.rank = output.len() + 1;
-        hit.score = ranked.score();
-        output.push(hit);
-        if output.len() == top_k {
-            break;
-        }
+    if let Some(range) = filters.date_range_overlaps() {
+        predicates.push(SearchProjectionPredicate::DateRangeOverlap {
+            start_month: range.start_month(),
+            end_month: range.end_month(),
+            min_confidence: FIELD_CONFIDENCE_THRESHOLD,
+        });
     }
-    output
-}
-
-fn daemon_ranked_hits_from_output(hits: &[DaemonSearchHit]) -> Vec<RankedHit> {
-    hits.iter()
-        .enumerate()
-        .map(|(index, hit)| {
-            RankedHit::new(hit.doc_id.clone(), index + 1, hit.score)
-                .with_candidate_key(hit.candidate_key.clone())
-        })
-        .collect()
-}
-
-fn daemon_field_filter_doc_id_prefilter(
-    store: &MetaStore,
-    filters: &SearchFilters,
-) -> std::result::Result<Option<BTreeSet<String>>, IpcCommandError> {
-    if filters.is_empty() {
-        return Ok(None);
-    }
-
-    let mut allowed_doc_ids = None;
-    if let Some(degree_min) = filters.degree_min() {
-        daemon_merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Degree,
-                    &daemon_degree_filter_values(degree_min),
-                    FIELD_CONFIDENCE_THRESHOLD,
-                    false,
-                )
-                .map_err(DaemonError::store)
-                .map_err(IpcCommandError::Internal)?,
-        );
-    }
-    if !filters.names_any().is_empty() {
-        daemon_merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Name,
-                    filters.names_any(),
-                    FIELD_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(DaemonError::store)
-                .map_err(IpcCommandError::Internal)?,
-        );
-    }
-    if !filters.school_tiers_any().is_empty() {
-        daemon_merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            daemon_school_tier_filter_doc_ids(store, filters.school_tiers_any())
-                .map_err(DaemonError::store)
-                .map_err(IpcCommandError::Internal)?,
-        );
-    }
-    if !filters.schools_any().is_empty() {
-        daemon_merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::School,
-                    filters.schools_any(),
-                    FIELD_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(DaemonError::store)
-                .map_err(IpcCommandError::Internal)?,
-        );
-    }
-    if !filters.majors_any().is_empty() {
-        daemon_merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Major,
-                    filters.majors_any(),
-                    FIELD_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(DaemonError::store)
-                .map_err(IpcCommandError::Internal)?,
-        );
-    }
-    if !filters.certificates_any().is_empty() {
-        daemon_merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Certificate,
-                    filters.certificates_any(),
-                    FIELD_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(DaemonError::store)
-                .map_err(IpcCommandError::Internal)?,
-        );
-    }
-    if let Some(date_range) = filters.date_range_overlaps() {
-        daemon_merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_date_range_overlap(
-                    date_range.start_month(),
-                    date_range.end_month(),
-                    FIELD_CONFIDENCE_THRESHOLD,
-                )
-                .map_err(DaemonError::store)
-                .map_err(IpcCommandError::Internal)?,
-        );
-    }
-    if !filters.companies_any().is_empty() {
-        daemon_merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Company,
-                    filters.companies_any(),
-                    FIELD_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(DaemonError::store)
-                .map_err(IpcCommandError::Internal)?,
-        );
-    }
-    if !filters.titles_any().is_empty() {
-        daemon_merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Title,
-                    filters.titles_any(),
-                    FIELD_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(DaemonError::store)
-                .map_err(IpcCommandError::Internal)?,
-        );
-    }
-    if !filters.locations_any().is_empty() {
-        daemon_merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Location,
-                    filters.locations_any(),
-                    FIELD_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(DaemonError::store)
-                .map_err(IpcCommandError::Internal)?,
-        );
-    }
-    if !filters.skills_any().is_empty() {
-        daemon_merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_entity_values(
-                    EntityType::Skill,
-                    filters.skills_any(),
-                    FIELD_CONFIDENCE_THRESHOLD,
-                    true,
-                )
-                .map_err(DaemonError::store)
-                .map_err(IpcCommandError::Internal)?,
-        );
-    }
+    push_text_filter(
+        &mut predicates,
+        EntityType::Company,
+        filters.companies_any(),
+    );
+    push_text_filter(&mut predicates, EntityType::Title, filters.titles_any());
+    push_text_filter(
+        &mut predicates,
+        EntityType::Location,
+        filters.locations_any(),
+    );
+    push_text_filter(&mut predicates, EntityType::Skill, filters.skills_any());
     if !filters.contact_hashes_any().is_empty() {
-        daemon_merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_contact_hashes(&daemon_contact_hash_filter_values(
-                    filters.contact_hashes_any(),
-                )?)
-                .map_err(DaemonError::store)
-                .map_err(IpcCommandError::Internal)?,
-        );
-    }
-    if let Some(years_min) = filters.years_experience_min() {
-        daemon_merge_filter_doc_ids(
-            &mut allowed_doc_ids,
-            store
-                .searchable_document_ids_with_numeric_entity_min(
-                    EntityType::YearsExperience,
-                    years_min,
-                    FIELD_CONFIDENCE_THRESHOLD,
-                )
-                .map_err(DaemonError::store)
-                .map_err(IpcCommandError::Internal)?,
-        );
-    }
-
-    Ok(allowed_doc_ids)
-}
-
-fn daemon_contact_hash_filter_values(
-    contact_hashes: &[String],
-) -> std::result::Result<Vec<ContactHash>, IpcCommandError> {
-    contact_hashes
-        .iter()
-        .map(|contact_hash| {
-            ContactHash::from_keyed_digest(contact_hash.clone()).map_err(|_| {
-                IpcCommandError::BadRequest("contact_hashes_any values must be contact hashes")
+        let hashes = filters
+            .contact_hashes_any()
+            .iter()
+            .map(|value| {
+                ContactHash::from_keyed_digest(value.clone()).map_err(|_| {
+                    IpcCommandError::BadRequest("contact_hashes_any values must be contact hashes")
+                })
             })
-        })
-        .collect()
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        predicates.push(SearchProjectionPredicate::ContactHashesAny(hashes));
+    }
+    if let Some(minimum) = filters.years_experience_min() {
+        predicates.push(SearchProjectionPredicate::NumericEntityMinimum {
+            entity_type: EntityType::YearsExperience,
+            minimum,
+            min_confidence: FIELD_CONFIDENCE_THRESHOLD,
+        });
+    }
+    SearchProjectionFilter::new(predicates)
+        .map_err(|_| IpcCommandError::BadRequest("filters are invalid"))
 }
 
-fn daemon_school_tier_filter_doc_ids(
-    store: &MetaStore,
-    school_tiers: &[SchoolTier],
-) -> meta_store::Result<Vec<DocumentId>> {
-    let known_values = school_tiers
+fn push_text_filter(
+    predicates: &mut Vec<SearchProjectionPredicate>,
+    entity_type: EntityType,
+    values: &[String],
+) {
+    if values.is_empty() {
+        return;
+    }
+    predicates.push(SearchProjectionPredicate::EntityValuesAny {
+        entity_type,
+        normalized_values: values.to_vec(),
+        min_confidence: FIELD_CONFIDENCE_THRESHOLD,
+        case: SearchFilterCase::AsciiInsensitive,
+    });
+}
+
+fn push_school_tier_filter(predicates: &mut Vec<SearchProjectionPredicate>, tiers: &[SchoolTier]) {
+    if tiers.is_empty() {
+        return;
+    }
+    let include_missing = tiers.contains(&SchoolTier::Unknown);
+    let values = tiers
         .iter()
-        .filter(|school_tier| **school_tier != SchoolTier::Unknown)
-        .map(|school_tier| school_tier.canonical().to_string())
+        .filter(|tier| **tier != SchoolTier::Unknown)
+        .map(|tier| tier.canonical().to_string())
         .collect::<Vec<_>>();
-    let mut document_ids = Vec::new();
-    if !known_values.is_empty() {
-        document_ids.extend(store.searchable_document_ids_with_entity_values(
-            EntityType::SchoolTier,
-            &known_values,
-            FIELD_CONFIDENCE_THRESHOLD,
-            false,
-        )?);
-    }
-    if school_tiers.contains(&SchoolTier::Unknown) {
-        document_ids.extend(store.searchable_document_ids_without_entity_type(
-            EntityType::SchoolTier,
-            FIELD_CONFIDENCE_THRESHOLD,
-        )?);
-    }
-    Ok(document_ids)
+    let predicate = match (values.is_empty(), include_missing) {
+        (true, true) => SearchProjectionPredicate::MissingEntityType {
+            entity_type: EntityType::SchoolTier,
+            min_confidence: FIELD_CONFIDENCE_THRESHOLD,
+        },
+        (false, true) => SearchProjectionPredicate::EntityValuesAnyOrMissing {
+            entity_type: EntityType::SchoolTier,
+            normalized_values: values,
+            min_confidence: FIELD_CONFIDENCE_THRESHOLD,
+            case: SearchFilterCase::Exact,
+        },
+        (false, false) => SearchProjectionPredicate::EntityValuesAny {
+            entity_type: EntityType::SchoolTier,
+            normalized_values: values,
+            min_confidence: FIELD_CONFIDENCE_THRESHOLD,
+            case: SearchFilterCase::Exact,
+        },
+        (true, false) => return,
+    };
+    predicates.push(predicate);
 }
 
-fn daemon_merge_filter_doc_ids(current: &mut Option<BTreeSet<String>>, next: Vec<DocumentId>) {
-    let next = next
-        .into_iter()
-        .map(|document_id| document_id.to_string())
-        .collect::<BTreeSet<_>>();
-    match current {
-        Some(current) => {
-            *current = current.intersection(&next).cloned().collect();
-        }
-        None => *current = Some(next),
-    }
-}
-
-fn daemon_degree_filter_values(min_degree: DegreeLevel) -> Vec<String> {
+fn degree_filter_values(minimum: DegreeLevel) -> Vec<String> {
     [
         DegreeLevel::HighSchool,
         DegreeLevel::Associate,
@@ -3470,7 +3529,7 @@ fn daemon_degree_filter_values(min_degree: DegreeLevel) -> Vec<String> {
         DegreeLevel::Doctor,
     ]
     .into_iter()
-    .filter(|degree| *degree >= min_degree)
+    .filter(|degree| *degree >= minimum)
     .map(|degree| degree.canonical().to_string())
     .collect()
 }
@@ -3487,456 +3546,6 @@ fn record_daemon_query_observation(
     let _ = store.record_query_observation(mode.label(), duration, result_count, observed_at);
 }
 
-fn daemon_visible_hits(
-    store: &MetaStore,
-    hits: Vec<SearchHit>,
-    filters: &SearchFilters,
-    top_k: usize,
-) -> std::result::Result<Vec<DaemonSearchHit>, IpcCommandError> {
-    let mut visible = Vec::new();
-    let mut seen_candidate_keys = BTreeSet::new();
-
-    for hit in hits {
-        let Some(version) = daemon_hydrate_visible_version(store, &hit)? else {
-            continue;
-        };
-        if !filters.is_empty()
-            && !filters.matches(&daemon_persisted_profile(store, &hit.doc_id, &version)?)
-        {
-            continue;
-        }
-        let candidate_key = daemon_candidate_fold_key(&version);
-        if !seen_candidate_keys.insert(candidate_key.clone()) {
-            continue;
-        }
-
-        visible.push(DaemonSearchHit {
-            rank: visible.len() + 1,
-            score: hit.score,
-            doc_id: hit.doc_id,
-            version_id: hit.version_id,
-            file_name: redact_contact_values(&hit.file_name),
-            snippet: redact_contact_values(&hit.snippet),
-            candidate_key,
-            soft_dedupe_hint: None,
-        });
-        if visible.len() == top_k {
-            break;
-        }
-    }
-
-    daemon_attach_soft_dedupe_hints(store, visible)
-}
-
-fn daemon_rerank_search_hits(mut hits: Vec<DaemonSearchHit>) -> Vec<DaemonSearchHit> {
-    for (index, hit) in hits.iter_mut().enumerate() {
-        hit.rank = index + 1;
-    }
-    hits
-}
-
-fn daemon_attach_soft_dedupe_hints(
-    store: &MetaStore,
-    mut hits: Vec<DaemonSearchHit>,
-) -> std::result::Result<Vec<DaemonSearchHit>, IpcCommandError> {
-    let hints = hits
-        .iter()
-        .map(|hit| daemon_soft_dedupe_hint_for_hit(store, hit))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    for (hit, hint) in hits.iter_mut().zip(hints) {
-        hit.soft_dedupe_hint = hint;
-    }
-    Ok(hits)
-}
-
-fn daemon_soft_dedupe_hint_for_hit(
-    store: &MetaStore,
-    hit: &DaemonSearchHit,
-) -> std::result::Result<Option<DaemonSoftDedupeHint>, IpcCommandError> {
-    if hit.candidate_key.starts_with("candidate:") {
-        return Ok(None);
-    }
-    let Some(profile) = daemon_dedupe_profile_for_hit(store, hit)? else {
-        return Ok(None);
-    };
-    let Some(name) = profile.name() else {
-        return Ok(None);
-    };
-    let candidate_doc_ids = store
-        .searchable_document_ids_with_entity_values(
-            EntityType::Name,
-            &[name.to_string()],
-            FIELD_CONFIDENCE_THRESHOLD,
-            true,
-        )
-        .map_err(DaemonError::store)
-        .map_err(IpcCommandError::Internal)?;
-    let mut suspected_versions = 0_usize;
-    let mut max_confidence = 0.0_f32;
-
-    for candidate_doc_id in candidate_doc_ids.into_iter().take(64) {
-        if candidate_doc_id.as_str() == hit.doc_id {
-            continue;
-        }
-        let versions = store
-            .resume_versions_for_document(&candidate_doc_id)
-            .map_err(DaemonError::store)
-            .map_err(IpcCommandError::Internal)?;
-        for version in versions {
-            if version.id.as_str() == hit.version_id
-                || version.visibility != ResumeVisibility::Searchable
-                || version.candidate_id.is_some()
-            {
-                continue;
-            }
-            let other_hit = DaemonSearchHit {
-                rank: 0,
-                score: 0.0,
-                doc_id: version.document_id.to_string(),
-                version_id: version.id.to_string(),
-                file_name: String::new(),
-                snippet: String::new(),
-                candidate_key: daemon_candidate_fold_key(&version),
-                soft_dedupe_hint: None,
-            };
-            let Some(other_profile) = daemon_dedupe_profile_for_hit(store, &other_hit)? else {
-                continue;
-            };
-            if let Some(score) = soft_dedupe_score(&profile, &other_profile) {
-                suspected_versions += 1;
-                max_confidence = max_confidence.max(score.confidence());
-            }
-        }
-    }
-
-    Ok((suspected_versions > 0).then_some(DaemonSoftDedupeHint {
-        suspected_versions,
-        max_confidence,
-    }))
-}
-
-fn daemon_dedupe_profile_for_hit(
-    store: &MetaStore,
-    hit: &DaemonSearchHit,
-) -> std::result::Result<Option<DedupeProfile>, IpcCommandError> {
-    let Ok(version_id) = ResumeVersionId::from_str(&hit.version_id) else {
-        return Ok(None);
-    };
-    let Some(version) = store
-        .resume_version_by_id(&version_id)
-        .map_err(DaemonError::store)
-        .map_err(IpcCommandError::Internal)?
-    else {
-        return Ok(None);
-    };
-    if version.document_id.as_str() != hit.doc_id || version.candidate_id.is_some() {
-        return Ok(None);
-    }
-    let mentions = store
-        .entity_mentions_for_version(&version.id)
-        .map_err(DaemonError::store)
-        .map_err(IpcCommandError::Internal)?;
-    let Some(name) = daemon_best_normalized_entity_value(&mentions, EntityType::Name) else {
-        return Ok(None);
-    };
-    let profile = DedupeProfile::new(hit.doc_id.clone())
-        .with_name(&name)
-        .with_schools(daemon_normalized_entity_values(
-            &mentions,
-            EntityType::School,
-        ))
-        .with_companies(daemon_normalized_entity_values(
-            &mentions,
-            EntityType::Company,
-        ))
-        .with_skills(daemon_normalized_entity_values(
-            &mentions,
-            EntityType::Skill,
-        ));
-
-    Ok(Some(profile))
-}
-
-fn daemon_best_normalized_entity_value(
-    mentions: &[EntityMention],
-    entity_type: EntityType,
-) -> Option<String> {
-    mentions
-        .iter()
-        .filter(|mention| {
-            mention.entity_type == entity_type && mention.confidence >= FIELD_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|mention| {
-            Some((
-                mention.normalized_value.as_deref()?.to_string(),
-                mention.confidence,
-                mention.span_start.unwrap_or(usize::MAX),
-            ))
-        })
-        .max_by(|left, right| {
-            left.1
-                .partial_cmp(&right.1)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| right.2.cmp(&left.2))
-                .then_with(|| right.0.cmp(&left.0))
-        })
-        .map(|candidate| candidate.0)
-}
-
-fn daemon_normalized_entity_values(
-    mentions: &[EntityMention],
-    entity_type: EntityType,
-) -> Vec<String> {
-    mentions
-        .iter()
-        .filter(|mention| {
-            mention.entity_type == entity_type && mention.confidence >= FIELD_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|mention| mention.normalized_value.as_deref())
-        .map(str::to_string)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
-fn daemon_hydrate_visible_version(
-    store: &MetaStore,
-    hit: &SearchHit,
-) -> std::result::Result<Option<ResumeVersion>, IpcCommandError> {
-    let Ok(document_id) = DocumentId::from_str(&hit.doc_id) else {
-        return Ok(None);
-    };
-    let Some(document) = store
-        .document_by_id(&document_id)
-        .map_err(DaemonError::store)
-        .map_err(IpcCommandError::Internal)?
-    else {
-        return Ok(None);
-    };
-    if document.is_deleted
-        || !matches!(
-            document.status,
-            DocumentStatus::Searchable | DocumentStatus::IndexedPartial
-        )
-    {
-        return Ok(None);
-    }
-
-    let Ok(version_id) = ResumeVersionId::from_str(&hit.version_id) else {
-        return Ok(None);
-    };
-    let Some(version) = store
-        .resume_version_by_id(&version_id)
-        .map_err(DaemonError::store)
-        .map_err(IpcCommandError::Internal)?
-    else {
-        return Ok(None);
-    };
-    if version.document_id != document_id || version.visibility != ResumeVisibility::Searchable {
-        return Ok(None);
-    }
-
-    Ok(Some(version))
-}
-
-fn daemon_hydrate_visible_document_version(
-    store: &MetaStore,
-    doc_id: &str,
-) -> std::result::Result<Option<(Document, ResumeVersion)>, IpcCommandError> {
-    let Ok(document_id) = DocumentId::from_str(doc_id) else {
-        return Ok(None);
-    };
-    let Some(document) = store
-        .document_by_id(&document_id)
-        .map_err(DaemonError::store)
-        .map_err(IpcCommandError::Internal)?
-    else {
-        return Ok(None);
-    };
-    if document.is_deleted
-        || !matches!(
-            document.status,
-            DocumentStatus::Searchable | DocumentStatus::IndexedPartial
-        )
-    {
-        return Ok(None);
-    }
-    let Some(version) = store
-        .latest_visible_resume_version_for_document(&document_id)
-        .map_err(DaemonError::store)
-        .map_err(IpcCommandError::Internal)?
-    else {
-        return Ok(None);
-    };
-    if version.visibility != ResumeVisibility::Searchable {
-        return Ok(None);
-    }
-    Ok(Some((document, version)))
-}
-
-fn daemon_persisted_profile(
-    store: &MetaStore,
-    doc_id: &str,
-    version: &ResumeVersion,
-) -> std::result::Result<ResumeProfile, IpcCommandError> {
-    let fields = store
-        .entity_mentions_for_version(&version.id)
-        .map_err(DaemonError::store)
-        .map_err(IpcCommandError::Internal)?;
-    let names = fields
-        .iter()
-        .filter(|field| {
-            field.entity_type == EntityType::Name && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let degree = fields
-        .iter()
-        .filter(|field| {
-            field.entity_type == EntityType::Degree
-                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|field| DegreeLevel::parse(field.normalized_value.as_deref()?))
-        .max();
-    let skills = fields
-        .iter()
-        .filter(|field| {
-            field.entity_type == EntityType::Skill && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let certificates = fields
-        .iter()
-        .filter(|field| {
-            field.entity_type == EntityType::Certificate
-                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let date_ranges = fields
-        .iter()
-        .filter(|field| {
-            field.entity_type == EntityType::DateRange
-                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let schools = fields
-        .iter()
-        .filter(|field| {
-            field.entity_type == EntityType::School
-                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let majors = fields
-        .iter()
-        .filter(|field| {
-            field.entity_type == EntityType::Major && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let companies = fields
-        .iter()
-        .filter(|field| {
-            field.entity_type == EntityType::Company
-                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let titles = fields
-        .iter()
-        .filter(|field| {
-            field.entity_type == EntityType::Title && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let locations = fields
-        .iter()
-        .filter(|field| {
-            field.entity_type == EntityType::Location
-                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|field| field.normalized_value.as_deref())
-        .collect::<Vec<_>>();
-    let school_tiers = fields
-        .iter()
-        .filter(|field| {
-            field.entity_type == EntityType::SchoolTier
-                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|field| SchoolTier::parse(field.normalized_value.as_deref()?))
-        .collect::<Vec<_>>();
-    let years_experience = fields
-        .iter()
-        .filter(|field| {
-            field.entity_type == EntityType::YearsExperience
-                && field.confidence >= FIELD_CONFIDENCE_THRESHOLD
-        })
-        .filter_map(|field| field.normalized_value.as_deref()?.parse::<f32>().ok())
-        .max_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
-
-    let mut profile = ResumeProfile::new(doc_id)
-        .with_names(names)
-        .with_school_tiers(school_tiers)
-        .with_schools(schools)
-        .with_majors(majors)
-        .with_certificates(certificates)
-        .with_date_ranges(date_ranges)
-        .with_companies(companies)
-        .with_titles(titles)
-        .with_locations(locations)
-        .with_skills(skills);
-    if let Some(degree) = degree {
-        profile = profile.with_degree(degree);
-    }
-    if let Some(years_experience) = years_experience {
-        profile = profile.with_years_experience(years_experience);
-    }
-    Ok(profile)
-}
-
-fn execute_detail_command(
-    data_dir: &Path,
-    body: &[u8],
-) -> std::result::Result<String, IpcCommandError> {
-    let payload = serde_json::from_slice::<serde_json::Value>(body)
-        .map_err(|_| IpcCommandError::BadRequest("invalid json"))?;
-    let args = parse_detail_command(&payload)?;
-    let store = open_store(data_dir).map_err(IpcCommandError::Internal)?;
-    let detail = build_daemon_resume_detail(&store, &args.document_id)?
-        .ok_or(IpcCommandError::NotFound("detail document was not found"))?;
-    let fields = detail
-        .fields
-        .iter()
-        .map(|field| {
-            serde_json::json!({
-                "type": field.field_type,
-                "value": field.value,
-                "confidence": field.confidence,
-                "evidence": field.evidence,
-                "extractor": field.extractor,
-            })
-        })
-        .collect::<Vec<_>>();
-    let body = serde_json::json!({
-        "schema_version": "daemon.detail.v1",
-        "status": "ok",
-        "document": {
-            "doc_id": detail.doc_id,
-            "version_id": detail.version_id,
-            "file_name": detail.file_name,
-            "extension": detail.extension,
-            "document_status": detail.document_status,
-            "visibility": detail.visibility,
-            "byte_size": detail.byte_size,
-            "fields": fields,
-            "snippet": detail.snippet,
-        }
-    });
-    Ok(body.to_string())
-}
-
 fn execute_delete_command(
     data_dir: &Path,
     body: &[u8],
@@ -3946,22 +3555,34 @@ fn execute_delete_command(
     let document_id = parse_delete_command(&payload)?;
     let store = open_store(data_dir).map_err(IpcCommandError::Internal)?;
     let now = current_timestamp().map_err(IpcCommandError::Internal)?;
-    let Some(deleted_document) = store
-        .mark_document_deleted(&document_id, now)
+    let Some(document) = store
+        .document_by_id(&document_id)
         .map_err(DaemonError::store)
         .map_err(IpcCommandError::Internal)?
     else {
         return Err(IpcCommandError::NotFound("delete document was not found"));
     };
-    let rebuild = rebuild_full_text_index(data_dir, &store, now)
-        .map_err(DaemonError::import)
-        .map_err(IpcCommandError::Internal)?;
+    if document.is_deleted || document.status == DocumentStatus::Deleted {
+        return Err(IpcCommandError::NotFound("delete document was not found"));
+    }
+    let publication = import_pipeline::publish_search_projection_removals(
+        data_dir,
+        &store,
+        &[SearchProjectionRemoval {
+            document_id: document_id.clone(),
+            reason: SearchProjectionRemovalReason::ConfirmedSourceDeletion,
+        }],
+        now,
+        &SearchPublicationVectorization::default(),
+    )
+    .map_err(DaemonError::import)
+    .map_err(IpcCommandError::Internal)?;
     Ok(serde_json::json!({
-        "schema_version": "daemon.delete.v1",
+        "schema_version": "resume-ir.delete-response.v2",
         "status": "ok",
-        "doc_id": deleted_document.id.as_str(),
-        "index_rebuilt": true,
-        "indexed_documents": rebuild.indexed_documents,
+        "doc_id": document_id.as_str(),
+        "publication_committed": true,
+        "indexed_documents": publication.active_projection_count,
     })
     .to_string())
 }
@@ -4021,118 +3642,23 @@ fn parse_import_cancel_task_id(
     ImportTaskId::from_str(value).map_err(|_| IpcCommandError::BadRequest("task_id is invalid"))
 }
 
-fn parse_detail_command(
-    payload: &serde_json::Value,
-) -> std::result::Result<DaemonDetailArgs, IpcCommandError> {
-    let doc_id = payload
-        .get("doc_id")
-        .and_then(serde_json::Value::as_str)
-        .filter(|doc_id| !doc_id.trim().is_empty())
-        .ok_or(IpcCommandError::BadRequest(
-            "doc_id must be a non-empty string",
-        ))?;
-    let document_id = DocumentId::from_str(doc_id)
-        .map_err(|_| IpcCommandError::BadRequest("doc_id is invalid"))?;
-    Ok(DaemonDetailArgs { document_id })
-}
-
-fn build_daemon_resume_detail(
-    store: &MetaStore,
-    document_id: &DocumentId,
-) -> std::result::Result<Option<DaemonResumeDetail>, IpcCommandError> {
-    let Some(document) = store
-        .document_by_id(document_id)
-        .map_err(DaemonError::store)
-        .map_err(IpcCommandError::Internal)?
-    else {
-        return Ok(None);
-    };
-    if document.is_deleted || document.status == DocumentStatus::Deleted {
-        return Ok(None);
-    }
-    let Some(version) = select_daemon_detail_version(store, document_id)? else {
-        return Ok(None);
-    };
-    let fields = store
-        .entity_mentions_for_version(&version.id)
-        .map_err(DaemonError::store)
-        .map_err(IpcCommandError::Internal)?
-        .iter()
-        .map(daemon_detail_field_from_mention)
-        .collect::<Vec<_>>();
-    let snippet = version
-        .clean_text
-        .as_deref()
-        .or(version.raw_text.as_deref())
-        .map(|text| redact_short_text(text, 240))
-        .unwrap_or_else(|| "none".to_string());
-
-    Ok(Some(DaemonResumeDetail {
-        doc_id: document.id.to_string(),
-        version_id: version.id.to_string(),
-        file_name: redact_short_text(&document.file_name, 160),
-        extension: file_extension_label(&document.extension).to_string(),
-        document_status: document_status_label(document.status).to_string(),
-        visibility: resume_visibility_label(version.visibility).to_string(),
-        byte_size: document.byte_size,
-        fields,
-        snippet,
-    }))
-}
-
-fn select_daemon_detail_version(
-    store: &MetaStore,
-    document_id: &DocumentId,
-) -> std::result::Result<Option<ResumeVersion>, IpcCommandError> {
-    store
-        .latest_visible_resume_version_for_document(document_id)
-        .map_err(DaemonError::store)
-        .map_err(IpcCommandError::Internal)
-}
-
-fn daemon_detail_field_from_mention(mention: &EntityMention) -> DaemonResumeDetailField {
-    let value = mention
-        .normalized_value
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(&mention.raw_value);
-    DaemonResumeDetailField {
-        field_type: entity_type_label(&mention.entity_type),
-        value: redact_short_text(value, 120),
-        confidence: f64::from(mention.confidence.clamp(0.0, 1.0)),
-        evidence: redact_short_text(&mention.raw_value, 120),
-        extractor: redact_short_text(&mention.extractor, 80),
-    }
-}
-
-fn redact_short_text(value: &str, max_chars: usize) -> String {
+fn redact_search_file_name(value: &str) -> String {
     let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
     let redacted = redact_contact_values(&compact);
-    truncate_chars(&redacted, max_chars)
+    truncate_utf8_bytes(&redacted, SEARCH_RESULT_FILE_NAME_MAX_BYTES)
 }
 
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    let mut output = String::new();
-    for (index, ch) in value.chars().enumerate() {
-        if index == max_chars {
-            output.push_str("...");
-            return output;
-        }
-        output.push(ch);
+fn truncate_utf8_bytes(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
     }
-    output
-}
 
-fn daemon_candidate_fold_key(version: &ResumeVersion) -> String {
-    version
-        .candidate_id
-        .as_ref()
-        .map(|candidate_id| format!("candidate:{}", candidate_id.as_str()))
-        .unwrap_or_else(|| format!("doc:{}", version.document_id.as_str()))
-}
-
-fn format_confidence(value: f32) -> f64 {
-    f64::from((value.clamp(0.0, 1.0) * 100.0).round() / 100.0)
+    const ELLIPSIS: &str = "...";
+    let mut end = max_bytes.saturating_sub(ELLIPSIS.len());
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{}", &value[..end], ELLIPSIS)
 }
 
 fn enqueue_import_command(
@@ -4154,6 +3680,14 @@ fn enqueue_import_command(
     for (root_index, root) in canonical_roots.iter().enumerate() {
         let canonical_root_path = path_string(&root.canonical);
         let requested_root_path = path_string(&root.requested);
+        if store
+            .import_root_control_status(&canonical_root_path)
+            .map_err(DaemonError::store)
+            .map_err(IpcCommandError::Internal)?
+            == Some(meta_store::ImportRootControlStatus::Paused)
+        {
+            return Err(IpcCommandError::Conflict("managed root is paused"));
+        }
         let task = match store
             .pending_import_task_by_root(&canonical_root_path)
             .map_err(DaemonError::store)
@@ -4404,97 +3938,6 @@ fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a s
         .map(|(_, value)| value.as_str())
 }
 
-fn load_or_create_ipc_auth_token(data_dir: &Path) -> Result<String> {
-    fs::create_dir_all(data_dir)
-        .map_err(|_| DaemonError::user("unable to prepare local metadata directory"))?;
-    let path = data_dir.join(IPC_AUTH_TOKEN_FILE);
-    match fs::read_to_string(&path) {
-        Ok(token) => {
-            ensure_ipc_auth_token_permissions(&path)?;
-            validate_ipc_auth_token(&token)
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => create_ipc_auth_token(&path),
-        Err(_) => Err(DaemonError::user("unable to read daemon ipc auth token")),
-    }
-}
-
-fn create_ipc_auth_token(path: &Path) -> Result<String> {
-    let token = random_hex_token()?;
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        options.mode(0o600);
-    }
-
-    match options.open(path) {
-        Ok(mut file) => {
-            file.write_all(token.as_bytes())
-                .and_then(|_| file.write_all(b"\n"))
-                .map_err(|_| DaemonError::user("unable to write daemon ipc auth token"))?;
-            Ok(token)
-        }
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            ensure_ipc_auth_token_permissions(path)?;
-            let token = fs::read_to_string(path)
-                .map_err(|_| DaemonError::user("unable to read daemon ipc auth token"))?;
-            validate_ipc_auth_token(&token)
-        }
-        Err(_) => Err(DaemonError::user("unable to create daemon ipc auth token")),
-    }
-}
-
-#[cfg(unix)]
-fn ensure_ipc_auth_token_permissions(path: &Path) -> Result<()> {
-    let permissions = fs::metadata(path)
-        .map_err(|_| DaemonError::user("unable to inspect daemon ipc auth token"))?
-        .permissions();
-    if permissions.mode() & 0o077 == 0 {
-        return Ok(());
-    }
-
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-        .map_err(|_| DaemonError::user("unable to secure daemon ipc auth token"))?;
-    let repaired = fs::metadata(path)
-        .map_err(|_| DaemonError::user("unable to inspect daemon ipc auth token"))?
-        .permissions();
-    if repaired.mode() & 0o077 != 0 {
-        return Err(DaemonError::user(
-            "daemon ipc auth token permissions are unsafe",
-        ));
-    }
-
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn ensure_ipc_auth_token_permissions(_path: &Path) -> Result<()> {
-    Ok(())
-}
-
-fn validate_ipc_auth_token(token: &str) -> Result<String> {
-    let token = token.trim();
-    if token.len() != IPC_AUTH_TOKEN_BYTES * 2
-        || !token.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err(DaemonError::user("daemon ipc auth token is invalid"));
-    }
-    Ok(token.to_string())
-}
-
-fn random_hex_token() -> Result<String> {
-    let mut bytes = [0_u8; IPC_AUTH_TOKEN_BYTES];
-    getrandom::getrandom(&mut bytes)
-        .map_err(|_| DaemonError::user("unable to create daemon ipc auth token"))?;
-    let mut token = String::with_capacity(IPC_AUTH_TOKEN_BYTES * 2);
-    for byte in bytes {
-        use std::fmt::Write as _;
-        write!(&mut token, "{byte:02x}")
-            .map_err(|_| DaemonError::user("unable to create daemon ipc auth token"))?;
-    }
-    Ok(token)
-}
-
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
         return false;
@@ -4536,6 +3979,8 @@ enum IpcCommandError {
     BadRequest(&'static str),
     Conflict(&'static str),
     NotFound(&'static str),
+    TooLarge(&'static str),
+    ServiceUnavailable(&'static str),
     Internal(DaemonError),
 }
 
@@ -4548,7 +3993,7 @@ struct DaemonSearchArgs {
     query: String,
     mode: DaemonSearchMode,
     top_k: usize,
-    filters: SearchFilters,
+    filter: SearchProjectionFilter,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4575,64 +4020,80 @@ impl DaemonSearchMode {
             Self::Hybrid => "hybrid",
         }
     }
+
+    fn response_label(self) -> &'static str {
+        match self {
+            Self::FullText => "keyword",
+            Self::Semantic => "semantic",
+            Self::Hybrid => "hybrid",
+        }
+    }
 }
 
-#[derive(Clone)]
-struct DaemonSearchHit {
-    rank: usize,
-    score: f32,
-    doc_id: String,
-    version_id: String,
-    file_name: String,
-    snippet: String,
-    candidate_key: String,
-    soft_dedupe_hint: Option<DaemonSoftDedupeHint>,
+fn status_json(store: &MetaStore) -> String {
+    status_json_with(|| status_json_once(store))
 }
 
-#[derive(Clone)]
-struct DaemonSoftDedupeHint {
-    suspected_versions: usize,
-    max_confidence: f32,
+fn status_json_with(read: impl FnMut() -> Result<String>) -> String {
+    retry_ipc_metadata_read(read).unwrap_or_else(|_| unavailable_status_json())
 }
 
-struct DaemonDetailArgs {
-    document_id: DocumentId,
-}
-
-struct DaemonResumeDetail {
-    doc_id: String,
-    version_id: String,
-    file_name: String,
-    extension: String,
-    document_status: String,
-    visibility: String,
-    byte_size: u64,
-    fields: Vec<DaemonResumeDetailField>,
-    snippet: String,
-}
-
-struct DaemonResumeDetailField {
-    field_type: String,
-    value: String,
-    confidence: f64,
-    evidence: String,
-    extractor: String,
-}
-
-fn status_json(store: &MetaStore) -> Result<String> {
-    retry_ipc_metadata_read(|| status_json_once(store))
+fn unavailable_status_json() -> String {
+    let services = ipc::ServiceHealth {
+        metadata: ipc::ServiceState::Unavailable,
+        query: ipc::ServiceState::Unavailable,
+    };
+    let metrics = ipc::process_metrics().snapshot();
+    serde_json::json!({
+        "schema_version": "daemon.status.v2",
+        "status": "degraded",
+        "process_state": "ready",
+        "service_state": services.aggregate().label(),
+        "services": {
+            "metadata": services.metadata.label(),
+            "query": services.query.label(),
+        },
+        "error": {
+            "code": "METADATA_UNAVAILABLE",
+            "action": "retry",
+        },
+        "indexed_documents": serde_json::Value::Null,
+        "searchable_documents": serde_json::Value::Null,
+        "partial_documents": serde_json::Value::Null,
+        "visible_epoch": serde_json::Value::Null,
+        "ipc": ipc_metrics_json(metrics),
+    })
+    .to_string()
 }
 
 fn status_json_once(store: &MetaStore) -> Result<String> {
     let summary = store.status_summary().map_err(DaemonError::store)?;
+    let projection = store
+        .search_projection_state()
+        .map_err(DaemonError::store)?;
     let latest_import_scan = store
         .latest_import_scan_scope()
         .map_err(DaemonError::store)?
         .map(|scope| latest_import_scan_json(&scope))
         .unwrap_or(serde_json::Value::Null);
+    let services = projection_service_health(projection.service_state);
+    let metrics = ipc::process_metrics().snapshot();
     let body = serde_json::json!({
-        "schema_version": "daemon.status.v1",
-        "status": "ok",
+        "schema_version": "daemon.status.v2",
+        "status": match services.aggregate() {
+            ipc::ServiceState::Ready => "ok",
+            ipc::ServiceState::Repairing => "repairing",
+            ipc::ServiceState::Degraded | ipc::ServiceState::Unavailable => "degraded",
+        },
+        "process_state": "ready",
+        "service_state": services.aggregate().label(),
+        "services": {
+            "metadata": services.metadata.label(),
+            "query": services.query.label(),
+        },
+        "error": service_error_json(services),
+        "ipc": ipc_metrics_json(metrics),
+        "visible_epoch": projection.visible_epoch,
         "indexed_documents": summary.indexed_documents,
         "searchable_documents": summary.searchable_documents,
         "partial_documents": summary.partial_documents,
@@ -4676,14 +4137,48 @@ fn status_json_once(store: &MetaStore) -> Result<String> {
     Ok(body.to_string())
 }
 
+fn ipc_metrics_json(metrics: ipc::IpcMetricsSnapshot) -> serde_json::Value {
+    serde_json::json!({
+        "accepted": metrics.accepted,
+        "completed": metrics.completed,
+        "client_disconnect": metrics.client_disconnect,
+        "request_failure": metrics.request_failure,
+        "response_failure": metrics.response_failure,
+    })
+}
+
+fn projection_service_health(state: SearchProjectionServiceState) -> ipc::ServiceHealth {
+    ipc::ServiceHealth {
+        metadata: ipc::ServiceState::Ready,
+        query: match state {
+            SearchProjectionServiceState::Ready => ipc::ServiceState::Ready,
+            SearchProjectionServiceState::Repairing => ipc::ServiceState::Repairing,
+            SearchProjectionServiceState::RepairBlocked => ipc::ServiceState::Unavailable,
+        },
+    }
+}
+
+fn service_error_json(services: ipc::ServiceHealth) -> serde_json::Value {
+    match services.aggregate() {
+        ipc::ServiceState::Ready => serde_json::Value::Null,
+        ipc::ServiceState::Repairing => serde_json::json!({
+            "code": "REPAIRING",
+            "action": "wait_for_repair",
+        }),
+        ipc::ServiceState::Degraded | ipc::ServiceState::Unavailable => serde_json::json!({
+            "code": "QUERY_SERVICE_UNAVAILABLE",
+            "action": "retry",
+        }),
+    }
+}
+
 fn retry_ipc_metadata_read<T>(mut read: impl FnMut() -> Result<T>) -> Result<T> {
     let mut last_error = None;
     for attempt in 1..=IPC_METADATA_READ_ATTEMPTS {
         match read() {
             Ok(value) => return Ok(value),
             Err(error)
-                if error.is_metadata_store_storage_error()
-                    && attempt < IPC_METADATA_READ_ATTEMPTS =>
+                if error.retryable_metadata_error() && attempt < IPC_METADATA_READ_ATTEMPTS =>
             {
                 last_error = Some(error);
                 thread::sleep(Duration::from_millis(IPC_METADATA_READ_RETRY_MS));
@@ -4741,21 +4236,54 @@ fn write_http_response(
         404 => "Not Found",
         409 => "Conflict",
         413 => "Payload Too Large",
+        500 => "Internal Server Error",
+        503 => "Service Unavailable",
         _ => "Error",
     };
-    write!(
-        stream,
-        "HTTP/1.1 {status_code} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    )
-    .map_err(|_| DaemonError::user("unable to write daemon ipc response"))
+    ipc::response::write_http_response(stream, status_code, reason, content_type, body)
+        .map_err(DaemonError::response_sink)
+}
+
+fn write_service_unavailable(stream: &mut TcpStream, code: ipc::ServiceErrorCode) -> Result<()> {
+    let body = unified_error_body(None, code.label(), code.action());
+    write_http_response(stream, 503, "application/json", &body)
+}
+
+fn unified_error_body(request_id: Option<&str>, code: &str, action: &str) -> String {
+    let mut body = serde_json::json!({
+        "schema_version": "resume-ir.error.v1",
+        "status": "error",
+        "error": {
+            "code": code,
+            "action": action,
+        },
+    });
+    if let Some(request_id) = request_id {
+        body["request_id"] = serde_json::json!(request_id);
+    }
+    body.to_string()
+}
+
+fn write_search_http_response(stream: &mut TcpStream, output: DaemonSearchOutput) -> Result<()> {
+    let server_timing = output.stage_timing.server_timing_header_value();
+    ipc::response::write_search_response(stream, &server_timing, &output.body)
+        .map_err(DaemonError::response_sink)
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum ParentLifecycleMode {
+    #[default]
+    Unmanaged,
+    Stdin,
 }
 
 #[derive(Clone)]
 struct RunOptions {
     foreground: bool,
+    parent_lifecycle: ParentLifecycleMode,
     once: bool,
     ipc_listen: Option<SocketAddr>,
+    expected_ipc_protocol: Option<String>,
     max_requests: Option<usize>,
     work_imports_once: bool,
     work_imports: bool,
@@ -4766,8 +4294,6 @@ struct RunOptions {
     import_retry_backoff_seconds: Option<i64>,
     work_ocr_once: bool,
     work_ocr: bool,
-    work_embeddings_once: bool,
-    work_embeddings: bool,
     work_index_once: bool,
     work_index: bool,
     ocr_command: Option<PathBuf>,
@@ -4784,9 +4310,9 @@ struct RunOptions {
     embedding_command: Option<PathBuf>,
     embedding_model_id: Option<String>,
     embedding_dimension: Option<usize>,
-    embedding_max_docs: usize,
-    embedding_max_text_bytes: usize,
     embedding_timeout_ms: u64,
+    resident_embedding: Option<ResidentEmbeddingClient>,
+    search_vectorization: SearchPublicationVectorization,
     worker_interval_ms: Option<u64>,
     max_worker_ticks: Option<usize>,
 }
@@ -4795,8 +4321,10 @@ impl Default for RunOptions {
     fn default() -> Self {
         Self {
             foreground: false,
+            parent_lifecycle: ParentLifecycleMode::Unmanaged,
             once: false,
             ipc_listen: None,
+            expected_ipc_protocol: None,
             max_requests: None,
             work_imports_once: false,
             work_imports: false,
@@ -4807,8 +4335,6 @@ impl Default for RunOptions {
             import_retry_backoff_seconds: None,
             work_ocr_once: false,
             work_ocr: false,
-            work_embeddings_once: false,
-            work_embeddings: false,
             work_index_once: false,
             work_index: false,
             ocr_command: None,
@@ -4825,9 +4351,9 @@ impl Default for RunOptions {
             embedding_command: None,
             embedding_model_id: None,
             embedding_dimension: None,
-            embedding_max_docs: DEFAULT_EMBEDDING_MAX_DOCS,
-            embedding_max_text_bytes: DEFAULT_EMBEDDING_MAX_TEXT_BYTES,
             embedding_timeout_ms: DEFAULT_EMBEDDING_TIMEOUT_MS,
+            resident_embedding: None,
+            search_vectorization: SearchPublicationVectorization::default(),
             worker_interval_ms: None,
             max_worker_ticks: None,
         }
@@ -4836,7 +4362,7 @@ impl Default for RunOptions {
 
 impl RunOptions {
     fn has_worker_loop(&self) -> bool {
-        self.work_imports || self.work_ocr || self.work_embeddings || self.work_index
+        self.work_imports || self.work_ocr || self.work_index
     }
 }
 
@@ -4851,6 +4377,7 @@ struct ImportWorkerSummary {
     processed: usize,
     cancelled: usize,
     failed: usize,
+    failure_class: Option<ImportPipelineErrorClass>,
     searchable_documents: usize,
     ocr_jobs_queued: usize,
 }
@@ -4882,6 +4409,9 @@ impl ImportWorkerSummary {
         self.processed += other.processed;
         self.cancelled += other.cancelled;
         self.failed += other.failed;
+        if other.failure_class.is_some() {
+            self.failure_class = other.failure_class;
+        }
         self.searchable_documents += other.searchable_documents;
         self.ocr_jobs_queued += other.ocr_jobs_queued;
     }
@@ -4920,6 +4450,9 @@ fn print_import_worker_summary(import_summary: &ImportWorkerSummary) -> Result<(
     println!("import worker processed: {}", import_summary.processed);
     println!("import worker cancelled: {}", import_summary.cancelled);
     println!("import worker failed: {}", import_summary.failed);
+    if let Some(class) = import_summary.failure_class {
+        println!("import worker failure class: {}", class.label());
+    }
     println!(
         "import worker searchable documents: {}",
         import_summary.searchable_documents
@@ -4930,7 +4463,7 @@ fn print_import_worker_summary(import_summary: &ImportWorkerSummary) -> Result<(
     );
     io::stdout()
         .flush()
-        .map_err(|_| DaemonError::user("unable to write daemon status"))
+        .map_err(|_| DaemonError::control_plane("unable to write daemon status"))
 }
 
 #[derive(Default)]
@@ -4975,96 +4508,57 @@ fn print_ocr_worker_summary(summary: &OcrWorkerSummary) -> Result<()> {
     println!("ocr worker failed: {}", summary.failed);
     io::stdout()
         .flush()
-        .map_err(|_| DaemonError::user("unable to write daemon status"))
+        .map_err(|_| DaemonError::control_plane("unable to write daemon status"))
 }
 
-#[derive(Clone, PartialEq, Eq)]
-struct EmbeddingWorkerCandidate {
-    document_id: DocumentId,
-    version_id: ResumeVersionId,
-    text: String,
+fn search_artifact_recovery_has_activity(summary: &SearchArtifactRecoverySummary) -> bool {
+    summary.interrupted_publications_abandoned > 0
+        || summary.fulltext_staging_directories_removed > 0
+        || summary.vector_staging_directories_removed > 0
+        || summary.fulltext_generations_removed > 0
+        || summary.vector_generations_removed > 0
+        || summary.active_generation_rebuilt
+        || summary.gc_deferred
+        || summary.gc_partial
 }
 
-impl fmt::Debug for EmbeddingWorkerCandidate {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("EmbeddingWorkerCandidate")
-            .field("document_id", &self.document_id)
-            .field("version_id", &self.version_id)
-            .field("text", &"<redacted>")
-            .field("text_bytes", &self.text.len())
-            .finish()
-    }
-}
-
-#[derive(Default)]
-struct EmbeddingWorkerSummary {
-    stale_recovered: usize,
-    completed_requeued: usize,
-    documents_considered: usize,
-    processed: usize,
-    vector_writes: usize,
-    failed: usize,
-}
-
-impl EmbeddingWorkerSummary {
-    fn has_activity(&self) -> bool {
-        self.stale_recovered > 0
-            || self.completed_requeued > 0
-            || self.documents_considered > 0
-            || self.processed > 0
-            || self.vector_writes > 0
-            || self.failed > 0
-    }
-}
-
-fn print_embedding_worker_summary(summary: &EmbeddingWorkerSummary) -> Result<()> {
+fn print_search_artifact_worker_summary(summary: &SearchArtifactRecoverySummary) -> Result<()> {
     println!(
-        "ingest jobs recovered stale running: {}",
-        summary.stale_recovered
+        "search artifact worker active generation rebuilt: {}",
+        if summary.active_generation_rebuilt {
+            "yes"
+        } else {
+            "no"
+        }
     );
-    if summary.completed_requeued > 0 {
-        println!(
-            "embedding worker requeued completed: {}",
-            summary.completed_requeued
-        );
-    }
     println!(
-        "embedding worker documents considered: {}",
-        summary.documents_considered
+        "search artifact worker interrupted publications abandoned: {}",
+        summary.interrupted_publications_abandoned
     );
-    println!("embedding worker processed: {}", summary.processed);
-    println!("embedding worker vector writes: {}", summary.vector_writes);
-    println!("embedding worker failed: {}", summary.failed);
+    println!(
+        "search artifact worker fulltext staging removed: {}",
+        summary.fulltext_staging_directories_removed
+    );
+    println!(
+        "search artifact worker vector staging removed: {}",
+        summary.vector_staging_directories_removed
+    );
+    println!(
+        "search artifact worker fulltext generations removed: {}",
+        summary.fulltext_generations_removed
+    );
+    println!(
+        "search artifact worker vector generations removed: {}",
+        summary.vector_generations_removed
+    );
+    println!(
+        "search artifact worker gc deferred: {}",
+        summary.gc_deferred
+    );
+    println!("search artifact worker gc partial: {}", summary.gc_partial);
     io::stdout()
         .flush()
-        .map_err(|_| DaemonError::user("unable to write daemon status"))
-}
-
-#[derive(Default)]
-struct IndexWorkerSummary {
-    rebuilt: bool,
-    indexed_documents: usize,
-}
-
-impl IndexWorkerSummary {
-    fn has_activity(&self) -> bool {
-        self.rebuilt
-    }
-}
-
-fn print_index_worker_summary(summary: &IndexWorkerSummary) -> Result<()> {
-    println!(
-        "index worker rebuilt: {}",
-        if summary.rebuilt { "yes" } else { "no" }
-    );
-    println!(
-        "index worker indexed documents: {}",
-        summary.indexed_documents
-    );
-    io::stdout()
-        .flush()
-        .map_err(|_| DaemonError::user("unable to write daemon status"))
+        .map_err(|_| DaemonError::control_plane("unable to write daemon status"))
 }
 
 struct ImportTaskHeartbeat {
@@ -5109,7 +4603,7 @@ impl Drop for ImportTaskHeartbeat {
 
 fn open_store(data_dir: &Path) -> Result<MetaStore> {
     fs::create_dir_all(data_dir)
-        .map_err(|_| DaemonError::user("unable to prepare local metadata directory"))?;
+        .map_err(|_| DaemonError::recoverable_dependency("local metadata directory unavailable"))?;
     let store = MetaStore::open_data_dir(data_dir).map_err(DaemonError::store)?;
     store.run_migrations().map_err(DaemonError::store)?;
     Ok(store)
@@ -5124,76 +4618,56 @@ fn index_health_label(status: IndexStateStatus) -> &'static str {
     }
 }
 
-fn file_extension_label(extension: &FileExtension) -> &str {
-    match extension {
-        FileExtension::Docx => "docx",
-        FileExtension::Pdf => "pdf",
-        FileExtension::Doc => "doc",
-        FileExtension::Txt => "txt",
-        FileExtension::Image => "image",
-        FileExtension::Other(_) => "other",
-    }
-}
-
-fn document_status_label(status: DocumentStatus) -> &'static str {
-    match status {
-        DocumentStatus::Discovered => "discovered",
-        DocumentStatus::Fingerprinted => "fingerprinted",
-        DocumentStatus::ParseQueued => "parse_queued",
-        DocumentStatus::ParseRunning => "parse_running",
-        DocumentStatus::TextExtracted => "text_extracted",
-        DocumentStatus::OcrRequired => "ocr_required",
-        DocumentStatus::OcrRunning => "ocr_running",
-        DocumentStatus::OcrDone => "ocr_done",
-        DocumentStatus::TextCleaned => "text_cleaned",
-        DocumentStatus::FieldsExtracted => "fields_extracted",
-        DocumentStatus::EmbeddingDone => "embedding_done",
-        DocumentStatus::IndexedPartial => "indexed_partial",
-        DocumentStatus::Searchable => "searchable",
-        DocumentStatus::FailedRetryable => "failed_retryable",
-        DocumentStatus::FailedPermanent => "failed_permanent",
-        DocumentStatus::Deleted => "deleted",
-    }
-}
-
-fn resume_visibility_label(visibility: ResumeVisibility) -> &'static str {
-    match visibility {
-        ResumeVisibility::Searchable => "searchable",
-        ResumeVisibility::Partial => "partial",
-        ResumeVisibility::Hidden => "hidden",
-    }
-}
-
-fn entity_type_label(entity_type: &EntityType) -> String {
-    match entity_type {
-        EntityType::Name => "name".to_string(),
-        EntityType::Email => "email".to_string(),
-        EntityType::Phone => "phone".to_string(),
-        EntityType::WeChat => "wechat".to_string(),
-        EntityType::School => "school".to_string(),
-        EntityType::SchoolTier => "school_tier".to_string(),
-        EntityType::Degree => "degree".to_string(),
-        EntityType::Major => "major".to_string(),
-        EntityType::Company => "company".to_string(),
-        EntityType::Title => "title".to_string(),
-        EntityType::Education => "education".to_string(),
-        EntityType::Skills => "skills".to_string(),
-        EntityType::Skill => "skill".to_string(),
-        EntityType::Certificate => "certificate".to_string(),
-        EntityType::Date => "date".to_string(),
-        EntityType::DateRange => "date_range".to_string(),
-        EntityType::YearsExperience => "years_experience".to_string(),
-        EntityType::Location => "location".to_string(),
-        EntityType::Other(_) => "other".to_string(),
-    }
-}
-
 type Result<T> = std::result::Result<T, DaemonError>;
 
 #[derive(Debug)]
 struct DaemonError {
     message: String,
     exit_code: i32,
+    kind: DaemonErrorKind,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DaemonErrorKind {
+    ConfigurationInvalid,
+    RuntimeIntegrity,
+    RecoverableDependency,
+    Store(MetaStoreErrorClass),
+    OwnershipConflict,
+    ProtocolMismatch,
+    ControlPlane,
+    ResponseSink(ipc::ResponseSinkError),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DaemonFatalClass {
+    OwnershipConflict,
+    ConfigurationInvalid,
+    RuntimeIntegrity,
+    ProtocolMismatch,
+    ControlPlaneFailure,
+}
+
+impl DaemonFatalClass {
+    fn label(self) -> &'static str {
+        match self {
+            Self::OwnershipConflict => "ownership_conflict",
+            Self::ConfigurationInvalid => "configuration_invalid",
+            Self::RuntimeIntegrity => "runtime_integrity",
+            Self::ProtocolMismatch => "protocol_mismatch",
+            Self::ControlPlaneFailure => "control_plane_failure",
+        }
+    }
+
+    fn disposition(self) -> &'static str {
+        match self {
+            Self::ControlPlaneFailure => "restartable",
+            Self::OwnershipConflict
+            | Self::ConfigurationInvalid
+            | Self::RuntimeIntegrity
+            | Self::ProtocolMismatch => "blocked",
+        }
+    }
 }
 
 impl DaemonError {
@@ -5201,6 +4675,7 @@ impl DaemonError {
         Self {
             message: message.into(),
             exit_code: 2,
+            kind: DaemonErrorKind::ConfigurationInvalid,
         }
     }
 
@@ -5208,48 +4683,129 @@ impl DaemonError {
         Self {
             message: message.into(),
             exit_code: 1,
+            kind: DaemonErrorKind::RuntimeIntegrity,
         }
     }
 
     fn store(error: meta_store::MetaStoreError) -> Self {
         Self {
-            message: error.to_string(),
+            message: "metadata store operation failed".to_string(),
             exit_code: 1,
+            kind: DaemonErrorKind::Store(error.class()),
         }
     }
 
-    fn fulltext(_error: index_fulltext::FullTextError) -> Self {
+    fn import(_error: import_pipeline::ImportPipelineError) -> Self {
         Self {
-            message: "search index operation failed".to_string(),
+            message: "import pipeline operation failed".to_string(),
             exit_code: 1,
-        }
-    }
-
-    fn import(error: import_pipeline::ImportPipelineError) -> Self {
-        Self {
-            message: error.to_string(),
-            exit_code: 1,
+            kind: DaemonErrorKind::RecoverableDependency,
         }
     }
 
     fn ocr(error: ocr_client::OcrError) -> Self {
         Self {
-            message: error.to_string(),
+            message: "ocr service operation failed".to_string(),
             exit_code: 1,
+            kind: match error.kind() {
+                ocr_client::OcrErrorKind::InvalidRequest => DaemonErrorKind::ConfigurationInvalid,
+                ocr_client::OcrErrorKind::Disabled
+                | ocr_client::OcrErrorKind::Cancelled
+                | ocr_client::OcrErrorKind::Timeout
+                | ocr_client::OcrErrorKind::WorkerUnavailable
+                | ocr_client::OcrErrorKind::LanguageUnavailable
+                | ocr_client::OcrErrorKind::EngineFailed => DaemonErrorKind::RecoverableDependency,
+            },
         }
     }
 
     fn embedding(error: embedder::EmbeddingError) -> Self {
+        let kind = match error {
+            embedder::EmbeddingError::InvalidDimension
+            | embedder::EmbeddingError::InvalidRequest
+            | embedder::EmbeddingError::BudgetExceeded { .. }
+            | embedder::EmbeddingError::TextBudgetExceeded { .. } => {
+                DaemonErrorKind::ConfigurationInvalid
+            }
+            embedder::EmbeddingError::WorkerUnavailable
+            | embedder::EmbeddingError::EngineFailed
+            | embedder::EmbeddingError::Overloaded
+            | embedder::EmbeddingError::Cancelled
+            | embedder::EmbeddingError::Timeout => DaemonErrorKind::RecoverableDependency,
+        };
         Self {
-            message: error.to_string(),
+            message: "embedding service operation failed".to_string(),
             exit_code: 1,
+            kind,
         }
     }
 
-    fn vector(error: index_vector::VectorIndexError) -> Self {
+    fn response_sink(error: ipc::ResponseSinkError) -> Self {
         Self {
             message: error.to_string(),
             exit_code: 1,
+            kind: DaemonErrorKind::ResponseSink(error),
+        }
+    }
+
+    fn control_plane(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            exit_code: 1,
+            kind: DaemonErrorKind::ControlPlane,
+        }
+    }
+
+    fn ownership_conflict() -> Self {
+        Self {
+            message: "daemon ownership conflict".to_string(),
+            exit_code: 1,
+            kind: DaemonErrorKind::OwnershipConflict,
+        }
+    }
+
+    fn runtime_integrity() -> Self {
+        Self {
+            message: "daemon runtime integrity failure".to_string(),
+            exit_code: 1,
+            kind: DaemonErrorKind::RuntimeIntegrity,
+        }
+    }
+
+    fn configuration_invalid(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            exit_code: 1,
+            kind: DaemonErrorKind::ConfigurationInvalid,
+        }
+    }
+
+    fn recoverable_dependency(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            exit_code: 1,
+            kind: DaemonErrorKind::RecoverableDependency,
+        }
+    }
+
+    fn protocol_mismatch() -> Self {
+        Self {
+            message: "daemon ipc protocol mismatch".to_string(),
+            exit_code: 1,
+            kind: DaemonErrorKind::ProtocolMismatch,
+        }
+    }
+
+    fn into_request_failure(self) -> std::result::Result<ipc::RequestFailure, DaemonError> {
+        match self.kind {
+            DaemonErrorKind::ConfigurationInvalid
+            | DaemonErrorKind::RuntimeIntegrity
+            | DaemonErrorKind::RecoverableDependency
+            | DaemonErrorKind::Store(_)
+            | DaemonErrorKind::OwnershipConflict
+            | DaemonErrorKind::ProtocolMismatch => Ok(ipc::RequestFailure::Handler),
+            DaemonErrorKind::ControlPlane => Err(self),
+            DaemonErrorKind::ResponseSink(error) => Ok(ipc::RequestFailure::ResponseSink(error)),
         }
     }
 
@@ -5257,13 +4813,202 @@ impl DaemonError {
         self.exit_code
     }
 
-    fn is_metadata_store_storage_error(&self) -> bool {
-        self.message == "metadata store operation failed"
+    fn retryable_metadata_error(&self) -> bool {
+        matches!(
+            self.kind,
+            DaemonErrorKind::Store(MetaStoreErrorClass::Storage)
+        )
     }
+
+    fn fatal_class(&self) -> DaemonFatalClass {
+        match self.kind {
+            DaemonErrorKind::OwnershipConflict => DaemonFatalClass::OwnershipConflict,
+            DaemonErrorKind::ConfigurationInvalid => DaemonFatalClass::ConfigurationInvalid,
+            DaemonErrorKind::RuntimeIntegrity => DaemonFatalClass::RuntimeIntegrity,
+            DaemonErrorKind::RecoverableDependency => DaemonFatalClass::ControlPlaneFailure,
+            DaemonErrorKind::ProtocolMismatch => DaemonFatalClass::ProtocolMismatch,
+            DaemonErrorKind::Store(MetaStoreErrorClass::Storage)
+            | DaemonErrorKind::ControlPlane
+            | DaemonErrorKind::ResponseSink(_) => DaemonFatalClass::ControlPlaneFailure,
+            DaemonErrorKind::Store(MetaStoreErrorClass::MigrationOwnershipRequired) => {
+                DaemonFatalClass::OwnershipConflict
+            }
+            DaemonErrorKind::Store(
+                MetaStoreErrorClass::WeakPassphrase
+                | MetaStoreErrorClass::InvalidBackup
+                | MetaStoreErrorClass::Crypto
+                | MetaStoreErrorClass::KeyAlreadyExists,
+            ) => DaemonFatalClass::ConfigurationInvalid,
+            DaemonErrorKind::Store(
+                MetaStoreErrorClass::Migration
+                | MetaStoreErrorClass::InvalidValue
+                | MetaStoreErrorClass::NotFound
+                | MetaStoreErrorClass::InvalidTransition
+                | MetaStoreErrorClass::ImmutableIdentityConflict
+                | MetaStoreErrorClass::StorageInvariant,
+            ) => DaemonFatalClass::RuntimeIntegrity,
+        }
+    }
+
+    fn fatal_event_json(&self) -> String {
+        fatal_event_json_for_class(self.fatal_class())
+    }
+}
+
+fn fatal_event_json_for_class(class: DaemonFatalClass) -> String {
+    serde_json::json!({
+        "schema_version": "resume-ir.daemon-fatal.v1",
+        "event": "fatal",
+        "class": class.label(),
+        "disposition": class.disposition(),
+    })
+    .to_string()
 }
 
 impl fmt::Display for DaemonError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.message)
+    }
+}
+
+#[cfg(test)]
+mod daemon_contract_tests {
+    use super::{
+        fatal_event_json_for_class, projection_query_error, projection_service_health,
+        status_json_with, unavailable_status_json, DaemonError, DaemonErrorKind, DaemonFatalClass,
+        IPC_METADATA_READ_ATTEMPTS,
+    };
+    use meta_store::{MetaStoreErrorClass, SearchProjectionServiceState};
+
+    #[test]
+    fn fatal_wire_is_closed_bounded_and_contains_no_raw_message() {
+        let classes = [
+            DaemonFatalClass::OwnershipConflict,
+            DaemonFatalClass::ConfigurationInvalid,
+            DaemonFatalClass::RuntimeIntegrity,
+            DaemonFatalClass::ProtocolMismatch,
+            DaemonFatalClass::ControlPlaneFailure,
+        ];
+        for class in classes {
+            let body = fatal_event_json_for_class(class);
+            assert!(body.len() <= 1024);
+            let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(value.as_object().unwrap().len(), 4);
+            assert_eq!(value["schema_version"], "resume-ir.daemon-fatal.v1");
+            assert_eq!(value["event"], "fatal");
+            assert_eq!(value["class"], class.label());
+            assert_eq!(value["disposition"], class.disposition());
+        }
+
+        let secret = "PRIVATE_PATH_TOKEN_QUERY";
+        let event = DaemonError::control_plane(secret).fatal_event_json();
+        assert!(!event.contains(secret));
+    }
+
+    #[test]
+    fn fatal_mapping_separates_restartable_dependencies_from_blocked_failures() {
+        let restartable = DaemonError::recoverable_dependency("transient dependency");
+        let storage = DaemonError {
+            message: String::new(),
+            exit_code: 1,
+            kind: DaemonErrorKind::Store(MetaStoreErrorClass::Storage),
+        };
+        let invariant = DaemonError {
+            message: String::new(),
+            exit_code: 1,
+            kind: DaemonErrorKind::Store(MetaStoreErrorClass::StorageInvariant),
+        };
+        let ownership = DaemonError {
+            message: String::new(),
+            exit_code: 1,
+            kind: DaemonErrorKind::Store(MetaStoreErrorClass::MigrationOwnershipRequired),
+        };
+
+        assert_eq!(
+            restartable.fatal_class(),
+            DaemonFatalClass::ControlPlaneFailure
+        );
+        assert_eq!(storage.fatal_class(), DaemonFatalClass::ControlPlaneFailure);
+        assert_eq!(invariant.fatal_class(), DaemonFatalClass::RuntimeIntegrity);
+        assert_eq!(ownership.fatal_class(), DaemonFatalClass::OwnershipConflict);
+    }
+
+    #[test]
+    fn metadata_unavailable_status_keeps_process_and_service_health() {
+        let body = unavailable_status_json();
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(value["schema_version"], "daemon.status.v2");
+        assert_eq!(value["process_state"], "ready");
+        assert_eq!(value["services"]["metadata"], "unavailable");
+        assert_eq!(value["services"]["query"], "unavailable");
+        assert_eq!(value["error"]["code"], "METADATA_UNAVAILABLE");
+        assert!(value["ipc"].is_object());
+        assert!(value["indexed_documents"].is_null());
+    }
+
+    #[test]
+    fn metadata_retry_is_limited_to_storage_class() {
+        let storage = DaemonError {
+            message: String::new(),
+            exit_code: 1,
+            kind: DaemonErrorKind::Store(MetaStoreErrorClass::Storage),
+        };
+        let invariant = DaemonError {
+            message: String::new(),
+            exit_code: 1,
+            kind: DaemonErrorKind::Store(MetaStoreErrorClass::StorageInvariant),
+        };
+        assert!(storage.retryable_metadata_error());
+        assert!(!invariant.retryable_metadata_error());
+    }
+
+    #[test]
+    fn runtime_metadata_read_failure_returns_status_v2_with_unavailable_dependencies() {
+        let mut attempts = 0;
+        let body = status_json_with(|| {
+            attempts += 1;
+            Err(DaemonError {
+                message: String::new(),
+                exit_code: 1,
+                kind: DaemonErrorKind::Store(MetaStoreErrorClass::Storage),
+            })
+        });
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+
+        assert_eq!(attempts, IPC_METADATA_READ_ATTEMPTS);
+        assert_eq!(value["schema_version"], "daemon.status.v2");
+        assert_eq!(value["process_state"], "ready");
+        assert_eq!(value["service_state"], "degraded");
+        assert_eq!(value["services"]["metadata"], "unavailable");
+        assert_eq!(value["services"]["query"], "unavailable");
+        assert_eq!(value["error"]["code"], "METADATA_UNAVAILABLE");
+    }
+
+    #[test]
+    fn v27_projection_repair_state_is_not_reported_ready() {
+        let repairing = projection_service_health(SearchProjectionServiceState::Repairing);
+        let blocked = projection_service_health(SearchProjectionServiceState::RepairBlocked);
+        assert_eq!(repairing.aggregate(), crate::ipc::ServiceState::Repairing);
+        assert_eq!(blocked.aggregate(), crate::ipc::ServiceState::Degraded);
+    }
+
+    #[test]
+    fn v27_projection_state_gates_query_routes_with_fixed_codes() {
+        assert_eq!(
+            projection_query_error(Some(SearchProjectionServiceState::Ready)),
+            None
+        );
+        assert_eq!(
+            projection_query_error(Some(SearchProjectionServiceState::Repairing)),
+            Some(crate::ipc::ServiceErrorCode::Repairing)
+        );
+        assert_eq!(
+            projection_query_error(Some(SearchProjectionServiceState::RepairBlocked)),
+            Some(crate::ipc::ServiceErrorCode::QueryServiceUnavailable)
+        );
+        assert_eq!(
+            projection_query_error(None),
+            Some(crate::ipc::ServiceErrorCode::MetadataUnavailable)
+        );
     }
 }

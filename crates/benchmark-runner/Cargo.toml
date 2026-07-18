@@ -10,11 +10,14 @@ core-domain = { path = "../core-domain" }
 embedder = { path = "../embedder" }
 extractor-rules = { path = "../extractor-rules" }
 index-fulltext = { path = "../index-fulltext" }
+index-vector = { path = "../index-vector" }
+meta-store = { path = "../meta-store" }
 ocr-client = { path = "../ocr-client" }
 rank-fusion = { path = "../rank-fusion" }
 serde = "1"
 serde_json = "1"
 sha2 = "0.10"
+sysinfo = { version = "0.39.3", default-features = false, features = ["system"] }
 
 [lints]
 workspace = true

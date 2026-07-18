@@ -1,0 +1,18 @@
+[package]
+name = "search-runtime"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+core-domain = { path = "../core-domain" }
+index-fulltext = { path = "../index-fulltext" }
+index-vector = { path = "../index-vector" }
+meta-store = { path = "../meta-store" }
+
+[dev-dependencies]
+import-pipeline = { path = "../import-pipeline" }
+
+[lints]
+workspace = true

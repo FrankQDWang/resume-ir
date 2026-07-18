@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reauthorize-managed-root"
+description = "Enables the reauthorize_managed_root command without any pre-configured scope."
+commands.allow = ["reauthorize_managed_root"]
+
+[[permission]]
+identifier = "deny-reauthorize-managed-root"
+description = "Denies the reauthorize_managed_root command without any pre-configured scope."
+commands.deny = ["reauthorize_managed_root"]

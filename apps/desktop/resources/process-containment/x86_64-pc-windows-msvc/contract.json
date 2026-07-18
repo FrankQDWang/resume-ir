@@ -1,0 +1,19 @@
+{
+  "schema_version": "resume-ir.windows-process-containment.v1",
+  "target_triple": "x86_64-pc-windows-msvc",
+  "minimum_windows_build": 10240,
+  "wrapper_crate": "process-containment",
+  "job_limit": "kill_on_job_close",
+  "breakaway_allowed": false,
+  "spawn_failure_mode": "fail_closed_and_reaped",
+  "workspace_unsafe_code_allowed": false,
+  "covered_spawn_owners": [
+    "desktop_daemon",
+    "embedding_one_shot",
+    "embedding_resident",
+    "ocr_custom_engine",
+    "ocr_tesseract",
+    "pdf_custom_renderer",
+    "pdf_pdftoppm"
+  ]
+}

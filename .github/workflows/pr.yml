@@ -40,6 +40,9 @@ jobs:
       - name: Metadata
         run: cargo metadata --no-deps --locked
 
+      - name: Search runtime boundary check
+        run: python3 scripts/ci/check-search-runtime-boundary.py
+
       - name: Format
         run: cargo fmt --check
 

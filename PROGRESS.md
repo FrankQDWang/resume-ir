@@ -3352,6 +3352,4197 @@ guards, local runtime discovery, and PR #9 CI state.
 
 ## Command Log
 
+### S807
+
+- The user elevated daemon residency and search-detail consistency above the
+  deferred S806 Windows runtime evidence lane. A deterministic peer-reset
+  witness established that a single response write error could escape the
+  connection boundary and terminate the daemon. Current desktop code starts the
+  child only during initial setup and has no runtime owner that can observe and
+  recover an unexpected exit. Static storage/import tracing also established
+  that search carries a resume version while detail drops it, ordinary parse
+  version identity is not content-addressed, and metadata becomes visible before
+  the full-text snapshot publication boundary.
+- The approved v27 hard cut is recorded in
+  `docs/superpowers/specs/2026-07-17-daemon-reliability-detail-snapshot-v27.md`
+  and
+  `docs/superpowers/plans/2026-07-17-daemon-reliability-detail-snapshot-v27.md`.
+  It requires request-local IPC failure isolation, one native desktop daemon
+  supervisor, generation-bound discovery/authentication, bounded persistent
+  lifecycle evidence, immutable content versions, atomic active-search
+  projection publication, and selection-bound detail/hydrate. Compatibility
+  readers, doc-only fallbacks, old visibility admission, and automatic business
+  request replay are explicitly prohibited.
+- Work is isolated on `codex/daemon-reliability-v27` under
+  `.worktrees/daemon-reliability-v27`; the dirty main worktree and its two
+  untracked research files are untouched. GitHub capability attestation found
+  the configured token invalid and the API unavailable, so no linked issue,
+  push, or PR is claimed. Historical #138 is retained only as the validator's
+  local umbrella until remote capability is restored. S806 is a truthful
+  evidence-only checkpoint, not complete.
+- G0 is contract/governance only. Production implementation and focused RED/
+  GREEN evidence follow in D1/D2, R1/R2, C1-C3, M1, and V1; the current machine
+  state remains `branch_active`, verification remains partial, and no
+  correctness, soak, cross-platform, release-readiness, or product-completion
+  claim is made yet.
+- G0 contract parsing, active-goal validation, loop-state validation, the public
+  repository privacy guard, and `git diff --check` pass after the v27 acceptance
+  cell and paired synthetic-smoke pins were updated. These checks establish only
+  an internally consistent implementation contract.
+- D1 now keeps connection read/write/reset failures below the daemon control
+  plane. The accept loops share one request-local outcome boundary, bounded
+  responses use a write timeout, and the supervised query service reports its
+  own worker death as a control-plane failure. `cargo test -p resume-daemon
+  --bin resume-daemon --locked` passed 9 tests, `cargo test -p resume-daemon
+  --test s20_ipc --locked` passed 21 tests, and strict daemon Clippy passed for
+  commit `e11e430`. This evidence does not cover D2 generation ownership yet.
+- R1 replaced the WebView start command with a Tauri-managed actor that is the
+  only owner of the contained child. The fixed startup, heartbeat, restart
+  budget, backoff, stable-reset, circuit and half-open policy is implemented;
+  normal App exit stops the contained tree and does not consume failure budget.
+  Production code and deterministic failure tests were split at the ordinary
+  change-budget boundary in commits `b1da412` and `cbf68e2`. The desktop Rust
+  suite passed 47 tests and strict all-target Clippy. Persistent lifecycle
+  receipts and daemon fatal-event ingestion remain R2 work, so native recovery
+  evidence is not complete.
+- The frontend half of R2 now models lifecycle, service health and result
+  freshness independently, polls serially with focus refresh, preserves but
+  disables results during recovery, interrupts generation-bound work without
+  replay, and requires explicit detail continuation. A stale selection clears
+  detail text, fields and path while retaining the result list. Focused Vitest
+  passed 26 tests and the TypeScript/Vite production build passed for commit
+  `fcdd778`. Status/diagnostics v2/v3 and selection-bound detail/hydrate v3 are
+  not wired yet; this is not an R2 or C3 completion claim.
+- D2/R2 are now complete for the local correctness train. The daemon owns a
+  locked v2 discovery generation with instance-bound rotating auth, classifies
+  request/response failures below the control plane, exposes bounded v2 health
+  and v3 diagnostics, and emits only enumerated fatal events. The desktop actor
+  is the sole child owner, persists at most 16 owner-only lifecycle receipts,
+  exports lifecycle evidence even when the daemon is unavailable, and applies
+  the fixed startup/heartbeat/backoff/circuit policy without replaying business
+  requests.
+- C1-C3/M1 completed as one v27 hard cut. Content-addressed source revisions and
+  resume versions are insert-once; derived data is version-bound; the active
+  search projection is the only search admission fact; full-text, vector,
+  metadata head, journal and visible epoch publish through one typed CAS
+  boundary; query leases are all-old or all-new. Search, detail and hydrate use
+  the exact `SearchSelection`; doc-only/latest-version fallbacks and the old
+  visibility/embedding-worker contracts were removed. The v26 copy-on-write
+  migration retains only source identity/authorization, invalidates legacy
+  derived artifacts, and remains `repairing` until a validated v27 publication.
+- Deterministic connection tests cover status, search, batch, detail, hydrate
+  and progress abort/reset paths. One resident daemon then completed 7,200
+  one-second cycles in 7,499.89 seconds with 72,000 injected mixed connection
+  faults and 79,201 total requests; every diagnostics sample preserved request
+  accounting and redaction, and the daemon exited normally only at the exact
+  configured request limit. The focused overload test also proved that the
+  ninth interactive request receives correlated `OVERLOADED`, capacity release
+  admits the next request, and the query service stays alive.
+- The remaining synthetic fault matrix passed: 17 CLI fault-injection cases
+  including disk-low, file-lock, corrupt-snapshot recovery and daemon restart;
+  import cancellation; database-guarded ready-head/journal/projection state;
+  and publication failure preserving the old snapshot. Workspace tests in
+  `verify-local.sh`, workspace all-target/all-feature warnings-denied Clippy,
+  formatting, frontend 28 Vitest plus 89 packaging tests, and the production
+  frontend build pass.
+- The approved bear/resume-folder application icon is restored from the
+  previously accepted native asset. The 1024px ICNS SHA-256 is
+  `0773cef6a3a2d8627874eb4cb9341b0039c5144b03b3612c617a03769c1a3747`;
+  source, packaged App and DMG volume icon were byte-identical. The DMG verifier
+  keeps an 8 MiB upper bound and has regression coverage for the 2,482,309-byte
+  production icon and an oversized rejection. The final internal-test arm64
+  DMG passed composition and ad-hoc hardened-runtime verification with SHA-256
+  `960e5a1efb0aeb8216e727a879c558a506ea10e20c2ee6b637e602687b3d22ab`.
+- A native macOS release-App witness used a distinct bundle identity and empty
+  isolated runtime state. After strong-killing its owned daemon, the lifecycle
+  receipt entered `recovering` in 144 ms and a new generation reached `ready`
+  in 499 ms. Native App quit removed the endpoint and contained daemon tree;
+  no process, mount or isolated runtime-data residue remained. Receipts stayed
+  below 16 KiB and contained no path, token, query, body or raw stderr.
+- S807 is locally complete for the daemon/detail correctness train and macOS
+  internal-test evidence only. It is not a stable-release or cross-platform
+  completion claim: the Windows H0 Job Object/NSIS lifecycle witness still
+  requires the blocked machine reset/reprovision lane, and signing,
+  notarization, updater, private-scale and other machine release-readiness
+  blockers remain unchanged. GitHub issue/PR/push reconciliation also remains
+  blocked by the previously attested credential/network state.
+- Final performance-contract, autonomous-goal, loop-state and public-repository
+  privacy gates pass. Machine `release-readiness --json` truthfully exits 1 with
+  `stable_release: blocked`; its remaining blockers are release credentials,
+  signed/notarized clean-host macOS evidence, Windows self-contained NSIS/H0
+  evidence, GitHub publication approval, private performance/quality/OCR
+  evidence, reviewed runtime/model distribution, cross-platform transcripts,
+  redacted validation diagnostics and hardware drills. None is reclassified as
+  satisfied by the S807 synthetic soak or internal-test App witness.
+
+### S806
+
+- Continued closed historical issue #138 locally after accepted S805 and froze
+  one native-evidence slice: temporarily repurpose the authorized Windows x64
+  machine as a build host, provision only the missing Git, CMake and VS2022 C++
+  inputs, check out exact ONNX Runtime `v1.24.4` commit
+  `2d924974ef147392ced8409d36bd6d2e7fcc8a74` with clean recursive submodules,
+  and run the accepted S805 owner under a native VS2022 x64 environment. Success
+  requires official single-job update/build/test plus one atomically promoted
+  PE32+ x64 DLL with the required export, Windows-system-only imports, static
+  MSVC runtime, exact legal identities, provenance v2 and a sub-4-KiB path-free
+  receipt. Any tool, source, submodule, test, artifact, import, legal, privacy or
+  publish drift fails closed and cannot create an H0 or installer claim.
+- Fresh read-only observation reached the online machine through Tailscale SSH:
+  Windows build 19045, x64, 7.76 GiB memory, 8 logical processors, about 136.7
+  GiB free disk, administrator capability, GitHub HTTPS and running sshd. Node
+  24, Python 3.14 and a VS2019 C++ toolset are present; Git, CMake, VS2022 and
+  long-path support are absent. The newly observed VS2019 toolset is environment
+  drift from S794, so previous clean-H0 status is not reusable. Once S806
+  provisioning begins, this installation remains a build host until a later
+  reset/reprovision and dependency-absence audit after all Windows artifacts are
+  produced.
+- Only public source and synthetic validation are allowed. Runtime bytes,
+  source/build/destination paths, host or account identity, full logs, process
+  identifiers, credentials, private data, model assets, diagnostics packages and
+  screenshots remain outside Git and public evidence. S806 does not include the
+  model pack, OCR/PDFium, composition, NSIS, H0 GUI E2E, signing or updater.
+
+### 2026-07-16 macOS internal-test lifecycle remediation (out of band)
+
+- Investigated two `launchd`-adopted resident embedding processes and confirmed
+  they were an App ownership/cleanup defect, not an intentional persistent
+  service or an external runtime dependency. The remediation makes Unix
+  process-tree roots and owned leaves explicit, gives desktop-to-daemon shutdown
+  a private stdin lifecycle channel with a bounded process-group fallback, and
+  starts the resident parent-identity guard before native runtime initialization.
+- The native initialization failure regression is bounded, while a valid
+  installed runtime reaches ready and completes synthetic inference. The
+  internal-test signing path keeps hardened runtime enabled and grants
+  `disable-library-validation` only to the bundled embedding executable; the
+  formal Developer ID/notarization path remains unchanged. Issues #205, #206,
+  and #207 were closed after their original acceptance contracts passed. The
+  temporary immutable ORT git pin remains tracked by #208.
+- A fresh current-source arm64 DMG passed exact runtime composition, digest,
+  architecture, ad-hoc signature, hardened-runtime, entitlement-scope and
+  fail-closed internal-test verification, then installed through the checked
+  lifecycle script without deleting user data. The final installed GUI reported
+  daemon ready and a 100% searchable synthetic fixture set; semantic and hybrid
+  searches each returned two synthetic results, and a real `Command-Q` exit left
+  zero desktop, daemon, or resident processes.
+- The installed-App forced-exit matrix passed 12/12: startup-before-ready,
+  model-loading, ready-idle and active-request each ran three times with zero
+  remainder. Three separate daemon-forced-exit runs also reclaimed the old
+  resident, including one under concurrent synthetic semantic requests.
+- Focused verification passed formatting; strict Clippy for the changed root and
+  standalone Tauri crates; process containment 8/8; daemon lifecycle 4/4;
+  embedding runtime 11 passed with one child-only probe intentionally ignored;
+  serial embedder 12/12; Mac packaging/lifecycle Node tests 36/36; license and
+  public-repository privacy guards. One resident parallel timing flake is tracked
+  by #210, and one workspace-load OCR timing flake is tracked by #211.
+- The repository-wide `verify-local` is not claimed green: its first run exposed
+  the #211 OCR timing flake, and its second run passed that test but stopped at
+  the pre-existing schema-v25 assertion against the current schema v26, tracked
+  by #212. Machine `release-readiness` still correctly reports stable release
+  blocked. This entry establishes only a self-contained, allow-list-only macOS
+  internal-test build ready for small manual testing with known concerns. OCR/PDF
+  helper crash containment remains #209 and blocks a whole-native-tree stable
+  release claim.
+
+### S805
+
+- Continued closed historical issue #138 locally after accepted S804 and chose
+  one remaining Windows runtime input: a reproducible native x64 owner for the
+  static-MSVCRT ONNX Runtime library required by the accepted resident
+  embedding executable. Inputs are the reviewed source contract, exact
+  ONNX Runtime `v1.24.4` commit, a recursively initialized clean checkout and
+  absolute non-overlapping source/destination paths. Success requires a native
+  VS2022 x64 environment, Python >= 3.10, CMake >= 3.28, one-job official
+  update/build/test, existing PE/export/import/license validation, provenance
+  v2, atomic promotion and a sub-4-KiB path-free receipt. Any platform,
+  toolchain, tracked/untracked source, submodule, artifact, import, privacy or
+  rollback drift fails closed and rolls back this slice only.
+- The user authorized staged reuse of the existing 8 GiB Windows hardware. It
+  may first cease being H0 and become the native build host; all H0 claims from
+  that Windows installation then become invalid until Windows is reset or
+  reprovisioned and the absence of Git, Rust, Node, Python, CMake, VS and source
+  code is reverified. OrbStack/Linux containers and Docker are not substituted
+  for the native MSVC environment. This slice did not connect to or mutate the
+  Windows machine.
+- RED first failed with `ERR_MODULE_NOT_FOUND` because no ONNX Runtime build
+  owner existed. GREEN adds a shell-free owner that rejects non-Windows/non-x64
+  execution, VS/tool/source/submodule drift, unsafe overlap and symlink build
+  roots; clears only the exact reviewed build output; invokes official
+  `tools/ci_build/build.py`; accepts only the exact bounded x64 DLL; copies only
+  reviewed legal files; writes provenance v2; and restores a prior accepted
+  runtime after promotion failure. The existing pack validator now requires
+  builder platform/architecture plus Python, VS, MSVC, SDK and CMake identities.
+- Ten focused builder/pack tests pass, including tracked and untracked drift,
+  dynamic CRT rejection, wrong platform, missing artifact, symlink, overlap and
+  rollback. The real Mac invocation exits 1 with the bounded expected
+  `requires native Windows x64` refusal. Full desktop verification passes 20
+  frontend `mockIPC`/`clearMocks` tests, 74 packaging/runtime Node tests, the
+  TypeScript/Vite production build and all 35 Tauri Rust command/state tests.
+  No Rust source changed, so rust-analyzer and Cargo check/clippy/build are not
+  applicable to this builder-only JavaScript/JSON/docs slice.
+- Diff integrity, performance-contract, autonomous-goal, loop-state and public
+  privacy gates pass after preserving the existing `origin/main`-reachable
+  public commit pin. Fresh release-readiness exits 1 as expected with
+  `complete_product: false`, P5 incomplete and stable release blocked. No real
+  ONNX DLL, model pack, inference, OCR/PDFium, NSIS, H0 native or signing/updater
+  evidence is claimed.
+- No runtime/model bytes, paths, build logs, account identity, private data,
+  credentials, diagnostics package or screenshot entered committed evidence.
+  There was no push, PR or remote issue mutation, and the two user research
+  files remain untouched. The successor is the controlled native Windows build
+  phase; it must provision the temporarily repurposed machine, produce and
+  verify the actual DLL locally, and still cannot claim H0 until the machine is
+  reset.
+
+### S804
+
+- Continued closed historical issue #138 locally after accepted S803 and
+  selected one Windows packaging input only: close the daemon's existing
+  bundled SQLCipher plus vendored OpenSSL build dependency without installing
+  developer tools on the clean H0 validation machine. The reproduced MSVC
+  cross-build failure remained inside that C/crypto build path; pinned
+  cargo-zigbuild 0.23.0 with Zig 0.16.0 successfully reached a self-contained
+  Windows GNU process executable on the Mac build host without Docker.
+- Froze the process boundary explicitly instead of mislabeling the artifact:
+  Tauri and the final bundle remain `x86_64-pc-windows-msvc`; the independently
+  executed daemon is `x86_64-pc-windows-gnu`, communicates only through the
+  existing local process IPC, and shares no FFI, allocator or Rust ABI. The
+  staged filename uses Tauri's required MSVC bundle suffix while the bounded
+  receipt records both target triples.
+- RED first failed because no Windows daemon build/staging owner existed. GREEN
+  adds one no-argument, shell-free owner pinned to the exact tool versions,
+  release target and `resume-daemon` package. It clears only an isolated,
+  owner-checked non-symlink build directory, remaps repository/home paths,
+  denies Rust warnings, bounds child output, and accepts only a bounded PE32+
+  x64 executable with the reviewed Windows 10 system DLL/UCRT API-set imports.
+  It rejects dynamic crypto/GNU/MSVC runtimes, unknown imports and exact UTF-8
+  or UTF-16 build identity, then atomically stages or restores the prior daemon.
+- Eight focused tests cover command/tool/target/package pins, honest runtime vs
+  bundle targets, safe build-directory handling, valid staging, forbidden and
+  unknown imports, generic system-path text versus exact builder identity,
+  tool drift, missing/non-x64 input and atomic rollback. The final warnings-
+  denied command was run twice from a cleared build directory; both produced
+  the same 17,302,528-byte executable with 26 reviewed direct system imports,
+  static SQLCipher/OpenSSL closure and zero checked build-identity markers.
+- All 20 official frontend `mockIPC`/`clearMocks` tests, 68 desktop packaging
+  script tests, frontend production build, 75 focused privacy/meta-store tests,
+  host daemon check/clippy/build, Windows privacy cfg clippy, and full Windows
+  cargo-zigbuild with warnings denied pass. A direct non-Zig Windows meta-store
+  Clippy diagnostic failed in the vendored OpenSSL build script because that
+  invocation requires an absent MinGW compiler; no compiler was installed to
+  work around it. The real cargo-zigbuild path and host full-daemon Clippy cover
+  the changed Rust code. rust-analyzer exited 0 with only existing cfg-inactive
+  weak warnings.
+- Formatting, diff integrity, performance-contract, autonomous-goal,
+  loop-state and public-repository privacy gates pass. Fresh machine
+  release-readiness correctly remains `complete_product: false`, P5 Tauri
+  installers `incomplete`, and `stable_release: blocked`; this component is not
+  native H0, NSIS, signing or updater evidence.
+- S804 does not stage or claim ONNX/model, OCR/PDFium, complete Windows runtime
+  composition or product completion. H0 was not mutated and receives no partial
+  executable; no private data, local path, credential, runtime bytes,
+  diagnostics package or screenshot entered committed evidence. No push, PR or
+  remote issue mutation occurred, and the two user research files remain
+  untouched. The next single Windows product input is the reviewed static-
+  MSVCRT ONNX Runtime plus immutable model pack needed to make the accepted
+  resident embedding executable runnable before full composition can proceed.
+
+### S803
+
+- Continued closed historical issue #138 locally after accepted S802 and
+  selected one Windows packaging input only: a real x64 resident embedding Rust
+  sidecar built on the Mac build host without mutating the clean H0 terminal
+  machine. Tailscale, Windows OpenSSH and the existing remote desktop session
+  are reachable; non-interactive SSH key authorization is still unavailable,
+  and no password, screenshot or host value entered evidence.
+- The initial two-sidecar hypothesis was falsified before scope expansion.
+  `resume-embedding-runtime` cross-builds through the official Tauri-documented
+  `cargo-xwin` route, while `resume-daemon` reaches the current SQLCipher
+  bundled-vendored OpenSSL Configure path and requires Windows-style Perl. S803
+  was narrowed to the independently shippable embedding sidecar; the daemon
+  SQLCipher/crypto build closure is the immediate successor rather than a
+  weakened static-dependency rule or an H0 developer-tool workaround.
+- RED first failed because no Windows embedding-sidecar build/staging owner
+  existed. GREEN adds one shell-free, argument-free owner pinned to
+  `cargo-xwin 0.22.0`, the exact release MSVC target/package and static-CRT
+  encoded Rust flags plus the existing release path remapping. It accepts only
+  a bounded PE32+ x64 executable whose direct imports are reviewed Windows
+  system DLLs, rejects dynamic MSVC/UCRT/OpenMP or unknown imports, scans UTF-8
+  and UTF-16 payloads for build-host identity, atomically restores prior output
+  on failure, and emits only a sub-4-KiB path-free receipt.
+- A second RED inspection caught two build-host identity markers in the first
+  real static-CRT executable. Rebuilding with repository/home path remapping
+  produced one 3,920,384-byte x64 executable with four direct Windows system
+  imports, no dynamic CRT and zero matches across 16 independent encoded
+  build-identity checks. Repeated orchestration preserved the same local digest
+  and atomically staged the exact Tauri sidecar. Six focused tests prove
+  command/version/target/package pins, valid staging, dynamic-CRT and
+  build-identity rejection, rollback and missing-artifact refusal.
+- All 20 official `mockIPC`/`clearMocks` tests, 60 desktop packaging tests,
+  frontend production build, 10 embedding-runtime tests, host and Windows x64
+  warnings-denied clippy, 35 desktop Rust tests, desktop check/clippy/release
+  build, target arm64 Tauri App regression build and exact composition verifier
+  pass. The Mac bundle remains one daemon, one resident embedding runtime, one
+  PDF renderer, 7 embedding files and 31 OCR files with matching digests,
+  arm64 executables and zero checked builder-path markers.
+- S803 does not claim a Windows daemon, ONNX Runtime/model pack, OCR/PDFium,
+  complete Windows composition, NSIS, H0 native execution, signing/updater or
+  complete product. No Docker, Windows mutation, runtime/model bytes, private
+  data, local path, credential, diagnostics package or screenshot entered
+  committed evidence; no push, PR or remote issue mutation occurred, and the
+  two user research files remain
+  untouched.
+
+### S802
+
+- Continued closed historical issue #138 locally after accepted S801 and selected one packaging product gap only: produce a repeatable self-contained macOS arm64 internal-test DMG without requiring a Developer ID account. This follows the user's explicit request to validate a small-scale test build before a colleague performs formal release signing.
+- Frozen input/success boundary: reuse the already verified exact daemon, resident embedding/model, OCR and PDF runtime composition; configure only the official Tauri v2 ad-hoc pseudo-identity `-` after final resource composition. The mounted and installed App must pass `codesign --verify --deep --strict`, identify as ad-hoc with no team identity, retain exact bundled-runtime digests, install and launch through the existing native lifecycle, and emit only a bounded path-free `internal_test_only` receipt.
+- Frozen failure/privacy boundary: notarization and Gatekeeper acceptance are not claimed by this internal build; tester guidance must explicitly require Privacy & Security allow-listing. Developer ID signing, notarization, stapling and signed updater remain release successors. Invalid/ambiguous identity, unsealed resources, unsigned nested runtime, post-install signature drift, launch/process-reclamation regression, credential/path/body/query/runtime leakage, a formal-release misclaim, visual/IPC/CSP drift or any required-gate failure rolls back only S802 packaging/scripts/tests/contracts. No Tauri command, handler, capability, plugin, permission, WebView, query/import/daemon/runtime/Windows/updater behavior, private evidence, screenshot or remote state may change.
+- RED target: the locked macOS config test must fail until `bundle.macOS.signingIdentity` is exactly `-`, and the DMG verifier test must fail until a merely linker-signed or resource-unsealed App is rejected instead of being reported as an acceptable composition.
+- RED reproduced exactly: the focused Node suite reported three failures because `bundle.macOS` was absent, the verifier returned `resume-ir.macos-dmg-composition.v1` instead of the bounded internal-test receipt, and failed/non-ad-hoc signatures did not reject. Four unrelated DMG layout/cleanup tests remained green, proving the failure is the missing signing contract rather than the mount fixture or host.
+- GREEN locks the official Tauri v2 ad-hoc pseudo-identity `-` and hardened runtime in the macOS platform overlay. The new argument-free `bundle:macos:test` entry removes all Apple certificate/notarization variables from its child environment, forces the pseudo-identity, builds only the fixed arm64 DMG, and accepts only a bounded composition receipt with `distribution_profile: internal_test`, a valid ad-hoc signature, hardened runtime, no notarization claim, transfer SHA-256 and mandatory tester allow-list guidance.
+- The first real signed build correctly failed the legacy exact-byte sidecar check because `codesign` replaces Mach-O signature blobs and updates the `__LINKEDIT` size fields. The verifier now compares a bounded canonical executable payload digest that excludes only `LC_CODE_SIGNATURE` data and its code-signing-owned `__LINKEDIT` sizes, while strict deep codesign validation covers the final signed bytes. Synthetic regression proves signature-only changes pass and executable payload changes still fail.
+- The final one-command build passes with one DMG, one App, one daemon, one resident embedding runtime, one PDF renderer, seven embedding resource files, 31 OCR resource files, canonical executable/resource digest match, arm64 architecture, zero checked build-machine identity markers, valid sealed ad-hoc signature and hardened runtime. The bounded receipt remains `composition_only/internal_test`; notarization is `not_requested` and local Gatekeeper rejection is recorded rather than hidden.
+- The final DMG replaced the old invalid `/Applications/resume-ir.app` through the verified data-preserving uninstall/install lifecycle. The copied App passed `codesign --verify --deep --strict`; native launch observed exactly one desktop and one owned daemon, authenticated aggregate status returned `daemon.status.v1`, and native quit reclaimed both processes. No screenshot or sensitive value was retained.
+- Broad verification passes 20 official frontend `mockIPC`/`clearMocks` tests, 54 packaging/runtime Node tests, the frontend production build, 35 desktop Rust command/state tests, Cargo check, warnings-denied clippy and release build. No Rust source, dependency, lockfile, AppManifest, command, invoke handler, capability, plugin, permission, WebView, CSP, visual or daemon/query/import behavior changed.
+- `git diff --check` and all four mandatory performance/autonomous/loop/public-boundary gates pass after one minimal local-only pin reconciliation. Fresh machine readiness remains correctly fail-closed with `complete_product: false`, `current_stage=tauri_desktop_product_incomplete_release_blocked`, P5 incomplete and `stable_release: blocked`; S802 proves only a small-scale macOS internal test distribution. Developer ID signing/notarization/stapling and signed updater wait for the colleague-owned release credentials. The selected local successor is the reviewed Windows x64 self-contained runtime closure and per-user NSIS path; no Windows host mutation, private data, push, PR or remote issue mutation occurred, and the two user research files remain untouched.
+
+### S801
+
+- Continued closed historical issue #138 locally after accepted S800 and selected one GUI product gap only: expose daemon-owned durable managed-root pause/resume through the existing typed Tauri bridge and approved source cards.
+- Frozen input/success boundary: WebView supplies only one existing bounded opaque root handle plus a closed `inspect|pause|resume` action. Rust resolves the authorized canonical root under a short lock, sends it only to the authenticated loopback daemon on a distinct bounded control lane, and projects only fixed path-free state/booleans. Source cards must distinguish unmanaged, active, paused, unavailable, overload and error; pause active roots, resume only available paused roots, disable paused rescan, and retain bounded retry/recovery behavior without changing approved visual tokens.
+- Frozen Tauri/privacy/rollback boundary: reuse the existing single `daemon_request` command, invoke handler and main-only capability; no AppManifest, capability, plugin, path-scope or second-handler change is allowed. No path/token/endpoint manifest may enter WebView, logs, diagnostics or evidence. Authorization bypass, unbounded or leaking projection, admission starvation, paused rescan, state conflation, lock across await/I/O, visual/native regression or required-gate failure rolls back only S801 bridge/frontend/tests/contracts. Remove/delete, daemon/store/query/runtime/resource semantics, Windows H0, signing/updater and product-complete claims are out of scope.
+- RED target: official `mockIPC`/`clearMocks` tests must fail until the frontend emits the exact opaque-handle/action request and classifies the bounded result; focused Rust tests must fail until the closed request enum and typed daemon projection exist.
+- RED reproduced exactly: the focused Vitest contract failed because `controlManagedRoot` and `managedRootControlOutcome` did not exist; the focused desktop Cargo test failed with E0599 because `Operation::RootControl` and `DesktopRequest::root_control` did not exist. Both failures are the intended missing bridge contract, not environment or unrelated regressions.
+- GREEN adds one explicit `RootControl` request/action/response path to the existing command, a distinct capacity-2 control lane, Rust-native handle authorization and canonical-path resolution, authenticated loopback forwarding, and a bounded typed projection that drops daemon paths and extra fields. The approved source cards now show active, paused, unmanaged, unavailable, overload and error distinctly; paused roots cannot rescan, and available paused roots can resume and queue catch-up.
+- The first real installed-App upgrade smoke exposed a recoverability defect: a retained same-schema endpoint manifest from the previous daemon lacked `import_control`, so the new bridge returned `daemon_protocol` before starting its owned daemon. A focused lifecycle RED test first failed on the missing recovery predicate. The fix permits owned restart only when the legacy manifest has a strictly valid loopback status endpoint that is actually unreachable; a live incompatible endpoint still fails closed to prevent two daemons from sharing one data directory.
+- Verification passes: 20 frontend `mockIPC` tests, 50 packaging/runtime tests, frontend production build, 35 desktop Rust tests, Cargo check, warnings-denied clippy and release build. Rust-analyzer still reports only the known Tauri `generate_context!` E0560 macro-expansion false positive at `main.rs`, while all four Cargo modes compile the same source. The Tauri surface remains seven commands, one invoke handler and no build/config/capability/plugin/dependency diff.
+- Synthetic 1440x900 inspection preserved the approved four-card density, mask, sheet and visual tokens; pause changed the available source to paused copy/pill/resume and disabled scan, resume restored active copy/actions, and the browser console stayed clean. No screenshot was retained.
+- A fresh arm64 DMG and installed App contain exactly one daemon, resident embedding runtime and PDF renderer plus the bounded embedding/OCR packs, matching digests and no build-machine path markers. The App was registered in the system Applications directory; the retained-manifest native witness then observed one desktop and one owned daemon start, followed by native quit and complete process reclamation. The DMG remains ad-hoc/unaccepted by Gatekeeper and is explicitly `composition_only`/`local_install_only` evidence.
+- All four mandatory contract/privacy gates pass. Fresh machine readiness remains correctly fail-closed with `complete_product: false`, `current_stage=tauri_desktop_product_incomplete_release_blocked` and `stable_release: blocked`. S801 completes only managed-root pause/resume GUI and upgrade recovery; macOS distribution signing/notarization/updater and Windows clean-host NSIS/H0 evidence remain successors. No private content, screenshot, Windows mutation, push, PR or remote issue mutation occurred; the two user research files remain untouched.
+
+### S800
+
+- Continued closed historical issue #138 locally after accepted S799 and selected one prerequisite product gap only: daemon-owned durable pause/resume control for a managed import root; desktop-ledger-only control is forbidden because watcher/rescan/worker authority comes from daemon metadata.
+- Frozen contract: one authenticated, versioned and bounded typed request carries an exact canonical root already in `import_scan_scope` and one closed `inspect|pause|resume` action. Pause durably blocks worker claim, periodic requeue and watcher synchronization and requests cancellation for active work; resume is idempotent and queues at most one immediate catch-up from the latest scope; inspect/restart reproduce state without filesystem access.
+- Response/privacy/rollback remain fixed: only schema/status plus `changed`, `task_cancel_requested` and `catch_up_queued` booleans are returned, with no path/task ID. Invalid/unknown/oversized/extra-field input, cross-root impact, duplicate catch-up, paused execution, leakage, migration or gate failure rolls back only S800. No Tauri/WebView/UI/capability, remove/delete, query/resource, Windows, signing/updater or product-complete change is included.
+- RED reproduced exactly: focused meta-store and daemon tests failed to compile on the absent durable control API before an endpoint could be accepted. GREEN adds migration V26, atomic pause/cancellation and idempotent resume/catch-up, paused-root exclusions in claim/requeue/watch synchronization, paused-import conflict, exact endpoint-manifest projection, and strict typed authenticated `/imports/control` parsing with path-free responses/errors.
+- Focused V26/root-control, migration, exact IPC validation, restart, cross-root, cancellation and duplicate-catch-up tests pass; full meta-store and clean serial daemon suites pass. Two accidentally overlapping daemon suites produced three resident-fixture timing failures; both jobs were allowed to finish, each failure passed alone, and the final non-overlapping full suite passed, so no product regression is claimed from that harness contention.
+- Cargo check, warnings-denied clippy, release daemon build, full-workspace rust-analyzer diagnostics, formatting/diff checks, 18 official `mockIPC`/`clearMocks` tests, 50 packaging tests and the frontend production build pass.
+- The target arm64 Tauri App rebuild and exact composition verifier pass with one daemon, one resident embedding runtime, one PDF renderer, 7 embedding files, 31 OCR files, matching digests, arm64 executables and zero build-machine path markers. After two rejected observer patterns were cleaned up, the corrected isolated-HOME native witness observed App plus owned daemon startup and native-quit reclamation without screenshots or retained data.
+- All four mandatory contract/privacy gates pass. Fresh machine readiness remains correctly fail-closed with `complete_product: false`, P5 desktop installers `incomplete` and `stable_release: blocked`; S800 is backend prerequisite only, and exposing pause/resume through the typed Tauri bridge and approved GUI is a successor. No private data, Windows mutation, push, PR or remote issue mutation occurred; the two user research files remain untouched.
+
+### S799
+
+- Continued closed historical issue #138 locally after accepted S798 and
+  selected one independent production security gap: remove the last Tauri
+  `style-src 'unsafe-inline'` exception without changing the approved UI.
+- Frozen input/success boundary: only the bundled frontend and locked Tauri v2
+  CSP are inputs. Replace the single dynamic React style attribute with a
+  bounded semantic progress element styled by local CSS; preserve its geometry,
+  colors, visible percentage and accessibility semantics. Production CSP must
+  contain only `default-src 'self'`, `style-src 'self'` and
+  `img-src 'self' data:` with no inline/eval/remote source or capability.
+- Frozen privacy/scope/rollback boundary: no command, invoke handler,
+  AppManifest, capability, plugin, path scope, daemon, managed-root, query,
+  runtime, Windows, signing or updater change is allowed. Any CSP relaxation,
+  inline injection surface, blank native UI, accessibility/visual regression,
+  sensitive-data contact, bundle regression or required-gate failure rolls back
+  only S799 config/frontend-style/test/contract changes.
+- RED target: a focused packaging contract must fail while either the Tauri CSP
+  contains an unsafe or unexpected source, the React source contains an inline
+  style/dangerous HTML sink, or the local stylesheet lacks the bounded semantic
+  progress rules.
+- RED reproduced exactly: the focused Node contract failed because the current
+  CSP was `style-src 'self' 'unsafe-inline'` instead of the strict local-only
+  value. The failure came before source/style assertions and was not an
+  environment or build error.
+- GREEN replaces the dynamic React width style with a semantic bounded
+  `<progress value max aria-label>` element, styles WebKit and Firefox progress
+  values entirely from bundled CSS, and removes the final `unsafe-inline` token
+  from the exact Tauri v2 CSP. The focused contract now passes.
+- Full frontend verification passes 18 official `mockIPC`/`clearMocks` tests,
+  50 packaging/runtime Node tests, TypeScript checks and the Vite production
+  build. Public-synthetic 1440x900 inspection observed one accessible 86/100
+  progressbar at the preserved 4px geometry, zero inline style below the App
+  root and zero browser warning/error; the approved status card and four-card
+  workspace remained visually aligned and no screenshot was retained.
+- The merged target arm64 Tauri App rebuild passes with unchanged exact runtime
+  composition: one daemon, one resident embedding runtime, one PDF renderer, 7
+  embedding files, 31 OCR files, matching digests, executable arm64 shape and
+  zero build-machine identity markers. The compiled desktop binary contains the
+  exact strict CSP once and contains zero `unsafe-inline`/`unsafe-eval` tokens.
+- Two optional stronger window observers were rejected as evidence: macOS
+  `System Events` blocked while traversing the WebView accessibility tree, then
+  the local Swift/CoreGraphics probe failed on a CommandLineTools module-map
+  conflict. Both runs were bounded and cleaned up; neither establishes a
+  product failure. The reliable isolated-HOME process-tree witness then passed:
+  App and exactly one owned daemon started, and native quit reclaimed both.
+- Config discipline review found no dependency, lockfile, AppManifest,
+  capability, permission or generated capability-schema change was required;
+  the locked v2 schema remains in place and the target-platform merged release
+  build is the configuration authority. Contract parsing, diff checks and all
+  four mandatory performance/autonomous/loop/public-boundary gates pass.
+- Fresh release readiness remains intentionally fail-closed with
+  `complete_product: false`, P5 Tauri cross-platform installers `incomplete` and
+  `stable_release: blocked`. S799 closes only the style CSP exception. The next
+  managed-root slice must introduce a daemon-owned persistent root-control
+  contract before pause/resume/remove UI, because the daemon currently derives
+  watcher/rescan roots from historical scan scopes. No private data, retained
+  screenshot, Windows mutation, push, PR or remote issue mutation occurred; the
+  two user research files remain untouched.
+
+### S798
+
+- Continued closed historical issue #138 locally after accepted S797 and
+  selected one managed-root recovery gap only: safely reauthorize an unavailable
+  root without letting a mistaken picker selection persist a different root.
+- Frozen input/success boundary: the WebView supplies only one existing bounded
+  opaque handle; Rust validates it before opening a native folder picker, moves
+  canonicalization/filesystem work to `spawn_blocking`, accepts only the exact
+  previously authorized canonical root, and returns only the same handle plus
+  bounded display label. Cancellation is null; mismatch is fixed and path-free;
+  the ledger count and handle must remain unchanged across success and failure.
+- Frozen Tauri/privacy/rollback boundary: update the unique invoke handler,
+  `build.rs` AppManifest, main-only capability and exact generated permission
+  together. No wildcard window, path scope, `core:default`, plugin, remote
+  capability, daemon endpoint, new root on mismatch, WebView path, query/runtime
+  change, pause/resume/remove, Windows mutation or visual-token change is
+  allowed. Any lock across await/disk, authority widening, mutation on cancel or
+  mismatch, sensitive leakage, native regression or gate failure rolls back only
+  S798 changes.
+- RED target: Rust state tests must fail until same-root reauthorization preserves
+  identity and wrong-root selection fails without mutation; official
+  `mockIPC`/`clearMocks` coverage must fail until the dedicated command sends
+  only the expected opaque handle.
+- RED reproduced exactly: the focused Rust state test failed with E0599 because
+  `NativeImportState::reauthorize` did not exist, and the focused Vitest
+  contract failed because `reauthorizeManagedRoot` was not a function. Neither
+  failure came from environment setup or an unrelated regression.
+- GREEN adds one exact-same-canonical-root state operation with no persistence,
+  one native picker command on the existing zero-wait dialog lane, and an
+  opaque-handle-only frontend caller. The focused Rust test now proves an
+  unavailable/recreated root restores the same handle while ledger bytes remain
+  identical, a different root is rejected path-free, and restart resolves the
+  original path. Two focused official mockIPC tests prove the command payload
+  and distinct overload/mismatch/unavailable/error classification.
+- The unique `invoke_handler`, `build.rs` AppManifest, main-window-only
+  capability and exact allow/deny command permission were reviewed together:
+  seven commands are declared exactly once, with no wildcard window, path
+  scope, `core:default`, plugin or remote authority.
+- Public-synthetic 1440x900 browser inspection preserved the approved source
+  sheet/card density, overlay and controls. Exactly one unavailable-root
+  `重新授权` action became the same card's available `重新扫描` action with one
+  recovery message; no browser warning/error appeared and no screenshot was
+  retained.
+- Full desktop checks now pass 18 official `mockIPC`/`clearMocks` tests, 49
+  packaging/runtime Node tests, frontend production build, 31 Rust tests,
+  Cargo check, clippy with warnings denied and release build. Rust-analyzer
+  reproduced only the already-recorded Tauri `generate_handler!` closing-token
+  E0560 macro-expansion false positive; the four Cargo layers pass and no
+  diagnostic points into the new state or picker logic.
+- The target arm64 Tauri App rebuilt successfully. Exact bundle verification
+  reports one daemon, one resident embedding runtime, one PDF renderer, 7
+  embedding files, 31 OCR files, matching digests, executable arm64 shape and
+  zero checked build-machine identity markers. An initial smoke observer used
+  the staging target-suffixed sidecar name and therefore missed the packaged
+  `resume-daemon` basename; a bounded process-tree audit identified that monitor
+  bug. The corrected isolated-HOME, no-screenshot witness observed the App and
+  exactly one owned daemon start, then native quit reclaimed both.
+- Contract-pin reconciliation and all four mandatory performance/autonomous/
+  loop/public-boundary gates pass. Formatting, diff and JSON/TOML parsing pass.
+  Fresh release readiness remains the expected fail-closed result with
+  `complete_product: false`, P5 `incomplete` and `stable_release: blocked`.
+- S798 closes only safe exact-root permission reauthorization. Managed-root
+  pause/resume/remove, complete H-tier governance, Windows native runtime/NSIS/
+  H0, signing/notarization/updater and complete-product readiness remain
+  successors. No private root/data, sensitive screenshot, Windows mutation,
+  push, PR or remote issue mutation occurred; the two user research files
+  remain untouched.
+
+### S797
+
+- Continued closed historical issue #138 locally after accepted S796 and
+  selected one daily-use GUI gap only: make the daemon's existing same-root
+  incremental requeue behavior an explicit per-root rescan action instead of
+  hiding it behind the first-import label.
+- Frozen input/success boundary: the WebView may submit only one existing
+  available opaque root handle through the existing `import_selected_root`
+  command and bounded Import lane. The UI must distinguish a newly queued scan
+  from already-pending work, keep daemon conflict, unavailable, bridge overload
+  and generic error recoverable and distinct, refresh aggregate status after
+  acceptance, and retain the approved source-card visual language.
+- Frozen failure/privacy/rollback boundary: no new Tauri command, capability,
+  path scope, endpoint, daemon schema, task ID, queue, filesystem authority,
+  query/runtime behavior, Windows mutation, installer claim, pause/resume/remove
+  semantics or permission replacement is allowed. Path/query/token/task leakage,
+  unbounded duplicate submission, state confusion, visual drift or required-gate
+  failure rolls back only S797 GUI/test/contract changes.
+- Observed RED: the focused official `mockIPC` test failed with
+  `TypeError: rescanManagedRoot is not a function`; source inspection also found
+  no per-root rescan action in the managed-root cards. This proves the missing
+  caller/UI behavior without changing the already accepted daemon requeue path.
+- GREEN adds a dedicated typed `rescanManagedRoot` caller that intentionally
+  maps to the existing command, plus a bounded outcome mapper for `queued`,
+  `pending`, `active` and `error`. The managed-root card now exposes one
+  `重新扫描` action for an available root, disables unavailable roots as
+  `等待恢复`, and uses the existing banner/buttons/pills without adding layout
+  tokens or a second authority path.
+- A development-only synthetic import preview supplied one available and one
+  unavailable opaque root. At 1440x900, browser DOM and visual inspection found
+  one enabled rescan action, one disabled recovery state, unchanged card density
+  and a visible queued confirmation after activation. The screenshot was not
+  saved and contained no private data.
+- Focused and full verification so far passes 16 official `mockIPC`/clearMocks
+  tests, 49 desktop composition tests, the frontend production build, 30 Rust
+  command/state tests, desktop check and warnings-denied clippy, formatting and
+  diff checks. The merged arm64 Tauri App builds, and its exact verifier reports
+  one daemon, one resident embedder, one PDF renderer, 7 embedding files, 31 OCR
+  files, matching digests, arm64 executables and zero builder-path markers.
+- A no-screenshot native smoke launched the newly built App, observed only the
+  bounded facts that the App and owned daemon started, then used native quit and
+  observed both reclaimed. All four mandatory repository gates passed after
+  contract-pin reconciliation. Fresh release readiness remains intentionally
+  nonzero with `complete_product: false`, P5 `incomplete` and
+  `stable_release: blocked`.
+- S797 closes only explicit per-root rescan UX. Root pause/resume/remove and
+  permission replacement, full H-tier governance, Windows native OCR/NSIS/H0,
+  signing/notarization/updater and complete-product readiness remain successors.
+  No push, PR, remote issue mutation, Windows mutation, private-data evidence or
+  retained screenshot occurred; the two user research files remain untouched.
+
+### S796
+
+- Continued closed historical issue #138 locally and selected one gap only:
+  a source-only reproducible independent builder for the S794/S795 reviewed
+  Windows OCR closure. The contract pins one digest-addressed `linux/amd64`
+  builder image, xwin 0.9.0 plus exact Windows SDK/CRT versions, Clang 19.1.7,
+  CMake 3.25.1, Ninja 1.11.1, Wine 11.10, exact source commits, static CRT,
+  effective LTO and a native-amd64-only Wine smoke stage.
+- RED first failed because the builder contract module and recipe did not
+  exist. GREEN adds a strict five-file recipe identity, bounded parser and
+  drift tests. The recipe keeps compile output separate from validated output;
+  only the native x86_64 Linux smoke may set `native_smoke_passed: true` after
+  bounded synthetic P6 `eng+chi_sim` OCR produces bounded TSV.
+- The independent formal build exposed and fixed three real recipe defects:
+  Wine's version suffix broke an over-exact string check; xwin could not rename
+  files across a BuildKit cache mount boundary; and CMake's IPO probe selected
+  debug CRT until the toolchain fixed try-compile configuration, CMP0091 and
+  `MultiThreaded` globally. No version, license, runtime or dependency
+  requirement was relaxed.
+- The final `compile-output` build succeeded from pinned public sources. The
+  bounded witness is PE32+ x64, 5,450,752 bytes, imports only `KERNEL32.DLL`,
+  contains exactly 8 non-symlink files, matches all reviewed licenses,
+  `eng`/`chi_sim` data and TSV identities, and proves static dependency closure
+  plus effective LTO. The compile receipt truthfully keeps native smoke false.
+- Focused builder/source/artifact tests, the full 49-test desktop Node suite,
+  14 official `mockIPC`/`clearMocks` tests, frontend build, 30 desktop Rust
+  tests, check, clippy and release build, 70 release-readiness tests, CLI check,
+  clippy and build, shell syntax checks, Dockerfile static checks, a fresh
+  arm64 Tauri App build and exact macOS composition verification passed. The
+  Windows composition planner still refuses a partial NSIS build.
+- All four mandatory performance/autonomous/loop/public-boundary gates passed.
+  Fresh machine release-readiness remains the expected fail-closed result:
+  `complete_product: false` and `stable_release: blocked`; legacy package
+  automation is still distinct from the incomplete Tauri desktop installers.
+- Docker/OrbStack is builder-only and never a product or H0 prerequisite. The
+  Windows H0 host was not mutated and receives no loose artifact. Apple
+  Silicon compile/PE evidence is not promoted to native Windows evidence;
+  final provenance still requires the native x86_64 Linux Wine stage, followed
+  later by the single signed installer and H0 native validation.
+- No runtime/model bytes, builder output, private data, local path, credential,
+  diagnostics package, screenshot, push, PR or remote issue mutation enters
+  the slice. Temporary compile output remains outside Git and is removable
+  without affecting the source recipe.
+
+### S795
+
+- Continued closed historical issue #138 locally and selected one gap only:
+  Windows OCR artifact review and atomic candidate-pack assembly. Inputs are the
+  S794 pinned source contract plus one independent-builder x64 `tesseract.exe`
+  and exact source, toolchain, test and artifact provenance.
+- Success requires a bounded PE32+ x64 executable, system-DLL-only imports,
+  static CRT/OpenMP closure, exact licenses and `eng+chi_sim+TSV` data, no
+  extra/symlinked inputs, a target-specific manifest and atomic promotion.
+  Drift, malformed PE, dynamic CRT/UCRT/OpenMP, overlap or partial replacement
+  fails closed with bounded path-free errors.
+- RED first failed because the artifact assembler did not exist. GREEN adds a
+  shared bounded Windows PE inspector, strict OCR dependency/provenance review,
+  exact candidate construction and rollback tests; the embedding pack now uses
+  the same PE parser instead of a second implementation.
+- A temporary public-input witness exposed a real S794 ownership error:
+  `configs/tsv` is absent from tessdata_fast 4.1.0 and belongs to Tesseract
+  5.5.2. The corrected immutable source has the same reviewed 22-byte digest.
+  The full assembly then accepted official licenses/data plus a synthetic x64
+  static PE, produced 8 manifested runtime files and retained no source bytes.
+- Focused 11-test and full desktop 47-test Node suites, 14 official
+  `mockIPC`/`clearMocks` tests, frontend build, 30 Rust tests, check, clippy,
+  release build, fresh arm64 Tauri App build and exact composition verification
+  passed. The Windows planner still refuses partial NSIS composition.
+- No H0 host mutation, real Tesseract artifact, expected final pack manifest,
+  Tauri staging, NSIS or native Windows OCR claim is made. No private data,
+  local path, binary/model/build output, screenshot, push, PR or remote issue
+  mutation entered the slice.
+
+### S794
+
+- Selected the local-only successor to accepted S793 under closed historical
+  issue #138. S782-S785 had already frozen current-user NSIS/offline WebView2,
+  Windows process containment, static-CRT embedding and static PDF rendering;
+  the remaining unowned Windows runtime input was OCR.
+- Frozen input and success boundary: the exact public Tesseract 5.5.2,
+  Leptonica 1.87.0 and tessdata_fast 4.1.0 commits, license identities,
+  `eng+chi_sim` data digests, x64 MSVC target, static CRT, minimal PNM decoder,
+  PPM-to-TSV protocol, bounded I/O and system-DLL-only final PE closure must be
+  machine checked. Runtime network access, OpenMP, training/graphics, optional
+  codecs, archive/curl/TIFF and dynamic MSVC/UCRT imports remain forbidden.
+- Frozen failure, privacy and rollback boundary: missing, malformed, oversized,
+  symlinked, extra-key or drifted contracts fail with generic path-free errors;
+  the target composition planner must still reject a partial Windows installer
+  until real reviewed runtime artifacts, expected pack manifests, final PE
+  closure and native evidence exist. No runtime/model bytes, private data,
+  local paths, credentials, diagnostics packages or screenshots enter evidence.
+- RED first failed because no Windows OCR contract/parser existed. GREEN adds a
+  strict 269-line bounded parser, exact source contract and three focused tests;
+  the Windows planner now validates process containment, embedding, OCR and PDF
+  source contracts before its expected partial-NSIS refusal. Release-readiness
+  records the contract as evidence without clearing the P5 product blockers.
+- Read-only SSH preflight reached the real Windows test host: Windows build
+  19045, 7.76 GiB physical memory (H0), 8 logical processors, WebView2 present
+  and SSH service running. The clean terminal has no Git, Rust/Cargo, MSVC,
+  CMake or Ninja. Node and Python happen to be installed but are not product
+  dependencies; later native evidence must sanitize the environment and audit
+  the process tree rather than uninstall user-owned software. No Windows file,
+  setting or package was changed.
+- SSH is the deterministic control path. Sunlogin mouse/screen control is usable
+  for installer clicking and visual inspection, but remote keystrokes were
+  lossy and unsuitable for terminal commands. No user manual action is required
+  for this slice; a future GUI-only step will use Sunlogin only after SSH has
+  completed deterministic setup and evidence collection.
+- Verification passed all 14 official `mockIPC`/`clearMocks` tests, all 43 Node
+  composition/lifecycle tests, frontend build, all 30 desktop Rust tests,
+  desktop check/clippy/release build, 70 release-readiness tests, resume-cli
+  check/clippy/build, rustfmt, rust-analyzer and a fresh arm64 Tauri App build
+  plus exact bundle composition verification. Rust-analyzer emitted only known
+  cross-platform cfg inactive-code WeakWarnings. Release-readiness remains
+  intentionally blocked for real Windows artifacts/NSIS/H0 native evidence,
+  signed/notarized clean-host macOS, updater and the other existing gates.
+  Performance-contract, autonomous-goal, loop-state and public-repo guards all
+  passed.
+- This slice does not build or install Windows OCR bytes, generate `setup.exe`,
+  claim native Windows OCR/installer success, alter query/OCR/daemon behavior,
+  change UI/Tauri authority, or claim complete-product readiness. No push, PR
+  or remote issue mutation occurred.
+
+### S793
+
+- Selected the local-only successor to accepted S792 under closed historical
+  issue #138. Fresh observation confirmed one verified self-contained arm64
+  `0.1.0` App remains installed, idle and discoverable, with one daemon, one
+  resident embedder, one PDF renderer, 7 embedding resource files, 31 OCR
+  resource files, matching digests, arm64 executables and zero checked
+  builder-identity path markers. Signing/notarization credentials remain absent;
+  Windows H0 was not touched.
+- Frozen input and success boundary: use locked Tauri CLI 2.11.4 ordered config
+  merging to build real self-contained `0.1.0` and temporary-overlay `0.1.1`
+  DMGs from the same source/runtime closure. Verify the installed old App and
+  candidate before mutation; require the candidate version to be strictly newer;
+  stage it as an exclusive hidden sibling; back up and replace only the exact
+  verified App; then reverify and register the new App. A successful native run
+  must launch, reach authenticated status, quit cleanly, and preserve owner-only
+  persistent state.
+- Frozen failure, privacy and rollback boundary: same-version/downgrade, unknown
+  target, symlink/root escape, invalid composition, cross-device staging,
+  collision, closure drift or any failed verification/registration must fail
+  closed. Failures before the first target rename leave the old App unchanged;
+  failures after it remove only slice-owned new state, restore and re-register
+  the verified old App, preserve user data, and leave no stage, backup, mount or
+  process. Committed evidence is limited to fixed versions, counts and booleans;
+  no resume/query/result/path/token/endpoint/credential/runtime bytes, local data,
+  diagnostics body, process identifier or screenshot may enter evidence.
+- This slice does not claim Developer ID signing, notarization, Gatekeeper
+  acceptance, HTTPS updater, clean-host recovery, universal/x64 macOS, Windows
+  NSIS/H0 or complete-product readiness.
+- RED first failed because the upgrade module did not exist. GREEN adds a
+  456-line shell-free lifecycle owner with strict three-part version ordering,
+  exclusive sibling stage/backup reservation, bounded tool output, fixed
+  path-free errors, complete App verification and rollback-safe promotion.
+  Eighteen focused macOS DMG/install/upgrade tests now pass, including failures
+  before/after both renames, post-verify/registration rollback and explicit
+  rollback-failure reporting.
+- Two real unsigned self-contained DMGs (`0.1.0` and temporary-overlay `0.1.1`)
+  independently passed the exact composition verifier. Native upgrade reached
+  authenticated daemon status and quit with zero owned processes; a real
+  post-swap LaunchServices failure restored verified `0.1.0`, preserved the
+  owner-only authentication state, remained discoverable and launchable, and
+  left no stage, backup, mount, process or temporary candidate artifact. The
+  final installed App is the repo version `0.1.0`.
+- Verification passed all 14 official `mockIPC`/`clearMocks` tests, all 40 Node
+  composition/lifecycle tests, frontend build, all 30 desktop Rust tests,
+  desktop check/clippy/release build, 70 release-readiness tests, resume-cli
+  check/clippy/build, rustfmt and rust-analyzer. Rust-analyzer emitted only known
+  cross-platform cfg inactive-code WeakWarnings. Release-readiness remains
+  intentionally blocked for signed/notarized clean-host macOS evidence, Windows
+  NSIS/H0, updater and the other existing gates. No push, PR, remote issue,
+  Windows mutation, sensitive screenshot or private-data evidence occurred.
+
+### S792
+
+- Selected the local-only successor to accepted S791 under closed issue #138.
+  The verified arm64 DMG existed but no App was installed, so Launchpad absence
+  was an install-state gap. The mounted App also lacked the approved icon.
+  Signing/notarization credentials remained absent; Windows H0 was not touched.
+- Frozen safety boundary: verify the exact S791 DMG and runtime closure before
+  any mutation; accept only an explicit absolute, regular, non-symlink
+  Applications root; reject an existing `resume-ir.app` instead of overwriting;
+  reserve the fixed target directory exclusively before `ditto`; validate the
+  bundle id, version, display name, icon and complete sidecar/resource closure;
+  register only that App; and remove only the App created by this operation
+  after copy, detach or registration failure. Uninstall verifies the same
+  identity/runtime closure and never accepts or touches a user-data path.
+- RED first failed because the lifecycle module did not exist and the locked
+  macOS overlay had no icon. The approved `UI-reference` vector mark now
+  produces a macOS `icon.icns`, and the overlay declares only that icon. Enabling
+  it caused Tauri to add `.VolumeIcon.icns` to the DMG; the verifier now requires
+  that single extra metadata file to be regular, non-symlink, non-empty and at
+  most 1 MiB while continuing to reject every other root entry. Twelve focused
+  tests cover valid install/layout, bounded metadata, collision/identity/icon
+  rejection, rollback, plist bounds, data-preserving uninstall and config pins.
+- The rebuilt DMG remained one 114399721-byte `composition_only` image with one
+  App, one Applications link, one 43015-byte volume icon, one daemon, one
+  resident embedder, one PDF renderer, 7 embedding files, 31 OCR files, matching
+  digests, arm64 executables and zero checked builder-identity markers. Signature
+  stayed `not_accepted` and Gatekeeper `rejected`; neither became release proof.
+- Real native lifecycle installed the verified App into system Applications,
+  registered it with LaunchServices, confirmed Spotlight discovery and icon
+  metadata, launched it, recovered from one stale endpoint-manifest readiness
+  race by waiting for authenticated status rather than file existence, and
+  stopped both owned processes on native quit. A verified uninstall removed the
+  App while preserving the existing owner-only authentication state; reinstall
+  preserved that state, launched successfully again, and left the App installed
+  and discoverable for Launchpad. No screenshot, token, endpoint, path, query,
+  candidate, filename, resume text or diagnostic body was recorded.
+- Release-readiness P5 now truthfully acknowledges the self-contained unsigned
+  macOS arm64 DMG and local lifecycle evidence. It remains `incomplete` and
+  blocked for Windows NSIS, signing/notarization, real-version upgrade/rollback,
+  clean-host recovery, updater and the other existing release gates.
+- Verification passed 12 focused lifecycle/DMG tests, all 14 official
+  `mockIPC`/`clearMocks` tests, all 34 Node composition tests, frontend build,
+  all 30 desktop Rust command/state tests, desktop check/clippy/release build,
+  the target arm64 Tauri DMG build and exact DMG verifier, 70 focused
+  release-readiness tests, resume-cli check/clippy/build, formatting and diff
+  checks. Rust-analyzer exited zero for both changed Rust files with only known
+  cfg inactive-code warnings. The four mandatory repository gates passed.
+  Fresh release readiness intentionally exited nonzero with
+  `complete_product: false`, P5 `incomplete` and `stable_release: blocked`.
+  No push, PR or remote issue mutation occurred; the two user research files
+  remain untracked and untouched.
+
+### S791
+
+- Selected one local-only successor under closed historical issue #138 after
+  accepted S790. Fresh Git/GitHub, locked Tauri 2.11.4 schema and official v2
+  documentation inspection found that routine native verification exercised
+  only an explicit app-only bundle, while the macOS installer target remained
+  implicit and no committed verifier proved the mounted DMG composition.
+  Windows H0 and remote state were not touched.
+- Frozen input/success boundary: preserve the accepted three-sidecar and two-
+  resource-pack App, single invoke handler, AppManifest, main-only capability,
+  strict CSP, typed bridge, query semantics and approved visual. The macOS
+  platform overlay selects exactly `dmg` for the default release; verification
+  accepts one regular image of at most 1 GiB, mounts it read-only, requires one
+  non-symlink App and one `/Applications` link with only bounded Tauri metadata,
+  then delegates the complete App digest/resource/architecture/path-marker
+  checks. All subprocesses are shell-free with 64 KiB output caps, fixed errors
+  and bounded detach/force-detach cleanup.
+- RED first failed because the DMG verifier module and
+  `tauri.macos.conf.json` did not exist. Six focused tests now cover the exact
+  layout, extra entries, wrong link, symlinked App, irregular/empty/oversized
+  images, attach failure, bounded detach recovery and cleanup. The existing
+  composition suite also pins the locked v2 schema and platform target.
+- A default target arm64 Tauri build, without `--bundles`, produced exactly one
+  DMG. Its bounded receipt reported one App, one Applications link, one daemon,
+  one resident embedding runtime, one PDF renderer, 7 embedding files and 31
+  OCR files, matching digests, executable arm64 shape, and zero checked builder-
+  identity path markers. Distribution signature was `not_accepted`, Gatekeeper
+  was `rejected`, and the receipt therefore remained `composition_only`.
+- A no-screenshot synthetic native witness mounted the DMG, copied its App into
+  an isolated Applications directory, launched it through macOS LaunchServices
+  with isolated user data, observed daemon readiness and authenticated status,
+  requested native quit, and observed zero owned processes remaining. An
+  earlier direct-executable diagnostic never reached Tauri setup and was not
+  accepted; using the platform launch path closed that observation without
+  changing product code or touching the real system Applications directory.
+- Verification passed 6 focused DMG tests, all 14 official
+  `mockIPC`/`clearMocks` tests, all 28 desktop composition tests, frontend build,
+  all 30 desktop Rust command/state tests, Cargo check/clippy/release build,
+  formatting, the merged target-platform Tauri build, exact mounted-DMG
+  verification and native lifecycle smoke. No Rust source changed, so this
+  slice does not manufacture a new rust-analyzer claim.
+- The four mandatory repository gates passed after reconciliation. Fresh
+  release readiness remains intentionally nonzero with
+  `complete_product: false`, P5 `incomplete` and `stable_release: blocked`.
+  S791 closes unsigned macOS DMG composition and verification only. Developer
+  ID signing, notarization, real system install/upgrade/uninstall/data-retention
+  lifecycle, updater, universal/x64 macOS, Windows NSIS/H0, managed-root
+  actions, full H-tier governance, ranking/CSP successors and complete-product
+  readiness remain open. No push, PR or remote issue mutation occurred; the two
+  pre-existing research files remain user-owned.
+
+### S790
+
+- Selected one local-only successor under closed historical issue #138 after
+  accepted S789. Fresh code and machine-state inspection found the next daily-
+  use gap in the native authorization owner: daemon scan scopes already survive
+  restart and catch up incrementally, but Tauri root handles were memory-only,
+  silently evicted the oldest entry, and disappeared from the GUI on every App
+  restart. No remote state was changed and Windows H0 was not touched.
+- Frozen input/success boundary: preserve the existing native picker, daemon
+  import/incremental loop, single invoke handler, main-only window capability,
+  typed bridge, query semantics and approved UI tokens. The App-local ledger is
+  explicitly versioned, capped at 16 canonical non-overlapping roots, uses
+  stable random opaque handles and at-most-80-character labels, writes through
+  an owner-only atomic temporary file, reuses duplicate selections, and rejects
+  malformed, oversized, symlinked, broadly readable, duplicate, overlapping,
+  non-absolute or invalid-handle state with fixed path-free errors. Missing
+  state remains an empty list; unavailable roots remain listed.
+- RED first failed because `NativeImportState::initialize`, `managed_roots` and
+  the typed availability model did not exist, and the official frontend IPC
+  test could not import `listManagedRoots`. Production now loads the bounded
+  ledger during Tauri setup, performs picker registration and list filesystem
+  work in `spawn_blocking` behind the bounded zero-wait native lane, never holds
+  a registry lock over disk or await, and re-canonicalizes a restored root
+  immediately before import so a missing or retargeted path fails closed.
+- The new no-argument `list_managed_roots` command returns only schema, limit,
+  opaque handle, bounded display label and available/unavailable state. The
+  unique `invoke_handler`, `build.rs` AppManifest, exact autogenerated command
+  permission and the main-window-only capability were updated together; no
+  filesystem plugin, wildcard window, `core:default`, remote capability or
+  second handler was introduced. The WebView never receives a full path.
+- The import sheet now restores the bounded list after daemon connection,
+  selects the prior/first available authorization, distinguishes recovered,
+  unavailable, overload and contract-error states, prevents submit for an
+  unavailable root, and reuses the approved panel/source-card/button/pill
+  language without changing the design tokens or search/detail layout.
+- Verification passed 8 focused native-root tests and all 30 desktop Rust
+  command/state tests, 14 official `mockIPC`/`clearMocks` tests, 22 composition
+  tests, frontend build, desktop Cargo check/test/clippy/release build, and root
+  rust-analyzer diagnostics. Desktop rust-analyzer again reported only the
+  known Tauri `generate_handler!` closing-delimiter E0560 macro-expansion false
+  positive; Cargo compiled and linted the identical source successfully.
+- Target arm64 Tauri App build and exact bundle verification passed with one
+  daemon, one resident embedding runtime, one PDF renderer, 7 embedding files,
+  31 OCR files, matching digests, executable arm64 shape and zero checked
+  builder-path markers. A no-screenshot synthetic native witness selected one
+  temporary directory, observed persistent authorization, quit, relaunched
+  against the same isolated user data, and observed exactly one automatically
+  restored available authorization; the temporary state and owned processes
+  were removed afterward.
+- The four mandatory repository gates passed after reconciliation. Fresh
+  release readiness remains intentionally nonzero with
+  `complete_product: false` and `stable_release: blocked`. S790 closes stable
+  opaque managed-root persistence/list/restart recovery only. Pause/resume,
+  explicit rescan/remove, permission reauthorization, background operation
+  after App exit, full H-tier runtime governance, Windows NSIS/H0 evidence,
+  signing/notarization/updater, ranking/CSP successors and complete-product
+  readiness remain open. No push, PR or remote issue mutation occurred; the two
+  pre-existing research files remain user-owned.
+
+### S789
+
+- Selected one local-only successor under closed historical issue #138 after
+  accepted S788. Fresh Git/GitHub and code inspection corrected the assumed
+  successor: native resident embedding was already completed in S779 and
+  bundled in S780/S781. The actual daily-use gap was that the daemon already
+  persisted completed import scopes and implemented rescan/watcher recovery,
+  but the Tauri-owned daemon launched without either incremental option and
+  therefore behaved as a one-shot desktop import.
+- Frozen input/success boundary: preserve the existing typed native picker,
+  opaque in-memory selection handle, persisted daemon import ledger, worker
+  retry/cancel behavior, classifier/search admission, OCR/embedding/index
+  workers, loopback IPC, process containment, bridge lanes, single invoke
+  handler, main-only capability/CSP, query semantics and approved visual. The
+  desktop daemon must enable recursive root watching plus a 300-second
+  completed-root rescan fallback; the first import-worker tick after each
+  daemon start alone uses zero minimum age so changes made while the App was
+  closed are caught immediately, while later ticks restore the 300-second
+  minimum and cannot form a zero-age rescan loop.
+- Frozen failure/privacy/rollback boundary: duplicate pending work, repeated
+  zero-age rescans, watcher/import work on the query hot path, widened WebView
+  or filesystem authority, raw root/task/path disclosure, query/visual drift,
+  Windows H0 mutation, or any required-gate failure triggers rollback. Root
+  paths remain only in Rust and the local daemon fact ledger. Only repository
+  synthetic fixtures and bounded boolean/count evidence were observed; no
+  body, filename, path, query, result, endpoint, token, runtime bytes, process
+  identifier, diagnostics package or screenshot was retained.
+- RED first proved both missing behaviors: the desktop lifecycle argument test
+  showed only work-imports/work-index, and a recent completed root configured
+  with a 300-second rescan age was not requeued on daemon startup. Production
+  now passes rescan/watch/300-second arguments and applies zero age only when
+  `ticks == 1`. The new two-tick regression proves exactly one startup requeue;
+  the existing zero-age explicit rescan and live watcher tests remain green.
+- Focused and broad verification passed all 25 desktop Rust command/state
+  tests, all 15 daemon lifecycle tests, the full daemon test suite, 13 official
+  `mockIPC`/`clearMocks` tests, 22 desktop composition tests, frontend build,
+  daemon and desktop Cargo check/test/clippy/release build, formatting and diff
+  checks. Root rust-analyzer diagnostics exited 0; desktop diagnostics again
+  reported only the known Tauri generate-handler/context E0560 macro-expansion
+  false positive, while Cargo compiled the same source.
+- Target arm64 Tauri App build and exact bundle verification passed with one
+  daemon, one resident embedding runtime, one PDF renderer, 7 embedding files,
+  31 OCR files, matching digests, executable arm64 shape and zero checked
+  builder-path markers. An isolated-HOME native release witness seeded one
+  completed synthetic directory, added a second synthetic file while closed,
+  then launched the App: authenticated low-frequency IPC observed startup
+  catch-up to two searchable documents and a two-result keyword query; native
+  quit reclaimed the App and owned daemon. A rejected high-frequency direct
+  SQLite status probe created lock competition and a recoverable import task;
+  the exact bundled worker composition passed without that observer, and the
+  accepted witness uses product IPC rather than a database-mutating observer.
+- The four mandatory repository gates passed after reconciliation. Fresh
+  release readiness remains intentionally nonzero with
+  `complete_product: false`, P5 `incomplete` and `stable_release: blocked`.
+  S789 closes only desktop startup catch-up/live watch/periodic rescan
+  activation. Stable opaque managed-root persistence and list/pause/resume/
+  rescan/remove/permission-recovery UI, background operation after App exit,
+  full H-tier governance, Windows NSIS/H0 evidence, signing/notarization/updater
+  and complete-product readiness remain successors. No push, PR or remote issue
+  mutation occurred; the two pre-existing research files remain user-owned.
+
+### S788
+
+- Selected one local-only successor under closed historical issue #138 after
+  accepted S787. Fresh Git/GitHub inspection found only unrelated open
+  Dependabot PRs #202-#204 and existing issues #201/#159/#53/#37/#33; no remote
+  state was changed and Windows H0 was not touched.
+- Frozen input/success boundary: keep the existing five Tauri commands, seven
+  typed daemon operations, transport/startup/search deadlines, single invoke
+  handler, AppManifest, main-only capability and approved UI. A Tauri-managed
+  admission state now fail-fast bounds lifecycle 1, native dialog 1, import 1,
+  diagnostics 1, interactive search/detail/hydrate 4, status 2 and cancel 2.
+  Search/import saturation cannot consume status or cancel capacity, and status
+  saturation cannot consume cancel capacity.
+- Frozen failure/privacy/rollback boundary: there is no waiting bridge queue;
+  exhaustion returns only fixed `bridge_overloaded` code/message data. Admission
+  locks are held only for in-memory counter updates, never over await, dialog,
+  disk, network or callback work, and Tauri State is not wrapped in Arc. Any
+  permit leak, shared control/work lane, widened timeout/authority/path/response
+  bound, raw capacity/path/query exposure, visual/query change or required-gate
+  failure triggers rollback. Only synthetic states and boolean/count native
+  smoke evidence were observed.
+- Focused RED first failed because `BridgeAdmissionState`, lane mapping and
+  `bridgeFailureKind` did not exist. Rust tests now saturate work lanes, prove
+  independent status/cancel admission, prove permit recovery, and verify the
+  exact bounded overload projection. The frontend keeps bridge overload
+  distinct from daemon unavailable and generic error; search/import/status,
+  cancellation and diagnostics present recoverable overload-specific text
+  without changing the approved palette, layout or four-card density.
+- All daemon/file work remains on Tauri v2 `spawn_blocking`; the only newly
+  moved I/O is post-picker directory metadata/canonicalization, which no longer
+  runs on the async executor. Existing 500ms connect, 1s write, 3s default,
+  validated search deadline plus bounded grace, and 10s startup limits remain
+  unchanged. Import-root and diagnostics-save pickers share the same native
+  dialog lane.
+- Verification passed 25 Rust command/state tests, 13 official
+  `mockIPC`/`clearMocks` tests, 22 Node composition tests, frontend build, Cargo
+  check/test/clippy/release build, formatting, arm64 macOS target `.app` build
+  and exact bundle verification. The verifier reported one daemon, one resident
+  embedding runtime, one PDF renderer, 7 embedding resource files, 31 OCR
+  resource files, matching digests, executable arm64 shape and zero checked
+  build-machine path markers. An isolated-HOME native smoke reached an empty
+  ready status and native window close stopped both the app and owned daemon;
+  no screenshot or local value was retained. Rust-analyzer again reported only
+  the known Tauri `generate_handler!` E0560 macro-expansion false positive;
+  Cargo gates compiled the same source.
+- All four mandatory repository gates passed after the derived active-goal and
+  synthetic-smoke pins were reconciled. Fresh release readiness remains
+  intentionally nonzero with `complete_product: false`, P5 `incomplete` and
+  `stable_release: blocked`. S788 completes only bounded desktop bridge
+  admission/control priority; managed roots, full H-tier runtime governance,
+  Windows NSIS evidence, signing/notarization/updater and complete-product
+  readiness remain successors. No push, PR or remote issue mutation occurred,
+  and the two pre-existing untracked research files remain user-owned.
+
+### S787
+
+- Selected one local-only successor under closed historical issue #138 after
+  accepted S786. Fresh Git/GitHub inspection found only unrelated open
+  Dependabot PRs #202-#204; no remote state was changed and Windows H0 was not
+  touched.
+- Frozen input/success boundary: the six existing daemon operations plus native
+  import must enter Rust as explicit bounded serde types and leave through
+  operation-specific success/error projections. The single invoke handler,
+  five Tauri commands, AppManifest, main-only capability, plugin scopes, CSP,
+  approved visual, query/filter semantics, and authenticated local hydrate
+  path/body behavior remain unchanged.
+- Frozen failure/privacy/rollback boundary: arbitrary WebView bodies,
+  `serde_json::Value` response passthrough, raw daemon messages, task IDs,
+  diagnostics refs, detail evidence/extractor data, soft-dedupe internals,
+  widened authority or response bounds, or any required-gate failure triggers
+  rollback. Only fixed synthetic contract values and bounded aggregates entered
+  committed evidence.
+- RED first proved the old bridge leaked an added `private_debug` response field
+  and lacked the dedicated `readStatus` mockIPC contract. Rust now rejects
+  unknown request fields and validates schemas, identities, enums, query/filter
+  bounds, deadlines, hydrate cursors and cancel tokens before transport.
+- Success and non-2xx bodies are decoded into explicit Rust projections. The
+  WebView receives only UI/export fields; task IDs, benchmark refs, stage/index
+  internals, soft-dedupe, detail evidence/extractor metadata, and raw error
+  messages are dropped. TypeScript no longer exports a generic unknown request
+  helper and uses dedicated, discriminated operation functions.
+- Final verification passed 22 Rust command/state tests, 12 official
+  `mockIPC`/`clearMocks` tests, 22 bundle-composition tests, frontend build,
+  Cargo check/test/clippy/build, arm64 macOS target app build, and exact bundle
+  verification. Rust-analyzer reported only the known Tauri
+  `generate_handler!` E0560 macro-expansion false positive; Cargo gates passed.
+- All four mandatory repository gates passed. Fresh release-readiness remains
+  intentionally nonzero with `complete_product: false`, P5 `incomplete`, and
+  `stable_release: blocked`. S787 completes only the typed bridge projection;
+  admission priority, managed roots, Windows installer evidence, signing and
+  updater remain successors.
+
+### S786
+
+- Selected one local-only successor under historical issue #138 after accepted
+  S785. Fresh Git/GitHub and command inspection found unrelated open Dependabot
+  PRs #202-#204 but no relevant remote delivery state; no remote write was
+  made. The live `release-readiness --json` report still labeled
+  `P5_cross_platform_release` as `production_complete` and cited legacy
+  unsigned CLI/daemon packages, MSI/Windows Service dry-runs, pkg/LaunchAgent
+  dry-runs, and hosted workspace checks, although the ordinary-user macOS
+  Tauri app/DMG and Windows per-user NSIS products are incomplete.
+- Frozen input and success boundary: preserve `release-readiness.v1` evidence
+  intake while versioning the nested product matrix; use accepted S777-S785
+  Tauri composition evidence and the existing legacy package/lifecycle
+  evidence. Success requires P5 implementation `incomplete`, explicit legacy
+  and Tauri surfaces, `counts_as_tauri_desktop_installer: false` for legacy
+  automation, bounded partial evidence without native-installer claims, and
+  actionable implementation gaps for cross-target runtime closure, macOS
+  app/DMG, Windows per-user NSIS clean-H0 lifecycle, credentials, and updater.
+- Frozen failure/privacy/rollback boundary: P5 `production_complete`, legacy
+  package/Service/LaunchAgent evidence clearing the Tauri gap, unversioned wire
+  drift, stable-release weakening, sensitive disclosure, query/filter/visual
+  change, Windows H0 mutation, or a required-gate failure triggers rollback.
+  Paths, resumes, queries/results, tokens, runtime bytes, credentials,
+  diagnostics packages, process identifiers, and screenshots stay outside Git,
+  logs, diagnostics, and public evidence. This slice does not claim an
+  installer artifact, native lifecycle, signing/notarization/updater, runtime
+  pack, bridge projection, managed roots, ranking, or complete product.
+- Focused RED first changed the public CLI integration test to require
+  `resume-ir.goal-gap-matrix.v2`, the Tauri-incomplete current stage, nested
+  legacy/Tauri surfaces, and P5 `incomplete`; it failed against v1 at the exact
+  schema assertion. A second RED required an actionable Tauri composition
+  blocker and failed on the old sixteen-blocker count.
+- Moved the bounded P0-P6 projection out of the already-large CLI main file into
+  `release_readiness_matrix.rs`. Matrix v2 keeps the seven stable rows while P5
+  now separates `legacy_cli_package_automation` from
+  `tauri_v2_desktop_installers`. The legacy surface remains truthfully complete
+  for its old scope but explicitly does not count as a Tauri installer; the
+  Tauri surface is incomplete and enumerates the macOS app/DMG, Windows NSIS,
+  bundled runtime closure, clean-host lifecycle, and signed updater gaps.
+- Added a non-clearable `Tauri v2 desktop installer composition` blocker with
+  dependency kind `local_product_implementation`. The structured CI guard now
+  parses the JSON and rejects any regression to P5 production-complete or any
+  legacy/Tauri identity inversion. The legacy Windows Service blocker was
+  removed from the current product blocker set: its plan remains accepted as
+  bounded historical evidence, but cannot clear Tauri composition or native
+  lifecycle gaps. Windows lifecycle now requires a self-contained per-user
+  NSIS on a clean H0 host; macOS lifecycle requires a signed and notarized
+  Tauri app/DMG. The release runbook and both status reports now use the same
+  distinction; the complete-product report no longer says UI is merely
+  deferred.
+- Focused and regression verification passed all seventy release-readiness CLI
+  tests, the structured release-readiness and runbook guards, CLI check,
+  warnings-denied clippy and build, eleven frontend mock-IPC tests, twenty-two
+  desktop composition tests, and nineteen desktop Rust command/state tests.
+  Rust-analyzer exited 0 for the changed CLI owner/module; output contained only
+  existing cfg-inactive weak warnings elsewhere in the workspace. Formatting
+  and diff checks passed.
+- All four mandatory repository gates passed: performance contracts,
+  autonomous goal, loop state, and public-repository privacy guard. Fresh
+  release readiness exits 1 as required with
+  `complete_product: false`, P5 `incomplete`, and
+  `stable_release: blocked`. S786 is accepted locally for truthful product
+  reporting only. Windows PowerShell and the clean H0 validation machine were
+  not touched. The installer/runtime implementation successors remain active.
+
+### S785
+
+- Selected one local-only successor under historical issue #138 after accepted
+  S784. Fresh official-source review rejected `Windows.Data.Pdf`: Microsoft
+  documents `PdfDocument`, `PdfPage`, and `PdfPageRenderOptions` as requiring
+  package identity for desktop apps, which does not match the per-user Tauri
+  NSIS/unpackaged Win32 target. The bounded product route is therefore a
+  statically linked PDFium renderer, not an API that would fail on a clean H0
+  installation.
+- Frozen input and success boundary: use official PDFium `chromium/7881` at
+  commit `91b9d569b34be4f38eed7b3c49b227356c3aadad`, source build revision
+  `613f5c13bccbc15bd7ce8da9acb13ac06459f8cb`, `pdfium-render` 0.9.3 with the
+  matching `pdfium_7881` static binding, the existing one-page environment and
+  stdout protocol, and S783 process-tree containment. The Rust owner must
+  reject arguments and invalid paths, pages, DPI, input sizes, dimensions,
+  pixels, or output budgets; render one page; and emit only bounded P6 RGB8.
+  Windows composition must validate the reviewed source contract but continue
+  to refuse NSIS until the real static library, build provenance, Windows OCR
+  pack, final PE closure, and native evidence are present.
+- Frozen failure/privacy/rollback boundary: package-identity-only APIs, dynamic
+  PDFium or CRT dependencies, runtime downloads, Poppler/GPL substitution,
+  unbounded allocation/output, shell invocation, H0 developer-tool dependence,
+  partial installer output, sensitive disclosure, H-tier/query/visual
+  regression, or a required-gate failure triggers rollback. PDF/page bytes,
+  raw text, queries/results, paths, tokens, caches, child stderr, private data,
+  credentials, process identifiers, and screenshots stay outside Git, logs,
+  diagnostics, and public evidence. This slice does not claim a real PDFium
+  artifact, native Windows PDF/OCR execution, NSIS, clean-host H0 evidence,
+  signing/updater, managed roots, bridge projection, ranking, Tauri authority,
+  or complete-product readiness.
+- Added `resume-pdf-render-runtime`, an unsafe-forbidden one-shot Rust owner.
+  On Windows it accepts only the three existing environment fields, an absolute
+  direct regular PDF no larger than 64 MiB, page 1..512, and DPI 72..600; it
+  rereads a bounded byte vector, checks the PDF header and document page count,
+  limits dimensions to 10k, pixels to 10M, and PPM output to 32 MiB, then uses
+  the statically linked PDFium binding and drops alpha into bounded RGB chunks.
+  Stable generic exit codes distinguish unavailable, invalid request, and
+  resource-limit failures without printing the input path or renderer details.
+- Added the exact Windows x64 PDFium source contract and fail-closed Node
+  validator. The contract pins source/build revisions, root license digest,
+  `pdf_is_complete_lib=true`, static component/CRT posture, disabled V8/XFA,
+  the PDFium test targets, output names, system-DLL-only final closure, and
+  forbidden dynamic CRT prefixes. The desktop planner now validates this
+  contract alongside the accepted containment and embedding contracts, then
+  still exits before Cargo or staging with an explicit incomplete-composition
+  error. No Tauri config, capability, command, invoke handler, CSP, plugin,
+  query, or visual surface changed.
+- Focused verification passed eleven frontend mock-IPC tests, twenty-two Node
+  composition/contract tests, four renderer unit tests, nineteen desktop Rust
+  command/state tests, seventeen OCR protocol tests, host and Windows MSVC
+  warnings-denied clippy, Windows MSVC cross-check, rust-analyzer diagnostics
+  with only expected host-inactive Windows code, formatting/diff checks, and
+  the license guard. The Windows planner also failed closed as expected before
+  producing a partial installer.
+- All four mandatory repository gates passed: performance contracts,
+  autonomous goal, loop state, and public-repository privacy guard. Release
+  readiness correctly remains `complete_product: false` and
+  `stable_release: blocked`; the stale legacy P5 row is still not Tauri GUI
+  installer evidence. S785 is accepted locally for the bounded static PDFium
+  renderer owner and source contract only. The successor must build official
+  PDFium in a separate Windows builder, run its tests, link Rust with static
+  CRT, inspect the final PE imports, and execute a synthetic native render
+  before integrating the artifact; the clean H0 terminal machine remains free
+  of developer tools.
+
+### S784
+
+- Selected one local-only successor under historical issue #138 after accepted
+  S783. Fresh official-source and binary inspection found that ONNX Runtime
+  1.24.4 matches the locked API 24 and its CPU archive contains a valid Windows
+  x64 DLL, but that DLL imports dynamic MSVC runtime libraries. A clean H0
+  product install therefore cannot treat the official prebuilt DLL alone as a
+  self-contained embedding runtime.
+- Frozen input and success boundary: use official tag `v1.24.4`, source commit
+  `2d924974ef147392ced8409d36bd6d2e7fcc8a74`, the official
+  `--enable_msvc_static_runtime` build option, the accepted multilingual E5
+  identity and five exact model assets, and S783 containment. A bounded source
+  contract and offline assembler must validate x64 PE/DLL shape,
+  `OrtGetApiBase`, a CPU-only system import closure without dynamic MSVC/UCRT or
+  provider sidecars, exact build provenance, source license/notices, file
+  digests, direct regular files, and exact output. The planner must recognize
+  this contract while continuing to refuse a partial NSIS until a real reviewed
+  static-CRT artifact, expected pack manifest, OCR/PDF inputs, and native
+  evidence exist.
+- Frozen failure/privacy/rollback boundary: accepting the official dynamic-CRT
+  archive as self-contained, unknown/non-system imports, provenance-only trust,
+  symlink/path escape, runtime download, H0 developer-tool dependence, partial
+  installer output, sensitive disclosure, H-tier/query/visual regression, or a
+  required-gate failure triggers rollback. Runtime/model bytes, raw text,
+  queries/results, paths, tokens, caches, child stderr, private data,
+  credentials, process identifiers, and screenshots stay outside Git, logs,
+  diagnostics, and public evidence. This slice does not claim a real Windows
+  runtime pack, native inference, NSIS, clean-host H0, signing/updater, managed
+  roots, bridge projection, ranking, Tauri authority, or complete-product
+  readiness.
+- Added a reviewed Windows source contract that pins ONNX Runtime 1.24.4 API
+  24, source tag/commit, static-MSVCRT build arguments, CPU/no-telemetry
+  posture, source license/notices, the accepted model-manifest digest, and the
+  official prebuilt archive's explicit rejected-as-self-contained status. The
+  offline assembler validates build provenance plus toolchain versions,
+  source-tree cleanliness, an x64 PE DLL, `OrtGetApiBase`, exact imports,
+  license/notices, model assets, digests, and direct regular files before an
+  atomic exact pack replacement. It copies only the DLL, five model assets,
+  runtime manifest, source/build manifests, and license notices; it neither
+  downloads nor prints input/output paths.
+- The planner now verifies both the accepted S783 containment contract and the
+  new embedding source contract, then still exits before Cargo or staging
+  because the real static-CRT artifact/expected manifest plus x64 OCR/PDF
+  inputs are absent. A real official prebuilt DLL witness exposed thirteen
+  forbidden MSVC/UCRT imports even though its x64 shape and required export
+  were valid, proving the binary check rejects the unsafe shortcut. A cohesive
+  local-only scope exception covers the PE parser, dependency validator,
+  assembler, contract, and synthetic success/failure tests; splitting those
+  pieces would leave an unvalidated artifact path.
+- Focused verification passed eleven frontend mock-IPC tests, nineteen Node
+  composition/pack tests, ten native embedding-runtime tests, nineteen desktop
+  Rust command/state tests, Windows MSVC embedding check and warnings-denied
+  clippy, native desktop warnings-denied clippy/release build, frontend build,
+  and the license guard. The macOS arm64 Tauri App rebuilt, and its composition
+  verifier still reports one daemon, one embedding runtime, one PDF renderer,
+  seven embedding resources, thirty-one OCR resources, matching digests,
+  arm64 architecture, and zero build-machine path markers. Release readiness
+  correctly remains `complete_product: false`/`stable_release: blocked`; the
+  stale legacy P5 row still is not Tauri GUI installer evidence.
+- Formatting and diff checks plus all four mandatory repository gates passed:
+  performance contracts, autonomous goal, loop state, and public-repository
+  privacy guard. S784 is accepted locally for the reviewed static-CRT source
+  contract and offline assembler only. The successor must build and review the
+  real Windows artifact in an independent build environment, commit its
+  expected manifest/companion staging contract, then continue with x64 OCR/PDF
+  composition before any native NSIS or clean-H0 claim.
+
+### S783
+
+- Selected one local-only successor under historical issue #138 after accepted
+  S782. Fresh code observation showed that desktop daemon stop, resident and
+  one-shot embedding timeout/cancel/restart, and every OCR/PDF-render child use
+  Unix process groups but kill only the direct child on Windows. The clean H0
+  terminal host is Windows 10 x64 build 19045 with about 7.76 GiB memory and
+  eight logical processors; WebView2 is present, while Git, Cargo, and MSVC are
+  absent as required for an ordinary installer target. Those bounded aggregate
+  facts are environment observation only, not installer evidence.
+- Frozen input and success boundary: use the existing bounded `Command` spawn
+  sites, Windows 10+ nested Job Object semantics, and the reviewed safe
+  `win32job 2.0.3` API. One shared `unsafe_code = forbid` wrapper must create a
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` job before each Windows spawn, assign the
+  direct child immediately, fail closed and reap on job creation/assignment
+  failure, forbid breakaway, terminate and reap the tree on timeout,
+  cancellation, owner drop, runtime restart, and desktop daemon stop, and keep
+  the accepted Unix process-group behavior. A bounded reviewed manifest must
+  enumerate every covered owner. The Windows composition planner may remove
+  only the Job Object blocker and must still reject missing reviewed x64
+  embedding, OCR, and PDF-renderer inputs before build or staging.
+- Frozen failure/privacy/rollback boundary: best-effort or direct-child-only
+  Windows termination, breakaway, workspace unsafe-code relaxation, orphaned
+  descendants, unbounded output, PID/path/stderr disclosure, H-tier or query
+  semantics change, visual/Tauri authority change, macOS regression, or a
+  required-gate failure triggers rollback. Runtime/model bytes, raw text,
+  queries/results, local paths, tokens, caches, child stderr, private data,
+  credentials, process identifiers, and screenshots stay outside Git, logs,
+  diagnostics, and public evidence. This slice does not claim x64 runtime
+  packs, NSIS generation, clean-host installation/GUI evidence, signing,
+  updater, managed roots, bridge projection, or complete-product readiness.
+- Implemented a shared `process-containment` crate without workspace `unsafe`
+  code. Unix children retain isolated process groups and now always receive the
+  bounded TERM-then-KILL cleanup; Windows children are assigned immediately to
+  a `KILL_ON_JOB_CLOSE` Job Object, and job creation/assignment failure kills
+  and reaps the direct child before returning an error. The wrapper owns child
+  stdio and cleanup, redacts process identity from `Debug`, and is now used by
+  desktop daemon lifecycle, one-shot and resident embedding, custom and
+  Tesseract OCR, and custom and pdftoppm PDF rendering. The reviewed Windows
+  manifest lists those seven owners, forbids breakaway, and records fail-closed
+  cleanup; the planner validates it before continuing to reject the still
+  incomplete x64 embedding/OCR/PDF composition.
+- Focused verification passed three containment unit tests, five resident
+  embedder tests, seven embedder integration tests, seventeen OCR tests,
+  nineteen desktop Rust tests, eleven frontend mock-IPC tests, and fifteen
+  sidecar/resource contract tests. Native and `x86_64-pc-windows-msvc`
+  all-target warnings-denied clippy passed; focused checks/builds, desktop
+  release build, frontend build, license guard, formatting, and diff checks
+  passed. The real macOS arm64 Tauri app rebuilt and its bounded composition
+  receipt proved one daemon, one embedding runtime, one PDF renderer, seven
+  embedding resources, thirty-one OCR resources, digest/architecture match,
+  and zero checked build-machine path markers. The Windows planner exited
+  nonzero before staging, explicitly because the three reviewed x64 runtime
+  inputs remain absent while containment is present.
+- Root `rust-analyzer diagnostics` passed. Desktop diagnostics reproduced only
+  the existing Tauri `generate_context!` E0560 macro-expansion false positive;
+  desktop test, warnings-denied clippy, release build, and the target-platform
+  macOS app build all passed. A Mac-hosted desktop MSVC cross-check first
+  confirmed the still-missing reviewed Windows `.ico`; a temporary non-repo
+  icon then reached the platform resource-compiler boundary. This cannot
+  replace native Windows Tauri evidence, and no developer tools were installed
+  on the clean H0 terminal host.
+  Fresh release readiness correctly remains `complete_product: false` and
+  `stable_release: blocked`; its legacy P5 row still overstates old CLI/package
+  work and remains a later contract correction, not Tauri installer evidence.
+  S783 is accepted locally. The paused successor is the reviewed Windows x64
+  embedding runtime pack, followed by OCR/PDF inputs, native NSIS generation,
+  and clean-host H0 install/GUI evidence. The accepted S783 evidence required
+  no Windows-side changes and retained no screenshot or sensitive console
+  output.
+
+### S782
+
+- Selected one local-only successor under historical issue #138 after accepted
+  S781. Fresh observation showed that the locked Tauri 2.11.4 schema supports
+  per-user NSIS and an embedded offline WebView2 installer, but the desktop had
+  no Windows platform config. The complete Windows composition already rejected
+  x64 because only the basic `.exe` sidecar plan existed; embedding/OCR resource
+  packs, a PDF renderer, and Job Object containment were absent. The older
+  administrator MSI/Windows Service scripts remain historical CLI/package
+  evidence and are not Tauri GUI installer evidence.
+- Frozen input and success boundary: use `x86_64-pc-windows-msvc`, the locked
+  schema, and the accepted three-sidecar/two-resource composition. Windows must
+  target only NSIS, install for the current user, embed the silent offline
+  WebView2 installer, block downgrades, and reject composition before any build
+  or staging while a reviewed Windows embedding pack, OCR pack, PDF renderer,
+  or Job Object input is missing. The main-only capability, single invoke
+  handler, CSP, approved visual, query semantics, and macOS composition may not
+  change.
+- Frozen failure/privacy/rollback boundary: administrator-default installation,
+  first-install or normal-run download, partial runtime installers, wildcard or
+  broad filesystem authority, developer-tool dependence on the H0 terminal
+  host, sensitive output, resource/query regression, or a required-gate failure
+  triggers rollback. Runtime bytes, raw text, queries/results, paths, tokens,
+  caches, credentials, child stderr, private data, and screenshots stay outside
+  Git, logs, diagnostics, and public evidence.
+- Added Tauri's automatic `tauri.windows.conf.json` platform overlay with exact
+  `targets=["nsis"]`, `installMode="currentUser"`,
+  `webviewInstallMode={type="offlineInstaller",silent=true}`, and
+  `allowDowngrades=false`. The existing composition planner now reports all four
+  required Windows inputs and refuses a partial NSIS before invoking Cargo or
+  staging artifacts.
+- Focused RED/green evidence: the first Node run exposed one stale generic
+  Windows rejection assertion after the new fail-closed reason landed. The
+  assertion was separated from the x64 macOS resource rejection; the rerun
+  passed 11 frontend mock-IPC tests and 14 Node composition tests. A direct
+  Windows plan invocation exited 1 with zero stdout and a bounded generic error.
+  The locked Tauri CLI successfully merged the Windows overlay and completed a
+  release `--no-bundle` build on macOS, which validates schema/config shape but
+  is not Windows native or installer evidence.
+- Verification passed 19 Rust desktop command/state tests, release Cargo
+  check/build, warnings-denied clippy, frontend build, formatting, license
+  checks, and the macOS arm64 App composition regression. The bundle receipt
+  remained exact at three sidecars, seven embedding files, 31 OCR files,
+  arm64 architecture, matching digests, and zero checked builder-path markers.
+  `check-performance-contracts.py` first failed closed because the changed
+  active-goal pin changed the paired synthetic report SHA; the derived manifest
+  SHA was reconciled and all four mandatory gates then passed.
+- Fresh release-readiness still exits 1 with `complete_product=false`,
+  `stable_release=blocked`, and the known stale P5 `production_complete`
+  wording. S782 is accepted locally only for the installer/config and partial-
+  composition rejection contract. Windows runtime composition, Job Object
+  behavior, actual NSIS generation, clean-host install/first-start/GUI/H0
+  evidence, P5 correction, signing/updater, and complete product readiness
+  remain open.
+
+### S781
+
+- Selected one local-only successor under historical issue #138 after accepted
+  S780. The observed gap was that release desktop OCR still depended on an
+  external Tesseract/tessdata/PDF-rendering installation, so image-only PDFs
+  could not complete the ordinary-machine App import-to-search loop.
+- Frozen input and success boundary: use the existing daemon OCR worker and the
+  reviewed local Tesseract 5.5.2 `eng+chi_sim` assets; compose an exact arm64
+  dependency closure, language/config files, licenses/notices, and one bounded
+  macOS CoreGraphics PDF renderer. Staging and post-bundle verification must
+  prove exact role/file/size/digest/license/source review, regular-file and
+  no-symlink shape, local loader names for bundled non-system dylibs, arm64
+  architecture, and zero checked builder path markers. Release Rust must ignore
+  OCR command environment overrides and resolve only app siblings plus
+  `BaseDirectory::Resource`. A repeated target build and isolated native App
+  witness must complete synthetic image-only PDF import, OCR, indexing, keyword
+  search, queue drain, and redacted diagnostics.
+- Frozen failure, privacy, and rollback boundary: dependency/license gaps,
+  extra/mismatched/symlinked files, non-system absolute dylibs, wrong target,
+  builder markers, external Homebrew/Python/repository/network dependency,
+  sensitive output, query/filter change, relaxed page/pixel budget, or a failed
+  required gate triggers rollback. Only bounded manifests, license texts, and
+  aggregate receipts may enter Git/evidence. OCR/runtime bytes, raw text,
+  queries/results, local paths, tokens, caches, child stderr, private data, and
+  screenshots may not. No command/capability/CSP/visual/WebView change,
+  Windows implementation, managed-root behavior, typed bridge projection,
+  ranking, signing, updater, or installer-lifecycle claim is included.
+- Implemented a reviewed immutable OCR pack assembler and verifier. The pack
+  contains Tesseract, its 15-file recursive non-system dylib closure, `eng` and
+  `chi_sim` tessdata, the TSV config, ten license texts, a bounded third-party
+  notice, and one exact expected manifest. Dylib install names are rewritten to
+  loader-local references and ad-hoc signed for local composition. The staged
+  pack is atomic, normalizes executable/data modes, rejects extra or symlinked
+  files, and validates every declared digest and arm64 Mach-O role.
+- Replaced the initially considered Poppler payload with a macOS-native
+  CoreGraphics renderer, avoiding a 39-dylib/25+ MiB runtime and additional GPL
+  source-offer surface. The Objective-C renderer accepts no arguments and only
+  three internal worker environment fields; it validates an absolute direct
+  PDF up to 64 MiB, page 1..512, DPI 72..600, 10000 pixels per edge, and ten
+  million total pixels, then emits a bounded top-down PPM. Errors are generic
+  and path-free.
+- Tauri composition now contains exactly three sidecars (daemon, resident
+  embedding runtime, PDF renderer) and two immutable resource packs. Release
+  Rust resolves Tesseract/tessdata only from the OCR resource pack, passes
+  `eng+chi_sim`, one OCR job per tick, `TESSDATA_PREFIX`, and one inference
+  thread to the owned daemon, and keeps debug OCR configuration absent. The
+  single invoke handler, five commands, AppManifest, main-only capability,
+  plugin permissions, CSP, approved visual, and WebView authority remain
+  unchanged.
+- Repeated target `tauri build` succeeded after fixing a pre-existing S780
+  staging-mode defect: the reviewed ONNX Runtime source was owner-read/execute
+  only, and Tauri's resource copy could not overwrite its prior destination on
+  the next build. Embedding staging now normalizes data/manifest files to 0644
+  and the runtime library to 0755, with a regression assertion. A subsequent
+  build required no manual permission repair and produced both the arm64 App
+  and DMG. The bundle receipt reports 3 sidecars, 7 embedding files, 31 OCR
+  files, exact digest match, arm64 architecture, executable shape, and zero
+  checked builder path markers.
+- Focused verification passed 11 frontend mock-IPC tests, 13 Node composition
+  tests, and 19 Rust desktop command/state tests. Release Cargo check/build,
+  warnings-denied clippy, frontend build, license check, formatting, bundle
+  verifier, and target-platform Tauri build pass. The first clippy run exposed
+  one debug-only dead-code cfg mismatch; the cfg was narrowed and the required
+  rerun passed.
+- Final reconciliation passed `check-performance-contracts.py`,
+  `check-autonomous-goal.py`, `check-loop-state.py`, and
+  `guard-public-repo.sh`. Updating the active-slice hash also updated the two
+  matching synthetic-smoke contract pins and report digest; no benchmark result
+  or threshold changed. Fresh machine release readiness still correctly exits
+  nonzero with `complete_product: false` and `stable_release: blocked`.
+- The accepted isolated-HOME native App witness used only a temporary synthetic
+  image-only PDF. It reported App started, import accepted, one indexed and one
+  searchable document, drained OCR/embedding queues, one keyword result,
+  successful diagnostics, all five sensitive-content flags false, and the
+  redacted aggregate privacy boundary. An earlier oversized synthetic page was
+  rejected by the unchanged pixel budget and was not accepted as evidence; the
+  final standard-page witness passed without changing product limits. No body,
+  filename, path, token, child output, runtime bytes, or screenshot was retained.
+- `rust-analyzer diagnostics apps/desktop/src-tauri` reproduced only the known
+  Tauri `generate_context!` E0560 macro-expansion error at `main.rs:127` plus
+  inactive-cfg weak warnings; Cargo test/check/clippy/build and the repeated real
+  release bundle pass, so it remains the existing analyzer false positive.
+  S781 is accepted locally. The paused successor is Windows x64 self-contained
+  runtime composition plus H0 native evidence; it requires the Windows test
+  host as a build/verification machine, while the resulting installed product
+  must remain one self-contained installer with no Git, Rust, Cargo, Node, or
+  Python dependency. Signing/notarization/updater, managed roots, bridge typed
+  projection, and complete-product readiness remain unproved.
+
+### S780
+
+- Selected one local-only successor under historical issue #138 after accepted
+  S779. The observed gap is that the native resident embedding runtime and
+  reviewed qint8 pack are not yet part of the Tauri bundle, so release desktop
+  semantic/hybrid still cannot work on an ordinary machine without development
+  configuration.
+- Frozen input and success boundary: compose the accepted daemon and native
+  embedding executables plus the already reviewed arm64 macOS pack through
+  target-specific staging. Both staging and post-bundle verification must prove
+  exact file count, role, size, digest, immutable identity, reviewed licenses,
+  disabled network, regular-file/no-symlink status, and target architecture.
+  Release Rust must ignore embedding environment overrides, resolve the runtime
+  beside the app executable and the pack through `BaseDirectory::Resource`, and
+  pass a clean-environment macOS arm64 semantic/hybrid resident-reuse smoke.
+- Frozen failure, privacy, and rollback boundary: missing, mismatched, extra, or
+  symlinked assets; wrong target/architecture; mutable identity; unreviewed
+  license; enabled network; runtime environment dependency; WebView path or
+  authority exposure; build-machine identity markers; sensitive output; changed
+  query/filter semantics; or a required-gate failure triggers rollback. Only a
+  bounded public expected manifest and aggregate receipt may enter Git/evidence;
+  model/runtime bytes, text, queries, vectors, candidates, paths, tokens, caches,
+  stderr bodies, and private screenshots may not. No Windows/x64, OCR, visual,
+  managed-root, bridge-command, DMG/NSIS, signing/notarization/updater, remote
+  write, or complete-product claim is included.
+- Implemented deterministic two-sidecar composition: the existing daemon and
+  accepted native embedding runtime are built for the explicit target triple,
+  staged as executable regular files, and referenced by the release-only Tauri
+  overlay. The resource stage reads the reviewed arm64 manifest, validates its
+  exact schema/identity/dimension/provider/network/license/quantization and six
+  unique role/file/bytes/digest entries, validates every source as a direct
+  non-symlink file, and copies only those six files plus the reviewed manifest.
+  Extra cache/evidence files in the ignored source directory are not copied.
+- The post-bundle verifier now requires exactly one daemon sidecar, exactly one
+  embedding-runtime sidecar, and exactly seven reviewed resource files. It
+  proves staged/bundled size and SHA-256 equality, executable shape, arm64 Mach-O
+  architecture for both executables and ONNX Runtime, and absence of repo/home
+  path markers before returning a bounded aggregate receipt. The real `.app`
+  receipt reported 2 sidecars, 7 resources, 165082267 resource bytes, digest
+  match, arm64 architecture, and zero checked build-machine identity markers.
+- Release Rust now constructs daemon lifecycle state during Tauri setup, finds
+  the embedding executable only as an app sibling, resolves the pack only with
+  `BaseDirectory::Resource`, validates direct regular executable/resource
+  shape, and passes the pack to the owned daemon through Rust-only process
+  environment. Embedding command/model/dimension environment overrides remain
+  debug-only and are compiled out of release. The single invoke handler, five
+  commands, AppManifest, main-only capability, plugin permissions, CSP, visual
+  assets, and WebView authority were reviewed and remain unchanged.
+- Focused synthetic verification passed 11 frontend mock-IPC tests, 13 Node
+  composition tests, and 18 Rust desktop command/state tests. Coverage includes
+  unsupported target rejection, exact two-sidecar planning, source symlink and
+  extra-file handling, atomic resource staging, bundle mismatch/duplicate/path-
+  marker rejection, packaged sibling/resource scoping, and Rust-only runtime
+  environment injection. Release check, warnings-denied clippy, build, frontend
+  build, license gate, formatting, and the target-platform Tauri app build pass.
+- A clean-environment macOS arm64 native witness used only repository synthetic
+  fixtures. The packaged app launched its owned daemon, imported at least one
+  searchable/vector-indexed document, returned non-empty semantic and hybrid
+  results, reused one resident runtime PID across both requests, and reclaimed
+  desktop/daemon/runtime within 20 seconds of native quit. The accepted receipt
+  contains only booleans and lower-bound counts; temporary data, query/result
+  bodies, endpoint/token, paths, child output, model bytes, and screenshots were
+  neither printed nor retained. An initial high-frequency summary probe was not
+  accepted because it interfered with vector publication; the final witness
+  used a bounded low-frequency read and passed without changing product code.
+- `rust-analyzer diagnostics apps/desktop/src-tauri` reproduced only the known
+  Tauri `generate_context!` macro-expansion E0560 at `main.rs:123` plus inactive-
+  cfg weak warnings; Cargo test/check/clippy/build and the real release `.app`
+  all pass, so this remains classified as the existing analyzer false positive.
+  S780 is accepted locally. The paused successor is self-contained macOS OCR
+  runtime/license/resource composition. Windows/x64 composition, Windows Job
+  Object/H0 evidence, DMG/NSIS, signing/notarization/updater, managed roots, and
+  complete-product readiness remain unproved. Fresh machine release readiness
+  correctly reports `complete_product: false` and `stable_release: blocked`;
+  its expected nonzero exit is not a slice failure.
+
+### S779
+
+- Selected the next local-only product slice under historical issue #138 after
+  accepted S778. The observed defect is repeated process/model startup in both
+  daemon semantic/hybrid search and background embedding work; the one-shot
+  native runtime solved Python/offline installation dependency but not steady-
+  state query latency.
+- Frozen input and success boundary: use the accepted S778 runtime and immutable
+  reviewed pack; one supervised runtime generation must serve repeated daemon
+  requests through a typed length-prefixed protocol, with asynchronous startup,
+  interactive-before-background bounded admission, H0/H1/H2 inference threads
+  1/2/3 subject to CPU down-cap, and cleanup/restart after cancellation, timeout,
+  child failure, malformed response, or daemon shutdown. Repeated semantic and
+  hybrid requests must reuse a generation; a post-failure request must recover;
+  keyword and field must neither start nor wait for model inference.
+- Frozen failure, privacy, and rollback boundary: request/response caps are 2/4
+  MiB, batches remain at most four inputs and 65536 bytes per input, roles are
+  explicit query/passage, wire data contains no document id/path, and errors are
+  finite redacted enums. Hybrid preserves bounded BM25 results with a distinct
+  runtime partial reason; semantic does not confuse runtime unavailability with
+  index-not-ready; embedding jobs remain all-or-retry. Query/resume text,
+  vectors, candidates, local paths, model/runtime bytes, tokens, caches, child
+  commands, stderr bodies, unbounded queues, orphan processes, partial vector
+  publication, keyword/field blocking, changed query/filter semantics, H0 memory
+  regression, failed recovery, or any required-gate failure triggers rollback.
+  No Tauri, OCR, visual, installer, managed-root, ANN, tokenizer, ranking, remote
+  issue, PR, push, or complete-product claim is in this slice.
+- Implemented one shared `resume-ir.embedding-stream.v1` protocol crate and an
+  exact `--resident` mode in the accepted native runtime. Requests and responses
+  are length-prefixed, schema-bound, finite, and redacted in `Debug`; the
+  supervisor owns one child generation, two bounded priority queues, a ready
+  handshake, H-tier inference threads, and deterministic kill/reap/restart.
+  One-shot runtime behavior remains available for preflight and bounded
+  `--once` compatibility.
+- Integrated one daemon-lifetime resident owner for semantic/hybrid queries and
+  background embedding work. Search execution now has independent lexical and
+  semantic lanes, so an initializing, slow, or failed model cannot hold keyword
+  or field requests behind it. Runtime failure maps to the distinct
+  `embedding_runtime_unavailable` partial reason; hybrid retains bounded BM25
+  hits, while semantic returns no fabricated candidates. Claimed embedding jobs
+  are marked retryable and publish no partial vector group.
+- Synthetic failure/recovery evidence passed: 3 protocol tests, 10 native
+  runtime tests, 5 resident supervisor tests, 7 existing embedder tests, 23
+  search IPC tests, 3 embedding-worker tests, 7 all-or-retry embedding-job
+  tests, and 3 search command/state tests. The fixtures prove one generation is
+  reused, timeout and child exit restart before the next successful request,
+  owner shutdown interrupts and joins inference, interactive work precedes
+  waiting background work, slow semantic work does not block lexical search,
+  and hybrid preserves BM25 results during runtime failure.
+- A controlled real native-model witness used only repository synthetic resume
+  fixtures and emitted bounded aggregates: import and vector seed passed;
+  semantic and hybrid each returned status `ok`, two results, and zero partial
+  reasons; both queries reused one generation; daemon shutdown reclaimed it.
+  The temporary data directory, runtime pack path, IPC endpoint/token, query
+  bodies, result bodies, vectors, model bytes, and child output were neither
+  printed nor retained.
+- Verification passed: `cargo fmt --all -- --check`; `git diff --check`;
+  focused Cargo check/test commands for `embedding-protocol`, `embedder`,
+  `resume-embedding-runtime`, `resume-daemon`, and `resume-cli`; clippy for all
+  changed Rust targets with `-D warnings`; target release build; license check;
+  and `rust-analyzer diagnostics .` (exit 0, only expected platform/test cfg
+  inactive-code weak warnings). The four mandatory repository gates also
+  passed after final reconciliation. Fresh machine release-readiness remains
+  correctly gated at `complete_product: false` and `stable_release: blocked`.
+- S779 is accepted locally. The selected successor gap is target-specific
+  Tauri resource composition for the native embedding runtime, immutable model
+  pack, and ONNX Runtime assets. It is intentionally not activated before this
+  requested pause. S779 does not prove Windows process-tree containment,
+  Windows packaging, Tauri resource lookup, DMG/NSIS installation, OCR
+  bundling, managed-root increments, signing/notarization/updater, or complete
+  product readiness.
+
+### S778
+
+- Selected one local-only successor under historical product-audit issue #138:
+  replace the desktop semantic/hybrid path's external Python dependency with a
+  CPU-only native Rust multilingual-E5 ONNX runtime. The input is an already
+  reviewed local model/tokenizer directory plus an explicit local ONNX Runtime
+  library; only synthetic text may be used for committed or command-output
+  evidence.
+- Frozen success/failure boundary: the existing daemon must complete real
+  synthetic semantic and hybrid requests in a clean environment without
+  Python, a venv, Hugging Face cache access, or runtime network access. The
+  runtime must enforce one immutable pack-scoped model identity, dimension 384,
+  at most 4 inputs, at most 65536 bytes per input, at most 4 MiB output, H0
+  default intra-op threads 1, and E5 query/passage prefix parity. Missing or
+  escaping files, identity/dimension mismatch, malformed or oversized input,
+  non-finite/wrong-dimension vectors, download fallback, sensitive output, H0
+  resource regression, real-model failure, or any required-gate failure is
+  rollback.
+- Privacy and non-claim boundary: no model/runtime bytes, local paths, raw
+  query/resume text, vectors, candidate results, caches, tokens, diagnostics,
+  or screenshots enter Git or public evidence. This slice does not claim the
+  runtime is resident, packaged in Tauri resources, available on Windows, or
+  sufficient for installer/product completion; resident reuse and target-
+  specific Tauri composition remain immediate successor slices. No Tauri
+  command/capability/CSP/visual/query contract or remote state may change.
+- Implemented `resume-embedding-runtime` as a CPU-only Rust/tokenizers/ORT
+  executable with no download-capable dependency features. A model-specific
+  adapter maps the validated ONNX file directly, disables CPU arena,
+  prepacking, memory-pattern reuse, and parallel execution, and caps ORT
+  intra/inter-op work for the H0 launch path. The accepted pack identity
+  is pinned to the reviewed multilingual-E5 small dynamic-int8 model revision,
+  dimension, source filename, and exact model/tokenizer/config byte counts and
+  digests; the platform-specific ORT library remains separately manifest-
+  checked for later target-specific bundle composition. Pack paths must be
+  direct regular files under one canonical directory, symlinks/path escape,
+  unknown fields, duplicate roles, oversized components, digest changes, and
+  wrong identity all fail closed with path/text-free errors. The executable
+  also suppresses the default panic hook and converts unexpected ORT ABI/runtime
+  panics into the same generic path-free unavailable error.
+- The existing command protocol is parsed from raw bytes rather than line-
+  reconstructed text, preserving CRLF, multibyte UTF-8, trailing newlines, and
+  content equal to the boundary marker. Runtime admission enforces four inputs,
+  65536 bytes per input, 4 MiB output, finite 384-dimensional normalized
+  vectors, H0 default ORT threads 1, tokenizer parallelism disabled, E5
+  query/passage prefixes, mean pooling, and L2 normalization.
+- The daemon now preserves the runtime's four-input admission boundary when a
+  document produces a full-text vector plus many section vectors: ordered
+  inputs are split into calls of at most four, all calls must succeed before
+  vector-index publication, and any failure leaves every claimed document job
+  retryable. A five-vector sectionized fixture proves two bounded calls preserve
+  vector/input association, while a later-chunk failure regression proves the
+  first chunk is not published and the claimed job remains retryable.
+- A clean-environment real-model preflight passed with `runtime_status=ready`,
+  `embedding_protocol=passed`, empty stderr, and no Python/venv/Hugging Face
+  runtime dependency. A local synthetic daemon witness imported one document,
+  persisted four full-document/section vectors, reported complete HNSW
+  coverage, and returned one consistent non-partial result from both semantic
+  and hybrid IPC requests. The HTTP witness used Python only as an external
+  test client; daemon and embedding execution used the Rust binary.
+- A tight full-lifetime `vmmap` loop measured the reviewed qint8 pack's macOS
+  four-input physical-footprint peak at 396.9 MiB with one inference thread,
+  below the H0 512 MiB private/anonymous redline. The earlier 348.8 MiB sample
+  was current footprint rather than true peak and is not used as acceptance
+  evidence. A bounded old/new synthetic vector comparison measured cosine
+  0.995583133 and maximum absolute component delta 0.012501814 after replacing
+  the temporary FastEmbed adapter with the model-specific file-backed adapter.
+  This is bounded local resource evidence, not Windows H0 evidence and not a
+  latency claim: one-shot model startup remains slow, so resident reuse is the
+  mandatory successor before semantic/hybrid product-performance claims.
+- Focused verification passed 10 runtime tests, 7 embedder tests, 3 model-
+  preflight tests, 7 daemon embedding-job tests, 3 daemon embedding-worker
+  tests, and the semantic/hybrid IPC test, plus Cargo check/clippy/build,
+  license and no-download-feature guards, rust-analyzer diagnostics, and the
+  real synthetic witness. During verification, two stale daemon assertions
+  were minimally aligned from the retired encrypted-v1 snapshot header to the
+  production/index-vector encrypted-v2 contract. The approximately 1100-line
+  runtime/test plus minimum daemon batching change is recorded as a local scope
+  exception; it remains one product gap, is capped at 15 changed files, and has
+  no auto-merge or remote write.
+
+### S777
+
+- Completed the first local clean-install desktop runtime-composition slice,
+  using closed product-audit issue #138 as the historical anchor. The locked
+  Tauri v2 build now prepares one allowlisted target-triple `resume-daemon`
+  sidecar before `tauri-build` consumes `bundle.externalBin`; unsupported
+  triples, missing/empty outputs, and Cargo failure fail closed. The release
+  app resolves the packaged sibling and Tauri app-local data directory without
+  reading `RESUME_IR_DATA_DIR` or `RESUME_IR_DAEMON_BINARY`; debug overrides
+  remain Rust-only. No command, capability, plugin, window scope, CSP, query
+  contract, or approved visual changed.
+- Focused RED first proved the prior package could not satisfy `externalBin`
+  because the target-suffixed daemon did not exist. A later real-bundle audit
+  caught a false privacy receipt and builder-home markers in both binaries.
+  The final build wrapper remaps repo/home Rust paths, the daemon uses a
+  owner/type/mode-checked fixed non-identity `/tmp` Cargo target for vendored
+  native intermediates, and the verifier now checks regular executable shape,
+  target Mach-O architecture, exactly-one composition, bytes/SHA-256 equality,
+  and actual repo/home byte absence before reporting zero build-machine identity
+  markers. It makes no broader claim about generic absolute build prefixes.
+- The final arm64 `.app` contained exactly one matching 15,195,680-byte daemon.
+  A synthetic native smoke launched the release binary with an isolated
+  temporary `HOME`/`TMPDIR` and an otherwise clean environment, observed one
+  ready daemon manifest, received an authenticated loopback
+  `daemon.status.v1`, requested native quit, and observed both desktop and its
+  owned daemon exit. The receipt contained no endpoint, token, path, query,
+  candidate result, resume text, diagnostic body, or screenshot; existing
+  application data was not read or modified.
+- Verification passed: 11 Vitest tests and 11 Node sidecar/bundle tests, 17
+  Rust desktop tests, release `cargo check`, all-target `cargo clippy -D
+  warnings`, release `cargo build`, the target-platform Tauri `.app` build,
+  bundle verifier, build-path scan, clean-environment native smoke, and
+  `cargo fmt --check`. A separate clean-checkout witness temporarily removed
+  the ignored staged sidecar, used a fresh isolated Cargo target, and proved
+  direct desktop `cargo check` still succeeds without recreating or depending
+  on that artifact. Performance-contract, autonomous-goal, loop-state,
+  public-repo privacy, and `git diff --check` gates also passed.
+  `rust-analyzer diagnostics apps/desktop/src-tauri`
+  reproduced only the known Tauri macro-expansion E0560 plus cfg inactive-code
+  warnings; Cargo check/test/clippy/build and the native bundle all succeeded.
+- This slice closes bundled daemon bootstrap only. It does not bundle the
+  embedding model/runtime or OCR stack, persist and watch managed roots, prove
+  Windows/NSIS, add repeatable WebDriver E2E, complete typed response
+  projection/admission lanes, sign/notarize, add updater/install lifecycle, or
+  make `complete_product`/stable release true. Local-only policy produced no
+  push, PR, or remote issue mutation, and the two pre-existing untracked
+  research files remain user-owned and excluded.
+
+### S776
+
+- Completed the user-directed local successor correction to closed issue #123.
+  The static RAM selector is now unambiguous: unknown or `<= 12 GiB` maps to
+  `H0_Eco`, `> 12 GiB` and `<= 20 GiB` maps to `H1_Balanced`, and `> 20 GiB`
+  maps to `H2_Aggressive`. CPU/available parallelism still only caps the
+  effective parser worker count; the existing 1/2/3 worker limits, 64/128/256
+  MiB writer heaps, and 512/1024/1536 MiB evidence budgets are unchanged.
+- Focused RED first failed because the old `8/24 GiB` implementation classified
+  exactly `12 GiB` as `H1_Balanced`. The new boundary coverage checks unknown,
+  12 GiB, 12 GiB plus one byte, 20 GiB, and 20 GiB plus one byte in both the
+  import runtime policy and resident-query evidence labeling. Runtime constants,
+  the acceptance matrix, and the design contract now carry the same thresholds;
+  a repository scan found no remaining old production/contract thresholds.
+- Verification passed: `rust-analyzer diagnostics .` completed with only
+  existing platform/test cfg inactive-code weak warnings; focused package
+  `cargo check`, 44 import-pipeline unit tests, 10 benchmark-runner unit tests,
+  focused `cargo clippy -D warnings`, and focused `cargo build` all exited 0.
+  `cargo fmt --check`, performance-contract, autonomous-goal, loop-state, public
+  repo privacy guard, and `git diff --check` also exited 0.
+- Privacy and scope remained bounded to synthetic memory byte counts. No private
+  resumes, paths, queries, candidate results, diagnostics, screenshots, tokens,
+  or machine identifiers were read or persisted. This slice changes static
+  tier selection only; it does not add a dynamic memory governor, alter query
+  semantics, change GUI visuals, prove Windows performance, or make the broader
+  performance/GUI Goal complete. The two pre-existing untracked research files
+  remain user-owned and excluded, and local-only policy produced no push, PR, or
+  remote issue mutation.
+
+### S775
+
+- Completed a read-only macOS native GUI phase audit against fresh repo,
+  runtime, Git, GitHub, and S764-S774 evidence. The bounded journey is covered:
+  owned-daemon clean start/restart/exit, native authorized-root selection and
+  complete import, aggregate status, keyword and typed field-filter search,
+  real semantic and hybrid search, four-card pagination, cancellation, detail
+  plus automatic bounded body/path hydration, and native redacted diagnostics
+  cancel/save/readback. Accepted query and mixed-import evidence was inspected
+  rather than rerun.
+- Product-state coverage is closed for this phase. Real native witnesses cover
+  ready, unavailable, error, empty, partial, overload, cancelled, and complete,
+  with recovery back to ready/complete. The daemon's closed
+  `empty/building/ready/stale` health enum has synthetic mock-IPC coverage and
+  only `ready` maps to healthy, so connected degraded remains distinct from
+  unavailable. Offline stale was correctly repaired by daemon startup and was
+  not misreported as a native degraded screenshot or manual witness.
+- Fresh Tauri v2 audit found the same single `invoke_handler`, five commands in
+  `build.rs` AppManifest, main-only window capability, exact five generated
+  permissions, no wildcard window, no `core:default`, no v1 allowlist/API, no
+  remote capability, and local CSP without `unsafe-eval`. The WebView still has
+  no endpoint manifest, bearer token, SQLite/index access, unrestricted path
+  input, or unnecessary full path state. Debug and merged release-configuration
+  macOS `.app` bundles compile the current source.
+- Privacy and cleanup remained closed: no private screenshot, raw query,
+  candidate result, filename, resume body, local path, token, endpoint, model
+  cache, load response, diagnostics package, or private benchmark artifact was
+  committed or uploaded. No desktop or daemon process, temporary synthetic
+  data directory, diagnostics export, or LaunchServices data-dir override
+  remained after verification.
+- Fresh Git/GitHub truth before final reconciliation was local `main` at
+  `9912e8a`, 62 commits ahead of `origin/main` at `8851948`, issue #53 open, and
+  no open PR. The two pre-existing untracked research documents remain
+  user-owned and excluded; every S764-S774 delivery change is locally committed.
+  Current local-only policy therefore requires no push, PR, or remote issue
+  reconciliation.
+- Decision: the user-scoped macOS native GUI E2E stage is complete. This is not
+  the broader performance/GUI Goal's machine `goal_complete`, Windows or
+  cross-platform readiness, D100K/D1M, installer composition, packaged
+  embedding/OCR runtime distribution, signing/notarization/updater readiness,
+  stable release, or performance acceptance. The broader loop remains governed
+  by its own W0/W1/scale/soak/fault evidence contracts.
+
+### S774
+
+- Completed the selected controlled native overload/partial/empty/recovery
+  slice. Eight authenticated `interactive_gui` semantic requests occupied the
+  documented class admission limit without persisting their requests or
+  responses; the ninth request was submitted through the real Tauri GUI and
+  reached the distinct overload banner with the daemon-provided 250ms retry
+  interval and the explicit guarantee that query semantics would not be
+  relaxed. All eight pressure requests were then cancelled through the real
+  authenticated cancel endpoint and their response bodies were discarded.
+- The first GUI retry left overload and reached a real bounded
+  `deadline_exceeded` partial state. A second unchanged retry reached complete
+  with 50 results, proving overload, partial, and complete are mutually distinct
+  and recoverable without changing the query, filters, 30s semantic deadline,
+  concurrency limits, or resource caps. No result body, query text, candidate,
+  filename, path, token, endpoint, or private screenshot was recorded.
+- Fixed a status-mapping product gap found during observation: the daemon's
+  typed `index_health` contract already exposes `empty`, `building`, `ready`,
+  and `stale`, but the GUI previously classified every HTTP-200 `status=ok`
+  payload as healthy. `StatusBody` now preserves that closed enum and the GUI
+  treats only `ready` as healthy; connected `empty/building/stale` payloads map
+  to degraded without being confused with unavailable. Synthetic mock-IPC
+  contract tests cover all four values and an unhealthy HTTP reply. The change
+  does not alter the approved visual language or any Rust command, AppManifest,
+  capability, permission, plugin, CSP, or Tauri config.
+- A separate temporary synthetic data directory exercised the real daemon,
+  typed bridge, and native app with a ready but zero-document index. A bounded
+  synthetic keyword produced the distinct empty banner and the no-semantic-
+  relaxation guarantee, with no error, partial, or overload state. The
+  temporary daemon/data directory and the uncommitted typed stale witness were
+  removed. An offline stale state was deliberately not counted as native
+  degraded evidence because daemon startup correctly reconciled it to a usable
+  ready snapshot before serving IPC; degraded mapping remains automated rather
+  than being misrepresented as a manual fault witness.
+- Focused verification passed frontend Vitest 11/11, TypeScript/Vite production
+  build, fresh debug and release macOS `.app` bundles, and all four required
+  performance-contract, autonomous-goal, loop-state, and public-boundary gates.
+  Final private-root restart after all pressure and synthetic witnesses returned
+  the real native UI to `daemon 可用` / `索引可用`; closing the window stopped
+  both owned processes and the LaunchServices data-directory override was
+  cleared.
+- Reconciled directly to a bounded macOS native Goal-completion audit that uses
+  accepted S764-S774 evidence and probes only a genuinely missing contract.
+  S774 does not claim native transient degraded visual evidence, packaged
+  embedding sidecar/resource readiness, signing/notarization/updater readiness,
+  cross-platform readiness, performance acceptance, the macOS GUI Goal, or the
+  broader 03 Goal complete.
+
+### S773
+
+- Completed the selected real native diagnostics view/export recovery slice
+  against the authorized local daemon. The authenticated v2 payload rendered
+  the aggregate panel, all five prohibited material classes as `不包含`, and a
+  `5/5 通过` export boundary. A small UI correction now also displays the typed
+  `gui_manual · unaccepted` lane/status beside the visible epoch, restoring the
+  S766 lane-awareness claim without changing layout, palette, spacing, effects,
+  or the approved search/detail surfaces.
+- Native save cancellation returned the distinct `已取消导出` state, preserved
+  5/5 privacy, and left export available. A second native save used a unique
+  filename inside the configured authorized local evidence directory; the
+  WebView receipt displayed only that basename and never the parent path.
+  Local readback proved the exact `resume-ir.diagnostics.v2` schema,
+  `redacted_local_aggregate` boundary, `gui_manual/unaccepted` lane, all five
+  exact-false privacy flags, <=256 KiB payload, <=16 scan-error buckets, <=64
+  benchmark refs, and absence of the controlled query, data directory, evidence
+  directory, and token. The temporary export was deleted after validation.
+- A controlled owned-daemon termination moved the heartbeat and diagnostics
+  sheet to separate unavailable/error states, cleared the previous aggregate
+  and disabled export. The existing retry action clean-started a new owned
+  daemon within the bounded readiness window; reopening diagnostics recovered
+  ready, 5/5 privacy, lane/status, and export availability. Closing the final
+  window stopped both owned processes and the temporary LaunchServices
+  environment was cleared.
+- Focused verification passed frontend Vitest 9/9, TypeScript/Vite production
+  build, a fresh debug macOS `.app`, native accessibility checks for
+  lane/status/privacy/cancel/saved/error/recovered states, and all four required
+  performance-contract, autonomous-goal, loop-state, and public-boundary gates.
+  No private screenshot was saved. This slice reused the existing typed Rust
+  diagnostics/export tests from S766 and made no Rust, command, AppManifest,
+  capability, permission, plugin, CSP, or config change.
+- Privacy: no export file, destination path, query, candidate result, filename,
+  resume text, token, endpoint, model/cache path, screenshot, diagnostics
+  package, or raw accessibility/process output was committed or uploaded. Only
+  the bounded boolean/count evidence above is recorded. No push, PR, or remote
+  issue mutation occurred.
+- Reconciled directly to the next bounded #53 product slice: controlled real
+  native overload, partial/degraded presentation, and recovery without changing
+  query/filter semantics or the approved UI-reference visuals. S773 does not
+  claim that successor, sidecar/resource packaging, signing/notarization/updater
+  readiness, cross-platform readiness, performance acceptance, the macOS GUI
+  Goal, or the broader 03 Goal complete.
+
+### S772
+
+- Completed the remaining authorized search/runtime part of the #53 native
+  search/detail recovery slice. Fresh runtime observation corrected the stale
+  MiniLM assumption: the reviewed local runtime available on this machine is
+  the 384-dimensional `intfloat/multilingual-e5-small` ONNX adapter. The native
+  lifecycle now accepts an all-or-none absolute embedding command/model/
+  dimension override and, only in debug builds, resolves the prepared repo-local
+  E5 command, Python runtime, and unique model snapshot from compile-time paths.
+  It never uses the current working directory and returns no runtime, cache, or
+  model path to the WebView.
+- Bounded before/after observation found two real lifecycle failures. The
+  default 64-document/1 MiB embedding batch exceeded the existing 30-second
+  worker limit and stopped the daemon; a fixed 4-document/64 KiB desktop batch
+  completed one controlled private worker tick with 4 documents, 36 vector
+  writes, and zero failures. The authenticated status endpoint became reachable
+  after about 5.05 seconds, so the desktop readiness limit moved from 3 to 10
+  seconds while preserving fail-closed timeout cleanup of the owned child.
+- Search I/O remains explicitly bounded. Keyword and field requests keep their
+  1.5-second deadline. Semantic and hybrid use a 30-second correctness envelope,
+  matching the daemon's existing embedding timeout and retaining native cancel;
+  the Rust bridge derives its socket read timeout only from the already parsed
+  and validated request deadline, adds one second of response grace, and caps
+  the result at 61 seconds. Other status/import/detail/hydrate/cancel/diagnostics
+  operations remain at the existing 3-second bridge timeout. This is product
+  correctness evidence, not a latency or hot-path performance acceptance claim.
+- Controlled native verification used one authorized local query without
+  emitting or saving its text, result identities, filenames, snippets, fields,
+  body, or path. The final debug `.app` clean-started its owned daemon; semantic
+  and hybrid each reached a non-partial, non-empty, non-error v2 complete state
+  with more than four results and visible next-page navigation. A separate
+  running hybrid request reached the distinct cancelled state with no error,
+  overload, or residual loading state. Closing the window stopped both owned
+  processes and the temporary LaunchServices environment was cleared.
+- Synthetic and build verification passed: frontend Vitest 9/9, Tauri Rust
+  tests 14/14, warnings-denied Tauri Clippy, TypeScript/Vite production build,
+  debug macOS `.app`, and merged release-configuration macOS `.app`. Fresh
+  rust-analyzer diagnostics reproduced only the recorded Tauri
+  `generate_handler!` E0560 macro-expansion false positive plus inactive
+  test-module notices; Cargo test, Clippy, and both target builds compiled the
+  same source. The unique invoke handler, five-command AppManifest, main-only
+  capability, exact generated permissions, strict local CSP, and approved
+  UI-reference visuals were unchanged. Performance-contract, autonomous-goal,
+  loop-state, and public-boundary gates passed after updating only the derived
+  active-goal hash and paired synthetic-smoke fixture digest; accepted smoke,
+  query, and mixed-import evidence was not rerun.
+- Privacy: no private screenshot, diagnostics package, model/cache path, local
+  path, filename, query, candidate result, resume text, token, endpoint, vector,
+  or raw process output was saved, committed, or uploaded. Only the bounded
+  aggregates above are recorded. No push, PR, or remote issue mutation occurred.
+- Reconciled directly to the next bounded #53 product slice: real native
+  diagnostics view/export, including 5/5 redaction flags plus save-cancel/error
+  recovery. S772 does not claim diagnostics export success, sidecar/resource
+  packaging, signing/notarization/updater readiness, cross-platform readiness,
+  performance acceptance, the macOS GUI Goal, or the broader 03 Goal complete.
+
+### S771
+
+- Began the selected authorized search/detail recovery slice with a controlled
+  local query loaded in-process from the configured private query artifacts.
+  The query text, result identities, filenames, snippets, fields, body, and path
+  were never emitted or saved. Only bounded product-state aggregates were
+  observed: full-text/keyword returned 13 results, the first and second pages
+  each mounted exactly four cards, and a field-filter AND request produced a
+  legitimate empty state without relaxing query semantics.
+- Selecting one real result opened the approved detail sheet, rendered the
+  structured-fields and local-path sections, and automatically completed the
+  bounded body hydration with no visible error. Accessibility checks recorded
+  only booleans for sheet/field/path/body-complete state; no private screenshot
+  or sensitive accessibility text was persisted.
+- Real semantic and hybrid requests both returned HTTP 400 `BAD_REQUEST`
+  because the desktop-started daemon has no local embedding command/model
+  configured. The previous UI incorrectly evaluated those error responses as
+  empty results. Added a single typed `searchOutcome` classifier so overload,
+  cancelled, non-2xx/error, partial, empty, and complete remain mutually
+  exclusive; the native app now renders these semantic failures as error and
+  no longer as empty.
+- Focused frontend RED/GREEN coverage proves a daemon `BAD_REQUEST` is error
+  while an HTTP 200 response with zero results is empty. Vitest 8/8, TypeScript
+  production build, and fresh macOS debug plus release `.app` bundles passed; native
+  accessibility re-verification confirmed `查询失败：BAD_REQUEST` and no empty
+  message for the same semantic response.
+- This is an implementation-active checkpoint inside the same #53 product
+  slice, not slice success. Real semantic/hybrid completion still requires
+  binding the already prepared local embedding runtime to the desktop-owned
+  daemon, and native cancellation still needs evidence. The machine state
+  therefore remains `implementation_active`; diagnostics export, packaging,
+  Goal completion, push, PR, and remote issue mutation are not claimed.
+
+### S770
+
+- Completed the authorized macOS native import and aggregate-status recovery
+  slice through the shipped Tauri command surface. The native directory picker
+  selected the configured private root, returned only a bounded display label
+  plus opaque root handle to the WebView, resolved that handle in the native
+  registry, and submitted the canonical path only to the authenticated loopback
+  daemon. The daemon accepted one new complete-import task; no browser path or
+  unrestricted path argument was introduced.
+- Bounded real local aggregate observation after the import reported 8,720
+  discovered items, 100 searchable/indexed documents, 9 OCR-required/queued
+  items, 67 permanent failures, zero retryable failures, zero recovery depth,
+  and zero queued import tasks with `index_health: ready`. These are local
+  product-state aggregates only, not benchmark, quality, release, or accepted
+  private evidence. No filenames, paths, document text, query text, candidate
+  results, tokens, endpoint values, or per-document error records were emitted.
+- Closing the first verification window exposed a lifecycle gap: the desktop
+  process exited while its daemon child remained alive, so the earlier `Drop`
+  fallback was insufficient for every Tauri exit route. The bounded correction
+  builds the application once, keeps the single `invoke_handler`, and handles
+  Tauri v2 `RunEvent::Exit` by taking and stopping the owned child outside the
+  mutex. A repeat clean restart restored the same searchable aggregate while
+  workers continued, and the corrected close left both desktop and owned daemon
+  stopped. The temporary LaunchServices environment used to pass the configured
+  data directory to the native smoke was removed immediately afterward.
+- Focused verification passed after the exit correction: Tauri Rust tests 11/11,
+  Cargo clippy with `-D warnings`, frontend production build, and a fresh macOS
+  debug plus release `.app` bundle. Fresh rust-analyzer diagnostics reproduced
+  only the recorded Tauri `generate_handler!` E0560 macro-expansion false
+  positive plus test-only inactive-code notices; Cargo test/clippy and both
+  native builds compiled the same source. The import UI exercised selected,
+  submitting, queued,
+  ready-after-restart, and clean-exit recovery states without changing the
+  approved UI-reference palette, spacing, effects, or four-card search surface.
+- Privacy: this slice used the user-authorized private root only inside the
+  native picker and authenticated daemon. It saved no private screenshot,
+  diagnostic package, benchmark report, raw log, path, filename, text, or query;
+  only the bounded aggregate above is recorded. No push, PR, or remote issue
+  mutation was performed.
+- Reconciled the machine contract directly to the next selected #53 slice:
+  controlled real keyword/field/semantic/hybrid search, four-card pagination,
+  cancellation/error separation, and automatic authenticated detail hydration.
+  S770 does not claim that search journey, diagnostics export, sidecar packaging,
+  signing/notarization/updater readiness, cross-platform readiness, the macOS GUI
+  Goal, or the broader 03 Goal complete.
+
+### S769
+
+- Completed the selected macOS daemon-lifecycle slice in the existing Tauri v2
+  application. On startup the native Rust process first reuses a healthy owner
+  IPC endpoint; otherwise it resolves a configured, sibling, or debug-workspace
+  daemon binary without using the current working directory, starts only the
+  import/index workers with loopback IPC, and waits up to three seconds for the
+  typed status contract. Startup failure, early exit, timeout, and unavailable
+  states remain distinct bounded errors. Only `started` or `already_running`
+  reaches the WebView; binary paths, data paths, endpoint manifests, tokens,
+  stdout, and stderr remain native-only.
+- The shared lifecycle state uses one atomic startup claim and short child-slot
+  mutex scopes. It never holds a lock over IPC, process creation/termination, or
+  readiness waits, does not add an `Arc` around Tauri-managed state, and stops
+  only the daemon child it owns when the desktop application exits. The UI adds
+  a read-only five-second status heartbeat plus an explicit retry action while
+  preserving the approved UI-reference palette, type, spacing, effects, and
+  four-card density.
+- Hardened the unique Tauri command boundary under the v2 capability model.
+  `build.rs` declares the five application commands in `AppManifest`; the sole
+  `main` window receives only the five generated allow permissions, with no
+  wildcard window and no `core:default`. Production assets remain bundled under
+  the existing strict local CSP with no remote script, `unsafe-eval`, or remote
+  capability. The single `invoke_handler` remains the only registration point.
+- The WebView-to-daemon bridge now parses `deny_unknown_fields` request types and
+  validates operation/body relationships, schema/capability/deadline, query and
+  filter bounds, retrieval mode and degree enums, top-k, stable document IDs,
+  cancellation IDs/tokens, and detail pagination before forwarding. Native
+  import continues to resolve an opaque bounded root handle through the
+  authorized registry; loopback endpoints, response size/schema, hydrated local
+  privacy flags, and diagnostics redaction fields remain fail-closed.
+- Public-synthetic verification passed: frontend Vitest 7/7 with Tauri mock
+  cleanup, TypeScript/Vite production build, Tauri Rust tests 11/11, Cargo
+  check, and clippy with `-D warnings`. A merged release configuration built the
+  macOS release binary and `.app` bundle successfully. Performance-contract,
+  autonomous-goal, loop-state, and public-boundary gates passed; the only
+  fixture reconciliation was the new active-goal hash and its derived
+  synthetic smoke report digest, without rerunning accepted evidence. Fresh rust-analyzer
+  diagnostics reproduced only the recorded Tauri `generate_handler!` E0560
+  macro-expansion false positive plus test-only inactive-code notices; Cargo
+  check/test/clippy and the release build compiled the same source.
+- A controlled native local smoke used the configured authorized runtime without
+  recording private values. A clean desktop launch reached the real daemon-ready
+  aggregate state; terminating the owned daemon changed the UI within one
+  heartbeat to a distinct unavailable state with retry; retry returned through
+  loading to ready; closing the desktop left both owned processes stopped. No
+  resume body, query, candidate result, filename, original path, token, endpoint,
+  process output, private screenshot, diagnostic package, or benchmark evidence
+  was saved, committed, or uploaded.
+- Reconciled the machine contract directly from S768 `slice_complete` to the
+  next selected #53 slice: authorized native directory selection, import
+  submission, aggregate status progress, and recoverable import-side states.
+  This slice does not claim that successor evidence, production sidecar
+  packaging, signing/notarization/updater readiness, cross-platform readiness,
+  the macOS GUI Goal, or the broader 03 Goal complete. No push, PR, or remote
+  issue mutation was performed.
+
+### S768
+
+- Implemented the selected `UI-reference/` search and detail surfaces in the
+  existing Tauri app without changing the approved palette, radii, shadow,
+  overlay, hover/focus, scrollbar, or four-card desktop density. The 1440x900
+  public-synthetic capture shows three complete cards plus the fourth visible at
+  the viewport edge, with scroll preserving the 100000-logical-result product
+  model rather than compressing cards into a table. Pagination mounts exactly
+  four cards per page, so a 50-hit response never violates the eight-card
+  buffer cap.
+- Removed prototype-only/dead destinations and kept only product-backed search,
+  local source import, and privacy/diagnostics actions. Keyword, hybrid, and
+  semantic modes map directly to daemon search; the visible field-filter mode
+  applies the existing typed filter contract over full-text search rather than
+  inventing a fourth daemon retrieval mode.
+- Added a typed desktop `hydrate` operation. Selecting a result first reads
+  bounded structured detail and then automatically fetches authenticated 32 KiB
+  UTF-8 body pages, up to the explicit 128-page GUI-state bound. The Rust bridge
+  validates the exact hydrate response schema, local-authenticated-only privacy
+  flags, display-path bound, and per-page body bound before the WebView receives
+  sensitive content. Body and display path are rendered directly in the local
+  detail sheet and are not logged, exported, or added to diagnostics.
+- Same-viewport full and focused comparisons against `search.png` and
+  `detail.png` found no actionable P0-P2 visual mismatch. The synthetic search
+  and detail captures are committed only as design evidence; `design-qa.md`
+  records `final result: passed`. They are not private GUI/manual evidence,
+  performance evidence, release evidence, or a readiness claim.
+- Focused verification passed: desktop Vitest 6/6, TypeScript/Vite production
+  build, Tauri `cargo check --locked`, and daemon-client Rust tests 5/5. A fresh
+  `rust-analyzer diagnostics apps/desktop/src-tauri` reproduced the already
+  recorded Tauri `generate_context!`/`generate_handler!` macro-expansion false
+  positive while Cargo compiled the same crate successfully; disabling build
+  scripts instead produced the expected `proc-macro not yet built` diagnostics.
+- Privacy: only explicit public-synthetic UI values are present in committed
+  screenshots. No real resume text, query, candidate result, filename, path,
+  token, diagnostics package, private manifest, or private benchmark output was
+  read, committed, or uploaded. No push or PR was performed.
+
+### S767
+
+- Fresh contract reconciliation found that the machine GUI gate still required
+  20-60 visible rows with 44-56px row height, while the user explicitly selected
+  the existing `UI-reference/search.png` density and confirmed that four large
+  result cards plus scroll or pagination is the intended product. That drift
+  would have forced implementation away from the approved visual design, so the
+  benchmark was corrected before styling work.
+- The frozen public contract now keeps 100000 logical results but requires
+  exactly four visible cards at the 1440x900 reference state, at most eight
+  buffered cards, `scroll|pagination`, and stable card height. Report fields
+  hard-cut from row/overscan terminology to `visible_cards`, `buffered_cards`,
+  `navigation_mode`, and `stable_card_height`; a dedicated negative fixture
+  proves that five visible cards fail the machine gate.
+- `UI-reference/search.png` and `detail.png` remain visual truth for palette,
+  typography, spacing, borders, radii, hover/focus, overlay, and side-sheet
+  rendering. The contract no longer allows a row-density target to override
+  those visuals.
+- Selecting a result is now the explicit local detail action. The next slice
+  may automatically call authenticated detail/hydrate and display the selected
+  document's body and display path without a second confirmation. Sensitive
+  content remains prohibited from logs, diagnostics, benchmark/public evidence,
+  committed screenshots, and git.
+- This is a public-synthetic contract freeze only. It does not implement the
+  visual redesign, produce accepted GUI/manual evidence, expose private data in
+  evidence, claim packaging/readiness/goal completion, push, or open a PR. The
+  next bounded #53 slice is the existing Tauri implementation and pixel-level
+  design-QA pass.
+
+### S766
+
+- The fresh capability audit found that the GUI contract required
+  `resume-ir.diagnostics.v2`, while the daemon exposed no diagnostics endpoint
+  and the CLI's separate release-evidence exporter still emits
+  `diagnostics.v1`. The GUI did not reuse or reinterpret that legacy CLI
+  payload. Instead, the daemon now owns an authenticated additive
+  `GET /diagnostics` v2 runtime contract, and unauthenticated access returns
+  HTTP 401.
+- The v2 payload is a bounded redacted aggregate: fixed queue/document/query
+  metrics, fixed error totals, at most 16 scan-error class/operation buckets,
+  at most 64 benchmark refs, visible epoch, and five exact-false privacy flags.
+  It declares `gui_manual / unaccepted`, so exporting runtime state cannot
+  self-promote into accepted GUI/manual, W0, or W1 evidence. No path, raw query,
+  resume text, snippet, candidate result, token, cookie, or diagnostics package
+  field exists.
+- The desktop bridge validates the exact v2 schema, privacy boundary,
+  lane/status, all five privacy flags, aggregate object shape, and array bounds
+  before the WebView can display or export it. The GUI renders a 5/5 redaction
+  checklist, bounded local metrics, error totals, query P95, epoch, evidence
+  lane, and explicit loading/ready/blocked/error/exporting/cancelled/saved
+  states.
+- Export fetches a fresh validated payload in Rust, opens a native save dialog,
+  writes at most 256 KiB of pretty JSON, and returns only an at-most 80-character
+  file label. The WebView neither supplies nor receives the destination path.
+  A Rust test wrote and reparsed the JSON and proved the receipt omitted its
+  parent path; a frontend test proved the native export command receives no
+  browser path argument.
+- Focused verification passed the authenticated daemon integration test,
+  warnings-denied daemon Clippy, 5/5 Vitest checks, TypeScript/Vite production
+  build, 8/8 desktop Rust tests, warnings-denied desktop Clippy, and a full
+  Tauri debug build. Root-workspace rust-analyzer diagnostics completed cleanly
+  across 113 targets. The nested Tauri workspace again reported only the
+  isolated `E0560` false positive at `tauri::generate_handler!`; Cargo test,
+  Clippy, and the complete Tauri build compile the same handler.
+- Privacy: only public-synthetic/temp test values were used. No real resume,
+  filename, path, raw query, candidate result, token, private report/manifest,
+  diagnostics package, screenshot, or runtime state was committed or uploaded.
+  Native dialog visual evidence remains unaccepted, so S766 is local
+  implementation and typed evidence closure, not GUI readiness.
+- The next single #53 slice freezes the public-synthetic GUI
+  virtualization/manual benchmark and screenshot/interaction evidence contract
+  before any 100000-logical-row tuning. Query tuning remains closed at S758;
+  packaging/signing, cross-platform GUI evidence, GUI readiness, and
+  `goal_complete` remain open. No remote mutation was attempted.
+
+### S765
+
+- Added the native root/import/status desktop vertical. The Rust process opens
+  the directory chooser and stores canonical paths in a bounded 16-entry root
+  registry; the WebView receives only a random opaque handle and an at-most
+  80-character basename label. Cancelling selection creates no task, unreadable
+  roots return a bounded typed error, expired handles require reselection, and
+  no browser filesystem permission was added.
+- Import submission sends only the opaque handle from JavaScript. Rust resolves
+  it locally, reads the owner-only daemon endpoint/token files, and sends the
+  complete root only inside authenticated loopback `POST /imports`. The request
+  uses the explicit scan profile without a hidden `max_files` cap, and successful
+  replies must match `daemon.import.v1`. The UI renders separate selecting,
+  selected, submitting, accepted, cancelled, error, daemon degraded/unavailable,
+  and retry paths, then polls only bounded `daemon.status.v1` aggregates.
+- Focused verification passed 4/4 Vitest checks, TypeScript/Vite production
+  build, 7/7 Rust tests, warnings-denied Clippy, and the full Tauri debug build.
+  Tests prove the WebView command contains only the handle, the serialized
+  selection never contains its parent path, the registry evicts its oldest
+  handle at the fixed cap, and the native bridge sends the path only to an
+  authenticated fake daemon. The existing real daemon import/status test also
+  passed against committed public-synthetic fixtures.
+- `rust-analyzer diagnostics . --severity warning` was run and again reported
+  only repeated `E0560 no such field` at `tauri::generate_handler!`, now at the
+  expanded handler list. Cargo test, warnings-denied Clippy, and the complete
+  Tauri build compile the same code. This is the already isolated Tauri macro
+  false positive from S764, not a new production diagnostic or a hidden pass.
+- No private root was selected and no real document was imported for this
+  slice. No resume text, filename, path, raw query, candidate result, token,
+  private manifest/report, diagnostics package, screenshot, or runtime state
+  was committed or uploaded. The native chooser itself has not gained accepted
+  GUI/manual screenshot evidence, so this is local implementation and typed
+  public-synthetic evidence closure, not GUI readiness.
+- The next single #53 gap is lane-aware redacted diagnostics/export with native
+  destination selection and explicit pending/blocked/complete plus redaction
+  states. Query tuning remains closed at S758 evidence; virtualization,
+  packaging/signing, cross-platform GUI evidence, GUI readiness, and
+  `goal_complete` remain open. No remote issue, branch, push, or PR mutation was
+  attempted under the local-only policy.
+
+### S764
+
+- Added the first production desktop shell under `apps/desktop/` with the
+  frozen Tauri + React + Vite + Tailwind + TypeScript lane and the calm dense
+  `UI-reference/` workbench structure: left local-index rail, top query
+  controls, stable center results, right detail panel, and bottom evidence
+  strip. Loading, empty, error, partial, overload, cancelled, degraded, and
+  unavailable are separate visible states rather than one generic failure.
+- The WebView cannot read the owner data directory, IPC endpoint manifest,
+  bearer token, SQLite, index files, raw path, or full text. A typed Rust
+  bridge reads the daemon's owner-only endpoint/token files, rejects non-
+  loopback endpoints and protocol drift, whitelists status/search/detail/cancel,
+  caps requests at 64 KiB and responses at 2 MiB, and returns bounded generic
+  bridge failures. Successful responses must also carry the exact schema for
+  the selected operation. Frontend tests prove arbitrary thrown values cannot
+  leak a local path.
+- Focused verification passed 2/2 Vitest checks, TypeScript type checking,
+  Vite production build, 4/4 Rust bridge tests including an authenticated fake
+  loopback status request without process-environment mutation, warnings-
+  denied Clippy, and a full `tauri build --debug --no-bundle`. The reusable
+  reference icon was copied into the Tauri app rather than making the ignored
+  visual prototype a runtime dependency.
+- A real local manual path used only the three committed synthetic resume
+  fixtures. The daemon reported ready status through the native bridge; a Java
+  keyword request returned two synthetic results; selecting the first result
+  retrieved its redacted `daemon.detail.v2` filename, bounded snippet, and
+  structured fields. The WebView exposed neither the complete source path nor
+  full body. The observed debug interaction was not collected under the frozen
+  resident benchmark protocol and is not query performance evidence; S758
+  remains the accepted speed/load result.
+- macOS screen capture did not render this unsigned debug WebKit surface, and
+  WebKit reported that the page had no display ID in the command-launched test
+  harness. Accessibility inspection still exposed the full rendered tree and
+  enabled the real search/detail interaction. Screenshots therefore remain an
+  unaccepted GUI/manual lane, not silently substituted by accessibility output.
+- `rust-analyzer diagnostics . --severity warning` was run against the nested
+  Tauri workspace and reported only repeated `E0560 no such field` at
+  `tauri::generate_handler!`. Replacing the real async command temporarily with
+  a minimal synchronous Tauri command reproduced the identical macro-expansion
+  diagnostic, while `cargo check`, `cargo test`, Clippy, Tauri dev, and the full
+  Tauri build all compiled the same handler. This is recorded as a current
+  rust-analyzer/Tauri macro false positive, not hidden as a green diagnostic.
+- Privacy: only committed public-synthetic fixtures and temporary synthetic
+  runtime state were used. No real resume, filename, path, raw query, candidate
+  result, token, private manifest/report, diagnostics package, screenshot, or
+  local runtime data was committed or uploaded. No remote issue, branch, push,
+  or PR mutation was attempted. The next single product gap is native root
+  selection through authenticated daemon import/status with the complete path
+  retained outside the WebView; diagnostics/export, virtualization, packaging,
+  cross-platform GUI evidence, GUI readiness, and `goal_complete` remain open.
+
+### S763
+
+- Added authenticated `POST /search/batch` with a frozen
+  `resume-ir.search-batch-request.v1` envelope. Each batch accepts 1..=64
+  homogeneous v2 child requests with bounded unique request identities and
+  cancel tokens, and streams one completion-order NDJSON response per child
+  with batch identity, input sequence, HTTP status, and the original correlated
+  v2 success/deadline/cancel body or v1 error/overload body.
+- Batch admission is independently bounded to one active batch, and every
+  child still crosses the existing total/class admission limits; a concurrent
+  batch gets correlated HTTP 503 and an excess child gets its own `OVERLOADED`
+  response. Batch parsing and all payload validation finish before any child is
+  admitted. Deadlines start at batch receipt, and queued/active cancellation
+  uses the same registry, physical queue removal, atomic completion claim, and
+  embedding checkpoint as a single request.
+- Focused fault injection used three public-synthetic children: one active slow
+  semantic request, one queued request cancelled in under 200ms, and one 10ms
+  deadline request. A concurrent second batch was rejected in under 250ms.
+  The full daemon search IPC suite passed 22/22, CLI search IPC passed 8/8,
+  parser bounds/uniqueness tests passed 2/2, endpoint discovery exposes the
+  additive batch URL, warnings-denied daemon Clippy passed, and rust-analyzer
+  diagnostics completed across 112 targets.
+- The first functional test attempt did not reach daemon code because the new
+  local debug executable remained in macOS `_dyld_start` while `syspolicyd` and
+  `XprotectService` scanned it. A direct local launch warmed that exact build;
+  unchanged focused tests then completed in 0.47s and 1.65-1.78s. This startup
+  observation is not query latency, throughput, or batch performance evidence.
+- No resident load benchmark was rerun because this is IPC product correctness,
+  not another hot-path optimization. The accepted S758 frozen result remains
+  52.228 stable QPS versus 1.982 before and 70% arrival/service P95
+  73.922/67.198ms versus 1387.538/1379.628ms; every representative bucket
+  remains below 50% of the S756 before. S763 does not replace that baseline.
+- Privacy: public synthetic strings and temporary test directories only. No
+  real resume, filename, path, raw query, candidate result, token, private
+  manifest, diagnostic package, model cache, or private evidence was committed
+  or uploaded. The batch wrapper never logs raw query or result bodies.
+- Batch/cancel/deadline/overload are now locally stable for the required gate.
+  General persistent framing, server-derived client registration, and weighted
+  fairness remain explicit later IPC work, not hidden completion claims. Per
+  the user-selected order, the next slice immediately enters the first real GUI
+  status/search/results/detail vertical path; no remote issue, PR, branch, or
+  push mutation was attempted, so open #53 remains only the historical local-
+  only parent ledger.
+
+### S758
+
+- Reused the daemon's already migrated metadata store and cached the immutable
+  full-text reader by the database Ready generation. A generation change
+  acquires the existing snapshot read lease, rereads database truth, and opens
+  exactly that generation; not-ready states clear the cache and fail closed.
+  TCP connection behavior and query semantics remain unchanged.
+- All 17 daemon search IPC integration tests passed, including uncommitted
+  publication visibility, startup recovery, not-ready rejection, authorization,
+  field prefilters, and semantic/hybrid paths. The S757 resident vector cache
+  tests and generation-bound encrypted recovery remain green.
+- Frozen 10k full-text/10k vector after evidence accepted the user target.
+  Calibrated capacity is 74.612 QPS versus 2.831 before; stable capacity is
+  52.228 QPS versus 1.982 before and the 3.963 QPS target. At 70% load,
+  arrival/service P95 is 73.922/67.198ms versus 1387.538/1379.628ms before.
+  Per-bucket service P95 is single-term 60.317ms, and-2 56.138ms, and-3-5
+  49.608ms, and-6-16 29.750ms, field-filter 28.560ms, hybrid 78.916ms, and
+  semantic 71.793ms; every bucket is below 50% of its S756 before with 64-393
+  samples per bucket.
+- Results remained consistent, resource budget was not exceeded, daemon RSS
+  peak was 115.109 MiB, measured host CPU mean/peak was 42.018%/79.267%, and
+  all raw/private-data flags remained false. This closes the initial resident
+  query speed/load target only. IPC batch/cancel/deadline/overload and GUI
+  readiness remain separate unaccepted work.
+
+### S759
+
+- Completed the query IPC capability audit against current code, tests, the
+  frozen S756/S758 benchmark evidence, and goal documents 05/06/10/14/15/17/18.
+  The resident speed/load target remains accepted; production query batch,
+  cancel, enforced deadline, bounded class admission/overload, and persistent
+  framing remain unimplemented and must not be inferred from the benchmark
+  batch command.
+- Hard-cut authenticated production `/search`, the CLI IPC client, and the
+  resident benchmark load client to `resume-ir.ipc-request.v2`. Requests now
+  carry a bounded opaque request identity, validated client capability,
+  bounded deadline value, and nested payload. Legacy unversioned request bodies
+  fail closed without echoing query text.
+- Success responses now use `resume-ir.search-response.v2`, correlate the
+  request identity, expose database `visible_epoch`, canonical query mode,
+  explicit partial reasons, total latency, and seven bounded stage timings.
+  Post-envelope command errors also correlate request identity through
+  `resume-ir.ipc-response.v1`. Retrieval ranking, filters, Ready-generation
+  truth, result boundedness, privacy, and connection behavior are unchanged.
+- `deadline_ms` is schema-valid only in this slice; it is not yet enforced and
+  no batch/cancel/overload/persistent-connection or GUI-readiness claim is made.
+  The next single product gap is deadline enforcement across queued and active
+  query work.
+
+### S760
+
+- Replaced the false schema-only deadline with a resident query dispatcher and
+  an independent monotonic deadline scheduler. Search request parsing happens
+  before admission, total response latency includes queue time, and a queued
+  request can now return its correlated `deadline_exceeded` partial response
+  without waiting for an earlier slow semantic request to finish.
+- Active semantic/hybrid query embedding is limited by the smaller of the
+  configured embedding timeout and remaining request budget. Stage boundaries
+  also re-check expiry; hybrid may return already-computed full-text hits as a
+  partial result. The worker skips queued tasks that the deadline scheduler has
+  already completed, and an atomic completion claim prevents duplicate writes.
+- Fault-injection coverage holds an active semantic request behind a synthetic
+  one-second embedding command, submits a 10ms queued full-text request, and
+  proves both responses are correlated, bounded, redacted deadline partials;
+  the queued response arrives in under 250ms rather than waiting for the active
+  request. The full daemon search IPC suite passed 18/18, daemon IPC 18/18,
+  CLI IPC 8/8, and resident benchmark client/load tests passed.
+- A release public-synthetic 10k-document/10k-vector smoke retained exact
+  result consistency and all privacy controls. Smoke calibrated/stable capacity
+  was 82.607/57.825 QPS; 70% arrival/service P95 was 74.999/66.518ms; daemon RSS
+  peak was 94.45 MiB under H2. This is a harness regression smoke only, not a
+  replacement baseline, W1/D10K evidence, or a new performance claim.
+- CLI and benchmark deadlines now leave transport-response margin inside their
+  socket read timeouts. Retrieval semantics, Ready-generation truth, result
+  boundedness, ranking, filters, and public evidence privacy remain unchanged.
+  The remaining immediate load risk is the unbounded mpsc queue and retained
+  deadline stream clones; the next slice is bounded class-aware admission plus
+  explicit `OVERLOADED`, not further latency micro-tuning or GUI work.
+
+### S761
+
+- Added hard query admission bounds before task/stream retention: total
+  in-flight 16, with authenticated capability partitions of interactive 8,
+  Codex validation 2, benchmark request 8, and background 4. Excess work gets
+  an immediate request-correlated HTTP 503 `OVERLOADED` response with bounded
+  retry/degraded/reason fields and no query, token, path, or candidate data.
+- Admission permits are shared across worker and deadline ownership. Normal
+  completion explicitly releases its permit and wakes the deadline heap;
+  deadline responses retain the permit until the underlying queued/running
+  work actually exits. This prevents both stale false overload and false
+  recovery while expensive work is still consuming resources.
+- Fault injection holds one Codex semantic request in a slow local embedding
+  command, queues a second request, and proves the third is rejected in under
+  250ms without leakage. Full daemon search IPC passed 19/19; focused admission
+  lifecycle tests prove the per-class cap and clone-safe permit release.
+- The resident load client now recognizes only correlated v1 `OVERLOADED` as a
+  valid bounded load outcome, excludes overload from successful query QPS and
+  latency/stage histograms, reports overload count/response latency separately,
+  and requires zero overload for stable capacity. Other errors still invalidate
+  the run; bucket preflight still requires real successful results.
+- Release public-synthetic 10k/10k smoke passed with calibrated/stable capacity
+  83.983/58.788 QPS. At 70%, successful arrival/service P95 was
+  73.231/65.303ms with zero overload. The 100%/120% points produced 2/23 bounded
+  overload responses with 0.349/0.794ms overload-response P95. Results remained
+  consistent, daemon RSS peaked at 100.469 MiB under H2, and all privacy flags
+  remained false. This is smoke regression/overload evidence, not a replacement
+  baseline, W1/D10K, weighted-fairness, batch, cancel, or GUI-readiness claim.
+- The next single product gap is idempotent queued/active query cancellation.
+  Server-derived session/benchmark class registration and weighted fairness
+  remain explicit later IPC gaps; the current authenticated capability
+  partition must not be presented as the final fairness design.
+
+### S762
+
+- Added bounded optional `cancel_token` registration and authenticated
+  `resume-ir.search-cancel-request.v1` `POST /search/cancel`. Acknowledgements
+  return only `cancelled`, `cancel_requested`, or neutral `complete`; unknown or
+  expired tokens cannot reveal request existence.
+- Replaced the channel-backed query queue with an admission-capped
+  condition-variable queue. Queued cancellation removes the task, atomically
+  claims its terminal response, releases admission, and wakes deadline cleanup
+  instead of waiting for the worker to dequeue it.
+- Running cancellation is checked before and between retrieval stages. Local
+  query embedding now accepts a cancellation predicate and terminates its
+  isolated process group at the existing 10ms poll checkpoint. Cancelled search
+  responses contain no candidates and an atomic completion claim prevents a
+  deadline, cancel, and worker race from writing multiple responses.
+- Fault injection holds an active semantic request in a synthetic one-second
+  embedding command, queues a full-text request, then proves queued cancel ack
+  under 200ms, active termination under 500ms, zero-result cancelled search
+  responses, repeat-token idempotence, neutral unknown-token behavior, privacy,
+  and unchanged deadline/overload/retrieval behavior. Daemon search IPC passed
+  20/20 and embedder passed 7/7.
+- Release public-synthetic 10k/10k smoke retained exact result consistency and
+  all privacy flags false. Calibrated/stable capacity was 81.369/56.958 QPS;
+  70% arrival/service P95 was 73.868/66.292ms with zero overload. The 100% and
+  120% points returned 1/13 bounded overload responses with 0.358/0.853ms
+  overload-response P95; daemon RSS peaked at 97.391 MiB under H2. This remains
+  smoke regression evidence, not a replacement baseline, W1/D10K, persistent
+  framing, weighted fairness, batch, or GUI-readiness evidence.
+- The accepted stable target is 52.228 versus 1.982 QPS before; accepted 70%
+  arrival P95 is 73.922 versus 1387.538ms. Next is bounded batch with per-child
+  deadline/cancel identity, not another query micro-tune.
+
+### S757
+
+- Replaced per-query vector snapshot decrypt/HNSW rebuild with a generation-bound
+  resident search cache. Vector snapshot v2 binds a random generation in both
+  the manifest and encrypted plaintext; readers hold the shared publication
+  lock through KNN while writers retain the exclusive lock, and the cache
+  refreshes after publication. This is a deliberate pre-release breaking
+  format change; v1 snapshots must be rebuilt rather than compatibility-padded.
+- RED first failed because `PersistentVectorSearchIndex` did not exist. GREEN
+  proves an unchanged snapshot remains resident and a later publication
+  replaces deleted/added results. All 15 index-vector tests and the daemon
+  semantic/hybrid IPC integration passed with encrypted/recovery behavior.
+- Frozen 10k/10k after evidence improved calibrated capacity from 2.831 to
+  7.319 QPS and stable capacity from 1.982 to 7.319 QPS. At 70%, arrival/service
+  P95 fell from 1387.538/1379.628ms to 239.811/233.376ms and ANN P95 fell from
+  1172.371ms to 90.585ms. Result contracts, H2 1536 MiB budget, and all privacy
+  controls remained unchanged; daemon RSS peak was 190.781 MiB and measured
+  host CPU mean/peak was 40.863%/76.523%.
+- Strict per-bucket acceptance is not yet complete. The 70% P95 values were
+  and-2 168.279ms, and-3-5 141.265ms, and-6-16 145.785ms, field-filter
+  160.192ms, hybrid 241.718ms, semantic 88.038ms, and single-term 572.567ms.
+  Six buckets beat their 50% limits, but single-term exceeded its 469.175ms
+  limit. The ANN hypothesis is accepted, while the overall user target remains
+  open; the next single bottleneck is repeated resident request/store/full-text
+  setup and serial queue tail latency. No IPC batch/cancel/deadline/overload or
+  GUI readiness is claimed.
+
+### S756
+
+- Built the first real resident public-synthetic query load harness under the
+  existing #53 query profile ledger. `resume-benchmark resident-query-load`
+  materializes 10,000 deterministic searchable documents, a Ready full-text
+  generation, 10,000 vector records, and field-filter entities in an empty local
+  data directory, then starts the release daemon and drives authenticated
+  `/search` requests. The committed report shape is bounded and redacted; the
+  full report remains owner-only under the configured local evidence root.
+- The method is frozen before optimization: workload
+  `resume-ir.public-synthetic-query-hot-path.v1`, top-k 10, 30-second warmup,
+  five repetitions for every closed/open point, closed concurrency 1/2/4/8,
+  open 30/70/100/120% capacity, scheduled-start-to-completion coordinated
+  omission correction, actual elapsed including request drain, and a
+  cross-repetition 500-cycle permutation. Seven representative preflight
+  requests prove all buckets and fulltext/hybrid/semantic modes before timing.
+- Three calibration reports were rejected locally before the benchmark was
+  frozen: the first overstated closed-loop QPS by dividing by the configured
+  window and did not repeat every closed point; the second did not preserve
+  per-bucket latency and replayed closed repetitions from the cycle prefix,
+  which could omit semantic queries; the third indexed only 500 vector records
+  and therefore underrepresented the frozen 10k searchable corpus. No rejected
+  report is a before.
+- The accepted before reports calibrated capacity 2.831 QPS and stable
+  capacity 1.982 QPS, where stable means achieved/target >=0.95, arrival P95
+  <=1500ms, and exact response consistency. Open-loop arrival/service P95 is
+  1380.280/1374.130ms at 30%, 1387.538/1379.628ms at 70%,
+  1755.418/1747.631ms at 100%, and 1902.207/1892.170ms at 120%. At the primary
+  70% stable point, service P95 by bucket is single-term 938.350ms, and-2
+  1003.099ms, and-3-5 615.417ms, and-6-16 161.743ms, field-filter 256.485ms,
+  hybrid 1392.958ms, and semantic 1199.138ms. All result contracts were
+  consistent and every bucket had nonzero samples.
+- Resource/privacy evidence: H2 budget 1536 MiB, daemon RSS peak 192.906 MiB,
+  measured-phase host CPU mean/peak 44.990%/82.979%, and daemon CPU peak
+  114.392%. This is deliberately a loaded-workstation before; no external load
+  is subtracted from latency. The large acceptance margin, repeated method,
+  and explicit host/daemon CPU aggregates protect later comparison from small
+  workstation noise. The report contains no raw resume/query text, candidate
+  results, local paths, tokens, diagnostics package, or private manifest.
+- The 10k ANN/embedding path is the first measured bottleneck. At 30% load,
+  ANN P95 is 1189.162ms while BM25 P95 is 4.952ms and service P95 is
+  1374.130ms. Semantic/hybrid requests currently spawn the local embedding
+  command and validate/open/search the Ready vector generation per query. At
+  70% load, unattributed P95 reaches 993.207ms; at 120% it reaches 1663.007ms,
+  so serial connection handling and repeated request context become the
+  secondary loaded bottleneck. The next slice selects only the ANN/embedding
+  path before parser/BM25 micro-optimization or IPC batch/cancel/deadline/
+  overload expansion.
+- The performance target is now mechanically comparable: under the same
+  corpus, workload, semantics, top-k, H2 budget, and method, every sampled
+  primary bucket service P95 must be at most 50% of this accepted before and
+  stable capacity must reach at least 3.963 QPS. Result identity/order/ranking,
+  required-all and field-filter semantics, semantic/hybrid execution, privacy,
+  and resource limits are negative controls.
+- Focused verification passed the resident harness unit tests, incomplete CLI
+  command redaction test, warnings-denied benchmark-runner Clippy, release
+  daemon/benchmark build, formatting, diff checks, rust-analyzer diagnostics,
+  and all four required performance/autonomous/loop/public-repo gates. No
+  GitHub, branch, PR, or remote state was changed under the local-only policy.
+- This is a public-synthetic initial usable before and profile only. It is not
+  W1, D10K, agent replay, a performance improvement, stable-release evidence,
+  IPC readiness, GUI readiness, or `goal_complete`.
+
+### S755
+
+- Fresh reconciliation found local `main` 40 commits ahead of `origin/main`,
+  remote `main` as the only remote branch, no open PR, and GitHub #53 still open
+  as the query-profile parent ledger. No GitHub or remote state was changed
+  under the local-only delivery policy.
+- RED first proved authenticated daemon search had no stage-observability
+  surface. A rejected intermediate design attempted to label an incomplete
+  response as search v2; the final implementation deliberately keeps the
+  `daemon.search.v1` JSON body unchanged and adds a standard `Server-Timing`
+  header only to authenticated successful `/search` responses in the current
+  loopback development transport.
+- The header has exactly seven ordered, fixed fields: `query_parse`,
+  `prefilter`, `bm25`, `ann`, `fusion`, `bulk_hydrate`, and `snippet`. It is
+  bounded below 512 bytes and cannot grow with corpus size, query size, hit
+  count, or candidate count. Search-plan normalization is included in
+  `query_parse`; semantic command setup, query embedding, vector open, and KNN
+  are included in `ann`. Metadata/index open and connection setup remain
+  outside the seven stages, so the successor harness must report the residual
+  end-to-end overhead rather than misattribute it.
+- Result identity, ordering, ranking, required-all semantics, field-filter
+  behavior, index/storage state, connection lifecycle, concurrency, queueing,
+  observation writes, and resource budgets are unchanged. The existing CLI
+  continues to parse the v1 JSON body and ignores the additive standard header.
+- Verification passed: daemon search IPC 17/17, CLI search IPC 8/8,
+  warnings-denied Clippy for daemon and CLI, formatting, diff checks, and
+  `rust-analyzer diagnostics . --severity warning` across 106 workspace
+  targets. The four required performance, autonomous-goal, loop-state, and
+  public-repo gates all exited 0.
+- Privacy confirmation: this slice used synthetic IPC fixtures only. The
+  header contains durations and fixed stage names only; it contains no resume
+  text, raw query, candidate/result identity, local path, token, diagnostics
+  package, private manifest, or model material.
+- This is instrumentation, not a resident baseline, optimization result,
+  complete search-response v2, persistent IPC, batch/cancel/deadline/overload,
+  W1, D10K, agent-replay, scale, or GUI-readiness claim. The selected successor
+  is the resident public-synthetic load harness and initial usable before
+  baseline, with release build, >=30s warmup, >=5 repetitions, closed/open-loop
+  measurements, 30/70/100/120 percent capacity points, coordinated-omission
+  handling, fixed H-tier/resource budget, and bounded stage histograms.
+
+### S754
+
+- Fresh local/GitHub reconciliation found one issue-owner drift before resident
+  baseline implementation. Local `main` was clean at `18ff379`, 39 commits
+  ahead of `origin/main`, with no open PR. GitHub #37 remains explicitly titled
+  and scoped to `full_import_ocr_backlog`; its latest comments remain the
+  historical mixed-import train. It is not a truthful owner for query hot-path
+  work.
+- GitHub #53 remains the existing query-profile parent ledger for the frozen
+  query-set / resident baseline train. Its private D10K `agent_query_replay`
+  freeze is still blocked and is not reclassified or weakened. The separate
+  public synthetic `query_hot_path` baseline remains a local-only engineering
+  successor with no D10K/W1/agent-replay acceptance claim.
+- The minimum repair changes only the local ACTIVE/loop issue owner from #37 to
+  #53. No production code, benchmark workload, query semantics, threshold,
+  private evidence, GitHub issue/comment, PR, branch, or remote ref changed.
+- All four required performance, autonomous-goal, loop-state, and public-repo
+  gates passed after reconciliation.
+- The selected successor remains exactly one slice: instrument and capture the
+  resident daemon baseline and bounded load curve for
+  `resume-ir.public-synthetic-query-hot-path.v1` before any query optimization.
+
+### S753
+
+- Fresh reconciliation confirmed local-only `main` was clean and 38 commits
+  ahead of `origin/main`, with no open PR. Remote #37 remains the historical
+  query/profile issue; no remote state was mutated under the current local-only
+  policy. The strict private D10K/500-query `agent_query_replay` freeze remains
+  blocked by S752 and was neither retried nor weakened.
+- The proposed available-scale private diagnostic was rejected before freeze:
+  an exact product-summary scan found the best retained corpus had 11,551
+  documents, 6,070 searchable documents, and 0 vectors, while only 5 of the 21
+  unique trace-derived candidates produced hits and all 5 were `and_2`. That
+  workload is too small and skewed to support a credible latency or load target.
+- RED first proved the old public synthetic runner had no versioned workload
+  contract and repeated only five hard-coded queries. A focused generator now
+  freezes `resume-ir.public-synthetic-query-hot-path.v1`: 10,000 deterministic
+  synthetic documents, a 500-query unique cycle, exact bucket counts
+  50/75/150/50/75/75/25, and document/query pairing that requires zero
+  zero-result queries. Redacted reports bind only the public version, canonical
+  scale, uniqueness, and aggregate bucket counts; no per-query list or result is
+  emitted.
+- The canonical 10K/500 execution completed with 0 zero-result queries and
+  5,000 bounded top-10 hits. Its one-shot in-process latency/QPS values are
+  harness validation only: they are not resident daemon baseline, W1, D10K,
+  scale acceptance, or the before value for the requested 50% P95 / 2x stable
+  load objective.
+- Verification passed: benchmark-runner 116/116 integration tests, benchmark
+  CLI 44/44 tests, the benchmark smoke gate, warnings-denied benchmark-runner
+  Clippy, formatting, and `rust-analyzer diagnostics . --severity warning`
+  across 105 workspace targets. The four required performance, autonomous-goal,
+  loop-state, and public-repo gates all exited 0.
+- Privacy confirmation: this slice used generated public synthetic documents
+  and queries only. It did not read or publish real resumes, private queries,
+  candidate results, local paths, labels, raw hashes, diagnostics, tokens,
+  private manifests, vectors, or model material.
+- The selected successor is resident `query_hot_path` baseline/profile on this
+  unchanged workload version, with fixed query semantics, top-k, H-tier, and
+  resource budget. No latency implementation starts until that baseline and
+  load curve are accepted.
+
+### S752
+
+- Strict private query freeze preflight completed without reading or emitting
+  raw query text. All required environment keys were configured, present, and
+  readable. The configured local-evidence directory was inside a Git worktree,
+  so the product failed closed before writing; the run was repeated with an
+  owner-only repo-external evidence directory while leaving `.env` unchanged.
+- The redacted preflight scanned 8,745 trace logs / 77,322 trace lines and found
+  2,167 allowed `source_search` events. Canonical dedupe removed 2,146 repeats,
+  leaving 21 candidates: and_2=14, and_3_5=3, semantic=4, and all other buckets
+  zero. This is far below the fixed 500-query seven-bucket contract.
+- The configured data root reported no active query index and 0 documents,
+  searchable documents, or vectors. Its 26 readable historical indexed run
+  directories also reported only empty retained stores. A bounded read-only
+  reconciliation under the user-authorized MLE workspace opened 196 existing
+  resume-ir indexed data directories through the product's redacted corpus
+  summary command: none was D10K-ready; the largest searchable aggregate was
+  11,551 documents, 6,070 searchable, and 0 vector-indexed.
+- Therefore `freeze-agent-replay --max-queries 500 --min-queries 500` was not
+  run. The terminal deficits are independently corpus readiness and trace/query
+  diversity; neither may be hidden by lowering the D10K gate. No production
+  file, query selection rule, raw query/list/hash, local path, candidate result,
+  resume text, vector, or private manifest was committed or uploaded.
+- To keep query engineering moving without a false D10K claim, the selected
+  successor is a separate available-scale diagnostic freeze. It may use every
+  existing corpus-valid trace candidate against the best retained searchable
+  corpus to create an owner-only fixed engineering workload for resident
+  baseline/profile. It is not W1/D10K acceptance evidence, and the strict
+  500-query gate remains unchanged.
+
+### S751
+
+- Query execution semantics are locally accepted before benchmark freeze. One
+  shared core normalizer now applies NFKC, duplicate logical-term removal for
+  plain queries, canonical phrase quotes, a 4096-byte query cap, a 256-byte
+  per-term cap, and a 16 searchable-term cap. Explicit uppercase boolean
+  expressions preserve their token sequence so canonicalization cannot rewrite
+  boolean meaning. The prior built-in stopword deletion was removed; ordinary
+  lowercase words such as `and` remain searchable rather than disappearing.
+- Tantivy full-text parsing now enables conjunction-by-default. Metamorphic
+  synthetic coverage proves plain `rust backend` and the reordered form return
+  the same required-all candidate set, explicit `rust OR backend` retains union
+  semantics, and the quoted phrase remains exact. Existing mixed Chinese-English
+  coverage was made compatible with the required-all contract rather than
+  retaining an accidental default-OR dependency.
+- Direct CLI, authenticated daemon IPC, and resident-batch benchmark input all
+  canonicalize and reject semantic bounds before index access. New boundary
+  tests prove the direct and daemon error surfaces do not echo query content.
+  Metadata-backed field prefilters remain before the top-k full-text cutoff, and
+  semantic/hybrid plus benchmark protocol regressions remain green.
+- Verification passed: core-domain 11/11, search-planner 7/7, full-text 20/20,
+  direct CLI 4/4, query-set freeze 30/30, daemon query IPC 17/17,
+  benchmark-runner private-query contract tests 49/49, the focused
+  semantic/hybrid and benchmark-protocol tests, warnings-denied clippy for all
+  five affected crates, formatting, and `rust-analyzer diagnostics . --severity
+  warning` across 104 workspace targets. The four required performance,
+  autonomous-goal, loop-state, and public-repo gates all exited 0.
+- No private query/root/artifact, resume text/path, candidate result,
+  diagnostics package, token, or model material was read or published. Remote
+  #37 was not mutated because the current user policy is local-only main.
+- The selected successor is the one-shot private query freeze: run the existing
+  redacted preflight against configured local roots, require a D10K-shaped index,
+  then freeze exactly 500 corpus-valid `trace_source_search_v1` queries under
+  the already-fixed seven-bucket and tune/holdout contract. Production changes,
+  profiling, optimization, IPC work, and GUI work remain out of scope until the
+  frozen set exists or the preflight records a precise terminal deficit.
+
+### S750
+
+- The read-only query product-capability audit is accepted. Code and focused
+  executable tests confirm direct CLI and authenticated daemon `/search` support
+  full-text keyword, metadata-backed hard field prefilters, persistent-vector
+  semantic search, and full-text/vector RRF hybrid search. Search-planner 4/4,
+  full-text 19/19, direct CLI 3/3, semantic/hybrid 2/2, benchmark protocol 4/4,
+  daemon query IPC 17/17, and benchmark-runner private-query 49/49 pass using
+  synthetic/private-shaped fixtures only.
+- Benchmark status: the repository has the static query-set freezer,
+  tune/holdout split, seven buckets, redacted aggregates, resident-batch v2
+  command protocol, per-record stage timing, and histogram gates. It does not
+  have an accepted frozen 500-query D10K set or resident-daemon baseline. The
+  committed smoke observes two batch requests with
+  `resident_daemon_observed=false`, smoke confidence, and no target claim.
+- Product-correctness gap before freeze: query-set normalization uses NFKC,
+  logical-term dedupe, and 4096-byte/16-term caps, but runtime search-planner
+  only compacts whitespace and deletes a built-in stopword list. Full-text
+  search uses Tantivy's lenient parser without enabling conjunction-by-default,
+  so ordinary multi-term runtime search is default-OR rather than the frozen
+  required-all contract. Existing tests prove availability but do not contain
+  the required metamorphic candidate-set checks. Freezing now would lock a
+  benchmark against the wrong execution semantics.
+- Resident/load gap: the benchmark runner starts one CLI process for the batch,
+  but that process handles records sequentially and reopens search owners per
+  query. Daemon `/search` synchronously handles one accepted TCP connection at
+  a time, closes every connection, reopens metadata/index owners, and lacks
+  query batch, cancel, deadline, bounded class queues, fairness, overload, v2
+  partial/stage timing, and persistent framing. Search also writes a retained
+  SQLite query observation on the request path, contrary to the read-only
+  hot-path boundary. `spawn_per_query=false` does not prove a resident embedding
+  runtime.
+- The selected successor is one query-semantics correctness slice before any
+  private query read or freeze: share canonical NFKC/dedupe/caps across direct,
+  daemon, and benchmark execution; enforce required-all simple terms while
+  preserving explicit OR and phrase behavior; retain field-filter subset
+  semantics; and add metamorphic tests. Only after this passes may the static
+  query set be frozen, followed by resident baseline/profile and the user-set
+  <=50% P95 / >=2x stable-load target.
+- No private query, trace, candidate result, resume path/text, diagnostics
+  package, token, or model material was read or published. No production code,
+  remote issue, branch, or PR was changed in this audit.
+
+### S749
+
+- Fresh reconciliation after S748: local `main` is clean at `7ba0e24`, thirty-four
+  commits ahead of `origin/main`; GitHub #37 and #159 are open and there are no
+  open PRs. The user-selected local-only policy intentionally leaves #159
+  behind remote truth, so it is recorded as historical delivery lag rather than
+  a product blocker. No remote issue, branch, or PR was mutated.
+- Mixed-import product correctness is locally closed: accepted local evidence
+  covers the precision-first classifier after parse/normalize/sectionize,
+  resume-candidate-only search admission, retained non-resume/review/OCR/failed
+  audit states, OCR reclassification, frozen benchmark separation, local
+  full-body/original-path hydrate behind authentication, and bounded redacted
+  public output. The frozen public synthetic n=9 remains 3 resume candidates,
+  3 non-resumes, 1 review, 1 OCR backlog, 1 failed, 3 searchable, precision 1.0,
+  contamination 0, and completeness 0.75. This local stage closure is not a
+  stable-release, GUI-readiness, scale, or full-goal claim.
+- The next and only selected slice is a read-only query product-capability audit.
+  It must distinguish implemented, partial, missing, and contract-only behavior
+  for keyword, field, semantic, hybrid, direct CLI, resident daemon, and IPC
+  surfaces before the query benchmark is frozen. Benchmark execution,
+  profiling, semantic changes, production edits, GUI work, and private query
+  reads remain out of scope for this reconciliation slice.
+- The intended lane order is now explicit: capability audit, frozen query
+  benchmark, resident hot-path baseline/profile, then IPC batch/cancel/deadline/
+  overload stabilization, followed immediately by the GUI vertical loop. The
+  frozen resident baseline becomes the only before: under identical corpus,
+  query set, semantics, H-tier, and resource budget, primary-bucket P95 must
+  reach at most 50% of before and stable load capacity at least 2x, with P50,
+  P99, correctness, and resource redlines reported. New classifier/import or
+  adjacent #138 output-gap work is not selected.
+- Required performance-contract, autonomous-goal, loop-state, and public-repo
+  privacy gates pass. No private root, raw query, candidate result, path,
+  diagnostics package, token, or model material was read, committed, or
+  uploaded.
+
+### S748
+
+- Fresh truth and frozen contract: local `main` started at `b24e41c`, clean and
+  thirty-three commits ahead of `origin/main`; #37 remains the broad open
+  product-correctness ledger, #159 remains an open historical blocker, no PR is
+  open, and no remote state was mutated. Before editing, this public-synthetic
+  slice froze one remaining #138 output-boundary gap: search-result `file_name`
+  must be contact-redacted and then UTF-8-safely capped at 160 bytes, including
+  any ellipsis, at the direct CLI, daemon response, and IPC client boundaries.
+  Any result/ranking/admission/query/import change, leakage, invalid UTF-8, or
+  required-gate failure was rollback.
+- RED/GREEN: focused RED direct-CLI and daemon cases exposed a redacted name
+  longer than 160 bytes; the initial parallel IPC RED was timing-polluted by
+  concurrent Cargo/build contention, so it is not counted as semantic evidence.
+  GREEN centralizes whitespace compaction, existing contact redaction, and
+  byte-bounded UTF-8 truncation in both executable owners. The direct CLI,
+  daemon, and IPC client tests preserve the same document IDs and result counts,
+  remove the email and private trailing marker, and keep every exposed name at
+  or below 160 bytes. Full related binaries pass: direct search 3/3, CLI IPC
+  search 8/8, and daemon IPC search 17/17.
+- Product and architecture boundary: only output rendering changed. Indexed
+  filenames, stored documents, full-text/semantic matching, ranking, result
+  cardinality, classifier admission, detail/hydrate, import, OCR, and snapshot
+  publication are unchanged. The daemon IPC contract now records the exact
+  redact-then-truncate order and shared 160-byte ceiling.
+- Metrics and resources: the unchanged frozen public synthetic n=9 remains
+  resume-candidate/non-resume/review/OCR/failed/searchable = 3/3/1/1/1/3,
+  indexed precision 1.0, contamination 0, and completeness 0.75. No private
+  corpus, stage timing, clean-vs-mixed overhead, throughput, H-tier, CPU,
+  memory, or resource-budget delta was measured; no performance improvement is
+  claimed.
+- Privacy and scope: only synthetic long names were used. No private root,
+  real path/name/text, label detail, raw hash, query/result, private manifest,
+  diagnostics package, model material, or token was read, committed, or
+  uploaded. This closes only search-result filename boundedness; it does not
+  claim D10K/D100K/D1M, GUI readiness, stable release, or goal completion.
+- Verification: focused and full related search binaries pass; warnings-denied
+  Clippy for `resume-daemon` and `resume-cli`, formatting, and full-workspace
+  rust-analyzer error diagnostics pass. The required performance-contract,
+  autonomous-goal, loop-state, and public-repo privacy gates pass after the
+  accepted machine-state/evidence transition.
+
+### S747
+
+- Fresh truth and slice lock: local `main` started clean thirty-two commits
+  ahead of `origin/main`; no PR is open, #37 remains the broad parent ledger,
+  and no unique remote successor exists. The accepted S746 hydrate contract is
+  terminal. This adjacent public-synthetic slice froze one gap from the #138
+  audit before editing: default detail output may return at most 256 persisted
+  fields in existing deterministic mention order, with exact total/returned/
+  truncated metadata. Oversized or inconsistent daemon success payloads,
+  hydrate/classifier/query changes, leakage, or required-gate failure are
+  rollback. No remote mutation was attempted under the local-only policy.
+- RED/GREEN: RED daemon detail with 307 fields still returned unbounded
+  `daemon.detail.v1`; direct CLI with 308 fields lacked bounded count metadata;
+  and the CLI accepted an oversized 257-field daemon payload. GREEN makes the
+  breaking default detail contract `daemon.detail.v2`, returns at most 256
+  redacted fields, and adds `field_limit`, `field_count_total`,
+  `field_count_returned`, and `fields_truncated`. Direct CLI prints the same
+  exact counts. The IPC client checks cardinality and metadata consistency
+  before mapping field values and fails closed. `/details/hydrate`, body/path
+  bounds, searchable admission, classifier, query, and index semantics are
+  unchanged.
+- Executable evidence: daemon detail IPC passes 4/4; direct CLI detail passes
+  2/2; CLI detail IPC passes 6/6, including oversized and inconsistent payload
+  rejection. Full `resume-daemon` passes 77/77 and full `resume-cli` passes all
+  unit/integration binaries. Warnings-denied Clippy for both crates, formatting,
+  and full-workspace rust-analyzer diagnostics pass; rust-analyzer reports only
+  existing inactive-`cfg` weak warnings.
+- Broad-validation repairs: full CLI validation exposed old test fixtures, not
+  production regressions. Metadata-key tests now expect current schema 25;
+  deleted purge expects current Ready plus one verified predecessor; candidate,
+  query-set, and semantic/hybrid fixtures publish immutable snapshots and
+  register the same database Ready token; embedding fixtures also declare the
+  intended current-epoch `resume_candidate`; and no-index search asserts that
+  no search index is created while allowing encrypted metadata initialization.
+  The OCR crash fault probe's page timeout rises from 1 to a bounded 10 seconds
+  so parallel host scheduling cannot misclassify an immediate engine crash as
+  a timeout. No production admission, recovery, search, OCR-worker default, or
+  threshold was weakened.
+- Product metrics and resources: the unchanged frozen public synthetic n=9
+  remains resume-candidate/non-resume/review/OCR/failed/searchable =
+  3/3/1/1/1/3, indexed precision 1.0, contamination 0, and completeness 0.75.
+  No import benchmark, private calibration, blind holdout, stage timing,
+  clean-vs-mixed overhead, throughput, H-tier, CPU, memory, or resource-budget
+  delta was measured; no performance improvement is claimed.
+- Privacy and boundary: committed/generated public synthetic records only. No
+  private root, real path/name/text, label, raw hash, query/result, private
+  manifest, diagnostics package, model material, or token was read, committed,
+  or uploaded. This closes only the structured detail-list boundedness gap. It
+  does not claim D10K/D100K/D1M, GUI readiness, stable release, or goal
+  completion.
+- Required performance-contract, autonomous-goal, loop-state, and public-repo
+  privacy gates pass after the accepted machine-state/evidence transition.
+
+### S746
+
+- Fresh product gap: the existing authenticated `/details` endpoint and local
+  CLI detail path deliberately returned only redacted fields plus a 240-character
+  snippet under `daemon.detail.v1`. Metadata already retained the current
+  visible version's normalized body and normalized local path, but no versioned
+  daemon contract could retrieve either for a GUI detail view. Default CLI,
+  diagnostics, and benchmark outputs already enforced the required public
+  redaction boundary.
+- RED/GREEN: the focused end-to-end RED received 404 from the missing
+  `/details/hydrate` route. GREEN adds the exact
+  `resume-ir.detail-hydrate-request.v1` / response-v1 contract behind existing
+  loopback bearer authentication. It retrieves only the current visible
+  searchable version's `clean_text` plus local `display_path`, pages by UTF-8 byte cursor,
+  and never triggers OCR, parsing, classification, indexing, migration, or a
+  second metadata-store open. Non-search-admitted, deleted, or missing visible
+  documents remain generic not-found.
+- Bounds: each body page is 4..=32,768 bytes, the local display path is capped
+  at 131,072 bytes, and the serialized response is capped at 1,048,576 bytes.
+  Invalid schema, unbounded pages, non-UTF-8-boundary cursors, oversized paths,
+  and oversized responses fail closed. The response explicitly marks itself
+  local-authenticated-only and forbidden for public output. Existing
+  `/details` and `resume-cli detail` behavior is unchanged and remains
+  redacted.
+- Executable evidence: UTF-8/page request unit tests passed 2/2; daemon detail
+  IPC passed 4/4 including reconstruction of the complete synthetic normalized
+  body over multiple pages, exact local display-path hydration, authentication,
+  response cap, deleted/missing handling, and unchanged v1 redaction. CLI
+  detail IPC passed 4/4. The remaining daemon binaries passed identity 1/1,
+  import/status IPC 18/18, search IPC 17/17, scheduler/recovery 14/14, OCR
+  11/11, embedding worker 3/3, embedding jobs 6/6, and kill/restart 1/1.
+- Validation repair: the first broad daemon run exposed six stale S52 test
+  fixtures that created searchable versions without the current classifier
+  admission record; production correctly processed zero embedding jobs. The
+  fixtures now declare their intended synthetic documents as current-epoch
+  `resume_candidate`, matching the already-enforced production gate. All six
+  tests pass; no production classifier, embedding, or admission semantic
+  changed.
+- Quality/privacy: warnings-denied daemon Clippy and formatting passed.
+  Full-workspace rust-analyzer diagnostics completed with only existing
+  inactive-`cfg` weak warnings. Only committed synthetic strings were used; no
+  private root, real body, path, filename, label, query, result, hash, manifest,
+  diagnostics package, model material, or token was read, staged, or uploaded.
+  No push, PR, issue comment, or remote cleanup was attempted.
+
+### S745
+
+- Fresh truth: local `main` started clean at `7f424d7`, thirty commits ahead
+  of `origin/main`, with one local/remote branch name and one worktree. #37,
+  #159, and the historical local-only #201 ledger remained remotely open, no
+  PR was open, and the latest hosted `origin/main` runs were green. The remote
+  issue ledger predates the explicit local-only commits and is not local
+  contract drift.
+- Frozen input: this evidence-only slice reused only the accepted S744
+  twenty-second profiler capture. It did not reopen the mixed corpus, clean
+  resume corpus, or blind holdout. Product counts remain
+  `11,551/6,070/229/162`; precision, contamination, and completeness were not
+  rescored or reinterpreted.
+- Method correction: macOS scheduler-switch and idle worker samples were
+  removed from unowned `other` work before ranking. The corrected parser
+  reconstructed the prior published S742 active total within 25 samples, or
+  0.076%, preventing blocked coordination from being mislabeled as an active
+  CPU bottleneck.
+- Residual ranking: 37,958 current active leaf samples ranked PDF 16,609
+  (43.756%), other 7,342 (19.342%), SQLite 4,665 (12.290%), classifier 3,172
+  (8.357%), parse preparation 3,169 (8.349%), and full text 3,001 (7.906%).
+  PDF is an exhausted family. The broad `other` bucket split into field
+  extraction 3,041 (8.011% globally), quick fingerprint 2,097 (5.524%),
+  normalization 1,300, sectionization 610, and 294 remaining samples. SQLite's
+  largest inclusive paths were non-searchable persistence 1,702 (4.484%) and
+  searchable metadata batching 1,468 (3.867%). No single non-exhausted bounded
+  operation met both frozen gates of at least 1,500 samples and at least 10%
+  of current active leaf samples.
+- Decision: terminate further import micro-optimization without a production
+  change. The S744 searchable-metadata batch remains accepted, but neither
+  whole-import acceleration nor an absolute shared-host baseline is claimed.
+  The next local product slice returns to the #138 audit's remaining concrete
+  product gap: versioned authenticated detail/hydrate IPC that can page through
+  complete normalized body and retrieve the local display path for GUI use,
+  with explicit response caps and unchanged redaction for default CLI,
+  diagnostics, benchmark, and public evidence output.
+- Privacy: the owner-only package contains the frozen spec, environment,
+  opaque input reference, aggregate run, terminal decision, and bounded public
+  aggregate. Raw paths, filenames, text, labels, hashes, commands, process
+  names, samples, stacks, symbols, queries, candidates, databases, indexes,
+  model details, and manifests remain local and ignored. No push, PR, issue
+  comment, or remote cleanup was attempted.
+
+### S744
+
+- Fresh truth: local `main` started clean at `c95329d`, twenty-nine commits
+  ahead of `origin/main`, with one local/remote branch name and one worktree.
+  #37, #159, and the historical local-only #201 ledger remained remotely open,
+  no PR was open, and the latest hosted `origin/main` runs were green. The
+  active slice and loop state both named the S743 searchable-metadata batching
+  hypothesis, so no contract repair or remote mutation was needed.
+- Bounded change: searchable current-epoch classification, document metadata,
+  resume version, entity mentions, and hashed-contact assignment now commit in
+  one bounded transaction at the existing first/100/1,000/1,024 searchable
+  flush boundaries. The database batch commits before index publication. A
+  later-item constraint failure rolls the complete batch back and leaves the
+  pending index batch unpublished. OCR, non-searchable, exact-rerun,
+  classifier, query, and generation semantics are unchanged.
+- Correctness: the meta-store rollback tests passed 63/63, import-pipeline unit
+  tests passed 43/43, and frozen public synthetic admission passed. CLI OCR
+  handoff passed 13/13. The daemon OCR suite initially had one five-second
+  timing failure after macOS held the new test binary at `dyld_start` while
+  system security scanning was active; the unchanged exact test then passed in
+  2.13 seconds and the full warmed suite passed 11/11. Focused Clippy with
+  warnings denied, formatting, and full-workspace rust-analyzer diagnostics
+  passed; diagnostics contained only existing inactive-cfg weak warnings.
+- Frozen A/B: one discarded local preflight accidentally used the 14,439-file
+  full frozen corpus and a training-ledger artifact; production fail-closed
+  disabled promotion and all five observations were correctly invalid, so no
+  result from that run is accepted. The replacement experiment revalidated the
+  owner-only 11,551-file / 3,306,141,312-byte `private_calibration` and accepted
+  production envelope. After at least thirty seconds of excluded warm-up, all
+  five formal shared-host runs were diagnostic-valid and preserved classifier
+  enabled plus counts `11,551/6,070/229/162`. `blind_holdout` and clean-resume
+  inputs remained unread.
+- Performance result: DB-stage median improved from `21,993.811 ms` to
+  `19,001.660 ms` (-13.605%), above the declared 2% threshold. Maximum observed
+  peak RSS was `788,529,152` bytes, below the H2 1,536 MiB budget. Full-import
+  median moved from `43,296.780 ms` to `44,129.814 ms` (+1.924%) while the new
+  five-run full-import CV was 8.739%; therefore this slice claims only the
+  predeclared DB result and not whole-import acceleration or an absolute
+  baseline.
+- Separate reprofile: the target and twenty-second macOS sampler both exited
+  zero, target stderr was empty, and product counts remained
+  `11,551/6,070/229/162`. The current transaction's complete commit/checkpoint
+  semantic superset contained 124 samples, already below half of the prior
+  selected 1,737-sample family and proving at least 92.861% reduction. Its
+  automatic-checkpoint superset contained 67 samples versus the prior selected
+  752, a conservative reduction of at least 91.090%.
+- Decision and privacy: retain the bounded transaction batch and advance #37
+  to one evidence-only residual ranking over the accepted S744 capture; do not
+  reopen the corpus or make another production change in that slice. Raw files,
+  paths, filenames, text, labels, hashes, model details, commands, process
+  names, samples, stacks, symbols, queries, candidates, databases, and indexes
+  remain local and ignored. No push, PR, issue comment, or remote cleanup was
+  attempted.
+
+### S743
+
+- Fresh truth: local `main` started clean at `74539f3`, twenty-eight commits
+  ahead of `origin/main`, with one local/remote branch name and one worktree.
+  #37, #159, and the historical local-only #201 ledger remained remotely open,
+  no PR was open, and the latest hosted `origin/main` runs were green. The
+  remote issue ledger predates the local-only commits, which is expected under
+  the user's no-push/no-PR policy and does not conflict with the aligned local
+  active slice and loop state.
+- Frozen attribution input: the slice reused only the accepted owner-only S741
+  post-SHA capture and S742 residual aggregate. All configured symbolic roots
+  were readable, but no corpus file was reopened. `blind_holdout` and
+  clean-resume remained unread. A unique owner-only package records the spec,
+  environment class, opaque predecessor references, aggregate run, terminal
+  result, and bounded public-redacted aggregate.
+- Attribution result: SQLite-owned work contained 7,567 active samples. The
+  per-searchable-document metadata transaction owned 2,965 samples (39.183%).
+  Its transaction commit and automatic-checkpoint family alone owned 1,737
+  samples (22.955%), passing the predeclared 20% single-family gate; automatic
+  checkpoint work contributed 752 samples, or 43.293% of the selected family.
+  Product counts remained `11,551/6,070/229/162`. These are diagnostic profile
+  counts, not absolute timing or acceptance claims.
+- Source contract: each admitted document currently commits one searchable
+  metadata transaction after a separate classification transaction. Searchable
+  documents already accumulate behind bounded publication boundaries for the
+  first result, 100, 1,000, and a maximum 1,024 pending documents. This gives
+  the selected commit family one existing bounded batch boundary without
+  changing classifier, OCR, query, or index-generation semantics.
+- Successor hypothesis: batch searchable current-epoch classification and
+  metadata in one atomic DB transaction at the existing publication boundaries,
+  commit the DB batch before index publication, and write no index state when
+  the DB batch fails. OCR/non-searchable paths and exact-rerun behavior remain
+  unchanged. Acceptance requires focused atomicity and admission controls,
+  stable discovered/searchable/OCR/failed counts, at least 2% improvement in
+  the same five-repeat DB-stage median, H2 RSS compliance, and at least 50%
+  reduction of the selected commit/checkpoint sample family. Any failed gate
+  requires full revert and terminates this transaction-batching direction.
+- Privacy: no raw paths, filenames, text, labels, hashes, commands, process
+  names, stack rows, symbols, queries, candidates, private manifest, database,
+  or index artifact entered the repository. Public evidence remains bounded
+  aggregate only. The next slice is production-enabled but remains local-only;
+  it does not authorize a push, PR, issue comment, or remote cleanup.
+
+### S742
+
+- Fresh truth: local `main` started clean at `c9f450c`, twenty-seven commits
+  ahead of `origin/main`, with one local/remote branch name and one worktree.
+  #37, #159, and the historical local-only #201 ledger remained remotely open,
+  no PR was open, and current hosted checks on `origin/main` were green. The
+  active slice and loop state both named the #37 post-SHA residual ranking, so
+  no contract-drift repair or remote mutation was needed.
+- Frozen input: this evidence-only slice reused the accepted owner-only S741
+  post-SHA capture and its unchanged `private_calibration` product counts; it
+  did not read the mixed corpus again. `blind_holdout` and clean-resume inputs
+  remained unread. A unique owner-only local package records the spec,
+  environment class, opaque predecessor reference, aggregate run, terminal
+  decision, and bounded public-redacted aggregate.
+- Residual ranking: the same collapsed-stack parser was applied to the accepted
+  before/post captures. The selected software SHA leaf remained reduced from
+  2,487 to about 600 samples. Post-SHA owner samples ranked PDF 13,552, SQLite
+  7,567, other 4,189, parse preparation 2,735, full text 2,439, and classifier
+  2,419. SQLite owned 3,264 bounded file-I/O leaf samples, compared with 376
+  for full text, 99 for PDF, and 6 for parse preparation. The five-run DB-stage
+  mean remained 22,035.5684 ms with 0.56035% CV. These are diagnostic profile
+  counts, not absolute timing claims.
+- Exclusions: PDF is larger but is an exhausted family after prior accepted and
+  rejected token/borrowing experiments. Code inspection confirms hashing and
+  parsing share the same in-memory bytes, so there is no duplicate source-file
+  parser read to remove. The classifier's principal per-window allocation
+  direction was already accepted and is not reopened. Those exclusions leave
+  SQLite metadata persistence as the unique non-exhausted primary residual.
+- Successor contract: #37 advances to evidence-only SQLite statement/transaction
+  attribution. It must isolate exactly one operation family owning at least 20%
+  of SQLite-owned active samples before production work is allowed. Any later
+  implementation must predeclare at least 2% DB-stage improvement while keeping
+  discovered/searchable/OCR/failed counts stable and staying inside the RSS
+  budget. If attribution cannot isolate one family above the gate, the DB
+  direction terminates without a production change.
+- Privacy and verification: semantic counts remained
+  `11,551/6,070/229/162`; precision, contamination, and completeness were not
+  rescored or reinterpreted. Raw paths, filenames, text, labels, hashes,
+  commands, process names, samples, stacks, queries, candidates, and private
+  manifests remain local and ignored. Public evidence is bounded aggregate
+  only. The performance-contract, autonomous-goal, loop-state, and public-repo
+  guards pass after successor pins are refreshed.
+
+### S741
+
+- Fresh truth: local `main` started clean at `0f32605`, twenty-six commits
+  ahead of `origin/main`, with one local/remote branch name and one worktree.
+  #37, #159, and the historical local-only #201 ledger remained remotely open,
+  no PR was open, and current hosted checks on `origin/main` were green. This
+  slice stayed local-only: no push, PR, merge, issue comment, or remote cleanup
+  was attempted.
+- Bounded change: `import-pipeline` retains the generic `sha2` dependency and
+  enables `asm-aarch64` only under `cfg(target_arch = "aarch64")`. Cargo feature
+  resolution proves the aarch64 graph reaches `sha2-asm`, while the Windows
+  x86_64 graph has no `sha2-asm` dependency. The backend keeps sha2's runtime
+  CPU detection and software fallback; no hash input, generation, admission,
+  search, OCR, or classifier production semantics changed. A known-vector test
+  fixes the exact SHA-256 bytes for `abc`.
+- Correctness: all 42 `import-pipeline` unit tests and the frozen public
+  synthetic admission test passed, including middle-only mutation detection,
+  exact-rerun stability, five-state admission, excluded-vector cleanup, and
+  publication recovery. The CLI OCR handoff suite passed 13/13. The daemon OCR
+  suite first had one timing failure while status IPC was healthy but the OCR
+  queue had not completed inside the test window; the exact test passed on an
+  unchanged immediate rerun, while the other ten daemon OCR tests passed.
+  Format, focused Clippy with warnings denied, full-workspace rust-analyzer
+  diagnostics, lockfile resolution, and the release build passed.
+- Frozen A/B: only the unchanged 11,551-entry `private_calibration` and accepted
+  owner-only classifier model were used; frozen membership was revalidated and
+  `blind_holdout` plus clean-resume inputs were not read. After thirty seconds
+  of excluded warm-up, all five formal shared-host runs were diagnostic-valid.
+  Every run preserved classifier enabled and discovered/searchable/OCR/failed
+  counts `11,551/6,070/229/162`, so accepted precision 1.0, contamination 0,
+  and completeness evidence remains unchanged without label rescoring.
+- Performance result: mixed parse median improved from `43,175.542 ms` to
+  `38,659.994 ms` (-10.46%), above the declared 2% threshold. Median full-import
+  readiness improved from `47,897.463 ms` to `43,296.780 ms` (-9.61%). Median
+  peak RSS was `748,126,208` bytes (about 713.5 MiB), below the H2 1,536 MiB
+  budget. Parse CV was 0.906% and full-import CV was 0.716%. The observations
+  were not quiet-host valid because of recorded shared-host covariates, so they
+  remain diagnostic A/B evidence and do not support an absolute baseline or
+  clean-vs-mixed overhead claim.
+- Separate reprofile: the target and twenty-second macOS sampler both exited
+  zero, target stderr was empty, and product counts stayed
+  `11,551/6,070/229/162`. Under the same sample duration, the selected software
+  SHA compression leaf moved from 2,487 to about 600 listed samples (-75.9%);
+  sampled parse preparation moved from `12,042.917 ms` to `6,487.635 ms`.
+  This satisfies the attribution guard without treating profiler timings as
+  acceptance measurements.
+- Decision and privacy: retain the target-specific backend and advance #37 to
+  one evidence-only post-SHA residual-profile ranking slice before any further
+  production optimization. Raw files, paths, filenames, text, labels, hashes,
+  model details, commands, process names, samples, stacks, queries, candidates,
+  and telemetry remain in the ignored owner-only evidence directory. Public
+  evidence is bounded redacted aggregate only; the four required contract,
+  autonomous-loop, loop-state, and public-repository gates pass after successor
+  pins are refreshed.
+
+### S740
+
+- Fresh truth: local `main` started clean at `0dd5c60`, twenty-five commits
+  ahead of `origin/main`, with one branch and one worktree. #37, #159, and the
+  historical local-only #201 ledger remain remotely open, no PR is open, and
+  current hosted checks on `origin/main` are green. No remote mutation was
+  attempted under the local-only delivery policy.
+- Frozen profiler contract: one unique owner-only experiment recorded a spec,
+  environment, opaque local input references, run record, terminal result, and
+  public-redacted aggregate. It used only the unchanged 11,551-entry
+  `private_calibration`, current release binary, accepted owner-only model, and
+  H2 / three-worker settings. Frozen membership and the production envelope
+  were revalidated; `blind_holdout` and clean-resume inputs were not read.
+- Product result: both the target process and the twenty-second macOS sampler
+  exited zero with empty target stderr. Classifier promotion stayed enabled and
+  discovered/searchable/OCR-backlog/failed remained
+  11,551/6,070/229/162. The run read 3,219,569,967 content bytes and remained
+  inside the H2 1,536 MiB contract, so the accepted precision 1.0,
+  contamination 0, and completeness evidence remains unchanged without label
+  rescoring.
+- Diagnostic stage result: full-import readiness was 49,638.862 ms and the
+  scan/parse/DB/index stages were
+  3,039.366/44,373.744/22,943.666/8,396.864 ms. Parse preparation accounted
+  for 12,042.917 ms; parse-worker wall/active were
+  44,347.791/45,510.375 ms, with 1,473 full-queue events and 2,827.956 ms of
+  queue wait. This sampled run is hotspot attribution only, not an absolute
+  baseline or profiler-overhead acceptance result.
+- Bounded profile: after excluding scheduler waits and raw symbols, 31,694
+  listed active leaf samples remained. Aggregate PDF parsing represented
+  2,821 samples, but that family already has accepted optimization evidence and
+  a failed/reverted stricter-prefilter direction. The new strong-content
+  SHA-256 compression leaf represented 2,487 samples, or 7.847%, and its owned
+  ancestor context was only the ordered multi-worker import preparation path.
+  Source inspection confirms full bytes are hashed before a parse item can be
+  dispatched.
+- Decision: select exactly one successor hypothesis,
+  `aarch64_sha256_hardware_backend_v1`. The next bounded slice may enable only
+  sha2's runtime-detected aarch64 backend through target-specific Cargo
+  configuration, with exact digest parity and non-aarch64 fallback. Acceptance
+  requires the existing strong-generation/OCR/classifier controls, at least 2%
+  improvement in the same five-repeat mixed parse median, H2 RSS compliance,
+  and a separate reprofile that materially reduces the selected leaf;
+  otherwise the change is reverted and the direction terminates.
+- Privacy: raw stack rows, symbols, binary images, paths, addresses, commands,
+  stdout/stderr, model/checksum details, profiler hashes, private manifest, and
+  all source files remain in the ignored owner-only evidence directory. The
+  public aggregate contains only bounded categories, counts, timings, policy
+  facts, and false leakage sentinels. The four required contract, autonomous,
+  loop-state, and public-repository gates pass after successor pins are
+  refreshed.
+
+### S739
+
+- Fresh truth: local `main` started clean at `fa13fa8`, twenty-four commits
+  ahead of `origin/main`; #37 and #159 remain remotely open, no PR is open,
+  and no remote mutation was attempted under the local-only delivery policy.
+  The current release binary and all configured private roots were readable.
+- Frozen-input preflight: only `private_calibration` was opened. All 11,551
+  entries and 3,306,141,312 content bytes matched their frozen metadata,
+  keyed quick fingerprints, and keyed full-content digests before a local
+  owner-only calibration root was materialized. Exactly one owner-only
+  production envelope matched the accepted schema, epoch, feature contract,
+  240,000-feature cardinality, checksum, 32 MiB cap, and 20,942,422-byte
+  artifact size. `blind_holdout` was not read.
+- Shared-host observation: the current release binary ran with H2 / three
+  parse workers, at least 30 seconds of excluded warm-up, and five formal
+  repetitions. Five of five were diagnostic-valid and every run reported the
+  classifier enabled with discovered/searchable/OCR-backlog/failed counts
+  11,551/6,070/229/162. Equality with the already accepted frozen calibration
+  state preserves the prior precision 1.0, contamination 0, and completeness
+  evidence without rescoring labels or opening the holdout.
+- Bounded process aggregate: median full-import readiness was 47,897.463 ms
+  with 1.049% CV. Median scan/parse/DB/index stages were
+  2,494.947/43,175.542/22,680.191/8,433.886 ms; their shares of the reported
+  stage sum were 3.249%/56.229%/29.537%/10.984%, and parse CV was 1.202%.
+  Median user/sys time was 69.73/13.57 seconds, median peak RSS was
+  769,671,168 bytes, median block input/output operations were 0/0, and the
+  five-run mean instruction/cycle counts were bounded at
+  1,012,617,968,295.4 / 306,527,700,637.6.
+- Host covariates: target-process CPU median across run medians was 181.6% of
+  one logical core. External CPU remained substantial, every run observed
+  pageout growth, and one or more memory-pressure polls were unavailable;
+  therefore zero of five observations were quiet-host valid. Thermal state
+  stayed nominal and no run observed swapout growth. These facts do not
+  invalidate the shared-host process diagnostic and do prohibit an absolute
+  baseline or clean-vs-mixed overhead claim.
+- Decision: select exactly one primary bottleneck, the parse/text-extraction
+  plus classifier-admission stage. It is materially larger and similarly
+  stable than DB or index in the same five observations. The next bounded
+  slice is a separate local macOS profiler capture against this same frozen
+  calibration to select one parse sub-bottleneck hypothesis; no production
+  optimization, worker/queue change, clean-resume pair, GUI/query work, or
+  performance threshold change is authorized yet.
+- Privacy and verification: the committed evidence contains aggregate counts
+  only. Raw files, paths, filenames, text, labels, hashes, model details,
+  queries, candidates, commands, samples, stacks, and telemetry remain in the
+  ignored owner-only evidence directory. The four required contract,
+  autonomous-loop, loop-state, and public-repository gates pass after successor
+  state pins are refreshed.
+
+### S738
+
+- Fresh truth: local `main` started clean at `3aa1bcc`, twenty-three commits
+  ahead of `origin/main`; #37 and #159 remain remotely open, no PR is open,
+  and no remote mutation was attempted under the local-only delivery policy.
+  S736 still proves #159 locally complete, while S737 is terminal only for the
+  old quiet-host methodology. This slice read no private resume, calibration,
+  mixed-source, model, or blind-holdout input.
+- Contract: the variance runner now requires one explicit mode.
+  `shared_host_diagnostic` treats command success, semantic stability, and
+  complete target-process telemetry as the diagnostic validity gate while
+  retaining thermal, memory, pageout/swapout, disk, idle, and external-CPU
+  observations as covariates. `quiet_host_acceptance` applies every prior
+  thermal, memory, pageout/swapout, and sustained external-CPU rejection
+  unchanged. The report schema is v2 and states that shared-host absolute
+  claims are forbidden and quiet-host thresholds are unchanged.
+- RED/GREEN: focused tests first failed because modes, dual validity, and claim
+  fencing did not exist. Thirteen tests now prove the same sustained external
+  CPU observation remains diagnostic-valid but quiet-invalid, shared mode can
+  emit only `diagnostic_only` or `no_conclusion`, quiet acceptance still needs
+  five valid formal runs, command/semantic/telemetry failures fail both modes,
+  and missing invalid-run telemetry cannot crash aggregate generation.
+- Synthetic integration: five shared-mode formal observations were
+  diagnostic-valid while zero were quiet-valid on the current busy host; the
+  smoke terminal remained `no_conclusion` and emitted no absolute claim. The
+  same five-observation quiet-mode run selected zero valid observations and
+  remained incomplete. Both reports kept raw samples, commands, process names,
+  paths, filenames, resumes, queries, candidates, and tokens absent. An initial
+  integration run exposed coupled time/top parsing that could drop valid
+  process resource fields and crash aggregation; the parser paths are now
+  independent and absent invalid metrics produce bounded null variance.
+- Decision: the shared development Mac is now usable for process-scoped #37
+  diagnosis without pretending to be a quiet-host baseline. The next bounded
+  slice is `capture_shared_host_mixed_diagnostic`: use the unchanged frozen
+  calibration and accepted owner-only production envelope for five formal
+  shared-mode observations, preserve accepted semantic counts, and select one
+  process-scoped bottleneck. Blind holdout and clean-resume overhead remain
+  outside that slice, and no classifier/import/index/query/GUI behavior or
+  performance threshold changed here.
+- Verification: focused unit tests, two real synthetic runner invocations,
+  Python bytecode compilation, diff checks, and the four required
+  performance/autonomous/loop/privacy gates pass after state hashes are
+  refreshed. No private artifact is staged, committed, or uploaded.
+
+### S737
+
+- Fresh truth: local `main` started clean at `71976e1`, twenty-one commits
+  ahead of `origin/main`; #37 and #159 remain open, no PR is open, and no
+  remote mutation was attempted under the local-only delivery policy. The
+  configured private resume, frozen mixed-calibration, and local evidence
+  roots were readable; the release binary and one production-compatible,
+  owner-only accepted classifier artifact passed local integrity checks. Blind
+  holdout remained unread and post-test tuning remained disabled.
+- Harness/operator correction: the first observation accidentally selected the
+  compressed training artifact named by the model-family ledger instead of the
+  separate production promotion envelope. Production correctly reported
+  `fail_closed_disabled`, held searchable count at the deterministic 1,884,
+  and the harness rejected every run as semantic drift. That observation is
+  discarded and carries no performance conclusion. A fresh local inventory
+  found exactly one production-compatible envelope: current schema/epoch/
+  feature contract, 240,000 bounded features, checksum-valid, owner-only, and
+  within the 32 MiB loader cap. The second observation used that accepted
+  artifact and reported promotion `enabled` in every run.
+- Accepted-model semantic result: five of five formal mixed-calibration runs
+  preserved discovered/searchable/OCR-backlog/failed counts at
+  11,551/6,070/229/162. This matches the accepted post-model calibration state;
+  no precision, contamination, completeness, label, or admission regression
+  was observed. Thermal state remained nominal and classifier admission
+  remained enabled in every formal repetition.
+- Methodology terminal: zero of five formal repetitions were host-valid, so the
+  paired clean-resume run was not started and no performance bottleneck was
+  selected. Every formal run had sustained external CPU overlap fraction 1.0;
+  redacted external CPU medians were 339.3%-404.15% of one logical core, above
+  the frozen 20%-of-machine-capacity limit. Each run also observed pageout
+  growth and at least one unavailable memory-pressure sample. The all-run
+  full-import mean was 39,065.707 ms with 3.033% CV, but it is invalid sizing
+  evidence only and must not be used as a baseline or optimization claim.
+- Decision: transition #37 to `blocked_external_retryable`. A successor wake
+  may retry only after fresh aggregate telemetry shows a materially different
+  host window; it must use the production-compatible artifact, keep all
+  thresholds unchanged, and still require five valid mixed repetitions before
+  running the clean pair. This is not a harness-threshold relaxation, clean-vs-
+  mixed overhead result, profile capture, bottleneck selection, optimization,
+  GUI, scale, release, or goal-complete claim.
+- Privacy: raw private files, paths, filenames, text, per-file labels, hashes,
+  queries, candidates, model vocabulary/weights/checksum/path, raw telemetry,
+  and local manifests remain only in the ignored owner-only evidence area.
+  Public evidence is the bounded redacted aggregate above; no private artifact
+  was staged, committed, or uploaded.
+
+### S736
+
+- Fresh truth: local `main` was clean at S735 commit `a140bb0`, twenty commits
+  ahead of `origin/main`, with only the local/remote `main` branch and one
+  worktree. #159 and parent #37 are open, no PR is open, and hosted checks on
+  `origin/main` remain green. #165, #170, and #173 are closed. The remote #159
+  ledger stops at PR #164 because the user-directed delivery policy became
+  local-only; no issue, PR, branch, or push mutation was attempted.
+- #159 completion audit: `import-pipeline` directly owns `resume-classifier`
+  through its focused classification module and invokes one admission decision
+  after normalization/sectionization on sequential parse, parallel commit, and
+  OCR output. Current-epoch `resume_candidate` is the only state admitted to
+  searchable versions, full text, structured mentions/candidate assignment,
+  embedding scheduling, or persistent vectors; `non_resume`, `needs_review`,
+  `ocr_backlog`, and `failed` remain durable local audit states without index
+  admission.
+- Bypass/recovery audit: exact rerun and rebuild require a current accepted
+  classification; V23 quarantines missing/stale/excluded legacy searchable
+  rows, V24 quarantines legacy quick-fingerprint generations and stops their
+  stale OCR jobs, excluded reruns remove persistent-vector residue, and OCR
+  success/failure/requeue paths are attempt/generation fenced. S724-S726 supply
+  stable file identity and strong content generations. S728-S735 close
+  multi-writer snapshot coordination, atomic database Ready publication,
+  exact-generation opening, startup rebuild/reconciliation, verified previous
+  generation retention, reader-drain reclamation, and pre-Ready crash
+  convergence.
+- Current executable evidence: V23 and V24 focused migrations pass 1/1 each;
+  import-pipeline passes 41/41 plus its integration/doc tests; CLI OCR handoff
+  passes 13/13; daemon OCR worker passes 11/11. The unchanged frozen production
+  n=9 witness passes exact candidate/non-resume/review/OCR/failed/searchable
+  counts 3/3/1/1/1/3, indexed precision 1.0, contamination 0, completeness
+  0.75, excluded full-text/structured/candidate/vector surfaces empty, and no
+  private-output leakage. The accepted private calibration, one-shot blind
+  holdout, and owner-only safe-gray model adapter remain historical evidence
+  and were not rerun or inspected in this audit.
+- Lifecycle conclusion: every explicit #159 acceptance item and every later
+  correctness gap discovered while testing it now has current-head executable
+  evidence. #159 is therefore locally product-complete at `a140bb0`; its remote
+  OPEN state is delivery-ledger drift, not an implementation blocker. The
+  broader goal is not complete. Existing open parent #37 becomes the next
+  issue-centric lane for the first post-correctness mixed-import profile.
+- Next slice lock: use only the unchanged frozen `private_calibration`
+  partition, the accepted owner-only classifier artifact, current local binary,
+  and Git-ignored local evidence directory; blind holdout stays unread. Run the
+  existing variance harness first, then paired mixed-calibration and
+  clean-resume observations with identical binary/model/H-tier/worker settings,
+  at least 30 seconds warm-up and five valid formal repetitions. Record stable
+  semantic counts, stage timings, clean-vs-mixed overhead, resource budget,
+  host-load validity, and exactly one primary bottleneck before any production
+  optimization. Configured resume, mixed, and evidence roots are readable.
+- Privacy/resources: S736 read only repository/public GitHub state and emitted
+  no private path, filename, text, label detail, hash, query, candidate result,
+  model detail, manifest, diagnostic package, or token. It records no new
+  timing, overhead, CPU, memory, H-tier, performance, GUI, scale, release, or
+  goal-complete claim.
+- Required performance/autonomous/loop/privacy gates pass after the local state
+  transition.
+
+### S735
+
+- Fresh truth: local `main` was clean after S734 and nineteen commits ahead of
+  `origin/main`; #159 and #37 remain open, the unrelated #201 is also open, no
+  linked successor or PR exists, and the latest hosted `origin/main` push,
+  platform, and nightly runs are green. No remote mutation was attempted under
+  the local-only delivery policy.
+- Frozen input/contract/rollback: committed synthetic index documents and
+  locally constructed journal/filesystem residues only. Classifier rules,
+  public n=9, private calibration, and blind holdout remain unchanged and no
+  private root was read. Each case starts from one verified database Ready
+  generation. Any non-Ready search admission, loss of that Ready generation,
+  residue after convergence, non-idempotent second restart, or privacy/quality
+  regression is rollback.
+- Gap and result: the recovery implementation already covered individual
+  interrupted and missing-Ready cases, but no single executable matrix proved
+  every pre-Ready crash boundary or a second idempotent restart. The new
+  deterministic witness covers Preparing with no files, Preparing with
+  staging, Preparing with a complete published snapshot, Validated with a
+  complete published snapshot, and a crash after journal abandonment but
+  before physical cleanup. All five passed against the current production
+  recovery owner, so no production behavior change was necessary.
+- Recovery aggregate: first restart abandoned four still-interrupted journal
+  rows, removed two interrupted published snapshots, one staging directory,
+  and one already-abandoned obsolete snapshot, with zero rebuilds. The prior
+  exact Ready generation remained usable and returned its synthetic search hit
+  in 5/5 cases. Every interrupted generation became Abandoned and unusable;
+  all five second restarts returned the all-zero recovery summary.
+- Product metrics: frozen public synthetic n=9 remains resume-candidate/
+  non-resume/review/OCR/failed/searchable = 3/3/1/1/1/3, indexed precision 1.0,
+  contamination 0, and completeness 0.75. No calibration, holdout, timing,
+  clean-vs-mixed overhead, H-tier, CPU, memory, or resource budget was measured.
+- Boundary: S731-S735 now provide atomic database publication, restart
+  reconciliation, database-only generation authority, verified predecessor
+  retention, reader-drain reclamation, and deterministic pre-Ready crash
+  convergence evidence. #159 remains open until the next bounded lifecycle and
+  goal-completion assessment; this slice makes no GUI, performance, release,
+  or goal-complete claim.
+- Privacy: public synthetic records only. No real path/name/text, per-file
+  label, raw hash, query/result, private manifest, diagnostic package, model
+  material, or token was read, committed, or uploaded.
+- Verification: the focused five-case matrix, full import-pipeline suite (41
+  unit tests plus integration/doc tests), frozen production n=9 witness,
+  warnings-denied clippy, formatting, rust-analyzer diagnostics, and the four
+  required contract/privacy gates pass. The first formatting check reported
+  only two rustfmt line wraps; `cargo fmt` corrected them before the final green
+  rerun.
+
+### S734
+
+- Fresh truth: local `main` was clean after S733 and eighteen commits ahead of
+  `origin/main`; #159 and #37 remain open, the unrelated #201 is also open, no
+  linked successor or PR exists, and the latest hosted `origin/main` push,
+  platform, and nightly runs are green. No remote mutation was attempted under
+  the local-only delivery policy.
+- Frozen input/contract/rollback: committed synthetic snapshots and database
+  Ready state only; classifier rules, public n=9, private calibration, and blind
+  holdout are unchanged. Every CLI/daemon reader must acquire a cross-process
+  shared lease before reading the Ready token and retain it through exact
+  snapshot open. Physical obsolete-generation GC must acquire the exclusive
+  side of the same lock and wait for those open windows to drain. Query-path
+  filesystem mutation, global publication serialization, deadlock, deletion of
+  a leased generation, or privacy/quality regression is rollback.
+- RED/GREEN: the focused RED did not compile because no snapshot reader lease
+  existed. The full-text owner now creates the lease file during publication,
+  never from a read-only query, exposes a bounded shared read lease, and takes
+  an exclusive lease inside obsolete-snapshot purge. CLI search/witness/
+  diagnostics and daemon search/index-health readers acquire the lease before
+  database state selection. Publication itself remains independently serialized
+  by the existing writer lock.
+- Reader-drain witness: while generation A's selection/open lease is held, a
+  concurrent purge retaining B cannot finish and A remains present. After A is
+  fully opened into its private immutable reader directory, releasing the lease
+  lets purge remove A; the already-open A reader still returns its expected
+  synthetic hit. A separate witness proves acquiring a reader lease with no
+  index creates no query-path runtime state.
+- Product metrics: frozen public synthetic n=9 remains resume-candidate/
+  non-resume/review/OCR/failed/searchable = 3/3/1/1/1/3, indexed precision 1.0,
+  contamination 0, and completeness 0.75. No private calibration or blind
+  holdout was read.
+- Boundary: database-only generation selection, startup recovery, verified
+  predecessor retention, and delayed reader-drain reclamation are now closed.
+  The remaining per-crash-point publication/recovery matrix is not complete;
+  #159 and the broader goal remain open.
+- Performance/resources: no private run, timing, clean-vs-mixed overhead,
+  throughput, H-tier, CPU, memory, or resource-budget delta was measured. The
+  shared lease covers only Ready selection plus encrypted snapshot open; it is
+  released before query execution.
+- Privacy: public synthetic records only. No private root, real path/name/text,
+  label, raw hash, query/result, private manifest, diagnostics, model material,
+  or token was read, committed, or uploaded.
+- Verification: full index-fulltext/import-pipeline, CLI search/import/
+  diagnostics, daemon startup/search IPC, and frozen public-admission suites
+  pass; warnings-denied clippy, formatting, rust-analyzer diagnostics, and the
+  four required contract/privacy gates pass.
+
+### S733
+
+- Fresh truth: local `main` was clean after S732 and seventeen commits ahead of
+  `origin/main`; #159 and #37 remain open, the unrelated #201 is also open, no
+  linked successor or PR exists, and the latest hosted `origin/main` push,
+  platform, and nightly runs are green. No remote mutation was attempted under
+  the local-only delivery policy.
+- Frozen contract/rollback: this slice uses committed synthetic database and
+  snapshot states only. Classifier rules, the frozen public n=9 fixture,
+  private calibration, and blind holdout are unchanged. The database Ready
+  token is now the only generation-selection authority: publication may create
+  and validate immutable generations, but it must not emit a filesystem active
+  pointer; every query, import, daemon, diagnostics, purge, and fault witness
+  must name the database-selected generation explicitly. Any implicit
+  filesystem selection, lexicographic fallback, legacy-root query admission,
+  query-path recovery, or privacy/quality regression is rollback.
+- RED/GREEN: publication still wrote `active-snapshot`, and the full-text owner
+  still exposed active-root inspection, legacy-root opening, last-good fallback,
+  and active-based purge APIs. Those APIs and the pointer publication phase are
+  deleted without compatibility shims. Publication now ends after encrypted
+  snapshot validation. CLI, daemon, import, tests, diagnostics, and purge paths
+  open an exact database Ready generation; diagnostics expose
+  `database_ready_generation` and never select a fallback.
+- Recovery witness: the redacted corruption probe now builds two journaled
+  generations, corrupts the exact database Ready generation, proves it cannot
+  be opened, invokes startup reconciliation, and verifies that recovery rebuilds
+  from current classified database truth while retaining the independently
+  verified predecessor. No document body, query, generation token, or local
+  path is emitted.
+- Product metrics: frozen public synthetic n=9 remains resume-candidate/
+  non-resume/review/OCR/failed/searchable = 3/3/1/1/1/3, indexed precision 1.0,
+  contamination 0, and completeness 0.75. No private calibration or blind
+  holdout was read.
+- Boundary: filesystem generation authority and implicit fallback are removed.
+  Database-journal publication/recovery remains startup-owned and outside the
+  query path. Delayed reader-drain deletion and the remaining per-crash-point
+  fault matrix are not complete; #159 and the broader goal remain open.
+- Performance/resources: no private run, timing, clean-vs-mixed overhead,
+  throughput, H-tier, CPU, memory, or resource-budget delta was measured.
+- Privacy: public synthetic records only. No private root, real path/name/text,
+  label, raw hash, query/result, private manifest, diagnostics, model material,
+  or token was read, committed, or uploaded.
+- Verification: full exact-generation full-text, import-pipeline, daemon
+  startup/OCR/search IPC, CLI import/search/diagnostics/fault, and frozen public
+  admission witnesses pass; warnings-denied clippy, formatting, rust-analyzer
+  diagnostics, and the four required contract/privacy gates pass.
+
+### S732
+
+- Fresh truth: local `main` was clean after S731 and sixteen commits ahead of
+  `origin/main`; #159 and #37 remain open, the unrelated #201 is also open, no
+  linked successor or PR exists, and the latest hosted `origin/main` push,
+  platform, and nightly runs are green. S731 has terminal local evidence, so it
+  was not repeated. No remote mutation was attempted under the local-only
+  delivery policy.
+- Frozen input/contract/rollback: this slice uses committed synthetic DB and
+  snapshot states only; classifier rules, the frozen public n=9 fixture, private
+  calibration, and blind holdout are unchanged. Before the daemon declares
+  ready, one owner must hold the existing publication lock, abandon every
+  interrupted `preparing`/`validated` journal row, delete only those exact
+  physical generations, validate the database Ready generation, and rebuild
+  from current searchable database truth when that exact generation is missing
+  or corrupt. Current Ready plus one independently verified predecessor must
+  survive GC. Exposure of interrupted data, filesystem-fallback admission,
+  deletion of both recovery generations, query-path repair work, or any
+  privacy/precision/contamination regression is rollback.
+- RED/GREEN: the prior daemon contract returned `not_ready` when Ready metadata
+  named a missing snapshot and the periodic index worker still decided rebuild
+  need from the filesystem active pointer. Startup now reconciles before its
+  ready line. It abandons and removes interrupted generations, automatically
+  rebuilds missing/corrupt Ready generations through the S731 journal/CAS path,
+  and selects current plus one verified previous journal generation for bounded
+  GC. The periodic worker now tests the database Ready token exactly and no
+  longer treats the active pointer as rebuild authority.
+- Recovery witnesses: two validated but uncommitted publications based on A
+  become `abandoned`, their physical generations disappear, and usable Ready A
+  is not rebuilt. In the missing-head witness, A remains usable, Ready B is
+  removed, startup publishes a new Ready generation from current classified DB
+  truth, search returns the expected DB document, and A remains as the verified
+  rollback generation. A daemon IPC witness seeds a conflicting physical
+  fallback and proves startup ignores it, rebuilds from current classified DB
+  truth, and returns no fallback document.
+- Product metrics: frozen public synthetic n=9 remains resume-candidate/
+  non-resume/review/OCR/failed/searchable = 3/3/1/1/1/3, indexed precision 1.0,
+  contamination 0, and completeness 0.75. No private calibration or blind
+  holdout was read.
+- Boundary: interrupted-publication reconciliation, missing/corrupt Ready
+  convergence, and current-plus-one verified snapshot retention are now
+  automatic daemon-startup behavior. Filesystem active-pointer emission and
+  legacy inspection helpers still exist, and delayed reader-drain cleanup plus
+  the remaining per-crash-point fault matrix are not complete; #159 and the
+  broader goal therefore remain open.
+- Performance/resources: no private run, timing, clean-vs-mixed overhead,
+  throughput, H-tier, CPU, memory, or resource-budget delta was measured.
+  Recovery is startup-only and never runs inside the query request path.
+- Privacy: public synthetic records only. Recovery summaries expose counts and
+  booleans, while journal Debug output continues to redact generation/base/
+  manifest tokens. No private root, real path/name/text, label, raw hash,
+  query/result, private manifest, diagnostics, model material, or token was
+  read, committed, or uploaded.
+- Verification: full index-fulltext, meta-store SQLite, import-pipeline, daemon
+  startup, daemon search IPC, CLI import/search, and frozen public-admission
+  suites pass; warnings-denied clippy, formatting, rust-analyzer diagnostics,
+  and the four required contract/privacy gates pass.
+
+### S731
+
+- Fresh truth: local `main` was clean after S730 and fifteen commits ahead of
+  `origin/main`; #159 and #37 remain open, no successor or PR is open, and the
+  latest hosted `origin/main` push, platform, and nightly runs are green. No
+  remote mutation was attempted under the local-only delivery policy.
+- Frozen contract/rollback: public synthetic data and classifier semantics are
+  unchanged. Every production full-text generation must durably record
+  `preparing` before filesystem publication and `validated` only after snapshot
+  validation. The final database transaction may move the Ready head and
+  searchable document statuses only when the journaled base generation still
+  equals the current Ready head; otherwise it must mark the generation
+  `abandoned` without exposing its documents. Missing journal intent, partial
+  head/visibility commit, stale-base activation, or privacy/metric regression is
+  rollback.
+- RED/GREEN: before this slice there was no durable publication record and
+  normal import changed each document status separately before updating the
+  Ready head. Schema V25 now adds a bounded publication journal with
+  `preparing`, `validated`, `ready`, and `abandoned` states. Incremental,
+  rebuild, removal, and OCR writers record intent before snapshot construction
+  and validation after it. Normal import commits all pending searchable
+  document statuses, the Ready generation, and journal state in one SQLite
+  transaction. OCR success uses the same generation/base CAS inside its
+  existing claim-aware metadata/job transaction. A focused two-publication
+  interleaving proves B can commit from A while another validated A-based
+  generation becomes abandoned; its document remains non-searchable and the
+  Ready head remains B.
+- Product metrics: frozen public synthetic n=9 remains resume-candidate/
+  non-resume/review/OCR/failed/searchable = 3/3/1/1/1/3, indexed precision 1.0,
+  contamination 0, and completeness 0.75. No private calibration or blind
+  holdout was read.
+- Boundary: durable intent, validation, final head CAS, and atomic visibility
+  are now enforced for production full-text writers. Startup reconciliation of
+  interrupted `preparing`/`validated` rows, verified previous-generation
+  retention and GC, filesystem active-pointer removal, and the remaining
+  crash-point matrix are still required before #159 can be assessed complete.
+- Performance/resources: no private run, timing, clean-vs-mixed overhead,
+  throughput, H-tier, CPU, memory, or resource-budget delta was measured.
+- Privacy: public synthetic records only. Journal Debug output redacts
+  generation/base/manifest tokens. No private root, real path/name/text, label,
+  raw hash, query/result, private manifest, diagnostics, model material, or
+  token was read, committed, or uploaded.
+- Verification: meta-store V25 and publication-CAS tests, full meta-store and
+  import-pipeline suites, CLI import/OCR suites, daemon OCR/search suites,
+  frozen n=9 production admission witness, warnings-denied clippy, formatting,
+  rust-analyzer diagnostics, and the four required contract/privacy gates pass.
+
+### S730
+
+- Fresh truth: local `main` was clean after S729 and fourteen commits ahead of
+  `origin/main`; #159 and #37 remain open, no PR is open, and the latest hosted
+  `origin/main` push, platform, and nightly runs are green. The user explicitly
+  confirmed that this unshipped personal project should prefer the clean root
+  architecture and breaking changes over compatibility padding. No remote
+  mutation was attempted under the local-only delivery policy.
+- Contract drift and root hypothesis: S729 still described mismatch rejection,
+  while the accepted product direction now requires the database Ready
+  generation to be the sole publication truth. This slice locks the first root
+  step: exact-generation reads and incremental bases ignore the filesystem
+  active pointer. A newly validated but uncommitted generation must not affect
+  queries or later writers; a database-committed intervening generation must be
+  inherited.
+- RED/GREEN: the exact-generation test initially could not compile because the
+  index exposed only active-pointer-bound opening. `FullTextIndex::open_snapshot`
+  now validates and opens the database-named immutable generation directly.
+  CLI and daemon keep serving Ready A while a newer B is physically published
+  but uncommitted. Incremental writers now derive their base generation from
+  Ready metadata; a committed intervening B refreshes retained state, while an
+  uncommitted B is ignored and cannot contaminate the next generation. A
+  missing/corrupt database-named base fails into the existing metadata rebuild
+  path rather than silently starting from an empty index.
+- Product metrics: frozen public synthetic n=9 remains resume-candidate/
+  non-resume/review/OCR/failed/searchable = 3/3/1/1/1/3, indexed precision 1.0,
+  contamination 0, and completeness 0.75. No private calibration or blind
+  holdout was read.
+- Boundary: database Ready now owns query and writer-base generation selection,
+  eliminating the active-pointer split-brain availability gap. The filesystem
+  pointer still exists for legacy diagnostics/publication internals and must be
+  removed in the following breaking-change slice together with a durable
+  publication journal, atomic normal-import metadata/head commit, startup
+  reconciliation, previous-generation retention, and full crash-point matrix.
+  #159 and the root fix are not complete.
+- Performance/resources: no private run, timing, clean-vs-mixed overhead,
+  throughput, H-tier, CPU, memory, or resource-budget delta was measured.
+- Privacy: public synthetic records only. No private root, real path/name/text,
+  label detail, raw hash, query/result, private manifest, diagnostics, model
+  material, or token was read, committed, or uploaded.
+- Verification: full index-fulltext and import-pipeline suites, CLI
+  search/filter/import-search suites, daemon search IPC, frozen n=9 production
+  admission witness, warnings-denied clippy, formatting, rust-analyzer
+  diagnostics, and the four required contract/privacy gates pass.
+
+### S729
+
+- Fresh truth: local `main` was clean after S728 and thirteen commits ahead of
+  `origin/main`; #159 and parent #37 remain open, no PR is open, and the latest
+  hosted `origin/main` push, platform, and nightly runs are green. One
+  `git ls-remote` attempt hit a transient LibreSSL connection failure; fresh
+  GitHub REST reads then succeeded. Per the local-only delivery policy, no
+  remote issue, branch, or PR mutation was attempted.
+- Frozen contract/rollback: public synthetic inputs and classifier rules remain
+  unchanged. Ready metadata must name the exact readable published full-text
+  generation. Matching state remains searchable; missing, stale, or mismatched
+  state returns index-unavailable with zero hits. Either mismatch direction,
+  fallback to another readable generation, query-semantic change, privacy leak,
+  or frozen metric regression is rollback.
+- RED/GREEN: before implementation, CLI search still returned a hit after the
+  active snapshot was replaced while ready metadata retained the prior token.
+  `index-fulltext` now resolves and opens one exact immutable published
+  generation only when it equals the expected metadata token. CLI user search,
+  query benchmark, witness preflight/freeze/probe, and daemon full-text/hybrid
+  entry points require `Ready` metadata plus that exact match. Mismatch tests
+  now return unavailable and zero results without leaking filename or text;
+  matched CLI/daemon paths and existing filters remain searchable.
+- Product metrics: frozen n=9 remains resume-candidate/non-resume/review/OCR/
+  failed/searchable = 3/3/1/1/1/3, indexed precision 1.0, contamination 0,
+  completeness 0.75. No private calibration or blind holdout was read.
+- Boundary: this slice detects durable snapshot/metadata drift and fails closed;
+  it does not automatically reconcile or rebuild mismatched state. That repair
+  policy remains the next DB-index coordination decision before #159 can be
+  assessed as product-complete. No performance, GUI, scale, release, or
+  goal-complete claim is made.
+- Performance/resources: no private run, timing, clean-vs-mixed overhead,
+  throughput, H-tier, CPU, memory, or resource-budget delta was measured.
+- Privacy: public synthetic records only. No configured private root, mixed
+  corpus, calibration set, blind holdout, real path/name/text/label, raw hash,
+  query/result, private manifest, diagnostic package, model material, or token
+  was read, committed, or uploaded.
+- Verification: full index-fulltext tests, CLI search/filter/import-search
+  integration suites, daemon search IPC suite, frozen production admission
+  witness, warnings-denied clippy, formatting, rust-analyzer diagnostics, and
+  the four required contract/privacy gates pass.
+
+### S728
+
+- Fresh truth: local `main` was clean after S727 and twelve commits ahead of
+  `origin/main`; #159 and parent #37 remain open, no PR is open, and the latest
+  hosted `origin/main` push, platform, and nightly runs are green. S727 is
+  terminal for its frozen n=9 downstream witness, so it was not repeated as a
+  new slice.
+- Corrected acceptance interpretation: S727 proves candidate-only downstream
+  admission for one completed import, but it does not cover concurrent snapshot
+  writers. Fresh call-tree inspection found that milestone imports retain an
+  in-memory full-text snapshot while OCR, removal, and rebuild paths can publish
+  another snapshot. The retained cache did not compare its source generation
+  with the active snapshot before its next flush, leaving a lost-update path
+  that could reintroduce an excluded document. Therefore #159 was not yet
+  product-complete despite the narrower S727 witness.
+- Frozen contract/rollback: public synthetic state and classifier rules remain
+  unchanged. The focused interleaving starts with one cached document, publishes
+  an intervening snapshot that excludes it and admits a different current
+  candidate, then flushes a third candidate from the stale importer. Success is
+  exactly the intervening candidate plus the third candidate; reappearance of
+  the excluded first document, loss of the intervening candidate, deadlock,
+  cross-data-directory serialization, or privacy/metric regression is rollback.
+- RED/GREEN: before implementation the final active snapshot and retained cache
+  contained the excluded first document plus the third document, losing the
+  intervening admitted document. Full-text read/modify/publish is now guarded by
+  an owner lock located inside each data directory, so different data directories
+  remain independent. The retained cache records its active snapshot generation
+  and reloads fail-closed admitted content whenever that generation changes.
+  The same interleaving now ends with exactly the intervening and third
+  candidates in both cache and active snapshot.
+- Product metrics: frozen n=9 remains resume-candidate/non-resume/review/OCR/
+  failed/searchable = 3/3/1/1/1/3, indexed precision 1.0, contamination 0,
+  completeness 0.75, with excluded full-text/structured/embedding/vector
+  surfaces still empty. No private calibration or blind holdout was read.
+- Boundary: this slice coordinates only full-text read/modify/publish. Crash
+  recovery between active-snapshot replacement and metadata/index-state commit
+  remains a separate DB-index coordination gap and prevents declaring #159 or
+  the mixed-import semantics train complete. No performance, GUI, query, scale,
+  release, or goal-complete claim is made.
+- Performance/resources: no private run, stage timing, clean-vs-mixed overhead,
+  throughput, H-tier, CPU, memory, or resource-budget delta was measured. The
+  lock scope is per data directory and per snapshot publication, not a global
+  import/parser serialization mechanism.
+- Privacy: public synthetic records only. No configured private root, mixed
+  corpus, calibration set, blind holdout, real path/name/text/label, raw hash,
+  query/result, private manifest, diagnostic package, model material, or token
+  was read, committed, or uploaded.
+- Verification: focused stale-cache RED/GREEN, same/different-data-directory
+  lock tests, frozen production n=9 witness, full import-pipeline suite (38 unit
+  tests plus integration/doc tests), warnings-denied clippy, formatting,
+  rust-analyzer diagnostics, and the four required contract/privacy gates pass.
+
+### S727
+
+- Fresh truth: local `main` was clean after S726 and eleven commits ahead of
+  `origin/main`; #159 and parent #37 remain open, no PR is open, and current
+  hosted checks on `origin/main` are green. The accepted private calibration,
+  blind holdout, and production-adapter ledgers already prove precision 1.0 and
+  contamination 0, so this slice did not rerun or tune against private data.
+- Acceptance reconciliation: the frozen production n=9 witness already proved
+  five-state persistence and exact 3 resume-candidate / 3 non-resume / 1
+  needs-review / 1 OCR-backlog / 1 failed / 3 searchable counts. Separate tests
+  already cover OCR reclassification, stale/invalid generation quarantine, and
+  removal of excluded documents from an existing vector index. The remaining
+  evidence gap was direct admission proof against the actual full-text snapshot
+  and structured downstream surfaces in the same production witness.
+- Frozen input/contract: fixture membership and contents remain byte-for-byte
+  unchanged. The witness derives required-all-term probes at runtime from each
+  existing synthetic text sample, matching the product's
+  `simple_text_required_all_terms_v1` contract without committing new query
+  text. A first raw-query control exposed Tantivy's normal OR behavior and
+  returned three candidate hits; this was an ambiguous test probe, not a
+  product regression, and no query semantics or production code changed.
+- After: each of the three candidate probes returns exactly one hit whose
+  current classification is `resume_candidate`; each text-extracted excluded
+  sample returns zero hits. Every non-candidate version has no candidate link
+  and no entity mentions, candidate-derived entity evidence exists, embedding
+  queue depth is zero, and no vector-index directory exists. Counts remain
+  3/3/1/1/1/3, indexed precision remains 1.0, contamination remains 0, and
+  frozen synthetic completeness remains 0.75.
+- Issue result: with this witness plus the existing OCR, migration, and vector
+  residue controls, #159's product acceptance is locally satisfied on local
+  `main`. The remote issue remains open because the user-directed delivery
+  policy is local-only; no issue comment, close, push, or PR was performed.
+  Parent #37 remains the remote reconciliation lane, and neither the goal nor
+  release/GUI readiness is claimed complete.
+- Performance/resources: this evidence-only slice records no new stage timing,
+  clean-vs-mixed overhead, throughput, H-tier, CPU, memory, queue/backpressure,
+  or DB-index coordination claim.
+- Privacy: public synthetic records only; no configured private root,
+  mixed-source corpus, calibration set, or blind holdout was read. No real
+  path/name/text/label, raw hash/query/result, private manifest, diagnostic
+  package, model material, or token was committed or uploaded.
+- Verification: focused frozen production witness, full import-pipeline suite,
+  warnings-denied focused clippy, formatting, rust-analyzer diagnostics, and
+  the four required contract/privacy gates pass after this evidence update.
+
+### S726
+
+- Fresh truth: local `main` was clean after S725 and ten commits ahead of
+  `origin/main`; #159 and parent #37 remain open, with no linked successor or
+  open PR, and hosted `origin/main` checks remain green. S725 has terminal local
+  evidence. Schema V23 quarantined invalid classifier admission but did not
+  distinguish sampled `qfp_...` generations from exact strong generations.
+- Frozen input/contract: a public synthetic V23 snapshot contains four active
+  current-classification rows: searchable/strong, searchable/legacy-qfp,
+  OCR-backlog/strong, and OCR-backlog/legacy-qfp. Before migration both
+  searchable rows are visible and both OCR jobs are queued. Success requires
+  only the legacy searchable row to become hidden/non-searchable, only the
+  legacy OCR job to become terminal and unclaimable, its `ocr_backlog` audit to
+  remain intact, untrusted generations to be cleared, strong rows to remain
+  unchanged, index state to become stale, and rerunning migration to be a no-op.
+  Any strong-row quarantine, legacy searchability/claimability, audit loss,
+  schema failure, or privacy leak is rollback.
+- RED/GREEN: the focused upgrade test first reported no V24 migration. Schema
+  V24 now recognizes only canonical lowercase `sha256:` plus 64 hex digits as a
+  trusted active generation. Missing/non-strong active generations lose
+  searchable versions and derived candidate/entity associations, clear the
+  untrusted content hash, and stale the index. Active legacy OCR jobs become
+  `failed_permanent`, while document status and classification remain
+  `ocr_required`/`ocr_backlog` so a fresh import can compute a strong generation
+  and lawfully requeue.
+- Bounded n=4 before/after: searchable 2 -> 1; OCR backlog remains 2; OCR jobs
+  queued 2 -> 1 and failed-permanent 0 -> 1; non-resume/review/failed document
+  classifications remain 0/0/0. Indexed precision stays 1.0 and contamination
+  stays 0 for the declared synthetic resumes. Temporary migration-trust
+  completeness is 0.5 until the legacy file is freshly re-imported; this is not
+  a frozen benchmark completeness claim. The frozen n=9 production witness
+  remains 3/3/1/1/1/3 with precision 1.0, contamination 0, completeness 0.75.
+- This is upgrade correctness only. No new parse/classifier timing,
+  clean-vs-mixed overhead, throughput, H-tier, or resource budget is measured
+  or claimed. Physical full-text snapshot replacement and multi-writer
+  coordination remain separate later work after semantic closure.
+- Privacy: public synthetic records only; no configured private root,
+  calibration, mixed-source, or blind holdout was read. No real path/name/text/
+  label, raw hash/query/result, private manifest, diagnostic package, model
+  material, or token was committed or uploaded.
+- Verification: focused V24 RED/GREEN, meta-store 65 total tests,
+  import-pipeline 36/36 plus frozen production witness, focused
+  warnings-denied clippy, formatting, rust-analyzer, and the four required
+  contract/privacy gates pass after this evidence update.
+
+### S725
+
+- Fresh truth: local `main` was clean after S724 and nine commits ahead of
+  `origin/main`; #159 and parent #37 remain open, no linked successor or open PR
+  exists, and hosted `origin/main` checks remain green. S724 has terminal local
+  evidence, while persisted `document.content_hash` and OCR claim generations
+  still contained only the crawler's sampled quick fingerprint.
+- Frozen input/contract: one generated TXT resume exceeds the crawler's 8 KiB
+  edge-sample window. Its size, mtime, first 4 KiB, last 4 KiB, stable file
+  identity, classifier-relevant headings, and expected `resume_candidate`
+  outcome stay fixed; only a four-byte middle skill changes. Success requires
+  identical quick fingerprints but different strong generations, reparse of the
+  changed bytes, unchanged document identity, one searchable document, zero
+  deletions, and a new index snapshot. Any no-op, excluded-state admission,
+  classifier change, privacy leak, or OCR-generation regression is rollback.
+- RED/GREEN: before the change both imports persisted the same `qfp_...` value
+  and the second import took the stale exact-rerun no-op. The import pipeline
+  now computes SHA-256 over the exact byte buffer passed to parsing, keeps the
+  value redacted, persists it as the document/OCR generation, and requires it
+  for exact-rerun no-op. The same hidden middle mutation now changes the strong
+  generation, reparses the file, publishes a new snapshot containing the new
+  skill, and preserves the stable document ID.
+- Bounded product aggregate n=1 remains resume-candidate/searchable/deleted =
+  1/1/0 before and after. The frozen n=9 production witness remains candidate/
+  non-resume/review/OCR/failed/searchable = 3/3/1/1/1/3, indexed precision 1.0,
+  contamination 0, and resume completeness 0.75. CLI and daemon OCR handoff
+  suites prove strong generation values continue to fence cache, claim,
+  supersession, and publication behavior.
+- This is content-identity correctness, not performance evidence. Exact rerun
+  now reads full supported-file bytes before accepting no-op; new stage timing,
+  clean-vs-mixed overhead, throughput, H-tier, and resource deltas are not
+  measured or claimed. Profiling or a safe persisted quick+strong two-tier
+  optimization may follow only after remaining semantics are stable.
+- Privacy: generated public synthetic bytes only; private resume, calibration,
+  mixed-source, and blind-holdout roots were not read. The strong hash is local
+  storage state and is never printed by its type. No real path/name/text/label,
+  raw hash/query/result, private manifest, diagnostic package, model material,
+  or token was committed or uploaded.
+- Verification: import-pipeline 36/36 plus the frozen production witness,
+  resume-cli OCR handoff 13/13, resume-daemon OCR worker 11/11, focused
+  warnings-denied clippy, formatting, rust-analyzer, and the four required
+  contract/privacy gates pass after this evidence update.
+
+### S724
+
+- Fresh truth: local `main` was clean after S723, eight commits ahead of
+  `origin/main`, and the only local/remote branch and worktree was `main`.
+  #159 remains open, no PR is open, and fresh code still derived `DocumentId`
+  from a path-bearing quick fingerprint. A pure rename therefore appeared as
+  delete plus new document and forced parse/index work.
+- Contract/hypothesis: platform file identity is `(dev, ino, birthtime)` on
+  Unix/macOS and `(volume, file index, creation time)` on Windows, stored only
+  as a redacted deterministic identifier. A quick fingerprint must not include
+  the path alias. Same identity/content with a new path updates local path
+  metadata without reparsing or index publication; same path with replacement
+  identity/content remains a mutation. Strong hashing and legacy identity
+  migration remain separate work.
+- RED/GREEN: the crawler rename regression first produced different document
+  IDs. After the bounded change, an n=1 real-filesystem rename preserves stable
+  identity, document ID, and quick fingerprint; the production import keeps one
+  document, one version, zero deletions, and the exact prior index state while
+  updating the local path. A separate n=1 same-path replacement changes stable
+  identity, document ID, and quick fingerprint. macOS, Linux, and Windows
+  compile checks pass; Windows uses the existing safe `same-file` handle
+  identity because the equivalent standard-library accessors remain unstable.
+- Frozen public production witness remains resume-candidate/non-resume/
+  needs-review/OCR-backlog/failed/searchable = 3/3/1/1/1/3, with indexed
+  precision 1.0, contamination 0, and resume completeness 0.75. No classifier
+  rule/model/threshold, fixture membership, searchable admission, OCR state, or
+  query semantics changed.
+- This is identity/rename correctness, not a mixed performance run. New stage
+  timings, clean-vs-mixed overhead, throughput, H-tier, and resource budgets
+  are not applicable or claimed. A first scan after this pre-release identity
+  cut can assign new IDs to legacy rows; a bounded legacy identity migration is
+  explicitly still open before any stable-release claim.
+- Privacy: public synthetic and temporary generated files only; configured
+  private roots, private calibration, and blind holdout were not read. No real
+  file/path/name/text/label/hash/query/result, private manifest, diagnostic
+  package, model material, or token was committed or uploaded.
+- Verification: fs-crawler 12/12, import-pipeline 35/35 plus the frozen
+  production witness, three-platform fs-crawler compile checks, focused
+  warnings-denied clippy, formatting, rust-analyzer, and the four required
+  contract/privacy gates pass after this evidence update.
+
+### S723
+
+- Fresh truth: local `main` was clean after S722 and seven commits ahead of
+  `origin/main`; #159 remains open with no linked successor and no open PR.
+  S722 has terminal local evidence, while #159's explicit legacy missing/stale
+  searchable-row upgrade acceptance remained absent from schema V22.
+- Input/contract: one synthetic V22 metadata snapshot contains five legacy
+  searchable rows: missing classification, stale candidate classification,
+  current non-resume, current deterministic candidate, and current promoted
+  candidate. Success requires the first three to become non-searchable, the
+  two current candidates to remain searchable, derived index state to become
+  stale, and a second migration run to be a no-op. Any current-candidate
+  quarantine, excluded-state searchability, schema failure, or privacy leak is
+  a rollback condition.
+- RED: the focused upgrade test first observed no V23 migration (`[]` rather
+  than `[23]`). GREEN adds immutable schema V23 quarantine SQL: legacy
+  searchable/indexed-partial rows without a current deterministic or valid
+  promoted `resume_candidate` lose searchable visibility and candidate/entity
+  associations, move to the matching local non-searchable document state, and
+  mark index state stale for bounded rebuild. Current candidates are unchanged.
+- Bounded aggregate n=5: stored classification counts remain candidate/
+  non-resume/review/OCR/failed/missing = 3/1/0/0/0/1, while searchable moves
+  5 -> 2. The indexed set contains only the two declared current candidates,
+  giving bounded indexed precision 1.0 and contamination 0. Resume
+  completeness is not evaluated because missing/stale trust state is the test
+  variable rather than frozen resume ground truth.
+- This is a metadata-upgrade correctness slice, so parse/classifier stage
+  timings, clean-vs-mixed overhead, H-tier, throughput, and resource deltas are
+  not applicable or claimed. The frozen n=9 public production witness still
+  passes unchanged. No classifier rule/model/threshold/benchmark membership,
+  OCR, query, worker/queue, GUI, or performance semantics changed.
+- Privacy: public synthetic records only; private calibration and blind holdout
+  were not read. No real file/path/name/text/label/hash/query/result, private
+  manifest, diagnostic package, model material, or token was read, committed,
+  or uploaded.
+- Verification: focused V23 RED/GREEN, meta-store 64/64 total tests,
+  import-pipeline 35/35, focused warnings-denied clippy, formatting,
+  rust-analyzer, and the four required contract/privacy gates pass after this
+  evidence update.
+
+### S722
+
+- Fresh truth: local `main` was clean after S721 and six commits ahead of
+  `origin/main`; #159 remains the open product-correctness ledger, #201 remains
+  untouched under the local-only delivery policy, and no PR is open. This
+  slice changes no production code.
+- Frozen input/contract: the existing immutable nine-sample
+  `public_synthetic` fixture is materialized into nested real TXT, DOCX,
+  text-layer PDF, scanned PDF, and deterministic failed-DOC parser inputs, then
+  passed through `import_root_with_options`. Neither fixture membership/content
+  nor classifier rules, model, threshold, or production semantics changed.
+- Production-path result: resume-candidate/non-resume/needs-review/OCR-backlog/
+  failed/searchable = 3/3/1/1/1/3. All nine per-sample statuses match the frozen
+  expectations and only the three candidates expose searchable versions.
+  Indexed precision is 1.0, contamination is 0, and resume completeness is
+  0.75 (3 of 4 expected resumes searchable).
+- Harness correction: the first synthetic PDF writer used relative text
+  displacement that collapsed frozen line boundaries and produced 2/2/3/1/1.
+  Replacing that test-only operation with the parser suite's established `T*`
+  line advance restored faithful frozen content; the fixture and production
+  classifier were not tuned after observing the result.
+- One fresh bounded n=9 run observed scan/parse/DB/index =
+  0.922/116.122/5.343/355.261 ms and normalization/sectionization =
+  0.231/0.206 ms over 3018 synthetic bytes. Detected resource policy was H2,
+  three parse workers, 256 MiB index-writer heap, and 1536 MiB private/anonymous
+  cap. These are smoke diagnostics only; clean-vs-mixed overhead was not
+  measured or claimed.
+- Scope/privacy: public synthetic data only; private calibration and blind
+  holdout were not read. No real file/path/name, raw private text/label/hash/
+  query/result, private manifest, diagnostics package, model material, or token
+  was read, committed, or uploaded. No GUI, query, worker/queue, DB/index,
+  performance optimization, readiness, or goal-complete claim is made.
+- Verification: the exact production witness, the full import-pipeline suite,
+  focused clippy with warnings denied, formatting, rust-analyzer, and the four
+  required contract/privacy gates pass after this evidence update.
+
+### S721
+
+- Fresh truth: local `main` is clean after S720 and four commits ahead of
+  `origin/main`; #159 remains the open product-correctness ledger, #201 remains
+  untouched under the local-only delivery policy, and no PR is open. S720
+  physically removes vectors once import observes an excluded/replaced ID, but
+  fresh CLI/daemon code still admitted embedding work solely from document
+  status and version visibility.
+- Input/contract: this slice observes only the post-classification embedding
+  enqueue, claimed-job hydration, and final pre-upsert boundary. Frozen public
+  synthetic state is one current `resume_candidate` plus one current
+  `non_resume`; success requires exactly one vector-producing document, no
+  excluded vector write, current promoted epochs remaining eligible, and no
+  classifier/benchmark/query change. Any candidate rejection, excluded write,
+  privacy leak, or required-check failure requires rollback.
+- RED: a prequeued current `non_resume` job passed daemon scheduling/hydration
+  and the worker failed the assertion that only one document was processed.
+  GREEN adds one metadata-owned current-candidate predicate, applies it in CLI
+  candidate selection and daemon enqueue/claimed-job hydration, and rechecks it
+  after the embedding command immediately before persistent-vector upsert.
+- Public synthetic aggregate n=2 is candidate/non-resume/review/OCR/failed =
+  1/1/0/0/0. Daemon processed/vector-writes are 1/1; the non-resume job writes
+  no vector. For this bounded vector-admission witness, indexed precision is
+  1.0 and contamination is 0. Completeness, stage timing, clean-vs-mixed
+  overhead, H-tier, and resource deltas are not measured or claimed.
+- Scope: no classifier rule/model/threshold/epoch change, private calibration
+  or blind-holdout read, parser/OCR/full-text/query semantics, worker count,
+  queue policy, DB schema, GUI, L2/L4 optimization, or readiness claim.
+- Verification: meta-store unit/integration coverage, daemon S51 3/3, CLI unit
+  8/8, focused clippy with warnings denied, formatting, rust-analyzer, and the
+  four required contract/privacy gates pass after this evidence update.
+- Privacy: public synthetic values only. No private root, real file/path/name,
+  raw text/label/hash/query/result, manifest, diagnostics, model material, or
+  token was read, committed, or uploaded.
+
+### S720
+
+- Fresh truth: #201 remains remotely open without comments because the current
+  delivery policy is local-only, but its bounded implementation and terminal
+  evidence are committed on local `main`. The existing open product ledger
+  #159 explicitly retains physical persistent-vector residue as an unfinished
+  admission gap; no PR is open and no remote state was changed.
+- Hypothesis/contract: the document IDs already collected for full-text
+  exclusion/replacement are the same IDs whose old vectors must not remain
+  active. Purging them through the existing lock-protected latest-snapshot
+  mutation in the same import publication cycle should make physical vector
+  admission fail closed without changing classification, embedding, query, or
+  benchmark semantics.
+- RED: a current `non_resume` document with a seeded stale persistent vector
+  remained physically active after an unchanged re-import (`1 != 0`). GREEN
+  uses a public synthetic mixed sample with one `resume_candidate` and one
+  `non_resume`: active vector documents move 2 -> 1, the excluded document has
+  no active vector, and the unchanged candidate vector remains searchable in
+  the vector index. Classification/searchable counts remain candidate/
+  non-resume/review/OCR/failed/searchable = 1/1/0/0/0/1, so bounded synthetic
+  indexed precision is 1.0 and contamination is 0.
+- This correctness slice does not run private calibration or blind holdout,
+  does not claim completeness improvement, and does not measure stage timing,
+  clean-vs-mixed overhead, H-tier, or resource-budget deltas. It adds no worker,
+  queue, DB schema, classifier/model/threshold, GUI, query, or L4 change.
+- Verification: import-pipeline 34/34 and index-vector 14/14 pass; focused
+  clippy with warnings denied, formatting, and `rust-analyzer diagnostics .`
+  pass (existing platform/test-inactive weak warnings only). Required contract
+  and privacy gates pass after the evidence update.
+- Privacy: public synthetic text only. No private root, real file/path/name,
+  label detail, raw text/hash/query/result, manifest, diagnostic package,
+  model material, or token was read, committed, or uploaded.
+
+### S719
+
+- #201 re-attributed the generic regex hotspot from the existing merged-main
+  mixed-import sample to `index_fulltext::redact_contact_values_cow ->
+  replace_redaction`, with Unicode word-boundary work below the bounded
+  backtracker. The email grammar is ASCII-only, so its scoped boundary now uses
+  ASCII semantics while every other redaction family remains unchanged.
+- Public differential cases prove the optimized email regex preserves every
+  prior match span and additionally redacts ASCII email tokens adjacent to
+  Chinese or accented text. Stored-index and existing contact-redaction privacy
+  behavior remain covered.
+- After two warm-ups per variant, nine interleaved release microprobe pairs over
+  representative synthetic email text preserved output. Median elapsed time
+  moved 66,940,042 ns -> 15,921,958 ns (-76.270%); every pair improved and the
+  least favorable pair was -75.969%.
+- A fresh frozen-calibration import preserved candidate/non-resume/review/OCR/
+  failed/searchable = 6,070/0/5,090/229/162/6,070; blind holdout remained
+  sealed. Raw private inputs, model material, local paths, and local evidence
+  remain uncommitted. This is a contact-redaction privacy/performance slice, not
+  a full-import timing, query, GUI, scale, release, or goal-complete claim.
+
+### S718
+
+- #199 kept whole-string contextual Unicode lowercase and streamed only
+  post-lowercase whitespace collapse. Exact character-vector tests passed, but
+  the predeclared performance gate failed: nine interleaved pairs had median
+  -1.637%, least favorable +1.848%, and best -7.345%. The change and temporary
+  probe were fully removed before private execution; no production diff or
+  performance claim remains.
+
+### S717
+
+- #197 attempted to fuse Unicode lowercase and whitespace collapse. Exact
+  reference testing rejected it before private execution because per-character
+  lowercase produced ordinary Greek sigma where whole-string lowercase
+  correctly produced contextual final sigma. The change and temporary probe
+  were fully removed; the failure pins whole-string contextual lowercase as a
+  classifier semantic contract.
+
 ### S716
 
 - #190's separate macOS `sample` diagnostic preserved the frozen calibration

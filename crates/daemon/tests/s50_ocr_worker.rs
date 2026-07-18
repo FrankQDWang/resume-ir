@@ -5,13 +5,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use index_fulltext::{FullTextIndex, SearchQuery};
+use import_pipeline::{import_root_with_options, ImportOptions};
 use meta_store::{
-    ClassificationStatus, Document, DocumentClassificationRecord, DocumentId, DocumentStatus,
-    FileExtension, IngestJobFailureKind, IngestJobStatus, MetaStore, OcrPageCacheKey,
-    OcrPageCacheStatus, ReasonCode, ReviewDisposition, UnixTimestamp, WorkerTaskKind,
-    CLASSIFIER_EPOCH,
+    DocumentStatus, ImportTask, ImportTaskId, ImportTaskStatus, IngestJobFailureKind,
+    IngestJobStatus, MetaStore, OcrPageCacheKey, OcrPageCacheStatus, UnixTimestamp, WorkerTaskKind,
 };
+use search_runtime::{HitLimit, QueryCoordinator};
 
 #[cfg(unix)]
 #[test]
@@ -265,10 +264,7 @@ esac
         );
         assert!(cache_entry.text().unwrap().contains(token));
     }
-    let version = store
-        .latest_visible_resume_version_for_document(&scanned.id)
-        .unwrap()
-        .expect("OCR resume version");
+    let version = active_resume_version(&store, &scanned.id);
     assert_eq!(version.page_count, Some(2));
     let clean_text = version.clean_text.unwrap();
     assert!(clean_text.contains("S89DaemonPageOneToken"));
@@ -450,10 +446,7 @@ printf 'Rust PDF indexing.\n'
         .text()
         .unwrap()
         .contains("S91DaemonPdftoppmRenderedToken"));
-    let version = store
-        .latest_visible_resume_version_for_document(&scanned.id)
-        .unwrap()
-        .expect("OCR resume version");
+    let version = active_resume_version(&store, &scanned.id);
     assert_eq!(version.page_count, Some(1));
     assert!(version
         .clean_text
@@ -661,20 +654,13 @@ exit 17
         store.run_migrations().unwrap();
         let scanned = scanned_document(&store);
         let job = store.ingest_job_by_id(&job_id).unwrap().unwrap();
-        let classification = store
-            .document_classification_by_id(&scanned.id)
-            .unwrap()
-            .unwrap();
         assert_eq!(job.attempt_count, attempt);
         if attempt < 3 {
             assert_eq!(job.status, IngestJobStatus::FailedRetryable);
             assert_eq!(scanned.status, DocumentStatus::OcrRequired);
-            assert_eq!(classification.status, ClassificationStatus::OcrBacklog);
         } else {
             assert_eq!(job.status, IngestJobStatus::FailedPermanent);
             assert_eq!(scanned.status, DocumentStatus::FailedPermanent);
-            assert_eq!(classification.status, ClassificationStatus::Failed);
-            assert_eq!(classification.reason_codes, vec![ReasonCode::ParserFailed]);
         }
     }
 
@@ -894,14 +880,12 @@ fn daemon_ocr_worker_loop_batches_multiple_jobs_in_one_tick() {
         &data_dir,
         "batch-a",
         "synthetic-scanned-resume-batch-a.pdf",
-        "s50-synthetic-scanned-content-hash-batch-a",
         single_page_scanned_pdf_bytes(),
     );
     let private_document_path_b = seed_scanned_document_fixture(
         &data_dir,
         "batch-b",
         "synthetic-scanned-resume-batch-b.pdf",
-        "s50-synthetic-scanned-content-hash-batch-b",
         single_page_scanned_pdf_bytes(),
     );
     let command = write_fixture_executable(
@@ -947,7 +931,8 @@ printf 'Rust batch systems.\n'
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("ocr worker processed: 2"));
-    assert!(stdout.contains("ocr worker cache writes: 2"));
+    assert!(stdout.contains("ocr worker cache writes: 1"));
+    assert!(stdout.contains("ocr worker cache hits: 1"));
     assert!(stdout.contains("ocr worker failed: 0"));
     assert!(!stdout.contains("OCRS50DaemonBatchToken"));
     assert!(!stdout.contains(path_str(&data_dir)));
@@ -970,7 +955,6 @@ fn seed_scanned_document_with_bytes(data_dir: &Path, bytes: impl AsRef<[u8]>) ->
         data_dir,
         "scanned-document",
         "synthetic-scanned-resume.pdf",
-        "s50-synthetic-scanned-content-hash",
         bytes.as_ref(),
     )
 }
@@ -979,7 +963,6 @@ fn seed_scanned_document_fixture(
     data_dir: &Path,
     id_suffix: &str,
     file_name: &str,
-    content_hash: &str,
     bytes: impl AsRef<[u8]>,
 ) -> PathBuf {
     let now = UnixTimestamp::from_unix_seconds(1_800_050_000);
@@ -989,35 +972,25 @@ fn seed_scanned_document_fixture(
     fs::write(&document_path, bytes.as_ref()).unwrap();
     let store = MetaStore::open_data_dir(data_dir).unwrap();
     store.run_migrations().unwrap();
-    let doc_id = DocumentId::from_non_secret_parts(&["s50", id_suffix]);
-    store
-        .upsert_document(&Document {
-            id: doc_id.clone(),
-            source_uri: format!("file://{}", path_str(&document_path)),
-            normalized_path: path_str(&document_path).to_string(),
-            file_name: file_name.to_string(),
-            extension: FileExtension::Pdf,
-            byte_size: fs::metadata(&document_path).unwrap().len(),
-            mtime: now,
-            content_hash: Some(content_hash.to_string()),
-            text_hash: None,
-            is_deleted: false,
-            created_at: now,
-            updated_at: now,
-            status: DocumentStatus::OcrRequired,
-        })
-        .unwrap();
-    store
-        .upsert_document_classification(&DocumentClassificationRecord {
-            document_id: doc_id.clone(),
-            status: ClassificationStatus::OcrBacklog,
-            classifier_epoch: CLASSIFIER_EPOCH.to_string(),
-            reason_codes: vec![ReasonCode::OcrRequired],
-            classified_at: now,
-            review_disposition: ReviewDisposition::NotRequired,
-        })
-        .unwrap();
-    store.enqueue_ocr_job_for_document(&doc_id, now).unwrap();
+    let task = ImportTask {
+        id: ImportTaskId::from_non_secret_parts(&["s50", id_suffix]),
+        root_path: path_str(&private_root).to_string(),
+        status: ImportTaskStatus::Running,
+        queued_at: now,
+        started_at: Some(now),
+        finished_at: None,
+        updated_at: now,
+    };
+    store.insert_import_task(&task).unwrap();
+    import_root_with_options(
+        data_dir,
+        &store,
+        &task,
+        &private_root,
+        now,
+        ImportOptions::default(),
+    )
+    .unwrap();
     document_path
 }
 
@@ -1138,13 +1111,32 @@ fn scanned_document(store: &MetaStore) -> meta_store::Document {
         .expect("scanned synthetic fixture is persisted")
 }
 
-fn search_fulltext(data_dir: &Path, query: &str) -> Vec<index_fulltext::SearchHit> {
-    let index = FullTextIndex::open_active(&data_dir.join("search-index"))
+fn active_resume_version(
+    store: &MetaStore,
+    document_id: &meta_store::DocumentId,
+) -> meta_store::ResumeVersion {
+    let version_id = store
+        .with_search_metadata_snapshot(|snapshot| {
+            snapshot
+                .validated_active_projections()
+                .map_err(|_| ())?
+                .into_iter()
+                .find(|projection| &projection.document_id == document_id)
+                .map(|projection| projection.resume_version_id)
+                .ok_or(())
+        })
+        .expect("document has an active immutable resume version");
+    store
+        .resume_version_by_id(&version_id)
         .unwrap()
-        .expect("active full-text index");
-    index
-        .search(SearchQuery::new(query).with_limit(20))
-        .expect("search full-text index")
+        .expect("active resume version exists")
+}
+
+fn search_fulltext(data_dir: &Path, query: &str) -> Vec<search_runtime::FullTextCandidate> {
+    let mut coordinator = QueryCoordinator::open(data_dir).unwrap();
+    coordinator
+        .with_query(|scope| scope.fulltext_candidates(query, HitLimit::new(20)?, None))
+        .expect("generation-pinned full-text query")
 }
 
 fn http_get(endpoint: &str) -> String {

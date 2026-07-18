@@ -1,24 +1,28 @@
 use std::fs;
 use std::ops::Range;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    Candidate, CandidateId, ClassificationStatus, ContactHash, Document,
-    DocumentClassificationRecord, DocumentId, DocumentStatus, EntityMention, EntityMentionId,
-    EntityType, FileExtension, ImportRootKind, ImportRootPreset, ImportScanBudgetKind,
-    ImportScanError, ImportScanErrorKind, ImportScanErrorOperation, ImportScanErrorSummary,
-    ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, IndexState,
-    IndexStateStatus, IngestJob, IngestJobFailureKind, IngestJobId, IngestJobKind, IngestJobStatus,
-    MetaStore, MetadataEncryptionState, OcrAttemptFailure, OcrAttemptFailureOutcome,
-    OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, OcrWordBox, ReasonCode, ResumeVersion,
-    ResumeVersionId, ResumeVisibility, ReviewDisposition, SearchableImportDocument, UnixTimestamp,
-    WorkerTaskControl, WorkerTaskKind, CLASSIFIER_EPOCH,
+    ActiveSearchProjection, Candidate, CandidateId, ClassificationStatus, ContactHash,
+    ContentDigest, Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId,
+    EntityType, FileExtension, FullTextSnapshotDescriptor, IdentityInsertOutcome, ImportRootKind,
+    ImportRootPreset, ImportScanBudgetKind, ImportScanError, ImportScanErrorKind,
+    ImportScanErrorOperation, ImportScanErrorSummary, ImportScanProfile, ImportScanScope,
+    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobId,
+    IngestJobKind, IngestJobStatus, MetaStore, MetadataEncryptionState, OcrPageCacheEntry,
+    OcrPageCacheKey, OcrPageCacheStatus, OcrWordBox, ReasonCode, ResumeVersion,
+    ResumeVersionClassification, ResumeVersionId, ReviewDisposition, SearchProjectionDigest,
+    SearchPublicationCommit, SearchPublicationDraft, SearchPublicationOutcome,
+    SearchPublicationValidation, SourceRevision, TerminalDocumentUpdate, UnixTimestamp,
+    VectorSnapshotDescriptor, WorkerTaskControl, WorkerTaskKind, CLASSIFIER_EPOCH,
 };
 use rusqlite::{params, Connection};
 
 #[test]
-fn migrations_are_idempotent_and_schema_v1_is_queryable() {
+fn migrations_are_idempotent_and_schema_v27_is_queryable() {
     let store = MetaStore::open_in_memory().unwrap();
 
     assert!(store.foreign_keys_enabled().unwrap());
@@ -26,16 +30,27 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
     let first = store.run_migrations().unwrap();
     assert_eq!(
         first.applied_versions(),
-        &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,]
+        &[
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+            25, 26, 27,
+        ]
     );
-    assert_eq!(store.schema_version().unwrap(), 22);
+    assert_eq!(store.schema_version().unwrap(), 27);
 
     for table_name in [
         "candidate",
         "document",
         "resume_version",
         "ingest_job",
-        "index_state",
+        "source_revision",
+        "source_revision_triage",
+        "resume_version_classification",
+        "active_search_projection",
+        "search_projection_state",
+        "search_publication_journal",
+        "search_publication_commit_guard",
+        "authorized_import_root",
+        "privacy_maintenance_state",
         "import_task",
         "entity_mention",
         "ocr_page_cache",
@@ -46,15 +61,13 @@ fn migrations_are_idempotent_and_schema_v1_is_queryable() {
         "import_task_cancellation",
         "query_observation",
         "candidate_contact_conflict",
-        "document_classification",
-        "document_classification_reason",
     ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 22);
+    assert_eq!(store.schema_version().unwrap(), 27);
 }
 
 #[test]
@@ -88,7 +101,7 @@ fn encrypted_metadata_store_requires_key_and_survives_reopen_without_plaintext_h
         assert_eq!(store.metadata_encryption_state().label(), "sqlcipher");
         store.run_migrations().unwrap();
         store.upsert_document(&document).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 22);
+        assert_eq!(store.schema_version().unwrap(), 27);
     }
 
     let encrypted_bytes = fs::read(&db_path).unwrap();
@@ -119,28 +132,30 @@ fn encrypted_metadata_store_requires_key_and_survives_reopen_without_plaintext_h
 }
 
 #[test]
-fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
+fn open_data_dir_copy_on_write_migrates_plaintext_store_to_sqlcipher() {
     let data_dir = temp_data_dir("plaintext-metadata-migration");
-    let db_path = meta_store::metadata_store_path(&data_dir);
+    let db_path = meta_store::metadata_store_path(&data_dir).unwrap();
     let document = document(
         "plaintext-migration-document",
         false,
         DocumentStatus::Searchable,
     );
     let mut version = resume_version("plaintext-migration-version", document.id.clone());
-    version.clean_text = Some("SYNTHETIC PLAINTEXT MIGRATION CLEAN TEXT".to_string());
+    set_resume_text(&mut version, "SYNTHETIC PLAINTEXT MIGRATION CLEAN TEXT");
 
     {
         let plaintext = MetaStore::open(&db_path).unwrap();
         plaintext.run_migrations().unwrap();
         plaintext.upsert_document(&document).unwrap();
-        plaintext.upsert_resume_version(&version).unwrap();
-        assert_eq!(plaintext.schema_version().unwrap(), 22);
+        insert_resume_version(&plaintext, &version);
+        assert_eq!(plaintext.schema_version().unwrap(), 27);
         assert_eq!(
             plaintext.metadata_encryption_state(),
             MetadataEncryptionState::Plaintext
         );
     }
+
+    set_owner_only_file_permissions(&db_path);
 
     let plaintext_bytes = fs::read(&db_path).unwrap();
     assert!(plaintext_bytes.starts_with(b"SQLite format 3"));
@@ -150,7 +165,7 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         migrated.metadata_encryption_state(),
         MetadataEncryptionState::SqlCipher
     );
-    assert_eq!(migrated.schema_version().unwrap(), 22);
+    assert_eq!(migrated.schema_version().unwrap(), 27);
     assert_eq!(
         migrated.document_by_id(&document.id).unwrap().unwrap().id,
         document.id
@@ -164,14 +179,19 @@ fn open_data_dir_migrates_existing_plaintext_metadata_store_to_sqlcipher() {
         version.clean_text
     );
 
-    let encrypted_bytes = fs::read(&db_path).unwrap();
+    let active_db_path = meta_store::metadata_store_path(&data_dir).unwrap();
+    assert_ne!(active_db_path, db_path);
+    let encrypted_bytes = fs::read(&active_db_path).unwrap();
     assert!(!encrypted_bytes.starts_with(b"SQLite format 3"));
     assert!(!encrypted_bytes
         .windows(b"PLAINTEXT MIGRATION".len())
         .any(|window| window == b"PLAINTEXT MIGRATION"));
     assert!(meta_store::metadata_encryption_key_path(&data_dir).exists());
 
-    let plaintext_open_error = MetaStore::open(&db_path)
+    assert!(!db_path.exists());
+    assert!(!PathBuf::from(format!("{}-wal", db_path.display())).exists());
+    assert!(!PathBuf::from(format!("{}-shm", db_path.display())).exists());
+    let plaintext_open_error = MetaStore::open(&active_db_path)
         .and_then(|store| store.schema_version().map(|_| ()))
         .unwrap_err();
     assert_redacted_store_error(plaintext_open_error);
@@ -514,7 +534,7 @@ fn candidates_persist_and_are_found_only_by_hashed_contact_material() {
 }
 
 #[test]
-fn searchable_document_ids_with_contact_hashes_matches_visible_versions_only() {
+fn searchable_document_ids_with_contact_hashes_matches_active_projection_only() {
     let store = migrated_store();
     let email_hash = contact_hash('a');
     let phone_hash = contact_hash('b');
@@ -527,8 +547,7 @@ fn searchable_document_ids_with_contact_hashes_matches_visible_versions_only() {
     let deleted_doc = document("contact-deleted", true, DocumentStatus::Searchable);
     let deleted_version = resume_version("contact-deleted-version", deleted_doc.id.clone());
     let hidden_doc = document("contact-hidden", false, DocumentStatus::Searchable);
-    let mut hidden_version = resume_version("contact-hidden-version", hidden_doc.id.clone());
-    hidden_version.visibility = ResumeVisibility::Hidden;
+    let hidden_version = resume_version("contact-hidden-version", hidden_doc.id.clone());
     let partial_doc = document("contact-partial", false, DocumentStatus::IndexedPartial);
     let partial_version = resume_version("contact-partial-version", partial_doc.id.clone());
     let failed_doc = document("contact-failed", false, DocumentStatus::FailedPermanent);
@@ -550,7 +569,7 @@ fn searchable_document_ids_with_contact_hashes_matches_visible_versions_only() {
         partial_version.clone(),
         failed_version.clone(),
     ] {
-        store.upsert_resume_version(&version).unwrap();
+        insert_resume_version(&store, &version);
     }
 
     let visible_candidate = Candidate {
@@ -607,21 +626,21 @@ fn searchable_document_ids_with_contact_hashes_matches_visible_versions_only() {
     ] {
         store.upsert_candidate(&candidate).unwrap();
     }
-    store
-        .assign_candidate_to_version(&visible_version.id, &visible_candidate.id)
-        .unwrap();
-    store
-        .assign_candidate_to_version(&partial_version.id, &partial_candidate.id)
-        .unwrap();
-    store
-        .assign_candidate_to_version(&deleted_version.id, &deleted_candidate.id)
-        .unwrap();
-    store
-        .assign_candidate_to_version(&hidden_version.id, &hidden_candidate.id)
-        .unwrap();
-    store
-        .assign_candidate_to_version(&failed_version.id, &failed_candidate.id)
-        .unwrap();
+    for (version, candidate) in [
+        (&visible_version, &visible_candidate),
+        (&partial_version, &partial_candidate),
+        (&deleted_version, &deleted_candidate),
+        (&hidden_version, &hidden_candidate),
+        (&failed_version, &failed_candidate),
+    ] {
+        assert_eq!(
+            store
+                .insert_candidate_assignment(&version.id, &candidate.id)
+                .unwrap(),
+            IdentityInsertOutcome::Inserted
+        );
+    }
+    publish_active_versions(&store, &[&visible_version, &partial_version]);
 
     let matches = store
         .searchable_document_ids_with_contact_hashes(&[
@@ -674,7 +693,7 @@ fn candidate_contact_hash_indexes_are_unique_and_canonicalized() {
 }
 
 #[test]
-fn hashed_contact_assignment_reuses_candidate_and_updates_version_count() {
+fn hashed_contact_assignment_reuses_candidate_and_updates_active_version_count() {
     let store = migrated_store();
     let email_hash = contact_hash('d');
     let first_document = document("candidate-assign-first", false, DocumentStatus::Searchable);
@@ -687,37 +706,22 @@ fn hashed_contact_assignment_reuses_candidate_and_updates_version_count() {
 
     store.upsert_document(&first_document).unwrap();
     store.upsert_document(&second_document).unwrap();
-    store.upsert_resume_version(&first_version).unwrap();
-    store.upsert_resume_version(&second_version).unwrap();
+    insert_resume_version(&store, &first_version);
+    insert_resume_version(&store, &second_version);
 
     let first_assignment = store
         .assign_candidate_from_hashed_contacts(&first_version.id, Some(&email_hash), None)
         .unwrap()
         .expect("candidate assignment from hashed contact");
-    assert_eq!(first_assignment.version_count, 1);
-    assert_eq!(
-        store
-            .resume_version_by_id(&first_version.id)
-            .unwrap()
-            .unwrap()
-            .candidate_id,
-        Some(first_assignment.id.clone())
-    );
+    assert_eq!(first_assignment.version_count, 0);
 
     let second_assignment = store
         .assign_candidate_from_hashed_contacts(&second_version.id, Some(&email_hash), None)
         .unwrap()
         .expect("existing candidate assignment from hashed contact");
     assert_eq!(second_assignment.id, first_assignment.id);
-    assert_eq!(second_assignment.version_count, 2);
-    assert_eq!(
-        store
-            .resume_version_by_id(&second_version.id)
-            .unwrap()
-            .unwrap()
-            .candidate_id,
-        Some(first_assignment.id.clone())
-    );
+    assert_eq!(second_assignment.version_count, 0);
+    publish_active_versions(&store, &[&first_version, &second_version]);
     assert_eq!(
         store
             .candidate_by_id(&first_assignment.id)
@@ -732,110 +736,6 @@ fn hashed_contact_assignment_reuses_candidate_and_updates_version_count() {
             .assign_candidate_from_hashed_contacts(&first_version.id, None, None)
             .unwrap(),
         None
-    );
-}
-
-#[test]
-fn searchable_import_document_upsert_reuses_candidate_and_replaces_mentions() {
-    let store = migrated_store();
-    let email_hash = contact_hash('c');
-    let first_document = document("searchable-import-first", false, DocumentStatus::Searchable);
-    let second_document = document(
-        "searchable-import-second",
-        false,
-        DocumentStatus::TextCleaned,
-    );
-    let first_version =
-        resume_version("searchable-import-first-version", first_document.id.clone());
-    let second_version = resume_version(
-        "searchable-import-second-version",
-        second_document.id.clone(),
-    );
-
-    store.upsert_document(&first_document).unwrap();
-    store.upsert_resume_version(&first_version).unwrap();
-    let first_assignment = store
-        .assign_candidate_from_hashed_contacts(&first_version.id, Some(&email_hash), None)
-        .unwrap()
-        .expect("first candidate assignment from contact hash");
-
-    let skill = entity_mention(
-        "searchable-import-skill",
-        &second_version.id,
-        EntityType::Skill,
-        "Rust",
-        Some("Rust"),
-        20..24,
-        0.93,
-    );
-    let second_assignment = store
-        .upsert_searchable_import_document(SearchableImportDocument {
-            document: &second_document,
-            version: &second_version,
-            mentions: std::slice::from_ref(&skill),
-            email_hash: Some(&email_hash),
-            phone_hash: None,
-        })
-        .unwrap()
-        .expect("candidate assignment reused during searchable import upsert");
-
-    assert_eq!(second_assignment.id, first_assignment.id);
-    assert_eq!(second_assignment.version_count, 2);
-    assert_eq!(
-        store
-            .resume_version_by_id(&second_version.id)
-            .unwrap()
-            .unwrap()
-            .candidate_id,
-        Some(first_assignment.id.clone())
-    );
-    assert_eq!(
-        store
-            .entity_mentions_for_version(&second_version.id)
-            .unwrap(),
-        vec![skill]
-    );
-
-    let title = entity_mention(
-        "searchable-import-title",
-        &second_version.id,
-        EntityType::Title,
-        "Backend Engineer",
-        Some("backend_engineer"),
-        30..46,
-        0.88,
-    );
-    store
-        .upsert_searchable_import_document(SearchableImportDocument {
-            document: &second_document,
-            version: &second_version,
-            mentions: std::slice::from_ref(&title),
-            email_hash: None,
-            phone_hash: None,
-        })
-        .unwrap();
-
-    assert_eq!(
-        store
-            .resume_version_by_id(&second_version.id)
-            .unwrap()
-            .unwrap()
-            .candidate_id,
-        Some(first_assignment.id.clone())
-    );
-    assert_eq!(
-        store
-            .entity_mentions_for_version(&second_version.id)
-            .unwrap(),
-        vec![title]
-    );
-    assert_eq!(
-        store
-            .candidate_by_id(&first_assignment.id)
-            .unwrap()
-            .unwrap()
-            .version_count,
-        2
     );
 }
 
@@ -872,7 +772,7 @@ fn contact_hash_assignment_records_conflict_without_hash_or_contact_leakage() {
     store.upsert_candidate(&email_candidate).unwrap();
     store.upsert_candidate(&phone_candidate).unwrap();
     store.upsert_document(&document).unwrap();
-    store.upsert_resume_version(&version).unwrap();
+    insert_resume_version(&store, &version);
 
     assert_eq!(
         store
@@ -882,14 +782,6 @@ fn contact_hash_assignment_records_conflict_without_hash_or_contact_leakage() {
                 Some(&phone_hash)
             )
             .unwrap(),
-        None
-    );
-    assert_eq!(
-        store
-            .resume_version_by_id(&version.id)
-            .unwrap()
-            .unwrap()
-            .candidate_id,
         None
     );
 
@@ -929,107 +821,22 @@ fn explicit_candidate_assignment_requires_existing_candidate() {
     };
 
     store.upsert_document(&document).unwrap();
-    store.upsert_resume_version(&version).unwrap();
+    insert_resume_version(&store, &version);
 
     assert!(store
-        .assign_candidate_to_version(&version.id, &missing_candidate_id)
+        .insert_candidate_assignment(&version.id, &missing_candidate_id)
         .is_err());
 
     store.upsert_candidate(&candidate).unwrap();
-    let assigned = store
-        .assign_candidate_to_version(&version.id, &candidate.id)
-        .unwrap()
-        .expect("assigned candidate exists");
-
-    assert_eq!(assigned.id, candidate.id);
-    assert_eq!(assigned.version_count, 1);
     assert_eq!(
         store
-            .resume_version_by_id(&version.id)
-            .unwrap()
-            .unwrap()
-            .candidate_id,
-        Some(candidate.id)
-    );
-}
-
-#[test]
-fn unassign_candidate_versions_clears_assignments_and_refreshes_count() {
-    let store = migrated_store();
-    let first_document = document(
-        "candidate-unassign-first-document",
-        false,
-        DocumentStatus::Searchable,
-    );
-    let second_document = document(
-        "candidate-unassign-second-document",
-        false,
-        DocumentStatus::Searchable,
-    );
-    let first_version = resume_version(
-        "candidate-unassign-first-version",
-        first_document.id.clone(),
-    );
-    let second_version = resume_version(
-        "candidate-unassign-second-version",
-        second_document.id.clone(),
-    );
-    let candidate = Candidate {
-        id: CandidateId::from_non_secret_parts(&["s178", "candidate-unassign"]),
-        primary_name: None,
-        phone_hash: None,
-        email_hash: None,
-        dedupe_key: Some("candidate-review-manual-v1".to_string()),
-        merge_confidence: Some(0.91),
-        version_count: 0,
-    };
-
-    store.upsert_document(&first_document).unwrap();
-    store.upsert_document(&second_document).unwrap();
-    store.upsert_resume_version(&first_version).unwrap();
-    store.upsert_resume_version(&second_version).unwrap();
-    store.upsert_candidate(&candidate).unwrap();
-    store
-        .assign_candidate_to_version(&first_version.id, &candidate.id)
-        .unwrap();
-    store
-        .assign_candidate_to_version(&second_version.id, &candidate.id)
-        .unwrap();
-    assert_eq!(
-        store
-            .candidate_by_id(&candidate.id)
-            .unwrap()
-            .unwrap()
-            .version_count,
-        2
-    );
-
-    let unassigned = store.unassign_candidate_versions(&candidate.id).unwrap();
-
-    assert_eq!(unassigned, 2);
-    assert_eq!(
-        store
-            .candidate_by_id(&candidate.id)
-            .unwrap()
-            .unwrap()
-            .version_count,
-        0
+            .insert_candidate_assignment(&version.id, &candidate.id)
+            .unwrap(),
+        IdentityInsertOutcome::Inserted
     );
     assert_eq!(
-        store
-            .resume_version_by_id(&first_version.id)
-            .unwrap()
-            .unwrap()
-            .candidate_id,
-        None
-    );
-    assert_eq!(
-        store
-            .resume_version_by_id(&second_version.id)
-            .unwrap()
-            .unwrap()
-            .candidate_id,
-        None
+        store.candidate_by_id(&candidate.id).unwrap(),
+        Some(candidate)
     );
 }
 
@@ -1042,7 +849,7 @@ fn visible_document_query_excludes_deleted_documents_by_default() {
     store.upsert_document(&visible).unwrap();
     store.upsert_document(&deleted).unwrap();
     let visible_version = resume_version("visible-version-placeholder", visible.id.clone());
-    store.upsert_resume_version(&visible_version).unwrap();
+    insert_resume_version(&store, &visible_version);
 
     let visible_documents = store.visible_documents().unwrap();
     let visible_ids = visible_documents
@@ -1065,72 +872,6 @@ fn visible_document_query_excludes_deleted_documents_by_default() {
     assert_eq!(
         store.resume_versions_for_document(&visible.id).unwrap(),
         vec![visible_version]
-    );
-}
-
-#[test]
-fn latest_visible_resume_version_for_document_uses_latest_inserted_non_hidden_version() {
-    let store = migrated_store();
-    let document = document(
-        "latest-version-placeholder",
-        false,
-        DocumentStatus::Searchable,
-    );
-    store.upsert_document(&document).unwrap();
-    let mut old_visible = resume_version("latest-old-version-placeholder", document.id.clone());
-    old_visible.clean_text = Some("OLD_VERSION_SHOULD_NOT_APPEAR".to_string());
-    let mut latest_hidden =
-        resume_version("latest-hidden-version-placeholder", document.id.clone());
-    latest_hidden.visibility = ResumeVisibility::Hidden;
-    latest_hidden.clean_text = Some("HIDDEN_VERSION_SHOULD_NOT_APPEAR".to_string());
-    let mut latest_visible = resume_version("latest-new-version-placeholder", document.id.clone());
-    latest_visible.clean_text = Some("LATEST_VERSION_SHOULD_APPEAR".to_string());
-
-    store.upsert_resume_version(&old_visible).unwrap();
-    store.upsert_resume_version(&latest_hidden).unwrap();
-    store.upsert_resume_version(&latest_visible).unwrap();
-
-    let selected = store
-        .latest_visible_resume_version_for_document(&document.id)
-        .unwrap()
-        .unwrap();
-
-    assert_eq!(selected.id, latest_visible.id);
-    assert_eq!(
-        selected.clean_text.as_deref(),
-        Some("LATEST_VERSION_SHOULD_APPEAR")
-    );
-}
-
-#[test]
-fn mark_document_deleted_sets_tombstone_hides_versions_and_status_counts() {
-    let store = migrated_store();
-    let now = UnixTimestamp::from_unix_seconds(1_800_000_500);
-    let visible = document("soft-delete-placeholder", false, DocumentStatus::Searchable);
-    let version = resume_version("soft-delete-version-placeholder", visible.id.clone());
-
-    store.upsert_document(&visible).unwrap();
-    store.upsert_resume_version(&version).unwrap();
-    assert_eq!(store.status_summary().unwrap().searchable_documents, 1);
-
-    let deleted = store
-        .mark_document_deleted(&visible.id, now)
-        .unwrap()
-        .expect("document exists");
-
-    assert_eq!(deleted.id, visible.id);
-    assert!(deleted.is_deleted);
-    assert_eq!(deleted.status, DocumentStatus::Deleted);
-    assert_eq!(deleted.updated_at, now);
-    assert!(store.visible_documents().unwrap().is_empty());
-    assert_eq!(store.status_summary().unwrap().searchable_documents, 0);
-    assert_eq!(
-        store
-            .resume_version_by_id(&version.id)
-            .unwrap()
-            .unwrap()
-            .visibility,
-        ResumeVisibility::Hidden
     );
 }
 
@@ -1323,30 +1064,13 @@ fn stale_running_ingest_jobs_are_recovered_to_interrupted_for_retry() {
     )
     .started_at(fresh_started)
     .updated_at(fresh_started);
-    let exhausted_document = document(
-        "exhausted-ocr-recovery-document",
-        false,
-        DocumentStatus::OcrRequired,
-    );
-    upsert_ocr_backlog(&store, &exhausted_document, 1_800_000_009);
-    let mut exhausted = job(
-        "exhausted-ocr-recovery-job",
-        &exhausted_document.id,
-        IngestJobStatus::Running,
-        3,
-        3,
-    )
-    .started_at(stale_started)
-    .updated_at(stale_started);
-    exhausted.kind = IngestJobKind::OcrDocument;
     store.insert_ingest_job(&stale).unwrap();
     store.insert_ingest_job(&fresh).unwrap();
-    store.insert_ingest_job(&exhausted).unwrap();
 
     let recovered = store
         .recover_stale_running_ingest_jobs(recover_at, stale_before)
         .unwrap();
-    assert_eq!(recovered, 2);
+    assert_eq!(recovered, 1);
 
     let recovered_job = store.ingest_job_by_id(&stale.id).unwrap().unwrap();
     assert_eq!(recovered_job.status, IngestJobStatus::Interrupted);
@@ -1357,140 +1081,12 @@ fn stale_running_ingest_jobs_are_recovered_to_interrupted_for_retry() {
         store.ingest_job_by_id(&fresh.id).unwrap().unwrap().status,
         IngestJobStatus::Running
     );
-    let exhausted = store.ingest_job_by_id(&exhausted.id).unwrap().unwrap();
-    let classification = store
-        .document_classification_by_id(&exhausted_document.id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(exhausted.status, IngestJobStatus::FailedPermanent);
-    assert_eq!(classification.status, ClassificationStatus::Failed);
-
     let claimed = store.claim_next_job(claim_at).unwrap().unwrap();
     assert_eq!(claimed.id, stale.id);
     assert_eq!(claimed.status, IngestJobStatus::Running);
     assert_eq!(claimed.attempt_count, 2);
     assert_eq!(claimed.started_at, Some(claim_at));
     assert_eq!(store.claim_next_job(claim_at).unwrap(), None);
-}
-
-#[test]
-fn ocr_document_jobs_are_durable_idempotent_and_claimable_by_kind() {
-    let store = migrated_store();
-    let mut ocr_document = document(
-        "ocr-page-document-placeholder",
-        false,
-        DocumentStatus::OcrRequired,
-    );
-    upsert_ocr_backlog(&store, &ocr_document, 1_800_000_599);
-
-    let first = store
-        .enqueue_ocr_job_for_document(
-            &ocr_document.id,
-            UnixTimestamp::from_unix_seconds(1_800_000_600),
-        )
-        .unwrap();
-    let second = store
-        .enqueue_ocr_job_for_document(
-            &ocr_document.id,
-            UnixTimestamp::from_unix_seconds(1_800_000_601),
-        )
-        .unwrap();
-
-    assert!(first.scheduled);
-    assert!(!second.scheduled);
-    assert_eq!(first.job.id, second.job.id);
-    assert_eq!(first.job.kind, IngestJobKind::OcrDocument);
-    assert_eq!(store.status_summary().unwrap().ocr_jobs_queued, 1);
-
-    let claimed = store
-        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_800_000_700))
-        .unwrap()
-        .unwrap();
-    assert_eq!(claimed.job.id, first.job.id);
-    assert_eq!(claimed.job.kind, IngestJobKind::OcrDocument);
-    assert_eq!(claimed.job.status, IngestJobStatus::Running);
-    assert_eq!(claimed.job.attempt_count, 1);
-    assert_eq!(store.status_summary().unwrap().ocr_jobs_queued, 0);
-    let finish = |job, failure, at| {
-        store
-            .finish_ocr_attempt_failure(job, failure, UnixTimestamp::from_unix_seconds(at))
-            .unwrap()
-    };
-    assert_eq!(
-        finish(&claimed, OcrAttemptFailure::Retryable, 1_800_000_701),
-        OcrAttemptFailureOutcome::Retryable
-    );
-    let second = store
-        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_800_000_702))
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        finish(
-            &second,
-            OcrAttemptFailure::RetryableWithKind(IngestJobFailureKind::OcrPageBudgetExceeded),
-            1_800_000_703,
-        ),
-        OcrAttemptFailureOutcome::Retryable
-    );
-    let third = store
-        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_800_000_704))
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        finish(&claimed, OcrAttemptFailure::Permanent, 1_800_000_705),
-        OcrAttemptFailureOutcome::Superseded
-    );
-    assert_eq!(
-        finish(&third, OcrAttemptFailure::Retryable, 1_800_000_706),
-        OcrAttemptFailureOutcome::FailedPermanent
-    );
-    let terminal_document = store.document_by_id(&ocr_document.id).unwrap().unwrap();
-    let classification = store
-        .document_classification_by_id(&ocr_document.id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(terminal_document.status, DocumentStatus::FailedPermanent);
-    assert_eq!(classification.status, ClassificationStatus::Failed);
-    ocr_document.status = DocumentStatus::OcrRequired;
-    upsert_ocr_backlog(&store, &ocr_document, 1_800_000_707);
-    let requeued = store
-        .enqueue_ocr_job_for_document(
-            &ocr_document.id,
-            UnixTimestamp::from_unix_seconds(1_800_000_707),
-        )
-        .unwrap();
-    assert!(requeued.scheduled);
-    assert_eq!(
-        (requeued.job.attempt_count, requeued.job.max_attempts),
-        (3, 6)
-    );
-    let saturated_document = document(
-        "ocr-saturated-attempt-placeholder",
-        false,
-        DocumentStatus::OcrRequired,
-    );
-    upsert_ocr_backlog(&store, &saturated_document, 1_800_000_708);
-    let mut saturated_job = job(
-        "ocr-saturated-attempt-placeholder",
-        &saturated_document.id,
-        IngestJobStatus::FailedPermanent,
-        u32::MAX,
-        u32::MAX,
-    );
-    saturated_job.id =
-        IngestJobId::from_non_secret_parts(&["ocr-document", saturated_document.id.as_str()]);
-    saturated_job.kind = IngestJobKind::OcrDocument;
-    store.insert_ingest_job(&saturated_job).unwrap();
-    assert!(store
-        .enqueue_ocr_job_for_document(
-            &saturated_document.id,
-            UnixTimestamp::from_unix_seconds(1_800_000_709),
-        )
-        .is_err());
-    assert_eq!(
-        store.ingest_job_by_id(&saturated_job.id).unwrap().unwrap(),
-        saturated_job
-    );
 }
 
 #[test]
@@ -1512,7 +1108,7 @@ fn embedding_update_jobs_are_durable_idempotent_and_claimable_by_resume_version(
         let store = MetaStore::open(&db_path).unwrap();
         store.run_migrations().unwrap();
         store.upsert_document(&document).unwrap();
-        store.upsert_resume_version(&version).unwrap();
+        insert_resume_version(&store, &version);
         let mut unrelated_update_index = job(
             "embedding-update-unrelated-placeholder",
             &document.id,
@@ -1605,7 +1201,7 @@ fn embedding_update_jobs_are_scoped_by_model_and_dimension() {
     let complete_at = UnixTimestamp::from_unix_seconds(1_800_000_750);
 
     store.upsert_document(&document).unwrap();
-    store.upsert_resume_version(&version).unwrap();
+    insert_resume_version(&store, &version);
 
     let first = store
         .enqueue_embedding_job_for_resume_version(
@@ -1697,7 +1293,7 @@ fn completed_embedding_update_jobs_can_be_requeued_for_vector_snapshot_rebuild()
     let reclaim_at = UnixTimestamp::from_unix_seconds(1_800_000_800);
 
     store.upsert_document(&document).unwrap();
-    store.upsert_resume_version(&version).unwrap();
+    insert_resume_version(&store, &version);
     let enqueued = store
         .enqueue_embedding_job_for_resume_version(
             &document.id,
@@ -1853,12 +1449,12 @@ fn ocr_page_cache_rejects_invalid_keys_and_confidence() {
 }
 
 #[test]
-fn entity_mentions_replace_query_and_redact_values() {
+fn entity_mentions_insert_query_and_redact_values() {
     let store = migrated_store();
     let document = document("field-mention-document", false, DocumentStatus::Searchable);
     let version = resume_version("field-mention-version", document.id.clone());
     store.upsert_document(&document).unwrap();
-    store.upsert_resume_version(&version).unwrap();
+    insert_resume_version(&store, &version);
 
     let email = entity_mention(
         "email",
@@ -1879,15 +1475,15 @@ fn entity_mentions_replace_query_and_redact_values() {
         0.91,
     );
     store
-        .replace_entity_mentions(&version.id, &[email.clone(), skill.clone()])
+        .insert_entity_mentions(&version.id, &[email.clone(), skill.clone()])
         .unwrap();
 
     let mentions = store.entity_mentions_for_version(&version.id).unwrap();
     let mut expected_email = email;
     expected_email.raw_value = "<redacted:email>".to_string();
     expected_email.normalized_value = None;
-    assert_eq!(mentions, vec![expected_email, skill]);
-    assert_eq!(store.status_summary().unwrap().entity_mentions, 2);
+    assert_eq!(mentions, vec![expected_email.clone(), skill.clone()]);
+    assert_eq!(store.status_summary().unwrap().entity_mentions, 0);
     assert!(!format!("{:?}", mentions[0]).contains("Synthetic.Candidate"));
 
     let title = entity_mention(
@@ -1900,14 +1496,15 @@ fn entity_mentions_replace_query_and_redact_values() {
         0.82,
     );
     store
-        .replace_entity_mentions(&version.id, std::slice::from_ref(&title))
+        .insert_entity_mentions(&version.id, std::slice::from_ref(&title))
         .unwrap();
+    publish_active_versions(&store, &[&version]);
 
     assert_eq!(
         store.entity_mentions_for_version(&version.id).unwrap(),
-        vec![title]
+        vec![expected_email, skill, title]
     );
-    assert_eq!(store.status_summary().unwrap().entity_mentions, 1);
+    assert_eq!(store.status_summary().unwrap().entity_mentions, 3);
 }
 
 #[test]
@@ -1918,9 +1515,9 @@ fn entity_mentions_accept_major_values_for_searchable_prefilter() {
     let decoy_document = document("major-decoy-document", false, DocumentStatus::Searchable);
     let decoy_version = resume_version("major-decoy-version", decoy_document.id.clone());
     store.upsert_document(&target_document).unwrap();
-    store.upsert_resume_version(&target_version).unwrap();
+    insert_resume_version(&store, &target_version);
     store.upsert_document(&decoy_document).unwrap();
-    store.upsert_resume_version(&decoy_version).unwrap();
+    insert_resume_version(&store, &decoy_version);
 
     let target_major = entity_mention(
         "major-target",
@@ -1941,11 +1538,12 @@ fn entity_mentions_accept_major_values_for_searchable_prefilter() {
         0.92,
     );
     store
-        .replace_entity_mentions(&target_version.id, &[target_major])
+        .insert_entity_mentions(&target_version.id, &[target_major])
         .unwrap();
     store
-        .replace_entity_mentions(&decoy_version.id, &[decoy_major])
+        .insert_entity_mentions(&decoy_version.id, &[decoy_major])
         .unwrap();
+    publish_active_versions(&store, &[&target_version, &decoy_version]);
 
     let mentions = store
         .entity_mentions_for_version(&target_version.id)
@@ -1969,7 +1567,7 @@ fn entity_mentions_accept_major_values_for_searchable_prefilter() {
 }
 
 #[test]
-fn searchable_document_ids_without_entity_type_matches_visible_versions_only() {
+fn searchable_document_ids_without_entity_type_matches_active_projection_only() {
     let store = migrated_store();
     let no_tier_document = document("without-school-tier", false, DocumentStatus::Searchable);
     let known_tier_document = document("with-school-tier", false, DocumentStatus::Searchable);
@@ -2005,11 +1603,10 @@ fn searchable_document_ids_without_entity_type_matches_visible_versions_only() {
         "low-confidence-school-tier-version",
         low_confidence_document.id.clone(),
     );
-    let mut hidden_version = resume_version(
+    let hidden_version = resume_version(
         "hidden-school-tier-version",
         hidden_version_document.id.clone(),
     );
-    hidden_version.visibility = ResumeVisibility::Hidden;
     let discovered_version = resume_version(
         "discovered-without-tier-version",
         discovered_document.id.clone(),
@@ -2024,7 +1621,7 @@ fn searchable_document_ids_without_entity_type_matches_visible_versions_only() {
         &discovered_version,
         &deleted_version,
     ] {
-        store.upsert_resume_version(version).unwrap();
+        insert_resume_version(&store, version);
     }
 
     let known_tier = entity_mention(
@@ -2037,7 +1634,7 @@ fn searchable_document_ids_without_entity_type_matches_visible_versions_only() {
         0.95,
     );
     store
-        .replace_entity_mentions(&known_tier_version.id, &[known_tier])
+        .insert_entity_mentions(&known_tier_version.id, &[known_tier])
         .unwrap();
     let low_confidence_tier = entity_mention(
         "low-confidence-school-tier",
@@ -2049,8 +1646,16 @@ fn searchable_document_ids_without_entity_type_matches_visible_versions_only() {
         0.40,
     );
     store
-        .replace_entity_mentions(&low_confidence_version.id, &[low_confidence_tier])
+        .insert_entity_mentions(&low_confidence_version.id, &[low_confidence_tier])
         .unwrap();
+    publish_active_versions(
+        &store,
+        &[
+            &no_tier_version,
+            &known_tier_version,
+            &low_confidence_version,
+        ],
+    );
 
     let document_ids = store
         .searchable_document_ids_without_entity_type(EntityType::SchoolTier, 0.75)
@@ -2063,7 +1668,7 @@ fn searchable_document_ids_without_entity_type_matches_visible_versions_only() {
 }
 
 #[test]
-fn searchable_document_ids_with_date_range_overlap_matches_visible_versions_only() {
+fn searchable_document_ids_with_date_range_overlap_matches_active_projection_only() {
     let store = migrated_store();
     let overlapping_document = document("date-range-overlap", false, DocumentStatus::Searchable);
     let open_ended_document = document("date-range-open-ended", false, DocumentStatus::Searchable);
@@ -2103,11 +1708,10 @@ fn searchable_document_ids_with_date_range_overlap_matches_visible_versions_only
         "date-range-low-confidence-version",
         low_confidence_document.id.clone(),
     );
-    let mut hidden_version = resume_version(
+    let hidden_version = resume_version(
         "date-range-hidden-version",
         hidden_version_document.id.clone(),
     );
-    hidden_version.visibility = ResumeVisibility::Hidden;
     let deleted_version = resume_version("date-range-deleted-version", deleted_document.id.clone());
     for version in [
         &overlapping_version,
@@ -2117,7 +1721,7 @@ fn searchable_document_ids_with_date_range_overlap_matches_visible_versions_only
         &hidden_version,
         &deleted_version,
     ] {
-        store.upsert_resume_version(version).unwrap();
+        insert_resume_version(&store, version);
     }
 
     for (version, normalized_value, confidence) in [
@@ -2138,9 +1742,18 @@ fn searchable_document_ids_with_date_range_overlap_matches_visible_versions_only
             confidence,
         );
         store
-            .replace_entity_mentions(&version.id, &[mention])
+            .insert_entity_mentions(&version.id, &[mention])
             .unwrap();
     }
+    publish_active_versions(
+        &store,
+        &[
+            &overlapping_version,
+            &open_ended_version,
+            &before_version,
+            &low_confidence_version,
+        ],
+    );
 
     let document_ids = store
         .searchable_document_ids_with_date_range_overlap(2021 * 12 + 1, Some(2021 * 12 + 12), 0.75)
@@ -2164,7 +1777,7 @@ fn contact_entity_mentions_do_not_persist_contact_values() {
     );
     let version = resume_version("private-contact-mention-version", document.id.clone());
     store.upsert_document(&document).unwrap();
-    store.upsert_resume_version(&version).unwrap();
+    insert_resume_version(&store, &version);
 
     let email = entity_mention(
         "private-email",
@@ -2204,7 +1817,7 @@ fn contact_entity_mentions_do_not_persist_contact_values() {
     );
 
     store
-        .replace_entity_mentions(&version.id, &[email, phone, wechat, skill.clone()])
+        .insert_entity_mentions(&version.id, &[email, phone, wechat, skill.clone()])
         .unwrap();
 
     let mentions = store.entity_mentions_for_version(&version.id).unwrap();
@@ -2265,143 +1878,6 @@ fn contact_entity_mentions_do_not_persist_contact_values() {
     assert!(!raw_dump.contains("+14155550132"));
     assert!(!raw_dump.contains("Candidate_2026"));
     assert!(!raw_dump.contains("candidate_2026"));
-
-    remove_temp_db(&db_path);
-}
-
-#[test]
-fn schema_v6_redacts_existing_contact_entity_mentions() {
-    let db_path = temp_db_path("legacy-contact-mention");
-    let document = document(
-        "legacy-contact-mention-document",
-        false,
-        DocumentStatus::Searchable,
-    );
-    let version = resume_version("legacy-contact-mention-version", document.id.clone());
-    let email = entity_mention(
-        "legacy-email",
-        &version.id,
-        EntityType::Email,
-        "Legacy.Candidate@Example.Test",
-        Some("legacy.candidate@example.test"),
-        9..38,
-        0.99,
-    );
-    let phone = entity_mention(
-        "legacy-phone",
-        &version.id,
-        EntityType::Phone,
-        "(415) 555-0199",
-        Some("+14155550199"),
-        40..54,
-        0.98,
-    );
-    let skill = entity_mention(
-        "legacy-skill",
-        &version.id,
-        EntityType::Skill,
-        "Go",
-        Some("go"),
-        80..82,
-        0.91,
-    );
-
-    {
-        let store = MetaStore::open(&db_path).unwrap();
-        store.run_migrations().unwrap();
-        store.upsert_document(&document).unwrap();
-        store.upsert_resume_version(&version).unwrap();
-    }
-
-    {
-        let connection = open_raw_connection(&db_path);
-        connection
-            .execute(
-                "DELETE FROM schema_migrations WHERE version IN (6, 7, 15)",
-                [],
-            )
-            .unwrap();
-        connection
-            .execute("DROP TABLE IF EXISTS ocr_page_cache", [])
-            .unwrap();
-        for mention in [&email, &phone, &skill] {
-            connection
-                .execute(
-                    "\
-                    INSERT INTO entity_mention (
-                        id, resume_version_id, section_id, entity_type, raw_value,
-                        normalized_value, span_start, span_end, confidence, extractor
-                    )
-                    VALUES (?1, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                    params![
-                        mention.id.as_str(),
-                        mention.resume_version_id.as_str(),
-                        match mention.entity_type {
-                            EntityType::Email => "email",
-                            EntityType::Phone => "phone",
-                            EntityType::Skill => "skill",
-                            _ => unreachable!("test only uses email, phone, and skill"),
-                        },
-                        mention.raw_value.as_str(),
-                        mention.normalized_value.as_deref(),
-                        mention.span_start.unwrap() as i64,
-                        mention.span_end.unwrap() as i64,
-                        f64::from(mention.confidence),
-                        mention.extractor.as_str(),
-                    ],
-                )
-                .unwrap();
-        }
-
-        let legacy_dump = raw_entity_mention_value_dump(&connection);
-        assert!(legacy_dump.contains("Legacy.Candidate@Example.Test"));
-        assert!(legacy_dump.contains("legacy.candidate@example.test"));
-        assert!(legacy_dump.contains("(415) 555-0199"));
-        assert!(legacy_dump.contains("+14155550199"));
-    }
-
-    {
-        let reopened = MetaStore::open(&db_path).unwrap();
-        let report = reopened.run_migrations().unwrap();
-        assert_eq!(report.applied_versions(), &[6, 7, 15]);
-        assert_eq!(reopened.schema_version().unwrap(), 22);
-
-        let mentions = reopened.entity_mentions_for_version(&version.id).unwrap();
-        let email = mentions
-            .iter()
-            .find(|mention| mention.entity_type == EntityType::Email)
-            .expect("email mention");
-        assert_eq!(email.raw_value, "<redacted:email>");
-        assert_eq!(email.normalized_value, None);
-        assert_eq!(email.extractor, "rules-v1");
-        assert_eq!(email.span_start, Some(9));
-        assert_eq!(email.span_end, Some(38));
-
-        let phone = mentions
-            .iter()
-            .find(|mention| mention.entity_type == EntityType::Phone)
-            .expect("phone mention");
-        assert_eq!(phone.raw_value, "<redacted:phone>");
-        assert_eq!(phone.normalized_value, None);
-        assert_eq!(phone.extractor, "rules-v1");
-        assert_eq!(phone.span_start, Some(40));
-        assert_eq!(phone.span_end, Some(54));
-
-        assert!(mentions.iter().any(|mention| mention == &skill));
-    }
-
-    {
-        let connection = open_raw_connection(&db_path);
-        let raw_dump = raw_entity_mention_value_dump(&connection);
-        assert!(raw_dump.contains("<redacted:email>"));
-        assert!(raw_dump.contains("<redacted:phone>"));
-        assert!(raw_dump.contains("Go"));
-        assert!(raw_dump.contains("Some(\"go\")"));
-        assert!(!raw_dump.contains("Legacy.Candidate"));
-        assert!(!raw_dump.contains("legacy.candidate@example.test"));
-        assert!(!raw_dump.contains("555-0199"));
-        assert!(!raw_dump.contains("+14155550199"));
-    }
 
     remove_temp_db(&db_path);
 }
@@ -2514,64 +1990,7 @@ fn job_status_updates_set_timestamps_and_reject_terminal_transitions() {
 }
 
 #[test]
-fn index_state_persists_and_upserts_snapshot_status() {
-    let store = migrated_store();
-
-    assert_eq!(store.index_state().unwrap(), None);
-
-    let ready = IndexState {
-        manifest_version: "manifest-v1".to_string(),
-        snapshot_token: Some("snapshot-token-v1".to_string()),
-        status: IndexStateStatus::Ready,
-        updated_at: UnixTimestamp::from_unix_seconds(1_800_000_060),
-        visible_epoch: 1,
-        manifest_document_count: 3,
-    };
-    let stale = IndexState {
-        manifest_version: "manifest-v2".to_string(),
-        snapshot_token: Some("snapshot-token-v2".to_string()),
-        status: IndexStateStatus::Stale,
-        updated_at: UnixTimestamp::from_unix_seconds(1_800_000_120),
-        visible_epoch: 2,
-        manifest_document_count: 5,
-    };
-
-    store.upsert_index_state(&ready).unwrap();
-    assert_eq!(store.index_state().unwrap(), Some(ready));
-
-    store.upsert_index_state(&stale).unwrap();
-    assert_eq!(store.index_state().unwrap(), Some(stale));
-}
-
-#[test]
-fn migrations_add_visible_epoch_and_manifest_document_count_columns_to_index_state() {
-    let db_path = temp_db_path("index-state-visible-epoch-columns");
-
-    {
-        let store = MetaStore::open(&db_path).unwrap();
-        store.run_migrations().unwrap();
-    }
-
-    let connection = Connection::open(&db_path).unwrap();
-    let mut statement = connection
-        .prepare("PRAGMA table_info(index_state)")
-        .unwrap();
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .unwrap()
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .unwrap();
-
-    assert!(columns.iter().any(|column| column == "visible_epoch"));
-    assert!(columns
-        .iter()
-        .any(|column| column == "manifest_document_count"));
-
-    remove_temp_db(&db_path);
-}
-
-#[test]
-fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
+fn status_summary_aggregates_documents_jobs_imports_and_search_projection() {
     let store = migrated_store();
     let now = UnixTimestamp::from_unix_seconds(1_800_000_000);
     let searchable = document(
@@ -2617,9 +2036,11 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
     ] {
         store.upsert_document(&document).unwrap();
     }
+    let searchable_version = resume_version("status-searchable-version", searchable.id.clone());
+    insert_resume_version(&store, &searchable_version);
     let embedding_version =
         resume_version("status-embedding-version", embedding_waiting.id.clone());
-    store.upsert_resume_version(&embedding_version).unwrap();
+    insert_resume_version(&store, &embedding_version);
     store
         .enqueue_embedding_job_for_resume_version(
             &embedding_waiting.id,
@@ -2629,30 +2050,6 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
             now,
         )
         .unwrap();
-    let mut ocr_language_job = job(
-        "status-ocr-language-placeholder",
-        &ocr_required.id,
-        IngestJobStatus::FailedRetryable,
-        1,
-        3,
-    );
-    ocr_language_job.kind = IngestJobKind::OcrDocument;
-    store.insert_ingest_job(&ocr_language_job).unwrap();
-    let ocr_language_cache_key = OcrPageCacheKey::new(
-        ocr_required.content_hash.clone().unwrap(),
-        1,
-        300,
-        "eng+chi_sim",
-        "balanced",
-    )
-    .unwrap();
-    let ocr_language_cache_entry =
-        OcrPageCacheEntry::failed_retryable(ocr_language_cache_key, "LanguageUnavailable", now)
-            .unwrap();
-    store
-        .upsert_ocr_page_cache_entry(&ocr_language_cache_entry)
-        .unwrap();
-
     let running = job(
         "status-running-placeholder",
         &searchable.id,
@@ -2676,38 +2073,27 @@ fn status_summary_aggregates_documents_jobs_imports_and_index_state() {
             ImportTaskStatus::Queued,
         ))
         .unwrap();
-    store
-        .upsert_index_state(&IndexState {
-            manifest_version: "manifest-v1".to_string(),
-            snapshot_token: Some("snapshot-v1".to_string()),
-            status: IndexStateStatus::Building,
-            updated_at: now,
-            visible_epoch: 0,
-            manifest_document_count: 0,
-        })
-        .unwrap();
+    publish_active_versions(&store, &[&searchable_version]);
 
     let summary = store.status_summary().unwrap();
 
-    assert_eq!(summary.indexed_documents, 2);
+    assert_eq!(summary.indexed_documents, 1);
     assert_eq!(summary.searchable_documents, 1);
     assert_eq!(summary.partial_documents, 1);
     assert_eq!(summary.failed_retryable, 1);
     assert_eq!(summary.failed_permanent, 1);
     assert_eq!(summary.ocr_queue_depth, 1);
     assert_eq!(summary.embedding_queue_depth, 1);
-    assert_eq!(summary.recovery_queue_depth, 2);
+    assert_eq!(summary.recovery_queue_depth, 1);
     assert_eq!(summary.import_tasks_queued, 1);
     assert_eq!(summary.import_tasks_recoverable, 0);
-    assert_eq!(summary.ocr_jobs_queued, 1);
-    assert_eq!(summary.ocr_language_unavailable, 1);
-    assert_eq!(summary.index_health, IndexStateStatus::Building);
-    assert_eq!(summary.last_snapshot_id.as_deref(), Some("snapshot-v1"));
-
-    store
-        .update_job_status(&ocr_language_job.id, IngestJobStatus::FailedPermanent, now)
-        .unwrap();
-    assert_eq!(store.status_summary().unwrap().ocr_language_unavailable, 1);
+    assert_eq!(summary.ocr_jobs_queued, 0);
+    assert_eq!(summary.ocr_language_unavailable, 0);
+    assert_eq!(summary.index_health, IndexStateStatus::Ready);
+    assert_eq!(
+        summary.last_snapshot_id.as_deref(),
+        Some("s3-active-projection")
+    );
 }
 
 #[test]
@@ -2743,45 +2129,6 @@ fn query_observations_are_aggregated_without_query_text() {
 }
 
 #[test]
-fn ocr_job_failure_kind_persists_reports_and_clears_on_retry_claim() {
-    let store = migrated_store();
-    let now = UnixTimestamp::from_unix_seconds(1_800_010_000);
-    let document = document(
-        "ocr-page-budget-document-placeholder",
-        false,
-        DocumentStatus::OcrRequired,
-    );
-    upsert_ocr_backlog(&store, &document, now.as_unix_seconds());
-    let job = store
-        .enqueue_ocr_job_for_document(&document.id, now)
-        .unwrap()
-        .job;
-    let claimed = store.claim_next_ocr_job(now).unwrap().unwrap();
-    store
-        .finish_ocr_attempt_failure(
-            &claimed,
-            OcrAttemptFailure::RetryableWithKind(IngestJobFailureKind::OcrPageBudgetExceeded),
-            now,
-        )
-        .unwrap();
-
-    let persisted = store.ingest_job_by_id(&job.id).unwrap().unwrap();
-    assert_eq!(
-        persisted.failure_kind,
-        Some(IngestJobFailureKind::OcrPageBudgetExceeded)
-    );
-    assert_eq!(store.status_summary().unwrap().ocr_page_budget_blocked, 1);
-
-    let claimed = store
-        .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_800_010_050))
-        .unwrap()
-        .unwrap();
-    assert_eq!(claimed.job.status, IngestJobStatus::Running);
-    assert_eq!(claimed.job.failure_kind, None);
-    assert_eq!(store.status_summary().unwrap().ocr_page_budget_blocked, 0);
-}
-
-#[test]
 fn import_tasks_persist_without_document_foreign_key() {
     let db_path = temp_db_path("import-task-placeholder");
     let task = import_task(
@@ -2803,7 +2150,7 @@ fn import_tasks_persist_without_document_foreign_key() {
     {
         let reopened = MetaStore::open(&db_path).unwrap();
         reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 22);
+        assert_eq!(reopened.schema_version().unwrap(), 27);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -2815,7 +2162,7 @@ fn import_tasks_persist_without_document_foreign_key() {
 fn purge_import_tasks_for_deleted_document_roots_keeps_roots_with_visible_documents() {
     let store = migrated_store();
     let root_path = "synthetic/import/root";
-    let mut first_document = document("purge-import-root-first", false, DocumentStatus::Searchable);
+    let mut first_document = document("purge-import-root-first", true, DocumentStatus::Deleted);
     let mut second_document = document(
         "purge-import-root-second",
         false,
@@ -2832,13 +2179,6 @@ fn purge_import_tasks_for_deleted_document_roots_keeps_roots_with_visible_docume
     store.upsert_document(&first_document).unwrap();
     store.upsert_document(&second_document).unwrap();
     store.insert_import_task(&task).unwrap();
-    store
-        .mark_document_deleted(
-            &first_document.id,
-            UnixTimestamp::from_unix_seconds(1_800_014_010),
-        )
-        .unwrap();
-
     let retained = store
         .purge_import_tasks_for_deleted_document_roots(std::slice::from_ref(&first_document.id))
         .unwrap();
@@ -2846,12 +2186,10 @@ fn purge_import_tasks_for_deleted_document_roots_keeps_roots_with_visible_docume
     assert_eq!(retained.tasks(), 0);
     assert!(store.import_task_by_id(&task.id).unwrap().is_some());
 
-    store
-        .mark_document_deleted(
-            &second_document.id,
-            UnixTimestamp::from_unix_seconds(1_800_014_020),
-        )
-        .unwrap();
+    second_document.is_deleted = true;
+    second_document.status = DocumentStatus::Deleted;
+    second_document.updated_at = UnixTimestamp::from_unix_seconds(1_800_014_020);
+    store.upsert_document(&second_document).unwrap();
     let purged = store
         .purge_import_tasks_for_deleted_document_roots(&[first_document.id, second_document.id])
         .unwrap();
@@ -2863,11 +2201,7 @@ fn purge_import_tasks_for_deleted_document_roots_keeps_roots_with_visible_docume
 #[test]
 fn purge_import_tasks_matches_windows_canonical_root_to_normalized_document_path() {
     let store = migrated_store();
-    let mut document = document(
-        "purge-import-root-windows",
-        false,
-        DocumentStatus::Searchable,
-    );
+    let mut document = document("purge-import-root-windows", true, DocumentStatus::Deleted);
     document.source_uri = "file://c:/Synthetic/Import Root/resume.docx".to_string();
     document.normalized_path = "c:/Synthetic/Import Root/resume.docx".to_string();
     let task = import_task(
@@ -2878,13 +2212,6 @@ fn purge_import_tasks_matches_windows_canonical_root_to_normalized_document_path
 
     store.upsert_document(&document).unwrap();
     store.insert_import_task(&task).unwrap();
-    store
-        .mark_document_deleted(
-            &document.id,
-            UnixTimestamp::from_unix_seconds(1_800_014_030),
-        )
-        .unwrap();
-
     let purged = store
         .purge_import_tasks_for_deleted_document_roots(std::slice::from_ref(&document.id))
         .unwrap();
@@ -3263,124 +2590,6 @@ fn import_task_api_rejects_invalid_lifecycle_timestamps() {
 }
 
 #[test]
-fn existing_schema_v1_database_upgrades_to_v2_without_losing_documents() {
-    let db_path = temp_db_path("v1-upgrade-placeholder");
-    let document = document(
-        "v1-upgrade-document-placeholder",
-        false,
-        DocumentStatus::Discovered,
-    );
-    let task = import_task(
-        "v1-upgrade-import-placeholder",
-        "synthetic/import/root",
-        ImportTaskStatus::Queued,
-    );
-
-    {
-        let store = MetaStore::open(&db_path).unwrap();
-        store.run_migrations().unwrap();
-        store.upsert_document(&document).unwrap();
-    }
-
-    {
-        let connection = open_raw_connection(&db_path);
-        connection.execute("DROP TABLE import_task", []).unwrap();
-        connection.execute("DROP TABLE entity_mention", []).unwrap();
-        connection.execute("DROP TABLE candidate", []).unwrap();
-        connection.execute("DROP TABLE ocr_page_cache", []).unwrap();
-        connection
-            .execute("DROP TABLE worker_task_control", [])
-            .unwrap();
-        connection
-            .execute("DROP TABLE import_scan_scope", [])
-            .unwrap();
-        connection
-            .execute("DROP TABLE import_scan_error", [])
-            .unwrap();
-        connection
-            .execute("DROP TABLE embedding_job_spec", [])
-            .unwrap();
-        connection
-            .execute(
-                "DROP INDEX IF EXISTS ingest_job_ocr_document_unique_idx",
-                [],
-            )
-            .unwrap();
-        connection
-            .execute("DROP INDEX IF EXISTS resume_version_candidate_idx", [])
-            .unwrap();
-        connection
-            .execute(
-                "DROP INDEX IF EXISTS ingest_job_embedding_version_unique_idx",
-                [],
-            )
-            .unwrap();
-        connection
-            .execute("DROP INDEX IF EXISTS ingest_job_embedding_queue_idx", [])
-            .unwrap();
-        connection
-            .execute(
-                "DELETE FROM schema_migrations WHERE version IN (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15)",
-                [],
-            )
-            .unwrap();
-    }
-
-    {
-        let reopened = MetaStore::open(&db_path).unwrap();
-        let report = reopened.run_migrations().unwrap();
-        assert_eq!(
-            report.applied_versions(),
-            &[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15]
-        );
-        assert_eq!(reopened.schema_version().unwrap(), 22);
-        assert_eq!(
-            reopened.document_by_id(&document.id).unwrap(),
-            Some(document.clone())
-        );
-        assert_eq!(
-            reopened
-                .document_classification_by_id(&document.id)
-                .unwrap(),
-            None
-        );
-
-        reopened.insert_import_task(&task).unwrap();
-        assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
-    }
-
-    remove_temp_db(&db_path);
-}
-
-#[test]
-fn file_backed_store_reopens_schema_and_index_state() {
-    let db_path = temp_db_path("file-backed-placeholder");
-    let state = IndexState {
-        manifest_version: "manifest-file-v1".to_string(),
-        snapshot_token: Some("snapshot-file-token-v1".to_string()),
-        status: IndexStateStatus::Ready,
-        updated_at: UnixTimestamp::from_unix_seconds(1_800_000_180),
-        visible_epoch: 7,
-        manifest_document_count: 11,
-    };
-
-    {
-        let store = MetaStore::open(&db_path).unwrap();
-        store.run_migrations().unwrap();
-        store.upsert_index_state(&state).unwrap();
-    }
-
-    {
-        let reopened = MetaStore::open(&db_path).unwrap();
-        assert!(reopened.foreign_keys_enabled().unwrap());
-        assert_eq!(reopened.schema_version().unwrap(), 22);
-        assert_eq!(reopened.index_state().unwrap(), Some(state));
-    }
-
-    remove_temp_db(&db_path);
-}
-
-#[test]
 fn file_backed_connection_sets_pragmas() {
     let db_path = temp_db_path("pragma-placeholder");
     {
@@ -3406,6 +2615,9 @@ fn raw_sql_invalid_enum_and_quality_values_are_rejected() {
             DocumentStatus::Discovered,
         );
         store.upsert_document(&document).unwrap();
+        store
+            .insert_source_revision(&source_revision(&document.id))
+            .unwrap();
     }
 
     {
@@ -3414,6 +2626,8 @@ fn raw_sql_invalid_enum_and_quality_values_are_rejected() {
             DocumentId::from_non_secret_parts(&["s3", "checks-document-placeholder"]);
         let valid_version_id =
             ResumeVersionId::from_non_secret_parts(&["s3", "checks-version-valid"]);
+        let revision = source_revision(&valid_document_id);
+        let normalized_text_hash = ContentDigest::from_bytes(b"checks-normalized-text");
 
         expect_raw_rejection(connection.execute(
             "\
@@ -3429,22 +2643,16 @@ fn raw_sql_invalid_enum_and_quality_values_are_rejected() {
         expect_raw_rejection(connection.execute(
             "\
             INSERT INTO resume_version (
-                id, document_id, parse_version, schema_version, language_set_json,
-                quality_score, visibility
+                id, document_id, source_revision_id, normalized_text_hash,
+                parse_version, schema_version, language_set_json, clean_text, quality_score
             )
-            VALUES (?1, ?2, 'parser-v1', 'schema-v1', '[]', 1.5, 'searchable')",
-            params![valid_version_id.as_str(), valid_document_id.as_str()],
-        ));
-
-        expect_raw_rejection(connection.execute(
-            "\
-            INSERT INTO resume_version (
-                id, document_id, parse_version, schema_version, language_set_json, visibility
-            )
-            VALUES (?1, ?2, 'parser-v1', 'schema-v1', '[]', 'not_visibility')",
+            VALUES (?1, ?2, ?3, ?4, 'parser-v1', 'schema-v27', '[]',
+                    'checks-normalized-text', 1.5)",
             params![
-                ResumeVersionId::from_non_secret_parts(&["s3", "invalid-visibility"]).as_str(),
+                valid_version_id.as_str(),
                 valid_document_id.as_str(),
+                revision.id.as_str(),
+                normalized_text_hash.as_str(),
             ],
         ));
 
@@ -3476,8 +2684,9 @@ fn raw_sql_invalid_enum_and_quality_values_are_rejected() {
 
         expect_raw_rejection(connection.execute(
             "\
-            INSERT INTO index_state (state_key, manifest_version, status, updated_at_seconds)
-            VALUES ('default', 'manifest-invalid', 'not_index_status', 1)",
+            UPDATE search_projection_state
+            SET service_state = 'not_a_service_state'
+            WHERE state_key = 'default'",
             [],
         ));
 
@@ -3554,10 +2763,10 @@ fn foreign_keys_reject_missing_parents_and_delete_cascades_children() {
         3,
     )
     .resume_version_id(version.id.clone());
-    let classification = DocumentClassificationRecord {
-        document_id: document.id.clone(),
+    let classification = ResumeVersionClassification {
+        resume_version_id: version.id.clone(),
         status: ClassificationStatus::ResumeCandidate,
-        classifier_epoch: "precision_first_v1".to_string(),
+        classifier_epoch: CLASSIFIER_EPOCH.to_string(),
         reason_codes: vec![ReasonCode::CorroboratedResumeSignals],
         classified_at: UnixTimestamp::from_unix_seconds(1_800_000_001),
         review_disposition: ReviewDisposition::NotRequired,
@@ -3566,26 +2775,28 @@ fn foreign_keys_reject_missing_parents_and_delete_cascades_children() {
     {
         let store = MetaStore::open(&db_path).unwrap();
         store.run_migrations().unwrap();
-        let missing_parent = resume_version(
-            "fk-missing-parent-placeholder",
-            DocumentId::from_non_secret_parts(&["s3", "missing-parent"]),
-        );
-        assert_redacted_store_error(store.upsert_resume_version(&missing_parent).unwrap_err());
+        let missing_parent = source_revision(&DocumentId::from_non_secret_parts(&[
+            "s3",
+            "missing-parent",
+        ]));
+        assert_redacted_store_error(store.insert_source_revision(&missing_parent).unwrap_err());
 
         store.upsert_document(&document).unwrap();
-        store.upsert_resume_version(&version).unwrap();
+        insert_resume_version(&store, &version);
         store.insert_ingest_job(&ingest_job).unwrap();
         store
-            .upsert_document_classification(&classification)
+            .insert_resume_version_classification(&classification)
             .unwrap();
     }
 
     {
         let connection = open_raw_connection(&db_path);
         for statement in [
-            "UPDATE document_classification SET classifier_epoch = 'Invalid-Epoch'",
-            "UPDATE document_classification SET status = 'needs_review'",
-            "INSERT INTO document_classification_reason SELECT document_id, 1, 'unknown_reason' FROM document_classification",
+            "UPDATE resume_version_classification SET classifier_epoch = 'Invalid-Epoch'",
+            "UPDATE resume_version_classification SET status = 'needs_review'",
+            "INSERT INTO resume_version_classification_reason
+             SELECT resume_version_id, classifier_epoch, 1, 'unknown_reason'
+             FROM resume_version_classification",
         ] {
             assert!(connection.execute(statement, []).is_err());
         }
@@ -3604,7 +2815,7 @@ fn foreign_keys_reject_missing_parents_and_delete_cascades_children() {
         assert_eq!(reopened.ingest_job_by_id(&ingest_job.id).unwrap(), None);
         assert_eq!(
             reopened
-                .document_classification_by_id(&document.id)
+                .resume_version_classification(&version.id, CLASSIFIER_EPOCH)
                 .unwrap(),
             None
         );
@@ -3662,7 +2873,7 @@ fn file_backed_store_recovers_unfinished_jobs_after_reopen() {
         let store = MetaStore::open(&db_path).unwrap();
         store.run_migrations().unwrap();
         store.upsert_document(&document).unwrap();
-        store.upsert_resume_version(&version).unwrap();
+        insert_resume_version(&store, &version);
         for ingest_job in [
             running.clone(),
             interrupted.clone(),
@@ -3720,7 +2931,16 @@ fn temp_data_dir(label: &str) -> PathBuf {
         .as_nanos();
     let path = std::env::temp_dir().join(format!("resume-ir-s3-{label}-{unique}"));
     fs::create_dir_all(&path).unwrap();
+    #[cfg(unix)]
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
     path
+}
+
+fn set_owner_only_file_permissions(path: &PathBuf) {
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 fn remove_temp_db(db_path: &PathBuf) {
@@ -3736,6 +2956,7 @@ fn remove_temp_dir(path: &PathBuf) {
 fn document(label: &str, is_deleted: bool, status: DocumentStatus) -> Document {
     let now = UnixTimestamp::from_unix_seconds(1_800_000_000);
     let id = DocumentId::from_non_secret_parts(&["s3", label]);
+    let content_hash = ContentDigest::from_bytes(id.as_str().as_bytes());
 
     Document {
         id,
@@ -3745,8 +2966,12 @@ fn document(label: &str, is_deleted: bool, status: DocumentStatus) -> Document {
         extension: FileExtension::Txt,
         byte_size: 128,
         mtime: now,
-        content_hash: Some(format!("sha256:SYNTHETIC_CONTENT_HASH_{label}")),
-        text_hash: Some(format!("sha256:SYNTHETIC_TEXT_HASH_{label}")),
+        content_hash: Some(content_hash.as_str().to_string()),
+        text_hash: Some(
+            ContentDigest::from_bytes(label.as_bytes())
+                .as_str()
+                .to_string(),
+        ),
         is_deleted,
         created_at: now,
         updated_at: now,
@@ -3755,19 +2980,155 @@ fn document(label: &str, is_deleted: bool, status: DocumentStatus) -> Document {
 }
 
 fn resume_version(label: &str, document_id: DocumentId) -> ResumeVersion {
+    let revision = source_revision(&document_id);
+    let clean_text = format!("SYNTHETIC CLEAN TEXT {label}");
+    let normalized_text_hash = ContentDigest::from_bytes(clean_text.as_bytes());
     ResumeVersion {
-        id: ResumeVersionId::from_non_secret_parts(&["s3", label]),
+        id: ResumeVersionId::from_content_identity(
+            &document_id,
+            &revision.id,
+            &normalized_text_hash,
+            "parser-v1",
+            "schema-v27",
+        ),
         document_id,
-        candidate_id: None,
+        source_revision_id: revision.id,
+        normalized_text_hash,
         parse_version: "parser-v1".to_string(),
-        schema_version: "schema-v1".to_string(),
+        schema_version: "schema-v27".to_string(),
         language_set: vec!["en".to_string()],
         page_count: Some(1),
-        raw_text: Some("SYNTHETIC RAW TEXT".to_string()),
-        clean_text: Some("SYNTHETIC CLEAN TEXT".to_string()),
+        raw_text: Some(format!("SYNTHETIC RAW TEXT {label}")),
+        clean_text: Some(clean_text),
         quality_score: Some(0.8),
-        visibility: ResumeVisibility::Searchable,
     }
+}
+
+fn set_resume_text(version: &mut ResumeVersion, clean_text: &str) {
+    version.clean_text = Some(clean_text.to_string());
+    version.normalized_text_hash = ContentDigest::from_bytes(clean_text.as_bytes());
+    version.id = ResumeVersionId::from_content_identity(
+        &version.document_id,
+        &version.source_revision_id,
+        &version.normalized_text_hash,
+        &version.parse_version,
+        &version.schema_version,
+    );
+}
+
+fn source_revision(document_id: &DocumentId) -> SourceRevision {
+    SourceRevision::for_content(
+        document_id.clone(),
+        ContentDigest::from_bytes(document_id.as_str().as_bytes()),
+        128,
+    )
+}
+
+fn insert_resume_version(store: &MetaStore, version: &ResumeVersion) {
+    let revision = source_revision(&version.document_id);
+    assert_eq!(version.source_revision_id, revision.id);
+    assert!(matches!(
+        store.insert_source_revision(&revision).unwrap(),
+        IdentityInsertOutcome::Inserted | IdentityInsertOutcome::AlreadyPresent
+    ));
+    assert!(matches!(
+        store.insert_resume_version(version).unwrap(),
+        IdentityInsertOutcome::Inserted | IdentityInsertOutcome::AlreadyPresent
+    ));
+}
+
+fn publish_active_versions(store: &MetaStore, versions: &[&ResumeVersion]) {
+    let projections = versions
+        .iter()
+        .map(|version| ActiveSearchProjection {
+            document_id: version.document_id.clone(),
+            resume_version_id: version.id.clone(),
+        })
+        .collect::<Vec<_>>();
+    for version in versions {
+        assert!(matches!(
+            store
+                .insert_resume_version_classification(&ResumeVersionClassification {
+                    resume_version_id: version.id.clone(),
+                    status: ClassificationStatus::ResumeCandidate,
+                    classifier_epoch: CLASSIFIER_EPOCH.to_string(),
+                    reason_codes: vec![ReasonCode::CorroboratedResumeSignals],
+                    classified_at: UnixTimestamp::from_unix_seconds(1_800_000_001),
+                    review_disposition: ReviewDisposition::NotRequired,
+                })
+                .unwrap(),
+            IdentityInsertOutcome::Inserted | IdentityInsertOutcome::AlreadyPresent
+        ));
+    }
+    let projection_digest =
+        SearchProjectionDigest::from_pairs(projections.iter().map(|projection| {
+            (
+                projection.document_id.as_str(),
+                projection.resume_version_id.as_str(),
+            )
+        }))
+        .unwrap();
+    let generation = "s3-active-projection";
+    assert_eq!(
+        store
+            .begin_search_publication(&SearchPublicationDraft {
+                generation: generation.to_string(),
+                base_generation: None,
+                expected_visible_epoch: 0,
+                classifier_epoch: CLASSIFIER_EPOCH.to_string(),
+                projection_digest: projection_digest.clone(),
+                now: UnixTimestamp::from_unix_seconds(1_800_000_010),
+            })
+            .unwrap(),
+        SearchPublicationOutcome::Applied
+    );
+    let fulltext = FullTextSnapshotDescriptor::new(
+        generation.to_string(),
+        projections.len() as u64,
+        projection_digest.clone(),
+        ContentDigest::from_bytes(b"s3-fulltext-snapshot"),
+    );
+    let vector = VectorSnapshotDescriptor::disabled(
+        generation.to_string(),
+        projections.len() as u64,
+        projection_digest,
+        SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap(),
+        ContentDigest::from_bytes(b"s3-vector-snapshot"),
+    );
+    store
+        .validate_search_publication(&SearchPublicationValidation {
+            generation,
+            fulltext: &fulltext,
+            vector: &vector,
+            now: UnixTimestamp::from_unix_seconds(1_800_000_020),
+        })
+        .unwrap();
+    let terminal_documents = versions
+        .iter()
+        .map(|version| {
+            let document = store.document_by_id(&version.document_id).unwrap().unwrap();
+            TerminalDocumentUpdate {
+                document_id: document.id,
+                expected_status: document.status,
+                expected_is_deleted: document.is_deleted,
+                expected_content_hash: source_revision(&version.document_id).content_hash,
+                terminal_status: DocumentStatus::Searchable,
+                terminal_is_deleted: false,
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        store
+            .commit_search_publication(&SearchPublicationCommit {
+                generation,
+                terminal_documents: &terminal_documents,
+                projections: &projections,
+                vector_coverage: &[],
+                now: UnixTimestamp::from_unix_seconds(1_800_000_030),
+            })
+            .unwrap(),
+        SearchPublicationOutcome::Applied
+    );
 }
 
 fn contact_hash(hex: char) -> ContactHash {
@@ -3821,20 +3182,6 @@ fn job(
         updated_at: now,
         failure_kind: None,
     }
-}
-
-fn upsert_ocr_backlog(store: &MetaStore, document: &Document, classified_at: i64) {
-    store.upsert_document(document).unwrap();
-    store
-        .upsert_document_classification(&DocumentClassificationRecord {
-            document_id: document.id.clone(),
-            status: ClassificationStatus::OcrBacklog,
-            classifier_epoch: CLASSIFIER_EPOCH.to_string(),
-            reason_codes: vec![ReasonCode::OcrRequired],
-            classified_at: UnixTimestamp::from_unix_seconds(classified_at),
-            review_disposition: ReviewDisposition::NotRequired,
-        })
-        .unwrap();
 }
 
 fn import_task(label: &str, root_path: &str, status: ImportTaskStatus) -> ImportTask {

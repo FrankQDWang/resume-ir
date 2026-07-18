@@ -13,6 +13,10 @@ use core_domain::ContactHash;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
+mod redaction;
+
+pub use redaction::redact_contact_values;
+
 const CONTACT_HASH_KEY_LEN: usize = 32;
 const CONTACT_HASH_KEY_HEX_LEN: usize = CONTACT_HASH_KEY_LEN * 2;
 const CONTACT_HASH_KEY_PATH: &[&str] = &["secrets", "contact-hash-key-v1"];
@@ -524,12 +528,12 @@ fn key_permissions_are_weak(path: &Path) -> Result<bool> {
     }
 }
 
-fn restrict_key_permissions(path: &Path) -> Result<()> {
+fn restrict_key_permissions(_path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
 
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        fs::set_permissions(_path, fs::Permissions::from_mode(0o600))
             .map_err(PrivacyError::storage)?;
     }
 

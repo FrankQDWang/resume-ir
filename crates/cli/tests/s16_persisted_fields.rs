@@ -40,7 +40,7 @@ fn filtered_search_uses_persisted_field_mentions_without_reextracting_clean_text
     for mut version in versions {
         version.raw_text = None;
         version.clean_text = None;
-        store.upsert_resume_version(&version).unwrap();
+        assert!(store.insert_resume_version(&version).is_err());
     }
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))

@@ -33,6 +33,7 @@ nightly_workflow=".github/workflows/bench-nightly.yml"
 platform_workflow=".github/workflows/ci-platform.yml"
 release_workflow=".github/workflows/release.yml"
 verify_script="scripts/ci/verify-local.sh"
+search_runtime_boundary_script="scripts/ci/check-search-runtime-boundary.py"
 cli_closed_loop_script="scripts/ci/check-cli-closed-loop.sh"
 daemon_closed_loop_script="scripts/ci/check-daemon-closed-loop.sh"
 daemon_incremental_script="scripts/ci/check-daemon-incremental-import.sh"
@@ -49,7 +50,7 @@ local_ocr_runtime_script="scripts/ci/check-local-ocr-runtime.sh"
 local_diagnostics_evidence_script="scripts/ci/check-local-diagnostics-release-evidence.sh"
 local_quality_evidence_script="scripts/ci/check-local-quality-release-evidence.sh"
 
-for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$daemon_incremental_script" "$benchmark_smoke_script" "$runtime_bundle_policy_script" "$runtime_bundle_manifest_script" "$runtime_bundle_payload_script" "$runtime_bundle_sbom_script" "$runtime_bundle_package_script" "$current_stage_handoff_script" "$current_stage_validation_script" "$current_stage_observability_script" "$local_ocr_runtime_script" "$local_diagnostics_evidence_script" "$local_quality_evidence_script"; do
+for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script" "$search_runtime_boundary_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$daemon_incremental_script" "$benchmark_smoke_script" "$runtime_bundle_policy_script" "$runtime_bundle_manifest_script" "$runtime_bundle_payload_script" "$runtime_bundle_sbom_script" "$runtime_bundle_package_script" "$current_stage_handoff_script" "$current_stage_validation_script" "$current_stage_observability_script" "$local_ocr_runtime_script" "$local_diagnostics_evidence_script" "$local_quality_evidence_script"; do
   require_file "$file"
 done
 
@@ -63,6 +64,8 @@ require_text "$pr_workflow" "Benchmark smoke"
 require_text "$pr_workflow" "./scripts/ci/check-benchmark-smoke.sh"
 require_text "$pr_workflow" "Current-stage handoff check"
 require_text "$pr_workflow" "./scripts/ci/check-current-stage-handoff.sh"
+require_text "$pr_workflow" "Search runtime boundary check"
+require_text "$pr_workflow" "python3 scripts/ci/check-search-runtime-boundary.py"
 require_text "$pr_workflow" "check-workflows.sh"
 require_text "$pr_workflow" "actions/checkout@v6"
 
@@ -90,6 +93,7 @@ require_text "$platform_workflow" "cargo test --workspace --locked"
 require_text "$platform_workflow" "actions/checkout@v6"
 
 require_text "$verify_script" "./scripts/ci/check-workflows.sh"
+require_text "$verify_script" "python3 scripts/ci/check-search-runtime-boundary.py"
 require_text "$verify_script" "./scripts/ci/check-cli-closed-loop.sh"
 require_text "$verify_script" "./scripts/ci/check-daemon-closed-loop.sh"
 require_text "$verify_script" "./scripts/ci/check-daemon-incremental-import.sh"
@@ -116,14 +120,25 @@ require_text "$verify_script" "./scripts/ci/check-windows-package.sh"
 require_text "$verify_script" "./scripts/ci/check-windows-installer-evidence.sh"
 require_text "$verify_script" "./scripts/ci/check-windows-service-evidence.sh"
 
+require_text "$search_runtime_boundary_script" 'FACADE_PACKAGE = "search-runtime"'
+require_text "$search_runtime_boundary_script" 'PRODUCTION_CONSUMERS = ("resume-daemon", "resume-cli")'
+require_text "$search_runtime_boundary_script" 'FORBIDDEN_DIRECT_DEPENDENCIES = {"index-fulltext", "index-vector"}'
+require_text "$search_runtime_boundary_script" '"SnapshotReadLease"'
+require_text "$search_runtime_boundary_script" '"FullTextIndex::open_*"'
+require_text "$search_runtime_boundary_script" '"VectorSnapshotRoot"'
+require_text "$search_runtime_boundary_script" '"VectorSnapshotReader"'
+require_text "$search_runtime_boundary_script" '"PersistentVectorSearchIndex"'
+require_text "$search_runtime_boundary_script" '"PersistentVectorIndex"'
+require_text "$search_runtime_boundary_script" '"with_search_metadata_snapshot"'
+require_text "$search_runtime_boundary_script" '"validated_active_projections"'
+require_text "$search_runtime_boundary_script" '"latest_visible_resume_version_for_document"'
+require_text "$search_runtime_boundary_script" "search-runtime boundary self-test passed"
+
 require_text "$cli_closed_loop_script" "resume-cli"
 require_text "$cli_closed_loop_script" "import --root"
 require_text "$cli_closed_loop_script" "search Java --top-k 20"
 require_text "$cli_closed_loop_script" "search Java --degree bachelor --skills-any java --top-k 20"
 require_text "$cli_closed_loop_script" "ocr-worker --once --command"
-require_text "$cli_closed_loop_script" "embed-worker --once --command"
-require_text "$cli_closed_loop_script" "--mode semantic"
-require_text "$cli_closed_loop_script" "--mode hybrid"
 require_text "$cli_closed_loop_script" "export-diagnostics --redact"
 require_text "$cli_closed_loop_script" "CLIClosedLoopOCRToken"
 require_text "$cli_closed_loop_script" "cli closed-loop check passed"
@@ -132,18 +147,13 @@ reject_text "$cli_closed_loop_script" 'require_text "$fulltext_out" "synthetic-j
 reject_text "$cli_closed_loop_script" 'require_text "$field_out" "synthetic-java-platform.pdf"'
 reject_text "$cli_closed_loop_script" 'require_text "$field_out" "synthetic-java-engineer.docx"'
 reject_text "$cli_closed_loop_script" 'require_text "$ocr_search_out" "synthetic-scanned-resume.pdf"'
-reject_text "$cli_closed_loop_script" 'require_text "$semantic_out" "synthetic-java-platform.pdf"'
-reject_text "$cli_closed_loop_script" 'require_text "$semantic_out" "synthetic-java-engineer.docx"'
-reject_text "$cli_closed_loop_script" 'require_text "$semantic_out" "synthetic-scanned-resume.pdf"'
-reject_text "$cli_closed_loop_script" 'require_text "$hybrid_out" "synthetic-java-platform.pdf"'
-reject_text "$cli_closed_loop_script" 'require_text "$hybrid_out" "synthetic-java-engineer.docx"'
-reject_text "$cli_closed_loop_script" 'require_text "$hybrid_out" "synthetic-scanned-resume.pdf"'
+reject_text "$cli_closed_loop_script" "embed-worker"
 
 require_text "$daemon_closed_loop_script" "resume-daemon"
 require_text "$daemon_closed_loop_script" "--work-imports"
 require_text "$daemon_closed_loop_script" "--work-ocr"
-require_text "$daemon_closed_loop_script" "--work-embeddings"
 require_text "$daemon_closed_loop_script" "--work-index"
+require_text "$daemon_closed_loop_script" "--embedding-command"
 require_text "$daemon_closed_loop_script" "import --ipc auto --root"
 require_text "$daemon_closed_loop_script" "status --ipc auto"
 require_text "$daemon_closed_loop_script" "search Java --ipc auto --top-k 20"
@@ -151,8 +161,12 @@ require_text "$daemon_closed_loop_script" "search DaemonClosedLoopOCRToken --ipc
 require_text "$daemon_closed_loop_script" "--mode semantic"
 require_text "$daemon_closed_loop_script" "--mode hybrid"
 require_text "$daemon_closed_loop_script" "detail --doc-id"
+require_text "$daemon_closed_loop_script" "--version-id"
+require_text "$daemon_closed_loop_script" "--visible-epoch"
 require_text "$daemon_closed_loop_script" "delete --doc-id"
 require_text "$daemon_closed_loop_script" "daemon closed-loop check passed"
+reject_text "$daemon_closed_loop_script" "--work-embeddings"
+reject_text "$daemon_closed_loop_script" "embedding worker processed:"
 reject_text "$daemon_closed_loop_script" 'require_text "$search_out" "synthetic-java-platform.pdf"'
 reject_text "$daemon_closed_loop_script" 'require_text "$search_out" "synthetic-java-engineer.docx"'
 reject_text "$daemon_closed_loop_script" 'require_text "$ocr_search_out" "synthetic-scanned-resume.pdf"'
@@ -239,8 +253,8 @@ require_text "$local_quality_evidence_script" "real benchmark smoke: passed"
 require_text "$local_quality_evidence_script" "local quality release-evidence check passed"
 
 require_text "$current_stage_handoff_script" "scripts/local/summarize-current-stage-validation.py"
-require_text "$current_stage_handoff_script" "resume-ir.current-stage-smoke-summary.v1"
-require_text "$current_stage_handoff_script" "resume-ir.current-stage-blocked-summary.v1"
+require_text "$current_stage_handoff_script" "resume-ir.current-stage-smoke-summary.v2"
+require_text "$current_stage_handoff_script" "resume-ir.current-stage-blocked-summary.v2"
 require_text "$current_stage_handoff_script" "resume-ir.current-stage-handoff.v1"
 require_text "$current_stage_handoff_script" "current-stage handoff check passed"
 require_text "$current_stage_handoff_script" "PRIVATE-current-stage"

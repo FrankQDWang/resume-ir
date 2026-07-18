@@ -111,7 +111,6 @@ resume-daemon --data-dir "$data_dir" run --foreground \
   --watch-import-roots \
   --rescan-completed-imports \
   --work-ocr \
-  --work-embeddings \
   --work-index \
   --ocr-lang eng \
   --embedding-command "<local-embedding-command>" \
@@ -151,8 +150,8 @@ resume-cli --data-dir "$data_dir" search "platform engineer" \
   --top-k 20
 ```
 
-Run semantic search only after embedding preflight and embedding worker evidence
-exist:
+Run semantic search only after embedding preflight and an enabled atomic vector
+snapshot are confirmed:
 
 ```bash
 resume-cli --data-dir "$data_dir" search "distributed systems engineer" \
@@ -252,8 +251,7 @@ scripts/local/run-current-stage-validation.sh --execute \
   --reviewed-ocr-runtime \
   --max-files 10000 \
   --max-queries 20 \
-  --ocr-worker-ticks 1 \
-  --embedding-worker-ticks 1
+  --ocr-worker-ticks 1
 ```
 
 The smoke profile proves wiring only. The full profile is for later evidence

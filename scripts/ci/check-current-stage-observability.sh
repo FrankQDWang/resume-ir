@@ -36,7 +36,7 @@ trap 'rm -rf "$tmpdir"' EXIT INT TERM
 valid_summary="$tmpdir/valid-summary.json"
 cat >"$valid_summary" <<'JSON'
 {
-  "schema_version": "resume-ir.current-stage-blocked-summary.v1",
+  "schema_version": "resume-ir.current-stage-blocked-summary.v2",
   "corpus_summary_observability": {
     "privacy_boundary": "redacted_local_aggregate",
     "document_count": 8123,
@@ -73,7 +73,7 @@ python3 scripts/ci/validate-current-stage-observability.py --summary "$valid_sum
 valid_full="$tmpdir/valid-full-evidence.json"
 cat >"$valid_full" <<'JSON'
 {
-  "schema_version": "resume-ir.current-stage-validation-evidence.v1",
+  "schema_version": "resume-ir.current-stage-validation-evidence.v2",
   "corpus_summary_observability": {
     "privacy_boundary": "redacted_local_aggregate",
     "document_count": 8001,

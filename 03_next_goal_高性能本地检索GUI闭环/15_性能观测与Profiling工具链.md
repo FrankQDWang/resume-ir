@@ -171,6 +171,45 @@ Methodology hard rules:
 5. 需要明确 coordinated omission 修正方式；没有修正时该报告不能用于完成声明。
 6. profiler overhead 必须 <= 3%，否则 profiler run 只能定位热点，不能作为最终 latency 证据。
 
+### 2.1 Resident public-synthetic baseline method
+
+`resume-ir.public-synthetic-query-hot-path.v1` 的 accepted before 使用
+`resume-ir.resident-query-load.v1`，固定 10,000 documents、500-query cycle、
+top-k 10、release daemon、30 秒 warmup、5 次重复和 30/70/100/120% open-loop
+点。closed-loop 每个并发点同样重复 5 次，并用包含尾部排空的实际 elapsed 计算
+QPS；query sequence 在重复间连续推进，不能遗漏低占比 semantic bucket。
+
+稳定点必须同时满足 achieved/target >= 0.95、arrival P95 <= 1500ms、结果合同
+完全一致。报告必须保留 per-bucket service/arrival percentile、七阶段 percentile
+与固定 histogram，以及 `service - sum(seven stages)` 的非负
+`unattributed_latency_ms`。该 residual 包含当前连接、auth、store/index open、
+请求排队、observation write 和 response 成本，不能伪装成 BM25/ANN stage。
+
+S756 before 的稳定容量为 1.982 QPS，70% arrival/service P95 为
+1387.538/1379.628ms；每 bucket before 和 50% 目标见文档 05。在 30%
+负载下 ANN P95 已达 1189.162ms，而 BM25 P95 仅 4.952ms，因此下一主
+瓶颈限定为 10k vector ANN/embedding 路径：当前 semantic/hybrid 每次 query
+启动本地 embedding command，并打开/搜索 Ready vector generation。下一优化必须先
+降低这条路径的固定和搜索成本，保持结果、read-only query semantics、Ready
+generation 恢复合同和资源预算。在 70% 以上负载，unattributed P95
+从 993.207ms 增长到 1663.007ms，说明串行 queue/request setup 是紧随其后的二级
+瓶颈，但不应跳过低负载 ANN 主导事实先做 query parser/BM25 微优化。
+
+该 baseline measured phase 的整机 CPU mean/peak 为 44.990%/82.979%，daemon
+RSS peak 192.906 MiB。它是 loaded-workstation before，不是隔离实验室数字；
+不得从 latency 中扣除外部负载。后续 after 必须在同一 H2 预算下同时公开
+host/daemon CPU，并以大幅验收门槛和重复运行抵御环境噪声。
+
+S757 after 证明主瓶颈判断正确：70% ANN P95 1172.371ms 降至
+90.585ms，stable capacity 1.982 升至 7.319 QPS。但 single-term bucket P95
+仍为 572.567ms，未过 469.175ms 上限；下一 profile 只能处理 resident
+request/store/full-text setup 与串行 queue tail，并必须保持 S757 ANN 收益。
+
+S758 复用 migrated store 与 Ready-generation full-text reader 后，70% service
+P95 降至 67.198ms，stable capacity 升至 52.228 QPS，七个 bucket 全部过
+50% 改善门槛。下一 query 工作不再继续微调这个 hot path，而是核对 IPC
+batch/cancel/deadline/overload 产品合同，稳定后进入 GUI 垂直闭环。
+
 ## 3. Toolchain
 
 | 层 | 工具 | 用途 | 证据 |

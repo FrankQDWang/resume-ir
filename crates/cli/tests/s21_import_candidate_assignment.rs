@@ -57,20 +57,21 @@ fn import_assigns_candidates_from_hashed_contacts_and_search_folds_versions() {
 
     let versions = searchable_versions(&data_dir);
     assert_eq!(versions.len(), 2);
-    let first_candidate_id = versions[0]
-        .candidate_id
-        .as_ref()
-        .expect("first version candidate")
-        .clone();
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    let first_candidate_id = store
+        .candidate_assignment_for_version(&versions[0].id)
+        .unwrap()
+        .expect("first version candidate");
     assert!(
-        versions
-            .iter()
-            .all(|version| version.candidate_id.as_ref() == Some(&first_candidate_id)),
+        versions.iter().all(|version| store
+            .candidate_assignment_for_version(&version.id)
+            .unwrap()
+            .as_ref()
+            == Some(&first_candidate_id)),
         "same hashed contact should assign one candidate"
     );
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
     let candidate = store
         .candidate_by_id(&first_candidate_id)
         .unwrap()
@@ -149,11 +150,15 @@ fn import_assigns_candidates_from_hashed_contacts_and_search_folds_versions() {
     assert_eq!(fs::read_to_string(&key_path).unwrap(), key_material);
     let versions_after_reimport = searchable_versions(&data_dir);
     assert_eq!(versions_after_reimport.len(), 2);
-    assert!(versions_after_reimport
-        .iter()
-        .all(|version| { version.candidate_id.as_ref() == Some(&first_candidate_id) }));
     let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
+    assert!(versions_after_reimport.iter().all(|version| {
+        store
+            .candidate_assignment_for_version(&version.id)
+            .unwrap()
+            .as_ref()
+            == Some(&first_candidate_id)
+    }));
     let candidate = store
         .candidate_by_id(&first_candidate_id)
         .unwrap()
@@ -165,7 +170,7 @@ fn import_assigns_candidates_from_hashed_contacts_and_search_folds_versions() {
 }
 
 #[test]
-fn reimport_preserves_existing_candidate_assignment_without_contacts() {
+fn sealed_resume_version_rejects_a_late_candidate_assignment() {
     let data_dir = temp_dir("manual-candidate-data");
     let root = temp_dir("manual-candidate-root");
     let resume_path = root.join("synthetic-manual-candidate.pdf");
@@ -190,10 +195,13 @@ fn reimport_preserves_existing_candidate_assignment_without_contacts() {
     let version = searchable_versions(&data_dir)
         .pop()
         .expect("imported version");
-    assert!(version.candidate_id.is_none());
-    let manual_candidate_id = CandidateId::from_non_secret_parts(&["s21", "manual-candidate"]);
     let store = MetaStore::open_data_dir(&data_dir).unwrap();
     store.run_migrations().unwrap();
+    assert!(store
+        .candidate_assignment_for_version(&version.id)
+        .unwrap()
+        .is_none());
+    let manual_candidate_id = CandidateId::from_non_secret_parts(&["s21", "manual-candidate"]);
     store
         .upsert_candidate(&Candidate {
             id: manual_candidate_id.clone(),
@@ -205,10 +213,9 @@ fn reimport_preserves_existing_candidate_assignment_without_contacts() {
             version_count: 0,
         })
         .unwrap();
-    store
-        .assign_candidate_to_version(&version.id, &manual_candidate_id)
-        .unwrap()
-        .expect("manual assignment");
+    assert!(store
+        .insert_candidate_assignment(&version.id, &manual_candidate_id)
+        .is_err());
     drop(store);
 
     let reimport = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
@@ -225,11 +232,12 @@ fn reimport_preserves_existing_candidate_assignment_without_contacts() {
 
     let versions = searchable_versions(&data_dir);
     assert_eq!(versions.len(), 1);
-    assert_eq!(
-        versions[0].candidate_id.as_ref(),
-        Some(&manual_candidate_id),
-        "reimport should not clear existing manual assignment"
-    );
+    let store = MetaStore::open_data_dir(&data_dir).unwrap();
+    store.run_migrations().unwrap();
+    assert!(store
+        .candidate_assignment_for_version(&versions[0].id)
+        .unwrap()
+        .is_none());
 
     remove_dir(&data_dir);
     remove_dir(&root);
