@@ -3846,6 +3846,29 @@ guards, local runtime discovery, and PR #9 CI state.
   P0/P1/P2, and a fresh complete `./scripts/ci/verify-local.sh` run exits 0 on
   the frozen code. The failed hosted run remains non-acceptance evidence
   pending a fresh Windows job.
+- That fresh hosted run passed the complete `s4_daemon` suite and every earlier
+  Windows correction, then exposed an invalid terminal assumption in the
+  cross-route disconnect matrix. The batch route writes its HTTP 200 stream
+  header before its asynchronous child completes; the test treated that header
+  as batch termination and immediately submitted a second batch. Under Windows
+  load the old batch still correctly owned the single active-batch admission,
+  so the successor received the contractually required correlated 503
+  `batch_admission_exhausted`. The daemon remained alive and no child, class or
+  total permit leak was observed. This was not evidence for changing the
+  one-active-batch product contract or its deadlines.
+- The regression now names the cross-platform event truthfully: Unix uses an
+  abortive RST while Windows exercises an orderly client disconnect. After the
+  disconnected batch, one ordinary search advances the same FIFO worker; the
+  server's serial accept/dispatch boundary guarantees the old batch child was
+  enqueued first. An authenticated diagnostics snapshot then proves all seven
+  prior connections reached exactly one terminal outcome before a single
+  successor batch is submitted and required to return 200. There is no sleep,
+  retry, timeout change, platform serialization or production-code change.
+  The exact regression passes 10/10 repeated runs, the complete daemon IPC
+  suite passes 29 tests with only the explicit two-hour soak ignored, strict
+  all-target daemon Clippy passes, and formatting/diff checks pass. The failed
+  hosted job remains non-acceptance evidence; a fresh Windows job and all later
+  frozen-code package/soak/install gates are still required.
 
 ### S806
 

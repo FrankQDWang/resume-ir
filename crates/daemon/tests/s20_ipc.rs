@@ -943,10 +943,10 @@ fn daemon_rejects_malformed_ipc_request_without_stopping() {
 }
 
 #[test]
-fn daemon_survives_response_rst_across_every_product_ipc_route() {
-    const EXPECTED_ACCEPTED: u64 = 14;
+fn daemon_survives_client_disconnect_across_every_product_ipc_route() {
+    const EXPECTED_ACCEPTED: u64 = 16;
 
-    let data_dir = temp_dir("ipc-response-rst-matrix-data");
+    let data_dir = temp_dir("ipc-response-disconnect-matrix-data");
     seed_snapshot_state(&data_dir);
     let mut child = start_ipc_daemon(&data_dir, EXPECTED_ACCEPTED as usize);
     let child_id = child.id();
@@ -961,12 +961,12 @@ fn daemon_survives_response_rst_across_every_product_ipc_route() {
         &endpoint,
         "/search",
         &token,
-        search_request("rst-selection-setup", "codex_validation"),
+        search_request("disconnect-selection-setup", "codex_validation"),
     );
-    assert_search_response(&setup_search, "rst-selection-setup");
+    assert_search_response(&setup_search, "disconnect-selection-setup");
     let selection = response_json(&setup_search)["results"][0]["selection"].clone();
 
-    abort_after_response_started(
+    disconnect_after_response_started(
         &endpoint,
         authenticated_get_request(&endpoint, "/status", &token),
     );
@@ -974,89 +974,116 @@ fn daemon_survives_response_rst_across_every_product_ipc_route() {
     assert_ready_status(&status);
     assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
 
-    abort_after_response_started(
+    disconnect_after_response_started(
         &endpoint,
         authenticated_post_request(
             &endpoint,
             "/search",
             &token,
-            search_request("rst-search", "codex_validation"),
+            search_request("disconnect-search", "codex_validation"),
         ),
     );
     let search = http_post_json(
         &endpoint,
         "/search",
         &token,
-        search_request("rst-search-probe", "codex_validation"),
+        search_request("disconnect-search-probe", "codex_validation"),
     );
-    assert_search_response(&search, "rst-search-probe");
+    assert_search_response(&search, "disconnect-search-probe");
     assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
 
-    abort_after_response_started(
+    disconnect_after_response_started(
         &endpoint,
         authenticated_post_request(
             &endpoint,
             "/search/batch",
             &token,
-            search_batch_request("rst-batch", "rst-batch-child"),
+            search_batch_request("disconnect-batch", "disconnect-batch-child"),
         ),
+    );
+    // A response header only proves that the batch stream started. The server
+    // finishes this route's child dispatch before accepting the next request,
+    // so advancing the same FIFO worker is a causal terminal barrier. The
+    // diagnostics closure below then proves every earlier connection recorded
+    // exactly one terminal outcome.
+    let batch_terminal_barrier = http_post_json(
+        &endpoint,
+        "/search",
+        &token,
+        search_request("disconnect-batch-terminal-barrier", "codex_validation"),
+    );
+    assert_search_response(&batch_terminal_barrier, "disconnect-batch-terminal-barrier");
+    let terminal_diagnostics = http_get_diagnostics(&endpoint, Some(&token));
+    let terminal_payload = response_json(&terminal_diagnostics);
+    let terminal_ipc = &terminal_payload["metrics"]["ipc"];
+    assert_eq!(terminal_ipc["accepted"], 8);
+    assert_eq!(
+        terminal_ipc["completed"].as_u64().unwrap()
+            + terminal_ipc["request_failure"].as_u64().unwrap()
+            + terminal_ipc["response_failure"].as_u64().unwrap(),
+        7,
+        "the disconnected batch must be terminal before its successor: {terminal_ipc}"
     );
     let batch = http_post_json(
         &endpoint,
         "/search/batch",
         &token,
-        search_batch_request("rst-batch-probe", "rst-batch-probe-child"),
+        search_batch_request("disconnect-batch-probe", "disconnect-batch-probe-child"),
     );
-    assert_batch_response(&batch, "rst-batch-probe", "rst-batch-probe-child");
+    assert_batch_response(
+        &batch,
+        "disconnect-batch-probe",
+        "disconnect-batch-probe-child",
+    );
     assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
 
-    abort_after_response_started(
+    disconnect_after_response_started(
         &endpoint,
         authenticated_post_request(
             &endpoint,
             "/details",
             &token,
-            detail_request("rst-detail", &selection),
+            detail_request("disconnect-detail", &selection),
         ),
     );
     let detail = http_post_json(
         &endpoint,
         "/details",
         &token,
-        detail_request("rst-detail-probe", &selection),
+        detail_request("disconnect-detail-probe", &selection),
     );
     assert_json_response(
         &detail,
         "resume-ir.detail-response.v3",
-        "rst-detail-probe",
+        "disconnect-detail-probe",
         &selection,
     );
     assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
 
-    abort_after_response_started(
+    disconnect_after_response_started(
         &endpoint,
         authenticated_post_request(
             &endpoint,
             "/details/hydrate",
             &token,
-            hydrate_request("rst-hydrate", &selection),
+            hydrate_request("disconnect-hydrate", &selection),
         ),
     );
     let hydrate = http_post_json(
         &endpoint,
         "/details/hydrate",
         &token,
-        hydrate_request("rst-hydrate-probe", &selection),
+        hydrate_request("disconnect-hydrate-probe", &selection),
     );
     assert_json_response(
         &hydrate,
         "resume-ir.detail-hydrate-response.v3",
-        "rst-hydrate-probe",
+        "disconnect-hydrate-probe",
         &selection,
     );
     assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
 
-    abort_after_response_started(
+    disconnect_after_response_started(
         &endpoint,
         authenticated_get_request(&endpoint, "/imports/progress", &token),
     );
@@ -1086,7 +1113,7 @@ fn daemon_survives_response_rst_across_every_product_ipc_route() {
     );
     assert!(
         response_failure >= 1,
-        "streaming RST was not observed: {ipc}"
+        "response-side client disconnect was not observed: {ipc}"
     );
     assert_eq!(ipc["client_disconnect"], response_failure);
     assert!(!diagnostics_body.contains(path_str(&data_dir)));
@@ -1971,10 +1998,12 @@ fn assert_json_response(
     assert_eq!(payload["status"], "ok");
 }
 
-fn abort_after_response_started(endpoint: &str, request: Vec<u8>) {
+fn disconnect_after_response_started(endpoint: &str, request: Vec<u8>) {
     const MAX_RESPONSE_HEADER_BYTES: usize = 8 * 1024;
 
     let mut stream = TcpStream::connect(endpoint_address(endpoint)).expect("connect daemon ipc");
+    // Unix configures an abortive close (RST). Windows exercises the same
+    // request-local contract with an orderly client disconnect.
     prepare_abortive_close(&stream);
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
@@ -1992,7 +2021,7 @@ fn abort_after_response_started(endpoint: &str, request: Vec<u8>) {
         let mut byte = [0_u8; 1];
         stream
             .read_exact(&mut byte)
-            .expect("observe response write before abortive close");
+            .expect("observe response write before client disconnect");
         response_head.push(byte[0]);
     }
     assert!(response_head.starts_with(b"HTTP/1.1 "));
@@ -2008,7 +2037,7 @@ fn assert_same_daemon_instance(
     assert_eq!(child.id(), expected_child_id);
     assert!(
         child.try_wait().expect("poll daemon process").is_none(),
-        "daemon exited after a request-scoped response RST"
+        "daemon exited after a request-scoped client disconnect"
     );
     assert_eq!(
         read_ipc_owner_file(data_dir, "ipc.endpoints.json")["instance_id"],
