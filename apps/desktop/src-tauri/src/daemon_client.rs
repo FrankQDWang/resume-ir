@@ -269,7 +269,7 @@ mod tests {
             let request = std::str::from_utf8(&request).unwrap();
             assert!(request.starts_with("GET /status HTTP/1.1"), "{request:?}");
             assert!(request.contains(&format!("Authorization: Bearer {TOKEN}")));
-            let body = r#"{"schema_version":"daemon.status.v2","status":"ok","process_state":"ready","service_state":"ready","services":{"metadata":"ready","query":"ready"},"error":null,"indexed_documents":4,"searchable_documents":3,"partial_documents":1,"visible_epoch":7,"failed_retryable":0,"failed_permanent":0,"recovery_queue_depth":0,"ocr_queue_depth":0,"embedding_queue_depth":0,"entity_mentions":8,"import_tasks_queued":0,"index_health":"ready","latest_import_scan":null,"ipc":{"accepted":1,"completed":1,"client_disconnect":0,"request_failure":0,"response_failure":0},"private_debug":"synthetic-private-value"}"#;
+            let body = r#"{"schema_version":"daemon.status.v2","status":"ok","process_state":"ready","service_state":"ready","services":{"metadata":"ready","query":"ready"},"repair_reason":null,"error":null,"indexed_documents":4,"searchable_documents":3,"partial_documents":1,"visible_epoch":7,"failed_retryable":0,"failed_permanent":0,"recovery_queue_depth":0,"ocr_queue_depth":0,"embedding_queue_depth":0,"entity_mentions":8,"import_tasks_queued":0,"index_health":"ready","latest_import_scan":null,"ipc":{"accepted":1,"completed":1,"client_disconnect":0,"request_failure":0,"response_failure":0},"private_debug":"synthetic-private-value"}"#;
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -491,7 +491,7 @@ mod tests {
     fn make_owner_only(_path: &Path) {}
 
     fn write_status_response(stream: &mut std::net::TcpStream) {
-        let body = r#"{"schema_version":"daemon.status.v2","status":"ok","process_state":"ready","service_state":"ready","services":{"metadata":"ready","query":"ready"},"error":null,"indexed_documents":4,"searchable_documents":3,"partial_documents":1,"visible_epoch":7,"failed_retryable":0,"failed_permanent":0,"recovery_queue_depth":0,"ocr_queue_depth":0,"embedding_queue_depth":0,"entity_mentions":8,"import_tasks_queued":0,"index_health":"ready","latest_import_scan":null,"ipc":{"accepted":1,"completed":1,"client_disconnect":0,"request_failure":0,"response_failure":0}}"#;
+        let body = r#"{"schema_version":"daemon.status.v2","status":"ok","process_state":"ready","service_state":"ready","services":{"metadata":"ready","query":"ready"},"repair_reason":null,"error":null,"indexed_documents":4,"searchable_documents":3,"partial_documents":1,"visible_epoch":7,"failed_retryable":0,"failed_permanent":0,"recovery_queue_depth":0,"ocr_queue_depth":0,"embedding_queue_depth":0,"entity_mentions":8,"import_tasks_queued":0,"index_health":"ready","latest_import_scan":null,"ipc":{"accepted":1,"completed":1,"client_disconnect":0,"request_failure":0,"response_failure":0}}"#;
         write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",

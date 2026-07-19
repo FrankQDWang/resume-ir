@@ -20,13 +20,13 @@ const LC_SEGMENT_64 = 0x19;
 const MAX_SIDECAR_BYTES = 256 * 1024 * 1024;
 const MAX_LOAD_COMMANDS = 4096;
 
-async function sha256(file) {
+export async function sha256(file) {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(file)) hash.update(chunk);
   return hash.digest("hex");
 }
 
-async function executablePayloadSha256(file) {
+export async function executablePayloadSha256(file) {
   const bytes = await readFile(file);
   if (
     bytes.length < 32 ||
@@ -164,6 +164,24 @@ export async function verifyBundledSidecar({
     targetTriple,
     "runtime-pack.json",
   ),
+  expectedDesktop = path.join(
+    repoRoot,
+    "apps",
+    "desktop",
+    "src-tauri",
+    "target",
+    targetTriple,
+    "release",
+    "resume-desktop",
+  ),
+  expectedIcon = path.join(
+    repoRoot,
+    "apps",
+    "desktop",
+    "src-tauri",
+    "icons",
+    "icon.icns",
+  ),
   buildMachineIdentityPrefixes = [repoRoot, os.homedir()],
 }) {
   if (!APPLE_TARGETS.has(targetTriple)) {
@@ -176,6 +194,62 @@ export async function verifyBundledSidecar({
   const macosDirectory = path.join(appBundle, "Contents", "MacOS");
   const expectedArchitecture =
     targetTriple === "aarch64-apple-darwin" ? "arm64" : "x86_64";
+
+  const bundledDesktop = path.join(macosDirectory, "resume-desktop");
+  const bundledIcon = path.join(
+    appBundle,
+    "Contents",
+    "Resources",
+    "icon.icns",
+  );
+  let desktopMetadata;
+  let bundledDesktopMetadata;
+  let iconMetadata;
+  let bundledIconMetadata;
+  try {
+    [desktopMetadata, bundledDesktopMetadata, iconMetadata, bundledIconMetadata] =
+      await Promise.all([
+        lstat(expectedDesktop),
+        lstat(bundledDesktop),
+        lstat(expectedIcon),
+        lstat(bundledIcon),
+      ]);
+  } catch {
+    throw new Error("reviewed desktop executable or icon is missing");
+  }
+  if (
+    !desktopMetadata.isFile() ||
+    desktopMetadata.isSymbolicLink() ||
+    !bundledDesktopMetadata.isFile() ||
+    bundledDesktopMetadata.isSymbolicLink() ||
+    !iconMetadata.isFile() ||
+    iconMetadata.isSymbolicLink() ||
+    !bundledIconMetadata.isFile() ||
+    bundledIconMetadata.isSymbolicLink() ||
+    iconMetadata.size === 0 ||
+    bundledIconMetadata.size !== iconMetadata.size
+  ) {
+    throw new Error("reviewed desktop executable or icon is invalid");
+  }
+  const [expectedDesktopDigest, bundledDesktopDigest, expectedIconDigest, bundledIconDigest] =
+    await Promise.all([
+      executablePayloadSha256(expectedDesktop),
+      executablePayloadSha256(bundledDesktop),
+      sha256(expectedIcon),
+      sha256(bundledIcon),
+    ]);
+  if (
+    expectedDesktopDigest !== bundledDesktopDigest ||
+    expectedIconDigest !== bundledIconDigest
+  ) {
+    throw new Error("desktop executable or icon does not match reviewed bytes");
+  }
+  if (
+    (await machOArchitecture(bundledDesktop)) !== expectedArchitecture ||
+    (await containsAnyMarker(bundledDesktop, buildMachineIdentityPrefixes))
+  ) {
+    throw new Error("desktop executable is invalid");
+  }
 
   const macosEntries = await readdir(macosDirectory);
   for (const sidecarName of SIDECARS) {
@@ -480,6 +554,8 @@ export async function verifyBundledSidecar({
   return {
     schema_version: "resume-ir.desktop-bundle-composition.v1",
     target_triple: targetTriple,
+    desktop_executable_count: 1,
+    icon_file_count: 1,
     daemon_sidecar_count: 1,
     embedding_sidecar_count: 1,
     pdf_renderer_sidecar_count: 1,

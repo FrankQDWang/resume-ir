@@ -40,6 +40,7 @@ pub(super) struct RestartPolicy {
     automatic_restarts: VecDeque<Duration>,
     stable_since: Option<Duration>,
     half_open_attempt: bool,
+    manual_half_open_available: bool,
 }
 
 impl RestartPolicy {
@@ -49,6 +50,7 @@ impl RestartPolicy {
             automatic_restarts: VecDeque::with_capacity(MAX_AUTOMATIC_RESTARTS),
             stable_since: None,
             half_open_attempt: false,
+            manual_half_open_available: false,
         }
     }
 
@@ -56,10 +58,12 @@ impl RestartPolicy {
         self.stable_since = None;
         if self.half_open_attempt {
             self.half_open_attempt = false;
+            self.manual_half_open_available = false;
             return RecoveryDecision::OpenCircuit(self.config.circuit_open);
         }
         self.prune(now);
         if self.automatic_restarts.len() >= MAX_AUTOMATIC_RESTARTS {
+            self.manual_half_open_available = true;
             return RecoveryDecision::OpenCircuit(self.config.circuit_open);
         }
         let delay = self.config.backoff[self.automatic_restarts.len()];
@@ -69,7 +73,16 @@ impl RestartPolicy {
 
     pub(super) fn begin_half_open(&mut self) {
         self.half_open_attempt = true;
+        self.manual_half_open_available = false;
         self.stable_since = None;
+    }
+
+    pub(super) fn begin_manual_half_open(&mut self) -> bool {
+        if !self.manual_half_open_available {
+            return false;
+        }
+        self.begin_half_open();
+        true
     }
 
     pub(super) fn on_ready(&mut self, now: Duration) {
@@ -83,6 +96,7 @@ impl RestartPolicy {
         if stable {
             self.automatic_restarts.clear();
             self.half_open_attempt = false;
+            self.manual_half_open_available = false;
             self.stable_since = Some(now);
         }
         stable
@@ -152,6 +166,28 @@ mod tests {
             RecoveryDecision::OpenCircuit(Duration::from_secs(300))
         );
         assert_eq!(policy.restart_attempts(Duration::from_secs(1)), 1);
+    }
+
+    #[test]
+    fn failed_manual_half_open_cannot_bypass_the_reopened_circuit() {
+        let mut policy = RestartPolicy::new(test_config());
+        for second in 0..MAX_AUTOMATIC_RESTARTS {
+            assert!(matches!(
+                policy.on_failure(Duration::from_secs(second as u64)),
+                RecoveryDecision::RetryAfter(_)
+            ));
+        }
+        assert_eq!(
+            policy.on_failure(Duration::from_secs(MAX_AUTOMATIC_RESTARTS as u64)),
+            RecoveryDecision::OpenCircuit(Duration::from_secs(300))
+        );
+        assert!(policy.begin_manual_half_open());
+        assert!(!policy.begin_manual_half_open());
+        assert_eq!(
+            policy.on_failure(Duration::from_secs(6)),
+            RecoveryDecision::OpenCircuit(Duration::from_secs(300))
+        );
+        assert!(!policy.begin_manual_half_open());
     }
 
     #[test]

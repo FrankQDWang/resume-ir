@@ -264,6 +264,39 @@ async function prepareSyntheticBundleComposition(
   });
   const macosDirectory = path.join(appBundle, "Contents", "MacOS");
   await mkdir(macosDirectory, { recursive: true });
+  const desktopBody = syntheticMachO("same-desktop");
+  const expectedDesktop = path.join(
+    repoRoot,
+    "apps",
+    "desktop",
+    "src-tauri",
+    "target",
+    targetTriple,
+    "release",
+    "resume-desktop",
+  );
+  await mkdir(path.dirname(expectedDesktop), { recursive: true });
+  await writeExecutable(expectedDesktop, desktopBody);
+  await writeExecutable(path.join(macosDirectory, "resume-desktop"), desktopBody);
+  const iconBody = Buffer.from("same-reviewed-icon");
+  const expectedIcon = path.join(
+    repoRoot,
+    "apps",
+    "desktop",
+    "src-tauri",
+    "icons",
+    "icon.icns",
+  );
+  const bundledIcon = path.join(
+    appBundle,
+    "Contents",
+    "Resources",
+    "icon.icns",
+  );
+  await mkdir(path.dirname(expectedIcon), { recursive: true });
+  await mkdir(path.dirname(bundledIcon), { recursive: true });
+  await writeFile(expectedIcon, iconBody);
+  await writeFile(bundledIcon, iconBody);
   const sidecarBodies = new Map([
     ["resume-daemon", syntheticMachO(daemonPayload)],
     ["resume-embedding-runtime", syntheticMachO("same-runtime")],
@@ -872,6 +905,8 @@ test("verifies exact native sidecars and embedding resources in a macOS app", as
   });
 
   assert.equal(receipt.daemon_sidecar_count, 1);
+  assert.equal(receipt.desktop_executable_count, 1);
+  assert.equal(receipt.icon_file_count, 1);
   assert.equal(receipt.embedding_sidecar_count, 1);
   assert.equal(receipt.pdf_renderer_sidecar_count, 1);
   assert.equal(receipt.embedding_resource_file_count, 7);
@@ -881,6 +916,42 @@ test("verifies exact native sidecars and embedding resources in a macOS app", as
   assert.equal(receipt.architecture, "arm64");
   assert.equal(receipt.path_scan_scope, "repo_root_and_builder_home");
   assert.equal(receipt.build_machine_identity_path_markers, 0);
+});
+
+test("rejects a desktop executable or icon outside current staged trust", async (context) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "resume-ir-desktop-trust-"));
+  context.after(() => rm(repoRoot, { recursive: true, force: true }));
+  const appBundle = path.join(repoRoot, "synthetic.app");
+  const composition = await prepareSyntheticBundleComposition(repoRoot, appBundle);
+  const desktop = path.join(appBundle, "Contents", "MacOS", "resume-desktop");
+  await writeExecutable(desktop, syntheticMachO("unreviewed-desktop"));
+  await assert.rejects(
+    verifyBundledSidecar({
+      repoRoot,
+      targetTriple: composition.targetTriple,
+      appBundle,
+      expectedManifest: composition.expectedManifest,
+      expectedOcrManifest: composition.expectedOcrManifest,
+      expectedClassifierManifest: composition.expectedClassifierManifest,
+    }),
+    /desktop executable or icon does not match reviewed bytes/,
+  );
+  await writeExecutable(desktop, syntheticMachO("same-desktop"));
+  await writeFile(
+    path.join(appBundle, "Contents", "Resources", "icon.icns"),
+    "unreviewed-icon",
+  );
+  await assert.rejects(
+    verifyBundledSidecar({
+      repoRoot,
+      targetTriple: composition.targetTriple,
+      appBundle,
+      expectedManifest: composition.expectedManifest,
+      expectedOcrManifest: composition.expectedOcrManifest,
+      expectedClassifierManifest: composition.expectedClassifierManifest,
+    }),
+    /reviewed desktop executable or icon is invalid|does not match reviewed bytes/,
+  );
 });
 
 test("rejects mismatched or duplicate bundled daemon sidecars", async (context) => {
