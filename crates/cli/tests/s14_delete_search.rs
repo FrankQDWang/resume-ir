@@ -6,8 +6,8 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    DocumentId, ImportTaskId, MetaStore, OcrPageCacheEntry, OcrPageCacheKey, OcrWordBox,
-    UnixTimestamp,
+    DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, DocumentId, ImportTaskId,
+    OcrPageCacheEntry, OcrPageCacheKey, OcrWordBox, OwnedMetaStore, ReadMetaStore, UnixTimestamp,
 };
 
 #[test]
@@ -280,8 +280,7 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
 
     let deleted_document_id = DocumentId::from_str(&deleted_doc_id).unwrap();
     let (ocr_cache_key, embedding_job_id) = {
-        let store = MetaStore::open_data_dir(&data_dir).unwrap();
-        store.run_migrations().unwrap();
+        let store = create_owned_store(&data_dir);
         let deleted_document = store
             .document_by_id(&deleted_document_id)
             .unwrap()
@@ -369,8 +368,7 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
     assert!(!stdout.contains("PRIVATE_PURGE_OCR_TEXT"));
     assert!(!stdout.contains("PRIVATE"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     assert!(store
         .document_by_id(&DocumentId::from_str(&deleted_doc_id).unwrap())
         .unwrap()
@@ -470,8 +468,7 @@ fn purge_deleted_blocks_when_local_data_artifact_retains_import_root_marker_with
     let deleted_doc_id = doc_id_for_file(&before, "synthetic-java-engineer.docx");
 
     let private_root_path = {
-        let store = MetaStore::open_data_dir(&data_dir).unwrap();
-        store.run_migrations().unwrap();
+        let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
         let task = store.import_task_by_id(&task_id).unwrap().unwrap();
         assert!(task
             .root_path
@@ -551,8 +548,7 @@ fn purge_deleted_removes_empty_import_root_task_paths_without_path_leak() {
     let deleted_doc_id = doc_id_for_file(&before, "synthetic-java-engineer.docx");
 
     let private_root_path = {
-        let store = MetaStore::open_data_dir(&data_dir).unwrap();
-        store.run_migrations().unwrap();
+        let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
         let task = store.import_task_by_id(&task_id).unwrap().unwrap();
         let scope = store
             .import_scan_scope_by_task_id(&task_id)
@@ -595,8 +591,7 @@ fn purge_deleted_removes_empty_import_root_task_paths_without_path_leak() {
     assert!(!stdout.contains(path_str(&fixture_root)));
     assert!(!stdout.contains("synthetic-java-engineer.docx"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     assert!(store.import_task_by_id(&task_id).unwrap().is_none());
     assert!(store
         .import_scan_scope_by_task_id(&task_id)
@@ -729,6 +724,14 @@ fn snapshot_dir_count(data_dir: &Path) -> usize {
             .count(),
         Err(_) => 0,
     }
+}
+
+fn create_owned_store(data_dir: &Path) -> OwnedMetaStore {
+    let owner = match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("test store owner contended"),
+    };
+    owner.open_store().unwrap()
 }
 
 fn temp_dir(label: &str) -> PathBuf {

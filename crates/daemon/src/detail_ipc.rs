@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use meta_store::{
-    EntityMention, EntityType, MetaStore, SearchMetadataReadError, SearchMetadataUnavailable,
+    EntityMention, EntityType, ReadMetaStore, SearchMetadataReadError, SearchMetadataUnavailable,
     SearchSelection, SearchSelectionDetailBundle, SearchSelectionDetailResolution,
     SearchTextBytePageRequest,
 };
@@ -25,7 +25,7 @@ pub(crate) enum DetailError {
     MetadataUnavailable,
 }
 
-pub(crate) fn execute(store: &MetaStore, body: &[u8]) -> Result<String, DetailError> {
+pub(crate) fn execute(store: &ReadMetaStore, body: &[u8]) -> Result<String, DetailError> {
     let context = DetailRequest::parse(body)?;
     let snippet_request = SearchTextBytePageRequest::new(context.selection.clone(), 0, 240)
         .map_err(|_| DetailError::BadRequest)?;

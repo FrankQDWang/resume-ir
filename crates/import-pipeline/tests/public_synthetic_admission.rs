@@ -3,13 +3,16 @@ use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use import_pipeline::{import_root_with_options, ImportOptions};
+use import_pipeline::{
+    current_import_processing_contract, import_root_with_options, ImportOptions,
+};
 use index_fulltext::{FullTextIndex, SearchQuery, SnapshotReadLease};
 use index_vector::{VectorModelContract, VectorSnapshotRoot, VECTOR_SNAPSHOT_SCHEMA_V3};
 use meta_store::{
-    ClassificationStatus, Document, ImportTask, ImportTaskId, ImportTaskStatus, MetaStore,
-    SearchSelection, SearchSelectionDetailsResolution, SourceRevision, UnixTimestamp,
-    VectorSnapshotMode, CLASSIFIER_EPOCH,
+    ClassificationStatus, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, Document,
+    ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus,
+    OwnedMetaStore, SearchSelection, SearchSelectionDetailsResolution, SourceRevision,
+    UnixTimestamp, VectorSnapshotMode, CLASSIFIER_EPOCH,
 };
 use serde::Deserialize;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
@@ -60,29 +63,77 @@ fn frozen_public_synthetic_fixture_matches_production_admission() {
     fs::create_dir_all(&data_dir).unwrap();
     materialize_fixture(&root, &fixture.samples);
 
-    let store = MetaStore::open_in_memory().unwrap();
+    let owner = match DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("synthetic fixture owner contended"),
+    };
+    let store = owner.open_store().unwrap();
     store.run_migrations().unwrap();
     let now = UnixTimestamp::from_unix_seconds(1_800_159_000);
     let task = ImportTask {
         id: ImportTaskId::from_non_secret_parts(&["public-synthetic-production-admission"]),
         root_path: root.to_string_lossy().into_owned(),
-        status: ImportTaskStatus::Running,
+        status: ImportTaskStatus::Queued,
         queued_at: now,
-        started_at: Some(now),
+        started_at: None,
         finished_at: None,
         updated_at: now,
     };
-    store.insert_import_task(&task).unwrap();
+    let options = ImportOptions::default();
+    let contract = current_import_processing_contract(&options).unwrap();
+    store
+        .activate_migration_rebuild_contract(&contract, now)
+        .unwrap();
+    let scope = ImportScanScope {
+        import_task_id: task.id.clone(),
+        root_kind: ImportRootKind::Explicit,
+        root_preset: None,
+        scan_profile: ImportScanProfile::Explicit,
+        requested_root_path: task.root_path.clone(),
+        canonical_root_path: task.root_path.clone(),
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        scan_budget_kind: None,
+        scan_budget_limit: None,
+        scan_budget_observed: None,
+        scan_budget_exhausted: false,
+        updated_at: now,
+    };
+    let seed_id =
+        ImportTaskId::from_non_secret_parts(&["public-synthetic-production-admission-root-seed"]);
+    store
+        .insert_import_task_with_scan_scope(
+            &ImportTask {
+                id: seed_id.clone(),
+                ..task.clone()
+            },
+            &ImportScanScope {
+                import_task_id: seed_id.clone(),
+                ..scope.clone()
+            },
+            &contract,
+        )
+        .unwrap();
+    store.cancel_import_task(&seed_id, now).unwrap();
+    assert!(matches!(
+        store
+            .enqueue_full_corpus_migration_rebuild_root(&task.root_path, &task.id, &contract, now,)
+            .unwrap(),
+        meta_store::ImportRootTaskHeadOutcome::HeadInserted { .. }
+    ));
+    store.upsert_import_scan_scope(&scope).unwrap();
+    let task = store
+        .claim_observed_import_task_for_worker(&task, now)
+        .unwrap()
+        .expect("new synthetic import task must be claimable");
 
-    let summary = import_root_with_options(
-        &data_dir,
-        &store,
-        &task,
-        &root,
-        now,
-        ImportOptions::default(),
-    )
-    .unwrap();
+    let summary = import_root_with_options(&data_dir, &store, &task, &root, now, options).unwrap();
 
     let counts = store.classification_counts(CLASSIFIER_EPOCH).unwrap();
     assert_eq!(
@@ -321,7 +372,7 @@ fn frozen_public_synthetic_fixture_matches_production_admission() {
 }
 
 fn current_classification_status(
-    store: &MetaStore,
+    store: &OwnedMetaStore,
     document: &Document,
 ) -> Option<ClassificationStatus> {
     let content_hash = document.content_hash.as_deref()?.parse().ok()?;

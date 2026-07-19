@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use meta_store::{MetaStore, SearchSelection};
+use meta_store::{ReadMetaStore, SearchSelection};
 
 use support::{assert_import_succeeded, import_text_resumes};
 
@@ -114,8 +114,7 @@ fn detail_local_rejects_a_selection_after_delete_without_returning_text() {
 }
 
 fn active_selection(data_dir: &Path, file_name: &str) -> SearchSelection {
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()

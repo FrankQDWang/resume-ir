@@ -28,5 +28,8 @@ serde_json = "1"
 sha2 = "0.10"
 sysinfo = { version = "0.39.3", default-features = false, features = ["disk", "system"] }
 
+[dev-dependencies]
+meta-store = { path = "../meta-store", features = ["migration-test-support"] }
+
 [lints]
 workspace = true

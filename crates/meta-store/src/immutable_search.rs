@@ -4,15 +4,17 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{
     entity_mention_normalized_value_for_storage, entity_mention_raw_value_for_storage,
-    entity_type_to_storage, read_entity_mention, resume_version_by_id_from_connection,
+    entity_type_to_storage, read_document, read_entity_mention,
+    resume_version_by_id_from_connection,
     search_publication::search_publication_in_connection,
     search_snapshot::{
         MAX_MENTION_EXTRACTOR_BYTES, MAX_MENTION_VALUE_BYTES, MAX_SEARCH_SELECTION_MENTIONS,
     },
-    validate_entity_mention, ActiveSearchProjection, CandidateId, ContentDigest, DocumentId,
-    EntityMention, MetaStore, MetaStoreError, Result, ResumeVersion, ResumeVersionId,
-    SearchPublicationRecord, SearchSelection, SectionId, SourceRevision, SourceRevisionId,
-    UnixTimestamp, ENTITY_MENTION_COLUMNS,
+    validate_entity_mention, ActiveSearchProjection, CandidateId, ContentDigest, Document,
+    DocumentId, EntityMention, MetaStoreError, MetadataStore, MetadataStoreAccess,
+    MetadataStoreWriteAccess, Result, ResumeVersion, ResumeVersionId, SearchPublicationRecord,
+    SearchSelection, SectionId, SourceRevision, SourceRevisionId, UnixTimestamp,
+    ENTITY_MENTION_COLUMNS,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,6 +35,12 @@ pub enum SearchProjectionServiceState {
     Repairing,
     Ready,
     RepairBlocked,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchProjectionTransitionOutcome {
+    Applied,
+    Superseded,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,11 +89,11 @@ impl fmt::Debug for SearchProjectionState {
     }
 }
 
-impl MetaStore {
-    pub fn insert_source_revision(
-        &self,
-        revision: &SourceRevision,
-    ) -> Result<IdentityInsertOutcome> {
+impl<Access: MetadataStoreAccess> MetadataStore<Access> {
+    pub fn insert_source_revision(&self, revision: &SourceRevision) -> Result<IdentityInsertOutcome>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         insert_source_revision_in_connection(&self.connection.borrow(), revision)
     }
 
@@ -93,7 +101,10 @@ impl MetaStore {
         source_revision_by_id_from_connection(&self.connection.borrow(), id)
     }
 
-    pub fn insert_resume_version(&self, version: &ResumeVersion) -> Result<IdentityInsertOutcome> {
+    pub fn insert_resume_version(&self, version: &ResumeVersion) -> Result<IdentityInsertOutcome>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         insert_resume_version_in_connection(&self.connection.borrow(), version)
     }
 
@@ -101,7 +112,10 @@ impl MetaStore {
         &self,
         version_id: &ResumeVersionId,
         mentions: &[EntityMention],
-    ) -> Result<IdentityInsertOutcome> {
+    ) -> Result<IdentityInsertOutcome>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let mut connection = self.connection.borrow_mut();
         let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
         let outcome = insert_entity_mentions_in_connection(&transaction, version_id, mentions)?;
@@ -113,7 +127,10 @@ impl MetaStore {
         &self,
         version_id: &ResumeVersionId,
         candidate_id: &CandidateId,
-    ) -> Result<IdentityInsertOutcome> {
+    ) -> Result<IdentityInsertOutcome>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         insert_candidate_assignment_in_connection(
             &self.connection.borrow(),
             version_id,
@@ -133,6 +150,17 @@ impl MetaStore {
         document_id: &DocumentId,
     ) -> Result<Option<ActiveSearchProjection>> {
         active_projection_from_connection(&self.connection.borrow(), document_id)
+    }
+
+    /// Returns the document metadata atomically published with this exact
+    /// active `(document, version)` pair. There is no document-only or mutable
+    /// latest-row fallback.
+    pub fn active_search_document(
+        &self,
+        projection: &ActiveSearchProjection,
+    ) -> Result<Option<Document>> {
+        active_search_document_from_connection(&self.connection.borrow(), projection)
+            .map(|document| document.map(|(document, _generation)| document))
     }
 
     pub fn search_projection_state(&self) -> Result<SearchProjectionState> {
@@ -183,30 +211,86 @@ impl MetaStore {
         })
     }
 
-    pub fn mark_search_repairing(
+    /// Starts or resumes artifact repair only while the exact published head
+    /// observed by the caller is still current. Repair-blocked and migration
+    /// states are sticky and cannot be reopened through this transition.
+    pub fn begin_artifact_repair(
         &self,
-        reason: SearchRepairReason,
+        expected_generation: &str,
+        expected_visible_epoch: u64,
         now: UnixTimestamp,
-    ) -> Result<()> {
-        mark_search_service_state(
-            &self.connection.borrow(),
-            SearchProjectionServiceState::Repairing,
-            reason,
-            now,
-        )
+    ) -> Result<SearchProjectionTransitionOutcome>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
+        let changed = self
+            .connection
+            .borrow()
+            .execute(
+                "UPDATE search_projection_state
+                 SET service_state = 'repairing', repair_reason = 'artifact_unavailable',
+                     updated_at_seconds = MAX(updated_at_seconds, ?1)
+                 WHERE state_key = 'default'
+                   AND generation = ?2
+                   AND visible_epoch = ?3
+                   AND (
+                       (service_state = 'ready' AND repair_reason IS NULL)
+                       OR (service_state = 'repairing'
+                           AND repair_reason = 'artifact_unavailable')
+                   )",
+                params![
+                    now.as_unix_seconds(),
+                    expected_generation,
+                    u64_to_i64(
+                        expected_visible_epoch,
+                        "search_projection_state.visible_epoch"
+                    )?,
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        Ok(if changed == 1 {
+            SearchProjectionTransitionOutcome::Applied
+        } else {
+            SearchProjectionTransitionOutcome::Superseded
+        })
     }
 
-    pub fn mark_search_repair_blocked(
+    /// Fails a first v27 migration closed. Only the exact unpublished
+    /// migration state may become blocked; a ready or already-blocked head is
+    /// never overwritten by a stale worker.
+    pub fn block_migration_rebuild(
         &self,
         reason: SearchRepairReason,
         now: UnixTimestamp,
-    ) -> Result<()> {
-        mark_search_service_state(
-            &self.connection.borrow(),
-            SearchProjectionServiceState::RepairBlocked,
+    ) -> Result<SearchProjectionTransitionOutcome>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
+        if !matches!(
             reason,
-            now,
-        )
+            SearchRepairReason::SourceUnavailable | SearchRepairReason::RuntimeInvariant
+        ) {
+            return Err(MetaStoreError::invalid_transition());
+        }
+        let changed = self
+            .connection
+            .borrow()
+            .execute(
+                "UPDATE search_projection_state
+                 SET service_state = 'repair_blocked', repair_reason = ?1,
+                     updated_at_seconds = MAX(updated_at_seconds, ?2)
+                 WHERE state_key = 'default'
+                   AND service_state = 'repairing'
+                   AND repair_reason = 'migration_rebuild'
+                   AND generation IS NULL",
+                params![reason.as_str(), now.as_unix_seconds()],
+            )
+            .map_err(MetaStoreError::storage)?;
+        Ok(if changed == 1 {
+            SearchProjectionTransitionOutcome::Applied
+        } else {
+            SearchProjectionTransitionOutcome::Superseded
+        })
     }
 }
 
@@ -476,9 +560,12 @@ fn validate_resume_version_identity(version: &ResumeVersion) -> Result<()> {
     let Some(clean_text) = version.clean_text.as_deref() else {
         return Err(MetaStoreError::invalid_value("resume_version.clean_text"));
     };
-    if clean_text.contains('\0')
-        || ContentDigest::from_bytes(clean_text.as_bytes()) != version.normalized_text_hash
-    {
+    if clean_text.contains('\0') {
+        return Err(MetaStoreError::invalid_value(
+            "resume_version.clean_text_nul",
+        ));
+    }
+    if ContentDigest::from_bytes(clean_text.as_bytes()) != version.normalized_text_hash {
         return Err(MetaStoreError::invalid_value(
             "resume_version.normalized_text_hash",
         ));
@@ -599,6 +686,32 @@ fn active_projection_from_connection(
         .transpose()
 }
 
+pub(super) fn active_search_document_from_connection(
+    connection: &Connection,
+    projection: &ActiveSearchProjection,
+) -> Result<Option<(Document, String)>> {
+    connection
+        .query_row(
+            "SELECT document_id, source_uri, normalized_path, file_name, extension,
+                    byte_size, mtime_seconds, content_hash, text_hash, is_deleted,
+                    created_at_seconds, updated_at_seconds, status, generation
+             FROM active_search_projection
+             WHERE document_id = ?1 AND resume_version_id = ?2",
+            params![
+                projection.document_id.as_str(),
+                projection.resume_version_id.as_str(),
+            ],
+            |row| {
+                Ok((
+                    read_document(row).map_err(|_| rusqlite::Error::InvalidQuery)?,
+                    row.get::<_, String>(13)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(MetaStoreError::storage)
+}
+
 fn projection_service_state_from_storage(value: &str) -> Result<SearchProjectionServiceState> {
     match value {
         "repairing" => Ok(SearchProjectionServiceState::Repairing),
@@ -607,32 +720,6 @@ fn projection_service_state_from_storage(value: &str) -> Result<SearchProjection
         _ => Err(MetaStoreError::invalid_value(
             "search_projection_state.service_state",
         )),
-    }
-}
-
-fn mark_search_service_state(
-    connection: &Connection,
-    state: SearchProjectionServiceState,
-    reason: SearchRepairReason,
-    now: UnixTimestamp,
-) -> Result<()> {
-    let state = match state {
-        SearchProjectionServiceState::Repairing => "repairing",
-        SearchProjectionServiceState::RepairBlocked => "repair_blocked",
-        SearchProjectionServiceState::Ready => return Err(MetaStoreError::invalid_transition()),
-    };
-    let changed = connection
-        .execute(
-            "UPDATE search_projection_state
-             SET service_state = ?1, repair_reason = ?2, updated_at_seconds = ?3
-             WHERE state_key = 'default'",
-            params![state, reason.as_str(), now.as_unix_seconds()],
-        )
-        .map_err(MetaStoreError::storage)?;
-    if changed == 1 {
-        Ok(())
-    } else {
-        Err(MetaStoreError::storage_invariant())
     }
 }
 
@@ -651,3 +738,7 @@ fn repair_reason_from_storage(value: &str) -> Result<SearchRepairReason> {
 fn u64_to_i64(value: u64, field: &'static str) -> Result<i64> {
     i64::try_from(value).map_err(|_| MetaStoreError::invalid_value(field))
 }
+
+#[cfg(test)]
+#[path = "immutable_search_tests.rs"]
+mod tests;

@@ -106,7 +106,7 @@ fn source_lines(source: &str) -> Vec<Line> {
                 lines.push(std::mem::take(&mut line));
             }
             '\n' | '\u{000c}' => lines.push(std::mem::take(&mut line)),
-            _ => line.push_char(character, start..end),
+            _ => line.push_char(sanitize_inline_character(character), start..end),
         }
     }
 
@@ -250,7 +250,7 @@ fn source_text_lines(source: &str) -> Vec<String> {
                 lines.push(std::mem::take(&mut line));
             }
             '\n' | '\u{000c}' => lines.push(std::mem::take(&mut line)),
-            _ => line.push(character),
+            _ => line.push(sanitize_inline_character(character)),
         }
     }
 
@@ -389,6 +389,14 @@ fn merged_origin(origins: &[Range<usize>]) -> Range<usize> {
 
 fn is_horizontal_space(character: char) -> bool {
     character.is_whitespace() && character != '\n' && character != '\r'
+}
+
+fn sanitize_inline_character(character: char) -> char {
+    if character.is_control() {
+        ' '
+    } else {
+        character
+    }
 }
 
 fn is_page_number_line(text: &str) -> bool {

@@ -1,10 +1,10 @@
-use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use argon2::{Algorithm, Argon2, Params, Version};
@@ -17,42 +17,119 @@ pub use core_domain::{
     DocumentId, DocumentStatus, EntityMention, EntityMentionId, EntityType, FileExtension,
     ImportTaskId, IndexStateStatus, IngestJobId, IngestJobKind, IngestJobStatus, ResumeVersion,
     ResumeVersionId, SearchProjectionDigest, SearchSelection, SectionId, SourceRevision,
-    SourceRevisionId, UnixTimestamp,
+    SourceRevisionId, UnixTimestamp, MAX_ENTITY_MENTIONS_PER_VERSION,
+    MAX_ENTITY_MENTION_EXTRACTOR_BYTES, MAX_ENTITY_MENTION_VALUE_BYTES,
 };
 use rusqlite::{
-    params, params_from_iter, types::Value, Connection, OptionalExtension, Row, TransactionBehavior,
+    params, params_from_iter, types::Value, Connection, OpenFlags, OptionalExtension, Row,
+    TransactionBehavior,
 };
 
+mod active_store_manifest;
 mod classification;
+mod data_directory_owner;
+mod immutable_ingest_stage;
 mod immutable_search;
+mod import_processing_contract;
+mod import_processing_store;
 mod import_root_control;
+mod import_root_head;
+mod import_task_failure;
+mod import_task_purpose;
+mod migration_rebuild_attempt;
+mod migration_rebuild_barrier;
+#[cfg(feature = "migration-test-support")]
+#[doc(hidden)]
+pub mod migration_test_support;
 mod migration_v27;
+mod migration_v28;
+mod ocr_publication;
 mod privacy_maintenance;
 mod schema_v27;
+mod schema_v28;
 mod search_publication;
+mod search_publication_session;
 mod search_snapshot;
+mod store_access;
+
+use store_access::{
+    EphemeralStoreAccess, MetadataStore, MetadataStoreAccess, MetadataStoreWriteAccess,
+    OwnedStoreAccess, ReadStoreAccess,
+};
+
+/// Metadata reader that cannot create, migrate, repair, compact, or mutate its
+/// backing database.
+///
+/// Write and publication capabilities are rejected at compile time:
+///
+/// ```compile_fail
+/// # use meta_store::ReadMetaStore;
+/// # fn cannot_migrate(store: ReadMetaStore) {
+/// store.run_migrations();
+/// # }
+/// ```
+///
+/// ```compile_fail
+/// # use meta_store::ReadMetaStore;
+/// # fn cannot_publish(store: ReadMetaStore) {
+/// store.wait_for_search_publication_session();
+/// # }
+/// ```
+pub type ReadMetaStore = MetadataStore<ReadStoreAccess>;
+
+/// File-backed metadata writer retaining the data-directory owner lock for its
+/// entire connection lifetime.
+pub type OwnedMetaStore = MetadataStore<OwnedStoreAccess>;
+
+/// Explicit in-memory writer for tests and synthetic computation only.
+pub type EphemeralMetaStore = MetadataStore<EphemeralStoreAccess>;
 
 pub use classification::{
     ClassificationCounts, ClassificationStatus, ClassifierEpochSource, CurrentClassifierEpoch,
     ReasonCode, ResumeVersionClassification, ReviewDisposition, SourceRevisionTriage,
 };
+pub use data_directory_owner::{
+    import_task_owner_lock_path, DataDirectoryOwnerAcquireError, DataDirectoryOwnerAcquisition,
+    DataDirectoryOwnerLease, ImportProcessingOrphanNormalizationError, ImportTaskOwnerLock,
+};
+pub use immutable_ingest_stage::ImmutableIngestStage;
 pub use immutable_search::{
-    IdentityInsertOutcome, SearchProjectionServiceState, SearchProjectionState, SearchRepairReason,
-    SearchSelectionResolution,
+    IdentityInsertOutcome, SearchProjectionServiceState, SearchProjectionState,
+    SearchProjectionTransitionOutcome, SearchRepairReason, SearchSelectionResolution,
+};
+pub use import_processing_contract::{
+    ImportProcessingContract, ImportProcessingContractId, ImportSourceDispositionKind,
+    ImportTaskCompletion, ImportTaskDispositionBatchOutcome, ImportTaskSourceDisposition,
+    MigrationRebuildContractActivation, IMPORT_SOURCE_DISPOSITION_BATCH_LIMIT,
 };
 pub use import_root_control::{ImportRootControlStatus, ImportRootControlUpdate};
+pub use import_root_head::{
+    ImportRootTaskHeadBatchOutcome, ImportRootTaskHeadBatchRejection, ImportRootTaskHeadOutcome,
+    ImportRootTaskHeadRequest, IMPORT_ROOT_TASK_HEAD_BATCH_LIMIT,
+};
+pub use import_task_failure::{ImportTaskFailure, ObservedImportTaskFailureOutcome};
+pub use import_task_purpose::ImportTaskPurpose;
+pub use migration_rebuild_attempt::{
+    MigrationRebuildPublicationAttempt, MigrationRebuildPublicationAttemptAcquire,
+    MigrationRebuildPublicationAttemptFailureOutcome, MigrationRebuildPublicationAttemptPhase,
+    MigrationRebuildPublicationAttemptState, MigrationRebuildPublicationErrorClass,
+    MigrationRebuildPublicationFailure,
+};
+pub use migration_rebuild_barrier::{MigrationRebuildBarrierToken, MigrationRebuildProjectionRow};
+pub use ocr_publication::{OcrSearchPublicationCommit, OcrSearchPublicationOutcome};
 pub use privacy_maintenance::{PrivacyPurgeReport, PRIVACY_PURGE_BATCH_LIMIT};
 pub use resume_classifier::{
     classify as classify_resume, ClassificationResult, ClassifierInput, CLASSIFIER_EPOCH,
 };
 pub use search_publication::{
     search_publication_fingerprint, EnabledVectorSnapshotDescriptor, FullTextSnapshotDescriptor,
-    SearchPublicationCommit, SearchPublicationDraft, SearchPublicationFailure,
-    SearchPublicationOutcome, SearchPublicationPrunePolicy, SearchPublicationRecord,
-    SearchPublicationState, SearchPublicationValidation, TerminalDocumentUpdate,
-    VectorSnapshotDescriptor, VectorSnapshotMode, FULLTEXT_INDEX_SCHEMA_V2,
+    ProjectedDocumentSnapshot, SearchPublicationCommit, SearchPublicationDraft,
+    SearchPublicationFailure, SearchPublicationOutcome, SearchPublicationPrunePolicy,
+    SearchPublicationRecord, SearchPublicationState, SearchPublicationValidation,
+    TerminalDocumentUpdate, VectorSnapshotDescriptor, VectorSnapshotMode, FULLTEXT_INDEX_SCHEMA_V2,
     FULLTEXT_MANIFEST_SCHEMA_V2, VECTOR_INDEX_SCHEMA_V3, VECTOR_MANIFEST_SCHEMA_V3,
 };
+pub use search_publication_session::{SearchPublicationLease, SearchPublicationSession};
 pub use search_snapshot::{
     BoundedFilterSelection, ExactHitHydration, ExactHitHydrationFailure,
     ExactHitHydrationFailureKind, SearchFilterCase, SearchHitMetadata, SearchHitMetadataLimit,
@@ -94,7 +171,6 @@ const SCHEMA_VERSION_V23: u32 = 23;
 const SCHEMA_VERSION_V24: u32 = 24;
 const SCHEMA_VERSION_V25: u32 = 25;
 const SCHEMA_VERSION_V26: u32 = 26;
-const QUERY_OBSERVATION_RETENTION_ROWS: i64 = 10_000;
 const METADATA_STORE_FILE: &str = "metadata.sqlite3";
 const METADATA_ENCRYPTION_KEY_LEN: usize = 32;
 const METADATA_ENCRYPTION_KEY_HEX_LEN: usize = METADATA_ENCRYPTION_KEY_LEN * 2;
@@ -156,7 +232,7 @@ pub enum PendingImportTaskByRootDiagnostic {
 }
 
 pub fn metadata_store_path(data_dir: &Path) -> Result<PathBuf> {
-    migration_v27::active_store_path(data_dir)
+    migration_v28::active_store_path(data_dir)
 }
 
 pub fn metadata_encryption_key_path(data_dir: &Path) -> PathBuf {
@@ -173,7 +249,8 @@ pub fn backup_metadata_encryption_key(
     passphrase: &[u8],
 ) -> Result<MetadataEncryptionKeyBackup> {
     validate_backup_passphrase(passphrase)?;
-    let metadata_key = read_metadata_encryption_key(&metadata_encryption_key_path(data_dir))?;
+    let metadata_key =
+        read_metadata_encryption_key_without_repair(&metadata_encryption_key_path(data_dir))?;
     create_private_file_parent(backup_path)?;
 
     let mut salt = [0_u8; BACKUP_SALT_LEN];
@@ -206,12 +283,12 @@ ciphertext={}
 }
 
 pub fn restore_metadata_encryption_key(
-    data_dir: &Path,
+    owner: &DataDirectoryOwnerLease,
     backup_path: &Path,
     passphrase: &[u8],
 ) -> Result<MetadataEncryptionKeyRestore> {
     validate_backup_passphrase(passphrase)?;
-    let key_path = metadata_encryption_key_path(data_dir);
+    let key_path = metadata_encryption_key_path(owner.canonical_data_dir());
     if key_path.try_exists().map_err(MetaStoreError::io_storage)? {
         return Err(MetaStoreError::key_already_exists());
     }
@@ -226,26 +303,6 @@ pub fn restore_metadata_encryption_key(
     restrict_private_file_permissions(&key_path)?;
 
     Ok(MetadataEncryptionKeyRestore { _private: () })
-}
-
-pub fn rotate_metadata_encryption_key(data_dir: &Path) -> Result<MetadataEncryptionKeyRotation> {
-    let key_path = metadata_encryption_key_path(data_dir);
-    let old_key = read_metadata_encryption_key(&key_path)?;
-    let db_path = metadata_store_path(data_dir)?;
-
-    let connection = Connection::open(&db_path).map_err(MetaStoreError::storage)?;
-    apply_sqlcipher_key(&connection, &old_key)?;
-    verify_sqlcipher_key(&connection)?;
-
-    let new_key = random_metadata_encryption_key()?;
-    apply_sqlcipher_rekey(&connection, &new_key)?;
-    verify_sqlcipher_key(&connection)?;
-
-    replace_private_file(&key_path, encode_hex(&new_key).as_bytes())
-        .map_err(MetaStoreError::io_storage)?;
-    restrict_private_file_permissions(&key_path)?;
-
-    Ok(MetadataEncryptionKeyRotation { _private: () })
 }
 
 fn validate_metadata_encryption_key(key: &[u8]) -> Result<()> {
@@ -337,6 +394,15 @@ fn random_metadata_encryption_key() -> Result<[u8; METADATA_ENCRYPTION_KEY_LEN]>
 
 fn read_metadata_encryption_key(path: &Path) -> Result<[u8; METADATA_ENCRYPTION_KEY_LEN]> {
     restrict_private_file_permissions(path)?;
+    let key_hex = fs::read_to_string(path).map_err(MetaStoreError::io_storage)?;
+    decode_metadata_key_hex(key_hex.trim())
+}
+
+fn read_metadata_encryption_key_without_repair(
+    path: &Path,
+) -> Result<[u8; METADATA_ENCRYPTION_KEY_LEN]> {
+    let metadata = fs::symlink_metadata(path).map_err(MetaStoreError::io_storage)?;
+    active_store_manifest::validate_owner_regular_metadata(&metadata)?;
     let key_hex = fs::read_to_string(path).map_err(MetaStoreError::io_storage)?;
     decode_metadata_key_hex(key_hex.trim())
 }
@@ -532,19 +598,6 @@ fn metadata_store_has_plaintext_header(path: &Path) -> Result<bool> {
     Ok(bytes_read == header.len() && header.starts_with(b"SQLite format 3"))
 }
 
-fn remove_sqlite_sidecars(path: &Path) {
-    let _ = fs::remove_file(path.with_extension(format!(
-        "{}-wal",
-        path.extension().and_then(|value| value.to_str()).unwrap_or("")
-    )));
-    let _ = fs::remove_file(path.with_extension(format!(
-        "{}-shm",
-        path.extension().and_then(|value| value.to_str()).unwrap_or("")
-    )));
-    let _ = fs::remove_file(format!("{}-wal", path.display()));
-    let _ = fs::remove_file(format!("{}-shm", path.display()));
-}
-
 fn replace_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let temp_path = private_replacement_path(path)?;
     write_new_private_file(&temp_path, bytes)?;
@@ -660,52 +713,124 @@ impl fmt::Debug for MetadataEncryptionKeyRotation {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct OcrAttemptPublication<'a> {
-    pub document: &'a Document,
-    pub source_revision: &'a SourceRevision,
-    pub version: &'a ResumeVersion,
-    pub classification: &'a ResumeVersionClassification,
-    pub mentions: &'a [EntityMention],
-    pub email_hash: Option<&'a ContactHash>,
-    pub phone_hash: Option<&'a ContactHash>,
-}
-
-pub struct MetaStore {
-    connection: RefCell<Connection>,
-    metadata_encryption_state: MetadataEncryptionState,
-    file_backed: bool,
-}
-
-impl MetaStore {
+impl ReadMetaStore {
+    /// Opens only an already-published v28 metadata store.
+    ///
+    /// This path never creates a key, runs copy-on-write migration, publishes a
+    /// manifest, changes SQLite journal state, performs privacy maintenance, or
+    /// repairs any artifact. Legacy or absent stores require an explicit
+    /// [`DataDirectoryOwnerLease`].
     pub fn open_data_dir(data_dir: &Path) -> Result<Self> {
-        fs::create_dir_all(data_dir).map_err(MetaStoreError::io_storage)?;
-        let (db_path, key) = migration_v27::prepare_active_v27_store(data_dir)?;
-        Self::open_encrypted(&db_path, &key)
+        let (db_path, key, store_id_digest) = migration_v28::open_current_v28_store(data_dir)?;
+        validate_metadata_encryption_key(&key)?;
+        let connection = Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .map_err(MetaStoreError::storage)?;
+        apply_sqlcipher_key(&connection, &key)?;
+        verify_sqlcipher_key(&connection)?;
+        connection
+            .busy_timeout(Duration::from_millis(5_000))
+            .map_err(MetaStoreError::storage)?;
+        connection
+            .execute_batch("PRAGMA query_only = ON; PRAGMA foreign_keys = ON;")
+            .map_err(MetaStoreError::storage)?;
+        migration_v28::validate_current_v28_connection(&connection, &store_id_digest)?;
+        let query_only = connection
+            .query_row("PRAGMA query_only", [], |row| row.get::<_, i64>(0))
+            .map_err(MetaStoreError::storage)?;
+        if query_only != 1 {
+            return Err(MetaStoreError::storage_invariant());
+        }
+        Ok(Self {
+            connection: std::cell::RefCell::new(connection),
+            metadata_encryption_state: MetadataEncryptionState::SqlCipher,
+            file_backed: true,
+            access: ReadStoreAccess::new(),
+        })
+    }
+}
+
+impl OwnedMetaStore {
+    /// Opens, creates, or copy-on-write migrates the store authorized by the
+    /// unique canonical data-directory owner capability.
+    pub(crate) fn open_data_dir_for_owner(owner: &DataDirectoryOwnerLease) -> Result<Self> {
+        let owner_guard = owner.shared_guard();
+        let (db_path, key) = migration_v28::prepare_active_v28_store(&owner_guard)?;
+        Self::open_owned_encrypted(db_path, &key, owner_guard)
     }
 
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let connection = Connection::open(path).map_err(MetaStoreError::storage)?;
-        Self::from_connection(connection, true, MetadataEncryptionState::Plaintext)
+    /// Opens another writer connection backed by the same unforgeable owner
+    /// guard. The kernel lock remains held until every sibling is dropped.
+    pub fn open_sibling(&self) -> Result<Self> {
+        let owner_guard = Arc::clone(self.access.guard());
+        let (db_path, key) = migration_v28::prepare_active_v28_store(&owner_guard)?;
+        Self::open_owned_encrypted(db_path, &key, owner_guard)
     }
 
-    pub fn open_encrypted(path: impl AsRef<Path>, key: &[u8]) -> Result<Self> {
+    /// Rotates the active SQLCipher key while this connection retains the
+    /// unique data-directory owner guard.
+    pub fn rotate_metadata_encryption_key(&self) -> Result<MetadataEncryptionKeyRotation> {
+        let key_path = metadata_encryption_key_path(self.access.guard().canonical_data_dir());
+        let new_key = random_metadata_encryption_key()?;
+        let connection = self.connection.borrow();
+        apply_sqlcipher_rekey(&connection, &new_key)?;
+        verify_sqlcipher_key(&connection)?;
+        replace_private_file(&key_path, encode_hex(&new_key).as_bytes())
+            .map_err(MetaStoreError::io_storage)?;
+        restrict_private_file_permissions(&key_path)?;
+        Ok(MetadataEncryptionKeyRotation { _private: () })
+    }
+
+    fn open_owned_encrypted(
+        path: impl AsRef<Path>,
+        key: &[u8],
+        owner_guard: Arc<data_directory_owner::DataDirectoryOwnerGuard>,
+    ) -> Result<Self> {
         validate_metadata_encryption_key(key)?;
         let connection = Connection::open(path).map_err(MetaStoreError::storage)?;
         apply_sqlcipher_key(&connection, key)?;
         verify_sqlcipher_key(&connection)?;
-        Self::from_connection(connection, true, MetadataEncryptionState::SqlCipher)
+        Self::from_writer_connection(
+            connection,
+            true,
+            MetadataEncryptionState::SqlCipher,
+            OwnedStoreAccess::new(owner_guard),
+        )
     }
 
+    pub(crate) fn from_owned_connection(
+        connection: Connection,
+        metadata_encryption_state: MetadataEncryptionState,
+        owner_guard: Arc<data_directory_owner::DataDirectoryOwnerGuard>,
+    ) -> Result<Self> {
+        Self::from_writer_connection(
+            connection,
+            true,
+            metadata_encryption_state,
+            OwnedStoreAccess::new(owner_guard),
+        )
+    }
+}
+
+impl EphemeralMetaStore {
+    /// Creates an explicit in-memory writer. It cannot be redirected to a file
+    /// and therefore cannot bypass data-directory ownership.
     pub fn open_in_memory() -> Result<Self> {
         let connection = Connection::open_in_memory().map_err(MetaStoreError::storage)?;
-        Self::from_connection(connection, false, MetadataEncryptionState::Plaintext)
+        Self::from_writer_connection(
+            connection,
+            false,
+            MetadataEncryptionState::Plaintext,
+            EphemeralStoreAccess::new(),
+        )
     }
+}
 
-    fn from_connection(
+impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
+    fn from_writer_connection(
         connection: Connection,
         file_backed: bool,
         metadata_encryption_state: MetadataEncryptionState,
+        access: Access,
     ) -> Result<Self> {
         connection
             .busy_timeout(Duration::from_millis(5_000))
@@ -714,21 +839,23 @@ impl MetaStore {
             .execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(MetaStoreError::storage)?;
         if file_backed {
+            // File-backed stores deliberately use rollback journal mode. A WAL
+            // reader must update the shared wal-index, which would violate the
+            // ReadMetaStore zero-filesystem-mutation contract.
             let journal_mode = connection
                 .query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
                 .map_err(MetaStoreError::storage)?;
-            if !journal_mode.eq_ignore_ascii_case("wal") {
-                connection
-                    .pragma_update(None, "journal_mode", "WAL")
-                    .map_err(MetaStoreError::storage)?;
+            if !journal_mode.eq_ignore_ascii_case("delete") {
+                return Err(MetaStoreError::storage_invariant());
             }
         }
         privacy_maintenance::configure_privacy_maintenance(&connection, file_backed)?;
 
         Ok(Self {
-            connection: RefCell::new(connection),
+            connection: std::cell::RefCell::new(connection),
             metadata_encryption_state,
             file_backed,
+            access,
         })
     }
 
@@ -745,7 +872,7 @@ impl MetaStore {
             .map_err(MetaStoreError::migration)?;
 
         let initial_version = schema_version_in_connection(&connection)?;
-        if self.file_backed && (1..schema_v27::VERSION).contains(&initial_version) {
+        if self.file_backed && (1..schema_v28::VERSION).contains(&initial_version) {
             return Err(MetaStoreError::migration_ownership_required());
         }
         let mut applied_versions = Vec::new();
@@ -773,6 +900,10 @@ impl MetaStore {
             apply_v27_target_schema(&mut connection, &random_store_id_digest()?)?;
             applied_versions.push(schema_v27::VERSION);
         }
+        if !migration_applied(&connection, schema_v28::VERSION)? {
+            apply_v28_target_schema(&mut connection)?;
+            applied_versions.push(schema_v28::VERSION);
+        }
 
         privacy_maintenance::complete_privacy_maintenance_after_migration(
             &connection,
@@ -781,8 +912,13 @@ impl MetaStore {
 
         Ok(MigrationReport { applied_versions })
     }
+}
 
-    fn migrate_staging_store_to_v27(&self, store_id_digest: &str) -> Result<MigrationReport> {
+impl<Access: MetadataStoreAccess> MetadataStore<Access> {
+    fn migrate_staging_store_to_v27(&self, store_id_digest: &str) -> Result<MigrationReport>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let mut connection = self.connection.borrow_mut();
         connection
             .execute_batch(
@@ -817,6 +953,19 @@ impl MetaStore {
             applied_versions.push(schema_v27::VERSION);
         }
         Ok(MigrationReport { applied_versions })
+    }
+
+    fn migrate_staging_store_to_v28(&self, store_id_digest: &str) -> Result<MigrationReport>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
+        let mut report = self.migrate_staging_store_to_v27(store_id_digest)?;
+        let mut connection = self.connection.borrow_mut();
+        if !migration_applied(&connection, schema_v28::VERSION)? {
+            apply_v28_target_schema(&mut connection)?;
+            report.applied_versions.push(schema_v28::VERSION);
+        }
+        Ok(report)
     }
 
     pub fn schema_version(&self) -> Result<u32> {
@@ -880,7 +1029,10 @@ impl MetaStore {
             .map(|mode| mode.to_ascii_lowercase())
     }
 
-    pub fn upsert_document(&self, document: &Document) -> Result<()> {
+    pub fn upsert_document(&self, document: &Document) -> Result<()>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         if document.is_deleted || document.status == DocumentStatus::Deleted {
             let mut connection = self.connection.borrow_mut();
             let transaction = connection
@@ -961,10 +1113,16 @@ impl MetaStore {
         deleted_document_ids_from_connection(&connection)
     }
 
-    pub fn purge_import_tasks_for_deleted_document_roots(
+    /// Removes import-task state whose immutable source manifest references a
+    /// deleted document, plus unfinished root-only task state that can no
+    /// longer describe a visible document.
+    pub fn purge_import_tasks_for_deleted_documents(
         &self,
         document_ids: &[DocumentId],
-    ) -> Result<ImportTaskPurge> {
+    ) -> Result<ImportTaskPurge>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         if document_ids.is_empty() {
             return Ok(ImportTaskPurge::empty());
         }
@@ -972,7 +1130,7 @@ impl MetaStore {
         let mut connection = self.connection.borrow_mut();
         let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
         let import_tasks =
-            import_tasks_for_deleted_document_roots_from_connection(&transaction, document_ids)?;
+            import_tasks_for_deleted_documents_from_connection(&transaction, document_ids)?;
         let task_ids = import_tasks
             .into_iter()
             .map(|task| task.id)
@@ -1020,7 +1178,9 @@ impl MetaStore {
         })
     }
 
-    pub fn import_root_markers_for_deleted_document_roots(
+    /// Returns bounded private markers owned by import-task state selected for
+    /// the same deleted-document purge.
+    pub fn import_task_markers_for_deleted_documents(
         &self,
         document_ids: &[DocumentId],
     ) -> Result<Vec<String>> {
@@ -1030,7 +1190,7 @@ impl MetaStore {
 
         let connection = self.connection.borrow();
         let purge_candidates =
-            import_tasks_for_deleted_document_roots_from_connection(&connection, document_ids)?;
+            import_tasks_for_deleted_documents_from_connection(&connection, document_ids)?;
         let mut markers = Vec::new();
 
         for task in purge_candidates {
@@ -1055,7 +1215,10 @@ impl MetaStore {
     pub fn purge_ingest_jobs_for_documents(
         &self,
         document_ids: &[DocumentId],
-    ) -> Result<IngestJobPurge> {
+    ) -> Result<IngestJobPurge>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         if document_ids.is_empty() {
             return Ok(IngestJobPurge::empty());
         }
@@ -1103,7 +1266,10 @@ impl MetaStore {
     pub fn purge_ocr_page_cache_by_content_hashes(
         &self,
         content_hashes: &[String],
-    ) -> Result<OcrPageCachePurge> {
+    ) -> Result<OcrPageCachePurge>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         if content_hashes.is_empty() {
             return Ok(OcrPageCachePurge::empty());
         }
@@ -1151,7 +1317,10 @@ impl MetaStore {
         })
     }
 
-    pub fn upsert_candidate(&self, candidate: &Candidate) -> Result<()> {
+    pub fn upsert_candidate(&self, candidate: &Candidate) -> Result<()>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         validate_candidate(candidate)?;
         let connection = self.connection.borrow();
         upsert_candidate_in_connection(&connection, candidate)
@@ -1180,7 +1349,10 @@ impl MetaStore {
         version_id: &ResumeVersionId,
         email_hash: Option<&ContactHash>,
         phone_hash: Option<&ContactHash>,
-    ) -> Result<Option<Candidate>> {
+    ) -> Result<Option<Candidate>>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         if email_hash.is_none() && phone_hash.is_none() {
             return Ok(None);
         }
@@ -1534,7 +1706,10 @@ impl MetaStore {
         Ok(document_ids)
     }
 
-    pub fn upsert_ocr_page_cache_entry(&self, entry: &OcrPageCacheEntry) -> Result<()> {
+    pub fn upsert_ocr_page_cache_entry(&self, entry: &OcrPageCacheEntry) -> Result<()>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         validate_ocr_page_cache_entry(entry)?;
         let connection = self.connection.borrow();
         connection
@@ -1674,7 +1849,10 @@ impl MetaStore {
         task: WorkerTaskKind,
         paused: bool,
         updated_at: UnixTimestamp,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let connection = self.connection.borrow();
         connection
             .execute(
@@ -1697,7 +1875,10 @@ impl MetaStore {
         Ok(())
     }
 
-    pub fn insert_ingest_job(&self, job: &IngestJob) -> Result<()> {
+    pub fn insert_ingest_job(&self, job: &IngestJob) -> Result<()>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         if job.kind == IngestJobKind::OcrDocument {
             return Err(MetaStoreError::invalid_value(
                 "ingest_job.ocr_job_requires_exact_source_triage",
@@ -1752,7 +1933,10 @@ impl MetaStore {
         source_revision_id: &SourceRevisionId,
         triage_epoch: CurrentClassifierEpoch<'_>,
         queued_at: UnixTimestamp,
-    ) -> Result<EnqueuedIngestJob> {
+    ) -> Result<EnqueuedIngestJob>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let triage_epoch = triage_epoch.as_str();
         let (job_id, scheduled) = {
             let mut connection = self.connection.borrow_mut();
@@ -1913,7 +2097,10 @@ impl MetaStore {
         model_id: &str,
         dimension: usize,
         queued_at: UnixTimestamp,
-    ) -> Result<EnqueuedIngestJob> {
+    ) -> Result<EnqueuedIngestJob>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         validate_embedding_job_spec(model_id, dimension)?;
         let version = self
             .resume_version_by_id(resume_version_id)?
@@ -2133,7 +2320,10 @@ impl MetaStore {
         model_id: &str,
         dimension: usize,
         queued_at: UnixTimestamp,
-    ) -> Result<usize> {
+    ) -> Result<usize>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         validate_embedding_job_spec(model_id, dimension)?;
         let queued_at_seconds = queued_at.as_unix_seconds();
         let mut connection = self.connection.borrow_mut();
@@ -2203,7 +2393,10 @@ impl MetaStore {
         id: &IngestJobId,
         status: IngestJobStatus,
         updated_at: UnixTimestamp,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         self.update_job_status_with_failure_kind(id, status, None, updated_at)
     }
 
@@ -2213,7 +2406,10 @@ impl MetaStore {
         status: IngestJobStatus,
         failure_kind: Option<IngestJobFailureKind>,
         updated_at: UnixTimestamp,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         if failure_kind.is_some()
             && !matches!(
                 status,
@@ -2292,7 +2488,10 @@ impl MetaStore {
         claimed: &ClaimedOcrJob,
         failure: OcrAttemptFailure,
         now: UnixTimestamp,
-    ) -> Result<OcrAttemptFailureOutcome> {
+    ) -> Result<OcrAttemptFailureOutcome>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let job = &claimed.job;
         if job.kind != IngestJobKind::OcrDocument
             || job.status != IngestJobStatus::Running
@@ -2364,7 +2563,10 @@ impl MetaStore {
         })
     }
 
-    pub fn claim_next_ocr_job(&self, now: UnixTimestamp) -> Result<Option<ClaimedOcrJob>> {
+    pub fn claim_next_ocr_job(&self, now: UnixTimestamp) -> Result<Option<ClaimedOcrJob>>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let Some(job) =
             self.claim_next_job_matching(Some(IngestJobKind::OcrDocument), false, now)?
         else {
@@ -2377,91 +2579,10 @@ impl MetaStore {
         ocr_claim_is_current_in_connection(&self.connection.borrow(), claimed)
     }
 
-    pub fn finish_ocr_attempt_success(
-        &self,
-        claimed: &ClaimedOcrJob,
-        publication: OcrAttemptPublication<'_>,
-        now: UnixTimestamp,
-    ) -> Result<OcrAttemptSuccessOutcome> {
-        let job = &claimed.job;
-        let candidate = publication.classification.status == ClassificationStatus::ResumeCandidate;
-        let valid = job.kind == IngestJobKind::OcrDocument
-            && job.status == IngestJobStatus::Running
-            && job.attempt_count > 0
-            && publication.document.id == job.document_id
-            && publication.document.content_hash.as_deref() == Some(claimed.source_fingerprint())
-            && publication.source_revision.document_id == job.document_id
-            && publication.source_revision.id == *claimed.source_revision_id()
-            && publication.source_revision.content_hash.as_str() == claimed.source_fingerprint()
-            && publication.version.document_id == job.document_id
-            && publication.version.source_revision_id == publication.source_revision.id
-            && publication.classification.resume_version_id == publication.version.id
-            && CurrentClassifierEpoch::parse(&publication.classification.classifier_epoch)
-                .is_some()
-            && publication.classification.status != ClassificationStatus::OcrBacklog
-            && (candidate == (publication.document.status == DocumentStatus::FieldsExtracted))
-            && (candidate != (publication.document.status == DocumentStatus::OcrDone))
-            && (candidate || publication.mentions.is_empty())
-            && (candidate || publication.email_hash.is_none() && publication.phone_hash.is_none());
-        if !valid {
-            return Err(MetaStoreError::invalid_value("ingest_job.ocr_publication"));
-        }
-
-        let mut connection = self.connection.borrow_mut();
-        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        let current = ocr_claim_is_current_in_connection(&transaction, claimed)?;
-        if !current {
-            discard_superseded_ocr_claim_in_connection(&transaction, claimed, now)?;
-            transaction.commit().map_err(MetaStoreError::storage)?;
-            return Ok(OcrAttemptSuccessOutcome::Superseded);
-        }
-
-        upsert_document_in_connection(&transaction, publication.document)?;
-        immutable_search::insert_source_revision_in_connection(
-            &transaction,
-            publication.source_revision,
-        )?;
-        immutable_search::insert_resume_version_in_connection(&transaction, publication.version)?;
-        classification::insert_resume_version_classification_in_connection(
-            &transaction,
-            publication.classification,
-        )?;
-        immutable_search::insert_entity_mentions_in_connection(
-            &transaction,
-            &publication.version.id,
-            publication.mentions,
-        )?;
-        assign_candidate_from_hashed_contacts_in_connection(
-            &transaction,
-            &publication.version.id,
-            publication.email_hash,
-            publication.phone_hash,
-            now,
-        )?;
-        let changed = transaction
-            .execute(
-                "UPDATE ingest_job SET status = ?1, finished_at_seconds = ?2,
-                 updated_at_seconds = ?2, failure_kind = NULL
-                 WHERE id = ?3 AND status = ?4 AND attempt_count = ?5
-                   AND max_attempts = ?6",
-                params![
-                    ingest_job_status_to_storage(IngestJobStatus::Completed),
-                    now.as_unix_seconds(),
-                    job.id.as_str(),
-                    ingest_job_status_to_storage(IngestJobStatus::Running),
-                    u32_to_i64(job.attempt_count),
-                    u32_to_i64(job.max_attempts),
-                ],
-            )
-            .map_err(MetaStoreError::storage)?;
-        if changed != 1 {
-            return Err(MetaStoreError::invalid_transition());
-        }
-        transaction.commit().map_err(MetaStoreError::storage)?;
-        Ok(OcrAttemptSuccessOutcome::Completed)
-    }
-
-    pub fn claim_next_job(&self, now: UnixTimestamp) -> Result<Option<IngestJob>> {
+    pub fn claim_next_job(&self, now: UnixTimestamp) -> Result<Option<IngestJob>>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         self.claim_next_job_matching(None, false, now)
     }
 
@@ -2469,7 +2590,10 @@ impl MetaStore {
         &self,
         kind: IngestJobKind,
         now: UnixTimestamp,
-    ) -> Result<Option<IngestJob>> {
+    ) -> Result<Option<IngestJob>>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         self.claim_next_job_matching(Some(kind), false, now)
     }
 
@@ -2478,7 +2602,10 @@ impl MetaStore {
         model_id: &str,
         dimension: usize,
         now: UnixTimestamp,
-    ) -> Result<Option<IngestJob>> {
+    ) -> Result<Option<IngestJob>>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         validate_embedding_job_spec(model_id, dimension)?;
         let claimed_id = {
             let mut connection = self.connection.borrow_mut();
@@ -2577,7 +2704,10 @@ impl MetaStore {
         kind: Option<IngestJobKind>,
         require_resume_version_id: bool,
         now: UnixTimestamp,
-    ) -> Result<Option<IngestJob>> {
+    ) -> Result<Option<IngestJob>>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let kind_filter = kind.map(ingest_job_kind_to_storage);
         let claimed_id = {
             let mut connection = self.connection.borrow_mut();
@@ -2718,7 +2848,10 @@ impl MetaStore {
         &self,
         now: UnixTimestamp,
         stale_before: UnixTimestamp,
-    ) -> Result<usize> {
+    ) -> Result<usize>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let mut terminalized = {
             let mut connection = self.connection.borrow_mut();
             let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
@@ -2809,41 +2942,18 @@ impl MetaStore {
         self.query_jobs("ORDER BY rowid", params![])
     }
 
-    pub fn insert_import_task(&self, task: &ImportTask) -> Result<()> {
-        validate_import_task(task)?;
-
-        let connection = self.connection.borrow();
-        connection
-            .execute(
-                "\
-                INSERT INTO import_task (
-                    id, root_path, status, queued_at_seconds, started_at_seconds,
-                    finished_at_seconds, updated_at_seconds
-                )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![
-                    task.id.as_str(),
-                    task.root_path,
-                    import_task_status_to_storage(task.status),
-                    task.queued_at.as_unix_seconds(),
-                    task.started_at.map(UnixTimestamp::as_unix_seconds),
-                    task.finished_at.map(UnixTimestamp::as_unix_seconds),
-                    task.updated_at.as_unix_seconds(),
-                ],
-            )
-            .map_err(MetaStoreError::storage)?;
-
-        Ok(())
-    }
-
     pub fn insert_import_task_with_scan_scope(
         &self,
         task: &ImportTask,
         scope: &ImportScanScope,
-    ) -> Result<()> {
+        contract: &ImportProcessingContract,
+    ) -> Result<()>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let mut connection = self.connection.borrow_mut();
         let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        insert_import_task_with_scan_scope_in_connection(&transaction, task, scope)?;
+        insert_import_task_with_scan_scope_in_connection(&transaction, task, scope, contract)?;
         transaction.commit().map_err(MetaStoreError::storage)?;
 
         Ok(())
@@ -2863,11 +2973,10 @@ impl MetaStore {
         }
     }
 
-    pub fn cancel_import_task(
-        &self,
-        id: &ImportTaskId,
-        requested_at: UnixTimestamp,
-    ) -> Result<bool> {
+    pub fn cancel_import_task(&self, id: &ImportTaskId, requested_at: UnixTimestamp) -> Result<bool>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let mut connection = self.connection.borrow_mut();
         let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
         let current_task = {
@@ -2938,24 +3047,7 @@ impl MetaStore {
     }
 
     pub fn latest_import_task_by_root(&self, root_path: &str) -> Result<Option<ImportTask>> {
-        let connection = self.connection.borrow();
-        let sql = format!(
-            "\
-            SELECT {IMPORT_TASK_COLUMNS}
-            FROM import_task
-            WHERE root_path = ?1
-            ORDER BY updated_at_seconds DESC, rowid DESC
-            LIMIT 1"
-        );
-        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
-        let mut rows = statement
-            .query(params![root_path])
-            .map_err(MetaStoreError::storage)?;
-
-        match rows.next().map_err(MetaStoreError::storage)? {
-            Some(row) => Ok(Some(read_import_task(row)?)),
-            None => Ok(None),
-        }
+        import_root_head::canonical_import_task_head(&self.connection.borrow(), root_path)
     }
 
     pub fn pending_import_task_by_root(&self, root_path: &str) -> Result<Option<ImportTask>> {
@@ -3081,28 +3173,8 @@ impl MetaStore {
         Ok(scopes)
     }
 
-    pub fn claim_next_import_task_for_worker(
+    pub fn import_task_claim_candidate_for_worker_excluding_due_at(
         &self,
-        updated_at: UnixTimestamp,
-    ) -> Result<Option<ImportTask>> {
-        self.claim_next_import_task_for_worker_excluding(updated_at, &[])
-    }
-
-    pub fn claim_next_import_task_for_worker_excluding(
-        &self,
-        updated_at: UnixTimestamp,
-        excluded_ids: &[ImportTaskId],
-    ) -> Result<Option<ImportTask>> {
-        self.claim_next_import_task_for_worker_excluding_due_at(
-            updated_at,
-            updated_at,
-            excluded_ids,
-        )
-    }
-
-    pub fn claim_next_import_task_for_worker_excluding_due_at(
-        &self,
-        updated_at: UnixTimestamp,
         retryable_updated_at_or_before: UnixTimestamp,
         excluded_ids: &[ImportTaskId],
     ) -> Result<Option<ImportTask>> {
@@ -3119,47 +3191,33 @@ impl MetaStore {
         };
         let sql = format!(
             "\
-            UPDATE import_task
-            SET
-                status = ?,
-                started_at_seconds = ?,
-                finished_at_seconds = NULL,
-                updated_at_seconds = ?
-            WHERE rowid = (
-                SELECT rowid
-                FROM import_task
-                WHERE (
-                        (status = ? AND updated_at_seconds <= ?)
-                        OR (status = ? AND updated_at_seconds <= ?)
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM import_task_cancellation AS cancellation
-                        WHERE cancellation.import_task_id = import_task.id
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM authorized_import_root AS root_control
-                        WHERE root_control.canonical_root_path = import_task.root_path
-                            AND root_control.paused = 1
-                    )
-                    {excluded_clause}
-                ORDER BY CASE WHEN status = ? THEN 0 ELSE 1 END, queued_at_seconds, rowid
-                LIMIT 1
-            )
-            RETURNING {IMPORT_TASK_COLUMNS}"
+            SELECT {IMPORT_TASK_COLUMNS}
+            FROM import_task
+            WHERE (
+                    status = ?
+                    OR (status = ? AND updated_at_seconds <= ?)
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM import_task_cancellation AS cancellation
+                    WHERE cancellation.import_task_id = import_task.id
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM authorized_import_root AS root_control
+                    WHERE root_control.canonical_root_path = import_task.root_path
+                        AND root_control.paused = 1
+                )
+                {excluded_clause}
+            ORDER BY CASE WHEN status = ? THEN 0 ELSE 1 END, queued_at_seconds, rowid
+            LIMIT 1"
         );
         let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
-        let updated_at_seconds = updated_at.as_unix_seconds();
         let retryable_due_seconds = retryable_updated_at_or_before.as_unix_seconds();
         let queued = import_task_status_to_storage(ImportTaskStatus::Queued);
         let retryable = import_task_status_to_storage(ImportTaskStatus::FailedRetryable);
         let mut values = vec![
-            Value::Text(import_task_status_to_storage(ImportTaskStatus::Running).to_string()),
-            Value::Integer(updated_at_seconds),
-            Value::Integer(updated_at_seconds),
             Value::Text(queued.to_string()),
-            Value::Integer(updated_at_seconds),
             Value::Text(retryable.to_string()),
             Value::Integer(retryable_due_seconds),
         ];
@@ -3179,38 +3237,231 @@ impl MetaStore {
         }
     }
 
-    pub fn recover_stale_running_import_tasks(
+    /// Claims one previously observed import task after the caller has acquired
+    /// its process-wide owner lock. The observed status and timestamp form the
+    /// compare-and-swap token, so a concurrent cancellation, retry, or claim is
+    /// never overwritten.
+    pub fn claim_observed_import_task_for_worker(
         &self,
+        observed: &ImportTask,
         updated_at: UnixTimestamp,
-        running_updated_at_or_before: UnixTimestamp,
-    ) -> Result<usize> {
+    ) -> Result<Option<ImportTask>>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
+        if !matches!(
+            observed.status,
+            ImportTaskStatus::Queued | ImportTaskStatus::FailedRetryable
+        ) {
+            return Ok(None);
+        }
+        let claim_timestamp = UnixTimestamp::from_unix_seconds(
+            updated_at
+                .as_unix_seconds()
+                .max(observed.updated_at.as_unix_seconds()),
+        );
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        let claimed = {
+            let mut statement = transaction
+                .prepare(&format!(
+                    "\
+                    UPDATE import_task
+                    SET
+                        status = ?1,
+                        started_at_seconds = ?2,
+                        finished_at_seconds = NULL,
+                        updated_at_seconds = ?2
+                    WHERE id = ?3
+                        AND status = ?4
+                        AND updated_at_seconds = ?5
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM import_task_cancellation AS cancellation
+                            WHERE cancellation.import_task_id = import_task.id
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM authorized_import_root AS root_control
+                            WHERE root_control.canonical_root_path = import_task.root_path
+                                AND root_control.paused = 1
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1 FROM import_task_completion AS completion
+                            WHERE completion.import_task_id = import_task.id
+                        )
+                        AND (
+                            NOT EXISTS (
+                                SELECT 1
+                                FROM search_projection_state AS projection
+                                WHERE projection.state_key = 'default'
+                                  AND projection.service_state = 'repairing'
+                                  AND projection.repair_reason = 'migration_rebuild'
+                                  AND projection.generation IS NULL
+                            )
+                            OR EXISTS (
+                                SELECT 1
+                                FROM migration_rebuild_full_corpus_task AS purpose
+                                JOIN import_task_contract_binding AS binding
+                                  ON binding.import_task_id = purpose.import_task_id
+                                 AND binding.processing_contract_id = purpose.processing_contract_id
+                                JOIN migration_rebuild_contract_state AS rebuild
+                                  ON rebuild.state_key = 'default'
+                                 AND rebuild.active_contract_id = purpose.processing_contract_id
+                                WHERE purpose.import_task_id = import_task.id
+                            )
+                        )
+                    RETURNING {IMPORT_TASK_COLUMNS}"
+                ))
+                .map_err(MetaStoreError::storage)?;
+            let mut rows = statement
+                .query(params![
+                    import_task_status_to_storage(ImportTaskStatus::Running),
+                    claim_timestamp.as_unix_seconds(),
+                    observed.id.as_str(),
+                    import_task_status_to_storage(observed.status),
+                    observed.updated_at.as_unix_seconds(),
+                ])
+                .map_err(MetaStoreError::storage)?;
+            rows.next()
+                .map_err(MetaStoreError::storage)?
+                .map(read_import_task)
+                .transpose()?
+        };
+        let Some(claimed) = claimed else {
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            return Ok(None);
+        };
+        reset_unsealed_import_attempt(
+            &transaction,
+            &claimed.id,
+            claim_timestamp.as_unix_seconds(),
+        )?;
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(Some(claimed))
+    }
+
+    pub fn running_import_task_ids(&self) -> Result<Vec<ImportTaskId>> {
         let connection = self.connection.borrow();
-        let updated_at_seconds = updated_at.as_unix_seconds();
+        let mut statement = connection
+            .prepare(
+                "\
+                SELECT id
+                FROM import_task
+                WHERE status = ?1
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM import_task_cancellation AS cancellation
+                        WHERE cancellation.import_task_id = import_task.id
+                    )
+                ORDER BY queued_at_seconds, rowid",
+            )
+            .map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![import_task_status_to_storage(
+                ImportTaskStatus::Running
+            )])
+            .map_err(MetaStoreError::storage)?;
+        let mut ids = Vec::new();
+
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            ids.push(read_id::<ImportTaskId>(row, 0, "import_task.id")?);
+        }
+
+        Ok(ids)
+    }
+
+    pub fn requeue_running_import_task(
+        &self,
+        id: &ImportTaskId,
+        observed_updated_at: UnixTimestamp,
+        updated_at: UnixTimestamp,
+    ) -> Result<bool>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
+        let connection = self.connection.borrow();
         let changed = connection
             .execute(
                 "\
                 UPDATE import_task
                 SET
                     status = ?1,
-                    finished_at_seconds = ?2,
-                    updated_at_seconds = ?2
-                WHERE status = ?3 AND updated_at_seconds <= ?4",
+                    started_at_seconds = NULL,
+                    finished_at_seconds = NULL,
+                    updated_at_seconds = MAX(updated_at_seconds, ?2)
+                WHERE id = ?3
+                    AND status = ?4
+                    AND updated_at_seconds = ?5
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM import_task_cancellation AS cancellation
+                        WHERE cancellation.import_task_id = import_task.id
+                    )",
                 params![
-                    import_task_status_to_storage(ImportTaskStatus::FailedRetryable),
-                    updated_at_seconds,
+                    import_task_status_to_storage(ImportTaskStatus::Queued),
+                    updated_at.as_unix_seconds(),
+                    id.as_str(),
                     import_task_status_to_storage(ImportTaskStatus::Running),
-                    running_updated_at_or_before.as_unix_seconds(),
+                    observed_updated_at.as_unix_seconds(),
                 ],
             )
             .map_err(MetaStoreError::storage)?;
-        Ok(changed)
+
+        Ok(changed > 0)
+    }
+
+    /// Requeues a task that the current owner just interrupted during an
+    /// intentional process shutdown. This is not a failed attempt and must not
+    /// inherit the normal retry backoff when the desktop is opened again.
+    pub fn requeue_interrupted_import_task(
+        &self,
+        id: &ImportTaskId,
+        observed_updated_at: UnixTimestamp,
+        updated_at: UnixTimestamp,
+    ) -> Result<bool>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
+        let connection = self.connection.borrow();
+        let changed = connection
+            .execute(
+                "\
+                UPDATE import_task
+                SET
+                    status = ?1,
+                    started_at_seconds = NULL,
+                    finished_at_seconds = NULL,
+                    updated_at_seconds = MAX(updated_at_seconds, ?2)
+                WHERE id = ?3
+                    AND status = ?4
+                    AND updated_at_seconds = ?5
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM import_task_cancellation AS cancellation
+                        WHERE cancellation.import_task_id = import_task.id
+                    )",
+                params![
+                    import_task_status_to_storage(ImportTaskStatus::Queued),
+                    updated_at.as_unix_seconds(),
+                    id.as_str(),
+                    import_task_status_to_storage(ImportTaskStatus::FailedRetryable),
+                    observed_updated_at.as_unix_seconds(),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+
+        Ok(changed > 0)
     }
 
     pub fn heartbeat_running_import_task(
         &self,
         id: &ImportTaskId,
         updated_at: UnixTimestamp,
-    ) -> Result<bool> {
+    ) -> Result<bool>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let connection = self.connection.borrow();
         let updated_at_seconds = updated_at.as_unix_seconds();
         let changed = connection
@@ -3229,7 +3480,10 @@ impl MetaStore {
         Ok(changed > 0)
     }
 
-    pub fn upsert_import_scan_scope(&self, scope: &ImportScanScope) -> Result<()> {
+    pub fn upsert_import_scan_scope(&self, scope: &ImportScanScope) -> Result<()>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         validate_import_scan_scope(scope)?;
 
         let mut connection = self.connection.borrow_mut();
@@ -3354,7 +3608,10 @@ impl MetaStore {
         &self,
         task_id: &ImportTaskId,
         errors: &[ImportScanError],
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         for error in errors {
             validate_import_scan_error(task_id, error)?;
         }
@@ -3467,7 +3724,16 @@ impl MetaStore {
         id: &ImportTaskId,
         status: ImportTaskStatus,
         updated_at: UnixTimestamp,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
+        if matches!(
+            status,
+            ImportTaskStatus::Running | ImportTaskStatus::Completed
+        ) {
+            return Err(MetaStoreError::invalid_transition());
+        }
         let mut connection = self.connection.borrow_mut();
         let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
         let current_task = {
@@ -3798,51 +4064,6 @@ impl MetaStore {
         })
     }
 
-    pub fn record_query_observation(
-        &self,
-        mode: &str,
-        duration: Duration,
-        result_count: usize,
-        observed_at: UnixTimestamp,
-    ) -> Result<()> {
-        let mode = validate_query_observation_mode(mode)?;
-        let duration_ms = u64::try_from(duration.as_millis())
-            .ok()
-            .and_then(|value| u64_to_i64(value, "query_observation.duration_ms").ok())
-            .ok_or_else(|| MetaStoreError::invalid_value("query_observation.duration_ms"))?;
-        let result_count = usize_to_i64(result_count, "query_observation.result_count")?;
-        let connection = self.connection.borrow_mut();
-        connection
-            .execute(
-                "\
-                INSERT INTO query_observation (
-                    observed_at_seconds, mode, duration_ms, result_count
-                )
-                VALUES (?1, ?2, ?3, ?4)",
-                params![
-                    observed_at.as_unix_seconds(),
-                    mode,
-                    duration_ms,
-                    result_count,
-                ],
-            )
-            .map_err(MetaStoreError::storage)?;
-        connection
-            .execute(
-                "\
-                DELETE FROM query_observation
-                WHERE rowid NOT IN (
-                    SELECT rowid
-                    FROM query_observation
-                    ORDER BY observed_at_seconds DESC, rowid DESC
-                    LIMIT ?1
-                )",
-                params![QUERY_OBSERVATION_RETENTION_ROWS],
-            )
-            .map_err(MetaStoreError::storage)?;
-        Ok(())
-    }
-
     fn query_jobs<P>(&self, filter_clause: &str, params: P) -> Result<Vec<IngestJob>>
     where
         P: rusqlite::Params,
@@ -3861,10 +4082,10 @@ impl MetaStore {
     }
 }
 
-impl fmt::Debug for MetaStore {
+impl<Access: MetadataStoreAccess> fmt::Debug for MetadataStore<Access> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("MetaStore")
+            .debug_struct("MetadataStore")
             .field("connection", &"<redacted>")
             .finish()
     }
@@ -4345,12 +4566,6 @@ pub enum OcrAttemptFailure {
 pub enum OcrAttemptFailureOutcome {
     Retryable,
     FailedPermanent,
-    Superseded,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OcrAttemptSuccessOutcome {
-    Completed,
     Superseded,
 }
 
@@ -5738,6 +5953,22 @@ fn apply_v27_target_schema(connection: &mut Connection, store_id_digest: &str) -
     transaction.commit().map_err(MetaStoreError::migration)
 }
 
+fn apply_v28_target_schema(connection: &mut Connection) -> Result<()> {
+    let transaction = connection
+        .transaction()
+        .map_err(MetaStoreError::migration)?;
+    transaction
+        .execute_batch(schema_v28::SCHEMA)
+        .map_err(MetaStoreError::migration)?;
+    transaction
+        .execute(
+            "INSERT INTO schema_migrations (version, applied_at_seconds) VALUES (?1, 0)",
+            params![i64::from(schema_v28::VERSION)],
+        )
+        .map_err(MetaStoreError::migration)?;
+    transaction.commit().map_err(MetaStoreError::migration)
+}
+
 fn random_store_id_digest() -> Result<String> {
     let mut bytes = [0_u8; 32];
     getrandom::getrandom(&mut bytes).map_err(|_| MetaStoreError::random())?;
@@ -5928,17 +6159,62 @@ fn pending_import_task_by_root_sql() -> String {
                 FROM import_task_cancellation AS cancellation
                 WHERE cancellation.import_task_id = import_task.id
             )
-        ORDER BY CASE WHEN status = ?3 THEN 0 ELSE 1 END, queued_at_seconds, rowid
+        ORDER BY rowid DESC
         LIMIT 1"
     )
+}
+
+fn reset_unsealed_import_attempt(
+    connection: &Connection,
+    task_id: &ImportTaskId,
+    updated_at_seconds: i64,
+) -> Result<()> {
+    connection
+        .execute(
+            "DELETE FROM import_task_source_disposition
+             WHERE import_task_id = ?1
+               AND NOT EXISTS (
+                   SELECT 1 FROM import_task_completion AS completion
+                   WHERE completion.import_task_id = ?1
+               )",
+            params![task_id.as_str()],
+        )
+        .map_err(MetaStoreError::storage)?;
+    connection
+        .execute(
+            "DELETE FROM import_scan_error WHERE import_task_id = ?1",
+            params![task_id.as_str()],
+        )
+        .map_err(MetaStoreError::storage)?;
+    connection
+        .execute(
+            "UPDATE import_scan_scope SET
+                 files_discovered = 0,
+                 ignored_entries = 0,
+                 scan_errors = 0,
+                 searchable_documents = 0,
+                 ocr_required_documents = 0,
+                 ocr_jobs_queued = 0,
+                 failed_documents = 0,
+                 deleted_documents = 0,
+                 scan_budget_observed = CASE
+                     WHEN scan_budget_limit IS NULL THEN NULL ELSE 0
+                 END,
+                 scan_budget_exhausted = 0,
+                 updated_at_seconds = ?2
+             WHERE import_task_id = ?1",
+            params![task_id.as_str(), updated_at_seconds],
+        )
+        .map_err(MetaStoreError::storage)?;
+    Ok(())
 }
 
 fn insert_import_task_with_scan_scope_in_connection(
     connection: &Connection,
     task: &ImportTask,
     scope: &ImportScanScope,
+    contract: &ImportProcessingContract,
 ) -> Result<()> {
-    validate_import_task(task)?;
     validate_import_scan_scope(scope)?;
     if scope.import_task_id != task.id {
         return Err(MetaStoreError::invalid_value(
@@ -5948,24 +6224,8 @@ fn insert_import_task_with_scan_scope_in_connection(
     if scope.canonical_root_path != task.root_path {
         return Err(MetaStoreError::invalid_value("import_task.root_path"));
     }
+    insert_import_task_in_connection(connection, task, contract)?;
     upsert_authorized_import_root_in_connection(connection, scope)?;
-    connection
-        .execute(
-            "INSERT INTO import_task (
-                id, root_path, status, queued_at_seconds, started_at_seconds,
-                finished_at_seconds, updated_at_seconds
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                task.id.as_str(),
-                task.root_path,
-                import_task_status_to_storage(task.status),
-                task.queued_at.as_unix_seconds(),
-                task.started_at.map(UnixTimestamp::as_unix_seconds),
-                task.finished_at.map(UnixTimestamp::as_unix_seconds),
-                task.updated_at.as_unix_seconds(),
-            ],
-        )
-        .map_err(MetaStoreError::storage)?;
     connection
         .execute(
             "INSERT INTO import_scan_scope (
@@ -6018,6 +6278,78 @@ fn insert_import_task_with_scan_scope_in_connection(
             ],
         )
         .map_err(MetaStoreError::storage)?;
+    Ok(())
+}
+
+fn insert_import_task_in_connection(
+    connection: &Connection,
+    task: &ImportTask,
+    contract: &ImportProcessingContract,
+) -> Result<()> {
+    validate_import_task(task)?;
+    if task.status != ImportTaskStatus::Queued {
+        return Err(MetaStoreError::invalid_value("import_task.lifecycle"));
+    }
+    import_processing_store::insert_import_processing_contract_in_connection(connection, contract)?;
+    ensure_import_task_contract_allowed(connection, contract.id())?;
+    connection
+        .execute(
+            "INSERT INTO import_task (
+                id, root_path, status, queued_at_seconds, started_at_seconds,
+                finished_at_seconds, updated_at_seconds
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                task.id.as_str(),
+                task.root_path,
+                import_task_status_to_storage(task.status),
+                task.queued_at.as_unix_seconds(),
+                task.started_at.map(UnixTimestamp::as_unix_seconds),
+                task.finished_at.map(UnixTimestamp::as_unix_seconds),
+                task.updated_at.as_unix_seconds(),
+            ],
+        )
+        .map_err(MetaStoreError::storage)?;
+    connection
+        .execute(
+            "INSERT INTO import_task_contract_binding (
+                import_task_id, processing_contract_id
+             ) VALUES (?1, ?2)",
+            params![task.id.as_str(), contract.id().as_str()],
+        )
+        .map_err(MetaStoreError::storage)?;
+    Ok(())
+}
+
+fn ensure_import_task_contract_allowed(
+    connection: &Connection,
+    contract_id: &ImportProcessingContractId,
+) -> Result<()> {
+    let state = connection
+        .query_row(
+            "SELECT projection.service_state, projection.generation,
+                    projection.repair_reason, rebuild.active_contract_id
+             FROM search_projection_state AS projection
+             JOIN migration_rebuild_contract_state AS rebuild
+               ON rebuild.state_key = projection.state_key
+             WHERE projection.state_key = 'default'",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
+        )
+        .map_err(MetaStoreError::storage)?;
+    if state.0 == "repairing"
+        && state.1.is_none()
+        && state.2.as_deref() == Some("migration_rebuild")
+        && state.3.as_deref() != Some(contract_id.as_str())
+    {
+        return Err(MetaStoreError::invalid_transition());
+    }
     Ok(())
 }
 
@@ -6145,7 +6477,7 @@ fn import_tasks_from_connection(connection: &Connection) -> Result<Vec<ImportTas
     Ok(tasks)
 }
 
-fn import_tasks_for_deleted_document_roots_from_connection(
+fn import_tasks_for_deleted_documents_from_connection(
     connection: &Connection,
     document_ids: &[DocumentId],
 ) -> Result<Vec<ImportTask>> {
@@ -6159,16 +6491,40 @@ fn import_tasks_for_deleted_document_roots_from_connection(
     }
     let visible_paths = visible_document_paths_from_connection(connection)?;
     let import_tasks = import_tasks_from_connection(connection)?;
+    let placeholders = (0..document_ids.len())
+        .map(|index| format!("?{}", index + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let lineage_sql = format!(
+        "SELECT DISTINCT import_task_id
+         FROM import_task_source_disposition
+         WHERE document_id IN ({placeholders})"
+    );
+    let lineage_params = document_ids
+        .iter()
+        .map(|document_id| Value::Text(document_id.as_str().to_string()))
+        .collect::<Vec<_>>();
+    let mut lineage_statement = connection
+        .prepare(&lineage_sql)
+        .map_err(MetaStoreError::storage)?;
+    let mut lineage_rows = lineage_statement
+        .query(params_from_iter(lineage_params))
+        .map_err(MetaStoreError::storage)?;
+    let mut lineage_task_ids = BTreeSet::new();
+    while let Some(row) = lineage_rows.next().map_err(MetaStoreError::storage)? {
+        lineage_task_ids.insert(read_string(row, 0)?);
+    }
 
     Ok(import_tasks
         .into_iter()
         .filter(|task| {
-            deleted_paths
-                .iter()
-                .any(|path| import_root_matches_document_path(&task.root_path, path))
-                && !visible_paths
+            lineage_task_ids.contains(task.id.as_str())
+                || (deleted_paths
                     .iter()
                     .any(|path| import_root_matches_document_path(&task.root_path, path))
+                    && !visible_paths
+                        .iter()
+                        .any(|path| import_root_matches_document_path(&task.root_path, path)))
         })
         .collect())
 }
@@ -7149,15 +7505,6 @@ fn validate_confidence_threshold(confidence: f32, field: &'static str) -> Result
         return Err(MetaStoreError::invalid_value(field));
     }
     Ok(())
-}
-
-fn validate_query_observation_mode(mode: &str) -> Result<&'static str> {
-    match mode {
-        "fulltext" => Ok("fulltext"),
-        "semantic" => Ok("semantic"),
-        "hybrid" => Ok("hybrid"),
-        _ => Err(MetaStoreError::invalid_value("query_observation.mode")),
-    }
 }
 
 fn query_latency_summary(connection: &Connection) -> Result<QueryLatencySummary> {

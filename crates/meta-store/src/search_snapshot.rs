@@ -1,6 +1,6 @@
 use rusqlite::{Connection, TransactionBehavior};
 
-use crate::{MetaStore, MetaStoreError, Result};
+use crate::{MetaStoreError, MetadataStore, MetadataStoreAccess, Result};
 
 mod error;
 mod filter;
@@ -63,7 +63,7 @@ impl SearchMetadataSnapshot<'_> {
     }
 }
 
-impl MetaStore {
+impl<Access: MetadataStoreAccess> MetadataStore<Access> {
     /// Resolves exact-version detail metadata and a bounded text page in one
     /// SQLite snapshot. This is the application boundary for detail requests;
     /// callers cannot accidentally split the two reads across publications.

@@ -2,7 +2,7 @@ use std::io::Write;
 use std::net::TcpStream;
 use std::time::Duration;
 
-use super::{process_metrics, ResponseSinkError};
+use super::{ResponseSinkError, ServiceErrorCode};
 
 const RESPONSE_WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -15,10 +15,21 @@ pub(crate) fn configure(stream: &TcpStream) -> Result<(), ResponseSinkError> {
 pub(crate) fn write_http_response(
     stream: &mut TcpStream,
     status_code: u16,
-    reason: &str,
     content_type: &str,
     body: &str,
 ) -> Result<(), ResponseSinkError> {
+    let reason = match status_code {
+        200 => "OK",
+        202 => "Accepted",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        404 => "Not Found",
+        409 => "Conflict",
+        413 => "Payload Too Large",
+        500 => "Internal Server Error",
+        503 => "Service Unavailable",
+        _ => "Error",
+    };
     let header = format!(
         "HTTP/1.1 {status_code} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
@@ -45,23 +56,38 @@ pub(crate) fn write_search_response(
 }
 
 pub(crate) fn write_all(stream: &mut TcpStream, bytes: &[u8]) -> Result<(), ResponseSinkError> {
-    let result = stream
+    stream
         .write_all(bytes)
-        .map_err(|error| ResponseSinkError::from_io(&error));
-    if let Err(error) = result {
-        process_metrics().record_response_failure(error);
-    }
-    result
+        .map_err(|error| ResponseSinkError::from_io(&error))
 }
 
 pub(crate) fn flush(stream: &mut TcpStream) -> Result<(), ResponseSinkError> {
-    let result = stream
+    stream
         .flush()
-        .map_err(|error| ResponseSinkError::from_io(&error));
-    if let Err(error) = result {
-        process_metrics().record_response_failure(error);
+        .map_err(|error| ResponseSinkError::from_io(&error))
+}
+
+pub(crate) fn write_service_unavailable(
+    stream: &mut TcpStream,
+    code: ServiceErrorCode,
+) -> Result<(), ResponseSinkError> {
+    let body = unified_error_body(None, code.label(), code.action());
+    write_http_response(stream, 503, "application/json", &body)
+}
+
+pub(crate) fn unified_error_body(request_id: Option<&str>, code: &str, action: &str) -> String {
+    let mut body = serde_json::json!({
+        "schema_version": "resume-ir.error.v1",
+        "status": "error",
+        "error": {
+            "code": code,
+            "action": action,
+        },
+    });
+    if let Some(request_id) = request_id {
+        body["request_id"] = serde_json::json!(request_id);
     }
-    result
+    body.to_string()
 }
 
 #[cfg(all(test, unix))]

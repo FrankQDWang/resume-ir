@@ -2,9 +2,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use import_pipeline::{import_root_with_options, ImportOptions};
+use import_pipeline::{
+    current_import_processing_contract, import_root_with_options, ImportOptions,
+    ImportTaskOwnerLock,
+};
 use meta_store::{
-    ImportTask, ImportTaskId, ImportTaskStatus, MetaStore, SearchProjectionFilter, UnixTimestamp,
+    DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, ImportRootKind,
+    ImportRootTaskHeadOutcome, ImportRootTaskHeadRequest, ImportScanProfile, ImportScanScope,
+    ImportTask, ImportTaskId, ImportTaskStatus, OwnedMetaStore, SearchProjectionFilter,
+    UnixTimestamp,
 };
 use search_runtime::{
     HitLimit, QueryCoordinator, SearchRuntimeErrorCode, SelectionLimit, SemanticContract,
@@ -104,10 +110,11 @@ fn invalid_new_generation_is_not_served_from_the_old_cache() {
 }
 
 struct Fixture {
+    store: OwnedMetaStore,
+    _owner: DataDirectoryOwnerLease,
     _temp: TestDir,
     data_dir: PathBuf,
     root: PathBuf,
-    store: MetaStore,
     next_timestamp: i64,
 }
 
@@ -125,13 +132,17 @@ impl Fixture {
             )
             .unwrap();
         }
-        let store = MetaStore::open_data_dir(&data_dir).unwrap();
-        store.run_migrations().unwrap();
+        let owner = match DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap() {
+            DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+            DataDirectoryOwnerAcquisition::Contended => panic!("synthetic fixture owner contended"),
+        };
+        let store = owner.open_store().unwrap();
         let mut fixture = Self {
+            store,
+            _owner: owner,
             _temp: temp,
             data_dir,
             root,
-            store,
             next_timestamp: 1_900_000_000,
         };
         fixture.publish_next();
@@ -145,25 +156,63 @@ impl Fixture {
     fn publish_next(&mut self) -> String {
         let now = UnixTimestamp::from_unix_seconds(self.next_timestamp);
         self.next_timestamp += 1;
-        let task = ImportTask {
+        let options = ImportOptions::default();
+        let processing_contract = current_import_processing_contract(&options).unwrap();
+        self.store
+            .activate_migration_rebuild_contract(&processing_contract, now)
+            .unwrap();
+        let queued = ImportTask {
             id: ImportTaskId::from_non_secret_parts(&[&format!("task-{}", self.next_timestamp)]),
             root_path: self.root.to_string_lossy().into_owned(),
-            status: ImportTaskStatus::Running,
+            status: ImportTaskStatus::Queued,
             queued_at: now,
-            started_at: Some(now),
+            started_at: None,
             finished_at: None,
             updated_at: now,
         };
-        self.store.insert_import_task(&task).unwrap();
-        import_root_with_options(
-            &self.data_dir,
-            &self.store,
-            &task,
-            &self.root,
-            now,
-            ImportOptions::default(),
-        )
-        .unwrap();
+        let scope = ImportScanScope {
+            import_task_id: queued.id.clone(),
+            root_kind: ImportRootKind::Explicit,
+            root_preset: None,
+            scan_profile: ImportScanProfile::Explicit,
+            requested_root_path: queued.root_path.clone(),
+            canonical_root_path: queued.root_path.clone(),
+            files_discovered: 0,
+            ignored_entries: 0,
+            scan_errors: 0,
+            searchable_documents: 0,
+            ocr_required_documents: 0,
+            ocr_jobs_queued: 0,
+            failed_documents: 0,
+            deleted_documents: 0,
+            scan_budget_kind: None,
+            scan_budget_limit: None,
+            scan_budget_observed: None,
+            scan_budget_exhausted: false,
+            updated_at: now,
+        };
+        let observed = match self
+            .store
+            .coordinate_import_root_task_head(ImportRootTaskHeadRequest::Configured {
+                task: &queued,
+                scope: &scope,
+                processing_contract: &processing_contract,
+            })
+            .unwrap()
+        {
+            ImportRootTaskHeadOutcome::HeadInserted { task, .. }
+            | ImportRootTaskHeadOutcome::HeadPromoted { task, .. }
+            | ImportRootTaskHeadOutcome::HeadRetained { task, .. } => task,
+            outcome => panic!("synthetic fixture head was rejected: {outcome:?}"),
+        };
+        let _owner_lock = ImportTaskOwnerLock::acquire(&self.data_dir, &observed.id).unwrap();
+        let task = self
+            .store
+            .claim_observed_import_task_for_worker(&observed, now)
+            .unwrap()
+            .unwrap();
+        import_root_with_options(&self.data_dir, &self.store, &task, &self.root, now, options)
+            .unwrap();
         self.store
             .with_search_metadata_snapshot(|snapshot| {
                 Ok::<_, ()>(snapshot.head().generation.clone())

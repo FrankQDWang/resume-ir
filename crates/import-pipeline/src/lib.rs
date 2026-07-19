@@ -3,67 +3,106 @@
 #![allow(clippy::too_many_arguments, clippy::large_enum_variant)]
 
 mod classification;
+mod data_directory_owner;
+mod file_processing;
 mod immutable_ingest;
-mod index_publication;
+mod import_run;
 mod index_recovery;
+mod migration_artifacts;
+mod migration_rebuild;
+mod ocr_publication;
+mod processing_contract;
+mod publication_coordinator;
 mod search_artifact_cache;
 mod search_artifacts;
 mod search_publication;
+mod search_publication_ocr;
+mod search_publication_vector;
 mod search_vectorizer;
+mod source_digest;
+mod source_dispositions;
+mod timing;
 
-use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
 use std::num::NonZeroUsize;
-use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
-use core_domain::{EntityMentionId, SectionType};
-use extractor_rules::{extract_strong_fields, FieldType, RuleMatch};
 pub use fs_crawler::ScanProfile;
-use fs_crawler::{
-    crawl_directory_with_options_and_control, normalize_path, CrawlError, CrawlErrorKind,
-    DiscoveredFile, FsOperation, NormalizedPath, ScanBudgetKind, ScanControl, ScanOptions,
-};
-use index_fulltext::{IndexDocument, IndexSection, SnapshotPublishPhase};
-use meta_store::{
-    ClaimedOcrJob, ClassificationStatus, ContactHash, ContentDigest, CurrentClassifierEpoch,
-    Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
-    ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanError, ImportScanErrorKind,
-    ImportScanErrorOperation, ImportTask, ImportTaskId, ImportTaskStatus, IngestJob,
-    IngestJobStatus, MetaStore, OcrAttemptPublication, OcrAttemptSuccessOutcome, ResumeVersion,
-    ResumeVersionClassification, ResumeVersionId, SourceRevision, UnixTimestamp,
-};
-use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
-use parser_doc::DocParser;
-use parser_docx::DocxParser;
+use fs_crawler::{CrawlErrorKind, ScanBudgetKind};
+use index_fulltext::SnapshotPublishPhase;
+#[cfg(test)]
+use index_fulltext::{IndexDocument, IndexSection};
+use meta_store::{DocumentId, FileExtension};
+use parser_common::{ParseInput, Parser, ParserErrorKind, ResourceBudget};
 use parser_pdf::{PdfParser, PdfTextExtractionTimings};
-use parser_text::TxtParser;
-use privacy::{ContactHasher, ContactKind};
 pub use resume_classifier::LinearPromotionPolicy;
-use sectionizer::{SectionChunk, Sectionizer};
+#[cfg(test)]
+use sectionizer::Sectionizer;
 use sysinfo::System;
-use text_normalizer::TextNormalizer;
 
-use classification::AdmissionDecision;
-use immutable_ingest::{resume_version, source_revision, StagedDerivedData, StagedResume};
-use index_publication::SearchPublicationLock;
-pub use index_recovery::{reconcile_search_artifacts, SearchArtifactRecoverySummary};
+pub(crate) use classification::AdmissionDecision;
+pub use data_directory_owner::{
+    DataDirectoryOwnerAcquireError, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease,
+    ImportProcessingOrphanNormalizationError,
+};
+#[cfg(test)]
+use file_processing::classify_language_set;
+#[cfg(test)]
+use file_processing::persist_source_revision_failure;
+pub(crate) use file_processing::{
+    contact_hashes_from_mentions, entity_mentions_from_rules, language_set, sections_to_index,
+};
+#[cfg(test)]
+use file_processing::{
+    process_file, recv_parse_result_with_cancel_poll, ParseWorkOutcome, ParseWorkResult,
+};
+pub(crate) use file_processing::{PendingSearchableDocument, PendingSearchablePublicationKind};
+#[cfg(test)]
+use immutable_ingest::{resume_version, StagedDerivedData, StagedResume};
+pub(crate) use import_run::current_timestamp_or;
+#[cfg(test)]
+use import_run::{
+    document_path_is_deletion_candidate, finish_import_file, should_flush_searchable_documents,
+    CancelCheckMetrics, ImportCancelPoller, ParseWorkerClock,
+};
+pub use import_run::{
+    import_root, import_root_with_options, import_root_with_options_and_control, ImportRunControl,
+};
+pub use index_recovery::{
+    finalize_migration_rebuild, reconcile_search_artifacts, SearchArtifactRecoverySummary,
+};
+pub use meta_store::{import_task_owner_lock_path, ImportTaskOwnerLock};
+pub use migration_artifacts::{prepare_migration_rebuild_artifacts, MigrationArtifactRetirement};
+pub use migration_rebuild::{ocr_preclaim_decision, OcrPreclaimDecision, OcrPreclaimNotReady};
+pub use ocr_publication::{
+    index_claimed_ocr_text, index_claimed_ocr_text_with_policy, OcrTextIndexOutcome,
+    OcrTextIndexSummary,
+};
+pub use processing_contract::current_import_processing_contract;
+#[cfg(test)]
+use publication_coordinator::take_pending_searchable_documents;
+#[cfg(test)]
+use publication_coordinator::{flush_pending_searchable_documents, PendingProjectionRemovals};
+pub use publication_coordinator::{publish_search_projection_removals, rebuild_search_artifacts};
+#[cfg(test)]
 use search_artifact_cache::{CurrentImportCacheMode, CurrentImportDocumentCache};
-use search_artifacts::{write_incremental_search_artifacts, write_rebuilt_search_artifacts};
+#[cfg(test)]
+use search_artifacts::write_incremental_search_artifacts;
+#[cfg(test)]
 use search_publication::commit_prepared_search_publication;
 pub use search_vectorizer::{
     SearchPublicationEmbeddingFailure, SearchPublicationEmbeddingInput,
     SearchPublicationEmbeddingOutput, SearchPublicationVectorization, SearchPublicationVectorizer,
 };
+#[cfg(test)]
+use source_dispositions::{ImportDispositionBatches, ProcessedFile};
+pub(crate) use timing::measure_result_stage;
 
-const PARSE_VERSION: &str = "parser-v1";
-const OCR_PARSE_VERSION: &str = "ocr-v1";
-const SCHEMA_VERSION: &str = "resume-ir-s9-v1";
-const IMPORT_TASK_OWNER_LOCKS_DIR: &str = "import-task-locks";
+pub(crate) const PARSE_VERSION: &str = "parser-v1";
+pub(crate) const OCR_PARSE_VERSION: &str = "ocr-v1";
+pub(crate) const SCHEMA_VERSION: &str = "resume-ir-s9-v2";
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 const MAX_IMPORT_PARSE_WORKERS: usize = 3;
 const IMPORT_CANCEL_POLL_INTERVAL_MS: u64 = 25;
@@ -94,1144 +133,6 @@ pub enum SearchProjectionRemovalReason {
 pub struct SearchProjectionRemoval {
     pub document_id: DocumentId,
     pub reason: SearchProjectionRemovalReason,
-}
-
-struct ScheduledProjectionRemoval {
-    reason: SearchProjectionRemovalReason,
-    document_update: Option<Document>,
-}
-
-#[derive(Default)]
-struct PendingProjectionRemovals(BTreeMap<DocumentId, ScheduledProjectionRemoval>);
-
-impl PendingProjectionRemovals {
-    fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    fn schedule(
-        &mut self,
-        document_id: DocumentId,
-        reason: SearchProjectionRemovalReason,
-        document_update: Option<Document>,
-    ) -> Result<()> {
-        if let Some(existing) = self.0.get_mut(&document_id) {
-            if existing.reason != reason {
-                return Err(ImportPipelineError::store_invariant());
-            }
-            match (&existing.document_update, document_update) {
-                (Some(existing), Some(replacement)) if existing != &replacement => {
-                    return Err(ImportPipelineError::store_invariant());
-                }
-                (None, Some(replacement)) => existing.document_update = Some(replacement),
-                _ => {}
-            }
-            return Ok(());
-        }
-        self.0.insert(
-            document_id,
-            ScheduledProjectionRemoval {
-                reason,
-                document_update,
-            },
-        );
-        Ok(())
-    }
-
-    fn document_ids(&self) -> BTreeSet<String> {
-        self.0
-            .keys()
-            .map(|document_id| document_id.as_str().to_string())
-            .collect()
-    }
-
-    fn clear(&mut self) {
-        self.0.clear();
-    }
-
-    fn publication_documents(&self) -> impl Iterator<Item = &Document> {
-        self.0
-            .values()
-            .filter_map(|removal| removal.document_update.as_ref())
-    }
-}
-
-pub fn import_task_owner_lock_path(data_dir: &Path, task_id: &ImportTaskId) -> PathBuf {
-    data_dir
-        .join(IMPORT_TASK_OWNER_LOCKS_DIR)
-        .join(format!("{}.lock", task_id))
-}
-
-pub struct ImportTaskOwnerLock {
-    file: File,
-}
-
-impl ImportTaskOwnerLock {
-    pub fn acquire(data_dir: &Path, task_id: &ImportTaskId) -> std::io::Result<Self> {
-        let path = import_task_owner_lock_path(data_dir, task_id);
-        let parent = path.parent().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "invalid import task owner lock",
-            )
-        })?;
-        fs::create_dir_all(parent)?;
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(path)?;
-        file.lock()?;
-        Ok(Self { file })
-    }
-
-    pub fn try_acquire(data_dir: &Path, task_id: &ImportTaskId) -> std::io::Result<Option<Self>> {
-        let path = import_task_owner_lock_path(data_dir, task_id);
-        let parent = path.parent().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "invalid import task owner lock",
-            )
-        })?;
-        fs::create_dir_all(parent)?;
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(path)?;
-        match file.try_lock() {
-            Ok(()) => Ok(Some(Self { file })),
-            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
-            Err(std::fs::TryLockError::Error(error)) => Err(error),
-        }
-    }
-}
-
-impl Drop for ImportTaskOwnerLock {
-    fn drop(&mut self) {
-        let _ = self.file.unlock();
-    }
-}
-
-pub fn import_root(
-    data_dir: &Path,
-    store: &MetaStore,
-    task: &ImportTask,
-    root: &Path,
-    now: UnixTimestamp,
-) -> Result<ImportSummary> {
-    import_root_with_options(data_dir, store, task, root, now, ImportOptions::default())
-}
-
-pub fn import_root_with_options(
-    data_dir: &Path,
-    store: &MetaStore,
-    task: &ImportTask,
-    root: &Path,
-    now: UnixTimestamp,
-    options: ImportOptions,
-) -> Result<ImportSummary> {
-    if task.status != ImportTaskStatus::Running {
-        store
-            .update_import_task_status(&task.id, ImportTaskStatus::Running, now)
-            .map_err(ImportPipelineError::store)?;
-    }
-
-    let result = run_import(data_dir, store, task, root, now, options);
-    let finished_at = current_timestamp_or(now);
-    match result {
-        Ok(summary) => {
-            store
-                .update_import_task_status(&task.id, ImportTaskStatus::Completed, finished_at)
-                .map_err(ImportPipelineError::store)?;
-            Ok(summary)
-        }
-        Err(error) => {
-            let _ = store.update_import_task_status(
-                &task.id,
-                if error.retryable {
-                    ImportTaskStatus::FailedRetryable
-                } else {
-                    ImportTaskStatus::FailedPermanent
-                },
-                finished_at,
-            );
-            Err(error)
-        }
-    }
-}
-
-fn run_import(
-    data_dir: &Path,
-    store: &MetaStore,
-    task: &ImportTask,
-    root: &Path,
-    now: UnixTimestamp,
-    options: ImportOptions,
-) -> Result<ImportSummary> {
-    ensure_import_not_cancelled(store, &task.id)?;
-    let cancel_metrics = RefCell::new(CancelCheckMetrics::default());
-    let cancel_poller = RefCell::new(ImportCancelPoller::new(Duration::from_millis(
-        IMPORT_CANCEL_POLL_INTERVAL_MS,
-    )));
-    let cancel_phase = Cell::new(ImportCancelCheckPhase::ImportSetup);
-    let poll_cancelled = || {
-        cancel_poller.borrow_mut().poll(Instant::now(), || {
-            store
-                .is_import_task_cancelled(&task.id)
-                .map_err(ImportPipelineError::store)
-        })
-    };
-    let cancel_check = || {
-        cancel_metrics.borrow_mut().record_check(cancel_phase.get());
-        poll_cancelled().unwrap_or(true)
-    };
-    let ensure_not_cancelled = || {
-        cancel_metrics.borrow_mut().record_check(cancel_phase.get());
-        if poll_cancelled()? {
-            Err(ImportPipelineError::cancelled())
-        } else {
-            Ok(())
-        }
-    };
-    let set_cancel_phase = |phase| cancel_phase.set(phase);
-    let import_started = Instant::now();
-    let scan_started = Instant::now();
-    set_cancel_phase(ImportCancelCheckPhase::Scan);
-    let report = crawl_directory_with_options_and_control(
-        root,
-        ScanOptions {
-            profile: options.scan_profile,
-            max_files: options.max_files,
-        },
-        ScanControl::from_cancel_check(&cancel_check),
-    )
-    .map_err(ImportPipelineError::crawl)?;
-    let scan_elapsed = scan_started.elapsed();
-    ensure_not_cancelled()?;
-    let scanned_directories = report.scanned_directories.clone();
-    let skipped_directories = report.skipped_directories.clone();
-    let scan_errors = import_scan_errors_from_crawl(&task.id, &report.errors, now);
-    let scan_budget_exhausted = report.budget_exhausted;
-    let scan_budget = options.max_files.map(|limit| ImportScanBudget {
-        kind: ImportScanBudgetKind::Files,
-        limit,
-        observed: report.files.len(),
-        exhausted: scan_budget_exhausted.is_some(),
-    });
-    let mut summary = ImportSummary {
-        files_discovered: report.files.len(),
-        scan_errors: report.errors.len(),
-        ignored_entries: report.ignored_count,
-        content_bytes_read: 0,
-        searchable_documents: 0,
-        ocr_required_documents: 0,
-        ocr_jobs_queued: 0,
-        failed_documents: 0,
-        failure_counts: ImportFailureCounts::default(),
-        deleted_documents: 0,
-        scan_budget,
-        stage_timings: ImportStageTimings {
-            scan: scan_elapsed,
-            ..ImportStageTimings::default()
-        },
-        milestone_timings: ImportMilestoneTimings::default(),
-        worker_metrics: ImportWorkerMetrics::default(),
-    };
-    set_cancel_phase(ImportCancelCheckPhase::DbWrite);
-    measure_result_stage(&mut summary.stage_timings.db, || {
-        store.replace_import_scan_errors(&task.id, &scan_errors)
-    })
-    .map_err(ImportPipelineError::store)?;
-    let progress_started = Instant::now();
-    publish_import_progress(store, &task.id, &summary, now)?;
-    summary.stage_timings.db += progress_started.elapsed();
-    ensure_not_cancelled()?;
-    let mut pending_index_documents = Vec::new();
-    let sectionizer = Sectionizer::default();
-    let can_propagate_deletions = report.errors.is_empty() && scan_budget_exhausted.is_none();
-    let discovered_doc_ids = report
-        .files
-        .iter()
-        .map(|file| file.document_id.as_str().to_string())
-        .collect::<BTreeSet<_>>();
-    let mut pending_excluded_doc_ids = PendingProjectionRemovals::default();
-
-    let total_files = report.files.len();
-    let mut current_import_index_documents = CurrentImportDocumentCache::default();
-    if options.parse_workers.get() > 1 && total_files > 1 {
-        process_files_with_parse_workers(
-            data_dir,
-            store,
-            &task.id,
-            report.files,
-            now,
-            &ensure_not_cancelled,
-            &mut summary,
-            &mut pending_index_documents,
-            &mut pending_excluded_doc_ids,
-            &mut current_import_index_documents,
-            &set_cancel_phase,
-            import_started,
-            options.parse_workers,
-            options.index_writer_heap_bytes,
-            &options.search_vectorization,
-            &options.linear_promotion,
-        )?;
-    } else {
-        process_files_sequential(
-            data_dir,
-            store,
-            &task.id,
-            report.files,
-            &sectionizer,
-            now,
-            &ensure_not_cancelled,
-            &mut summary,
-            &mut pending_index_documents,
-            &mut pending_excluded_doc_ids,
-            &mut current_import_index_documents,
-            &set_cancel_phase,
-            import_started,
-            options.index_writer_heap_bytes,
-            &options.search_vectorization,
-            &options.linear_promotion,
-        )?;
-    }
-
-    if can_propagate_deletions {
-        set_cancel_phase(ImportCancelCheckPhase::DbWrite);
-        ensure_not_cancelled()?;
-        let deleted_documents = measure_result_stage(&mut summary.stage_timings.db, || {
-            mark_missing_documents_deleted(
-                store,
-                root,
-                options.scan_profile,
-                &scanned_directories,
-                &skipped_directories,
-                &discovered_doc_ids,
-                now,
-            )
-        })?;
-        summary.deleted_documents = deleted_documents.len();
-        for document in deleted_documents {
-            pending_excluded_doc_ids.schedule(
-                document.id.clone(),
-                SearchProjectionRemovalReason::ConfirmedSourceDeletion,
-                Some(document),
-            )?;
-        }
-        let progress_started = Instant::now();
-        publish_import_progress(store, &task.id, &summary, now)?;
-        summary.stage_timings.db += progress_started.elapsed();
-    } else {
-        summary.deleted_documents = 0;
-    }
-    set_cancel_phase(ImportCancelCheckPhase::IndexPublication);
-    flush_pending_searchable_documents(
-        data_dir,
-        store,
-        now,
-        &mut summary,
-        &mut pending_index_documents,
-        &mut pending_excluded_doc_ids,
-        Some(&mut current_import_index_documents),
-        CurrentImportCacheMode::Consume,
-        &ensure_not_cancelled,
-        &set_cancel_phase,
-        import_started,
-        options.index_writer_heap_bytes,
-        &options.search_vectorization,
-    )?;
-    summary.milestone_timings.full_import_ready = Some(import_started.elapsed());
-    if summary.milestone_timings.full_index_ready.is_none() {
-        summary.milestone_timings.full_index_ready = Some(import_started.elapsed());
-    }
-    set_cancel_phase(ImportCancelCheckPhase::DbWrite);
-    let progress_started = Instant::now();
-    publish_import_progress(store, &task.id, &summary, now)?;
-    summary.stage_timings.db += progress_started.elapsed();
-    summary
-        .worker_metrics
-        .record_cancel_checks(cancel_metrics.into_inner());
-
-    Ok(summary)
-}
-
-fn process_files_sequential(
-    data_dir: &Path,
-    store: &MetaStore,
-    task_id: &ImportTaskId,
-    files: Vec<DiscoveredFile>,
-    sectionizer: &Sectionizer,
-    now: UnixTimestamp,
-    ensure_not_cancelled: &dyn Fn() -> Result<()>,
-    summary: &mut ImportSummary,
-    pending_index_documents: &mut Vec<PendingSearchableDocument>,
-    pending_excluded_doc_ids: &mut PendingProjectionRemovals,
-    current_import_index_documents: &mut CurrentImportDocumentCache,
-    set_cancel_phase: &dyn Fn(ImportCancelCheckPhase),
-    import_started: Instant,
-    index_writer_heap_bytes: usize,
-    search_vectorization: &SearchPublicationVectorization,
-    linear_promotion: &LinearPromotionPolicy,
-) -> Result<()> {
-    let total_files = files.len();
-    for (index, file) in files.into_iter().enumerate() {
-        set_cancel_phase(ImportCancelCheckPhase::SequentialParse);
-        ensure_not_cancelled()?;
-        let processed = process_file(
-            data_dir,
-            store,
-            &file,
-            sectionizer,
-            now,
-            ensure_not_cancelled,
-            &mut summary.stage_timings,
-            &mut summary.worker_metrics,
-            &mut summary.content_bytes_read,
-            linear_promotion,
-        )?;
-        finish_import_file(
-            data_dir,
-            store,
-            task_id,
-            now,
-            ensure_not_cancelled,
-            summary,
-            pending_index_documents,
-            pending_excluded_doc_ids,
-            current_import_index_documents,
-            set_cancel_phase,
-            import_started,
-            index_writer_heap_bytes,
-            search_vectorization,
-            index,
-            total_files,
-            &file,
-            processed,
-        )?;
-    }
-
-    Ok(())
-}
-
-fn process_files_with_parse_workers(
-    data_dir: &Path,
-    store: &MetaStore,
-    task_id: &ImportTaskId,
-    files: Vec<DiscoveredFile>,
-    now: UnixTimestamp,
-    ensure_not_cancelled: &dyn Fn() -> Result<()>,
-    summary: &mut ImportSummary,
-    pending_index_documents: &mut Vec<PendingSearchableDocument>,
-    pending_excluded_doc_ids: &mut PendingProjectionRemovals,
-    current_import_index_documents: &mut CurrentImportDocumentCache,
-    set_cancel_phase: &dyn Fn(ImportCancelCheckPhase),
-    import_started: Instant,
-    parse_workers: ImportParseWorkers,
-    index_writer_heap_bytes: usize,
-    search_vectorization: &SearchPublicationVectorization,
-    linear_promotion: &LinearPromotionPolicy,
-) -> Result<()> {
-    let total_files = files.len();
-    let worker_count = parse_workers.get().min(total_files);
-    if worker_count <= 1 {
-        summary
-            .worker_metrics
-            .record_parse_worker_count(worker_count);
-        let sectionizer = Sectionizer::default();
-        return process_files_sequential(
-            data_dir,
-            store,
-            task_id,
-            files,
-            &sectionizer,
-            now,
-            ensure_not_cancelled,
-            summary,
-            pending_index_documents,
-            pending_excluded_doc_ids,
-            current_import_index_documents,
-            set_cancel_phase,
-            import_started,
-            index_writer_heap_bytes,
-            search_vectorization,
-            linear_promotion,
-        );
-    }
-
-    let sectionizer = Sectionizer::default();
-    let mut remaining_files = Vec::new();
-    let mut indexed_files = files.into_iter().enumerate();
-    for (index, file) in &mut indexed_files {
-        if summary.searchable_documents > 0 {
-            remaining_files.push((index, file));
-            break;
-        }
-        set_cancel_phase(ImportCancelCheckPhase::SequentialParse);
-        ensure_not_cancelled()?;
-        let processed = process_file(
-            data_dir,
-            store,
-            &file,
-            &sectionizer,
-            now,
-            ensure_not_cancelled,
-            &mut summary.stage_timings,
-            &mut summary.worker_metrics,
-            &mut summary.content_bytes_read,
-            linear_promotion,
-        )?;
-        finish_import_file(
-            data_dir,
-            store,
-            task_id,
-            now,
-            ensure_not_cancelled,
-            summary,
-            pending_index_documents,
-            pending_excluded_doc_ids,
-            current_import_index_documents,
-            set_cancel_phase,
-            import_started,
-            index_writer_heap_bytes,
-            search_vectorization,
-            index,
-            total_files,
-            &file,
-            processed,
-        )?;
-    }
-    remaining_files.extend(indexed_files);
-    if remaining_files.is_empty() {
-        summary.worker_metrics.record_parse_worker_count(1);
-        return Ok(());
-    }
-
-    let worker_count = parse_workers.get().min(remaining_files.len());
-    summary
-        .worker_metrics
-        .record_parse_worker_count(worker_count);
-    if worker_count <= 1 {
-        return process_indexed_files_sequential(
-            data_dir,
-            store,
-            task_id,
-            remaining_files,
-            &sectionizer,
-            now,
-            ensure_not_cancelled,
-            summary,
-            pending_index_documents,
-            pending_excluded_doc_ids,
-            current_import_index_documents,
-            set_cancel_phase,
-            import_started,
-            index_writer_heap_bytes,
-            total_files,
-            search_vectorization,
-            linear_promotion,
-        );
-    }
-
-    let mut parse_worker_clock = ParseWorkerClock::default();
-    thread::scope(|scope| -> Result<()> {
-        let (work_tx, work_rx) = mpsc::sync_channel::<ParseWorkItem>(worker_count);
-        let work_rx = Arc::new(Mutex::new(work_rx));
-        let (result_tx, result_rx) = mpsc::sync_channel::<ParseWorkResult>(worker_count);
-
-        for _ in 0..worker_count {
-            let work_rx = Arc::clone(&work_rx);
-            let result_tx = result_tx.clone();
-            let linear_promotion = linear_promotion.clone();
-            scope.spawn(move || parse_worker_loop(work_rx, result_tx, &linear_promotion));
-        }
-        drop(result_tx);
-
-        let mut pending_results = BTreeMap::<usize, ImportFileResult>::new();
-        let mut next_commit_index = remaining_files[0].0;
-
-        for (index, file) in remaining_files.into_iter() {
-            set_cancel_phase(ImportCancelCheckPhase::WorkerResultCommit);
-            drain_available_parse_results(&result_rx, &mut pending_results)?;
-            commit_ready_import_file_results(
-                data_dir,
-                store,
-                task_id,
-                now,
-                ensure_not_cancelled,
-                summary,
-                pending_index_documents,
-                pending_excluded_doc_ids,
-                current_import_index_documents,
-                import_started,
-                total_files,
-                &mut pending_results,
-                &mut next_commit_index,
-                &mut parse_worker_clock,
-                set_cancel_phase,
-                index_writer_heap_bytes,
-                search_vectorization,
-                linear_promotion,
-            )?;
-
-            set_cancel_phase(ImportCancelCheckPhase::ParsePrepare);
-            let prepared = prepare_file_for_parse(
-                store,
-                index,
-                file,
-                now,
-                ensure_not_cancelled,
-                &mut summary.stage_timings.db,
-                &mut summary.worker_metrics.parse_prepare,
-                &mut summary.content_bytes_read,
-                linear_promotion,
-            )?;
-            match prepared {
-                PreparedFile::Ready(result) => {
-                    insert_import_file_result(
-                        &mut pending_results,
-                        index,
-                        ImportFileResult::Processed(result),
-                    )?;
-                }
-                PreparedFile::Parse(work) => {
-                    send_parse_work_with_backpressure(
-                        &work_tx,
-                        &result_rx,
-                        &mut pending_results,
-                        &mut summary.worker_metrics,
-                        ensure_not_cancelled,
-                        set_cancel_phase,
-                        work,
-                    )?;
-                }
-            }
-
-            set_cancel_phase(ImportCancelCheckPhase::WorkerResultCommit);
-            drain_available_parse_results(&result_rx, &mut pending_results)?;
-            commit_ready_import_file_results(
-                data_dir,
-                store,
-                task_id,
-                now,
-                ensure_not_cancelled,
-                summary,
-                pending_index_documents,
-                pending_excluded_doc_ids,
-                current_import_index_documents,
-                import_started,
-                total_files,
-                &mut pending_results,
-                &mut next_commit_index,
-                &mut parse_worker_clock,
-                set_cancel_phase,
-                index_writer_heap_bytes,
-                search_vectorization,
-                linear_promotion,
-            )?;
-        }
-
-        drop(work_tx);
-        while next_commit_index < total_files {
-            set_cancel_phase(ImportCancelCheckPhase::WorkerResultCommit);
-            if commit_ready_import_file_results(
-                data_dir,
-                store,
-                task_id,
-                now,
-                ensure_not_cancelled,
-                summary,
-                pending_index_documents,
-                pending_excluded_doc_ids,
-                current_import_index_documents,
-                import_started,
-                total_files,
-                &mut pending_results,
-                &mut next_commit_index,
-                &mut parse_worker_clock,
-                set_cancel_phase,
-                index_writer_heap_bytes,
-                search_vectorization,
-                linear_promotion,
-            )? {
-                continue;
-            }
-
-            set_cancel_phase(ImportCancelCheckPhase::ParseResultWait);
-            let wait_started = Instant::now();
-            let result = recv_parse_result_with_cancel_poll(&result_rx, ensure_not_cancelled)?;
-            summary.worker_metrics.parse_result_wait += wait_started.elapsed();
-            insert_parse_result(&mut pending_results, result)?;
-        }
-
-        Ok(())
-    })?;
-
-    summary
-        .worker_metrics
-        .record_parse_worker_clock(&parse_worker_clock);
-    summary.stage_timings.parse += parse_worker_clock.worker_wall_elapsed();
-
-    Ok(())
-}
-
-fn process_indexed_files_sequential(
-    data_dir: &Path,
-    store: &MetaStore,
-    task_id: &ImportTaskId,
-    files: Vec<(usize, DiscoveredFile)>,
-    sectionizer: &Sectionizer,
-    now: UnixTimestamp,
-    ensure_not_cancelled: &dyn Fn() -> Result<()>,
-    summary: &mut ImportSummary,
-    pending_index_documents: &mut Vec<PendingSearchableDocument>,
-    pending_excluded_doc_ids: &mut PendingProjectionRemovals,
-    current_import_index_documents: &mut CurrentImportDocumentCache,
-    set_cancel_phase: &dyn Fn(ImportCancelCheckPhase),
-    import_started: Instant,
-    index_writer_heap_bytes: usize,
-    total_files: usize,
-    search_vectorization: &SearchPublicationVectorization,
-    linear_promotion: &LinearPromotionPolicy,
-) -> Result<()> {
-    for (index, file) in files {
-        set_cancel_phase(ImportCancelCheckPhase::SequentialParse);
-        ensure_not_cancelled()?;
-        let processed = process_file(
-            data_dir,
-            store,
-            &file,
-            sectionizer,
-            now,
-            ensure_not_cancelled,
-            &mut summary.stage_timings,
-            &mut summary.worker_metrics,
-            &mut summary.content_bytes_read,
-            linear_promotion,
-        )?;
-        finish_import_file(
-            data_dir,
-            store,
-            task_id,
-            now,
-            ensure_not_cancelled,
-            summary,
-            pending_index_documents,
-            pending_excluded_doc_ids,
-            current_import_index_documents,
-            set_cancel_phase,
-            import_started,
-            index_writer_heap_bytes,
-            search_vectorization,
-            index,
-            total_files,
-            &file,
-            processed,
-        )?;
-    }
-
-    Ok(())
-}
-
-fn finish_import_file(
-    data_dir: &Path,
-    store: &MetaStore,
-    task_id: &ImportTaskId,
-    now: UnixTimestamp,
-    ensure_not_cancelled: &dyn Fn() -> Result<()>,
-    summary: &mut ImportSummary,
-    pending_index_documents: &mut Vec<PendingSearchableDocument>,
-    pending_excluded_doc_ids: &mut PendingProjectionRemovals,
-    current_import_index_documents: &mut CurrentImportDocumentCache,
-    set_cancel_phase: &dyn Fn(ImportCancelCheckPhase),
-    import_started: Instant,
-    index_writer_heap_bytes: usize,
-    search_vectorization: &SearchPublicationVectorization,
-    index: usize,
-    total_files: usize,
-    file: &DiscoveredFile,
-    processed: ProcessedFile,
-) -> Result<()> {
-    match processed {
-        ProcessedFile::Searchable { pending } => {
-            pending_index_documents.push(*pending);
-        }
-        ProcessedFile::OcrRequired { ocr_job_queued } => {
-            summary.ocr_required_documents += 1;
-            if ocr_job_queued {
-                summary.ocr_jobs_queued += 1;
-            }
-        }
-        ProcessedFile::Failed { kind } => {
-            summary.failed_documents += 1;
-            summary.failure_counts.increment(kind);
-        }
-        ProcessedFile::Excluded { document } => {
-            pending_excluded_doc_ids.schedule(
-                file.document_id.clone(),
-                SearchProjectionRemovalReason::PermanentClassificationExclusion,
-                Some(*document),
-            )?;
-        }
-        ProcessedFile::UnchangedExcluded => {
-            pending_excluded_doc_ids.schedule(
-                file.document_id.clone(),
-                SearchProjectionRemovalReason::PermanentClassificationExclusion,
-                None,
-            )?;
-        }
-        ProcessedFile::UnchangedOcrRequired => {}
-        ProcessedFile::UnchangedSearchable => {
-            summary.searchable_documents += 1;
-        }
-    }
-
-    let flushed_searchables = if should_flush_searchable_documents(
-        index,
-        total_files,
-        pending_index_documents.len(),
-        summary.searchable_documents,
-    ) {
-        flush_pending_searchable_documents(
-            data_dir,
-            store,
-            now,
-            summary,
-            pending_index_documents,
-            pending_excluded_doc_ids,
-            Some(current_import_index_documents),
-            CurrentImportCacheMode::Retain,
-            ensure_not_cancelled,
-            set_cancel_phase,
-            import_started,
-            index_writer_heap_bytes,
-            search_vectorization,
-        )?
-    } else {
-        false
-    };
-    if flushed_searchables || should_publish_import_progress(index, total_files) {
-        set_cancel_phase(ImportCancelCheckPhase::DbWrite);
-        let progress_started = Instant::now();
-        publish_import_progress(store, task_id, summary, now)?;
-        summary.stage_timings.db += progress_started.elapsed();
-    }
-
-    Ok(())
-}
-
-const IMPORT_PROGRESS_UPDATE_EVERY_FILES: usize = 32;
-const IMPORT_SEARCHABLE_FLUSH_BATCH: usize = 1024;
-const IMPORT_SEARCHABLE_FLUSH_MILESTONES: [usize; 2] = [100, 1000];
-
-fn should_publish_import_progress(index: usize, total: usize) -> bool {
-    let processed = index + 1;
-    processed == total || processed.is_multiple_of(IMPORT_PROGRESS_UPDATE_EVERY_FILES)
-}
-
-fn should_flush_searchable_documents(
-    index: usize,
-    total: usize,
-    pending_searchable_documents: usize,
-    searchable_documents: usize,
-) -> bool {
-    let processed = index + 1;
-    (processed < total && searchable_documents == 0 && pending_searchable_documents > 0)
-        || crosses_searchable_flush_milestone(pending_searchable_documents, searchable_documents)
-        || pending_searchable_documents >= IMPORT_SEARCHABLE_FLUSH_BATCH
-}
-
-fn crosses_searchable_flush_milestone(
-    pending_searchable_documents: usize,
-    searchable_documents: usize,
-) -> bool {
-    let projected_searchable = searchable_documents.saturating_add(pending_searchable_documents);
-    IMPORT_SEARCHABLE_FLUSH_MILESTONES
-        .iter()
-        .any(|milestone| searchable_documents < *milestone && projected_searchable >= *milestone)
-}
-
-fn publish_import_progress(
-    store: &MetaStore,
-    task_id: &ImportTaskId,
-    summary: &ImportSummary,
-    updated_at: UnixTimestamp,
-) -> Result<()> {
-    let Some(mut scope) = store
-        .import_scan_scope_by_task_id(task_id)
-        .map_err(ImportPipelineError::store)?
-    else {
-        return Ok(());
-    };
-
-    scope.files_discovered = summary.files_discovered as u64;
-    scope.ignored_entries = summary.ignored_entries as u64;
-    scope.scan_errors = summary.scan_errors as u64;
-    scope.searchable_documents = summary.searchable_documents as u64;
-    scope.ocr_required_documents = summary.ocr_required_documents as u64;
-    scope.ocr_jobs_queued = summary.ocr_jobs_queued as u64;
-    scope.failed_documents = summary.failed_documents as u64;
-    scope.deleted_documents = summary.deleted_documents as u64;
-    scope.scan_budget_kind = summary.scan_budget.map(|budget| match budget.kind {
-        ImportScanBudgetKind::Files => StoreImportScanBudgetKind::Files,
-    });
-    scope.scan_budget_limit = summary.scan_budget.map(|budget| budget.limit as u64);
-    scope.scan_budget_observed = summary.scan_budget.map(|budget| budget.observed as u64);
-    scope.scan_budget_exhausted = summary.scan_budget.is_some_and(|budget| budget.exhausted);
-    scope.updated_at = current_timestamp_or(updated_at);
-    store
-        .upsert_import_scan_scope(&scope)
-        .map_err(ImportPipelineError::store)
-}
-
-fn flush_pending_searchable_documents(
-    data_dir: &Path,
-    store: &MetaStore,
-    now: UnixTimestamp,
-    summary: &mut ImportSummary,
-    pending_index_documents: &mut Vec<PendingSearchableDocument>,
-    pending_excluded_doc_ids: &mut PendingProjectionRemovals,
-    current_import_index_documents: Option<&mut CurrentImportDocumentCache>,
-    current_import_index_cache_mode: CurrentImportCacheMode,
-    ensure_not_cancelled: &dyn Fn() -> Result<()>,
-    set_cancel_phase: &dyn Fn(ImportCancelCheckPhase),
-    import_started: Instant,
-    index_writer_heap_bytes: usize,
-    search_vectorization: &SearchPublicationVectorization,
-) -> Result<bool> {
-    let has_delta = !pending_index_documents.is_empty() || !pending_excluded_doc_ids.is_empty();
-    let needs_initial_publication = store
-        .search_projection_state()
-        .map_err(ImportPipelineError::store)?
-        .generation
-        .is_none();
-    if !has_delta && !needs_initial_publication {
-        return Ok(false);
-    }
-    let classifier_epoch = publication_classifier_epoch(store, pending_index_documents)?;
-
-    if !pending_index_documents.is_empty() {
-        set_cancel_phase(ImportCancelCheckPhase::DbWrite);
-        ensure_not_cancelled()?;
-        measure_result_stage(&mut summary.stage_timings.db, || {
-            for pending in pending_index_documents.iter() {
-                immutable_ingest::stage(
-                    store,
-                    StagedResume {
-                        document: &pending.document,
-                        source_revision: &pending.source_revision,
-                        derived: StagedDerivedData::ClassifiedVersion {
-                            version: &pending.version,
-                            classification: &pending.classification,
-                            mentions: &pending.mentions,
-                            email_hash: pending.email_hash.as_ref(),
-                            phone_hash: pending.phone_hash.as_ref(),
-                        },
-                    },
-                )
-                .map_err(ImportPipelineError::store)?;
-            }
-            Ok(())
-        })?;
-    }
-
-    set_cancel_phase(ImportCancelCheckPhase::IndexPublication);
-    ensure_not_cancelled()?;
-    let removed_document_ids = pending_excluded_doc_ids.document_ids();
-    let searchable_before = summary.searchable_documents;
-    let (mut pending_documents, pending_replacements) =
-        take_pending_searchable_documents(pending_index_documents);
-    let phase_worker_metrics = RefCell::new(ImportWorkerMetrics::default());
-    let record_phase_timing = |phase, elapsed| {
-        phase_worker_metrics
-            .borrow_mut()
-            .record_index_publication_phase_timing(phase, elapsed);
-    };
-    let index_started = Instant::now();
-    let write_result = write_incremental_search_artifacts(
-        data_dir,
-        store,
-        now,
-        &classifier_epoch,
-        pending_replacements,
-        &removed_document_ids,
-        summary.ocr_required_documents,
-        summary.deleted_documents,
-        current_import_index_documents,
-        current_import_index_cache_mode,
-        Some(ensure_not_cancelled),
-        Some(set_cancel_phase),
-        Some(&record_phase_timing),
-        index_writer_heap_bytes,
-        search_vectorization,
-    );
-    summary.stage_timings.index += index_started.elapsed();
-    summary
-        .worker_metrics
-        .add_assign(&phase_worker_metrics.into_inner());
-    let publication = write_result?;
-
-    set_cancel_phase(ImportCancelCheckPhase::DbWrite);
-    for document in &mut pending_documents {
-        ensure_not_cancelled()?;
-        document.status = DocumentStatus::Searchable;
-        document.updated_at = now;
-    }
-    let new_searchable_count = pending_documents.len();
-    pending_documents.extend(pending_excluded_doc_ids.publication_documents().cloned());
-
-    set_cancel_phase(ImportCancelCheckPhase::DbWrite);
-    ensure_not_cancelled()?;
-    let committed_publication = measure_result_stage(&mut summary.stage_timings.db, || {
-        commit_prepared_search_publication(store, now, publication, &pending_documents)
-    })?;
-    committed_publication.release();
-    summary.searchable_documents += new_searchable_count;
-    pending_excluded_doc_ids.clear();
-    let index_ready_elapsed = import_started.elapsed();
-    record_searchable_milestones(
-        &mut summary.milestone_timings,
-        searchable_before,
-        summary.searchable_documents,
-        index_ready_elapsed,
-    );
-    Ok(true)
-}
-
-fn publication_classifier_epoch(
-    store: &MetaStore,
-    pending: &[PendingSearchableDocument],
-) -> Result<String> {
-    let pending_epochs = pending
-        .iter()
-        .map(|document| document.classification.classifier_epoch.as_str())
-        .collect::<BTreeSet<_>>();
-    if pending_epochs.len() > 1 {
-        return Err(ImportPipelineError::store_invariant());
-    }
-    let pending_epoch = pending_epochs.first().copied();
-    let current_epoch = store
-        .search_projection_state()
-        .map_err(ImportPipelineError::store)?
-        .publication
-        .map(|publication| publication.classifier_epoch.clone());
-    if let (Some(pending_epoch), Some(current_epoch)) = (pending_epoch, current_epoch.as_deref()) {
-        if pending_epoch != current_epoch {
-            return Err(ImportPipelineError::store_invariant());
-        }
-    }
-    Ok(pending_epoch
-        .map(str::to_string)
-        .or(current_epoch)
-        .unwrap_or_else(|| resume_classifier::CLASSIFIER_EPOCH.to_string()))
-}
-
-fn take_pending_searchable_documents(
-    pending_index_documents: &mut Vec<PendingSearchableDocument>,
-) -> (Vec<Document>, Vec<IndexDocument>) {
-    let pending = std::mem::take(pending_index_documents);
-    let mut documents = Vec::with_capacity(pending.len());
-    let mut index_documents = Vec::with_capacity(pending.len());
-    for pending in pending {
-        documents.push(pending.document);
-        index_documents.push(pending.index_document);
-    }
-    (documents, index_documents)
-}
-
-fn record_searchable_milestones(
-    milestones: &mut ImportMilestoneTimings,
-    searchable_before: usize,
-    searchable_after: usize,
-    elapsed: Duration,
-) {
-    milestones.full_index_ready = Some(elapsed);
-    if searchable_before == searchable_after {
-        return;
-    }
-    if milestones.first_searchable.is_none() && searchable_after > 0 {
-        milestones.first_searchable = Some(elapsed);
-    }
-    if milestones.ttf100_searchable.is_none() && searchable_before < 100 && searchable_after >= 100
-    {
-        milestones.ttf100_searchable = Some(elapsed);
-    }
-    if milestones.ttf1000_searchable.is_none()
-        && searchable_before < 1000
-        && searchable_after >= 1000
-    {
-        milestones.ttf1000_searchable = Some(elapsed);
-    }
-}
-
-fn measure_result_stage<T, E>(
-    stage: &mut Duration,
-    operation: impl FnOnce() -> std::result::Result<T, E>,
-) -> std::result::Result<T, E> {
-    let started = Instant::now();
-    let result = operation();
-    *stage += started.elapsed();
-    result
-}
-
-fn measure_stage<T>(stage: &mut Duration, operation: impl FnOnce() -> T) -> T {
-    let started = Instant::now();
-    let result = operation();
-    *stage += started.elapsed();
-    result
-}
-
-fn ensure_import_not_cancelled(store: &MetaStore, task_id: &ImportTaskId) -> Result<()> {
-    if store
-        .is_import_task_cancelled(task_id)
-        .map_err(ImportPipelineError::store)?
-    {
-        Err(ImportPipelineError::cancelled())
-    } else {
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-struct ImportCancelPoller {
-    min_interval: Duration,
-    last_probe: Option<Instant>,
-    cached_cancelled: bool,
-}
-
-impl ImportCancelPoller {
-    fn new(min_interval: Duration) -> Self {
-        Self {
-            min_interval,
-            last_probe: None,
-            cached_cancelled: false,
-        }
-    }
-
-    fn poll(&mut self, now: Instant, probe: impl FnOnce() -> Result<bool>) -> Result<bool> {
-        if self.cached_cancelled {
-            return Ok(true);
-        }
-
-        if self.should_probe(now) {
-            self.cached_cancelled = probe()?;
-            self.last_probe = Some(now);
-        }
-        Ok(self.cached_cancelled)
-    }
-
-    fn should_probe(&self, now: Instant) -> bool {
-        match self.last_probe {
-            Some(last_probe) => now
-                .checked_duration_since(last_probe)
-                .is_none_or(|elapsed| elapsed >= self.min_interval),
-            None => true,
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -1424,245 +325,6 @@ impl Default for ImportParseWorkers {
     }
 }
 
-pub fn rebuild_search_artifacts(
-    data_dir: &Path,
-    store: &MetaStore,
-    now: UnixTimestamp,
-    vectorization: &SearchPublicationVectorization,
-) -> Result<SearchArtifactPublicationSummary> {
-    let publication_lock =
-        SearchPublicationLock::acquire(data_dir).map_err(|_| ImportPipelineError::index_io())?;
-    let classifier_epoch = publication_classifier_epoch(store, &[])?;
-    let publication = write_rebuilt_search_artifacts(
-        data_dir,
-        store,
-        now,
-        &classifier_epoch,
-        publication_lock,
-        &BTreeSet::new(),
-        Vec::new(),
-        vectorization,
-    )?;
-    let publication = commit_prepared_search_publication(store, now, publication, &[])?.release();
-
-    Ok(SearchArtifactPublicationSummary {
-        active_projection_count: publication.projections.len(),
-    })
-}
-
-pub fn publish_search_projection_removals(
-    data_dir: &Path,
-    store: &MetaStore,
-    removals: &[SearchProjectionRemoval],
-    now: UnixTimestamp,
-    vectorization: &SearchPublicationVectorization,
-) -> Result<SearchArtifactPublicationSummary> {
-    let mut documents = Vec::with_capacity(removals.len());
-    for removal in removals {
-        let Some(mut document) = store
-            .document_by_id(&removal.document_id)
-            .map_err(ImportPipelineError::store)?
-        else {
-            continue;
-        };
-        if matches!(
-            removal.reason,
-            SearchProjectionRemovalReason::ConfirmedSourceDeletion
-                | SearchProjectionRemovalReason::PrivacyRevocation
-        ) {
-            document.is_deleted = true;
-            document.status = DocumentStatus::Deleted;
-        }
-        document.updated_at = now;
-        documents.push(document);
-    }
-    let document_ids = removals
-        .iter()
-        .map(|removal| removal.document_id.as_str().to_string())
-        .collect::<BTreeSet<_>>();
-    let publication = write_incremental_search_artifacts(
-        data_dir,
-        store,
-        now,
-        &publication_classifier_epoch(store, &[])?,
-        Vec::new(),
-        &document_ids,
-        0,
-        removals.len(),
-        None,
-        CurrentImportCacheMode::Retain,
-        None,
-        None,
-        None,
-        ImportResourcePolicy::detect().index_writer_heap_bytes,
-        vectorization,
-    )?;
-    let publication =
-        commit_prepared_search_publication(store, now, publication, &documents)?.release();
-
-    Ok(SearchArtifactPublicationSummary {
-        active_projection_count: publication.projections.len(),
-    })
-}
-
-pub fn index_claimed_ocr_text(
-    data_dir: &Path,
-    store: &MetaStore,
-    claimed: &ClaimedOcrJob,
-    ocr_text: &str,
-    confidence: Option<f32>,
-    page_count: Option<u32>,
-    now: UnixTimestamp,
-    vectorization: &SearchPublicationVectorization,
-) -> Result<OcrTextIndexOutcome> {
-    index_claimed_ocr_text_with_policy(
-        data_dir,
-        store,
-        claimed,
-        ocr_text,
-        confidence,
-        page_count,
-        now,
-        &LinearPromotionPolicy::default(),
-        vectorization,
-    )
-}
-
-pub fn index_claimed_ocr_text_with_policy(
-    data_dir: &Path,
-    store: &MetaStore,
-    claimed: &ClaimedOcrJob,
-    ocr_text: &str,
-    confidence: Option<f32>,
-    page_count: Option<u32>,
-    now: UnixTimestamp,
-    linear_promotion: &LinearPromotionPolicy,
-    vectorization: &SearchPublicationVectorization,
-) -> Result<OcrTextIndexOutcome> {
-    let Some(mut document) = store
-        .document_by_id(&claimed.job.document_id)
-        .map_err(ImportPipelineError::store)?
-    else {
-        return Err(ImportPipelineError {
-            kind: ImportPipelineErrorKind::Store,
-            retryable: false,
-        });
-    };
-
-    if document.content_hash.as_deref() != Some(claimed.source_fingerprint())
-        || !store
-            .ocr_claim_is_current(claimed)
-            .map_err(ImportPipelineError::store)?
-    {
-        return Ok(OcrTextIndexOutcome::Superseded);
-    }
-
-    let clean_text = TextNormalizer::normalize_text_only(ocr_text);
-    let sectionizer = Sectionizer::default();
-    let sections = sectionizer.sectionize(&clean_text);
-    let decision =
-        AdmissionDecision::after_sectionization(&clean_text, &sections, linear_promotion);
-    let admitted = decision.admits_search_index();
-    let pending_doc_ids = BTreeSet::from([document.id.as_str().to_string()]);
-    let content_hash = claimed
-        .source_fingerprint()
-        .parse::<ContentDigest>()
-        .map_err(|_| ImportPipelineError {
-            kind: ImportPipelineErrorKind::Store,
-            retryable: false,
-        })?;
-    let source_revision =
-        SourceRevision::for_content(document.id.clone(), content_hash, document.byte_size);
-    let version = resume_version(
-        &document,
-        &source_revision,
-        clean_text.clone(),
-        OCR_PARSE_VERSION,
-        SCHEMA_VERSION,
-        language_set(&clean_text),
-        page_count,
-        Some(confidence.unwrap_or(0.5)),
-    );
-    document.status = if admitted {
-        DocumentStatus::FieldsExtracted
-    } else {
-        DocumentStatus::OcrDone
-    };
-    document.updated_at = now;
-    let mentions = if admitted {
-        entity_mentions_from_rules(&version.id, &clean_text)
-    } else {
-        Vec::new()
-    };
-    let pending_index_documents = if admitted {
-        vec![IndexDocument {
-            doc_id: document.id.to_string(),
-            resume_version_id: version.id.to_string(),
-            file_name: document.file_name.clone(),
-            clean_text: clean_text.clone(),
-            sections: sections_to_index(sections),
-        }]
-    } else {
-        Vec::new()
-    };
-    let (email_hash, phone_hash) = if admitted {
-        contact_hashes_from_mentions(data_dir, &mentions)?
-    } else {
-        (None, None)
-    };
-    let classification = decision.into_version_classification(version.id.clone(), now);
-    let publication = OcrAttemptPublication {
-        document: &document,
-        classification: &classification,
-        source_revision: &source_revision,
-        version: &version,
-        mentions: &mentions,
-        email_hash: email_hash.as_ref(),
-        phone_hash: phone_hash.as_ref(),
-    };
-    match store
-        .finish_ocr_attempt_success(claimed, publication, now)
-        .map_err(ImportPipelineError::store)?
-    {
-        OcrAttemptSuccessOutcome::Completed => {
-            let search_publication = write_incremental_search_artifacts(
-                data_dir,
-                store,
-                now,
-                &classification.classifier_epoch,
-                pending_index_documents,
-                &pending_doc_ids,
-                0,
-                0,
-                None,
-                CurrentImportCacheMode::Retain,
-                None,
-                None,
-                None,
-                ImportResourcePolicy::detect().index_writer_heap_bytes,
-                vectorization,
-            )?;
-            if admitted {
-                document.status = DocumentStatus::Searchable;
-            } else {
-                document.status = DocumentStatus::Excluded;
-            }
-            let search_publication = commit_prepared_search_publication(
-                store,
-                now,
-                search_publication,
-                std::slice::from_ref(&document),
-            )?
-            .release();
-            Ok(OcrTextIndexOutcome::Committed(OcrTextIndexSummary {
-                searchable: admitted,
-                indexed_documents: search_publication.fulltext.document_count(),
-            }))
-        }
-        OcrAttemptSuccessOutcome::Superseded => Ok(OcrTextIndexOutcome::Superseded),
-    }
-}
-
 pub fn detect_ocr_page_count(extension: &FileExtension, bytes: &[u8]) -> Result<u32> {
     if !matches!(extension, FileExtension::Pdf) {
         return Ok(1);
@@ -1679,1559 +341,6 @@ pub fn detect_ocr_page_count(extension: &FileExtension, bytes: &[u8]) -> Result<
         .and_then(|page_count| u32::try_from(page_count).ok())
         .filter(|page_count| *page_count > 0)
         .unwrap_or(1))
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct OcrTextIndexSummary {
-    pub searchable: bool,
-    pub indexed_documents: usize,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OcrTextIndexOutcome {
-    Committed(OcrTextIndexSummary),
-    Superseded,
-}
-
-fn current_timestamp_or(default: UnixTimestamp) -> UnixTimestamp {
-    let Some(current) = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
-        .map(UnixTimestamp::from_unix_seconds)
-    else {
-        return default;
-    };
-
-    if current.as_unix_seconds() >= default.as_unix_seconds() {
-        current
-    } else {
-        default
-    }
-}
-
-fn mark_missing_documents_deleted(
-    store: &MetaStore,
-    root: &Path,
-    scan_profile: ScanProfile,
-    scanned_directories: &[NormalizedPath],
-    skipped_directories: &[NormalizedPath],
-    discovered_doc_ids: &BTreeSet<String>,
-    now: UnixTimestamp,
-) -> Result<Vec<Document>> {
-    let documents = store
-        .visible_documents()
-        .map_err(ImportPipelineError::store)?;
-    let mut deleted_documents = Vec::new();
-
-    for mut document in documents {
-        if !document_path_is_deletion_candidate(
-            &document.normalized_path,
-            root,
-            scan_profile,
-            scanned_directories,
-            skipped_directories,
-        ) {
-            continue;
-        }
-        if discovered_doc_ids.contains(document.id.as_str()) {
-            continue;
-        }
-        document.is_deleted = true;
-        document.status = DocumentStatus::Deleted;
-        document.updated_at = now;
-        deleted_documents.push(document);
-    }
-
-    Ok(deleted_documents)
-}
-
-fn document_path_is_deletion_candidate(
-    document_path: &str,
-    root: &Path,
-    scan_profile: ScanProfile,
-    scanned_directories: &[NormalizedPath],
-    skipped_directories: &[NormalizedPath],
-) -> bool {
-    if !document_path_is_under_root(document_path, root) {
-        return false;
-    }
-
-    if scan_profile == ScanProfile::Explicit {
-        return true;
-    }
-
-    document_parent_is_scanned(document_path, scanned_directories)
-        && !document_path_is_under_any_normalized_root(document_path, skipped_directories)
-}
-
-fn document_path_is_under_root(document_path: &str, root: &Path) -> bool {
-    let Ok(root) = normalize_path(root) else {
-        return false;
-    };
-    normalized_path_is_under_root(document_path, root.as_str())
-}
-
-fn document_path_is_under_any_normalized_root(
-    document_path: &str,
-    roots: &[NormalizedPath],
-) -> bool {
-    roots
-        .iter()
-        .any(|root| normalized_path_is_under_root(document_path, root.as_str()))
-}
-
-fn normalized_path_is_under_root(document_path: &str, root: &str) -> bool {
-    if document_path == root {
-        return true;
-    }
-    if root.ends_with('/') {
-        return document_path.starts_with(root);
-    }
-
-    document_path
-        .strip_prefix(root)
-        .is_some_and(|suffix| suffix.starts_with('/'))
-}
-
-fn document_parent_is_scanned(document_path: &str, scanned_directories: &[NormalizedPath]) -> bool {
-    let Some(parent_path) = normalized_parent_path(document_path) else {
-        return false;
-    };
-
-    scanned_directories
-        .iter()
-        .any(|directory| directory.as_str() == parent_path)
-}
-
-fn normalized_parent_path(path: &str) -> Option<&str> {
-    let (parent, _) = path.rsplit_once('/')?;
-    if parent.is_empty() {
-        Some("/")
-    } else {
-        Some(parent)
-    }
-}
-
-fn prepare_file_for_parse(
-    store: &MetaStore,
-    index: usize,
-    file: DiscoveredFile,
-    now: UnixTimestamp,
-    ensure_not_cancelled: &dyn Fn() -> Result<()>,
-    db_timing: &mut Duration,
-    parse_prepare_timing: &mut Duration,
-    content_bytes_read: &mut u64,
-    linear_promotion: &LinearPromotionPolicy,
-) -> Result<PreparedFile> {
-    let started = Instant::now();
-    let mut db_elapsed = Duration::ZERO;
-    let result = prepare_file_for_parse_inner(
-        store,
-        index,
-        file,
-        now,
-        ensure_not_cancelled,
-        &mut db_elapsed,
-        content_bytes_read,
-        linear_promotion,
-    );
-    *db_timing += db_elapsed;
-    *parse_prepare_timing += started.elapsed().saturating_sub(db_elapsed);
-    result
-}
-
-fn prepare_file_for_parse_inner(
-    store: &MetaStore,
-    index: usize,
-    file: DiscoveredFile,
-    now: UnixTimestamp,
-    ensure_not_cancelled: &dyn Fn() -> Result<()>,
-    db_elapsed: &mut Duration,
-    content_bytes_read: &mut u64,
-    linear_promotion: &LinearPromotionPolicy,
-) -> Result<PreparedFile> {
-    ensure_not_cancelled()?;
-    let mut document = document_from_discovered_file(&file, now, DocumentStatus::Discovered);
-    if file.extension == FileExtension::Txt
-        && file.byte_size > parser_text::DEFAULT_MAX_BYTES as u64
-    {
-        document.status = DocumentStatus::FailedPermanent;
-        document.updated_at = now;
-        measure_result_stage(db_elapsed, || {
-            persist_document_failure_without_revision(store, &document)
-        })?;
-        return Ok(PreparedFile::Ready(ProcessedImportFile {
-            file,
-            processed: ProcessedFile::Failed {
-                kind: ImportFailureKind::TextTooLarge,
-            },
-        }));
-    }
-
-    let path = PathBuf::from(file.normalized_path.as_str());
-    ensure_not_cancelled()?;
-    let bytes = match fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            document.status = DocumentStatus::FailedRetryable;
-            document.updated_at = now;
-            measure_result_stage(db_elapsed, || {
-                persist_document_failure_without_revision(store, &document)
-            })?;
-            return Ok(PreparedFile::Ready(ProcessedImportFile {
-                file,
-                processed: ProcessedFile::Failed {
-                    kind: ImportFailureKind::ReadError,
-                },
-            }));
-        }
-    };
-    *content_bytes_read += bytes.len() as u64;
-    ensure_not_cancelled()?;
-
-    let source_revision = source_revision(&document, &bytes);
-    if let Some(noop_kind) = measure_result_stage(db_elapsed, || {
-        exact_rerun_noop_kind(
-            store,
-            &file,
-            &source_revision.content_hash,
-            linear_promotion,
-        )
-    })? {
-        let processed = match noop_kind {
-            ExactRerunNoopKind::Searchable => ProcessedFile::UnchangedSearchable,
-            ExactRerunNoopKind::OcrRequired => ProcessedFile::UnchangedOcrRequired,
-            ExactRerunNoopKind::Excluded => ProcessedFile::UnchangedExcluded,
-        };
-        return Ok(PreparedFile::Ready(ProcessedImportFile { file, processed }));
-    }
-
-    document.content_hash = Some(source_revision.content_hash.as_str().to_string());
-    document.byte_size = source_revision.byte_size;
-    ensure_not_cancelled()?;
-
-    Ok(PreparedFile::Parse(ParseWorkItem {
-        index,
-        file,
-        document,
-        source_revision,
-        bytes,
-    }))
-}
-
-fn parse_worker_loop(
-    work_rx: Arc<Mutex<mpsc::Receiver<ParseWorkItem>>>,
-    result_tx: mpsc::SyncSender<ParseWorkResult>,
-    linear_promotion: &LinearPromotionPolicy,
-) {
-    loop {
-        let work = match work_rx.lock() {
-            Ok(receiver) => receiver.recv(),
-            Err(_) => return,
-        };
-        let Ok(work) = work else {
-            return;
-        };
-        if result_tx
-            .send(parse_work_item(work, linear_promotion))
-            .is_err()
-        {
-            return;
-        }
-    }
-}
-
-fn parse_work_item(
-    work: ParseWorkItem,
-    linear_promotion: &LinearPromotionPolicy,
-) -> ParseWorkResult {
-    let ParseWorkItem {
-        index,
-        file,
-        document,
-        source_revision,
-        bytes,
-    } = work;
-    let parse_started = Instant::now();
-    let output =
-        parse_work_item_inner(&file, &document, &source_revision, &bytes, linear_promotion);
-    let parse_finished = Instant::now();
-
-    ParseWorkResult {
-        index,
-        file,
-        document,
-        source_revision,
-        parse_elapsed: parse_finished.saturating_duration_since(parse_started),
-        parse_started,
-        parse_finished,
-        pdf_parse_timings: output.pdf_parse_timings,
-        post_parser_timings: output.post_parser_timings,
-        outcome: output.outcome,
-    }
-}
-
-fn parse_work_item_inner(
-    file: &DiscoveredFile,
-    document: &Document,
-    source_revision: &SourceRevision,
-    bytes: &[u8],
-    linear_promotion: &LinearPromotionPolicy,
-) -> ParseWorkItemOutput {
-    let extension = file_extension_label(&file.extension);
-    let mut pdf_parse_timings = PdfTextExtractionTimings::default();
-    let mut post_parser_timings = ImportPostParserTimings::default();
-    let parse_output = match file.extension {
-        FileExtension::Docx => DocxParser.parse(
-            ParseInput::from_bytes(Some(extension), bytes),
-            ResourceBudget::default(),
-        ),
-        FileExtension::Doc => DocParser::default().parse(
-            ParseInput::from_bytes(Some(extension), bytes),
-            ResourceBudget::default(),
-        ),
-        FileExtension::Pdf => {
-            match PdfParser.parse_with_timings(
-                ParseInput::from_bytes(Some(extension), bytes),
-                ResourceBudget::default(),
-            ) {
-                Ok((parse_output, timings)) => {
-                    pdf_parse_timings = timings;
-                    Ok(parse_output)
-                }
-                Err(error) => Err(error),
-            }
-        }
-        FileExtension::Txt => TxtParser.parse(
-            ParseInput::from_bytes(Some(extension), bytes),
-            ResourceBudget::default().with_max_bytes(parser_text::DEFAULT_MAX_BYTES),
-        ),
-        _ => {
-            return ParseWorkItemOutput {
-                outcome: ParseWorkOutcome::Failed {
-                    status: DocumentStatus::FailedPermanent,
-                    kind: ImportFailureKind::UnsupportedExtension,
-                },
-                pdf_parse_timings,
-                post_parser_timings,
-            };
-        }
-    };
-
-    let parse_output = match parse_output {
-        Ok(parse_output) => parse_output,
-        Err(error) => {
-            let status = if error.retryable() {
-                DocumentStatus::FailedRetryable
-            } else if error.kind() == ParserErrorKind::OcrRequired {
-                DocumentStatus::OcrRequired
-            } else {
-                DocumentStatus::FailedPermanent
-            };
-            let outcome = if status == DocumentStatus::OcrRequired {
-                ParseWorkOutcome::OcrRequired
-            } else {
-                ParseWorkOutcome::Failed {
-                    status,
-                    kind: ImportFailureKind::from_parser_error(error.kind()),
-                }
-            };
-            return ParseWorkItemOutput {
-                outcome,
-                pdf_parse_timings,
-                post_parser_timings,
-            };
-        }
-    };
-
-    if parse_output.status() == ParseStatus::OcrRequired {
-        return ParseWorkItemOutput {
-            outcome: ParseWorkOutcome::OcrRequired,
-            pdf_parse_timings,
-            post_parser_timings,
-        };
-    }
-
-    let clean_text = measure_stage(&mut post_parser_timings.normalization, || {
-        TextNormalizer::normalize_text_only(parse_output.text())
-    });
-    if clean_text.trim().is_empty() {
-        let outcome = if file.extension == FileExtension::Txt {
-            ParseWorkOutcome::Failed {
-                status: DocumentStatus::FailedPermanent,
-                kind: ImportFailureKind::EmptyText,
-            }
-        } else {
-            ParseWorkOutcome::OcrRequired
-        };
-        return ParseWorkItemOutput {
-            outcome,
-            pdf_parse_timings,
-            post_parser_timings,
-        };
-    }
-
-    let sections = measure_stage(&mut post_parser_timings.sectionization, || {
-        Sectionizer::default().sectionize(&clean_text)
-    });
-    let decision =
-        AdmissionDecision::after_sectionization(&clean_text, &sections, linear_promotion);
-    let admitted = decision.admits_search_index();
-    let version = resume_version(
-        document,
-        source_revision,
-        clean_text.clone(),
-        PARSE_VERSION,
-        SCHEMA_VERSION,
-        language_set(&clean_text),
-        parse_output
-            .page_count()
-            .and_then(|page_count| u32::try_from(page_count).ok()),
-        Some(0.8),
-    );
-    let version_id = version.id.clone();
-    let outcome = if admitted {
-        ParseWorkOutcome::Searchable {
-            decision,
-            version: Box::new(version),
-            mentions: entity_mentions_from_rules(&version_id, &clean_text),
-            index_document: Box::new(IndexDocument {
-                doc_id: document.id.to_string(),
-                resume_version_id: version_id.to_string(),
-                file_name: file.file_name.clone(),
-                clean_text,
-                sections: sections_to_index(sections),
-            }),
-        }
-    } else {
-        ParseWorkOutcome::Excluded {
-            decision,
-            version: Box::new(version),
-        }
-    };
-
-    ParseWorkItemOutput {
-        outcome,
-        pdf_parse_timings,
-        post_parser_timings,
-    }
-}
-
-fn send_parse_work_with_backpressure(
-    work_tx: &mpsc::SyncSender<ParseWorkItem>,
-    result_rx: &mpsc::Receiver<ParseWorkResult>,
-    pending_results: &mut BTreeMap<usize, ImportFileResult>,
-    worker_metrics: &mut ImportWorkerMetrics,
-    ensure_not_cancelled: &dyn Fn() -> Result<()>,
-    set_cancel_phase: &dyn Fn(ImportCancelCheckPhase),
-    mut work: ParseWorkItem,
-) -> Result<()> {
-    let mut queue_full_events = 0_usize;
-    let mut queue_wait = Duration::ZERO;
-    loop {
-        match work_tx.try_send(work) {
-            Ok(()) => {
-                worker_metrics.parse_jobs_queued += 1;
-                worker_metrics.parse_queue_full_events += queue_full_events;
-                worker_metrics.parse_queue_wait += queue_wait;
-                return Ok(());
-            }
-            Err(mpsc::TrySendError::Full(returned_work)) => {
-                work = returned_work;
-                queue_full_events += 1;
-                set_cancel_phase(ImportCancelCheckPhase::ParseQueueWait);
-                let wait_started = Instant::now();
-                let result = recv_parse_result_with_cancel_poll(result_rx, ensure_not_cancelled)?;
-                queue_wait += wait_started.elapsed();
-                insert_parse_result(pending_results, result)?;
-            }
-            Err(mpsc::TrySendError::Disconnected(_)) => {
-                return Err(parallel_parse_error());
-            }
-        }
-    }
-}
-
-fn drain_available_parse_results(
-    result_rx: &mpsc::Receiver<ParseWorkResult>,
-    pending_results: &mut BTreeMap<usize, ImportFileResult>,
-) -> Result<()> {
-    loop {
-        match result_rx.try_recv() {
-            Ok(result) => insert_parse_result(pending_results, result)?,
-            Err(mpsc::TryRecvError::Empty) | Err(mpsc::TryRecvError::Disconnected) => {
-                return Ok(());
-            }
-        }
-    }
-}
-
-fn recv_parse_result_with_cancel_poll(
-    result_rx: &mpsc::Receiver<ParseWorkResult>,
-    ensure_not_cancelled: &dyn Fn() -> Result<()>,
-) -> Result<ParseWorkResult> {
-    loop {
-        match result_rx.recv_timeout(Duration::from_millis(PARSE_RESULT_CANCEL_POLL_INTERVAL_MS)) {
-            Ok(result) => return Ok(result),
-            Err(mpsc::RecvTimeoutError::Timeout) => ensure_not_cancelled()?,
-            Err(mpsc::RecvTimeoutError::Disconnected) => return Err(parallel_parse_error()),
-        }
-    }
-}
-
-fn insert_parse_result(
-    pending_results: &mut BTreeMap<usize, ImportFileResult>,
-    result: ParseWorkResult,
-) -> Result<()> {
-    insert_import_file_result(
-        pending_results,
-        result.index,
-        ImportFileResult::Parsed(result),
-    )
-}
-
-fn insert_import_file_result(
-    pending_results: &mut BTreeMap<usize, ImportFileResult>,
-    index: usize,
-    result: ImportFileResult,
-) -> Result<()> {
-    if pending_results.insert(index, result).is_some() {
-        return Err(parallel_parse_error());
-    }
-    Ok(())
-}
-
-fn commit_ready_import_file_results(
-    data_dir: &Path,
-    store: &MetaStore,
-    task_id: &ImportTaskId,
-    now: UnixTimestamp,
-    ensure_not_cancelled: &dyn Fn() -> Result<()>,
-    summary: &mut ImportSummary,
-    pending_index_documents: &mut Vec<PendingSearchableDocument>,
-    pending_excluded_doc_ids: &mut PendingProjectionRemovals,
-    current_import_index_documents: &mut CurrentImportDocumentCache,
-    import_started: Instant,
-    total_files: usize,
-    pending_results: &mut BTreeMap<usize, ImportFileResult>,
-    next_commit_index: &mut usize,
-    parse_worker_clock: &mut ParseWorkerClock,
-    set_cancel_phase: &dyn Fn(ImportCancelCheckPhase),
-    index_writer_heap_bytes: usize,
-    search_vectorization: &SearchPublicationVectorization,
-    linear_promotion: &LinearPromotionPolicy,
-) -> Result<bool> {
-    let mut committed = false;
-    while let Some(result) = pending_results.remove(next_commit_index) {
-        set_cancel_phase(ImportCancelCheckPhase::WorkerResultCommit);
-        ensure_not_cancelled()?;
-        let index = *next_commit_index;
-        let result = match result {
-            ImportFileResult::Processed(result) => result,
-            ImportFileResult::Parsed(result) => commit_parse_work_result(
-                data_dir,
-                store,
-                now,
-                &mut summary.stage_timings.db,
-                &mut summary.worker_metrics,
-                parse_worker_clock,
-                result,
-                linear_promotion,
-            )?,
-        };
-        finish_import_file(
-            data_dir,
-            store,
-            task_id,
-            now,
-            ensure_not_cancelled,
-            summary,
-            pending_index_documents,
-            pending_excluded_doc_ids,
-            current_import_index_documents,
-            set_cancel_phase,
-            import_started,
-            index_writer_heap_bytes,
-            search_vectorization,
-            index,
-            total_files,
-            &result.file,
-            result.processed,
-        )?;
-        *next_commit_index += 1;
-        committed = true;
-    }
-
-    Ok(committed)
-}
-
-fn commit_parse_work_result(
-    data_dir: &Path,
-    store: &MetaStore,
-    now: UnixTimestamp,
-    db_timing: &mut Duration,
-    worker_metrics: &mut ImportWorkerMetrics,
-    parse_worker_clock: &mut ParseWorkerClock,
-    result: ParseWorkResult,
-    linear_promotion: &LinearPromotionPolicy,
-) -> Result<ProcessedImportFile> {
-    parse_worker_clock.record_result(&result);
-    worker_metrics
-        .pdf_parse_timings
-        .add_assign(&result.pdf_parse_timings);
-    worker_metrics
-        .post_parser_timings
-        .add_assign(&result.post_parser_timings);
-    let ParseWorkResult {
-        file,
-        mut document,
-        source_revision,
-        outcome,
-        ..
-    } = result;
-
-    let processed = match outcome {
-        ParseWorkOutcome::Searchable {
-            decision,
-            version,
-            mentions,
-            index_document,
-        } => {
-            document.status = DocumentStatus::TextCleaned;
-            document.updated_at = now;
-            measure_result_stage(db_timing, || {
-                prepare_pending_searchable_document(
-                    data_dir,
-                    document,
-                    source_revision,
-                    decision,
-                    *version,
-                    mentions,
-                    *index_document,
-                    now,
-                )
-            })?
-        }
-        ParseWorkOutcome::Excluded { decision, version } => {
-            document.status = DocumentStatus::Excluded;
-            document.updated_at = now;
-            measure_result_stage(db_timing, || {
-                persist_non_searchable(store, &document, &source_revision, &version, decision, now)
-            })?;
-            ProcessedFile::Excluded {
-                document: Box::new(document),
-            }
-        }
-        ParseWorkOutcome::OcrRequired => ProcessedFile::OcrRequired {
-            ocr_job_queued: measure_result_stage(db_timing, || {
-                mark_ocr_required_and_enqueue(
-                    store,
-                    &mut document,
-                    &source_revision,
-                    now,
-                    linear_promotion,
-                )
-            })?,
-        },
-        ParseWorkOutcome::Failed { status, kind } => {
-            document.status = status;
-            document.updated_at = now;
-            measure_result_stage(db_timing, || {
-                persist_source_revision_failure(
-                    store,
-                    &document,
-                    &source_revision,
-                    now,
-                    linear_promotion,
-                )
-            })?;
-            ProcessedFile::Failed { kind }
-        }
-    };
-
-    Ok(ProcessedImportFile { file, processed })
-}
-
-fn parallel_parse_error() -> ImportPipelineError {
-    ImportPipelineError {
-        kind: ImportPipelineErrorKind::Parser,
-        retryable: true,
-    }
-}
-
-fn process_file(
-    data_dir: &Path,
-    store: &MetaStore,
-    file: &DiscoveredFile,
-    sectionizer: &Sectionizer,
-    now: UnixTimestamp,
-    ensure_not_cancelled: &dyn Fn() -> Result<()>,
-    stage_timings: &mut ImportStageTimings,
-    worker_metrics: &mut ImportWorkerMetrics,
-    content_bytes_read: &mut u64,
-    linear_promotion: &LinearPromotionPolicy,
-) -> Result<ProcessedFile> {
-    let started = Instant::now();
-    let mut db_elapsed = Duration::ZERO;
-    let result = process_file_inner(
-        data_dir,
-        store,
-        file,
-        sectionizer,
-        now,
-        ensure_not_cancelled,
-        &mut db_elapsed,
-        worker_metrics,
-        content_bytes_read,
-        linear_promotion,
-    );
-    stage_timings.db += db_elapsed;
-    stage_timings.parse += started.elapsed().saturating_sub(db_elapsed);
-    result
-}
-
-fn process_file_inner(
-    data_dir: &Path,
-    store: &MetaStore,
-    file: &DiscoveredFile,
-    sectionizer: &Sectionizer,
-    now: UnixTimestamp,
-    ensure_not_cancelled: &dyn Fn() -> Result<()>,
-    db_elapsed: &mut Duration,
-    worker_metrics: &mut ImportWorkerMetrics,
-    content_bytes_read: &mut u64,
-    linear_promotion: &LinearPromotionPolicy,
-) -> Result<ProcessedFile> {
-    ensure_not_cancelled()?;
-    let mut document = document_from_discovered_file(file, now, DocumentStatus::Discovered);
-    if file.extension == FileExtension::Txt
-        && file.byte_size > parser_text::DEFAULT_MAX_BYTES as u64
-    {
-        document.status = DocumentStatus::FailedPermanent;
-        document.updated_at = now;
-        measure_result_stage(db_elapsed, || {
-            persist_document_failure_without_revision(store, &document)
-        })?;
-        return Ok(ProcessedFile::Failed {
-            kind: ImportFailureKind::TextTooLarge,
-        });
-    }
-
-    let path = PathBuf::from(file.normalized_path.as_str());
-    ensure_not_cancelled()?;
-    let bytes = match fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            document.status = DocumentStatus::FailedRetryable;
-            document.updated_at = now;
-            measure_result_stage(db_elapsed, || {
-                persist_document_failure_without_revision(store, &document)
-            })?;
-            return Ok(ProcessedFile::Failed {
-                kind: ImportFailureKind::ReadError,
-            });
-        }
-    };
-    *content_bytes_read += bytes.len() as u64;
-    ensure_not_cancelled()?;
-
-    let source_revision = source_revision(&document, &bytes);
-    if let Some(noop_kind) = measure_result_stage(db_elapsed, || {
-        exact_rerun_noop_kind(store, file, &source_revision.content_hash, linear_promotion)
-    })? {
-        return Ok(match noop_kind {
-            ExactRerunNoopKind::Searchable => ProcessedFile::UnchangedSearchable,
-            ExactRerunNoopKind::OcrRequired => ProcessedFile::UnchangedOcrRequired,
-            ExactRerunNoopKind::Excluded => ProcessedFile::UnchangedExcluded,
-        });
-    }
-
-    document.content_hash = Some(source_revision.content_hash.as_str().to_string());
-    document.byte_size = source_revision.byte_size;
-    ensure_not_cancelled()?;
-
-    let extension = file_extension_label(&file.extension);
-    ensure_not_cancelled()?;
-    let mut pdf_parse_timings = PdfTextExtractionTimings::default();
-    let mut post_parser_timings = ImportPostParserTimings::default();
-    let parse_output = match file.extension {
-        FileExtension::Docx => DocxParser
-            .parse(
-                ParseInput::from_bytes(Some(extension), &bytes),
-                ResourceBudget::default(),
-            )
-            .map_err(|error| (error, document.clone())),
-        FileExtension::Doc => DocParser::default()
-            .parse(
-                ParseInput::from_bytes(Some(extension), &bytes),
-                ResourceBudget::default(),
-            )
-            .map_err(|error| (error, document.clone())),
-        FileExtension::Pdf => match PdfParser.parse_with_timings(
-            ParseInput::from_bytes(Some(extension), &bytes),
-            ResourceBudget::default(),
-        ) {
-            Ok((parse_output, timings)) => {
-                pdf_parse_timings = timings;
-                Ok(parse_output)
-            }
-            Err(error) => Err((error, document.clone())),
-        },
-        FileExtension::Txt => TxtParser
-            .parse(
-                ParseInput::from_bytes(Some(extension), &bytes),
-                ResourceBudget::default().with_max_bytes(parser_text::DEFAULT_MAX_BYTES),
-            )
-            .map_err(|error| (error, document.clone())),
-        _ => {
-            document.status = DocumentStatus::FailedPermanent;
-            document.updated_at = now;
-            measure_result_stage(db_elapsed, || {
-                persist_source_revision_failure(
-                    store,
-                    &document,
-                    &source_revision,
-                    now,
-                    linear_promotion,
-                )
-            })?;
-            return Ok(ProcessedFile::Failed {
-                kind: ImportFailureKind::UnsupportedExtension,
-            });
-        }
-    };
-    worker_metrics
-        .pdf_parse_timings
-        .add_assign(&pdf_parse_timings);
-    ensure_not_cancelled()?;
-
-    let parse_output = match parse_output {
-        Ok(parse_output) => parse_output,
-        Err((error, mut document)) => {
-            document.status = if error.retryable() {
-                DocumentStatus::FailedRetryable
-            } else if error.kind() == ParserErrorKind::OcrRequired {
-                DocumentStatus::OcrRequired
-            } else {
-                DocumentStatus::FailedPermanent
-            };
-            return Ok(if document.status == DocumentStatus::OcrRequired {
-                ProcessedFile::OcrRequired {
-                    ocr_job_queued: measure_result_stage(db_elapsed, || {
-                        mark_ocr_required_and_enqueue(
-                            store,
-                            &mut document,
-                            &source_revision,
-                            now,
-                            linear_promotion,
-                        )
-                    })?,
-                }
-            } else {
-                measure_result_stage(db_elapsed, || {
-                    persist_source_revision_failure(
-                        store,
-                        &document,
-                        &source_revision,
-                        now,
-                        linear_promotion,
-                    )
-                })?;
-                ProcessedFile::Failed {
-                    kind: ImportFailureKind::from_parser_error(error.kind()),
-                }
-            });
-        }
-    };
-
-    if parse_output.status() == ParseStatus::OcrRequired {
-        ensure_not_cancelled()?;
-        return Ok(ProcessedFile::OcrRequired {
-            ocr_job_queued: measure_result_stage(db_elapsed, || {
-                mark_ocr_required_and_enqueue(
-                    store,
-                    &mut document,
-                    &source_revision,
-                    now,
-                    linear_promotion,
-                )
-            })?,
-        });
-    }
-
-    ensure_not_cancelled()?;
-    let clean_text = measure_stage(&mut post_parser_timings.normalization, || {
-        TextNormalizer::normalize_text_only(parse_output.text())
-    });
-    worker_metrics
-        .post_parser_timings
-        .add_assign(&post_parser_timings);
-    if clean_text.trim().is_empty() {
-        if file.extension == FileExtension::Txt {
-            document.status = DocumentStatus::FailedPermanent;
-            document.updated_at = now;
-            measure_result_stage(db_elapsed, || {
-                persist_source_revision_failure(
-                    store,
-                    &document,
-                    &source_revision,
-                    now,
-                    linear_promotion,
-                )
-            })?;
-            return Ok(ProcessedFile::Failed {
-                kind: ImportFailureKind::EmptyText,
-            });
-        }
-
-        ensure_not_cancelled()?;
-        return Ok(ProcessedFile::OcrRequired {
-            ocr_job_queued: measure_result_stage(db_elapsed, || {
-                mark_ocr_required_and_enqueue(
-                    store,
-                    &mut document,
-                    &source_revision,
-                    now,
-                    linear_promotion,
-                )
-            })?,
-        });
-    }
-
-    ensure_not_cancelled()?;
-    document.status = DocumentStatus::TextCleaned;
-    let sections = measure_stage(&mut post_parser_timings.sectionization, || {
-        sectionizer.sectionize(&clean_text)
-    });
-    worker_metrics.post_parser_timings.sectionization += post_parser_timings.sectionization;
-    let decision =
-        AdmissionDecision::after_sectionization(&clean_text, &sections, linear_promotion);
-    let admitted = decision.admits_search_index();
-    let version = resume_version(
-        &document,
-        &source_revision,
-        clean_text.clone(),
-        PARSE_VERSION,
-        SCHEMA_VERSION,
-        language_set(&clean_text),
-        parse_output
-            .page_count()
-            .and_then(|page_count| u32::try_from(page_count).ok()),
-        Some(0.8),
-    );
-    let version_id = version.id.clone();
-    if !admitted {
-        document.status = DocumentStatus::Excluded;
-        measure_result_stage(db_elapsed, || {
-            persist_non_searchable(store, &document, &source_revision, &version, decision, now)
-        })?;
-        return Ok(ProcessedFile::Excluded {
-            document: Box::new(document),
-        });
-    }
-    let mentions = entity_mentions_from_rules(&version_id, &clean_text);
-    let index_document = IndexDocument {
-        doc_id: document.id.to_string(),
-        resume_version_id: version_id.to_string(),
-        file_name: file.file_name.clone(),
-        clean_text,
-        sections: sections_to_index(sections),
-    };
-    ensure_not_cancelled()?;
-    measure_result_stage(db_elapsed, || {
-        prepare_pending_searchable_document(
-            data_dir,
-            document,
-            source_revision,
-            decision,
-            version,
-            mentions,
-            index_document,
-            now,
-        )
-    })
-}
-
-fn contact_hashes_from_mentions(
-    data_dir: &Path,
-    mentions: &[EntityMention],
-) -> Result<(Option<ContactHash>, Option<ContactHash>)> {
-    let email = best_normalized_contact(mentions, EntityType::Email);
-    let phone = best_normalized_contact(mentions, EntityType::Phone);
-    if email.is_none() && phone.is_none() {
-        return Ok((None, None));
-    }
-
-    let hasher = ContactHasher::load_or_create(data_dir).map_err(ImportPipelineError::privacy)?;
-    let email_hash = email
-        .map(|value| hasher.hash_contact(ContactKind::Email, value))
-        .transpose()
-        .map_err(ImportPipelineError::privacy)?;
-    let phone_hash = phone
-        .map(|value| hasher.hash_contact(ContactKind::Phone, value))
-        .transpose()
-        .map_err(ImportPipelineError::privacy)?;
-
-    Ok((email_hash, phone_hash))
-}
-
-fn best_normalized_contact(mentions: &[EntityMention], entity_type: EntityType) -> Option<&str> {
-    let mut candidates = mentions
-        .iter()
-        .filter(|mention| mention.entity_type == entity_type)
-        .filter_map(|mention| {
-            let normalized = mention.normalized_value.as_deref()?;
-            Some((
-                normalized,
-                mention.confidence,
-                mention.span_start.unwrap_or(usize::MAX),
-            ))
-        })
-        .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| {
-        right
-            .1
-            .partial_cmp(&left.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| left.2.cmp(&right.2))
-            .then_with(|| left.0.cmp(right.0))
-    });
-    candidates.first().map(|candidate| candidate.0)
-}
-
-fn prepare_pending_searchable_document(
-    data_dir: &Path,
-    document: Document,
-    source_revision: SourceRevision,
-    decision: AdmissionDecision,
-    version: ResumeVersion,
-    mentions: Vec<EntityMention>,
-    index_document: IndexDocument,
-    now: UnixTimestamp,
-) -> Result<ProcessedFile> {
-    let classification = decision.into_version_classification(version.id.clone(), now);
-    let (email_hash, phone_hash) = contact_hashes_from_mentions(data_dir, &mentions)?;
-    Ok(ProcessedFile::Searchable {
-        pending: Box::new(PendingSearchableDocument {
-            document,
-            source_revision,
-            classification,
-            version,
-            mentions,
-            email_hash,
-            phone_hash,
-            index_document,
-        }),
-    })
-}
-
-fn persist_non_searchable(
-    store: &MetaStore,
-    document: &Document,
-    source_revision: &SourceRevision,
-    version: &ResumeVersion,
-    decision: AdmissionDecision,
-    now: UnixTimestamp,
-) -> Result<()> {
-    let classification = decision.into_version_classification(version.id.clone(), now);
-    immutable_ingest::stage(
-        store,
-        StagedResume {
-            document,
-            source_revision,
-            derived: StagedDerivedData::ClassifiedVersion {
-                version,
-                classification: &classification,
-                mentions: &[],
-                email_hash: None,
-                phone_hash: None,
-            },
-        },
-    )
-    .map_err(ImportPipelineError::store)
-}
-
-fn persist_document_failure_without_revision(store: &MetaStore, document: &Document) -> Result<()> {
-    let has_active_projection = store
-        .active_search_projection_for_document(&document.id)
-        .map_err(ImportPipelineError::store)?
-        .is_some();
-    if has_active_projection {
-        return Ok(());
-    }
-    store
-        .upsert_document(document)
-        .map_err(ImportPipelineError::store)
-}
-
-fn persist_source_revision_failure(
-    store: &MetaStore,
-    document: &Document,
-    source_revision: &SourceRevision,
-    now: UnixTimestamp,
-    linear_promotion: &LinearPromotionPolicy,
-) -> Result<()> {
-    let triage = AdmissionDecision::failed(linear_promotion)
-        .into_source_triage(source_revision.id.clone(), now);
-    immutable_ingest::stage(
-        store,
-        StagedResume {
-            document,
-            source_revision,
-            derived: StagedDerivedData::SourceTriage(&triage),
-        },
-    )
-    .map_err(ImportPipelineError::store)
-}
-
-fn mark_ocr_required_and_enqueue(
-    store: &MetaStore,
-    document: &mut Document,
-    source_revision: &SourceRevision,
-    now: UnixTimestamp,
-    linear_promotion: &LinearPromotionPolicy,
-) -> Result<bool> {
-    document.status = DocumentStatus::OcrRequired;
-    document.updated_at = now;
-    let triage = AdmissionDecision::ocr_backlog(linear_promotion)
-        .into_source_triage(source_revision.id.clone(), now);
-    immutable_ingest::stage(
-        store,
-        StagedResume {
-            document,
-            source_revision,
-            derived: StagedDerivedData::SourceTriage(&triage),
-        },
-    )
-    .map_err(ImportPipelineError::store)?;
-    let triage_epoch = CurrentClassifierEpoch::parse(&triage.triage_epoch)
-        .ok_or_else(ImportPipelineError::store_invariant)?;
-    let enqueue = store
-        .enqueue_ocr_job_for_source_triage(&source_revision.id, triage_epoch, now)
-        .map_err(ImportPipelineError::store)?;
-
-    Ok(enqueue.scheduled)
-}
-
-fn entity_mentions_from_rules(
-    version_id: &ResumeVersionId,
-    clean_text: &str,
-) -> Vec<EntityMention> {
-    extract_strong_fields(clean_text)
-        .into_iter()
-        .enumerate()
-        .map(|(index, field)| entity_mention_from_rule(version_id, index, field))
-        .collect()
-}
-
-fn entity_mention_from_rule(
-    version_id: &ResumeVersionId,
-    index: usize,
-    field: RuleMatch,
-) -> EntityMention {
-    EntityMention {
-        id: EntityMentionId::from_non_secret_parts(&[
-            "rules-v1",
-            version_id.as_str(),
-            &index.to_string(),
-        ]),
-        resume_version_id: version_id.clone(),
-        section_id: None,
-        entity_type: entity_type_from_field_type(&field.field_type),
-        raw_value: field.raw_value,
-        normalized_value: field.normalized_value,
-        span_start: Some(field.span_start),
-        span_end: Some(field.span_end),
-        confidence: field.confidence,
-        extractor: "rules-v1".to_string(),
-    }
-}
-
-fn entity_type_from_field_type(field_type: &FieldType) -> EntityType {
-    match field_type {
-        FieldType::Name => EntityType::Name,
-        FieldType::Email => EntityType::Email,
-        FieldType::Phone => EntityType::Phone,
-        FieldType::WeChat => EntityType::WeChat,
-        FieldType::DateRange => EntityType::DateRange,
-        FieldType::School => EntityType::School,
-        FieldType::SchoolTier => EntityType::SchoolTier,
-        FieldType::Degree => EntityType::Degree,
-        FieldType::Major => EntityType::Major,
-        FieldType::Company => EntityType::Company,
-        FieldType::Title => EntityType::Title,
-        FieldType::Location => EntityType::Location,
-        FieldType::Skill => EntityType::Skill,
-        FieldType::Certificate => EntityType::Certificate,
-        FieldType::YearsExperience => EntityType::YearsExperience,
-    }
-}
-
-fn exact_rerun_noop_kind(
-    store: &MetaStore,
-    file: &DiscoveredFile,
-    strong_content_hash: &ContentDigest,
-    linear_promotion: &LinearPromotionPolicy,
-) -> Result<Option<ExactRerunNoopKind>> {
-    let Some(mut document) = store
-        .document_by_id(&file.document_id)
-        .map_err(ImportPipelineError::store)?
-    else {
-        return Ok(None);
-    };
-
-    if document.is_deleted
-        || document.extension != file.extension
-        || document.byte_size != file.byte_size
-        || document.mtime != file.mtime
-        || document.content_hash.as_deref() != Some(strong_content_hash.as_str())
-    {
-        return Ok(None);
-    }
-
-    if document.normalized_path != file.normalized_path.as_str()
-        || document.file_name != file.file_name
-    {
-        document.source_uri = format!("file://{}", file.normalized_path.as_str());
-        document.normalized_path = file.normalized_path.as_str().to_string();
-        document.file_name = file.file_name.clone();
-        store
-            .upsert_document(&document)
-            .map_err(ImportPipelineError::store)?;
-    }
-
-    let source_revision = SourceRevision::for_content(
-        document.id.clone(),
-        strong_content_hash.clone(),
-        file.byte_size,
-    );
-    let classifier_epoch = linear_promotion
-        .classifier_epoch()
-        .unwrap_or(meta_store::CLASSIFIER_EPOCH);
-
-    match document.status {
-        DocumentStatus::Searchable | DocumentStatus::IndexedPartial => {
-            let Some(active_projection) = store
-                .active_search_projection_for_document(&document.id)
-                .map_err(ImportPipelineError::store)?
-            else {
-                return Ok(None);
-            };
-            let Some(version) = store
-                .resume_version_by_id(&active_projection.resume_version_id)
-                .map_err(ImportPipelineError::store)?
-            else {
-                return Err(ImportPipelineError::store_invariant());
-            };
-            if version.source_revision_id != source_revision.id
-                || version.schema_version != SCHEMA_VERSION
-                || !matches!(
-                    version.parse_version.as_str(),
-                    PARSE_VERSION | OCR_PARSE_VERSION
-                )
-            {
-                return Ok(None);
-            }
-            let Some(classification) = store
-                .resume_version_classification(&version.id, classifier_epoch)
-                .map_err(ImportPipelineError::store)?
-            else {
-                return Ok(None);
-            };
-            Ok(
-                (classification_epoch_matches(classifier_epoch, &classification.classifier_epoch)
-                    && classification.status == ClassificationStatus::ResumeCandidate)
-                    .then_some(ExactRerunNoopKind::Searchable),
-            )
-        }
-        DocumentStatus::OcrRequired => {
-            let Some(triage) = store
-                .source_revision_triage(&source_revision.id, classifier_epoch)
-                .map_err(ImportPipelineError::store)?
-            else {
-                return Ok(None);
-            };
-            if !classification_epoch_matches(classifier_epoch, &triage.triage_epoch)
-                || triage.status != ClassificationStatus::OcrBacklog
-            {
-                return Ok(None);
-            }
-            let triage_epoch = CurrentClassifierEpoch::parse(classifier_epoch)
-                .ok_or_else(ImportPipelineError::store_invariant)?;
-            let job = store
-                .ocr_job_for_source_triage(&source_revision.id, triage_epoch)
-                .map_err(ImportPipelineError::store)?;
-            Ok(job
-                .as_ref()
-                .is_some_and(ocr_job_is_actionable)
-                .then_some(ExactRerunNoopKind::OcrRequired))
-        }
-        DocumentStatus::Excluded => {
-            let mut matching = store
-                .resume_versions_for_document(&document.id)
-                .map_err(ImportPipelineError::store)?
-                .into_iter()
-                .filter(|version| {
-                    version.source_revision_id == source_revision.id
-                        && matches!(
-                            version.parse_version.as_str(),
-                            PARSE_VERSION | OCR_PARSE_VERSION
-                        )
-                        && version.schema_version == SCHEMA_VERSION
-                });
-            let Some(version) = matching.next() else {
-                return Ok(None);
-            };
-            if matching.next().is_some() {
-                return Err(ImportPipelineError::store_invariant());
-            }
-            let Some(classification) = store
-                .resume_version_classification(&version.id, classifier_epoch)
-                .map_err(ImportPipelineError::store)?
-            else {
-                return Ok(None);
-            };
-            if !classification_epoch_matches(classifier_epoch, &classification.classifier_epoch)
-                || !matches!(
-                    classification.status,
-                    ClassificationStatus::NonResume | ClassificationStatus::NeedsReview
-                )
-            {
-                return Ok(None);
-            }
-            Ok(Some(ExactRerunNoopKind::Excluded))
-        }
-        _ => Ok(None),
-    }
-}
-
-fn classification_epoch_matches(expected: &str, actual: &str) -> bool {
-    CurrentClassifierEpoch::parse(actual).is_some_and(|epoch| epoch.as_str() == expected)
-}
-
-fn ocr_job_is_actionable(job: &IngestJob) -> bool {
-    match job.status {
-        IngestJobStatus::Queued | IngestJobStatus::Running => true,
-        IngestJobStatus::Interrupted | IngestJobStatus::FailedRetryable => {
-            job.attempt_count < job.max_attempts
-        }
-        IngestJobStatus::Completed | IngestJobStatus::FailedPermanent => false,
-    }
-}
-
-fn document_from_discovered_file(
-    file: &DiscoveredFile,
-    now: UnixTimestamp,
-    status: DocumentStatus,
-) -> Document {
-    Document {
-        id: file.document_id.clone(),
-        source_uri: format!("file://{}", file.normalized_path.as_str()),
-        normalized_path: file.normalized_path.as_str().to_string(),
-        file_name: file.file_name.clone(),
-        extension: file.extension.clone(),
-        byte_size: file.byte_size,
-        mtime: file.mtime,
-        content_hash: None,
-        text_hash: None,
-        is_deleted: false,
-        created_at: now,
-        updated_at: now,
-        status,
-    }
-}
-
-fn sections_to_index(sections: Vec<SectionChunk>) -> Vec<IndexSection> {
-    sections
-        .into_iter()
-        .map(|section| IndexSection {
-            section_type: section_type_label(&section.section_type).to_string(),
-            text: section.text,
-        })
-        .collect()
-}
-
-fn section_type_label(section_type: &SectionType) -> &str {
-    match section_type {
-        SectionType::Profile => "profile",
-        SectionType::Contact => "contact",
-        SectionType::Education => "education",
-        SectionType::Experience => "experience",
-        SectionType::Project => "project",
-        SectionType::Skill => "skill",
-        SectionType::Certificate => "certificate",
-        SectionType::Other(_) => "other",
-    }
-}
-
-fn file_extension_label(extension: &FileExtension) -> &'static str {
-    match extension {
-        FileExtension::Docx => "docx",
-        FileExtension::Pdf => "pdf",
-        FileExtension::Doc => "doc",
-        FileExtension::Txt => "txt",
-        FileExtension::Image => "image",
-        FileExtension::Other(_) => "other",
-    }
-}
-
-fn language_set(text: &str) -> Vec<String> {
-    classify_language_set(text)
-        .into_iter()
-        .map(str::to_string)
-        .collect()
-}
-
-fn classify_language_set(text: &str) -> Vec<&'static str> {
-    let mut has_english = false;
-    let mut has_chinese = false;
-    for character in text.chars() {
-        has_english |= character.is_ascii_alphabetic();
-        has_chinese |= is_cjk_character(character);
-        if has_english && has_chinese {
-            break;
-        }
-    }
-
-    let mut languages = Vec::new();
-    if has_english {
-        languages.push("en");
-    }
-    if has_chinese {
-        languages.push("zh");
-    }
-    if languages.is_empty() {
-        languages.push("unknown");
-    }
-    languages
-}
-
-fn is_cjk_character(character: char) -> bool {
-    ('\u{4e00}'..='\u{9fff}').contains(&character) || ('\u{3400}'..='\u{4dbf}').contains(&character)
-}
-
-enum ProcessedFile {
-    Searchable {
-        pending: Box<PendingSearchableDocument>,
-    },
-    UnchangedSearchable,
-    UnchangedOcrRequired,
-    UnchangedExcluded,
-    Excluded {
-        document: Box<Document>,
-    },
-    OcrRequired {
-        ocr_job_queued: bool,
-    },
-    Failed {
-        kind: ImportFailureKind,
-    },
-}
-
-struct PendingSearchableDocument {
-    document: Document,
-    source_revision: SourceRevision,
-    classification: ResumeVersionClassification,
-    version: ResumeVersion,
-    mentions: Vec<EntityMention>,
-    email_hash: Option<ContactHash>,
-    phone_hash: Option<ContactHash>,
-    index_document: IndexDocument,
-}
-
-enum PreparedFile {
-    Ready(ProcessedImportFile),
-    Parse(ParseWorkItem),
-}
-
-struct ProcessedImportFile {
-    file: DiscoveredFile,
-    processed: ProcessedFile,
-}
-
-enum ImportFileResult {
-    Processed(ProcessedImportFile),
-    Parsed(ParseWorkResult),
-}
-
-struct ParseWorkItem {
-    index: usize,
-    file: DiscoveredFile,
-    document: Document,
-    source_revision: SourceRevision,
-    bytes: Vec<u8>,
-}
-
-struct ParseWorkResult {
-    index: usize,
-    file: DiscoveredFile,
-    document: Document,
-    source_revision: SourceRevision,
-    parse_elapsed: Duration,
-    parse_started: Instant,
-    parse_finished: Instant,
-    pdf_parse_timings: PdfTextExtractionTimings,
-    post_parser_timings: ImportPostParserTimings,
-    outcome: ParseWorkOutcome,
-}
-
-struct ParseWorkItemOutput {
-    outcome: ParseWorkOutcome,
-    pdf_parse_timings: PdfTextExtractionTimings,
-    post_parser_timings: ImportPostParserTimings,
-}
-
-enum ParseWorkOutcome {
-    Searchable {
-        decision: AdmissionDecision,
-        version: Box<ResumeVersion>,
-        mentions: Vec<EntityMention>,
-        index_document: Box<IndexDocument>,
-    },
-    Excluded {
-        decision: AdmissionDecision,
-        version: Box<ResumeVersion>,
-    },
-    OcrRequired,
-    Failed {
-        status: DocumentStatus,
-        kind: ImportFailureKind,
-    },
-}
-
-#[derive(Default)]
-struct ParseWorkerClock {
-    first_started: Option<Instant>,
-    last_finished: Option<Instant>,
-    active_elapsed: Duration,
-}
-
-impl ParseWorkerClock {
-    fn record_result(&mut self, result: &ParseWorkResult) {
-        self.active_elapsed += result.parse_elapsed;
-        self.first_started = Some(match self.first_started {
-            Some(first_started) => first_started.min(result.parse_started),
-            None => result.parse_started,
-        });
-        self.last_finished = Some(match self.last_finished {
-            Some(last_finished) => last_finished.max(result.parse_finished),
-            None => result.parse_finished,
-        });
-    }
-
-    fn worker_wall_elapsed(&self) -> Duration {
-        match (self.first_started, self.last_finished) {
-            (Some(started), Some(finished)) => finished.saturating_duration_since(started),
-            _ => Duration::ZERO,
-        }
-    }
-}
-
-enum ExactRerunNoopKind {
-    Searchable,
-    OcrRequired,
-    Excluded,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -3386,16 +495,21 @@ impl ImportWorkerMetrics {
         self.parse_worker_count = self.parse_worker_count.max(count);
     }
 
-    fn record_parse_worker_clock(&mut self, clock: &ParseWorkerClock) {
-        self.parse_worker_wall += clock.worker_wall_elapsed();
-        self.parse_worker_active += clock.active_elapsed;
+    fn record_parse_worker_timing(&mut self, active: Duration, wall: Duration) {
+        self.parse_worker_wall += wall;
+        self.parse_worker_active += active;
     }
 
-    fn record_cancel_checks(&mut self, checks: CancelCheckMetrics) {
-        self.cancel_check_count += checks.count;
-        if checks.max_gap > self.cancel_check_max_gap {
-            self.cancel_check_max_gap = checks.max_gap;
-            self.cancel_check_max_gap_phase = checks.max_gap_phase;
+    fn record_cancel_checks(
+        &mut self,
+        count: usize,
+        max_gap: Duration,
+        max_gap_phase: ImportCancelCheckPhase,
+    ) {
+        self.cancel_check_count += count;
+        if max_gap > self.cancel_check_max_gap {
+            self.cancel_check_max_gap = max_gap;
+            self.cancel_check_max_gap_phase = max_gap_phase;
         }
     }
 
@@ -3453,31 +567,6 @@ impl ImportIndexPublicationTimings {
         self.encrypted_publication += next.encrypted_publication;
         self.encrypted_validation += next.encrypted_validation;
         self.atomic_publication += next.atomic_publication;
-    }
-}
-
-#[derive(Debug, Default)]
-struct CancelCheckMetrics {
-    count: usize,
-    previous_check: Option<Instant>,
-    previous_phase: ImportCancelCheckPhase,
-    max_gap: Duration,
-    max_gap_phase: ImportCancelCheckPhase,
-}
-
-impl CancelCheckMetrics {
-    fn record_check(&mut self, phase: ImportCancelCheckPhase) {
-        let now = Instant::now();
-        self.count += 1;
-        if let Some(previous_check) = self.previous_check {
-            let gap = now.duration_since(previous_check);
-            if gap > self.max_gap {
-                self.max_gap = gap;
-                self.max_gap_phase = self.previous_phase;
-            }
-        }
-        self.previous_check = Some(now);
-        self.previous_phase = phase;
     }
 }
 
@@ -3578,45 +667,6 @@ impl From<fs_crawler::ScanBudgetExhausted> for ImportScanBudget {
     }
 }
 
-fn import_scan_errors_from_crawl(
-    task_id: &ImportTaskId,
-    errors: &[CrawlError],
-    now: UnixTimestamp,
-) -> Vec<ImportScanError> {
-    errors
-        .iter()
-        .enumerate()
-        .map(|(index, error)| ImportScanError {
-            import_task_id: task_id.clone(),
-            error_index: u64::try_from(index).expect("scan error index fits into u64"),
-            kind: import_scan_error_kind(error.kind),
-            operation: import_scan_error_operation(error.operation),
-            path_digest: None,
-            updated_at: now,
-        })
-        .collect()
-}
-
-fn import_scan_error_kind(kind: CrawlErrorKind) -> ImportScanErrorKind {
-    match kind {
-        CrawlErrorKind::Cancelled => ImportScanErrorKind::Io,
-        CrawlErrorKind::PermissionDenied => ImportScanErrorKind::PermissionDenied,
-        CrawlErrorKind::SourceUnavailable => ImportScanErrorKind::SourceUnavailable,
-        CrawlErrorKind::LockedOrUnreadable => ImportScanErrorKind::LockedOrUnreadable,
-        CrawlErrorKind::Io => ImportScanErrorKind::Io,
-    }
-}
-
-fn import_scan_error_operation(operation: FsOperation) -> ImportScanErrorOperation {
-    match operation {
-        FsOperation::CheckCancellation => ImportScanErrorOperation::ReadDirectory,
-        FsOperation::NormalizePath => ImportScanErrorOperation::NormalizePath,
-        FsOperation::ReadDirectory => ImportScanErrorOperation::ReadDirectory,
-        FsOperation::ReadMetadata => ImportScanErrorOperation::ReadMetadata,
-        FsOperation::Fingerprint => ImportScanErrorOperation::Fingerprint,
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SearchArtifactPublicationSummary {
     pub active_projection_count: usize,
@@ -3629,7 +679,14 @@ pub struct ImportPipelineError {
 }
 
 impl ImportPipelineError {
-    fn store(_error: meta_store::MetaStoreError) -> Self {
+    fn store(error: meta_store::MetaStoreError) -> Self {
+        let class = error.class();
+        if class != meta_store::MetaStoreErrorClass::Storage {
+            return Self {
+                kind: ImportPipelineErrorKind::StoreInvariant(class),
+                retryable: false,
+            };
+        }
         Self {
             kind: ImportPipelineErrorKind::Store,
             retryable: true,
@@ -3638,7 +695,9 @@ impl ImportPipelineError {
 
     fn store_invariant() -> Self {
         Self {
-            kind: ImportPipelineErrorKind::Store,
+            kind: ImportPipelineErrorKind::StoreInvariant(
+                meta_store::MetaStoreErrorClass::StorageInvariant,
+            ),
             retryable: false,
         }
     }
@@ -3649,7 +708,14 @@ impl ImportPipelineError {
         }
 
         Self {
-            kind: ImportPipelineErrorKind::Crawl,
+            kind: ImportPipelineErrorKind::Crawl(error.kind),
+            retryable: true,
+        }
+    }
+
+    fn migration_scan_incomplete() -> Self {
+        Self {
+            kind: ImportPipelineErrorKind::Crawl(CrawlErrorKind::SourceUnavailable),
             retryable: true,
         }
     }
@@ -3661,6 +727,27 @@ impl ImportPipelineError {
         }
     }
 
+    fn interrupted() -> Self {
+        Self {
+            kind: ImportPipelineErrorKind::Interrupted,
+            retryable: true,
+        }
+    }
+
+    fn repairing() -> Self {
+        Self {
+            kind: ImportPipelineErrorKind::Repairing,
+            retryable: true,
+        }
+    }
+
+    fn artifact_retirement() -> Self {
+        Self {
+            kind: ImportPipelineErrorKind::ArtifactRetirement,
+            retryable: false,
+        }
+    }
+
     fn index(error: index_fulltext::FullTextError) -> Self {
         if matches!(error, index_fulltext::FullTextError::Cancelled) {
             return Self::cancelled();
@@ -3668,7 +755,7 @@ impl ImportPipelineError {
 
         Self {
             kind: ImportPipelineErrorKind::Index,
-            retryable: true,
+            retryable: !matches!(error, index_fulltext::FullTextError::Internal { .. }),
         }
     }
 
@@ -3680,7 +767,7 @@ impl ImportPipelineError {
     }
 
     fn vector(error: index_vector::VectorIndexError) -> Self {
-        let kind = match error {
+        let (kind, retryable) = match error {
             index_vector::VectorIndexError::InvalidDimension { .. }
             | index_vector::VectorIndexError::InvalidVectorValue
             | index_vector::VectorIndexError::InvalidModelId
@@ -3691,20 +778,21 @@ impl ImportPipelineError {
             | index_vector::VectorIndexError::PublicationProjectionMismatch
             | index_vector::VectorIndexError::DuplicateVectorId
             | index_vector::VectorIndexError::ConflictingDocumentVersion => {
-                ImportPipelineErrorKind::VectorContract
+                (ImportPipelineErrorKind::VectorContract, false)
             }
             index_vector::VectorIndexError::GenerationAlreadyExists
             | index_vector::VectorIndexError::GenerationNotFound
             | index_vector::VectorIndexError::LeaseRootMismatch
             | index_vector::VectorIndexError::SchemaMismatch
             | index_vector::VectorIndexError::CorruptSnapshot
-            | index_vector::VectorIndexError::StorageLayoutInvalid
-            | index_vector::VectorIndexError::Storage => ImportPipelineErrorKind::VectorStorage,
+            | index_vector::VectorIndexError::StorageLayoutInvalid => {
+                (ImportPipelineErrorKind::VectorStorage, false)
+            }
+            index_vector::VectorIndexError::Storage => {
+                (ImportPipelineErrorKind::VectorStorage, true)
+            }
         };
-        Self {
-            kind,
-            retryable: true,
-        }
+        Self { kind, retryable }
     }
 
     fn vector_io() -> Self {
@@ -3731,8 +819,24 @@ impl ImportPipelineError {
     pub fn class(&self) -> ImportPipelineErrorClass {
         match self.kind {
             ImportPipelineErrorKind::Cancelled => ImportPipelineErrorClass::Cancelled,
+            ImportPipelineErrorKind::Interrupted => ImportPipelineErrorClass::Interrupted,
+            ImportPipelineErrorKind::Repairing => ImportPipelineErrorClass::Repairing,
+            ImportPipelineErrorKind::ArtifactRetirement => {
+                ImportPipelineErrorClass::ArtifactRetirement
+            }
             ImportPipelineErrorKind::Store => ImportPipelineErrorClass::Metadata,
-            ImportPipelineErrorKind::Crawl => ImportPipelineErrorClass::Scan,
+            ImportPipelineErrorKind::StoreInvariant(_) => {
+                ImportPipelineErrorClass::MetadataInvariant
+            }
+            ImportPipelineErrorKind::Crawl(
+                CrawlErrorKind::PermissionDenied
+                | CrawlErrorKind::SourceUnavailable
+                | CrawlErrorKind::LockedOrUnreadable,
+            ) => ImportPipelineErrorClass::SourceUnavailable,
+            ImportPipelineErrorKind::Crawl(CrawlErrorKind::Io) => ImportPipelineErrorClass::Scan,
+            ImportPipelineErrorKind::Crawl(CrawlErrorKind::Cancelled) => {
+                ImportPipelineErrorClass::Cancelled
+            }
             ImportPipelineErrorKind::Index => ImportPipelineErrorClass::FullText,
             ImportPipelineErrorKind::VectorContract => ImportPipelineErrorClass::VectorContract,
             ImportPipelineErrorKind::VectorStorage => ImportPipelineErrorClass::VectorStorage,
@@ -3740,6 +844,34 @@ impl ImportPipelineError {
             ImportPipelineErrorKind::Privacy => ImportPipelineErrorClass::Privacy,
             ImportPipelineErrorKind::Parser => ImportPipelineErrorClass::Parser,
         }
+    }
+
+    pub fn is_retryable(&self) -> bool {
+        self.retryable
+    }
+
+    pub fn metadata_class_label(&self) -> Option<&'static str> {
+        let ImportPipelineErrorKind::StoreInvariant(class) = self.kind else {
+            return None;
+        };
+        Some(match class {
+            meta_store::MetaStoreErrorClass::Storage => "storage",
+            meta_store::MetaStoreErrorClass::Migration => "migration",
+            meta_store::MetaStoreErrorClass::MigrationOwnershipRequired => {
+                "migration_ownership_required"
+            }
+            meta_store::MetaStoreErrorClass::InvalidValue => "invalid_value",
+            meta_store::MetaStoreErrorClass::NotFound => "not_found",
+            meta_store::MetaStoreErrorClass::InvalidTransition => "invalid_transition",
+            meta_store::MetaStoreErrorClass::ImmutableIdentityConflict => {
+                "immutable_identity_conflict"
+            }
+            meta_store::MetaStoreErrorClass::StorageInvariant => "storage_invariant",
+            meta_store::MetaStoreErrorClass::WeakPassphrase => "weak_passphrase",
+            meta_store::MetaStoreErrorClass::InvalidBackup => "invalid_backup",
+            meta_store::MetaStoreErrorClass::Crypto => "crypto",
+            meta_store::MetaStoreErrorClass::KeyAlreadyExists => "key_already_exists",
+        })
     }
 }
 
@@ -3757,8 +889,20 @@ impl fmt::Display for ImportPipelineError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.kind {
             ImportPipelineErrorKind::Cancelled => formatter.write_str("import task was cancelled"),
+            ImportPipelineErrorKind::Interrupted => {
+                formatter.write_str("import task was interrupted by shutdown")
+            }
+            ImportPipelineErrorKind::Repairing => {
+                formatter.write_str("search publication is repairing")
+            }
+            ImportPipelineErrorKind::ArtifactRetirement => {
+                formatter.write_str("legacy search artifact retirement failed")
+            }
             ImportPipelineErrorKind::Store => formatter.write_str("metadata update failed"),
-            ImportPipelineErrorKind::Crawl => formatter.write_str("file scan failed"),
+            ImportPipelineErrorKind::StoreInvariant(_) => {
+                formatter.write_str("metadata invariant failed")
+            }
+            ImportPipelineErrorKind::Crawl(_) => formatter.write_str("file scan failed"),
             ImportPipelineErrorKind::Index => formatter.write_str("search index update failed"),
             ImportPipelineErrorKind::VectorContract => {
                 formatter.write_str("vector publication contract failed")
@@ -3782,8 +926,12 @@ impl std::error::Error for ImportPipelineError {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ImportPipelineErrorKind {
     Cancelled,
+    Interrupted,
+    Repairing,
+    ArtifactRetirement,
     Store,
-    Crawl,
+    StoreInvariant(meta_store::MetaStoreErrorClass),
+    Crawl(CrawlErrorKind),
     Index,
     VectorContract,
     VectorStorage,
@@ -3795,7 +943,12 @@ enum ImportPipelineErrorKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImportPipelineErrorClass {
     Cancelled,
+    Interrupted,
+    Repairing,
+    ArtifactRetirement,
     Metadata,
+    MetadataInvariant,
+    SourceUnavailable,
     Scan,
     FullText,
     VectorContract,
@@ -3809,7 +962,12 @@ impl ImportPipelineErrorClass {
     pub fn label(self) -> &'static str {
         match self {
             Self::Cancelled => "cancelled",
+            Self::Interrupted => "interrupted",
+            Self::Repairing => "repairing",
+            Self::ArtifactRetirement => "artifact_retirement",
             Self::Metadata => "metadata",
+            Self::MetadataInvariant => "metadata_invariant",
+            Self::SourceUnavailable => "source_unavailable",
             Self::Scan => "scan",
             Self::FullText => "fulltext",
             Self::VectorContract => "vector_contract",
@@ -3836,40 +994,153 @@ mod tests {
 
     use fs_crawler::{crawl_directory, normalize_path, NormalizedPath, ScanProfile};
     use index_fulltext::{
-        incremental_snapshot_documents, FullTextIndex, SearchQuery, SnapshotReadLease,
+        incremental_snapshot_documents, FullTextError, FullTextIndex, SearchQuery,
+        SnapshotReadLease,
     };
-    use index_vector::{QueryVector, VectorModelContract, VectorSnapshotRoot};
+    use index_vector::{QueryVector, VectorIndexError, VectorModelContract, VectorSnapshotRoot};
     use meta_store::{
         ActiveSearchProjection, ClassificationStatus, ContentDigest, CurrentClassifierEpoch,
-        Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId, EntityType,
-        FileExtension, ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask,
-        ImportTaskStatus, IngestJobStatus, MetaStore, OcrAttemptFailure, ReasonCode, ResumeVersion,
+        DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, Document, DocumentId,
+        DocumentStatus, EntityMention, EntityMentionId, EntityType, FileExtension, ImportRootKind,
+        ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanProfile, ImportScanScope,
+        ImportTask, ImportTaskFailure, ImportTaskPurpose, ImportTaskStatus, IngestJobStatus,
+        OcrAttemptFailure, OwnedMetaStore, ReadMetaStore, ReasonCode, ResumeVersion,
         ResumeVersionClassification, ResumeVersionId, ReviewDisposition, SearchMetadataHead,
-        SearchPublicationState, SearchSelection, SearchSelectionResolution, SourceRevision,
+        SearchProjectionServiceState, SearchProjectionTransitionOutcome, SearchPublicationState,
+        SearchRepairReason, SearchSelection, SearchSelectionResolution, SourceRevision,
         UnixTimestamp, CLASSIFIER_EPOCH,
     };
     use resume_classifier::LinearPromotionPolicy;
 
+    fn create_test_store(data_dir: &Path) -> OwnedMetaStore {
+        let owner = match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+            DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+            DataDirectoryOwnerAcquisition::Contended => panic!("test store owner contended"),
+        };
+        let store = owner.open_store().unwrap();
+        store.run_migrations().unwrap();
+        store
+    }
+
     use super::search_artifact_cache::CachedSearchDocument;
     use super::{
         classify_language_set, commit_prepared_search_publication, current_timestamp_or,
-        document_path_is_deletion_candidate, flush_pending_searchable_documents,
-        import_root_with_options, index_claimed_ocr_text, reconcile_search_artifacts,
-        recv_parse_result_with_cancel_poll, should_flush_searchable_documents,
-        take_pending_searchable_documents, write_incremental_search_artifacts, AdmissionDecision,
-        CurrentImportCacheMode, CurrentImportDocumentCache, ImportCancelCheckPhase,
+        document_path_is_deletion_candidate, finish_import_file,
+        flush_pending_searchable_documents, import_root_with_options,
+        import_root_with_options_and_control, index_claimed_ocr_text, process_file,
+        reconcile_search_artifacts, recv_parse_result_with_cancel_poll,
+        should_flush_searchable_documents, take_pending_searchable_documents,
+        write_incremental_search_artifacts, AdmissionDecision, CurrentImportCacheMode,
+        CurrentImportDocumentCache, ImportCancelCheckPhase, ImportFailureKind,
         ImportHardwareProfile, ImportHardwareTier, ImportOptions, ImportParseWorkers,
-        ImportPipelineErrorKind, ImportResourcePolicy, ImportSummary, IndexDocument, IndexSection,
-        OcrTextIndexOutcome, ParseWorkOutcome, ParseWorkResult, PendingProjectionRemovals,
-        PendingSearchableDocument, SearchProjectionRemoval, SearchProjectionRemovalReason,
-        SearchPublicationEmbeddingFailure, SearchPublicationEmbeddingInput,
-        SearchPublicationEmbeddingOutput, SearchPublicationVectorization,
-        SearchPublicationVectorizer, SnapshotPublishPhase, BYTES_PER_GIB,
-        H2_INDEX_WRITER_HEAP_BYTES,
+        ImportPipelineError, ImportPipelineErrorClass, ImportPipelineErrorKind,
+        ImportResourcePolicy, ImportRunControl, ImportStageTimings, ImportSummary,
+        ImportWorkerMetrics, IndexDocument, IndexSection, OcrTextIndexOutcome, ParseWorkOutcome,
+        ParseWorkResult, PendingProjectionRemovals, PendingSearchableDocument,
+        PendingSearchablePublicationKind, ProcessedFile, SearchProjectionRemoval,
+        SearchProjectionRemovalReason, SearchPublicationEmbeddingFailure,
+        SearchPublicationEmbeddingInput, SearchPublicationEmbeddingOutput,
+        SearchPublicationVectorization, SearchPublicationVectorizer, Sectionizer,
+        SnapshotPublishPhase, BYTES_PER_GIB, H2_INDEX_WRITER_HEAP_BYTES,
     };
+
+    #[path = "ocr_publication_tests.rs"]
+    mod ocr_publication_tests;
 
     struct TestPublicationVectorizer {
         fail: bool,
+    }
+
+    #[test]
+    fn fulltext_internal_failure_is_a_non_retryable_runtime_invariant() {
+        let error = ImportPipelineError::index(FullTextError::Internal {
+            diagnostic: "synthetic invariant".to_string(),
+        });
+
+        assert_eq!(error.class(), ImportPipelineErrorClass::FullText);
+        assert!(!error.is_retryable());
+    }
+
+    #[test]
+    fn unavailable_import_root_preserves_source_failure_class() {
+        let temp = TestDir::new("import-pipeline-unavailable-root");
+        let crawl_error = crawl_directory(temp.path().join("missing-root")).unwrap_err();
+        let error = ImportPipelineError::crawl(crawl_error);
+
+        assert_eq!(error.class(), ImportPipelineErrorClass::SourceUnavailable);
+        assert!(error.is_retryable());
+    }
+
+    #[test]
+    fn migration_ocr_staging_and_initial_base_preserve_an_inherited_visible_epoch() {
+        let state = meta_store::SearchProjectionState {
+            service_state: SearchProjectionServiceState::Repairing,
+            generation: None,
+            visible_epoch: 17,
+            repair_reason: Some(SearchRepairReason::MigrationRebuild),
+            publication: None,
+            updated_at: UnixTimestamp::from_unix_seconds(1_700_000_020),
+        };
+
+        assert!(super::migration_rebuild::is_unpublished_migration_rebuild(
+            &state
+        ));
+        let base = super::search_publication::migration_rebuild_publication_base_from_state(state)
+            .unwrap();
+        assert_eq!(base.generation, None);
+        assert_eq!(base.visible_epoch, 17);
+        assert!(base.projections.is_empty());
+    }
+
+    #[test]
+    fn vector_contract_failures_are_non_retryable() {
+        let failures = [
+            VectorIndexError::InvalidDimension {
+                expected: 2,
+                actual: 3,
+            },
+            VectorIndexError::InvalidVectorValue,
+            VectorIndexError::InvalidModelId,
+            VectorIndexError::InvalidIdentity,
+            VectorIndexError::InvalidGeneration,
+            VectorIndexError::InvalidModelContract,
+            VectorIndexError::SemanticUnavailable,
+            VectorIndexError::PublicationProjectionMismatch,
+            VectorIndexError::DuplicateVectorId,
+            VectorIndexError::ConflictingDocumentVersion,
+        ];
+
+        for failure in failures {
+            let error = ImportPipelineError::vector(failure);
+            assert_eq!(error.class(), ImportPipelineErrorClass::VectorContract);
+            assert!(!error.is_retryable(), "{failure:?} must fail closed");
+        }
+    }
+
+    #[test]
+    fn vector_storage_invariants_are_non_retryable() {
+        let failures = [
+            VectorIndexError::GenerationAlreadyExists,
+            VectorIndexError::GenerationNotFound,
+            VectorIndexError::LeaseRootMismatch,
+            VectorIndexError::SchemaMismatch,
+            VectorIndexError::CorruptSnapshot,
+            VectorIndexError::StorageLayoutInvalid,
+        ];
+
+        for failure in failures {
+            let error = ImportPipelineError::vector(failure);
+            assert_eq!(error.class(), ImportPipelineErrorClass::VectorStorage);
+            assert!(!error.is_retryable(), "{failure:?} must fail closed");
+        }
+    }
+
+    #[test]
+    fn vector_storage_failure_is_retryable() {
+        let error = ImportPipelineError::vector(VectorIndexError::Storage);
+
+        assert_eq!(error.class(), ImportPipelineErrorClass::VectorStorage);
+        assert!(error.is_retryable());
     }
 
     impl SearchPublicationVectorizer for TestPublicationVectorizer {
@@ -3917,7 +1188,7 @@ mod tests {
     static DOC_CONVERTER_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn claim_ocr_document(
-        store: &MetaStore,
+        store: &OwnedMetaStore,
         document: &Document,
         now: UnixTimestamp,
     ) -> meta_store::ClaimedOcrJob {
@@ -3943,7 +1214,7 @@ mod tests {
         store.claim_next_ocr_job(now).unwrap().unwrap()
     }
 
-    fn active_resume_version(store: &MetaStore, document: &Document) -> Option<ResumeVersion> {
+    fn active_resume_version(store: &OwnedMetaStore, document: &Document) -> Option<ResumeVersion> {
         let projection = store
             .active_search_projection_for_document(&document.id)
             .unwrap()?;
@@ -3952,10 +1223,32 @@ mod tests {
             .unwrap()
     }
 
-    fn ready_search_head(store: &MetaStore) -> SearchMetadataHead {
+    fn ready_search_head(store: &OwnedMetaStore) -> SearchMetadataHead {
         store
             .with_search_metadata_snapshot(|snapshot| Ok::<_, ()>(snapshot.head().clone()))
             .unwrap()
+    }
+
+    fn ready_search_head_from_reader(store: &ReadMetaStore) -> SearchMetadataHead {
+        store
+            .with_search_metadata_snapshot(|snapshot| Ok::<_, ()>(snapshot.head().clone()))
+            .unwrap()
+    }
+
+    fn initialize_ready_empty_search(_data_dir: &Path, store: &OwnedMetaStore, now: UnixTimestamp) {
+        let contract =
+            super::current_import_processing_contract(&ImportOptions::default()).unwrap();
+        store
+            .activate_migration_rebuild_contract(&contract, now)
+            .unwrap();
+        let summary = super::finalize_migration_rebuild(
+            store,
+            now,
+            &contract,
+            &SearchPublicationVectorization::default(),
+        )
+        .unwrap();
+        assert!(summary.active_generation_rebuilt);
     }
 
     fn open_fulltext_generation(data_dir: &Path, generation: &str) -> FullTextIndex {
@@ -3969,12 +1262,332 @@ mod tests {
     }
 
     fn resolve_selection(
-        store: &MetaStore,
+        store: &OwnedMetaStore,
         selection: &SearchSelection,
     ) -> SearchSelectionResolution {
         store
             .with_search_metadata_snapshot(|snapshot| snapshot.resolve_search_selection(selection))
             .unwrap()
+    }
+
+    #[test]
+    fn invalid_publication_capability_blocks_repair_without_forging_an_attempt() {
+        let temp = TestDir::new("import-pipeline-invalid-publication-capability");
+        let data_dir = temp.path().join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+        let store = create_test_store(&data_dir);
+        fs::remove_file(data_dir.join("search-publication.lock")).unwrap();
+        fs::create_dir_all(data_dir.join("search-publication.lock")).unwrap();
+        let contract =
+            super::current_import_processing_contract(&ImportOptions::default()).unwrap();
+        store
+            .activate_migration_rebuild_contract(
+                &contract,
+                UnixTimestamp::from_unix_seconds(1_700_000_100),
+            )
+            .unwrap();
+
+        let error = super::finalize_migration_rebuild(
+            &store,
+            UnixTimestamp::from_unix_seconds(1_700_000_100),
+            &contract,
+            &SearchPublicationVectorization::default(),
+        )
+        .unwrap_err();
+        assert_eq!(error.class(), ImportPipelineErrorClass::MetadataInvariant);
+        assert_eq!(error.metadata_class_label(), Some("invalid_value"));
+        assert!(store
+            .migration_rebuild_publication_attempt_state()
+            .unwrap()
+            .is_none());
+        let state = store.search_projection_state().unwrap();
+        assert_eq!(
+            state.service_state,
+            SearchProjectionServiceState::RepairBlocked
+        );
+        assert_eq!(
+            state.repair_reason,
+            Some(SearchRepairReason::RuntimeInvariant)
+        );
+        assert_eq!(state.generation, None);
+    }
+
+    #[test]
+    fn migration_rebuild_vector_failures_are_bounded_without_artifact_accumulation() {
+        let temp = TestDir::new("import-pipeline-migration-vector-failure-budget");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("synthetic-resume.txt"),
+            synthetic_resume_text("Vector Failure Candidate", "Rust Search"),
+        )
+        .unwrap();
+        let store = create_test_store(&data_dir);
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_200);
+        let vectorization =
+            SearchPublicationVectorization::enabled(Arc::new(TestPublicationVectorizer {
+                fail: true,
+            }));
+        let options = ImportOptions {
+            search_vectorization: vectorization.clone(),
+            ..ImportOptions::default()
+        };
+        let task = import_task("migration-vector-failure", root.to_str().unwrap(), now);
+        let contract = insert_test_import_task(&store, &task, &options);
+
+        let first_error =
+            import_root_with_options(&data_dir, &store, &task, &root, now, options).unwrap_err();
+        assert_eq!(
+            first_error.class(),
+            ImportPipelineErrorClass::EmbeddingRuntime
+        );
+        assert_eq!(
+            store.import_task_by_id(&task.id).unwrap().unwrap().status,
+            ImportTaskStatus::Completed
+        );
+        assert_no_search_artifact_candidates(&data_dir);
+
+        for expected_attempt_count in 2..=5 {
+            let retry_at = store
+                .migration_rebuild_publication_attempt_state()
+                .unwrap()
+                .unwrap()
+                .next_retry_at
+                .expect("failed migration publication must be in retry_wait");
+            let error =
+                super::finalize_migration_rebuild(&store, retry_at, &contract, &vectorization)
+                    .unwrap_err();
+            assert_eq!(error.class(), ImportPipelineErrorClass::EmbeddingRuntime);
+            assert_eq!(
+                store
+                    .migration_rebuild_publication_attempt_state()
+                    .unwrap()
+                    .unwrap()
+                    .attempt_count,
+                expected_attempt_count
+            );
+            assert_no_search_artifact_candidates(&data_dir);
+            assert!(store
+                .interrupted_search_publications(256)
+                .unwrap()
+                .is_empty());
+        }
+
+        let state = store.search_projection_state().unwrap();
+        assert_eq!(
+            state.service_state,
+            SearchProjectionServiceState::RepairBlocked
+        );
+        assert_eq!(
+            state.repair_reason,
+            Some(SearchRepairReason::RuntimeInvariant)
+        );
+    }
+
+    #[test]
+    fn migration_rebuild_fulltext_failures_are_bounded_before_vector_layout_exists() {
+        let temp = TestDir::new("import-pipeline-migration-fulltext-failure-budget");
+        let data_dir = temp.path().join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+        let store = create_test_store(&data_dir);
+        store.run_migrations().unwrap();
+        let contract =
+            super::current_import_processing_contract(&ImportOptions::default()).unwrap();
+        store
+            .activate_migration_rebuild_contract(
+                &contract,
+                UnixTimestamp::from_unix_seconds(1_700_000_300),
+            )
+            .unwrap();
+        for attempt_at in [
+            1_700_000_300,
+            1_700_000_301,
+            1_700_000_305,
+            1_700_000_320,
+            1_700_000_350,
+        ] {
+            let error = super::index_recovery::finalize_migration_rebuild_with_fault(
+                &store,
+                UnixTimestamp::from_unix_seconds(attempt_at),
+                &contract,
+                &SearchPublicationVectorization::default(),
+                super::index_recovery::MigrationPublicationFault::RetryableFullText,
+            )
+            .unwrap_err();
+            assert_eq!(error.class(), ImportPipelineErrorClass::FullText);
+            assert_no_search_artifact_candidates(&data_dir);
+        }
+
+        let attempt = store
+            .migration_rebuild_publication_attempt_state()
+            .unwrap()
+            .unwrap();
+        assert_eq!(attempt.attempt_count, 5);
+        assert_eq!(
+            attempt.last_error_class,
+            Some(meta_store::MigrationRebuildPublicationErrorClass::FullText)
+        );
+        assert_eq!(
+            store.search_projection_state().unwrap().service_state,
+            SearchProjectionServiceState::RepairBlocked
+        );
+    }
+
+    #[test]
+    fn migration_rebuild_retry_deadline_is_relative_to_attempt_completion() {
+        let temp = TestDir::new("import-pipeline-migration-failure-finished-at");
+        let data_dir = temp.path().join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+        let store = create_test_store(&data_dir);
+        store.run_migrations().unwrap();
+        let contract =
+            super::current_import_processing_contract(&ImportOptions::default()).unwrap();
+        let started_at = UnixTimestamp::from_unix_seconds(1_700_000_600);
+        let finished_at = UnixTimestamp::from_unix_seconds(1_700_000_660);
+        store
+            .activate_migration_rebuild_contract(&contract, started_at)
+            .unwrap();
+
+        super::index_recovery::finalize_migration_rebuild_with_fault(
+            &store,
+            started_at,
+            &contract,
+            &SearchPublicationVectorization::default(),
+            super::index_recovery::MigrationPublicationFault::RetryableFullTextFinishedAt(
+                finished_at,
+            ),
+        )
+        .unwrap_err();
+
+        let attempt = store
+            .migration_rebuild_publication_attempt_state()
+            .unwrap()
+            .unwrap();
+        assert_eq!(attempt.attempt_count, 1);
+        assert_eq!(
+            attempt.next_retry_at,
+            Some(UnixTimestamp::from_unix_seconds(1_700_000_661))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migration_rebuild_partial_cleanup_blocks_on_the_first_attempt() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TestDir::new("import-pipeline-migration-partial-cleanup");
+        let data_dir = temp.path().join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+        let fulltext_root = data_dir.join("search-index");
+        index_fulltext::publish_trusted_redacted_snapshot_with_control(
+            &fulltext_root,
+            "orphan-generation",
+            Vec::<IndexDocument>::new(),
+            index_fulltext::SnapshotPublishControl::disabled(),
+        )
+        .unwrap();
+        let snapshots = fulltext_root.join("snapshots");
+        fs::set_permissions(&snapshots, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let store = create_test_store(&data_dir);
+        store.run_migrations().unwrap();
+        let contract =
+            super::current_import_processing_contract(&ImportOptions::default()).unwrap();
+        store
+            .activate_migration_rebuild_contract(
+                &contract,
+                UnixTimestamp::from_unix_seconds(1_700_000_400),
+            )
+            .unwrap();
+        let error = super::index_recovery::finalize_migration_rebuild_with_fault(
+            &store,
+            UnixTimestamp::from_unix_seconds(1_700_000_400),
+            &contract,
+            &SearchPublicationVectorization::default(),
+            super::index_recovery::MigrationPublicationFault::RetryableFullText,
+        )
+        .unwrap_err();
+        fs::set_permissions(&snapshots, fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert_eq!(error.class(), ImportPipelineErrorClass::FullText);
+        let attempt = store
+            .migration_rebuild_publication_attempt_state()
+            .unwrap()
+            .unwrap();
+        assert_eq!(attempt.attempt_count, 1);
+        assert_eq!(
+            attempt.last_error_class,
+            Some(meta_store::MigrationRebuildPublicationErrorClass::Cleanup)
+        );
+        assert_eq!(
+            store.search_projection_state().unwrap().service_state,
+            SearchProjectionServiceState::RepairBlocked
+        );
+        assert!(fulltext_root.join("snapshots/orphan-generation").exists());
+    }
+
+    #[test]
+    fn migration_rebuild_cleanup_error_blocks_on_the_first_attempt() {
+        let temp = TestDir::new("import-pipeline-migration-cleanup-error");
+        let data_dir = temp.path().join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::write(data_dir.join("search-index"), b"invalid artifact root").unwrap();
+        let store = create_test_store(&data_dir);
+        store.run_migrations().unwrap();
+        let contract =
+            super::current_import_processing_contract(&ImportOptions::default()).unwrap();
+        store
+            .activate_migration_rebuild_contract(
+                &contract,
+                UnixTimestamp::from_unix_seconds(1_700_000_500),
+            )
+            .unwrap();
+
+        let error = super::index_recovery::finalize_migration_rebuild_with_fault(
+            &store,
+            UnixTimestamp::from_unix_seconds(1_700_000_500),
+            &contract,
+            &SearchPublicationVectorization::default(),
+            super::index_recovery::MigrationPublicationFault::RetryableFullText,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.class(), ImportPipelineErrorClass::FullText);
+        let attempt = store
+            .migration_rebuild_publication_attempt_state()
+            .unwrap()
+            .unwrap();
+        assert_eq!(attempt.attempt_count, 1);
+        assert_eq!(
+            attempt.last_error_class,
+            Some(meta_store::MigrationRebuildPublicationErrorClass::Cleanup)
+        );
+        assert_eq!(
+            store.search_projection_state().unwrap().service_state,
+            SearchProjectionServiceState::RepairBlocked
+        );
+    }
+
+    fn assert_no_search_artifact_candidates(data_dir: &Path) {
+        for relative in [
+            "search-index/snapshots",
+            "search-index/staging",
+            "search-index/generation-pins",
+            "vector-index/snapshots",
+            "vector-index/staging",
+            "vector-index/generation-pins",
+        ] {
+            let path = data_dir.join(relative);
+            let count = match fs::read_dir(&path) {
+                Ok(entries) => entries.count(),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+                Err(error) => panic!("failed to inspect {relative}: {error}"),
+            };
+            assert_eq!(count, 0, "artifact candidates remain under {relative}");
+        }
     }
 
     fn test_source_revision(document: &Document) -> SourceRevision {
@@ -4039,8 +1652,13 @@ mod tests {
         let temp = TestDir::new("staged-publication-cas");
         let data_dir = temp.path().join("data");
         fs::create_dir_all(&data_dir).unwrap();
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
+        initialize_ready_empty_search(
+            &data_dir,
+            &store,
+            UnixTimestamp::from_unix_seconds(1_700_199_999),
+        );
         let first = test_pending_searchable_document("publication-first");
         let second = test_pending_searchable_document("publication-second");
         for pending in [&first, &second] {
@@ -4068,9 +1686,9 @@ mod tests {
         }
 
         let now = UnixTimestamp::from_unix_seconds(1_700_200_000);
+        let first_session = store.wait_for_search_publication_session().unwrap();
         let first_publication = write_incremental_search_artifacts(
-            &data_dir,
-            &store,
+            &first_session,
             now,
             CLASSIFIER_EPOCH,
             vec![first.index_document.clone()],
@@ -4088,18 +1706,19 @@ mod tests {
         .unwrap();
         let mut first_document = first.document.clone();
         first_document.status = DocumentStatus::Searchable;
+        first_document.updated_at = now;
         let first_publication = commit_prepared_search_publication(
-            &store,
             now,
             first_publication,
             std::slice::from_ref(&first_document),
         )
         .unwrap()
         .release();
+        drop(first_session);
         let second_now = UnixTimestamp::from_unix_seconds(now.as_unix_seconds() + 1);
+        let second_session = store.wait_for_search_publication_session().unwrap();
         let second_publication = write_incremental_search_artifacts(
-            &data_dir,
-            &store,
+            &second_session,
             second_now,
             CLASSIFIER_EPOCH,
             vec![second.index_document.clone()],
@@ -4117,14 +1736,15 @@ mod tests {
         .unwrap();
         let mut second_document = second.document.clone();
         second_document.status = DocumentStatus::Searchable;
+        second_document.updated_at = second_now;
         let second_publication = commit_prepared_search_publication(
-            &store,
             second_now,
             second_publication,
             std::slice::from_ref(&second_document),
         )
         .unwrap()
         .release();
+        drop(second_session);
         assert_eq!(first_publication.projections.len(), 1);
         assert_eq!(second_publication.projections.len(), 2);
         assert_eq!(
@@ -4152,8 +1772,13 @@ mod tests {
         let temp = TestDir::new("vector-publication-atomic");
         let data_dir = temp.path().join("data");
         fs::create_dir_all(&data_dir).unwrap();
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
+        initialize_ready_empty_search(
+            &data_dir,
+            &store,
+            UnixTimestamp::from_unix_seconds(1_700_209_999),
+        );
         let first = test_pending_searchable_document("vector-first");
         let second = test_pending_searchable_document("vector-second");
         for pending in [&first, &second] {
@@ -4179,9 +1804,9 @@ mod tests {
                 fail: false,
             }));
         let first_now = UnixTimestamp::from_unix_seconds(1_700_210_000);
+        let first_session = store.wait_for_search_publication_session().unwrap();
         let first_publication = write_incremental_search_artifacts(
-            &data_dir,
-            &store,
+            &first_session,
             first_now,
             CLASSIFIER_EPOCH,
             vec![first.index_document.clone()],
@@ -4199,23 +1824,24 @@ mod tests {
         .unwrap();
         let mut first_document = first.document.clone();
         first_document.status = DocumentStatus::Searchable;
+        first_document.updated_at = first_now;
         commit_prepared_search_publication(
-            &store,
             first_now,
             first_publication,
             std::slice::from_ref(&first_document),
         )
         .unwrap()
         .release();
+        drop(first_session);
         let first_head = ready_search_head(&store);
 
         let failing =
             SearchPublicationVectorization::enabled(Arc::new(TestPublicationVectorizer {
                 fail: true,
             }));
+        let failing_session = store.wait_for_search_publication_session().unwrap();
         let failed = write_incremental_search_artifacts(
-            &data_dir,
-            &store,
+            &failing_session,
             UnixTimestamp::from_unix_seconds(1_700_210_001),
             CLASSIFIER_EPOCH,
             vec![second.index_document.clone()],
@@ -4231,6 +1857,7 @@ mod tests {
             &failing,
         );
         assert!(failed.is_err());
+        drop(failing_session);
         assert_eq!(ready_search_head(&store).generation, first_head.generation);
         assert_eq!(
             store
@@ -4240,9 +1867,9 @@ mod tests {
         );
 
         let second_now = UnixTimestamp::from_unix_seconds(1_700_210_002);
+        let second_session = store.wait_for_search_publication_session().unwrap();
         let second_publication = write_incremental_search_artifacts(
-            &data_dir,
-            &store,
+            &second_session,
             second_now,
             CLASSIFIER_EPOCH,
             vec![second.index_document.clone()],
@@ -4260,18 +1887,18 @@ mod tests {
         .unwrap();
         let mut second_document = second.document.clone();
         second_document.status = DocumentStatus::Searchable;
+        second_document.updated_at = second_now;
         commit_prepared_search_publication(
-            &store,
             second_now,
             second_publication,
             std::slice::from_ref(&second_document),
         )
         .unwrap()
         .release();
+        drop(second_session);
         assert_vector_generation(&data_dir, &store, 2);
 
         super::publish_search_projection_removals(
-            &data_dir,
             &store,
             &[SearchProjectionRemoval {
                 document_id: second.document.id.clone(),
@@ -4289,8 +1916,13 @@ mod tests {
         let temp = TestDir::new("vector-publication-reconcile-contract");
         let data_dir = temp.path().join("data");
         fs::create_dir_all(&data_dir).unwrap();
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
+        initialize_ready_empty_search(
+            &data_dir,
+            &store,
+            UnixTimestamp::from_unix_seconds(1_700_219_999),
+        );
         let pending = test_pending_searchable_document("vector-reconcile");
         super::immutable_ingest::stage(
             &store,
@@ -4308,9 +1940,9 @@ mod tests {
         )
         .unwrap();
         let now = UnixTimestamp::from_unix_seconds(1_700_220_000);
+        let publication_session = store.wait_for_search_publication_session().unwrap();
         let publication = write_incremental_search_artifacts(
-            &data_dir,
-            &store,
+            &publication_session,
             now,
             CLASSIFIER_EPOCH,
             vec![pending.index_document.clone()],
@@ -4328,21 +1960,17 @@ mod tests {
         .unwrap();
         let mut document = pending.document.clone();
         document.status = DocumentStatus::Searchable;
-        commit_prepared_search_publication(
-            &store,
-            now,
-            publication,
-            std::slice::from_ref(&document),
-        )
-        .unwrap()
-        .release();
+        document.updated_at = now;
+        commit_prepared_search_publication(now, publication, std::slice::from_ref(&document))
+            .unwrap()
+            .release();
+        drop(publication_session);
 
         let enabled =
             SearchPublicationVectorization::enabled(Arc::new(TestPublicationVectorizer {
                 fail: false,
             }));
         let summary = reconcile_search_artifacts(
-            &data_dir,
             &store,
             UnixTimestamp::from_unix_seconds(1_700_220_001),
             &enabled,
@@ -4353,7 +1981,49 @@ mod tests {
         assert_vector_generation(&data_dir, &store, 1);
     }
 
-    fn assert_vector_generation(data_dir: &Path, store: &MetaStore, expected_documents: usize) {
+    #[test]
+    fn reconcile_resumes_an_interrupted_artifact_repair() {
+        let temp = TestDir::new("artifact-repair-resume");
+        let data_dir = temp.path().join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+        let store = create_test_store(&data_dir);
+        store.run_migrations().unwrap();
+        initialize_ready_empty_search(
+            &data_dir,
+            &store,
+            UnixTimestamp::from_unix_seconds(1_700_220_100),
+        );
+        let observed = store.search_projection_state().unwrap();
+        assert_eq!(
+            store
+                .begin_artifact_repair(
+                    observed.generation.as_deref().unwrap(),
+                    observed.visible_epoch,
+                    UnixTimestamp::from_unix_seconds(1_700_220_101),
+                )
+                .unwrap(),
+            SearchProjectionTransitionOutcome::Applied
+        );
+
+        let summary = reconcile_search_artifacts(
+            &store,
+            UnixTimestamp::from_unix_seconds(1_700_220_102),
+            &SearchPublicationVectorization::default(),
+        )
+        .unwrap();
+
+        assert!(summary.active_generation_rebuilt);
+        let ready = store.search_projection_state().unwrap();
+        assert_eq!(ready.service_state, SearchProjectionServiceState::Ready);
+        assert_eq!(ready.repair_reason, None);
+        assert_eq!(ready.visible_epoch, observed.visible_epoch + 1);
+    }
+
+    fn assert_vector_generation(
+        data_dir: &Path,
+        store: &OwnedMetaStore,
+        expected_documents: usize,
+    ) {
         let head = ready_search_head(store);
         let vector = head.publication.vector.as_ref().unwrap();
         let contract = VectorModelContract::enabled("synthetic-publication-v1", 2).unwrap();
@@ -4473,14 +2143,19 @@ mod tests {
         let temp = TestDir::new("import-pipeline-current-import-index-cache-refresh");
         let data_dir = temp.path().join("data");
         fs::create_dir_all(&data_dir).unwrap();
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
+        initialize_ready_empty_search(
+            &data_dir,
+            &store,
+            UnixTimestamp::from_unix_seconds(1_700_000_049),
+        );
         let empty_exclusions = BTreeSet::new();
         let mut current_import_index_documents = CurrentImportDocumentCache::default();
 
+        let first_session = store.wait_for_search_publication_session().unwrap();
         let first_publication = write_incremental_search_artifacts(
-            &data_dir,
-            &store,
+            &first_session,
             UnixTimestamp::from_unix_seconds(1_700_000_050),
             CLASSIFIER_EPOCH,
             vec![stage_test_index_document(&store, "doc-1")],
@@ -4497,13 +2172,17 @@ mod tests {
         )
         .unwrap();
         let first_publication = commit_prepared_search_publication(
-            &store,
             UnixTimestamp::from_unix_seconds(1_700_000_050),
             first_publication,
-            &[terminal_searchable_document(&store, "doc-1")],
+            &[terminal_searchable_document(
+                &store,
+                "doc-1",
+                UnixTimestamp::from_unix_seconds(1_700_000_050),
+            )],
         )
         .unwrap()
         .release();
+        drop(first_session);
         assert_eq!(first_publication.fulltext.document_count(), 1);
         assert_eq!(current_import_index_documents.documents.len(), 1);
         assert_eq!(
@@ -4513,9 +2192,9 @@ mod tests {
 
         let intervening_index_document = stage_test_index_document(&store, "doc-2");
         let intervening_doc_id = intervening_index_document.doc_id.clone();
+        let intervening_session = store.wait_for_search_publication_session().unwrap();
         let intervening_publication = write_incremental_search_artifacts(
-            &data_dir,
-            &store,
+            &intervening_session,
             UnixTimestamp::from_unix_seconds(1_700_000_051),
             CLASSIFIER_EPOCH,
             vec![intervening_index_document],
@@ -4532,18 +2211,22 @@ mod tests {
         )
         .unwrap();
         let intervening_publication = commit_prepared_search_publication(
-            &store,
             UnixTimestamp::from_unix_seconds(1_700_000_051),
             intervening_publication,
-            &[terminal_searchable_document(&store, "doc-2")],
+            &[terminal_searchable_document(
+                &store,
+                "doc-2",
+                UnixTimestamp::from_unix_seconds(1_700_000_051),
+            )],
         )
         .unwrap()
         .release();
+        drop(intervening_session);
         assert_eq!(intervening_publication.fulltext.document_count(), 2);
 
+        let second_session = store.wait_for_search_publication_session().unwrap();
         let second_publication = write_incremental_search_artifacts(
-            &data_dir,
-            &store,
+            &second_session,
             UnixTimestamp::from_unix_seconds(1_700_000_052),
             CLASSIFIER_EPOCH,
             vec![stage_test_index_document(&store, "doc-3")],
@@ -4594,15 +2277,20 @@ mod tests {
         let temp = TestDir::new("import-pipeline-uncommitted-generation");
         let data_dir = temp.path().join("data");
         fs::create_dir_all(&data_dir).unwrap();
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
+        initialize_ready_empty_search(
+            &data_dir,
+            &store,
+            UnixTimestamp::from_unix_seconds(1_700_000_059),
+        );
         let empty_exclusions = BTreeSet::new();
         let mut current_import_documents = CurrentImportDocumentCache::default();
         let ready_now = UnixTimestamp::from_unix_seconds(1_700_000_060);
 
+        let ready_session = store.wait_for_search_publication_session().unwrap();
         let ready = write_incremental_search_artifacts(
-            &data_dir,
-            &store,
+            &ready_session,
             ready_now,
             CLASSIFIER_EPOCH,
             vec![stage_test_index_document(&store, "doc-1")],
@@ -4619,17 +2307,17 @@ mod tests {
         )
         .unwrap();
         let ready = commit_prepared_search_publication(
-            &store,
             ready_now,
             ready,
-            &[terminal_searchable_document(&store, "doc-1")],
+            &[terminal_searchable_document(&store, "doc-1", ready_now)],
         )
         .unwrap()
         .release();
+        drop(ready_session);
 
+        let uncommitted_session = store.wait_for_search_publication_session().unwrap();
         let uncommitted = write_incremental_search_artifacts(
-            &data_dir,
-            &store,
+            &uncommitted_session,
             UnixTimestamp::from_unix_seconds(1_700_000_061),
             CLASSIFIER_EPOCH,
             vec![stage_test_index_document(&store, "doc-2")],
@@ -4647,9 +2335,10 @@ mod tests {
         .unwrap();
         let uncommitted_generation = uncommitted.fulltext.generation().to_string();
         drop(uncommitted);
+        drop(uncommitted_session);
+        let next_session = store.wait_for_search_publication_session().unwrap();
         let next = write_incremental_search_artifacts(
-            &data_dir,
-            &store,
+            &next_session,
             UnixTimestamp::from_unix_seconds(1_700_000_062),
             CLASSIFIER_EPOCH,
             vec![stage_test_index_document(&store, "doc-3")],
@@ -4685,9 +2374,9 @@ mod tests {
             ]
         );
         drop(next);
+        drop(next_session);
 
         let recovery = reconcile_search_artifacts(
-            &data_dir,
             &store,
             UnixTimestamp::from_unix_seconds(1_700_000_063),
             &SearchPublicationVectorization::default(),
@@ -4726,15 +2415,14 @@ mod tests {
             synthetic_resume_text("Synthetic Recovery Candidate", "Rust recovery"),
         )
         .unwrap();
-        let store = MetaStore::open_data_dir(&data_dir).unwrap();
-        store.run_migrations().unwrap();
+        let store = create_test_store(&data_dir);
         let first_now = UnixTimestamp::from_unix_seconds(1_700_000_070);
         let task = import_task(
             "search-artifact-recovery",
             root.to_str().unwrap(),
             first_now,
         );
-        store.insert_import_task(&task).unwrap();
+        insert_test_import_task(&store, &task, &ImportOptions::default());
         import_root_with_options(
             &data_dir,
             &store,
@@ -4765,7 +2453,6 @@ mod tests {
         .unwrap();
 
         let recovery = reconcile_search_artifacts(
-            &data_dir,
             &store,
             UnixTimestamp::from_unix_seconds(1_700_000_071),
             &SearchPublicationVectorization::default(),
@@ -4814,14 +2501,19 @@ mod tests {
         let temp = TestDir::new("import-pipeline-current-import-index-cache-final");
         let data_dir = temp.path().join("data");
         fs::create_dir_all(&data_dir).unwrap();
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
+        initialize_ready_empty_search(
+            &data_dir,
+            &store,
+            UnixTimestamp::from_unix_seconds(1_700_000_049),
+        );
         let empty_exclusions = BTreeSet::new();
         let mut current_import_index_documents = CurrentImportDocumentCache::default();
 
+        let ready_session = store.wait_for_search_publication_session().unwrap();
         let ready_publication = write_incremental_search_artifacts(
-            &data_dir,
-            &store,
+            &ready_session,
             UnixTimestamp::from_unix_seconds(1_700_000_050),
             CLASSIFIER_EPOCH,
             vec![stage_test_index_document(&store, "doc-1")],
@@ -4838,18 +2530,22 @@ mod tests {
         )
         .unwrap();
         commit_prepared_search_publication(
-            &store,
             UnixTimestamp::from_unix_seconds(1_700_000_050),
             ready_publication,
-            &[terminal_searchable_document(&store, "doc-1")],
+            &[terminal_searchable_document(
+                &store,
+                "doc-1",
+                UnixTimestamp::from_unix_seconds(1_700_000_050),
+            )],
         )
         .unwrap()
         .release();
+        drop(ready_session);
         assert_eq!(current_import_index_documents.documents.len(), 1);
 
+        let final_session = store.wait_for_search_publication_session().unwrap();
         let final_publication = write_incremental_search_artifacts(
-            &data_dir,
-            &store,
+            &final_session,
             UnixTimestamp::from_unix_seconds(1_700_000_051),
             CLASSIFIER_EPOCH,
             vec![stage_test_index_document(&store, "doc-2")],
@@ -4926,8 +2622,7 @@ mod tests {
         let temp = TestDir::new("searchable-metadata-batch-rollback");
         let data_dir = temp.path().join("data");
         fs::create_dir_all(&data_dir).unwrap();
-        let store = MetaStore::open_data_dir(&data_dir).unwrap();
-        store.run_migrations().unwrap();
+        let store = create_test_store(&data_dir);
 
         let mut first = test_pending_searchable_document("batch-first");
         let mut second = test_pending_searchable_document("batch-second");
@@ -4946,7 +2641,6 @@ mod tests {
         let mut summary = ImportSummary::default();
 
         let error = flush_pending_searchable_documents(
-            &data_dir,
             &store,
             UnixTimestamp::from_unix_seconds(1_700_000_000),
             &mut summary,
@@ -4962,7 +2656,12 @@ mod tests {
         )
         .unwrap_err();
 
-        assert_eq!(error.kind, ImportPipelineErrorKind::Store);
+        assert_eq!(
+            error.kind,
+            ImportPipelineErrorKind::StoreInvariant(
+                meta_store::MetaStoreErrorClass::ImmutableIdentityConflict
+            )
+        );
         assert_eq!(pending.len(), 2);
         for (document_id, _) in documents {
             assert_eq!(
@@ -5113,11 +2812,11 @@ mod tests {
         )
         .unwrap();
 
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
         let now = UnixTimestamp::from_unix_seconds(1_700_000_075);
         let task = import_task("no-duplicate-raw-text-import", root.to_str().unwrap(), now);
-        store.insert_import_task(&task).unwrap();
+        insert_test_import_task(&store, &task, &ImportOptions::default());
 
         let summary = import_root_with_options(
             &data_dir,
@@ -5138,6 +2837,45 @@ mod tests {
             .unwrap()
             .contains("Rust Search"));
         assert_eq!(version.raw_text, None);
+    }
+
+    #[test]
+    fn import_root_sanitizes_embedded_control_bytes_before_version_identity() {
+        let temp = TestDir::new("import-pipeline-control-byte-normalization");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        let source = synthetic_resume_text("Synthetic Candidate", "Rust\0Search");
+        fs::write(root.join("synthetic-resume.txt"), source).unwrap();
+
+        let store = create_test_store(&data_dir);
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_076);
+        let task = import_task("control-byte-normalization", root.to_str().unwrap(), now);
+        insert_test_import_task(&store, &task, &ImportOptions::default());
+
+        let summary = import_root_with_options(
+            &data_dir,
+            &store,
+            &task,
+            &root,
+            now,
+            ImportOptions::default(),
+        )
+        .unwrap();
+
+        assert_eq!(summary.searchable_documents, 1);
+        let document = store.visible_documents().unwrap().remove(0);
+        let version = active_resume_version(&store, &document).unwrap();
+        let clean_text = version.clean_text.as_deref().unwrap();
+        assert!(clean_text.contains("Rust Search"));
+        assert!(clean_text
+            .chars()
+            .all(|character| !character.is_control() || character == '\n'));
+        assert_eq!(
+            version.normalized_text_hash,
+            ContentDigest::from_bytes(clean_text.as_bytes())
+        );
     }
 
     #[test]
@@ -5167,10 +2905,10 @@ mod tests {
         for workers in [1, 2] {
             let data_dir = temp.path().join(format!("data-{workers}"));
             fs::create_dir_all(&data_dir).unwrap();
-            let store = MetaStore::open_in_memory().unwrap();
+            let store = create_test_store(&data_dir);
             store.run_migrations().unwrap();
             let task = import_task(&format!("gate-{workers}"), root.to_str().unwrap(), now);
-            store.insert_import_task(&task).unwrap();
+            insert_test_import_task(&store, &task, &ImportOptions::default());
             let options = ImportOptions::low_memory_default_for_available_parallelism(workers);
             import_root_with_options(&data_dir, &store, &task, &root, now, options).unwrap();
             let counts = store.classification_counts(CLASSIFIER_EPOCH).unwrap();
@@ -5202,11 +2940,11 @@ mod tests {
         )
         .unwrap();
 
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
         let first_now = UnixTimestamp::from_unix_seconds(1_700_210_000);
         let first_task = import_task("failure-retention-first", root.to_str().unwrap(), first_now);
-        store.insert_import_task(&first_task).unwrap();
+        insert_test_import_task(&store, &first_task, &ImportOptions::default());
         import_root_with_options(
             &data_dir,
             &store,
@@ -5230,7 +2968,7 @@ mod tests {
             root.to_str().unwrap(),
             second_now,
         );
-        store.insert_import_task(&second_task).unwrap();
+        insert_test_import_task(&store, &second_task, &ImportOptions::default());
         let summary = import_root_with_options(
             &data_dir,
             &store,
@@ -5291,11 +3029,11 @@ mod tests {
         )
         .unwrap();
 
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
         let now = UnixTimestamp::from_unix_seconds(1_700_000_078);
         let task = import_task("parallel-parse-import", root.to_str().unwrap(), now);
-        store.insert_import_task(&task).unwrap();
+        insert_test_import_task(&store, &task, &ImportOptions::default());
 
         let summary = import_root_with_options(
             &data_dir,
@@ -5352,7 +3090,7 @@ mod tests {
         )
         .unwrap();
 
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
         let now = UnixTimestamp::from_unix_seconds(1_700_000_079);
         let task = import_task(
@@ -5360,7 +3098,7 @@ mod tests {
             root.to_str().unwrap(),
             now,
         );
-        store.insert_import_task(&task).unwrap();
+        insert_test_import_task(&store, &task, &ImportOptions::default());
 
         let summary = import_root_with_options(
             &data_dir,
@@ -5410,11 +3148,11 @@ mod tests {
         )
         .unwrap();
 
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
         let now = UnixTimestamp::from_unix_seconds(1_700_000_080);
         let task = import_task("parse-phase-evidence-import", root.to_str().unwrap(), now);
-        store.insert_import_task(&task).unwrap();
+        insert_test_import_task(&store, &task, &ImportOptions::default());
 
         let summary = import_root_with_options(
             &data_dir,
@@ -5561,7 +3299,7 @@ mod tests {
             outcome: ParseWorkOutcome::OcrRequired,
         });
 
-        assert_eq!(clock.active_elapsed, Duration::from_millis(200));
+        assert_eq!(clock.active_elapsed(), Duration::from_millis(200));
         assert_eq!(clock.worker_wall_elapsed(), Duration::from_millis(110));
     }
 
@@ -5688,8 +3426,13 @@ mod tests {
         let temp = TestDir::new("import-pipeline-ocr-no-duplicate-raw-text");
         let data_dir = temp.path().join("data");
         fs::create_dir_all(&data_dir).unwrap();
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
+        initialize_ready_empty_search(
+            &data_dir,
+            &store,
+            UnixTimestamp::from_unix_seconds(1_700_000_074),
+        );
         let document = test_document("ocr-doc", DocumentStatus::OcrRequired);
         let stale = claim_ocr_document(
             &store,
@@ -5707,6 +3450,10 @@ mod tests {
             .claim_next_ocr_job(UnixTimestamp::from_unix_seconds(1_700_000_076))
             .unwrap()
             .unwrap();
+        let vectorization =
+            SearchPublicationVectorization::enabled(Arc::new(TestPublicationVectorizer {
+                fail: false,
+            }));
         assert_eq!(
             index_claimed_ocr_text(
                 &data_dir,
@@ -5716,7 +3463,7 @@ mod tests {
                 Some(0.99),
                 Some(1),
                 UnixTimestamp::from_unix_seconds(1_700_000_076),
-                &SearchPublicationVectorization::default(),
+                &vectorization,
             )
             .unwrap(),
             OcrTextIndexOutcome::Superseded
@@ -5730,7 +3477,7 @@ mod tests {
             Some(0.91),
             Some(1),
             UnixTimestamp::from_unix_seconds(1_700_000_076),
-            &SearchPublicationVectorization::default(),
+            &vectorization,
         )
         .unwrap() else {
             panic!("current OCR attempt was superseded");
@@ -5744,6 +3491,242 @@ mod tests {
             .unwrap()
             .contains("Rust Search"));
         assert_eq!(version.raw_text, None);
+        assert_vector_generation(&data_dir, &store, 1);
+    }
+
+    #[test]
+    fn migration_rebuild_defers_ocr_publication_until_exact_root_barrier_is_ready() {
+        let temp = TestDir::new("import-pipeline-migration-ocr-barrier");
+        let data_dir = temp.path().join("data");
+        let root_a = temp.path().join("root-a");
+        let root_b = temp.path().join("root-b");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root_a).unwrap();
+        fs::create_dir_all(&root_b).unwrap();
+        let store = create_test_store(&data_dir);
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_500);
+        let task_a = import_task("migration-ocr-root-a", root_a.to_str().unwrap(), now);
+        let task_b = import_task("migration-ocr-root-b", root_b.to_str().unwrap(), now);
+        let scope_a = import_scan_scope(&task_a, None);
+        let scope_b = import_scan_scope(&task_b, None);
+        let contract = insert_test_import_task_with_scope(
+            &store,
+            &task_a,
+            &scope_a,
+            &ImportOptions::default(),
+        );
+        insert_test_import_task_with_scope(&store, &task_b, &scope_b, &ImportOptions::default());
+        store
+            .complete_import_task(
+                &task_a.id,
+                contract.id(),
+                &scope_a,
+                UnixTimestamp::from_unix_seconds(1_700_000_501),
+            )
+            .unwrap();
+
+        let document = test_document("migration-ocr-doc", DocumentStatus::OcrRequired);
+        let claimed = claim_ocr_document(
+            &store,
+            &document,
+            UnixTimestamp::from_unix_seconds(1_700_000_502),
+        );
+        let error = index_claimed_ocr_text(
+            &data_dir,
+            &store,
+            &claimed,
+            &synthetic_resume_text("Migration OCR Candidate", "Rust Search"),
+            Some(0.94),
+            Some(1),
+            UnixTimestamp::from_unix_seconds(1_700_000_503),
+            &SearchPublicationVectorization::default(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.class(), ImportPipelineErrorClass::Repairing);
+        assert!(error.is_retryable());
+        let deferred_document = store.document_by_id(&document.id).unwrap().unwrap();
+        assert_eq!(deferred_document.status, DocumentStatus::OcrRequired);
+        assert!(active_resume_version(&store, &document).is_none());
+        assert_eq!(
+            store
+                .ingest_job_by_id(&claimed.job.id)
+                .unwrap()
+                .unwrap()
+                .status,
+            IngestJobStatus::Running
+        );
+        let staging_state = store.search_projection_state().unwrap();
+        assert_eq!(
+            staging_state.service_state,
+            SearchProjectionServiceState::Repairing
+        );
+        assert_eq!(
+            staging_state.repair_reason,
+            Some(SearchRepairReason::MigrationRebuild)
+        );
+        assert_eq!(staging_state.generation, None);
+        let inherited_epoch = staging_state.visible_epoch;
+        assert!(store.searchable_document_ids().unwrap().is_empty());
+
+        store
+            .complete_import_task(
+                &task_b.id,
+                contract.id(),
+                &scope_b,
+                UnixTimestamp::from_unix_seconds(1_700_000_504),
+            )
+            .unwrap();
+        let finalized = super::finalize_migration_rebuild(
+            &store,
+            UnixTimestamp::from_unix_seconds(1_700_000_505),
+            &contract,
+            &SearchPublicationVectorization::default(),
+        )
+        .unwrap();
+
+        assert!(finalized.active_generation_rebuilt);
+        let ready_state = store.search_projection_state().unwrap();
+        assert_eq!(
+            ready_state.service_state,
+            SearchProjectionServiceState::Ready
+        );
+        assert_eq!(ready_state.repair_reason, None);
+        assert!(ready_state.generation.is_some());
+        assert_eq!(
+            ready_state.visible_epoch,
+            inherited_epoch.checked_add(1).unwrap()
+        );
+        assert!(active_resume_version(&store, &document).is_none());
+
+        let OcrTextIndexOutcome::Committed(summary) = index_claimed_ocr_text(
+            &data_dir,
+            &store,
+            &claimed,
+            &synthetic_resume_text("Migration OCR Candidate", "Rust Search"),
+            Some(0.94),
+            Some(1),
+            UnixTimestamp::from_unix_seconds(1_700_000_506),
+            &SearchPublicationVectorization::default(),
+        )
+        .unwrap() else {
+            panic!("deferred OCR must publish after the exact root barrier is ready");
+        };
+        assert!(summary.searchable);
+        assert!(active_resume_version(&store, &document).is_some());
+        assert_eq!(
+            store.document_by_id(&document.id).unwrap().unwrap().status,
+            DocumentStatus::Searchable
+        );
+    }
+
+    #[test]
+    fn migration_publication_session_rejects_concurrent_ocr_then_retry_preserves_the_version() {
+        let temp = TestDir::new("import-pipeline-migration-ocr-finalizer-race");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("root");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        let store = create_test_store(&data_dir);
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_520);
+        let task = import_task("migration-ocr-race-root", root.to_str().unwrap(), now);
+        let scope = import_scan_scope(&task, None);
+        let contract =
+            insert_test_import_task_with_scope(&store, &task, &scope, &ImportOptions::default());
+        store
+            .complete_import_task(
+                &task.id,
+                contract.id(),
+                &scope,
+                UnixTimestamp::from_unix_seconds(1_700_000_521),
+            )
+            .unwrap();
+        let document = test_document("migration-ocr-race-doc", DocumentStatus::OcrRequired);
+        let claimed = claim_ocr_document(
+            &store,
+            &document,
+            UnixTimestamp::from_unix_seconds(1_700_000_522),
+        );
+        let publisher_store = store.open_sibling().unwrap();
+        let publisher_contract_id = contract.id().clone();
+        let (publisher_ready_sender, publisher_ready_receiver) = mpsc::sync_channel(1);
+        let (publisher_release_sender, publisher_release_receiver) = mpsc::sync_channel(1);
+        let publisher = thread::spawn(move || {
+            let publication_session = publisher_store
+                .wait_for_search_publication_session()
+                .unwrap();
+            publisher_ready_sender.send(()).unwrap();
+            publisher_release_receiver.recv().unwrap();
+            let barrier = publisher_store
+                .acquire_migration_rebuild_barrier_token(&publisher_contract_id)
+                .unwrap()
+                .unwrap();
+            let staged = super::search_artifacts::migration_index_documents_from_exact_projection(
+                publisher_store
+                    .migration_rebuild_projection_rows(&barrier)
+                    .unwrap(),
+            )
+            .unwrap();
+            assert!(staged.is_empty());
+            let publication = super::search_artifacts::write_migration_rebuild_search_artifacts(
+                &publication_session,
+                UnixTimestamp::from_unix_seconds(1_700_000_524),
+                CLASSIFIER_EPOCH,
+                &BTreeSet::new(),
+                Vec::new(),
+                &SearchPublicationVectorization::default(),
+            )
+            .unwrap();
+            super::search_publication::commit_migration_rebuild_search_publication(
+                UnixTimestamp::from_unix_seconds(1_700_000_524),
+                publication,
+                &[],
+                &barrier,
+            )
+            .unwrap()
+            .expect("unchanged migration barrier must commit")
+            .release();
+        });
+        publisher_ready_receiver.recv().unwrap();
+        let concurrent_error = index_claimed_ocr_text(
+            &data_dir,
+            &store,
+            &claimed,
+            &synthetic_resume_text("Concurrent OCR Candidate", "Rust Search"),
+            Some(0.95),
+            Some(1),
+            UnixTimestamp::from_unix_seconds(1_700_000_523),
+            &SearchPublicationVectorization::default(),
+        )
+        .unwrap_err();
+        assert_eq!(
+            concurrent_error.metadata_class_label(),
+            Some("migration_ownership_required")
+        );
+        publisher_release_sender.send(()).unwrap();
+        publisher.join().unwrap();
+
+        let outcome = index_claimed_ocr_text(
+            &data_dir,
+            &store,
+            &claimed,
+            &synthetic_resume_text("Concurrent OCR Candidate", "Rust Search"),
+            Some(0.95),
+            Some(1),
+            UnixTimestamp::from_unix_seconds(1_700_000_525),
+            &SearchPublicationVectorization::default(),
+        )
+        .unwrap();
+        let OcrTextIndexOutcome::Committed(summary) = outcome else {
+            panic!("OCR retried after migration publication must commit against the ready head");
+        };
+        assert!(summary.searchable);
+        assert_eq!(summary.indexed_documents, 1);
+        let state = store.search_projection_state().unwrap();
+        assert_eq!(state.service_state, SearchProjectionServiceState::Ready);
+        assert_eq!(state.visible_epoch, 2);
+        assert!(active_resume_version(&store, &document).is_some());
     }
 
     fn test_pending_searchable_document(doc_id: &str) -> PendingSearchableDocument {
@@ -5762,7 +3745,7 @@ mod tests {
             &source_revision,
             clean_text,
             "parser-v1",
-            "schema-v1",
+            super::SCHEMA_VERSION,
             vec!["en".to_string()],
             Some(1),
             Some(0.8),
@@ -5791,6 +3774,7 @@ mod tests {
             email_hash: None,
             phone_hash: None,
             index_document,
+            publication_kind: PendingSearchablePublicationKind::Replacement,
         }
     }
 
@@ -5812,7 +3796,7 @@ mod tests {
         }
     }
 
-    fn stage_test_index_document(store: &MetaStore, doc_id: &str) -> IndexDocument {
+    fn stage_test_index_document(store: &OwnedMetaStore, doc_id: &str) -> IndexDocument {
         let pending = test_pending_searchable_document(doc_id);
         super::immutable_ingest::stage(
             store,
@@ -5837,10 +3821,15 @@ mod tests {
         index_document
     }
 
-    fn terminal_searchable_document(store: &MetaStore, doc_id: &str) -> Document {
+    fn terminal_searchable_document(
+        store: &OwnedMetaStore,
+        doc_id: &str,
+        now: UnixTimestamp,
+    ) -> Document {
         let document_id = DocumentId::from_non_secret_parts(&[doc_id]);
         let mut document = store.document_by_id(&document_id).unwrap().unwrap();
         document.status = DocumentStatus::Searchable;
+        document.updated_at = now;
         document
     }
 
@@ -5880,6 +3869,517 @@ mod tests {
         normalize_path(path).unwrap()
     }
 
+    fn import_scan_scope(task: &ImportTask, max_files: Option<u64>) -> ImportScanScope {
+        ImportScanScope {
+            import_task_id: task.id.clone(),
+            root_kind: ImportRootKind::Explicit,
+            root_preset: None,
+            scan_profile: ImportScanProfile::Explicit,
+            requested_root_path: task.root_path.clone(),
+            canonical_root_path: task.root_path.clone(),
+            files_discovered: 0,
+            ignored_entries: 0,
+            scan_errors: 0,
+            searchable_documents: 0,
+            ocr_required_documents: 0,
+            ocr_jobs_queued: 0,
+            failed_documents: 0,
+            deleted_documents: 0,
+            scan_budget_kind: max_files.map(|_| StoreImportScanBudgetKind::Files),
+            scan_budget_limit: max_files,
+            scan_budget_observed: max_files.map(|_| 0),
+            scan_budget_exhausted: false,
+            updated_at: task.updated_at,
+        }
+    }
+
+    #[test]
+    fn migration_rebuild_budget_exhaustion_blocks_without_partial_publication() {
+        let temp = TestDir::new("import-pipeline-migration-budget-block");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("a-resume.txt"),
+            synthetic_resume_text("Budget Candidate A", "Rust Search"),
+        )
+        .unwrap();
+        fs::write(
+            root.join("b-resume.txt"),
+            synthetic_resume_text("Budget Candidate B", "Rust Search"),
+        )
+        .unwrap();
+        let store = create_test_store(&data_dir);
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_600);
+        let task = import_task("migration-budget-block", root.to_str().unwrap(), now);
+        let scope = import_scan_scope(&task, Some(1));
+        insert_test_import_task_with_scope(
+            &store,
+            &task,
+            &scope,
+            &ImportOptions {
+                max_files: Some(1),
+                ..ImportOptions::default()
+            },
+        );
+
+        let error = import_root_with_options(
+            &data_dir,
+            &store,
+            &task,
+            &root,
+            now,
+            ImportOptions {
+                max_files: Some(1),
+                ..ImportOptions::default()
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.class(), ImportPipelineErrorClass::SourceUnavailable);
+        assert!(error.is_retryable());
+        assert_eq!(
+            store.import_task_by_id(&task.id).unwrap().unwrap().status,
+            ImportTaskStatus::FailedRetryable
+        );
+        let scope = store
+            .import_scan_scope_by_task_id(&task.id)
+            .unwrap()
+            .unwrap();
+        assert!(scope.scan_budget_exhausted);
+        let state = store.search_projection_state().unwrap();
+        assert_eq!(
+            state.service_state,
+            SearchProjectionServiceState::RepairBlocked
+        );
+        assert_eq!(
+            state.repair_reason,
+            Some(SearchRepairReason::SourceUnavailable)
+        );
+        assert_eq!(state.generation, None);
+        assert_eq!(state.visible_epoch, 0);
+        assert!(store.searchable_document_ids().unwrap().is_empty());
+        assert!(!data_dir.join("search-index").join("active").exists());
+    }
+
+    #[test]
+    fn ready_search_keeps_existing_partial_scan_semantics() {
+        let temp = TestDir::new("import-pipeline-ready-budget-retained-semantics");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("a-resume.txt"),
+            synthetic_resume_text("Ready Candidate A", "Rust Search"),
+        )
+        .unwrap();
+        fs::write(
+            root.join("b-resume.txt"),
+            synthetic_resume_text("Ready Candidate B", "Rust Search"),
+        )
+        .unwrap();
+        let store = create_test_store(&data_dir);
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_605);
+        initialize_ready_empty_search(&data_dir, &store, now);
+        let task = import_task("ready-budget-import", root.to_str().unwrap(), now);
+        let scope = import_scan_scope(&task, Some(1));
+        insert_test_import_task_with_scope(
+            &store,
+            &task,
+            &scope,
+            &ImportOptions {
+                max_files: Some(1),
+                ..ImportOptions::default()
+            },
+        );
+
+        let summary = import_root_with_options(
+            &data_dir,
+            &store,
+            &task,
+            &root,
+            now,
+            ImportOptions {
+                max_files: Some(1),
+                ..ImportOptions::default()
+            },
+        )
+        .unwrap();
+
+        assert!(summary.scan_budget.unwrap().exhausted);
+        assert_eq!(summary.searchable_documents, 1);
+        assert_eq!(
+            store.import_task_by_id(&task.id).unwrap().unwrap().status,
+            ImportTaskStatus::Completed
+        );
+        let state = store.search_projection_state().unwrap();
+        assert_eq!(state.service_state, SearchProjectionServiceState::Ready);
+        assert_eq!(state.repair_reason, None);
+        assert_eq!(store.searchable_document_ids().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn migration_empty_base_is_unavailable_to_normal_incremental_and_rebuild_paths() {
+        let temp = TestDir::new("import-pipeline-migration-base-hard-cut");
+        let data_dir = temp.path().join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+        let store = create_test_store(&data_dir);
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_607);
+        let publication_session = store.wait_for_search_publication_session().unwrap();
+
+        let incremental_result = write_incremental_search_artifacts(
+            &publication_session,
+            now,
+            CLASSIFIER_EPOCH,
+            Vec::new(),
+            &BTreeSet::new(),
+            0,
+            0,
+            None,
+            CurrentImportCacheMode::Retain,
+            None,
+            None,
+            None,
+            H2_INDEX_WRITER_HEAP_BYTES,
+            &SearchPublicationVectorization::default(),
+        );
+        let Err(incremental_error) = incremental_result else {
+            panic!("normal incremental publication must reject the migration empty base");
+        };
+        assert_eq!(
+            incremental_error.class(),
+            ImportPipelineErrorClass::MetadataInvariant
+        );
+
+        let rebuild_result = super::search_artifacts::write_rebuilt_search_artifacts(
+            &publication_session,
+            now,
+            CLASSIFIER_EPOCH,
+            &BTreeSet::new(),
+            Vec::new(),
+            &SearchPublicationVectorization::default(),
+        );
+        let Err(rebuild_error) = rebuild_result else {
+            panic!("normal rebuild publication must reject the migration empty base");
+        };
+        assert_eq!(
+            rebuild_error.class(),
+            ImportPipelineErrorClass::MetadataInvariant
+        );
+        let state = store.search_projection_state().unwrap();
+        assert_eq!(state.service_state, SearchProjectionServiceState::Repairing);
+        assert_eq!(
+            state.repair_reason,
+            Some(SearchRepairReason::MigrationRebuild)
+        );
+        assert_eq!(state.generation, None);
+        assert_eq!(state.visible_epoch, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migration_rebuild_partial_scan_error_blocks_without_staging_readable_subset() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TestDir::new("import-pipeline-migration-scan-error-block");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        let unreadable = root.join("unreadable");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&unreadable).unwrap();
+        fs::write(
+            root.join("readable-resume.txt"),
+            synthetic_resume_text("Readable Candidate", "Rust Search"),
+        )
+        .unwrap();
+        fs::write(
+            unreadable.join("hidden-resume.txt"),
+            synthetic_resume_text("Hidden Candidate", "Rust Search"),
+        )
+        .unwrap();
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
+        let store = create_test_store(&data_dir);
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_610);
+        let task = import_task("migration-scan-error-block", root.to_str().unwrap(), now);
+        let scope = import_scan_scope(&task, None);
+        insert_test_import_task_with_scope(&store, &task, &scope, &ImportOptions::default());
+
+        let result = import_root_with_options(
+            &data_dir,
+            &store,
+            &task,
+            &root,
+            now,
+            ImportOptions::default(),
+        );
+        fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o700)).unwrap();
+        let error = result.unwrap_err();
+
+        assert_eq!(error.class(), ImportPipelineErrorClass::SourceUnavailable);
+        assert!(error.is_retryable());
+        assert_eq!(
+            store.import_task_by_id(&task.id).unwrap().unwrap().status,
+            ImportTaskStatus::FailedRetryable
+        );
+        let scope = store
+            .import_scan_scope_by_task_id(&task.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(scope.files_discovered, 1);
+        assert_eq!(scope.scan_errors, 1);
+        let state = store.search_projection_state().unwrap();
+        assert_eq!(
+            state.service_state,
+            SearchProjectionServiceState::RepairBlocked
+        );
+        assert_eq!(
+            state.repair_reason,
+            Some(SearchRepairReason::SourceUnavailable)
+        );
+        assert_eq!(state.generation, None);
+        assert_eq!(state.visible_epoch, 0);
+        assert_eq!(store.visible_document_count().unwrap(), 0);
+        assert!(store.searchable_document_ids().unwrap().is_empty());
+    }
+
+    #[test]
+    fn migration_rebuild_blocks_when_a_discovered_source_disappears_before_read() {
+        let temp = TestDir::new("import-pipeline-migration-post-scan-read-error");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("candidate.txt");
+        fs::write(
+            &source,
+            synthetic_resume_text("Post Scan Candidate", "Rust Search"),
+        )
+        .unwrap();
+        let mut report = crawl_directory(&root).unwrap();
+        assert!(report.errors.is_empty());
+        assert_eq!(report.files.len(), 1);
+        let discovered = report.files.remove(0);
+        fs::remove_file(&source).unwrap();
+
+        let store = create_test_store(&data_dir);
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_611);
+        let task = import_task(
+            "migration-post-scan-read-error",
+            root.to_str().unwrap(),
+            now,
+        );
+        let contract = insert_test_import_task(&store, &task, &ImportOptions::default());
+
+        let mut stage_timings = ImportStageTimings::default();
+        let mut worker_metrics = ImportWorkerMetrics::default();
+        let mut content_bytes_read = 0;
+        let processed = process_file(
+            &data_dir,
+            &store,
+            &discovered,
+            &Sectionizer::default(),
+            now,
+            &|| Ok(()),
+            &mut stage_timings,
+            &mut worker_metrics,
+            &mut content_bytes_read,
+            &LinearPromotionPolicy::default(),
+        )
+        .unwrap();
+        assert!(matches!(
+            &processed,
+            ProcessedFile::Failed {
+                kind: ImportFailureKind::ReadError,
+                ..
+            }
+        ));
+
+        let mut summary = ImportSummary {
+            files_discovered: 1,
+            ..ImportSummary::default()
+        };
+        let mut disposition_batches =
+            super::ImportDispositionBatches::new(task.id.clone(), contract.id().clone());
+        let error = finish_import_file(
+            &store,
+            &task.id,
+            now,
+            &|| Ok(()),
+            &mut summary,
+            &mut Vec::new(),
+            &mut PendingProjectionRemovals::default(),
+            &mut disposition_batches,
+            &mut CurrentImportDocumentCache::default(),
+            &|_| {},
+            Instant::now(),
+            H2_INDEX_WRITER_HEAP_BYTES,
+            &SearchPublicationVectorization::default(),
+            0,
+            1,
+            &discovered,
+            processed,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.class(), ImportPipelineErrorClass::SourceUnavailable);
+        assert!(error.is_retryable());
+        assert_eq!(
+            store
+                .import_scan_scope_by_task_id(&task.id)
+                .unwrap()
+                .unwrap()
+                .failed_documents,
+            1
+        );
+        let pre_failure_state = store.search_projection_state().unwrap();
+        assert_eq!(
+            pre_failure_state.service_state,
+            SearchProjectionServiceState::Repairing
+        );
+        assert_eq!(
+            pre_failure_state.repair_reason,
+            Some(SearchRepairReason::MigrationRebuild)
+        );
+        store
+            .fail_observed_import_task(
+                &task,
+                ImportTaskFailure::Retryable,
+                Some(SearchRepairReason::SourceUnavailable),
+                UnixTimestamp::from_unix_seconds(1_700_000_612),
+            )
+            .unwrap();
+        let state = store.search_projection_state().unwrap();
+        assert_eq!(
+            state.service_state,
+            SearchProjectionServiceState::RepairBlocked
+        );
+        assert_eq!(
+            state.repair_reason,
+            Some(SearchRepairReason::SourceUnavailable)
+        );
+        assert_eq!(
+            store.import_task_by_id(&task.id).unwrap().unwrap().status,
+            ImportTaskStatus::FailedRetryable
+        );
+        assert!(state.generation.is_none());
+        assert!(store.searchable_document_ids().unwrap().is_empty());
+    }
+
+    #[test]
+    fn import_root_reports_shutdown_as_retryable_interruption() {
+        let temp = TestDir::new("import-pipeline-shutdown-running");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("synthetic-resume.txt"),
+            synthetic_resume_text("Synthetic Candidate", "Rust"),
+        )
+        .unwrap();
+
+        let store = create_test_store(&data_dir);
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_000);
+        let task = import_task("shutdown-interrupted-import", root.to_str().unwrap(), now);
+        insert_test_import_task(&store, &task, &ImportOptions::default());
+        let control = ImportRunControl::default();
+        control.request_shutdown();
+
+        let error = import_root_with_options_and_control(
+            &data_dir,
+            &store,
+            &task,
+            &root,
+            now,
+            ImportOptions::default(),
+            control,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.class(), ImportPipelineErrorClass::Interrupted);
+        assert!(error.retryable);
+        let stored_task = store.import_task_by_id(&task.id).unwrap().unwrap();
+        assert_eq!(stored_task.status, ImportTaskStatus::FailedRetryable);
+        assert_eq!(store.status_summary().unwrap().searchable_documents, 0);
+        assert!(!data_dir.join("search-index").join("active").exists());
+    }
+
+    #[test]
+    fn import_root_requires_the_exact_persisted_running_claim() {
+        let temp = TestDir::new("import-pipeline-exact-running-claim");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("synthetic-resume.txt"),
+            synthetic_resume_text("Synthetic Candidate", "Rust"),
+        )
+        .unwrap();
+
+        let store = create_test_store(&data_dir);
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_000);
+        let queued = ImportTask {
+            status: ImportTaskStatus::Queued,
+            started_at: None,
+            ..import_task("unclaimed-import", root.to_str().unwrap(), now)
+        };
+        let options = ImportOptions::default();
+        let contract = super::current_import_processing_contract(&options).unwrap();
+        store
+            .activate_migration_rebuild_contract(&contract, now)
+            .unwrap();
+        store
+            .insert_import_task_with_scan_scope(
+                &queued,
+                &import_scan_scope(&queued, None),
+                &contract,
+            )
+            .unwrap();
+        assert_eq!(
+            store.import_task_purpose(&queued.id).unwrap(),
+            ImportTaskPurpose::ConfiguredCatchUp
+        );
+
+        let queued_error =
+            import_root_with_options(&data_dir, &store, &queued, &root, now, options.clone())
+                .unwrap_err();
+        assert_eq!(
+            queued_error.class(),
+            ImportPipelineErrorClass::MetadataInvariant
+        );
+        assert!(!queued_error.is_retryable());
+        assert_eq!(
+            store.import_task_by_id(&queued.id).unwrap(),
+            Some(queued.clone())
+        );
+
+        let fabricated_running = ImportTask {
+            status: ImportTaskStatus::Running,
+            started_at: Some(now),
+            ..queued.clone()
+        };
+        let fabricated_error =
+            import_root_with_options(&data_dir, &store, &fabricated_running, &root, now, options)
+                .unwrap_err();
+        assert_eq!(
+            fabricated_error.class(),
+            ImportPipelineErrorClass::MetadataInvariant
+        );
+        assert!(!fabricated_error.is_retryable());
+        assert_eq!(store.import_task_by_id(&queued.id).unwrap(), Some(queued));
+        assert!(!data_dir.join("search-index").join("active").exists());
+    }
+
     #[test]
     fn import_root_stops_running_task_when_cancellation_marker_exists() {
         let temp = TestDir::new("import-pipeline-cancel-running");
@@ -5893,12 +4393,12 @@ mod tests {
         )
         .unwrap();
 
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
         let now = UnixTimestamp::from_unix_seconds(1_700_000_000);
         let cancel_at = UnixTimestamp::from_unix_seconds(1_700_000_010);
         let task = import_task("running-cancelled-import", root.to_str().unwrap(), now);
-        store.insert_import_task(&task).unwrap();
+        insert_test_import_task(&store, &task, &ImportOptions::default());
         store.cancel_import_task(&task.id, cancel_at).unwrap();
 
         let error = import_root_with_options(
@@ -5912,8 +4412,11 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error.kind, ImportPipelineErrorKind::Cancelled);
+        assert_eq!(error.class(), ImportPipelineErrorClass::Cancelled);
         let stored_task = store.import_task_by_id(&task.id).unwrap().unwrap();
-        assert_eq!(stored_task.status, ImportTaskStatus::FailedRetryable);
+        assert_eq!(stored_task.status, ImportTaskStatus::Running);
+        assert_eq!(stored_task.updated_at, cancel_at);
+        assert!(store.is_import_task_cancelled(&task.id).unwrap());
         assert_eq!(store.status_summary().unwrap().searchable_documents, 0);
         assert!(!data_dir.join("search-index").join("active").exists());
     }
@@ -5931,11 +4434,11 @@ mod tests {
         )
         .unwrap();
 
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
         let now = UnixTimestamp::from_unix_seconds(1_700_000_100);
         let task = import_task("live-progress-import", root.to_str().unwrap(), now);
-        store.insert_import_task(&task).unwrap();
+        insert_test_import_task(&store, &task, &ImportOptions::default());
         store
             .upsert_import_scan_scope(&ImportScanScope {
                 import_task_id: task.id.clone(),
@@ -5995,11 +4498,11 @@ mod tests {
         )
         .unwrap();
 
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
         let now = UnixTimestamp::from_unix_seconds(1_700_000_150);
         let task = import_task("utf16be-literal-pdf-import", root.to_str().unwrap(), now);
-        store.insert_import_task(&task).unwrap();
+        insert_test_import_task(&store, &task, &ImportOptions::default());
 
         let summary = import_root_with_options(
             &data_dir,
@@ -6040,11 +4543,11 @@ mod tests {
         )
         .unwrap();
 
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
         let now = UnixTimestamp::from_unix_seconds(1_700_000_175);
         let task = import_task("tounicode-cmap-pdf-import", root.to_str().unwrap(), now);
-        store.insert_import_task(&task).unwrap();
+        insert_test_import_task(&store, &task, &ImportOptions::default());
 
         let summary = import_root_with_options(
             &data_dir,
@@ -6084,7 +4587,7 @@ mod tests {
         )
         .unwrap();
 
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
         let first_now = UnixTimestamp::from_unix_seconds(1_700_000_190);
         let first_task = import_task(
@@ -6092,7 +4595,7 @@ mod tests {
             root.to_str().unwrap(),
             first_now,
         );
-        store.insert_import_task(&first_task).unwrap();
+        insert_test_import_task(&store, &first_task, &ImportOptions::default());
 
         let first_summary = import_root_with_options(
             &data_dir,
@@ -6116,7 +4619,7 @@ mod tests {
             root.to_str().unwrap(),
             second_now,
         );
-        store.insert_import_task(&second_task).unwrap();
+        insert_test_import_task(&store, &second_task, &ImportOptions::default());
 
         let second_summary = import_root_with_options(
             &data_dir,
@@ -6167,7 +4670,7 @@ mod tests {
     }
 
     #[test]
-    fn import_root_rename_updates_path_without_reparse_or_index_rebuild() {
+    fn import_root_rename_publishes_same_version_with_new_metadata_and_artifacts() {
         let temp = TestDir::new("import-pipeline-rename-rerun");
         let data_dir = temp.path().join("data");
         let root = temp.path().join("resumes");
@@ -6179,11 +4682,11 @@ mod tests {
         )
         .unwrap();
 
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
         let first_now = UnixTimestamp::from_unix_seconds(1_700_000_192);
         let first_task = import_task("rename-first-import", root.to_str().unwrap(), first_now);
-        store.insert_import_task(&first_task).unwrap();
+        insert_test_import_task(&store, &first_task, &ImportOptions::default());
         import_root_with_options(
             &data_dir,
             &store,
@@ -6195,6 +4698,14 @@ mod tests {
         .unwrap();
         let first_document = store.visible_documents().unwrap().remove(0);
         let first_head = ready_search_head(&store);
+        let first_projection = store
+            .active_search_projection_for_document(&first_document.id)
+            .unwrap()
+            .unwrap();
+        let first_projected_document = store
+            .active_search_document(&first_projection)
+            .unwrap()
+            .unwrap();
 
         fs::create_dir_all(root.join("after")).unwrap();
         fs::rename(
@@ -6202,9 +4713,16 @@ mod tests {
             root.join("after/renamed-resume.txt"),
         )
         .unwrap();
+        assert_eq!(
+            store
+                .active_search_document(&first_projection)
+                .unwrap()
+                .unwrap(),
+            first_projected_document
+        );
         let second_now = UnixTimestamp::from_unix_seconds(1_700_000_193);
         let second_task = import_task("rename-second-import", root.to_str().unwrap(), second_now);
-        store.insert_import_task(&second_task).unwrap();
+        insert_test_import_task(&store, &second_task, &ImportOptions::default());
         let summary = import_root_with_options(
             &data_dir,
             &store,
@@ -6216,12 +4734,25 @@ mod tests {
         .unwrap();
         let second_document = store.visible_documents().unwrap().remove(0);
         let second_head = ready_search_head(&store);
+        let second_projection = store
+            .active_search_projection_for_document(&second_document.id)
+            .unwrap()
+            .unwrap();
+        let second_projected_document = store
+            .active_search_document(&second_projection)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(summary.deleted_documents, 0);
         assert_eq!(first_document.id, second_document.id);
+        assert_eq!(first_projection, second_projection);
         assert!(second_document
             .normalized_path
             .ends_with("after/renamed-resume.txt"));
+        assert!(second_projected_document
+            .normalized_path
+            .ends_with("after/renamed-resume.txt"));
+        assert_eq!(second_projected_document.file_name, "renamed-resume.txt");
         assert_eq!(
             store
                 .resume_versions_for_document(&second_document.id)
@@ -6229,7 +4760,20 @@ mod tests {
                 .len(),
             1
         );
-        assert_eq!(second_head, first_head);
+        assert_ne!(second_head.generation, first_head.generation);
+        assert_eq!(
+            second_head.visible_epoch,
+            first_head.visible_epoch.checked_add(1).unwrap()
+        );
+        let indexed_documents = incremental_snapshot_documents(
+            &data_dir.join("search-index"),
+            Some(&second_head.generation),
+            Vec::new(),
+            &BTreeSet::new(),
+        )
+        .unwrap();
+        assert_eq!(indexed_documents.len(), 1);
+        assert_eq!(indexed_documents[0].file_name, "renamed-resume.txt");
     }
 
     #[test]
@@ -6257,7 +4801,7 @@ mod tests {
             .remove(0)
             .fingerprint;
 
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
         let first_now = UnixTimestamp::from_unix_seconds(1_700_000_194);
         let first_task = import_task(
@@ -6265,7 +4809,7 @@ mod tests {
             root.to_str().unwrap(),
             first_now,
         );
-        store.insert_import_task(&first_task).unwrap();
+        insert_test_import_task(&store, &first_task, &ImportOptions::default());
         import_root_with_options(
             &data_dir,
             &store,
@@ -6311,7 +4855,7 @@ mod tests {
             root.to_str().unwrap(),
             second_now,
         );
-        store.insert_import_task(&second_task).unwrap();
+        insert_test_import_task(&store, &second_task, &ImportOptions::default());
         let summary = import_root_with_options(
             &data_dir,
             &store,
@@ -6373,7 +4917,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("scanned-resume.pdf"), scanned_pdf_bytes()).unwrap();
 
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
         let first_now = UnixTimestamp::from_unix_seconds(1_700_000_195);
         let first_task = import_task(
@@ -6381,7 +4925,7 @@ mod tests {
             root.to_str().unwrap(),
             first_now,
         );
-        store.insert_import_task(&first_task).unwrap();
+        insert_test_import_task(&store, &first_task, &ImportOptions::default());
 
         let first_summary = import_root_with_options(
             &data_dir,
@@ -6409,7 +4953,7 @@ mod tests {
             root.to_str().unwrap(),
             second_now,
         );
-        store.insert_import_task(&second_task).unwrap();
+        insert_test_import_task(&store, &second_task, &ImportOptions::default());
 
         let second_summary = import_root_with_options(
             &data_dir,
@@ -6478,7 +5022,7 @@ mod tests {
             root.to_str().unwrap(),
             third_now,
         );
-        store.insert_import_task(&third_task).unwrap();
+        insert_test_import_task(&store, &third_task, &ImportOptions::default());
         let third_summary = import_root_with_options(
             &data_dir,
             &store,
@@ -6518,11 +5062,11 @@ mod tests {
             converter.to_str().unwrap().to_string(),
         );
 
-        let store = MetaStore::open_in_memory().unwrap();
+        let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
         let now = UnixTimestamp::from_unix_seconds(1_700_000_200);
         let task = import_task("legacy-doc-import", root.to_str().unwrap(), now);
-        store.insert_import_task(&task).unwrap();
+        insert_test_import_task(&store, &task, &ImportOptions::default());
 
         let summary = import_root_with_options(
             &data_dir,
@@ -6580,15 +5124,19 @@ mod tests {
             converter.to_str().unwrap().to_string(),
         );
 
-        let store = MetaStore::open_data_dir(&data_dir).unwrap();
-        store.run_migrations().unwrap();
+        let store = create_test_store(&data_dir);
         let now = UnixTimestamp::from_unix_seconds(1_700_000_225);
+        initialize_ready_empty_search(
+            &data_dir,
+            &store,
+            UnixTimestamp::from_unix_seconds(now.as_unix_seconds() - 1),
+        );
         let task = import_task(
             "first-searchable-progress-import",
             root.to_str().unwrap(),
             now,
         );
-        store.insert_import_task(&task).unwrap();
+        insert_test_import_task(&store, &task, &ImportOptions::default());
         store
             .upsert_import_scan_scope(&ImportScanScope {
                 import_task_id: task.id.clone(),
@@ -6616,12 +5164,11 @@ mod tests {
         let data_dir_for_worker = data_dir.clone();
         let root_for_worker = root.clone();
         let task_for_worker = task.clone();
+        let worker_store = store.open_sibling().unwrap();
         let worker = thread::spawn(move || {
-            let store = MetaStore::open_data_dir(&data_dir_for_worker).unwrap();
-            store.run_migrations().unwrap();
             import_root_with_options(
                 &data_dir_for_worker,
-                &store,
+                &worker_store,
                 &task_for_worker,
                 &root_for_worker,
                 now,
@@ -6631,21 +5178,19 @@ mod tests {
         });
 
         wait_for_path(&started_marker);
-        let observed_store = MetaStore::open_data_dir(&data_dir).unwrap();
-        observed_store.run_migrations().unwrap();
+        let observed_store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
         let scope = observed_store
             .import_scan_scope_by_task_id(&task.id)
             .unwrap()
             .unwrap();
         let status = observed_store.status_summary().unwrap();
-        let observed_head = ready_search_head(&observed_store);
+        let observed_head = ready_search_head_from_reader(&observed_store);
         let _ready_reader = open_fulltext_generation(&data_dir, &observed_head.generation);
 
         fs::write(&release_marker, b"release").unwrap();
         let summary = worker.join().unwrap();
-        let final_store = MetaStore::open_data_dir(&data_dir).unwrap();
-        final_store.run_migrations().unwrap();
-        let final_head = ready_search_head(&final_store);
+        let final_store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+        let final_head = ready_search_head_from_reader(&final_store);
 
         assert_eq!(scope.files_discovered, 33);
         assert!(
@@ -6656,7 +5201,7 @@ mod tests {
             status.searchable_documents > 0,
             "expected searchable documents to be visible before the final file completed, got status: {status:?}"
         );
-        assert_eq!(observed_head.visible_epoch, 1);
+        assert_eq!(observed_head.visible_epoch, 2);
         assert_eq!(
             observed_head
                 .publication
@@ -6667,7 +5212,7 @@ mod tests {
             1
         );
         assert_eq!(summary.searchable_documents, 33);
-        assert_eq!(final_head.visible_epoch, 2);
+        assert_eq!(final_head.visible_epoch, 3);
         assert_eq!(
             final_head
                 .publication
@@ -6703,11 +5248,15 @@ mod tests {
             converter.to_str().unwrap().to_string(),
         );
 
-        let store = MetaStore::open_data_dir(&data_dir).unwrap();
-        store.run_migrations().unwrap();
+        let store = create_test_store(&data_dir);
         let now = UnixTimestamp::from_unix_seconds(1_700_000_230);
+        initialize_ready_empty_search(
+            &data_dir,
+            &store,
+            UnixTimestamp::from_unix_seconds(now.as_unix_seconds() - 1),
+        );
         let task = import_task("first-searchable-early-import", root.to_str().unwrap(), now);
-        store.insert_import_task(&task).unwrap();
+        insert_test_import_task(&store, &task, &ImportOptions::default());
         store
             .upsert_import_scan_scope(&ImportScanScope {
                 import_task_id: task.id.clone(),
@@ -6735,12 +5284,11 @@ mod tests {
         let data_dir_for_worker = data_dir.clone();
         let root_for_worker = root.clone();
         let task_for_worker = task.clone();
+        let worker_store = store.open_sibling().unwrap();
         let worker = thread::spawn(move || {
-            let store = MetaStore::open_data_dir(&data_dir_for_worker).unwrap();
-            store.run_migrations().unwrap();
             import_root_with_options(
                 &data_dir_for_worker,
-                &store,
+                &worker_store,
                 &task_for_worker,
                 &root_for_worker,
                 now,
@@ -6750,21 +5298,19 @@ mod tests {
         });
 
         wait_for_path(&started_marker);
-        let observed_store = MetaStore::open_data_dir(&data_dir).unwrap();
-        observed_store.run_migrations().unwrap();
+        let observed_store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
         let scope = observed_store
             .import_scan_scope_by_task_id(&task.id)
             .unwrap()
             .unwrap();
         let status = observed_store.status_summary().unwrap();
-        let observed_head = ready_search_head(&observed_store);
+        let observed_head = ready_search_head_from_reader(&observed_store);
         let _ready_reader = open_fulltext_generation(&data_dir, &observed_head.generation);
 
         fs::write(&release_marker, b"release").unwrap();
         let summary = worker.join().unwrap();
-        let final_store = MetaStore::open_data_dir(&data_dir).unwrap();
-        final_store.run_migrations().unwrap();
-        let final_head = ready_search_head(&final_store);
+        let final_store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+        let final_head = ready_search_head_from_reader(&final_store);
 
         assert_eq!(scope.files_discovered, 2);
         assert!(
@@ -6775,7 +5321,7 @@ mod tests {
             status.searchable_documents > 0,
             "expected searchable status before the slow file completed, got status: {status:?}"
         );
-        assert_eq!(observed_head.visible_epoch, 1);
+        assert_eq!(observed_head.visible_epoch, 2);
         assert_eq!(
             observed_head
                 .publication
@@ -6789,7 +5335,7 @@ mod tests {
         assert!(summary.milestone_timings.first_searchable.is_some());
         assert!(summary.milestone_timings.full_import_ready.is_some());
         assert!(summary.milestone_timings.full_index_ready.is_some());
-        assert_eq!(final_head.visible_epoch, 2);
+        assert_eq!(final_head.visible_epoch, 3);
         assert_eq!(
             final_head
                 .publication
@@ -6811,6 +5357,79 @@ mod tests {
             finished_at: None,
             updated_at: now,
         }
+    }
+
+    fn insert_test_import_task(
+        store: &OwnedMetaStore,
+        task: &ImportTask,
+        options: &ImportOptions,
+    ) -> meta_store::ImportProcessingContract {
+        let scope = import_scan_scope(
+            task,
+            options.max_files.map(|limit| u64::try_from(limit).unwrap()),
+        );
+        insert_test_import_task_with_scope(store, task, &scope, options)
+    }
+
+    fn insert_test_import_task_with_scope(
+        store: &OwnedMetaStore,
+        task: &ImportTask,
+        scope: &ImportScanScope,
+        options: &ImportOptions,
+    ) -> meta_store::ImportProcessingContract {
+        let contract = super::current_import_processing_contract(options).unwrap();
+        store
+            .activate_migration_rebuild_contract(&contract, task.updated_at)
+            .unwrap();
+        let queued_task = ImportTask {
+            status: ImportTaskStatus::Queued,
+            started_at: None,
+            finished_at: None,
+            ..task.clone()
+        };
+        let projection = store.search_projection_state().unwrap();
+        if projection.service_state == SearchProjectionServiceState::Repairing
+            && projection.repair_reason == Some(SearchRepairReason::MigrationRebuild)
+            && projection.generation.is_none()
+        {
+            let seed_id = meta_store::ImportTaskId::from_non_secret_parts(&[
+                "import-pipeline-test-root-seed",
+                task.id.as_str(),
+            ]);
+            let seed = ImportTask {
+                id: seed_id.clone(),
+                ..queued_task.clone()
+            };
+            let mut seed_scope = scope.clone();
+            seed_scope.import_task_id = seed_id.clone();
+            store
+                .insert_import_task_with_scan_scope(&seed, &seed_scope, &contract)
+                .unwrap();
+            store.cancel_import_task(&seed_id, task.updated_at).unwrap();
+            assert!(matches!(
+                store
+                    .enqueue_full_corpus_migration_rebuild_root(
+                        &task.root_path,
+                        &task.id,
+                        &contract,
+                        task.updated_at,
+                    )
+                    .unwrap(),
+                meta_store::ImportRootTaskHeadOutcome::HeadInserted { .. }
+            ));
+            store.upsert_import_scan_scope(scope).unwrap();
+        } else {
+            store
+                .insert_import_task_with_scan_scope(&queued_task, scope, &contract)
+                .unwrap();
+        }
+        let claimed = store
+            .claim_observed_import_task_for_worker(&queued_task, task.updated_at)
+            .unwrap()
+            .expect("new test import task must be claimable");
+        assert_eq!(claimed.id, task.id);
+        assert_eq!(claimed.status, ImportTaskStatus::Running);
+        contract
     }
 
     fn synthetic_ole_doc() -> Vec<u8> {

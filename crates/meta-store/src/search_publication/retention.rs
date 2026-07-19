@@ -2,14 +2,14 @@ use std::collections::BTreeSet;
 
 use rusqlite::{params, TransactionBehavior};
 
-use crate::{MetaStore, MetaStoreError, Result};
+use crate::{MetaStoreError, MetadataStore, MetadataStoreAccess, Result};
 
 use super::{
     model::{SearchPublicationFailure, SearchPublicationState},
     validation::publication_error,
 };
 
-impl MetaStore {
+impl<Access: MetadataStoreAccess> MetadataStore<Access> {
     /// Returns the complete metadata-retained artifact generations from one
     /// SQLite read snapshot. The caller must already hold both artifact-store
     /// exclusive publication leases so no unrecorded artifact can appear

@@ -4,8 +4,8 @@ pub use resume_classifier::{ClassificationStatus, ReasonCode};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{
-    i64_to_u64, IdentityInsertOutcome, MetaStore, MetaStoreError, Result, ResumeVersionId,
-    SourceRevisionId, UnixTimestamp,
+    i64_to_u64, IdentityInsertOutcome, MetaStoreError, MetadataStore, MetadataStoreAccess,
+    MetadataStoreWriteAccess, Result, ResumeVersionId, SourceRevisionId, UnixTimestamp,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -126,11 +126,14 @@ pub struct ClassificationCounts {
     pub failed: u64,
 }
 
-impl MetaStore {
+impl<Access: MetadataStoreAccess> MetadataStore<Access> {
     pub fn insert_source_revision_triage(
         &self,
         triage: &SourceRevisionTriage,
-    ) -> Result<IdentityInsertOutcome> {
+    ) -> Result<IdentityInsertOutcome>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let mut connection = self.connection.borrow_mut();
         let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
         let outcome = insert_source_revision_triage_in_connection(&transaction, triage)?;
@@ -153,7 +156,10 @@ impl MetaStore {
     pub fn insert_resume_version_classification(
         &self,
         classification: &ResumeVersionClassification,
-    ) -> Result<IdentityInsertOutcome> {
+    ) -> Result<IdentityInsertOutcome>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let mut connection = self.connection.borrow_mut();
         let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
         let outcome =
@@ -360,7 +366,7 @@ pub(super) fn insert_resume_version_classification_in_connection(
     Ok(IdentityInsertOutcome::Inserted)
 }
 
-fn source_revision_triage_from_connection(
+pub(super) fn source_revision_triage_from_connection(
     connection: &Connection,
     source_revision_id: &SourceRevisionId,
     triage_epoch: &str,
@@ -403,7 +409,7 @@ fn source_revision_triage_from_connection(
     Ok(Some(triage))
 }
 
-fn resume_version_classification_from_connection(
+pub(super) fn resume_version_classification_from_connection(
     connection: &Connection,
     resume_version_id: &ResumeVersionId,
     classifier_epoch: &str,

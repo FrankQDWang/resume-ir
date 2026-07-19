@@ -2,28 +2,30 @@ use std::fs;
 use std::ops::Range;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
     ActiveSearchProjection, Candidate, CandidateId, ClassificationStatus, ContactHash,
-    ContentDigest, Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId,
-    EntityType, FileExtension, FullTextSnapshotDescriptor, IdentityInsertOutcome, ImportRootKind,
-    ImportRootPreset, ImportScanBudgetKind, ImportScanError, ImportScanErrorKind,
-    ImportScanErrorOperation, ImportScanErrorSummary, ImportScanProfile, ImportScanScope,
-    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobId,
-    IngestJobKind, IngestJobStatus, MetaStore, MetadataEncryptionState, OcrPageCacheEntry,
-    OcrPageCacheKey, OcrPageCacheStatus, OcrWordBox, ReasonCode, ResumeVersion,
-    ResumeVersionClassification, ResumeVersionId, ReviewDisposition, SearchProjectionDigest,
-    SearchPublicationCommit, SearchPublicationDraft, SearchPublicationOutcome,
-    SearchPublicationValidation, SourceRevision, TerminalDocumentUpdate, UnixTimestamp,
-    VectorSnapshotDescriptor, WorkerTaskControl, WorkerTaskKind, CLASSIFIER_EPOCH,
+    ContentDigest, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, Document, DocumentId,
+    DocumentStatus, EntityMention, EntityMentionId, EntityType, EphemeralMetaStore, FileExtension,
+    FullTextSnapshotDescriptor, IdentityInsertOutcome, ImportRootKind, ImportRootPreset,
+    ImportScanBudgetKind, ImportScanError, ImportScanErrorKind, ImportScanErrorOperation,
+    ImportScanErrorSummary, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobId, IngestJobKind, IngestJobStatus,
+    MetaStoreErrorClass, MetadataEncryptionState, MigrationRebuildBarrierToken, OcrPageCacheEntry,
+    OcrPageCacheKey, OcrPageCacheStatus, OcrWordBox, OwnedMetaStore, ReadMetaStore, ReasonCode,
+    ResumeVersion, ResumeVersionClassification, ResumeVersionId, ReviewDisposition,
+    SearchProjectionDigest, SearchPublicationCommit, SearchPublicationDraft,
+    SearchPublicationOutcome, SearchPublicationSession, SearchPublicationState,
+    SearchPublicationValidation, SearchRepairReason, SourceRevision, TerminalDocumentUpdate,
+    UnixTimestamp, VectorSnapshotDescriptor, WorkerTaskControl, WorkerTaskKind, CLASSIFIER_EPOCH,
 };
-use rusqlite::{params, Connection};
+mod support;
 
 #[test]
-fn migrations_are_idempotent_and_schema_v27_is_queryable() {
-    let store = MetaStore::open_in_memory().unwrap();
+fn migrations_are_idempotent_and_schema_v28_is_queryable() {
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
 
     assert!(store.foreign_keys_enabled().unwrap());
 
@@ -32,10 +34,10 @@ fn migrations_are_idempotent_and_schema_v27_is_queryable() {
         first.applied_versions(),
         &[
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25, 26, 27,
+            25, 26, 27, 28,
         ]
     );
-    assert_eq!(store.schema_version().unwrap(), 27);
+    assert_eq!(store.schema_version().unwrap(), 28);
 
     for table_name in [
         "candidate",
@@ -61,13 +63,18 @@ fn migrations_are_idempotent_and_schema_v27_is_queryable() {
         "import_task_cancellation",
         "query_observation",
         "candidate_contact_conflict",
+        "import_processing_contract",
+        "migration_rebuild_contract_state",
+        "import_task_contract_binding",
+        "import_task_source_disposition",
+        "import_task_completion",
     ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 27);
+    assert_eq!(store.schema_version().unwrap(), 28);
 }
 
 #[test]
@@ -82,10 +89,8 @@ fn metadata_encryption_state_reports_plaintext_until_sqlcipher_is_enabled() {
 }
 
 #[test]
-fn encrypted_metadata_store_requires_key_and_survives_reopen_without_plaintext_header() {
-    let db_path = temp_db_path("encrypted-metadata-store");
-    let key = [7_u8; 32];
-    let wrong_key = [8_u8; 32];
+fn owner_created_metadata_store_survives_read_reopen_without_plaintext_header() {
+    let data_dir = temp_data_dir("encrypted-metadata-store");
     let document = document(
         "encrypted-store-document",
         false,
@@ -93,32 +98,24 @@ fn encrypted_metadata_store_requires_key_and_survives_reopen_without_plaintext_h
     );
 
     {
-        let store = MetaStore::open_encrypted(&db_path, &key).unwrap();
+        let store = open_owned_store(&data_dir);
         assert_eq!(
             store.metadata_encryption_state(),
             MetadataEncryptionState::SqlCipher
         );
         assert_eq!(store.metadata_encryption_state().label(), "sqlcipher");
-        store.run_migrations().unwrap();
         store.upsert_document(&document).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 27);
+        assert_eq!(store.schema_version().unwrap(), 28);
     }
 
+    let db_path = meta_store::metadata_store_path(&data_dir).unwrap();
     let encrypted_bytes = fs::read(&db_path).unwrap();
     assert!(!encrypted_bytes.starts_with(b"SQLite format 3"));
     assert!(!encrypted_bytes
         .windows(b"encrypted-store-document".len())
         .any(|window| window == b"encrypted-store-document"));
 
-    let plaintext_open_error = MetaStore::open(&db_path)
-        .and_then(|store| store.schema_version().map(|_| ()))
-        .unwrap_err();
-    assert_redacted_store_error(plaintext_open_error);
-
-    let wrong_key_error = MetaStore::open_encrypted(&db_path, &wrong_key).unwrap_err();
-    assert_redacted_store_error(wrong_key_error);
-
-    let reopened = MetaStore::open_encrypted(&db_path, &key).unwrap();
+    let reopened = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     assert_eq!(
         reopened.metadata_encryption_state(),
         MetadataEncryptionState::SqlCipher
@@ -128,86 +125,40 @@ fn encrypted_metadata_store_requires_key_and_survives_reopen_without_plaintext_h
         document.id
     );
 
-    remove_temp_db(&db_path);
+    drop(reopened);
+    remove_temp_dir(&data_dir);
 }
 
 #[test]
-fn open_data_dir_copy_on_write_migrates_plaintext_store_to_sqlcipher() {
-    let data_dir = temp_data_dir("plaintext-metadata-migration");
-    let db_path = meta_store::metadata_store_path(&data_dir).unwrap();
-    let document = document(
-        "plaintext-migration-document",
-        false,
-        DocumentStatus::Searchable,
-    );
-    let mut version = resume_version("plaintext-migration-version", document.id.clone());
-    set_resume_text(&mut version, "SYNTHETIC PLAINTEXT MIGRATION CLEAN TEXT");
+fn read_open_rejects_an_unpublished_plaintext_database() {
+    let data_dir = temp_data_dir("unowned-plaintext-v28");
+    let db_path = data_dir.join("unpublished.sqlite3");
 
-    {
-        let plaintext = MetaStore::open(&db_path).unwrap();
-        plaintext.run_migrations().unwrap();
-        plaintext.upsert_document(&document).unwrap();
-        insert_resume_version(&plaintext, &version);
-        assert_eq!(plaintext.schema_version().unwrap(), 27);
-        assert_eq!(
-            plaintext.metadata_encryption_state(),
-            MetadataEncryptionState::Plaintext
-        );
-    }
+    fs::write(&db_path, b"SQLite format 3\0synthetic unpublished fixture").unwrap();
 
     set_owner_only_file_permissions(&db_path);
 
     let plaintext_bytes = fs::read(&db_path).unwrap();
     assert!(plaintext_bytes.starts_with(b"SQLite format 3"));
 
-    let migrated = MetaStore::open_data_dir(&data_dir).unwrap();
+    let error = ReadMetaStore::open_data_dir(&data_dir).unwrap_err();
     assert_eq!(
-        migrated.metadata_encryption_state(),
-        MetadataEncryptionState::SqlCipher
+        error.class(),
+        MetaStoreErrorClass::MigrationOwnershipRequired
     );
-    assert_eq!(migrated.schema_version().unwrap(), 27);
-    assert_eq!(
-        migrated.document_by_id(&document.id).unwrap().unwrap().id,
-        document.id
-    );
-    assert_eq!(
-        migrated
-            .resume_version_by_id(&version.id)
-            .unwrap()
-            .unwrap()
-            .clean_text,
-        version.clean_text
-    );
-
-    let active_db_path = meta_store::metadata_store_path(&data_dir).unwrap();
-    assert_ne!(active_db_path, db_path);
-    let encrypted_bytes = fs::read(&active_db_path).unwrap();
-    assert!(!encrypted_bytes.starts_with(b"SQLite format 3"));
-    assert!(!encrypted_bytes
-        .windows(b"PLAINTEXT MIGRATION".len())
-        .any(|window| window == b"PLAINTEXT MIGRATION"));
-    assert!(meta_store::metadata_encryption_key_path(&data_dir).exists());
-
-    assert!(!db_path.exists());
-    assert!(!PathBuf::from(format!("{}-wal", db_path.display())).exists());
-    assert!(!PathBuf::from(format!("{}-shm", db_path.display())).exists());
-    let plaintext_open_error = MetaStore::open(&active_db_path)
-        .and_then(|store| store.schema_version().map(|_| ()))
-        .unwrap_err();
-    assert_redacted_store_error(plaintext_open_error);
+    assert!(db_path.exists());
 
     remove_temp_dir(&data_dir);
 }
 
 #[test]
 fn worker_task_control_defaults_to_running_and_persists_pause_state() {
-    let db_path = temp_db_path("worker-task-control-placeholder");
+    let data_dir = temp_data_dir("worker-task-control-placeholder");
     let pause_at = UnixTimestamp::from_unix_seconds(1_800_000_330);
     let resume_at = UnixTimestamp::from_unix_seconds(1_800_000_360);
 
     {
-        let store = MetaStore::open(&db_path).unwrap();
-        store.run_migrations().unwrap();
+        let store = open_owned_store(&data_dir);
         assert_eq!(
             store.worker_task_control(WorkerTaskKind::Ocr).unwrap(),
             WorkerTaskControl {
@@ -231,8 +182,7 @@ fn worker_task_control_defaults_to_running_and_persists_pause_state() {
     }
 
     {
-        let reopened = MetaStore::open(&db_path).unwrap();
-        reopened.run_migrations().unwrap();
+        let reopened = open_owned_store(&data_dir);
         assert_eq!(
             reopened.worker_task_control(WorkerTaskKind::Ocr).unwrap(),
             WorkerTaskControl {
@@ -255,12 +205,12 @@ fn worker_task_control_defaults_to_running_and_persists_pause_state() {
         );
     }
 
-    remove_temp_db(&db_path);
+    remove_temp_dir(&data_dir);
 }
 
 #[test]
 fn import_scan_scope_persists_root_profile_and_redacted_progress_counts() {
-    let db_path = temp_db_path("import-scan-scope-placeholder");
+    let data_dir = temp_data_dir("import-scan-scope-placeholder");
     let task = import_task(
         "scan-scope-task",
         "/private/root/Documents",
@@ -316,9 +266,8 @@ fn import_scan_scope_persists_root_profile_and_redacted_progress_counts() {
     };
 
     {
-        let store = MetaStore::open(&db_path).unwrap();
-        store.run_migrations().unwrap();
-        store.insert_import_task(&task).unwrap();
+        let store = open_owned_store(&data_dir);
+        support::insert_import_task_owned(&store, &task);
 
         store.upsert_import_scan_scope(&initial_scope).unwrap();
         assert_eq!(
@@ -339,8 +288,7 @@ fn import_scan_scope_persists_root_profile_and_redacted_progress_counts() {
     }
 
     {
-        let reopened = MetaStore::open(&db_path).unwrap();
-        reopened.run_migrations().unwrap();
+        let reopened = ReadMetaStore::open_data_dir(&data_dir).unwrap();
         let persisted = reopened
             .latest_import_scan_scope()
             .unwrap()
@@ -352,7 +300,7 @@ fn import_scan_scope_persists_root_profile_and_redacted_progress_counts() {
         assert!(debug.contains("files_discovered"));
     }
 
-    remove_temp_db(&db_path);
+    remove_temp_dir(&data_dir);
 }
 
 #[test]
@@ -385,9 +333,7 @@ fn import_task_and_scan_scope_insert_atomically_for_daemon_command_ipc() {
         updated_at: UnixTimestamp::from_unix_seconds(1_800_000_020),
     };
 
-    store
-        .insert_import_task_with_scan_scope(&task, &scope)
-        .unwrap();
+    support::insert_import_task_with_scan_scope(&store, &task, &scope);
 
     assert_eq!(store.import_task_by_id(&task.id).unwrap(), Some(task));
     assert_eq!(
@@ -434,7 +380,7 @@ fn import_scan_errors_replace_and_query_without_exposing_path_digest() {
         updated_at,
     }];
 
-    store.insert_import_task(&task).unwrap();
+    support::insert_import_task(&store, &task);
 
     store
         .replace_import_scan_errors(&task.id, &first_errors)
@@ -535,7 +481,7 @@ fn candidates_persist_and_are_found_only_by_hashed_contact_material() {
 
 #[test]
 fn searchable_document_ids_with_contact_hashes_matches_active_projection_only() {
-    let store = migrated_store();
+    let (_directory, store) = support::owned_store();
     let email_hash = contact_hash('a');
     let phone_hash = contact_hash('b');
     let deleted_hash = contact_hash('c');
@@ -569,7 +515,7 @@ fn searchable_document_ids_with_contact_hashes_matches_active_projection_only() 
         partial_version.clone(),
         failed_version.clone(),
     ] {
-        insert_resume_version(&store, &version);
+        insert_resume_version_owned(&store, &version);
     }
 
     let visible_candidate = Candidate {
@@ -694,7 +640,7 @@ fn candidate_contact_hash_indexes_are_unique_and_canonicalized() {
 
 #[test]
 fn hashed_contact_assignment_reuses_candidate_and_updates_active_version_count() {
-    let store = migrated_store();
+    let (_directory, store) = support::owned_store();
     let email_hash = contact_hash('d');
     let first_document = document("candidate-assign-first", false, DocumentStatus::Searchable);
     let second_document = document("candidate-assign-second", false, DocumentStatus::Searchable);
@@ -706,8 +652,8 @@ fn hashed_contact_assignment_reuses_candidate_and_updates_active_version_count()
 
     store.upsert_document(&first_document).unwrap();
     store.upsert_document(&second_document).unwrap();
-    insert_resume_version(&store, &first_version);
-    insert_resume_version(&store, &second_version);
+    insert_resume_version_owned(&store, &first_version);
+    insert_resume_version_owned(&store, &second_version);
 
     let first_assignment = store
         .assign_candidate_from_hashed_contacts(&first_version.id, Some(&email_hash), None)
@@ -1091,7 +1037,7 @@ fn stale_running_ingest_jobs_are_recovered_to_interrupted_for_retry() {
 
 #[test]
 fn embedding_update_jobs_are_durable_idempotent_and_claimable_by_resume_version() {
-    let db_path = temp_db_path("embedding-update-job-placeholder");
+    let data_dir = temp_data_dir("embedding-update-job-placeholder");
     let document = document(
         "embedding-update-document-placeholder",
         false,
@@ -1105,10 +1051,9 @@ fn embedding_update_jobs_are_durable_idempotent_and_claimable_by_resume_version(
     let first_job_id;
 
     {
-        let store = MetaStore::open(&db_path).unwrap();
-        store.run_migrations().unwrap();
+        let store = open_owned_store(&data_dir);
         store.upsert_document(&document).unwrap();
-        insert_resume_version(&store, &version);
+        insert_resume_version_owned(&store, &version);
         let mut unrelated_update_index = job(
             "embedding-update-unrelated-placeholder",
             &document.id,
@@ -1148,8 +1093,7 @@ fn embedding_update_jobs_are_durable_idempotent_and_claimable_by_resume_version(
     }
 
     {
-        let reopened = MetaStore::open(&db_path).unwrap();
-        reopened.run_migrations().unwrap();
+        let reopened = open_owned_store(&data_dir);
         let claimed = reopened
             .claim_next_embedding_job("fixture-local-model", 4, claim_at)
             .unwrap()
@@ -1181,7 +1125,7 @@ fn embedding_update_jobs_are_durable_idempotent_and_claimable_by_resume_version(
         );
     }
 
-    remove_temp_db(&db_path);
+    remove_temp_dir(&data_dir);
 }
 
 #[test]
@@ -1450,11 +1394,11 @@ fn ocr_page_cache_rejects_invalid_keys_and_confidence() {
 
 #[test]
 fn entity_mentions_insert_query_and_redact_values() {
-    let store = migrated_store();
+    let (_directory, store) = support::owned_store();
     let document = document("field-mention-document", false, DocumentStatus::Searchable);
     let version = resume_version("field-mention-version", document.id.clone());
     store.upsert_document(&document).unwrap();
-    insert_resume_version(&store, &version);
+    insert_resume_version_owned(&store, &version);
 
     let email = entity_mention(
         "email",
@@ -1509,15 +1453,15 @@ fn entity_mentions_insert_query_and_redact_values() {
 
 #[test]
 fn entity_mentions_accept_major_values_for_searchable_prefilter() {
-    let store = migrated_store();
+    let (_directory, store) = support::owned_store();
     let target_document = document("major-target-document", false, DocumentStatus::Searchable);
     let target_version = resume_version("major-target-version", target_document.id.clone());
     let decoy_document = document("major-decoy-document", false, DocumentStatus::Searchable);
     let decoy_version = resume_version("major-decoy-version", decoy_document.id.clone());
     store.upsert_document(&target_document).unwrap();
-    insert_resume_version(&store, &target_version);
+    insert_resume_version_owned(&store, &target_version);
     store.upsert_document(&decoy_document).unwrap();
-    insert_resume_version(&store, &decoy_version);
+    insert_resume_version_owned(&store, &decoy_version);
 
     let target_major = entity_mention(
         "major-target",
@@ -1568,7 +1512,7 @@ fn entity_mentions_accept_major_values_for_searchable_prefilter() {
 
 #[test]
 fn searchable_document_ids_without_entity_type_matches_active_projection_only() {
-    let store = migrated_store();
+    let (_directory, store) = support::owned_store();
     let no_tier_document = document("without-school-tier", false, DocumentStatus::Searchable);
     let known_tier_document = document("with-school-tier", false, DocumentStatus::Searchable);
     let low_confidence_document = document(
@@ -1621,7 +1565,7 @@ fn searchable_document_ids_without_entity_type_matches_active_projection_only() 
         &discovered_version,
         &deleted_version,
     ] {
-        insert_resume_version(&store, version);
+        insert_resume_version_owned(&store, version);
     }
 
     let known_tier = entity_mention(
@@ -1669,7 +1613,7 @@ fn searchable_document_ids_without_entity_type_matches_active_projection_only() 
 
 #[test]
 fn searchable_document_ids_with_date_range_overlap_matches_active_projection_only() {
-    let store = migrated_store();
+    let (_directory, store) = support::owned_store();
     let overlapping_document = document("date-range-overlap", false, DocumentStatus::Searchable);
     let open_ended_document = document("date-range-open-ended", false, DocumentStatus::Searchable);
     let before_document = document("date-range-before", false, DocumentStatus::Searchable);
@@ -1721,7 +1665,7 @@ fn searchable_document_ids_with_date_range_overlap_matches_active_projection_onl
         &hidden_version,
         &deleted_version,
     ] {
-        insert_resume_version(&store, version);
+        insert_resume_version_owned(&store, version);
     }
 
     for (version, normalized_value, confidence) in [
@@ -1767,9 +1711,8 @@ fn searchable_document_ids_with_date_range_overlap_matches_active_projection_onl
 
 #[test]
 fn contact_entity_mentions_do_not_persist_contact_values() {
-    let db_path = temp_db_path("private-contact-mention");
-    let store = MetaStore::open(&db_path).unwrap();
-    store.run_migrations().unwrap();
+    let data_dir = temp_data_dir("private-contact-mention");
+    let store = open_owned_store(&data_dir);
     let document = document(
         "private-contact-mention-document",
         false,
@@ -1777,7 +1720,7 @@ fn contact_entity_mentions_do_not_persist_contact_values() {
     );
     let version = resume_version("private-contact-mention-version", document.id.clone());
     store.upsert_document(&document).unwrap();
-    insert_resume_version(&store, &version);
+    insert_resume_version_owned(&store, &version);
 
     let email = entity_mention(
         "private-email",
@@ -1867,19 +1810,27 @@ fn contact_entity_mentions_do_not_persist_contact_values() {
     assert!(!joined.contains("Candidate_2026"));
     assert!(!joined.contains("candidate_2026"));
 
-    let raw_connection = open_raw_connection(&db_path);
-    let raw_dump = raw_entity_mention_value_dump(&raw_connection);
-    assert!(raw_dump.contains("<redacted:email>"));
-    assert!(raw_dump.contains("<redacted:phone>"));
-    assert!(raw_dump.contains("<redacted:wechat>"));
-    assert!(!raw_dump.contains("Sensitive.Candidate"));
-    assert!(!raw_dump.contains("sensitive.candidate@example.test"));
-    assert!(!raw_dump.contains("415"));
-    assert!(!raw_dump.contains("+14155550132"));
-    assert!(!raw_dump.contains("Candidate_2026"));
-    assert!(!raw_dump.contains("candidate_2026"));
+    drop(store);
+    let reader = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+    let persisted = reader.entity_mentions_for_version(&version.id).unwrap();
+    assert_eq!(persisted, mentions);
+    let persisted_dump = persisted
+        .iter()
+        .map(|mention| format!("{} {:?}", mention.raw_value, mention.normalized_value))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(persisted_dump.contains("<redacted:email>"));
+    assert!(persisted_dump.contains("<redacted:phone>"));
+    assert!(persisted_dump.contains("<redacted:wechat>"));
+    assert!(!persisted_dump.contains("Sensitive.Candidate"));
+    assert!(!persisted_dump.contains("sensitive.candidate@example.test"));
+    assert!(!persisted_dump.contains("415"));
+    assert!(!persisted_dump.contains("+14155550132"));
+    assert!(!persisted_dump.contains("Candidate_2026"));
+    assert!(!persisted_dump.contains("candidate_2026"));
 
-    remove_temp_db(&db_path);
+    drop(reader);
+    remove_temp_dir(&data_dir);
 }
 
 #[test]
@@ -1991,7 +1942,7 @@ fn job_status_updates_set_timestamps_and_reject_terminal_transitions() {
 
 #[test]
 fn status_summary_aggregates_documents_jobs_imports_and_search_projection() {
-    let store = migrated_store();
+    let (_directory, store) = support::owned_store();
     let now = UnixTimestamp::from_unix_seconds(1_800_000_000);
     let searchable = document(
         "status-searchable-placeholder",
@@ -2037,10 +1988,10 @@ fn status_summary_aggregates_documents_jobs_imports_and_search_projection() {
         store.upsert_document(&document).unwrap();
     }
     let searchable_version = resume_version("status-searchable-version", searchable.id.clone());
-    insert_resume_version(&store, &searchable_version);
+    insert_resume_version_owned(&store, &searchable_version);
     let embedding_version =
         resume_version("status-embedding-version", embedding_waiting.id.clone());
-    insert_resume_version(&store, &embedding_version);
+    insert_resume_version_owned(&store, &embedding_version);
     store
         .enqueue_embedding_job_for_resume_version(
             &embedding_waiting.id,
@@ -2066,14 +2017,13 @@ fn status_summary_aggregates_documents_jobs_imports_and_search_projection() {
     );
     store.insert_ingest_job(&running).unwrap();
     store.insert_ingest_job(&exhausted).unwrap();
-    store
-        .insert_import_task(&import_task(
-            "status-import-placeholder",
-            "synthetic/import/root",
-            ImportTaskStatus::Queued,
-        ))
-        .unwrap();
+    let queued_import = import_task(
+        "status-import-placeholder",
+        "synthetic/import/root",
+        ImportTaskStatus::Queued,
+    );
     publish_active_versions(&store, &[&searchable_version]);
+    support::insert_import_task_owned(&store, &queued_import);
 
     let summary = store.status_summary().unwrap();
 
@@ -2097,40 +2047,8 @@ fn status_summary_aggregates_documents_jobs_imports_and_search_projection() {
 }
 
 #[test]
-fn query_observations_are_aggregated_without_query_text() {
-    let store = migrated_store();
-    let now = UnixTimestamp::from_unix_seconds(1_800_010_000);
-
-    for (offset, duration_ms, result_count) in [(0, 5, 2), (1, 20, 1), (2, 100, 0), (3, 200, 4)] {
-        store
-            .record_query_observation(
-                "fulltext",
-                Duration::from_millis(duration_ms),
-                result_count,
-                UnixTimestamp::from_unix_seconds(now.as_unix_seconds() + offset),
-            )
-            .unwrap();
-    }
-
-    let summary = store.status_summary().unwrap();
-
-    assert_eq!(summary.query_latency.sample_count, 4);
-    assert_eq!(summary.query_latency.p50_ms, Some(20));
-    assert_eq!(summary.query_latency.p95_ms, Some(200));
-    assert_eq!(summary.query_latency.p99_ms, Some(200));
-    assert_eq!(summary.query_latency.last_result_count, Some(4));
-    assert_eq!(
-        summary.query_latency.last_observed_at,
-        Some(UnixTimestamp::from_unix_seconds(1_800_010_003))
-    );
-    assert!(store
-        .record_query_observation("private query text", Duration::from_millis(1), 0, now,)
-        .is_err());
-}
-
-#[test]
 fn import_tasks_persist_without_document_foreign_key() {
-    let db_path = temp_db_path("import-task-placeholder");
+    let data_dir = temp_data_dir("import-task-placeholder");
     let task = import_task(
         "import-reopen-placeholder",
         "synthetic/import/root",
@@ -2138,9 +2056,8 @@ fn import_tasks_persist_without_document_foreign_key() {
     );
 
     {
-        let store = MetaStore::open(&db_path).unwrap();
-        store.run_migrations().unwrap();
-        store.insert_import_task(&task).unwrap();
+        let store = open_owned_store(&data_dir);
+        support::insert_import_task_owned(&store, &task);
         assert_eq!(
             store.import_task_by_id(&task.id).unwrap(),
             Some(task.clone())
@@ -2148,18 +2065,17 @@ fn import_tasks_persist_without_document_foreign_key() {
     }
 
     {
-        let reopened = MetaStore::open(&db_path).unwrap();
-        reopened.run_migrations().unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 27);
+        let reopened = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+        assert_eq!(reopened.schema_version().unwrap(), 28);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
 
-    remove_temp_db(&db_path);
+    remove_temp_dir(&data_dir);
 }
 
 #[test]
-fn purge_import_tasks_for_deleted_document_roots_keeps_roots_with_visible_documents() {
+fn purge_import_tasks_for_deleted_documents_keeps_unrelated_roots_with_visible_documents() {
     let store = migrated_store();
     let root_path = "synthetic/import/root";
     let mut first_document = document("purge-import-root-first", true, DocumentStatus::Deleted);
@@ -2178,9 +2094,9 @@ fn purge_import_tasks_for_deleted_document_roots_keeps_roots_with_visible_docume
 
     store.upsert_document(&first_document).unwrap();
     store.upsert_document(&second_document).unwrap();
-    store.insert_import_task(&task).unwrap();
+    support::insert_import_task(&store, &task);
     let retained = store
-        .purge_import_tasks_for_deleted_document_roots(std::slice::from_ref(&first_document.id))
+        .purge_import_tasks_for_deleted_documents(std::slice::from_ref(&first_document.id))
         .unwrap();
 
     assert_eq!(retained.tasks(), 0);
@@ -2191,7 +2107,7 @@ fn purge_import_tasks_for_deleted_document_roots_keeps_roots_with_visible_docume
     second_document.updated_at = UnixTimestamp::from_unix_seconds(1_800_014_020);
     store.upsert_document(&second_document).unwrap();
     let purged = store
-        .purge_import_tasks_for_deleted_document_roots(&[first_document.id, second_document.id])
+        .purge_import_tasks_for_deleted_documents(&[first_document.id, second_document.id])
         .unwrap();
 
     assert_eq!(purged.tasks(), 1);
@@ -2211,9 +2127,9 @@ fn purge_import_tasks_matches_windows_canonical_root_to_normalized_document_path
     );
 
     store.upsert_document(&document).unwrap();
-    store.insert_import_task(&task).unwrap();
+    support::insert_import_task(&store, &task);
     let purged = store
-        .purge_import_tasks_for_deleted_document_roots(std::slice::from_ref(&document.id))
+        .purge_import_tasks_for_deleted_documents(std::slice::from_ref(&document.id))
         .unwrap();
 
     assert_eq!(purged.tasks(), 1);
@@ -2222,19 +2138,20 @@ fn purge_import_tasks_matches_windows_canonical_root_to_normalized_document_path
 
 #[test]
 fn import_task_status_updates_support_completion_and_retry() {
-    let store = migrated_store();
+    let (_directory, store) = support::owned_store();
     let task = import_task(
         "import-status-update-placeholder",
         "synthetic/import/root",
         ImportTaskStatus::Queued,
     );
-    store.insert_import_task(&task).unwrap();
+    support::insert_import_task_owned(&store, &task);
+    let contract = support::processing_contract();
 
     let started_at = UnixTimestamp::from_unix_seconds(1_800_000_010);
-    store
-        .update_import_task_status(&task.id, ImportTaskStatus::Running, started_at)
+    let running = store
+        .claim_observed_import_task_for_worker(&task, started_at)
         .unwrap();
-    let running = store.import_task_by_id(&task.id).unwrap().unwrap();
+    let running = running.unwrap();
     assert_eq!(running.status, ImportTaskStatus::Running);
     assert_eq!(running.started_at, Some(started_at));
     assert_eq!(running.finished_at, None);
@@ -2257,17 +2174,25 @@ fn import_task_status_updates_support_completion_and_retry() {
     assert_eq!(store.status_summary().unwrap().import_tasks_recoverable, 1);
 
     let restarted_at = UnixTimestamp::from_unix_seconds(1_800_000_030);
-    store
-        .update_import_task_status(&task.id, ImportTaskStatus::Running, restarted_at)
+    let restarted = store
+        .claim_observed_import_task_for_worker(&retryable, restarted_at)
         .unwrap();
-    let restarted = store.import_task_by_id(&task.id).unwrap().unwrap();
+    let restarted = restarted.unwrap();
     assert_eq!(restarted.status, ImportTaskStatus::Running);
     assert_eq!(restarted.started_at, Some(restarted_at));
     assert_eq!(restarted.finished_at, None);
 
     let completed_at = UnixTimestamp::from_unix_seconds(1_800_000_040);
     store
-        .update_import_task_status(&task.id, ImportTaskStatus::Completed, completed_at)
+        .complete_import_task(
+            &task.id,
+            contract.id(),
+            &support::import_scan_scope(&ImportTask {
+                updated_at: completed_at,
+                ..restarted.clone()
+            }),
+            completed_at,
+        )
         .unwrap();
     let completed = store.import_task_by_id(&task.id).unwrap().unwrap();
     assert_eq!(completed.status, ImportTaskStatus::Completed);
@@ -2288,26 +2213,26 @@ fn import_task_status_updates_support_completion_and_retry() {
         "synthetic/import/root",
         ImportTaskStatus::Queued,
     );
-    store.insert_import_task(&time_travel_task).unwrap();
+    support::insert_import_task_owned(&store, &time_travel_task);
     let before_queue = UnixTimestamp::from_unix_seconds(1_799_999_999);
-    assert_redacted_store_error(
-        store
-            .update_import_task_status(
-                &time_travel_task.id,
-                ImportTaskStatus::Running,
-                before_queue,
-            )
-            .unwrap_err(),
+    let clock_safe_claim = store
+        .claim_observed_import_task_for_worker(&time_travel_task, before_queue)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        clock_safe_claim.started_at,
+        Some(time_travel_task.queued_at)
     );
 
-    let retryable_to_running_backwards =
-        store.update_import_task_status(&task.id, ImportTaskStatus::Running, retry_at);
-    assert_redacted_store_error(retryable_to_running_backwards.unwrap_err());
+    assert!(store
+        .claim_observed_import_task_for_worker(&retryable, retry_at)
+        .unwrap()
+        .is_none());
 }
 
 #[test]
 fn cancelled_import_tasks_are_not_claimed_or_reported_as_queued() {
-    let store = migrated_store();
+    let (_directory, store) = support::owned_store();
     let cancel_at = UnixTimestamp::from_unix_seconds(1_800_000_050);
     let claim_at = UnixTimestamp::from_unix_seconds(1_800_000_060);
     let queued = import_task(
@@ -2324,8 +2249,8 @@ fn cancelled_import_tasks_are_not_claimed_or_reported_as_queued() {
     retryable.finished_at = Some(UnixTimestamp::from_unix_seconds(1_800_000_020));
     retryable.updated_at = UnixTimestamp::from_unix_seconds(1_800_000_020);
 
-    store.insert_import_task(&queued).unwrap();
-    store.insert_import_task(&retryable).unwrap();
+    support::insert_import_task_owned(&store, &queued);
+    support::insert_import_task_owned(&store, &retryable);
 
     assert!(store.cancel_import_task(&queued.id, cancel_at).unwrap());
     assert!(store.is_import_task_cancelled(&queued.id).unwrap());
@@ -2340,7 +2265,7 @@ fn cancelled_import_tasks_are_not_claimed_or_reported_as_queued() {
     );
     assert_eq!(
         store
-            .claim_next_import_task_for_worker_excluding_due_at(claim_at, claim_at, &[])
+            .import_task_claim_candidate_for_worker_excluding_due_at(claim_at, &[])
             .unwrap(),
         None
     );
@@ -2352,7 +2277,7 @@ fn cancelled_import_tasks_are_not_claimed_or_reported_as_queued() {
 
 #[test]
 fn running_import_task_cancellation_is_recorded_and_removed_from_recovery() {
-    let store = migrated_store();
+    let (_directory, store) = support::owned_store();
     let started_at = UnixTimestamp::from_unix_seconds(1_800_000_010);
     let cancel_at = UnixTimestamp::from_unix_seconds(1_800_000_020);
     let mut running = import_task(
@@ -2363,7 +2288,7 @@ fn running_import_task_cancellation_is_recorded_and_removed_from_recovery() {
     running.started_at = Some(started_at);
     running.updated_at = started_at;
 
-    store.insert_import_task(&running).unwrap();
+    support::insert_import_task_owned(&store, &running);
 
     assert!(store.cancel_import_task(&running.id, cancel_at).unwrap());
     assert!(store.is_import_task_cancelled(&running.id).unwrap());
@@ -2381,7 +2306,7 @@ fn running_import_task_cancellation_is_recorded_and_removed_from_recovery() {
 
 #[test]
 fn import_worker_claim_atomically_marks_next_task_running_and_skips_attempted_tasks() {
-    let store = migrated_store();
+    let (_directory, store) = support::owned_store();
     let timestamp = UnixTimestamp::from_unix_seconds(1_800_000_000);
     let mut running = import_task(
         "next-import-running",
@@ -2409,14 +2334,18 @@ fn import_worker_claim_atomically_marks_next_task_running_and_skips_attempted_ta
         ImportTaskStatus::Queued,
     );
 
-    store.insert_import_task(&running).unwrap();
-    store.insert_import_task(&completed).unwrap();
-    store.insert_import_task(&retryable).unwrap();
-    store.insert_import_task(&queued).unwrap();
+    support::insert_import_task_owned(&store, &running);
+    support::insert_import_task_owned(&store, &completed);
+    support::insert_import_task_owned(&store, &retryable);
+    support::insert_import_task_owned(&store, &queued);
 
     let claim_at = UnixTimestamp::from_unix_seconds(1_900_000_000);
+    let candidate = store
+        .import_task_claim_candidate_for_worker_excluding_due_at(claim_at, &[])
+        .unwrap()
+        .unwrap();
     let claimed = store
-        .claim_next_import_task_for_worker(claim_at)
+        .claim_observed_import_task_for_worker(&candidate, claim_at)
         .unwrap()
         .unwrap();
     assert_eq!(claimed.id, queued.id.clone());
@@ -2427,8 +2356,15 @@ fn import_worker_claim_atomically_marks_next_task_running_and_skips_attempted_ta
         ImportTaskStatus::Running
     );
 
+    let retryable_candidate = store
+        .import_task_claim_candidate_for_worker_excluding_due_at(
+            claim_at,
+            std::slice::from_ref(&queued.id),
+        )
+        .unwrap()
+        .unwrap();
     let claimed_retryable = store
-        .claim_next_import_task_for_worker_excluding(claim_at, std::slice::from_ref(&queued.id))
+        .claim_observed_import_task_for_worker(&retryable_candidate, claim_at)
         .unwrap()
         .unwrap();
     assert_eq!(claimed_retryable.id, retryable.id);
@@ -2437,7 +2373,7 @@ fn import_worker_claim_atomically_marks_next_task_running_and_skips_attempted_ta
 
 #[test]
 fn import_worker_claim_respects_retryable_due_time_without_delaying_queued_tasks() {
-    let store = migrated_store();
+    let (_directory, store) = support::owned_store();
     let timestamp = UnixTimestamp::from_unix_seconds(1_800_000_000);
     let mut retryable = import_task(
         "retryable-not-due",
@@ -2452,21 +2388,24 @@ fn import_worker_claim_respects_retryable_due_time_without_delaying_queued_tasks
         ImportTaskStatus::Queued,
     );
 
-    store.insert_import_task(&retryable).unwrap();
-    store.insert_import_task(&queued).unwrap();
+    support::insert_import_task_owned(&store, &retryable);
+    support::insert_import_task_owned(&store, &queued);
 
     let claim_at = UnixTimestamp::from_unix_seconds(1_900_000_000);
     let retryable_not_due = UnixTimestamp::from_unix_seconds(1_799_999_999);
+    let candidate = store
+        .import_task_claim_candidate_for_worker_excluding_due_at(retryable_not_due, &[])
+        .unwrap()
+        .unwrap();
     let claimed = store
-        .claim_next_import_task_for_worker_excluding_due_at(claim_at, retryable_not_due, &[])
+        .claim_observed_import_task_for_worker(&candidate, claim_at)
         .unwrap()
         .unwrap();
     assert_eq!(claimed.id, queued.id);
     assert_eq!(claimed.status, ImportTaskStatus::Running);
 
     assert!(store
-        .claim_next_import_task_for_worker_excluding_due_at(
-            claim_at,
+        .import_task_claim_candidate_for_worker_excluding_due_at(
             retryable_not_due,
             std::slice::from_ref(&claimed.id),
         )
@@ -2474,12 +2413,15 @@ fn import_worker_claim_respects_retryable_due_time_without_delaying_queued_tasks
         .is_none());
 
     let retryable_due = UnixTimestamp::from_unix_seconds(1_800_000_000);
-    let claimed_retryable = store
-        .claim_next_import_task_for_worker_excluding_due_at(
-            claim_at,
+    let retryable_candidate = store
+        .import_task_claim_candidate_for_worker_excluding_due_at(
             retryable_due,
             std::slice::from_ref(&claimed.id),
         )
+        .unwrap()
+        .unwrap();
+    let claimed_retryable = store
+        .claim_observed_import_task_for_worker(&retryable_candidate, claim_at)
         .unwrap()
         .unwrap();
     assert_eq!(claimed_retryable.id, retryable.id);
@@ -2487,71 +2429,484 @@ fn import_worker_claim_respects_retryable_due_time_without_delaying_queued_tasks
 }
 
 #[test]
-fn stale_running_import_tasks_can_be_recovered_for_worker_retry() {
-    let store = migrated_store();
-    let started_at = UnixTimestamp::from_unix_seconds(1_800_000_000);
-    let fresh_updated_at = UnixTimestamp::from_unix_seconds(1_900_000_000);
-    let recovered_at = UnixTimestamp::from_unix_seconds(2_000_000_000);
-    let stale_cutoff = UnixTimestamp::from_unix_seconds(1_850_000_000);
-    let mut stale_running = import_task(
-        "stale-running",
-        "synthetic/import/stale",
+fn orphaned_running_import_tasks_are_listed_and_atomically_requeued() {
+    let (_directory, store) = support::owned_store();
+    let started_at = UnixTimestamp::from_unix_seconds(1_800_000_010);
+    let cancel_at = UnixTimestamp::from_unix_seconds(1_800_000_020);
+    let requeued_at = UnixTimestamp::from_unix_seconds(1_800_000_030);
+    let mut orphaned = import_task(
+        "orphaned-running",
+        "synthetic/import/orphaned",
         ImportTaskStatus::Running,
     );
-    stale_running.started_at = Some(started_at);
-    let mut fresh_running = import_task(
-        "fresh-running",
-        "synthetic/import/fresh",
+    orphaned.started_at = Some(started_at);
+    orphaned.updated_at = started_at;
+    let mut cancelled = import_task(
+        "cancelled-running-not-orphaned",
+        "synthetic/import/cancelled-running",
         ImportTaskStatus::Running,
     );
-    fresh_running.started_at = Some(started_at);
-    fresh_running.updated_at = fresh_updated_at;
+    cancelled.started_at = Some(started_at);
+    cancelled.updated_at = started_at;
+    let queued = import_task(
+        "queued-not-orphaned",
+        "synthetic/import/queued",
+        ImportTaskStatus::Queued,
+    );
 
-    store.insert_import_task(&stale_running).unwrap();
-    store.insert_import_task(&fresh_running).unwrap();
+    support::insert_import_task_owned(&store, &orphaned);
+    support::insert_import_task_owned(&store, &cancelled);
+    support::insert_import_task_owned(&store, &queued);
+    assert!(store.cancel_import_task(&cancelled.id, cancel_at).unwrap());
 
-    let recovered = store
-        .recover_stale_running_import_tasks(recovered_at, stale_cutoff)
-        .unwrap();
-    assert_eq!(recovered, 1);
+    assert_eq!(
+        store.running_import_task_ids().unwrap(),
+        vec![orphaned.id.clone()]
+    );
+    assert!(store
+        .requeue_running_import_task(&orphaned.id, started_at, requeued_at)
+        .unwrap());
+    assert!(!store
+        .requeue_running_import_task(&orphaned.id, started_at, requeued_at)
+        .unwrap());
+    assert!(!store
+        .requeue_running_import_task(&cancelled.id, cancel_at, requeued_at)
+        .unwrap());
 
-    let stale = store.import_task_by_id(&stale_running.id).unwrap().unwrap();
-    assert_eq!(stale.status, ImportTaskStatus::FailedRetryable);
-    assert_eq!(stale.finished_at, Some(recovered_at));
-    assert_eq!(stale.updated_at, recovered_at);
-    let fresh = store.import_task_by_id(&fresh_running.id).unwrap().unwrap();
-    assert_eq!(fresh.status, ImportTaskStatus::Running);
-    assert_eq!(fresh.finished_at, None);
+    let recovered = store.import_task_by_id(&orphaned.id).unwrap().unwrap();
+    assert_eq!(recovered.status, ImportTaskStatus::Queued);
+    assert_eq!(recovered.started_at, None);
+    assert_eq!(recovered.finished_at, None);
+    assert_eq!(recovered.updated_at, requeued_at);
+    assert_eq!(store.running_import_task_ids().unwrap(), Vec::new());
+
+    let still_cancelled = store.import_task_by_id(&cancelled.id).unwrap().unwrap();
+    assert_eq!(still_cancelled.status, ImportTaskStatus::Running);
+    assert_eq!(still_cancelled.started_at, Some(started_at));
+    assert_eq!(still_cancelled.finished_at, None);
+    assert_eq!(still_cancelled.updated_at, cancel_at);
 }
 
 #[test]
-fn running_import_task_heartbeat_prevents_stale_recovery() {
-    let store = migrated_store();
-    let started_at = UnixTimestamp::from_unix_seconds(1_800_000_000);
-    let heartbeat_at = UnixTimestamp::from_unix_seconds(1_900_000_000);
-    let recovered_at = UnixTimestamp::from_unix_seconds(2_000_000_000);
-    let stale_cutoff = UnixTimestamp::from_unix_seconds(1_850_000_000);
+fn orphan_requeue_uses_observed_version_and_survives_clock_rollback() {
+    let (_directory, store) = support::owned_store();
+    let observed_at = UnixTimestamp::from_unix_seconds(1_900_000_000);
+    let recovery_clock = UnixTimestamp::from_unix_seconds(1_800_000_000);
     let mut running = import_task(
-        "heartbeat-running",
-        "synthetic/import/heartbeat",
+        "orphaned-clock-rollback",
+        "synthetic/import/orphaned-clock-rollback",
         ImportTaskStatus::Running,
     );
-    running.started_at = Some(started_at);
+    running.started_at = Some(observed_at);
+    running.updated_at = observed_at;
+    support::insert_import_task_owned(&store, &running);
 
-    store.insert_import_task(&running).unwrap();
+    assert!(store
+        .requeue_running_import_task(&running.id, observed_at, recovery_clock)
+        .unwrap());
+    let recovered = store.import_task_by_id(&running.id).unwrap().unwrap();
+    assert_eq!(recovered.status, ImportTaskStatus::Queued);
+    assert_eq!(recovered.updated_at, observed_at);
+    let candidate = store
+        .import_task_claim_candidate_for_worker_excluding_due_at(recovery_clock, &[])
+        .unwrap()
+        .unwrap();
+    let claimed = store
+        .claim_observed_import_task_for_worker(&candidate, recovery_clock)
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.status, ImportTaskStatus::Running);
+    assert_eq!(claimed.started_at, Some(observed_at));
+    assert_eq!(claimed.updated_at, observed_at);
+}
 
+#[test]
+fn orphan_requeue_rejects_a_task_changed_after_observation() {
+    let (_directory, store) = support::owned_store();
+    let observed_at = UnixTimestamp::from_unix_seconds(1_800_000_000);
+    let heartbeat_at = UnixTimestamp::from_unix_seconds(1_800_000_010);
+    let recovery_at = UnixTimestamp::from_unix_seconds(1_800_000_020);
+    let mut running = import_task(
+        "orphaned-observation-race",
+        "synthetic/import/orphaned-observation-race",
+        ImportTaskStatus::Running,
+    );
+    running.started_at = Some(observed_at);
+    running.updated_at = observed_at;
+    support::insert_import_task_owned(&store, &running);
     assert!(store
         .heartbeat_running_import_task(&running.id, heartbeat_at)
         .unwrap());
-    let recovered = store
-        .recover_stale_running_import_tasks(recovered_at, stale_cutoff)
-        .unwrap();
-    assert_eq!(recovered, 0);
 
-    let task = store.import_task_by_id(&running.id).unwrap().unwrap();
-    assert_eq!(task.status, ImportTaskStatus::Running);
-    assert_eq!(task.updated_at, heartbeat_at);
-    assert_eq!(task.finished_at, None);
+    assert!(!store
+        .requeue_running_import_task(&running.id, observed_at, recovery_at)
+        .unwrap());
+    let still_running = store.import_task_by_id(&running.id).unwrap().unwrap();
+    assert_eq!(still_running.status, ImportTaskStatus::Running);
+    assert_eq!(still_running.updated_at, heartbeat_at);
+}
+
+#[test]
+fn interrupted_requeue_uses_the_exact_failed_attempt_observation() {
+    let (_directory, store) = support::owned_store();
+    let observed_at = UnixTimestamp::from_unix_seconds(1_800_000_000);
+    let newer_attempt_at = UnixTimestamp::from_unix_seconds(1_800_000_010);
+    let shutdown_at = UnixTimestamp::from_unix_seconds(1_800_000_020);
+    let mut interrupted = import_task(
+        "interrupted-observation-race",
+        "synthetic/import/interrupted-observation-race",
+        ImportTaskStatus::FailedRetryable,
+    );
+    interrupted.started_at = Some(observed_at);
+    interrupted.finished_at = Some(observed_at);
+    interrupted.updated_at = observed_at;
+    support::insert_import_task_owned(&store, &interrupted);
+    let restarted = store
+        .claim_observed_import_task_for_worker(&interrupted, newer_attempt_at)
+        .unwrap();
+    assert!(restarted.is_some());
+    store
+        .update_import_task_status(
+            &interrupted.id,
+            ImportTaskStatus::FailedRetryable,
+            newer_attempt_at,
+        )
+        .unwrap();
+
+    assert!(!store
+        .requeue_interrupted_import_task(&interrupted.id, observed_at, shutdown_at)
+        .unwrap());
+    let current = store.import_task_by_id(&interrupted.id).unwrap().unwrap();
+    assert_eq!(current.status, ImportTaskStatus::FailedRetryable);
+    assert_eq!(current.updated_at, newer_attempt_at);
+
+    assert!(store
+        .requeue_interrupted_import_task(&interrupted.id, newer_attempt_at, shutdown_at)
+        .unwrap());
+    let requeued = store.import_task_by_id(&interrupted.id).unwrap().unwrap();
+    assert_eq!(requeued.status, ImportTaskStatus::Queued);
+    assert_eq!(requeued.updated_at, shutdown_at);
+}
+
+#[test]
+fn migration_publication_barrier_requires_the_latest_task_for_every_root_to_complete() {
+    let store = migrated_store();
+    let contract = support::activate_processing_contract(
+        &store,
+        UnixTimestamp::from_unix_seconds(1_799_999_999),
+    );
+    assert!(store
+        .acquire_migration_rebuild_barrier_token(contract.id())
+        .unwrap()
+        .is_some());
+    let root_path = "synthetic/import/migration-barrier";
+    let first = import_task(
+        "migration-barrier-first",
+        root_path,
+        ImportTaskStatus::Queued,
+    );
+    let scope = ImportScanScope {
+        import_task_id: first.id.clone(),
+        root_kind: ImportRootKind::Explicit,
+        root_preset: None,
+        scan_profile: ImportScanProfile::Explicit,
+        requested_root_path: root_path.to_string(),
+        canonical_root_path: root_path.to_string(),
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        scan_budget_kind: None,
+        scan_budget_limit: None,
+        scan_budget_observed: None,
+        scan_budget_exhausted: false,
+        updated_at: first.updated_at,
+    };
+    support::insert_migration_rebuild_import_task_with_scan_scope(&store, &first, &scope);
+    assert!(store
+        .acquire_migration_rebuild_barrier_token(contract.id())
+        .unwrap()
+        .is_none());
+    support::complete_import_task_with_empty_manifest(
+        &store,
+        &first,
+        UnixTimestamp::from_unix_seconds(1_800_000_001),
+        UnixTimestamp::from_unix_seconds(1_800_000_002),
+    );
+    assert!(store
+        .acquire_migration_rebuild_barrier_token(contract.id())
+        .unwrap()
+        .is_some());
+
+    let mut retry = import_task(
+        "migration-barrier-retry",
+        root_path,
+        ImportTaskStatus::FailedRetryable,
+    );
+    retry.queued_at = UnixTimestamp::from_unix_seconds(1_700_000_000);
+    retry.started_at = Some(retry.queued_at);
+    retry.finished_at = Some(retry.queued_at);
+    retry.updated_at = retry.queued_at;
+    let mut retry_scope = migration_scan_scope(&retry);
+    retry_scope.requested_root_path = "synthetic/import/migration-barrier-retry".to_string();
+    support::insert_migration_rebuild_import_task_with_scan_scope(&store, &retry, &retry_scope);
+    assert!(store
+        .acquire_migration_rebuild_barrier_token(contract.id())
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn migration_barrier_rejects_an_unfinished_full_corpus_task() {
+    let store = migrated_store();
+    let unknown = import_task(
+        "migration-unknown-root",
+        "synthetic/import/migration-unknown-root",
+        ImportTaskStatus::Queued,
+    );
+    support::insert_migration_rebuild_import_task_with_scan_scope(
+        &store,
+        &unknown,
+        &migration_scan_scope(&unknown),
+    );
+
+    assert!(store
+        .acquire_migration_rebuild_barrier_token(support::processing_contract().id())
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn migration_barrier_excludes_paused_roots_with_cancelled_queued_tasks() {
+    let store = migrated_store();
+    let active = import_task(
+        "migration-active-completed",
+        "synthetic/import/migration-active",
+        ImportTaskStatus::Queued,
+    );
+    support::insert_migration_rebuild_import_task_with_scan_scope(
+        &store,
+        &active,
+        &migration_scan_scope(&active),
+    );
+    support::complete_import_task_with_empty_manifest(
+        &store,
+        &active,
+        UnixTimestamp::from_unix_seconds(1_800_000_010),
+        UnixTimestamp::from_unix_seconds(1_800_000_011),
+    );
+
+    let paused = import_task(
+        "migration-paused-queued",
+        "synthetic/import/migration-paused",
+        ImportTaskStatus::Queued,
+    );
+    support::insert_migration_rebuild_import_task_with_scan_scope(
+        &store,
+        &paused,
+        &migration_scan_scope(&paused),
+    );
+    let update = store
+        .pause_import_root(
+            &paused.root_path,
+            UnixTimestamp::from_unix_seconds(1_800_000_020),
+        )
+        .unwrap();
+    assert_eq!(update.cancellation_requests, 1);
+
+    let token = store
+        .acquire_migration_rebuild_barrier_token(support::processing_contract().id())
+        .unwrap()
+        .expect("the paused root must be atomically outside the barrier");
+    let debug = format!("{token:?}");
+    assert!(!debug.contains(&active.root_path));
+    assert!(!debug.contains(&paused.root_path));
+}
+
+#[test]
+fn migration_barrier_rejects_completed_task_with_scan_errors() {
+    let store = migrated_store();
+    let task = import_task(
+        "migration-completed-scan-errors",
+        "synthetic/import/migration-scan-errors",
+        ImportTaskStatus::Queued,
+    );
+    let mut scope = migration_scan_scope(&task);
+    scope.scan_errors = 1;
+    support::insert_migration_rebuild_import_task_with_scan_scope(&store, &task, &scope);
+    support::complete_import_task_with_final_scope(
+        &store,
+        &task,
+        &scope,
+        UnixTimestamp::from_unix_seconds(1_800_000_010),
+        UnixTimestamp::from_unix_seconds(1_800_000_011),
+    );
+
+    assert!(store
+        .acquire_migration_rebuild_barrier_token(support::processing_contract().id())
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn migration_barrier_rejects_completed_task_with_exhausted_scan_budget() {
+    let store = migrated_store();
+    let task = import_task(
+        "migration-completed-budget-exhausted",
+        "synthetic/import/migration-budget-exhausted",
+        ImportTaskStatus::Queued,
+    );
+    let mut scope = migration_scan_scope(&task);
+    scope.scan_budget_kind = Some(ImportScanBudgetKind::Files);
+    scope.scan_budget_limit = Some(1);
+    scope.scan_budget_observed = Some(1);
+    scope.scan_budget_exhausted = true;
+    support::insert_migration_rebuild_import_task_with_scan_scope(&store, &task, &scope);
+    support::complete_import_task_with_final_scope(
+        &store,
+        &task,
+        &scope,
+        UnixTimestamp::from_unix_seconds(1_800_000_010),
+        UnixTimestamp::from_unix_seconds(1_800_000_011),
+    );
+
+    assert!(store
+        .acquire_migration_rebuild_barrier_token(support::processing_contract().id())
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn migration_commit_rejects_a_root_that_arrives_and_completes_during_snapshot_build() {
+    let (_directory, store) = support::owned_store();
+    let token = support::acquire_migration_rebuild_barrier_owned(
+        &store,
+        UnixTimestamp::from_unix_seconds(1_799_999_999),
+    );
+    let generation = "migration-new-root-race";
+    let session = prepare_empty_migration_publication(&store, generation);
+
+    let new_root = import_task(
+        "migration-new-root-completed",
+        "synthetic/import/migration-new-root",
+        ImportTaskStatus::Queued,
+    );
+    support::insert_migration_rebuild_import_task_with_scan_scope_owned(
+        &store,
+        &new_root,
+        &migration_scan_scope(&new_root),
+    );
+    support::complete_import_task_with_empty_manifest_owned(
+        &store,
+        &new_root,
+        UnixTimestamp::from_unix_seconds(1_800_000_030),
+        UnixTimestamp::from_unix_seconds(1_800_000_031),
+    );
+
+    assert_migration_commit_superseded(&session, generation, &token, 1_800_000_040);
+}
+
+#[test]
+fn migration_commit_rejects_a_changed_latest_task_head() {
+    let (_directory, store) = support::owned_store();
+    let first = import_task(
+        "migration-head-first",
+        "synthetic/import/migration-head",
+        ImportTaskStatus::Queued,
+    );
+    support::insert_migration_rebuild_import_task_with_scan_scope_owned(
+        &store,
+        &first,
+        &migration_scan_scope(&first),
+    );
+    support::complete_import_task_with_empty_manifest_owned(
+        &store,
+        &first,
+        UnixTimestamp::from_unix_seconds(1_800_000_010),
+        UnixTimestamp::from_unix_seconds(1_800_000_011),
+    );
+    let token = store
+        .acquire_migration_rebuild_barrier_token(support::processing_contract().id())
+        .unwrap()
+        .unwrap();
+    let generation = "migration-task-head-race";
+    let session = prepare_empty_migration_publication(&store, generation);
+
+    let second = import_task(
+        "migration-head-second",
+        &first.root_path,
+        ImportTaskStatus::Queued,
+    );
+    let mut second_scope = migration_scan_scope(&second);
+    second_scope.requested_root_path = "synthetic/import/migration-head-updated".to_string();
+    support::insert_migration_rebuild_import_task_with_scan_scope_owned(
+        &store,
+        &second,
+        &second_scope,
+    );
+    support::complete_import_task_with_empty_manifest_owned(
+        &store,
+        &second,
+        UnixTimestamp::from_unix_seconds(1_800_000_030),
+        UnixTimestamp::from_unix_seconds(1_800_000_031),
+    );
+
+    assert_migration_commit_superseded(&session, generation, &token, 1_800_000_040);
+}
+
+#[test]
+fn migration_commit_abandons_validated_publication_after_repair_blocked_race() {
+    let (_directory, store) = support::owned_store();
+    let token = support::acquire_migration_rebuild_barrier_owned(
+        &store,
+        UnixTimestamp::from_unix_seconds(1_799_999_999),
+    );
+    let generation = "migration-repair-blocked-race";
+    let session = prepare_empty_migration_publication(&store, generation);
+    store
+        .block_migration_rebuild(
+            SearchRepairReason::RuntimeInvariant,
+            UnixTimestamp::from_unix_seconds(1_800_000_030),
+        )
+        .unwrap();
+
+    assert_migration_commit_superseded(&session, generation, &token, 1_800_000_040);
+    let state = store.search_projection_state().unwrap();
+    assert_eq!(
+        state.service_state,
+        meta_store::SearchProjectionServiceState::RepairBlocked
+    );
+    assert_eq!(
+        state.repair_reason,
+        Some(SearchRepairReason::RuntimeInvariant)
+    );
+    assert_eq!(state.generation, None);
+}
+
+#[test]
+fn ordinary_publication_cannot_overwrite_repair_blocked() {
+    let (_directory, store) = support::owned_store();
+    let generation = "ordinary-repair-blocked";
+    let session = prepare_empty_migration_publication(&store, generation);
+    store
+        .block_migration_rebuild(
+            SearchRepairReason::SourceUnavailable,
+            UnixTimestamp::from_unix_seconds(1_800_000_030),
+        )
+        .unwrap();
+
+    let outcome = session
+        .commit_search_publication(&empty_publication_commit(generation, 1_800_000_040))
+        .unwrap();
+    assert_eq!(outcome, SearchPublicationOutcome::Superseded);
+    assert_eq!(
+        store.search_publication(generation).unwrap().unwrap().state,
+        SearchPublicationState::Abandoned
+    );
 }
 
 #[test]
@@ -2565,7 +2920,15 @@ fn import_task_api_rejects_invalid_lifecycle_timestamps() {
         ImportTaskStatus::Queued,
     );
     queued_with_started.started_at = Some(timestamp);
-    assert_redacted_store_error(store.insert_import_task(&queued_with_started).unwrap_err());
+    assert_redacted_store_error(
+        store
+            .insert_import_task_with_scan_scope(
+                &queued_with_started,
+                &support::import_scan_scope(&queued_with_started),
+                &support::processing_contract(),
+            )
+            .unwrap_err(),
+    );
 
     let mut completed_without_finish = import_task(
         "invalid-completed-placeholder",
@@ -2575,7 +2938,11 @@ fn import_task_api_rejects_invalid_lifecycle_timestamps() {
     completed_without_finish.started_at = Some(timestamp);
     assert_redacted_store_error(
         store
-            .insert_import_task(&completed_without_finish)
+            .insert_import_task_with_scan_scope(
+                &completed_without_finish,
+                &support::import_scan_scope(&completed_without_finish),
+                &support::processing_contract(),
+            )
             .unwrap_err(),
     );
 
@@ -2586,173 +2953,49 @@ fn import_task_api_rejects_invalid_lifecycle_timestamps() {
     );
     running_with_finish.started_at = Some(timestamp);
     running_with_finish.finished_at = Some(timestamp);
-    assert_redacted_store_error(store.insert_import_task(&running_with_finish).unwrap_err());
+    assert_redacted_store_error(
+        store
+            .insert_import_task_with_scan_scope(
+                &running_with_finish,
+                &support::import_scan_scope(&running_with_finish),
+                &support::processing_contract(),
+            )
+            .unwrap_err(),
+    );
 }
 
 #[test]
 fn file_backed_connection_sets_pragmas() {
-    let db_path = temp_db_path("pragma-placeholder");
+    let data_dir = temp_data_dir("pragma-placeholder");
     {
-        let store = MetaStore::open(&db_path).unwrap();
+        let store = open_owned_store(&data_dir);
 
         assert!(store.foreign_keys_enabled().unwrap());
         assert_eq!(store.busy_timeout_millis().unwrap(), 5_000);
-        assert_eq!(store.journal_mode().unwrap(), "wal");
+        assert_eq!(store.journal_mode().unwrap(), "delete");
     }
 
-    remove_temp_db(&db_path);
+    remove_temp_dir(&data_dir);
 }
 
 #[test]
-fn raw_sql_invalid_enum_and_quality_values_are_rejected() {
-    let db_path = temp_db_path("checks-placeholder");
-    {
-        let store = MetaStore::open(&db_path).unwrap();
-        store.run_migrations().unwrap();
-        let document = document(
-            "checks-document-placeholder",
-            false,
-            DocumentStatus::Discovered,
-        );
-        store.upsert_document(&document).unwrap();
-        store
-            .insert_source_revision(&source_revision(&document.id))
-            .unwrap();
-    }
+fn typed_write_rejects_out_of_range_resume_quality() {
+    let store = migrated_store();
+    let document = document(
+        "checks-document-placeholder",
+        false,
+        DocumentStatus::Discovered,
+    );
+    store.upsert_document(&document).unwrap();
+    let mut version = resume_version("checks-version-invalid-quality", document.id);
+    version.quality_score = Some(1.5);
 
-    {
-        let connection = open_raw_connection(&db_path);
-        let valid_document_id =
-            DocumentId::from_non_secret_parts(&["s3", "checks-document-placeholder"]);
-        let valid_version_id =
-            ResumeVersionId::from_non_secret_parts(&["s3", "checks-version-valid"]);
-        let revision = source_revision(&valid_document_id);
-        let normalized_text_hash = ContentDigest::from_bytes(b"checks-normalized-text");
-
-        expect_raw_rejection(connection.execute(
-            "\
-            INSERT INTO document (
-                id, source_uri, normalized_path, file_name, extension, byte_size, mtime_seconds,
-                is_deleted, created_at_seconds, updated_at_seconds, status
-            )
-            VALUES (?1, 'synthetic://invalid', 'synthetic/invalid.txt', 'invalid.txt', 'txt',
-                1, 1, 0, 1, 1, 'not_a_status')",
-            params![DocumentId::from_non_secret_parts(&["s3", "invalid-document"]).as_str()],
-        ));
-
-        expect_raw_rejection(connection.execute(
-            "\
-            INSERT INTO resume_version (
-                id, document_id, source_revision_id, normalized_text_hash,
-                parse_version, schema_version, language_set_json, clean_text, quality_score
-            )
-            VALUES (?1, ?2, ?3, ?4, 'parser-v1', 'schema-v27', '[]',
-                    'checks-normalized-text', 1.5)",
-            params![
-                valid_version_id.as_str(),
-                valid_document_id.as_str(),
-                revision.id.as_str(),
-                normalized_text_hash.as_str(),
-            ],
-        ));
-
-        expect_raw_rejection(connection.execute(
-            "\
-            INSERT INTO ingest_job (
-                id, document_id, kind, status, attempt_count, max_attempts,
-                queued_at_seconds, updated_at_seconds
-            )
-            VALUES (?1, ?2, 'not_kind', 'queued', 0, 3, 1, 1)",
-            params![
-                IngestJobId::from_non_secret_parts(&["s3", "invalid-kind"]).as_str(),
-                valid_document_id.as_str(),
-            ],
-        ));
-
-        expect_raw_rejection(connection.execute(
-            "\
-            INSERT INTO ingest_job (
-                id, document_id, kind, status, attempt_count, max_attempts,
-                queued_at_seconds, updated_at_seconds
-            )
-            VALUES (?1, ?2, 'parse_document', 'not_status', 0, 3, 1, 1)",
-            params![
-                IngestJobId::from_non_secret_parts(&["s3", "invalid-job-status"]).as_str(),
-                valid_document_id.as_str(),
-            ],
-        ));
-
-        expect_raw_rejection(connection.execute(
-            "\
-            UPDATE search_projection_state
-            SET service_state = 'not_a_service_state'
-            WHERE state_key = 'default'",
-            [],
-        ));
-
-        expect_raw_rejection(connection.execute(
-            "\
-            INSERT INTO import_task (
-                id, root_path, status, queued_at_seconds, updated_at_seconds
-            )
-            VALUES (?1, 'synthetic/import/root', 'not_import_status', 1, 1)",
-            params![ImportTaskId::from_non_secret_parts(&["s4", "invalid-import"]).as_str()],
-        ));
-
-        expect_raw_rejection(connection.execute(
-            "\
-            INSERT INTO import_task (
-                id, root_path, status, queued_at_seconds, started_at_seconds, updated_at_seconds
-            )
-            VALUES (?1, 'synthetic/import/root', 'queued', 1, 1, 1)",
-            params![
-                ImportTaskId::from_non_secret_parts(&["s4", "invalid-queued-started"]).as_str()
-            ],
-        ));
-
-        expect_raw_rejection(connection.execute(
-            "\
-            INSERT INTO import_task (
-                id, root_path, status, queued_at_seconds, started_at_seconds, updated_at_seconds
-            )
-            VALUES (?1, 'synthetic/import/root', 'completed', 1, 2, 3)",
-            params![
-                ImportTaskId::from_non_secret_parts(&["s4", "invalid-completed-missing-finished"])
-                    .as_str()
-            ],
-        ));
-
-        expect_raw_rejection(connection.execute(
-            "\
-            INSERT INTO import_task (
-                id, root_path, status, queued_at_seconds, started_at_seconds,
-                finished_at_seconds, updated_at_seconds
-            )
-            VALUES (?1, 'synthetic/import/root', 'running', 1, 2, 2, 3)",
-            params![
-                ImportTaskId::from_non_secret_parts(&["s4", "invalid-running-finished"]).as_str()
-            ],
-        ));
-
-        expect_raw_rejection(connection.execute(
-            "\
-            INSERT INTO import_task (
-                id, root_path, status, queued_at_seconds, started_at_seconds,
-                finished_at_seconds, updated_at_seconds
-            )
-            VALUES (?1, 'synthetic/import/root', 'completed', 3, 2, 4, 4)",
-            params![
-                ImportTaskId::from_non_secret_parts(&["s4", "invalid-timestamp-order"]).as_str()
-            ],
-        ));
-    }
-
-    remove_temp_db(&db_path);
+    assert_redacted_store_error(store.insert_resume_version(&version).unwrap_err());
 }
 
 #[test]
 fn foreign_keys_reject_missing_parents_and_delete_cascades_children() {
-    let db_path = temp_db_path("fk-placeholder");
+    let store = migrated_store();
     let document = document("fk-document-placeholder", false, DocumentStatus::Discovered);
     let version = resume_version("fk-version-placeholder", document.id.clone());
     let ingest_job = job(
@@ -2772,61 +3015,41 @@ fn foreign_keys_reject_missing_parents_and_delete_cascades_children() {
         review_disposition: ReviewDisposition::NotRequired,
     };
 
-    {
-        let store = MetaStore::open(&db_path).unwrap();
-        store.run_migrations().unwrap();
-        let missing_parent = source_revision(&DocumentId::from_non_secret_parts(&[
-            "s3",
-            "missing-parent",
-        ]));
-        assert_redacted_store_error(store.insert_source_revision(&missing_parent).unwrap_err());
+    let missing_parent = source_revision(&DocumentId::from_non_secret_parts(&[
+        "s3",
+        "missing-parent",
+    ]));
+    assert_redacted_store_error(store.insert_source_revision(&missing_parent).unwrap_err());
 
-        store.upsert_document(&document).unwrap();
-        insert_resume_version(&store, &version);
-        store.insert_ingest_job(&ingest_job).unwrap();
+    store.upsert_document(&document).unwrap();
+    insert_resume_version(&store, &version);
+    store.insert_ingest_job(&ingest_job).unwrap();
+    store
+        .insert_resume_version_classification(&classification)
+        .unwrap();
+
+    let mut deleted = document.clone();
+    deleted.is_deleted = true;
+    deleted.status = DocumentStatus::Deleted;
+    store.upsert_document(&deleted).unwrap();
+    assert_eq!(
+        store.purge_deleted_documents().unwrap().deleted_documents,
+        1
+    );
+    assert_eq!(store.document_by_id(&document.id).unwrap(), None);
+    assert_eq!(store.resume_version_by_id(&version.id).unwrap(), None);
+    assert_eq!(store.ingest_job_by_id(&ingest_job.id).unwrap(), None);
+    assert_eq!(
         store
-            .insert_resume_version_classification(&classification)
-            .unwrap();
-    }
-
-    {
-        let connection = open_raw_connection(&db_path);
-        for statement in [
-            "UPDATE resume_version_classification SET classifier_epoch = 'Invalid-Epoch'",
-            "UPDATE resume_version_classification SET status = 'needs_review'",
-            "INSERT INTO resume_version_classification_reason
-             SELECT resume_version_id, classifier_epoch, 1, 'unknown_reason'
-             FROM resume_version_classification",
-        ] {
-            assert!(connection.execute(statement, []).is_err());
-        }
-        connection
-            .execute(
-                "DELETE FROM document WHERE id = ?1",
-                params![document.id.as_str()],
-            )
-            .unwrap();
-    }
-
-    {
-        let reopened = MetaStore::open(&db_path).unwrap();
-        assert_eq!(reopened.document_by_id(&document.id).unwrap(), None);
-        assert_eq!(reopened.resume_version_by_id(&version.id).unwrap(), None);
-        assert_eq!(reopened.ingest_job_by_id(&ingest_job.id).unwrap(), None);
-        assert_eq!(
-            reopened
-                .resume_version_classification(&version.id, CLASSIFIER_EPOCH)
-                .unwrap(),
-            None
-        );
-    }
-
-    remove_temp_db(&db_path);
+            .resume_version_classification(&version.id, CLASSIFIER_EPOCH)
+            .unwrap(),
+        None
+    );
 }
 
 #[test]
 fn file_backed_store_recovers_unfinished_jobs_after_reopen() {
-    let db_path = temp_db_path("recovery-reopen-placeholder");
+    let data_dir = temp_data_dir("recovery-reopen-placeholder");
     let document = document(
         "recovery-reopen-document-placeholder",
         false,
@@ -2870,10 +3093,9 @@ fn file_backed_store_recovers_unfinished_jobs_after_reopen() {
     .finished_at(UnixTimestamp::from_unix_seconds(1_800_000_060));
 
     {
-        let store = MetaStore::open(&db_path).unwrap();
-        store.run_migrations().unwrap();
+        let store = open_owned_store(&data_dir);
         store.upsert_document(&document).unwrap();
-        insert_resume_version(&store, &version);
+        insert_resume_version_owned(&store, &version);
         for ingest_job in [
             running.clone(),
             interrupted.clone(),
@@ -2885,7 +3107,7 @@ fn file_backed_store_recovers_unfinished_jobs_after_reopen() {
     }
 
     {
-        let reopened = MetaStore::open(&db_path).unwrap();
+        let reopened = ReadMetaStore::open_data_dir(&data_dir).unwrap();
         assert_eq!(
             reopened.document_by_id(&document.id).unwrap(),
             Some(document)
@@ -2906,22 +3128,21 @@ fn file_backed_store_recovers_unfinished_jobs_after_reopen() {
         );
     }
 
-    remove_temp_db(&db_path);
+    remove_temp_dir(&data_dir);
 }
 
-fn migrated_store() -> MetaStore {
-    let store = MetaStore::open_in_memory().unwrap();
+fn migrated_store() -> EphemeralMetaStore {
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
     store.run_migrations().unwrap();
     store
 }
 
-fn temp_db_path(label: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-
-    std::env::temp_dir().join(format!("resume-ir-s3-{label}-{unique}.sqlite3"))
+fn open_owned_store(data_dir: &Path) -> OwnedMetaStore {
+    let owner = match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("synthetic data directory contended"),
+    };
+    owner.open_store().unwrap()
 }
 
 fn temp_data_dir(label: &str) -> PathBuf {
@@ -2941,12 +3162,6 @@ fn set_owner_only_file_permissions(path: &PathBuf) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
     #[cfg(not(unix))]
     let _ = path;
-}
-
-fn remove_temp_db(db_path: &PathBuf) {
-    let _ = fs::remove_file(db_path);
-    let _ = fs::remove_file(format!("{}-wal", db_path.display()));
-    let _ = fs::remove_file(format!("{}-shm", db_path.display()));
 }
 
 fn remove_temp_dir(path: &PathBuf) {
@@ -3004,18 +3219,6 @@ fn resume_version(label: &str, document_id: DocumentId) -> ResumeVersion {
     }
 }
 
-fn set_resume_text(version: &mut ResumeVersion, clean_text: &str) {
-    version.clean_text = Some(clean_text.to_string());
-    version.normalized_text_hash = ContentDigest::from_bytes(clean_text.as_bytes());
-    version.id = ResumeVersionId::from_content_identity(
-        &version.document_id,
-        &version.source_revision_id,
-        &version.normalized_text_hash,
-        &version.parse_version,
-        &version.schema_version,
-    );
-}
-
 fn source_revision(document_id: &DocumentId) -> SourceRevision {
     SourceRevision::for_content(
         document_id.clone(),
@@ -3024,7 +3227,7 @@ fn source_revision(document_id: &DocumentId) -> SourceRevision {
     )
 }
 
-fn insert_resume_version(store: &MetaStore, version: &ResumeVersion) {
+fn insert_resume_version(store: &EphemeralMetaStore, version: &ResumeVersion) {
     let revision = source_revision(&version.document_id);
     assert_eq!(version.source_revision_id, revision.id);
     assert!(matches!(
@@ -3037,7 +3240,20 @@ fn insert_resume_version(store: &MetaStore, version: &ResumeVersion) {
     ));
 }
 
-fn publish_active_versions(store: &MetaStore, versions: &[&ResumeVersion]) {
+fn insert_resume_version_owned(store: &OwnedMetaStore, version: &ResumeVersion) {
+    let revision = source_revision(&version.document_id);
+    assert_eq!(version.source_revision_id, revision.id);
+    assert!(matches!(
+        store.insert_source_revision(&revision).unwrap(),
+        IdentityInsertOutcome::Inserted | IdentityInsertOutcome::AlreadyPresent
+    ));
+    assert!(matches!(
+        store.insert_resume_version(version).unwrap(),
+        IdentityInsertOutcome::Inserted | IdentityInsertOutcome::AlreadyPresent
+    ));
+}
+
+fn publish_active_versions(store: &OwnedMetaStore, versions: &[&ResumeVersion]) {
     let projections = versions
         .iter()
         .map(|version| ActiveSearchProjection {
@@ -3068,9 +3284,14 @@ fn publish_active_versions(store: &MetaStore, versions: &[&ResumeVersion]) {
             )
         }))
         .unwrap();
+    let migration_barrier = support::acquire_migration_rebuild_barrier_owned(
+        store,
+        UnixTimestamp::from_unix_seconds(1_799_999_999),
+    );
     let generation = "s3-active-projection";
+    let session = store.wait_for_search_publication_session().unwrap();
     assert_eq!(
-        store
+        session
             .begin_search_publication(&SearchPublicationDraft {
                 generation: generation.to_string(),
                 base_generation: None,
@@ -3095,7 +3316,7 @@ fn publish_active_versions(store: &MetaStore, versions: &[&ResumeVersion]) {
         SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap(),
         ContentDigest::from_bytes(b"s3-vector-snapshot"),
     );
-    store
+    session
         .validate_search_publication(&SearchPublicationValidation {
             generation,
             fulltext: &fulltext,
@@ -3117,15 +3338,26 @@ fn publish_active_versions(store: &MetaStore, versions: &[&ResumeVersion]) {
             }
         })
         .collect::<Vec<_>>();
+    let commit_now = UnixTimestamp::from_unix_seconds(1_800_000_030);
+    let projected_documents = support::projected_documents_for_commit(
+        store,
+        &projections,
+        &terminal_documents,
+        commit_now,
+    );
     assert_eq!(
-        store
-            .commit_search_publication(&SearchPublicationCommit {
-                generation,
-                terminal_documents: &terminal_documents,
-                projections: &projections,
-                vector_coverage: &[],
-                now: UnixTimestamp::from_unix_seconds(1_800_000_030),
-            })
+        session
+            .commit_migration_rebuild_search_publication(
+                &SearchPublicationCommit {
+                    generation,
+                    terminal_documents: &terminal_documents,
+                    projections: &projections,
+                    projected_documents: &projected_documents,
+                    vector_coverage: &[],
+                    now: commit_now,
+                },
+                &migration_barrier,
+            )
             .unwrap(),
         SearchPublicationOutcome::Applied
     );
@@ -3198,6 +3430,110 @@ fn import_task(label: &str, root_path: &str, status: ImportTaskStatus) -> Import
     }
 }
 
+fn migration_scan_scope(task: &ImportTask) -> ImportScanScope {
+    ImportScanScope {
+        import_task_id: task.id.clone(),
+        root_kind: ImportRootKind::Explicit,
+        root_preset: None,
+        scan_profile: ImportScanProfile::Explicit,
+        requested_root_path: task.root_path.clone(),
+        canonical_root_path: task.root_path.clone(),
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        scan_budget_kind: None,
+        scan_budget_limit: None,
+        scan_budget_observed: None,
+        scan_budget_exhausted: false,
+        updated_at: task.updated_at,
+    }
+}
+
+fn prepare_empty_migration_publication(
+    store: &OwnedMetaStore,
+    generation: &str,
+) -> SearchPublicationSession {
+    let projection_digest = SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap();
+    let session = store.wait_for_search_publication_session().unwrap();
+    assert_eq!(
+        session
+            .begin_search_publication(&SearchPublicationDraft {
+                generation: generation.to_string(),
+                base_generation: None,
+                expected_visible_epoch: 0,
+                classifier_epoch: CLASSIFIER_EPOCH.to_string(),
+                projection_digest: projection_digest.clone(),
+                now: UnixTimestamp::from_unix_seconds(1_800_000_010),
+            })
+            .unwrap(),
+        SearchPublicationOutcome::Applied
+    );
+    let fulltext = FullTextSnapshotDescriptor::new(
+        generation.to_string(),
+        0,
+        projection_digest.clone(),
+        ContentDigest::from_bytes(b"empty-migration-fulltext"),
+    );
+    let vector = VectorSnapshotDescriptor::disabled(
+        generation.to_string(),
+        0,
+        projection_digest,
+        SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap(),
+        ContentDigest::from_bytes(b"empty-migration-vector"),
+    );
+    session
+        .validate_search_publication(&SearchPublicationValidation {
+            generation,
+            fulltext: &fulltext,
+            vector: &vector,
+            now: UnixTimestamp::from_unix_seconds(1_800_000_020),
+        })
+        .unwrap();
+    session
+}
+
+fn empty_publication_commit(generation: &str, now_seconds: i64) -> SearchPublicationCommit<'_> {
+    SearchPublicationCommit {
+        generation,
+        terminal_documents: &[],
+        projections: &[],
+        projected_documents: &[],
+        vector_coverage: &[],
+        now: UnixTimestamp::from_unix_seconds(now_seconds),
+    }
+}
+
+fn assert_migration_commit_superseded(
+    session: &SearchPublicationSession,
+    generation: &str,
+    token: &MigrationRebuildBarrierToken,
+    now_seconds: i64,
+) {
+    assert_eq!(
+        session
+            .commit_migration_rebuild_search_publication(
+                &empty_publication_commit(generation, now_seconds),
+                token,
+            )
+            .unwrap(),
+        SearchPublicationOutcome::Superseded
+    );
+    assert_eq!(
+        session
+            .owned_store()
+            .search_publication(generation)
+            .unwrap()
+            .unwrap()
+            .state,
+        SearchPublicationState::Abandoned
+    );
+}
+
 trait IngestJobTestExt {
     fn started_at(self, timestamp: UnixTimestamp) -> Self;
     fn finished_at(self, timestamp: UnixTimestamp) -> Self;
@@ -3225,34 +3561,6 @@ impl IngestJobTestExt for IngestJob {
         self.resume_version_id = Some(id);
         self
     }
-}
-
-fn open_raw_connection(db_path: &PathBuf) -> Connection {
-    let connection = Connection::open(db_path).unwrap();
-    connection
-        .execute_batch("PRAGMA foreign_keys = ON;")
-        .unwrap();
-    connection
-}
-
-fn raw_entity_mention_value_dump(connection: &Connection) -> String {
-    connection
-        .prepare("SELECT raw_value, normalized_value FROM entity_mention ORDER BY rowid")
-        .unwrap()
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
-        })
-        .unwrap()
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .unwrap()
-        .iter()
-        .map(|(raw, normalized)| format!("{raw} {normalized:?}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn expect_raw_rejection(result: rusqlite::Result<usize>) {
-    assert!(result.is_err());
 }
 
 fn assert_redacted_store_error(error: meta_store::MetaStoreError) {

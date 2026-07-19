@@ -188,12 +188,45 @@ CREATE TABLE active_search_projection (
     document_id TEXT PRIMARY KEY NOT NULL,
     resume_version_id TEXT NOT NULL,
     generation TEXT NOT NULL,
+    source_uri TEXT NOT NULL,
+    normalized_path TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    extension TEXT NOT NULL,
+    byte_size INTEGER NOT NULL CHECK (byte_size >= 0),
+    mtime_seconds INTEGER NOT NULL,
+    content_hash TEXT NOT NULL CHECK (
+        length(content_hash) = 71
+        AND substr(content_hash, 1, 7) = 'sha256:'
+        AND substr(content_hash, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
+    text_hash TEXT,
+    is_deleted INTEGER NOT NULL CHECK (is_deleted = 0),
+    created_at_seconds INTEGER NOT NULL,
+    updated_at_seconds INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status = 'searchable'),
     UNIQUE (resume_version_id),
     FOREIGN KEY (resume_version_id, document_id)
         REFERENCES resume_version(id, document_id) ON DELETE RESTRICT,
     FOREIGN KEY (generation)
         REFERENCES search_publication_journal(generation) ON DELETE RESTRICT
 );
+
+CREATE TRIGGER active_search_projection_exact_version_metadata
+BEFORE INSERT ON active_search_projection
+WHEN NOT EXISTS (
+    SELECT 1
+    FROM resume_version AS version
+    JOIN source_revision AS revision
+      ON revision.id = version.source_revision_id
+     AND revision.document_id = version.document_id
+    WHERE version.id = NEW.resume_version_id
+      AND version.document_id = NEW.document_id
+      AND revision.content_hash = NEW.content_hash
+      AND revision.byte_size = NEW.byte_size
+)
+BEGIN
+    SELECT RAISE(ABORT, 'active projection metadata must match exact source revision');
+END;
 
 CREATE TRIGGER active_search_projection_immutable_update
 BEFORE UPDATE ON active_search_projection
