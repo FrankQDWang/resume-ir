@@ -471,6 +471,26 @@ fn prepared_gc_releases_root_fence_before_commit() {
     )
     .unwrap();
     let retained = BTreeSet::from(["generation-retained".to_string()]);
+    let reader_root = index_root.clone();
+    let (reader_ready_tx, reader_ready_rx) = std::sync::mpsc::sync_channel(0);
+    let (reader_start_tx, reader_start_rx) = std::sync::mpsc::channel();
+    let (lease_acquired_tx, lease_acquired_rx) = std::sync::mpsc::channel();
+    let reader = thread::spawn(move || {
+        reader_ready_tx.send(()).unwrap();
+        reader_start_rx.recv().unwrap();
+        let lease = SnapshotReadLease::acquire(&reader_root).unwrap().unwrap();
+        lease_acquired_tx.send(()).unwrap();
+        let opened =
+            FullTextIndex::open_snapshot_with_lease(&reader_root, "generation-retained", lease)
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            opened.snapshot_metadata().unwrap().generation(),
+            "generation-retained"
+        );
+    });
+    reader_ready_rx.recv().unwrap();
+
     let acquisition = try_acquire_snapshot_gc(&index_root).unwrap().unwrap();
     let FullTextSnapshotGcPreparation::Prepared(prepared) =
         prepare_snapshot_gc(acquisition, &retained).unwrap()
@@ -478,22 +498,10 @@ fn prepared_gc_releases_root_fence_before_commit() {
         panic!("GC unexpectedly deferred");
     };
 
-    let reader_root = index_root.clone();
-    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
-    let reader = thread::spawn(move || {
-        let lease = SnapshotReadLease::acquire(&reader_root).unwrap().unwrap();
-        let opened =
-            FullTextIndex::open_snapshot_with_lease(&reader_root, "generation-retained", lease)
-                .unwrap()
-                .unwrap();
-        entered_tx
-            .send(opened.snapshot_metadata().unwrap().generation().to_string())
-            .unwrap();
-    });
-    assert_eq!(
-        entered_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
-        "generation-retained"
-    );
+    reader_start_tx.send(()).unwrap();
+    lease_acquired_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("snapshot read lease remained blocked after GC preparation");
     reader.join().unwrap();
 
     let summary = complete_gc_summary(commit_snapshot_gc(prepared));

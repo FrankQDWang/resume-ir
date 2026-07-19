@@ -3893,6 +3893,18 @@ guards, local runtime discovery, and PR #9 CI state.
   is the superseded non-converging migration behavior; only a merged, rebuilt
   and composition-verified 0.1.1 that makes the same probe reach ready may be
   handed to the user.
+- A subsequent complete local gate exposed one false coupling in the full-text
+  GC concurrency witness. The test's one-second root-fence barrier was not
+  signalled until a newly spawned reader had also opened and decoded a complete
+  Tantivy snapshot, so the 51-test parallel process could time out after the
+  lease had already succeeded. The exact case passed 10/10 in isolation and
+  the complete suite passed serially, ruling out a retained product fence.
+  The witness now pre-starts the reader, releases it only after GC preparation,
+  signals immediately after the exact read lease is acquired, and checks the
+  heavier snapshot open outside that barrier. No product lock, timeout, sleep
+  or retry changed. The exact case passes another 10/10 and the complete
+  51-test parallel suite passes three consecutive runs; the failed full gate
+  remains non-acceptance evidence until rerun on this test-only correction.
 
 ### S806
 
