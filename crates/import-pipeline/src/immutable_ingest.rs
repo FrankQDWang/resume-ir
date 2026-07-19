@@ -1,6 +1,7 @@
 use meta_store::{
-    ContactHash, ContentDigest, Document, EntityMention, MetaStore, Result, ResumeVersion,
-    ResumeVersionClassification, ResumeVersionId, SourceRevision, SourceRevisionTriage,
+    ContactHash, ContentDigest, Document, EntityMention, ImmutableIngestStage, OwnedMetaStore,
+    Result, ResumeVersion, ResumeVersionClassification, ResumeVersionId, SourceRevision,
+    SourceRevisionTriage,
 };
 
 /// Immutable parse-derived data staged before an index generation is published.
@@ -65,60 +66,28 @@ pub(super) fn resume_version(
     }
 }
 
-pub(super) fn stage(store: &MetaStore, staged: StagedResume<'_>) -> Result<()> {
-    store.upsert_document(staged.document)?;
-    store.insert_source_revision(staged.source_revision)?;
-    match staged.derived {
-        StagedDerivedData::SourceTriage(triage) => {
-            match store.source_revision_triage(&triage.source_revision_id, &triage.triage_epoch)? {
-                Some(existing) if same_source_triage_decision(&existing, triage) => {}
-                _ => {
-                    store.insert_source_revision_triage(triage)?;
-                }
-            }
-        }
+pub(super) fn stage(store: &OwnedMetaStore, staged: StagedResume<'_>) -> Result<()> {
+    let stage = match staged.derived {
+        StagedDerivedData::SourceTriage(triage) => ImmutableIngestStage::SourceTriage {
+            document: staged.document,
+            source_revision: staged.source_revision,
+            triage,
+        },
         StagedDerivedData::ClassifiedVersion {
             version,
             classification,
             mentions,
             email_hash,
             phone_hash,
-        } => {
-            store.insert_resume_version(version)?;
-            match store.resume_version_classification(
-                &classification.resume_version_id,
-                &classification.classifier_epoch,
-            )? {
-                Some(existing)
-                    if same_version_classification_decision(&existing, classification) => {}
-                _ => {
-                    store.insert_resume_version_classification(classification)?;
-                }
-            }
-            store.insert_entity_mentions(&version.id, mentions)?;
-            store.assign_candidate_from_hashed_contacts(&version.id, email_hash, phone_hash)?;
-        }
-    }
-    Ok(())
-}
-
-fn same_source_triage_decision(
-    existing: &SourceRevisionTriage,
-    proposed: &SourceRevisionTriage,
-) -> bool {
-    existing.source_revision_id == proposed.source_revision_id
-        && existing.status == proposed.status
-        && existing.triage_epoch == proposed.triage_epoch
-        && existing.reason_codes == proposed.reason_codes
-}
-
-fn same_version_classification_decision(
-    existing: &ResumeVersionClassification,
-    proposed: &ResumeVersionClassification,
-) -> bool {
-    existing.resume_version_id == proposed.resume_version_id
-        && existing.status == proposed.status
-        && existing.classifier_epoch == proposed.classifier_epoch
-        && existing.reason_codes == proposed.reason_codes
-        && existing.review_disposition == proposed.review_disposition
+        } => ImmutableIngestStage::ClassifiedResume {
+            document: staged.document,
+            source_revision: staged.source_revision,
+            version,
+            classification,
+            mentions,
+            email_hash,
+            phone_hash,
+        },
+    };
+    store.stage_immutable_ingest(stage)
 }

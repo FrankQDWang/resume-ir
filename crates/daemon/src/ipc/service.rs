@@ -1,3 +1,5 @@
+use meta_store::{SearchProjectionServiceState, SearchRepairReason};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ServiceState {
     Ready,
@@ -57,6 +59,40 @@ impl ServiceHealth {
             (ServiceState::Degraded, _) | (_, ServiceState::Degraded) => ServiceState::Degraded,
             (ServiceState::Ready, ServiceState::Ready) => ServiceState::Ready,
         }
+    }
+}
+
+pub(crate) fn projection_service_health(state: SearchProjectionServiceState) -> ServiceHealth {
+    ServiceHealth {
+        metadata: ServiceState::Ready,
+        query: match state {
+            SearchProjectionServiceState::Ready => ServiceState::Ready,
+            SearchProjectionServiceState::Repairing => ServiceState::Repairing,
+            SearchProjectionServiceState::RepairBlocked => ServiceState::Unavailable,
+        },
+    }
+}
+
+pub(crate) fn search_repair_reason_label(reason: SearchRepairReason) -> &'static str {
+    match reason {
+        SearchRepairReason::MigrationRebuild => "migration_rebuild",
+        SearchRepairReason::ArtifactUnavailable => "artifact_unavailable",
+        SearchRepairReason::SourceUnavailable => "source_unavailable",
+        SearchRepairReason::RuntimeInvariant => "runtime_invariant",
+    }
+}
+
+pub(crate) fn service_error_json(services: ServiceHealth) -> serde_json::Value {
+    match services.aggregate() {
+        ServiceState::Ready => serde_json::Value::Null,
+        ServiceState::Repairing => serde_json::json!({
+            "code": "REPAIRING",
+            "action": "wait_for_repair",
+        }),
+        ServiceState::Degraded | ServiceState::Unavailable => serde_json::json!({
+            "code": "QUERY_SERVICE_UNAVAILABLE",
+            "action": "retry",
+        }),
     }
 }
 

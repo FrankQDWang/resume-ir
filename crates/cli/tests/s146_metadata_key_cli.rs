@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use meta_store::{metadata_store_path, MetaStore, MetadataEncryptionState};
+use meta_store::{metadata_store_path, MetadataEncryptionState, ReadMetaStore};
+
+mod support;
 
 #[test]
 fn privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks() {
@@ -22,6 +24,8 @@ fn privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks
         "synthetic wrong metadata key backup passphrase\n",
     )
     .unwrap();
+
+    drop(support::create_store(&source_dir));
 
     let initialize = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args(["--data-dir", path_str(&source_dir), "doctor"])
@@ -94,12 +98,12 @@ fn privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks
     assert!(!stdout.contains(backup_passphrase));
     assert!(!stdout.contains(key_material.trim()));
 
-    let restored = MetaStore::open_data_dir(&restore_dir).unwrap();
+    let restored = ReadMetaStore::open_data_dir(&restore_dir).unwrap();
     assert_eq!(
         restored.metadata_encryption_state(),
         MetadataEncryptionState::SqlCipher
     );
-    assert_eq!(restored.schema_version().unwrap(), 27);
+    assert_eq!(restored.schema_version().unwrap(), 28);
 
     copy_active_store_without_key(&source_dir, &source_db, &wrong_restore_dir);
     let wrong_passphrase_restore = Command::new(env!("CARGO_BIN_EXE_resume-cli"))

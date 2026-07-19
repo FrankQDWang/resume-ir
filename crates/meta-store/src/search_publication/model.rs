@@ -1,8 +1,8 @@
 use std::fmt;
 
 use crate::{
-    ActiveSearchProjection, ContentDigest, DocumentId, DocumentStatus, SearchProjectionDigest,
-    UnixTimestamp,
+    ActiveSearchProjection, ContentDigest, Document, DocumentId, DocumentStatus,
+    SearchProjectionDigest, UnixTimestamp,
 };
 
 pub const FULLTEXT_MANIFEST_SCHEMA_V2: &str = "fulltext.snapshot.v2";
@@ -296,8 +296,48 @@ pub struct SearchPublicationCommit<'a> {
     pub generation: &'a str,
     pub terminal_documents: &'a [TerminalDocumentUpdate],
     pub projections: &'a [ActiveSearchProjection],
+    pub projected_documents: &'a [ProjectedDocumentSnapshot],
     pub vector_coverage: &'a [ActiveSearchProjection],
     pub now: UnixTimestamp,
+}
+
+/// Explicit query-visible document action for one exact active projection.
+///
+/// Publication never infers this action from the mutable `document` table.
+/// Callers must distinguish an unchanged retained snapshot from a same-version
+/// metadata update and from a content-version replacement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProjectedDocumentSnapshot {
+    RetainedUnchanged {
+        projection: ActiveSearchProjection,
+    },
+    MetadataChanged {
+        projection: ActiveSearchProjection,
+        document: Document,
+    },
+    Replacement {
+        projection: ActiveSearchProjection,
+        document: Document,
+    },
+}
+
+impl ProjectedDocumentSnapshot {
+    pub fn projection(&self) -> &ActiveSearchProjection {
+        match self {
+            Self::RetainedUnchanged { projection }
+            | Self::MetadataChanged { projection, .. }
+            | Self::Replacement { projection, .. } => projection,
+        }
+    }
+
+    pub fn document(&self) -> Option<&Document> {
+        match self {
+            Self::RetainedUnchanged { .. } => None,
+            Self::MetadataChanged { document, .. } | Self::Replacement { document, .. } => {
+                Some(document)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

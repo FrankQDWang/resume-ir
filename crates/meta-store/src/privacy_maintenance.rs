@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
-use super::{MetaStore, MetaStoreError, Result};
+use super::{MetaStoreError, MetadataStore, MetadataStoreAccess, MetadataStoreWriteAccess, Result};
 
 pub const PRIVACY_PURGE_BATCH_LIMIT: usize = 128;
 
@@ -16,22 +16,26 @@ enum PrivacyMaintenanceFailpoint {
     #[cfg(test)]
     AfterDeleteCommit,
     #[cfg(test)]
-    AfterCheckpoint,
-    #[cfg(test)]
     AfterVacuum,
 }
 
-impl MetaStore {
-    /// Physically purges at most one bounded batch, then checkpoints and
-    /// compacts before clearing the durable privacy-maintenance receipt.
-    pub fn purge_deleted_documents(&self) -> Result<PrivacyPurgeReport> {
+impl<Access: MetadataStoreAccess> MetadataStore<Access> {
+    /// Physically purges at most one bounded batch, then vacuums the rollback
+    /// journal store before clearing the durable privacy-maintenance receipt.
+    pub fn purge_deleted_documents(&self) -> Result<PrivacyPurgeReport>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         self.purge_deleted_documents_inner(PrivacyMaintenanceFailpoint::None)
     }
 
     fn purge_deleted_documents_inner(
         &self,
         failpoint: PrivacyMaintenanceFailpoint,
-    ) -> Result<PrivacyPurgeReport> {
+    ) -> Result<PrivacyPurgeReport>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let mut connection = self.connection.borrow_mut();
         complete_pending_privacy_compaction(&connection, self.file_backed, failpoint)?;
         connection
@@ -306,22 +310,6 @@ fn complete_pending_privacy_compaction(
     }
 
     if file_backed {
-        let (busy, log_frames, checkpointed_frames) = connection
-            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
-                ))
-            })
-            .map_err(MetaStoreError::storage)?;
-        if busy != 0 || log_frames != checkpointed_frames {
-            return Err(MetaStoreError::storage_invariant());
-        }
-        #[cfg(test)]
-        if _failpoint == PrivacyMaintenanceFailpoint::AfterCheckpoint {
-            return Err(MetaStoreError::storage_invariant());
-        }
         connection
             .execute_batch("VACUUM;")
             .map_err(MetaStoreError::storage)?;

@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use meta_store::{Candidate, CandidateId, ContactHash, EntityType, MetaStore, ResumeVersion};
+use meta_store::{
+    Candidate, CandidateId, ContactHash, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease,
+    EntityType, OwnedMetaStore, ReadMetaStore, ResumeVersion,
+};
 
 #[test]
 fn import_assigns_candidates_from_hashed_contacts_and_search_folds_versions() {
@@ -57,8 +60,7 @@ fn import_assigns_candidates_from_hashed_contacts_and_search_folds_versions() {
 
     let versions = searchable_versions(&data_dir);
     assert_eq!(versions.len(), 2);
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let first_candidate_id = store
         .candidate_assignment_for_version(&versions[0].id)
         .unwrap()
@@ -150,8 +152,7 @@ fn import_assigns_candidates_from_hashed_contacts_and_search_folds_versions() {
     assert_eq!(fs::read_to_string(&key_path).unwrap(), key_material);
     let versions_after_reimport = searchable_versions(&data_dir);
     assert_eq!(versions_after_reimport.len(), 2);
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     assert!(versions_after_reimport.iter().all(|version| {
         store
             .candidate_assignment_for_version(&version.id)
@@ -195,8 +196,7 @@ fn sealed_resume_version_rejects_a_late_candidate_assignment() {
     let version = searchable_versions(&data_dir)
         .pop()
         .expect("imported version");
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = create_owned_store(&data_dir);
     assert!(store
         .candidate_assignment_for_version(&version.id)
         .unwrap()
@@ -232,8 +232,7 @@ fn sealed_resume_version_rejects_a_late_candidate_assignment() {
 
     let versions = searchable_versions(&data_dir);
     assert_eq!(versions.len(), 1);
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     assert!(store
         .candidate_assignment_for_version(&versions[0].id)
         .unwrap()
@@ -244,14 +243,21 @@ fn sealed_resume_version_rejects_a_late_candidate_assignment() {
 }
 
 fn searchable_versions(data_dir: &Path) -> Vec<ResumeVersion> {
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(data_dir).unwrap();
     let mut versions = Vec::new();
     for document in store.visible_documents().unwrap() {
         versions.extend(store.resume_versions_for_document(&document.id).unwrap());
     }
     versions.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
     versions
+}
+
+fn create_owned_store(data_dir: &Path) -> OwnedMetaStore {
+    let owner = match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("test store owner contended"),
+    };
+    owner.open_store().unwrap()
 }
 
 fn write_pdf_resume(path: &Path, heading: &str, java_line: &str, email: &str, phone: &str) {

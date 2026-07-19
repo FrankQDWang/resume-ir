@@ -3,9 +3,10 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use import_pipeline::{current_import_processing_contract, ImportOptions, LinearPromotionPolicy};
 use meta_store::{
-    ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus,
-    MetaStore, UnixTimestamp,
+    DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, ImportRootKind, ImportScanProfile,
+    ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, ReadMetaStore, UnixTimestamp,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -20,9 +21,9 @@ fn daemon_import_uses_the_bundled_classifier_model_by_default() {
     )
     .unwrap();
     let canonical_root = fs::canonicalize(&root).unwrap();
-    seed_queued_import_task(&data_dir, &canonical_root);
     let model = data_dir.join("bundled-classifier-model.json");
     write_synthetic_bundled_model(&model);
+    seed_queued_import_task(&data_dir, &canonical_root, &model);
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
         .args([
@@ -57,8 +58,7 @@ fn daemon_import_uses_the_bundled_classifier_model_by_default() {
     assert!(!stdout.contains(path_str(&model)));
     assert!(!stdout.contains(path_str(&root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let summary = store.status_summary().unwrap();
     assert_eq!(summary.searchable_documents, 1);
 
@@ -94,9 +94,12 @@ fn write_synthetic_bundled_model(path: &Path) {
     }
 }
 
-fn seed_queued_import_task(data_dir: &Path, canonical_root: &Path) {
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
+fn seed_queued_import_task(data_dir: &Path, canonical_root: &Path, model: &Path) {
+    let owner = match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("synthetic data directory is owned"),
+    };
+    let store = owner.open_store().unwrap();
     let now = UnixTimestamp::from_unix_seconds(1_700_300_000);
     let task_id = ImportTaskId::from_non_secret_parts(&["s82", "bundled-classifier"]);
     let task = ImportTask {
@@ -129,8 +132,16 @@ fn seed_queued_import_task(data_dir: &Path, canonical_root: &Path) {
         scan_budget_exhausted: false,
         updated_at: now,
     };
+    let processing_contract = current_import_processing_contract(&ImportOptions {
+        linear_promotion: LinearPromotionPolicy::load_bundled(model),
+        ..ImportOptions::default()
+    })
+    .unwrap();
     store
-        .insert_import_task_with_scan_scope(&task, &scope)
+        .activate_migration_rebuild_contract(&processing_contract, now)
+        .unwrap();
+    store
+        .insert_import_task_with_scan_scope(&task, &scope, &processing_contract)
         .unwrap();
 }
 

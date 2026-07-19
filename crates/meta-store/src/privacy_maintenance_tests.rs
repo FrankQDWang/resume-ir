@@ -2,9 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::{
-    Candidate, CandidateId, ContentDigest, Document, DocumentId, DocumentStatus, FileExtension,
-    IdentityInsertOutcome, MetaStore, ResumeVersion, ResumeVersionId, SourceRevision,
-    UnixTimestamp,
+    Candidate, CandidateId, ContentDigest, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease,
+    Document, DocumentId, DocumentStatus, FileExtension, IdentityInsertOutcome, OwnedMetaStore,
+    ResumeVersion, ResumeVersionId, SourceRevision, UnixTimestamp,
 };
 
 use super::{PrivacyMaintenanceFailpoint, PRIVACY_PURGE_BATCH_LIMIT};
@@ -24,24 +24,21 @@ impl TestDatabase {
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
         Self {
-            path: std::env::temp_dir().join(format!("resume-ir-{label}-{suffix}.sqlite3")),
+            path: std::env::temp_dir().join(format!("resume-ir-{label}-{suffix}")),
         }
     }
 }
 
 impl Drop for TestDatabase {
     fn drop(&mut self) {
-        for path in sqlite_files(&self.path) {
-            let _ = fs::remove_file(path);
-        }
+        let _ = fs::remove_dir_all(&self.path);
     }
 }
 
-fn sqlite_files(path: &Path) -> [PathBuf; 3] {
+fn sqlite_files(path: &Path) -> [PathBuf; 2] {
     [
         path.to_path_buf(),
-        PathBuf::from(format!("{}-wal", path.display())),
-        PathBuf::from(format!("{}-shm", path.display())),
+        PathBuf::from(format!("{}-journal", path.display())),
     ]
 }
 
@@ -64,7 +61,7 @@ fn document(label: &str) -> Document {
     }
 }
 
-fn seed_private_tombstone(store: &MetaStore, label: &str) {
+fn seed_private_tombstone(store: &OwnedMetaStore, label: &str) {
     let mut document = document(label);
     let source = format!("source {PRIVATE_MARKER}");
     let revision = SourceRevision::for_content(
@@ -109,7 +106,7 @@ fn seed_private_tombstone(store: &MetaStore, label: &str) {
     store.upsert_document(&document).unwrap();
 }
 
-fn compaction_pending(store: &MetaStore) -> i64 {
+fn compaction_pending(store: &OwnedMetaStore) -> i64 {
     store
         .connection
         .borrow()
@@ -125,8 +122,12 @@ fn compaction_pending(store: &MetaStore) -> i64 {
 #[test]
 fn purge_is_bounded_to_one_batch() {
     let database = TestDatabase::new("privacy-batch");
-    let store = MetaStore::open(&database.path).unwrap();
-    store.run_migrations().unwrap();
+    fs::create_dir_all(&database.path).unwrap();
+    let owner = match DataDirectoryOwnerLease::try_acquire(&database.path).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("test data directory was contended"),
+    };
+    let store = owner.open_store().unwrap();
     for index in 0..=PRIVACY_PURGE_BATCH_LIMIT {
         let mut document = document(&format!("batch-{index}"));
         document.is_deleted = true;
@@ -168,15 +169,21 @@ fn purge_is_bounded_to_one_batch() {
 }
 
 #[test]
-fn durable_receipt_resumes_checkpoint_and_vacuum_after_each_failpoint() {
+fn durable_receipt_resumes_vacuum_after_each_failpoint() {
     for failpoint in [
         PrivacyMaintenanceFailpoint::AfterDeleteCommit,
-        PrivacyMaintenanceFailpoint::AfterCheckpoint,
         PrivacyMaintenanceFailpoint::AfterVacuum,
     ] {
         let database = TestDatabase::new(&format!("privacy-resume-{failpoint:?}"));
-        let store = MetaStore::open(&database.path).unwrap();
-        store.run_migrations().unwrap();
+        fs::create_dir_all(&database.path).unwrap();
+        let owner = match DataDirectoryOwnerLease::try_acquire(&database.path).unwrap() {
+            DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+            DataDirectoryOwnerAcquisition::Contended => {
+                panic!("test data directory was contended")
+            }
+        };
+        let store = owner.open_store().unwrap();
+        let store_path = crate::metadata_store_path(&database.path).unwrap();
         let secure_delete = store
             .connection
             .borrow()
@@ -189,10 +196,10 @@ fn durable_receipt_resumes_checkpoint_and_vacuum_after_each_failpoint() {
         assert_eq!(compaction_pending(&store), 1);
         drop(store);
 
-        let reopened = MetaStore::open(&database.path).unwrap();
+        let reopened = owner.open_store().unwrap();
         assert_eq!(compaction_pending(&reopened), 0);
         drop(reopened);
-        for path in sqlite_files(&database.path) {
+        for path in sqlite_files(&store_path) {
             if let Ok(bytes) = fs::read(&path) {
                 assert!(
                     !bytes

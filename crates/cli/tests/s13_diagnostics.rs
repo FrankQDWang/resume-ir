@@ -6,23 +6,29 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use import_pipeline::ImportTaskOwnerLock;
+use meta_store::migration_test_support::{apply_owned_store_fault, OwnedStoreFault};
 use meta_store::{
     ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus,
-    MetaStore, UnixTimestamp,
+    ReadMetaStore, UnixTimestamp,
 };
-use rusqlite::{params, Connection};
 use support::{assert_import_succeeded, import_text_resumes};
 
 #[test]
 fn doctor_uses_sqlcipher_metadata_by_default_without_key_or_path_leak() {
     let data_dir = temp_path("doctor-sqlcipher-private-data");
+    initialize_store(&data_dir);
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args(["--data-dir", path_str(&data_dir), "doctor"])
         .output()
         .expect("run resume-cli doctor");
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("metadata encryption: sqlcipher"));
@@ -37,23 +43,25 @@ fn doctor_uses_sqlcipher_metadata_by_default_without_key_or_path_leak() {
         fs::read_to_string(data_dir.join("metadata-secrets/metadata-sqlcipher-key-v1"))
             .expect("metadata SQLCipher key");
     assert!(!stdout.contains(metadata_key.trim()));
-    assert!(MetaStore::open(metadata_path)
-        .and_then(|store| store.schema_version().map(|_| ()))
-        .is_err());
-
     remove_dir(&data_dir);
 }
 
 #[test]
 fn doctor_reports_no_index_without_path_or_fake_benchmark() {
     let data_dir = temp_path("doctor-private-data");
+    initialize_store(&data_dir);
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args(["--data-dir", path_str(&data_dir), "doctor"])
         .output()
         .expect("run resume-cli doctor");
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("resume-ir doctor"));
@@ -79,6 +87,7 @@ fn doctor_reports_no_index_without_path_or_fake_benchmark() {
 #[test]
 fn export_diagnostics_redact_outputs_local_aggregate_evidence_without_paths() {
     let data_dir = temp_path("diagnostics-private-data");
+    initialize_store(&data_dir);
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -90,7 +99,12 @@ fn export_diagnostics_redact_outputs_local_aggregate_evidence_without_paths() {
         .output()
         .expect("run resume-cli export-diagnostics");
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"schema_version\": \"diagnostics.v1\""));
@@ -134,6 +148,7 @@ fn export_diagnostics_redact_outputs_local_aggregate_evidence_without_paths() {
 #[test]
 fn doctor_and_diagnostics_report_redacted_resource_telemetry() {
     let data_dir = temp_dir("diagnostics-resource-private-data");
+    initialize_store(&data_dir);
 
     let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args(["--data-dir", path_str(&data_dir), "doctor"])
@@ -185,6 +200,7 @@ fn doctor_and_diagnostics_report_redacted_resource_telemetry() {
 #[test]
 fn doctor_and_diagnostics_report_ocr_runtime_without_paths_or_language_dump() {
     let data_dir = temp_dir("diagnostics-ocr-runtime-private-data");
+    initialize_store(&data_dir);
     let bin_dir = temp_dir("diagnostics-ocr-runtime-private-bin");
     write_executable(&bin_dir, "pdftoppm", "#!/bin/sh\nexit 0\n");
     write_executable(
@@ -247,6 +263,7 @@ exit 9
 #[test]
 fn doctor_and_diagnostics_check_requested_ocr_language_without_language_dump() {
     let data_dir = temp_dir("diagnostics-ocr-runtime-custom-lang-data");
+    initialize_store(&data_dir);
     let bin_dir = temp_dir("diagnostics-ocr-runtime-custom-lang-bin");
     write_executable(&bin_dir, "pdftoppm", "#!/bin/sh\nexit 0\n");
     write_executable(
@@ -320,6 +337,7 @@ exit 9
 #[test]
 fn doctor_and_diagnostics_check_combined_ocr_languages_without_language_dump() {
     let data_dir = temp_dir("diagnostics-ocr-runtime-combined-lang-data");
+    initialize_store(&data_dir);
     let bin_dir = temp_dir("diagnostics-ocr-runtime-combined-lang-bin");
     write_executable(&bin_dir, "pdftoppm", "#!/bin/sh\nexit 0\n");
     write_executable(
@@ -391,6 +409,7 @@ exit 9
 #[test]
 fn doctor_reports_non_executable_ocr_tools_as_missing_without_paths() {
     let data_dir = temp_dir("diagnostics-ocr-runtime-nonexec-data");
+    initialize_store(&data_dir);
     let bin_dir = temp_dir("diagnostics-ocr-runtime-nonexec-bin");
     write_private_file(&bin_dir, "pdftoppm", "#!/bin/sh\nexit 0\n");
 
@@ -462,6 +481,7 @@ fn doctor_and_diagnostics_report_the_generation_bound_disabled_vector_snapshot()
 #[test]
 fn doctor_and_diagnostics_report_invalid_contact_hash_key_without_leaks() {
     let data_dir = temp_dir("diagnostics-invalid-key");
+    initialize_store(&data_dir);
     let key_path = data_dir.join("secrets").join("contact-hash-key-v1");
     fs::create_dir_all(key_path.parent().unwrap()).unwrap();
     fs::write(&key_path, "not-a-real-contact-key\n").unwrap();
@@ -502,6 +522,7 @@ fn doctor_reports_unreadable_contact_hash_key_without_leaks() {
     use std::os::unix::fs::PermissionsExt;
 
     let data_dir = temp_dir("diagnostics-unreadable-key");
+    initialize_store(&data_dir);
     let secrets_dir = data_dir.join("secrets");
     let key_path = secrets_dir.join("contact-hash-key-v1");
     fs::create_dir_all(&secrets_dir).unwrap();
@@ -599,8 +620,7 @@ fn doctor_and_search_fail_closed_when_the_published_generation_is_corrupt() {
             "SUMMARY\nCorrupt Candidate\nEXPERIENCE\nBuilt PRIVATE_DIAGNOSTIC_SENTINEL systems\nSKILLS\nRust",
         )],
     ));
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let generation = store.search_projection_state().unwrap().generation.unwrap();
     fs::write(
         data_dir
@@ -663,6 +683,7 @@ fn doctor_and_search_fail_closed_when_the_published_generation_is_corrupt() {
 fn doctor_pending_import_task_boundary_reports_post_boundary_without_path_leak() {
     let data_dir = temp_dir("doctor-pending-import-boundary-healthy");
     let root_dir = temp_dir("doctor-pending-import-boundary-root");
+    initialize_store(&data_dir);
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -676,7 +697,12 @@ fn doctor_pending_import_task_boundary_reports_post_boundary_without_path_leak()
         .output()
         .expect("run resume-cli doctor pending import task boundary");
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("resume-ir doctor"));
@@ -695,16 +721,11 @@ fn doctor_pending_import_task_boundary_reports_pending_import_task_by_root_failu
 ) {
     let data_dir = temp_dir("doctor-pending-import-boundary-missing-table");
     let root_dir = temp_dir("doctor-pending-import-boundary-broken-root");
-    let metadata_key = {
-        let store = MetaStore::open_data_dir(&data_dir).unwrap();
-        store.run_migrations().unwrap();
-        fs::read_to_string(meta_store::metadata_encryption_key_path(&data_dir)).unwrap()
-    };
-    let connection = open_encrypted_metadata_connection(&data_dir);
-    connection
-        .execute_batch("ALTER TABLE import_task RENAME TO import_task_missing;")
-        .unwrap();
-    drop(connection);
+    let store = support::create_store(&data_dir);
+    let metadata_key =
+        fs::read_to_string(meta_store::metadata_encryption_key_path(&data_dir)).unwrap();
+    apply_owned_store_fault(&store, OwnedStoreFault::MissingImportTaskTable).unwrap();
+    drop(store);
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -718,7 +739,12 @@ fn doctor_pending_import_task_boundary_reports_pending_import_task_by_root_failu
         .output()
         .expect("run resume-cli doctor pending import task boundary broken import task table");
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("pending import task boundary: pending_import_task_query_failure"));
@@ -734,28 +760,26 @@ fn doctor_pending_import_task_boundary_reports_pending_import_task_by_root_failu
 fn doctor_pending_import_task_boundary_reports_row_materialization_failure_without_path_or_key_leak(
 ) {
     let data_dir = temp_dir("doctor-pending-import-boundary-corrupt-row");
-    let root_dir = temp_dir("doctor-pending-import-boundary-corrupt-row-root");
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root_dir = std::env::temp_dir().join(format!(
+        "resume-ir-synthetic-s13-corrupt-import-task-{unique}"
+    ));
+    fs::create_dir_all(&root_dir).unwrap();
     let canonical_root = fs::canonicalize(&root_dir).unwrap();
-    let metadata_key = {
-        let store = MetaStore::open_data_dir(&data_dir).unwrap();
-        store.run_migrations().unwrap();
-        fs::read_to_string(meta_store::metadata_encryption_key_path(&data_dir)).unwrap()
-    };
-    let connection = open_encrypted_metadata_connection(&data_dir);
-    connection
-        .execute(
-            "\
-            INSERT INTO import_task (
-                id, root_path, status, queued_at_seconds, updated_at_seconds
-            )
-            VALUES (?1, ?2, 'queued', 1, 1)",
-            params!["diagnostic-materialization-task", path_str(&canonical_root)],
-        )
-        .unwrap();
-    connection
-        .execute("UPDATE import_task SET id = zeroblob(16)", [])
-        .unwrap();
-    drop(connection);
+    let store = support::create_store(&data_dir);
+    let metadata_key =
+        fs::read_to_string(meta_store::metadata_encryption_key_path(&data_dir)).unwrap();
+    apply_owned_store_fault(
+        &store,
+        OwnedStoreFault::CorruptImportTaskId {
+            canonical_root: path_str(&canonical_root).to_string(),
+        },
+    )
+    .unwrap();
+    drop(store);
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -802,7 +826,12 @@ fn doctor_post_pending_import_task_recovery_boundary_reports_recovered_running_t
         .output()
         .expect("run resume-cli doctor post pending import task recovery boundary");
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("resume-ir doctor"));
@@ -820,6 +849,7 @@ fn doctor_post_pending_import_task_recovery_boundary_reports_recovered_running_t
 fn doctor_post_pending_import_task_recovery_boundary_reports_post_boundary_without_path_leak() {
     let data_dir = temp_dir("doctor-post-pending-import-recovery-post-boundary");
     let root_dir = temp_dir("doctor-post-pending-import-recovery-post-boundary-root");
+    initialize_store(&data_dir);
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -833,7 +863,12 @@ fn doctor_post_pending_import_task_recovery_boundary_reports_post_boundary_witho
         .output()
         .expect("run resume-cli doctor post pending import task recovery boundary");
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(
@@ -865,7 +900,12 @@ fn doctor_post_pending_import_task_recovery_boundary_reports_lock_bound_without_
         .output()
         .expect("run resume-cli doctor post pending import task recovery boundary lock bound");
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout
@@ -883,19 +923,9 @@ fn doctor_post_pending_import_task_recovery_boundary_reports_status_update_failu
     let data_dir = temp_dir("doctor-post-pending-import-recovery-update-failure");
     let root_dir = temp_dir("doctor-post-pending-import-recovery-update-root");
     seed_running_import_task(&data_dir, &root_dir);
-    let connection = open_encrypted_metadata_connection(&data_dir);
-    connection
-        .execute_batch(
-            "\
-            CREATE TRIGGER import_task_block_status_update
-            BEFORE UPDATE OF status ON import_task
-            BEGIN
-                SELECT RAISE(FAIL, 'diagnostic update blocked');
-            END;
-            ",
-        )
-        .unwrap();
-    drop(connection);
+    let store = support::create_store(&data_dir);
+    apply_owned_store_fault(&store, OwnedStoreFault::BlockStatusUpdate).unwrap();
+    drop(store);
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -909,7 +939,12 @@ fn doctor_post_pending_import_task_recovery_boundary_reports_status_update_failu
         .output()
         .expect("run resume-cli doctor post pending import task recovery boundary update failure");
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(
@@ -928,19 +963,9 @@ fn doctor_post_pending_import_task_recovery_boundary_reports_row_refresh_failure
     let data_dir = temp_dir("doctor-post-pending-import-recovery-row-refresh-failure");
     let root_dir = temp_dir("doctor-post-pending-import-recovery-row-refresh-root");
     seed_running_import_task(&data_dir, &root_dir);
-    let connection = open_encrypted_metadata_connection(&data_dir);
-    connection
-        .execute_batch(
-            "\
-            CREATE TRIGGER import_task_delete_after_status_update
-            AFTER UPDATE OF status ON import_task
-            BEGIN
-                DELETE FROM import_task WHERE id = NEW.id;
-            END;
-            ",
-        )
-        .unwrap();
-    drop(connection);
+    let store = support::create_store(&data_dir);
+    apply_owned_store_fault(&store, OwnedStoreFault::DeleteAfterStatusUpdate).unwrap();
+    drop(store);
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -956,7 +981,12 @@ fn doctor_post_pending_import_task_recovery_boundary_reports_row_refresh_failure
             "run resume-cli doctor post pending import task recovery boundary row refresh failure",
         );
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains(
@@ -1081,16 +1111,15 @@ fn doctor_post_recovery_retained_lineage_convergence_boundary_reports_completed_
 ) {
     let data_dir = temp_dir("doctor-post-recovery-lineage-completed");
     let root_dir = temp_dir("doctor-post-recovery-lineage-completed-root");
-    let task_id = seed_import_task_with_status(&data_dir, &root_dir, ImportTaskStatus::Completed);
-    seed_import_scan_scope(
+    let import = support::import_text_resumes(
         &data_dir,
         &root_dir,
-        &task_id,
-        ImportScanScopeCounts {
-            searchable_documents: 1,
-            ..ImportScanScopeCounts::default()
-        },
+        &[(
+            "completed-lineage.txt",
+            "SUMMARY\nSynthetic candidate\nEXPERIENCE\nBuilt Rust systems\nSKILLS\nRust",
+        )],
     );
+    support::assert_import_succeeded(&import);
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -1125,26 +1154,14 @@ fn temp_path(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!("resume-ir-s13-cli-{label}-{unique}"))
 }
 
+fn initialize_store(data_dir: &Path) {
+    drop(support::create_store(data_dir));
+}
+
 fn temp_dir(label: &str) -> PathBuf {
     let path = temp_path(label);
     fs::create_dir_all(&path).unwrap();
     path
-}
-
-fn open_encrypted_metadata_connection(data_dir: &Path) -> Connection {
-    let metadata_key = fs::read_to_string(meta_store::metadata_encryption_key_path(data_dir))
-        .expect("read metadata SQLCipher key");
-    let connection = Connection::open(meta_store::metadata_store_path(data_dir).unwrap())
-        .expect("open metadata db");
-    connection
-        .execute_batch(&format!("PRAGMA key = \"x'{}'\";", metadata_key.trim()))
-        .expect("apply metadata SQLCipher key");
-    connection
-        .query_row("SELECT count(*) FROM sqlite_master", [], |row| {
-            row.get::<_, i64>(0)
-        })
-        .expect("verify metadata SQLCipher key");
-    connection
 }
 
 fn seed_running_import_task(data_dir: &Path, root_dir: &Path) -> ImportTaskId {
@@ -1156,8 +1173,7 @@ fn seed_import_task_with_status(
     root_dir: &Path,
     status: ImportTaskStatus,
 ) -> ImportTaskId {
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = support::create_store(data_dir);
     let canonical_root = fs::canonicalize(root_dir).unwrap();
     let queued_at = UnixTimestamp::from_unix_seconds(1_700_000_000);
     let started_at = UnixTimestamp::from_unix_seconds(1_700_000_010);
@@ -1169,17 +1185,37 @@ fn seed_import_task_with_status(
     )
     .then_some(UnixTimestamp::from_unix_seconds(1_700_000_020));
     let id = ImportTaskId::from_non_secret_parts(&["s13", "running-import-task"]);
-    store
-        .insert_import_task(&ImportTask {
-            id: id.clone(),
-            root_path: path_str(&canonical_root).to_string(),
-            status,
-            queued_at,
-            started_at: Some(started_at),
-            finished_at,
-            updated_at: finished_at.unwrap_or(started_at),
-        })
-        .unwrap();
+    let task = ImportTask {
+        id: id.clone(),
+        root_path: path_str(&canonical_root).to_string(),
+        status,
+        queued_at,
+        started_at: Some(started_at),
+        finished_at,
+        updated_at: finished_at.unwrap_or(started_at),
+    };
+    let scope = ImportScanScope {
+        import_task_id: id.clone(),
+        root_kind: ImportRootKind::Explicit,
+        root_preset: None,
+        scan_profile: ImportScanProfile::Explicit,
+        requested_root_path: task.root_path.clone(),
+        canonical_root_path: task.root_path.clone(),
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        scan_budget_kind: None,
+        scan_budget_limit: None,
+        scan_budget_observed: None,
+        scan_budget_exhausted: false,
+        updated_at: task.updated_at,
+    };
+    support::insert_import_task_with_scope(&store, &task, &scope);
     id
 }
 
@@ -1198,8 +1234,7 @@ fn seed_import_scan_scope(
     task_id: &ImportTaskId,
     counts: ImportScanScopeCounts,
 ) {
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = support::create_store(data_dir);
     let canonical_root = fs::canonicalize(root_dir).unwrap();
     let root_path = path_str(&canonical_root).to_string();
     store

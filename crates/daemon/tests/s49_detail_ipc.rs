@@ -8,14 +8,17 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use index_fulltext::{publish_snapshot, IndexDocument};
 use index_vector::{VectorModelContract, VectorSnapshotStore};
 use meta_store::{
-    ActiveSearchProjection, ClassificationStatus, ContentDigest, Document, DocumentId,
-    DocumentStatus, EntityMention, EntityMentionId, EntityType, FileExtension,
-    FullTextSnapshotDescriptor, IdentityInsertOutcome, MetaStore, ReasonCode, ResumeVersion,
-    ResumeVersionClassification, ResumeVersionId, ReviewDisposition, SearchProjectionDigest,
-    SearchPublicationCommit, SearchPublicationDraft, SearchPublicationOutcome,
-    SearchPublicationValidation, SearchSelection, SourceRevision, TerminalDocumentUpdate,
-    UnixTimestamp, VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
+    ActiveSearchProjection, ClassificationStatus, ContentDigest, DataDirectoryOwnerAcquisition,
+    DataDirectoryOwnerLease, Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId,
+    EntityType, FileExtension, FullTextSnapshotDescriptor, IdentityInsertOutcome, OwnedMetaStore,
+    ProjectedDocumentSnapshot, ReasonCode, ResumeVersion, ResumeVersionClassification,
+    ResumeVersionId, ReviewDisposition, SearchProjectionDigest, SearchPublicationCommit,
+    SearchPublicationDraft, SearchPublicationOutcome, SearchPublicationValidation, SearchSelection,
+    SourceRevision, TerminalDocumentUpdate, UnixTimestamp, VectorSnapshotDescriptor,
+    CLASSIFIER_EPOCH,
 };
+
+mod support;
 
 const IPC_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(30);
 const HYDRATE_PAGE_BYTES: usize = 32 * 1024;
@@ -99,7 +102,7 @@ fn detail_and_hydrate_read_one_exact_selection_across_unrelated_publications() {
 #[test]
 fn hydrate_never_mixes_pages_after_the_selected_document_is_republished() {
     let fixture = Fixture::create("hydrate-switch");
-    let mut daemon = Daemon::start(&fixture.data_dir, 2);
+    let mut daemon = Daemon::start(&fixture.data_dir, 1);
     let token = daemon.token.clone();
 
     let first = daemon.post(
@@ -113,8 +116,11 @@ fn hydrate_never_mixes_pages_after_the_selected_document_is_republished() {
     let next_offset = first_payload["document"]["body_page"]["next_offset_bytes"]
         .as_u64()
         .unwrap() as usize;
+    daemon.wait_success();
 
     fixture.replace_current_version();
+    let mut daemon = Daemon::start(&fixture.data_dir, 1);
+    let token = daemon.token.clone();
     let interrupted = daemon.post(
         "/details/hydrate",
         Some(&token),
@@ -363,8 +369,8 @@ struct Fixture {
 impl Fixture {
     fn create(label: &str) -> Self {
         let data_dir = temp_dir(label);
-        let store = MetaStore::open_data_dir(&data_dir).unwrap();
-        store.run_migrations().unwrap();
+        let owner = acquire_data_directory_owner(&data_dir);
+        let store = owner.open_store().unwrap();
 
         let current_path = "/synthetic/local/resumes/candidate-detail.pdf".to_string();
         let current_body = format!(
@@ -480,8 +486,8 @@ impl Fixture {
     }
 
     fn replace_current_version(&self) {
-        let store = MetaStore::open_data_dir(&self.data_dir).unwrap();
-        store.run_migrations().unwrap();
+        let owner = acquire_data_directory_owner(&self.data_dir);
+        let store = owner.open_store().unwrap();
         let mut projections = self.active_projections.clone();
         let document = store
             .document_by_id(&self.current_selection.document_id)
@@ -535,7 +541,7 @@ impl SeededVersion {
 }
 
 fn seed_version(
-    store: &MetaStore,
+    store: &OwnedMetaStore,
     label: &str,
     path: &str,
     text: &str,
@@ -562,7 +568,7 @@ fn seed_version(
 }
 
 fn seed_version_for_document(
-    store: &MetaStore,
+    store: &OwnedMetaStore,
     document: &Document,
     label: &str,
     text: &str,
@@ -666,7 +672,7 @@ fn entity_mention(version_id: &ResumeVersionId, index: usize) -> EntityMention {
 
 fn publish(
     data_dir: &Path,
-    store: &MetaStore,
+    store: &OwnedMetaStore,
     generation: &str,
     expected_generation: Option<&str>,
     expected_epoch: u64,
@@ -689,8 +695,18 @@ fn publish(
         projection_digest: projection_digest.clone(),
         now,
     };
+    let migration_barrier = expected_generation.is_none().then(|| {
+        let contract = support::activate_default_processing_contract(store, now);
+        store
+            .acquire_migration_rebuild_barrier_token(contract.id())
+            .unwrap()
+            .expect("initial publication requires a closed migration rebuild barrier")
+    });
+    let publication_session = store.wait_for_search_publication_session().unwrap();
     assert_eq!(
-        store.begin_search_publication(&publication).unwrap(),
+        publication_session
+            .begin_search_publication(&publication)
+            .unwrap(),
         SearchPublicationOutcome::Applied
     );
     let index_documents = projections
@@ -733,7 +749,7 @@ fn publish(
         vector_artifact.coverage_digest().clone(),
         vector_artifact.logical_content_digest().clone(),
     );
-    store
+    publication_session
         .validate_search_publication(&SearchPublicationValidation {
             generation,
             fulltext: &fulltext,
@@ -768,18 +784,70 @@ fn publish(
             })
         })
         .collect::<Vec<_>>();
-    assert_eq!(
-        store
-            .commit_search_publication(&SearchPublicationCommit {
-                generation,
-                terminal_documents: &terminal_documents,
-                projections,
-                vector_coverage: &[],
-                now,
-            })
+    let projected_documents = projections
+        .iter()
+        .map(|projection| {
+            let mut document = store
+                .document_by_id(&projection.document_id)
+                .unwrap()
+                .unwrap();
+            if let Some(terminal) = terminal_documents
+                .iter()
+                .find(|terminal| terminal.document_id == projection.document_id)
+            {
+                document.status = terminal.terminal_status;
+                document.is_deleted = terminal.terminal_is_deleted;
+                document.updated_at = now;
+            }
+            match store
+                .active_search_projection_for_document(&projection.document_id)
+                .unwrap()
+            {
+                Some(active) if active == *projection => {
+                    let active_document =
+                        store.active_search_document(projection).unwrap().unwrap();
+                    if active_document == document {
+                        ProjectedDocumentSnapshot::RetainedUnchanged {
+                            projection: projection.clone(),
+                        }
+                    } else {
+                        ProjectedDocumentSnapshot::MetadataChanged {
+                            projection: projection.clone(),
+                            document,
+                        }
+                    }
+                }
+                Some(_) | None => ProjectedDocumentSnapshot::Replacement {
+                    projection: projection.clone(),
+                    document,
+                },
+            }
+        })
+        .collect::<Vec<_>>();
+    let commit = SearchPublicationCommit {
+        generation,
+        terminal_documents: &terminal_documents,
+        projections,
+        projected_documents: &projected_documents,
+        vector_coverage: &[],
+        now,
+    };
+    let outcome = match migration_barrier.as_ref() {
+        Some(barrier) => publication_session
+            .commit_migration_rebuild_search_publication(&commit, barrier)
             .unwrap(),
-        SearchPublicationOutcome::Applied
-    );
+        None => publication_session
+            .commit_search_publication(&commit)
+            .unwrap(),
+    };
+    assert_eq!(outcome, SearchPublicationOutcome::Applied);
+}
+
+fn acquire_data_directory_owner(data_dir: &Path) -> DataDirectoryOwnerLease {
+    match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("synthetic data directory is owned"),
+    }
 }
 
 struct Daemon {

@@ -1,4 +1,20 @@
-use extractor_rules::{extract_strong_fields, FieldType};
+use core_domain::{MAX_ENTITY_MENTIONS_PER_VERSION, MAX_ENTITY_MENTION_VALUE_BYTES};
+use extractor_rules::{extract_strong_fields, FieldType, RuleEvidenceKind};
+
+fn unique_closed_date_ranges(count: usize) -> String {
+    (0..count)
+        .map(|ordinal| {
+            let start_year = 1980 + ordinal / 12;
+            let start_month = ordinal % 12 + 1;
+            let (end_year, end_month) = if start_month == 12 {
+                (start_year + 1, 1)
+            } else {
+                (start_year, start_month + 1)
+            };
+            format!("{start_year}-{start_month:02} - {end_year}-{end_month:02}\n")
+        })
+        .collect()
+}
 
 #[test]
 fn extracts_candidate_name_from_labeled_line_and_heading_with_evidence() {
@@ -103,8 +119,87 @@ Experience
         .find(|field| field.field_type == FieldType::YearsExperience)
         .unwrap();
     assert_eq!(years.normalized_value.as_deref(), Some("4.2"));
-    assert_eq!(&text[years.span_start..years.span_end], years.raw_value);
+    assert_eq!(years.raw_value, "2020.01 - 2024.03");
+    assert!(years.raw_value.len() <= MAX_ENTITY_MENTION_VALUE_BYTES);
+    assert_eq!(years.evidence_kind(), RuleEvidenceKind::DerivedAggregate);
     assert!(!format!("{years:?}").contains("2020.01"));
+}
+
+#[test]
+fn years_experience_evidence_stays_bounded_across_a_long_resume() {
+    let text = format!(
+        "Experience\n2020-01 - 2021-01\n{}\n2022-01 - 2023-01",
+        "Synthetic project detail. ".repeat(400)
+    );
+
+    let matches = extract_strong_fields(&text);
+    let years = matches
+        .iter()
+        .find(|field| field.field_type == FieldType::YearsExperience)
+        .unwrap();
+
+    assert!(text.len() > MAX_ENTITY_MENTION_VALUE_BYTES);
+    assert_eq!(&text[years.span_start..years.span_end], years.raw_value);
+    assert_eq!(years.raw_value, "2020-01 - 2021-01");
+    assert!(years.raw_value.len() <= MAX_ENTITY_MENTION_VALUE_BYTES);
+    assert_eq!(years.evidence_kind(), RuleEvidenceKind::DerivedAggregate);
+    assert!(matches.iter().all(|field| {
+        field.raw_value.len() <= MAX_ENTITY_MENTION_VALUE_BYTES
+            && field
+                .normalized_value
+                .as_deref()
+                .is_none_or(|value| value.len() <= MAX_ENTITY_MENTION_VALUE_BYTES)
+    }));
+}
+
+#[test]
+fn extraction_enforces_the_version_bound_entity_contract() {
+    let overlong_name = format!("Name: {}", "S".repeat(MAX_ENTITY_MENTION_VALUE_BYTES + 1));
+    assert!(extract_strong_fields(&overlong_name)
+        .iter()
+        .all(|field| field.field_type != FieldType::Name));
+
+    let text = format!(
+        "Experience\n{}Education\nSchool: Synthetic University\nSkills\nRust\nEmail: bounded@example.test\n",
+        unique_closed_date_ranges(MAX_ENTITY_MENTIONS_PER_VERSION + 32)
+    );
+    let matches = extract_strong_fields(&text);
+    assert_eq!(matches.len(), MAX_ENTITY_MENTIONS_PER_VERSION);
+    assert_eq!(matches, extract_strong_fields(&text));
+    for required in [
+        FieldType::Email,
+        FieldType::School,
+        FieldType::Skill,
+        FieldType::YearsExperience,
+    ] {
+        assert!(
+            matches.iter().any(|field| field.field_type == required),
+            "bounded retention dropped {required:?}"
+        );
+    }
+    assert!(matches.iter().all(|field| {
+        field.raw_value.len() <= MAX_ENTITY_MENTION_VALUE_BYTES
+            && field
+                .normalized_value
+                .as_deref()
+                .is_none_or(|value| value.len() <= MAX_ENTITY_MENTION_VALUE_BYTES)
+    }));
+    for field in matches
+        .iter()
+        .filter(|field| field.evidence_kind() == RuleEvidenceKind::SourceSpan)
+    {
+        assert_eq!(&text[field.span_start..field.span_end], field.raw_value);
+    }
+
+    let repeated_evidence = extract_strong_fields(&"2020-01 - 2021-01\n".repeat(300));
+    assert!(
+        repeated_evidence
+            .iter()
+            .filter(|field| field.field_type == FieldType::DateRange)
+            .count()
+            > 1,
+        "different source spans must remain independent evidence"
+    );
 }
 
 #[test]
@@ -458,7 +553,7 @@ Synthetic Payments Inc.";
 }
 
 #[test]
-fn extracts_open_ended_present_date_ranges_with_years_evidence() {
+fn extracts_open_ended_present_date_ranges_without_time_dependent_years() {
     let text = "\
 Experience
 2020年1月 - 至今
@@ -496,14 +591,41 @@ Contract
     assert!(date_ranges.iter().all(|field| field.confidence >= 0.9));
     assert!(!format!("{:?}", date_ranges[0]).contains("至今"));
 
+    assert!(matches
+        .iter()
+        .all(|field| field.field_type != FieldType::YearsExperience));
+}
+
+#[test]
+fn years_experience_unions_overlapping_closed_ranges() {
+    let text = "\
+Experience
+2020-01 - 2021-01
+2020-06 - 2021-06";
+
+    let matches = extract_strong_fields(text);
     let years = matches
         .iter()
         .find(|field| field.field_type == FieldType::YearsExperience)
         .unwrap();
-    let years_value = years.normalized_value.as_deref().unwrap();
-    let years_value = years_value.parse::<f32>().unwrap();
-    assert!(years_value >= 10.0, "{years_value}");
-    assert!(!format!("{years:?}").contains("Present"));
+
+    assert_eq!(years.normalized_value.as_deref(), Some("1.4"));
+}
+
+#[test]
+fn years_experience_uses_only_stable_closed_ranges_when_present_is_also_listed() {
+    let text = "\
+Experience
+2018-01 - 2020-01
+2021-01 - Present";
+
+    let matches = extract_strong_fields(text);
+    let years = matches
+        .iter()
+        .find(|field| field.field_type == FieldType::YearsExperience)
+        .unwrap();
+
+    assert_eq!(years.normalized_value.as_deref(), Some("2.0"));
 }
 
 #[test]

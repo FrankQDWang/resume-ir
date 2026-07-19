@@ -2,11 +2,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use import_pipeline::{
+    current_import_processing_contract, finalize_migration_rebuild,
+    prepare_migration_rebuild_artifacts, ImportOptions, SearchPublicationVectorization,
+};
 use meta_store::{
-    ClassificationStatus, ContentDigest, CurrentClassifierEpoch, Document, DocumentId,
-    DocumentStatus, FileExtension, IngestJobFailureKind, IngestJobKind, IngestJobStatus, MetaStore,
-    OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, ReasonCode, SourceRevision,
-    SourceRevisionTriage, UnixTimestamp, CLASSIFIER_EPOCH,
+    ClassificationStatus, ContentDigest, CurrentClassifierEpoch, DataDirectoryOwnerAcquisition,
+    DataDirectoryOwnerLease, Document, DocumentId, DocumentStatus, FileExtension,
+    IngestJobFailureKind, IngestJobKind, IngestJobStatus, OcrPageCacheEntry, OcrPageCacheKey,
+    OcrPageCacheStatus, OwnedMetaStore, ReadMetaStore, ReasonCode, SearchRepairReason,
+    SourceRevision, SourceRevisionTriage, UnixTimestamp, CLASSIFIER_EPOCH,
 };
 
 #[test]
@@ -37,8 +42,7 @@ fn import_scanned_pdf_creates_durable_ocr_document_job_without_searchable_text()
     assert!(import_stdout.contains("ocr jobs queued: 1"));
     assert!(!import_stdout.contains(path_str(&fixture_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = create_owned_store(&data_dir);
     let scanned = store
         .visible_documents()
         .unwrap()
@@ -58,6 +62,7 @@ fn import_scanned_pdf_creates_durable_ocr_document_job_without_searchable_text()
         .expect("ocr document job can be claimed after restart");
     assert_eq!(claimed.job.kind, IngestJobKind::OcrDocument);
     assert_eq!(claimed.job.status, IngestJobStatus::Running);
+    drop(store);
 
     let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -86,8 +91,7 @@ fn repeated_import_does_not_duplicate_existing_ocr_document_jobs() {
     import_fixtures(&data_dir, &fixture_root);
     import_fixtures(&data_dir, &fixture_root);
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scanned = store
         .visible_documents()
         .unwrap()
@@ -125,11 +129,67 @@ fn ocr_worker_without_command_reports_blocked_and_leaves_job_queued() {
     assert!(!stderr.contains(path_str(&data_dir)));
     assert!(!stderr.contains(path_str(&fixture_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let retryable = store.retryable_jobs().unwrap();
     assert_eq!(retryable.len(), 1);
     assert_eq!(retryable[0].status, IngestJobStatus::Queued);
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn ocr_worker_repair_blocked_returns_not_ready_without_claiming() {
+    let data_dir = temp_dir("ocr-worker-repair-blocked-data");
+    let document_path = seed_ocr_pdf_document_with_bytes(
+        &data_dir,
+        b"synthetic repair-blocked OCR bytes".to_vec(),
+        "repair-blocked",
+        OcrFixturePublicationState::Unpublished,
+    );
+    let store = create_owned_store(&data_dir);
+    let job_id = store.retryable_jobs().unwrap()[0].id.clone();
+    store
+        .block_migration_rebuild(
+            SearchRepairReason::RuntimeInvariant,
+            UnixTimestamp::from_unix_seconds(1_900_000_093),
+        )
+        .unwrap();
+    drop(store);
+
+    let missing_command = data_dir.join("synthetic-command-must-not-run");
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "ocr-worker",
+            "--once",
+            "--command",
+            path_str(&missing_command),
+        ])
+        .output()
+        .expect("run repair-blocked OCR worker");
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("ocr worker: not ready"));
+    assert!(stdout.contains("documents processed: 0"));
+    assert!(stdout.contains("cache writes: 0"));
+    assert!(stdout.contains("cache hits: 0"));
+    assert!(!stdout.contains(path_str(&data_dir)));
+    assert!(!stdout.contains(path_str(&document_path)));
+    assert!(!stdout.contains(path_str(&missing_command)));
+
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+    let still_queued = store.ingest_job_by_id(&job_id).unwrap().unwrap();
+    assert_eq!(still_queued.status, IngestJobStatus::Queued);
+    assert_eq!(still_queued.attempt_count, 0);
+    assert_eq!(scanned_document(&store).status, DocumentStatus::OcrRequired);
 
     remove_dir(&data_dir);
 }
@@ -184,8 +244,7 @@ printf 'OCRS33PauseResumeToken worker text\n'
     assert!(!paused_stdout.contains(path_str(&fixture_root)));
 
     {
-        let store = MetaStore::open_data_dir(&data_dir).unwrap();
-        store.run_migrations().unwrap();
+        let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
         assert_eq!(scanned_document(&store).status, DocumentStatus::OcrRequired);
         let retryable = store.retryable_jobs().unwrap();
         assert_eq!(retryable.len(), 1);
@@ -225,8 +284,7 @@ printf 'OCRS33PauseResumeToken worker text\n'
     assert!(resumed_stdout.contains("documents processed: 1"));
     assert!(!resumed_stdout.contains("OCRS33PauseResumeToken"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     assert_eq!(scanned_document(&store).status, DocumentStatus::Searchable);
     assert!(store.retryable_jobs().unwrap().is_empty());
 
@@ -280,8 +338,7 @@ printf 'OCRS31UniqueToken worker text bytes=%s page=%s\n' "$input_size" "$RESUME
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::Searchable);
     assert!(store.retryable_jobs().unwrap().is_empty());
@@ -406,8 +463,7 @@ esac
     assert!(!stdout.contains(path_str(&command)));
     assert!(!stdout.contains(path_str(&render_command)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::Searchable);
     assert!(store.retryable_jobs().unwrap().is_empty());
@@ -512,8 +568,7 @@ exit 31
     assert!(!stderr.contains(path_str(&fixture_root)));
     assert!(!stderr.contains(path_str(&command)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::OcrRequired);
     let jobs = store.retryable_jobs().unwrap();
@@ -680,8 +735,7 @@ printf 'S91PdftoppmRenderedToken rendered page text\n'
     assert!(!stdout.contains(path_str(&command)));
     assert!(!stdout.contains(path_str(&pdftoppm)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::Searchable);
     assert!(store.retryable_jobs().unwrap().is_empty());
@@ -750,6 +804,7 @@ fn ocr_worker_uses_tesseract_for_rendered_image_before_indexing() {
         &data_dir,
         valid_blank_pdf_bytes(),
         "s92-cli-tesseract-content-hash",
+        OcrFixturePublicationState::Ready,
     );
     let render_command = write_text_png_render_executable(
         "fixture-ocr-worker-tesseract-render",
@@ -795,8 +850,7 @@ fn ocr_worker_uses_tesseract_for_rendered_image_before_indexing() {
     assert!(!stdout.contains(path_str(&tesseract)));
     assert!(!stdout.contains(path_str(&render_command)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::Searchable);
     assert!(store.retryable_jobs().unwrap().is_empty());
@@ -892,8 +946,7 @@ exit 17
     assert!(!stderr.contains(path_str(&fixture_root)));
     assert!(!stderr.contains(path_str(&command)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::OcrRequired);
     let jobs = store.retryable_jobs().unwrap();
@@ -933,8 +986,7 @@ exit 17
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
 
-        let store = MetaStore::open_data_dir(&data_dir).unwrap();
-        store.run_migrations().unwrap();
+        let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
         let scanned = scanned_document(&store);
         let job = store.ingest_job_by_id(&job_id).unwrap().unwrap();
         let source_revision = SourceRevision::for_content(
@@ -1032,8 +1084,7 @@ exit 17
     assert!(!stderr.contains(path_str(&fixture_root)));
     assert!(!stderr.contains(path_str(&tesseract)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::OcrRequired);
     let jobs = store.retryable_jobs().unwrap();
@@ -1123,9 +1174,8 @@ fn ocr_worker_indexes_succeeded_cache_hit_without_invoking_command() {
     import_fixtures(&data_dir, &fixture_root);
 
     {
-        let store = MetaStore::open_data_dir(&data_dir).unwrap();
-        store.run_migrations().unwrap();
-        let scanned = scanned_document(&store);
+        let store = create_owned_store(&data_dir);
+        let scanned = scanned_document_from_owned(&store);
         assert_eq!(scanned.status, DocumentStatus::OcrRequired);
         let cache_key = OcrPageCacheKey::new(
             scanned.content_hash.expect("content hash"),
@@ -1182,8 +1232,7 @@ exit 42
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     assert_eq!(scanned_document(&store).status, DocumentStatus::Searchable);
     assert!(store.retryable_jobs().unwrap().is_empty());
 
@@ -1255,8 +1304,7 @@ printf '    \n'
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scanned = scanned_document(&store);
     assert_eq!(scanned.status, DocumentStatus::Excluded);
     assert!(store
@@ -1309,13 +1357,30 @@ fn import_fixtures(data_dir: &Path, fixture_root: &Path) {
     );
 }
 
-fn scanned_document(store: &MetaStore) -> meta_store::Document {
+fn scanned_document(store: &ReadMetaStore) -> meta_store::Document {
     store
         .visible_documents()
         .unwrap()
         .into_iter()
         .find(|document| document.file_name == "synthetic-scanned-resume.pdf")
         .expect("scanned synthetic fixture is persisted")
+}
+
+fn scanned_document_from_owned(store: &OwnedMetaStore) -> meta_store::Document {
+    store
+        .visible_documents()
+        .unwrap()
+        .into_iter()
+        .find(|document| document.file_name == "synthetic-scanned-resume.pdf")
+        .expect("scanned synthetic fixture is persisted")
+}
+
+fn create_owned_store(data_dir: &Path) -> OwnedMetaStore {
+    let owner = match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("test store owner contended"),
+    };
+    owner.open_store().unwrap()
 }
 
 fn fixture_root() -> PathBuf {
@@ -1420,6 +1485,7 @@ fn seed_ocr_pdf_document_with_bytes(
     data_dir: &Path,
     bytes: Vec<u8>,
     content_hash: &str,
+    publication_state: OcrFixturePublicationState,
 ) -> PathBuf {
     let now = UnixTimestamp::from_unix_seconds(1_900_000_092);
     let content_digest = ContentDigest::from_bytes(&bytes);
@@ -1427,8 +1493,25 @@ fn seed_ocr_pdf_document_with_bytes(
     std::fs::create_dir_all(&private_root).unwrap();
     let document_path = private_root.join("synthetic-scanned-resume.pdf");
     std::fs::write(&document_path, &bytes).unwrap();
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let owner = match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("synthetic data dir is unowned"),
+    };
+    let store = owner.open_store().unwrap();
+    if publication_state == OcrFixturePublicationState::Ready {
+        let contract = current_import_processing_contract(&ImportOptions::default()).unwrap();
+        store
+            .activate_migration_rebuild_contract(&contract, now)
+            .unwrap();
+        prepare_migration_rebuild_artifacts(&store, now).unwrap();
+        finalize_migration_rebuild(
+            &store,
+            now,
+            &contract,
+            &SearchPublicationVectorization::default(),
+        )
+        .unwrap();
+    }
     let doc_id = DocumentId::from_non_secret_parts(&["s15", content_hash]);
     store
         .upsert_document(&Document {
@@ -1470,6 +1553,12 @@ fn seed_ocr_pdf_document_with_bytes(
         )
         .unwrap();
     document_path
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OcrFixturePublicationState {
+    Unpublished,
+    Ready,
 }
 
 fn temp_dir(label: &str) -> PathBuf {

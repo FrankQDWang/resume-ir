@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
 
-use super::{ConnectionOutcome, RequestFailure, ResponseSinkError};
+use super::{ConnectionOutcome, RequestFailure};
 
 static PROCESS_METRICS: LazyLock<IpcMetrics> = LazyLock::new(IpcMetrics::default);
 
@@ -38,15 +38,14 @@ impl IpcMetrics {
             ConnectionOutcome::RequestFailed(RequestFailure::Handler) => {
                 saturating_increment(&self.request_failure);
             }
-            ConnectionOutcome::ClientDisconnected(_)
-            | ConnectionOutcome::RequestFailed(RequestFailure::ResponseSink(_)) => {}
-        }
-    }
-
-    pub(crate) fn record_response_failure(&self, error: ResponseSinkError) {
-        saturating_increment(&self.response_failure);
-        if error.client_disconnected() {
-            saturating_increment(&self.client_disconnect);
+            ConnectionOutcome::ClientDisconnected(error)
+            | ConnectionOutcome::RequestFailed(RequestFailure::ResponseSink(error)) => {
+                saturating_increment(&self.response_failure);
+                if error.client_disconnected() {
+                    saturating_increment(&self.client_disconnect);
+                }
+            }
+            ConnectionOutcome::Deferred => {}
         }
     }
 
@@ -81,7 +80,6 @@ mod tests {
         metrics
             .record_connection_outcome(ConnectionOutcome::RequestFailed(RequestFailure::Handler));
         metrics.record_accepted();
-        metrics.record_response_failure(ResponseSinkError::ClientDisconnected);
         metrics.record_connection_outcome(ConnectionOutcome::ClientDisconnected(
             ResponseSinkError::ClientDisconnected,
         ));

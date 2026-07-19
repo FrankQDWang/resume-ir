@@ -1,32 +1,43 @@
-use rusqlite::{params, Connection, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use crate::{
-    document_status_to_storage, immutable_search::seal_resume_version,
-    refresh_all_candidate_version_counts_in_connection, MetaStore, MetaStoreError, Result,
-    UnixTimestamp,
+    discard_superseded_ocr_claim_in_connection, document_status_to_storage,
+    file_extension_to_storage,
+    immutable_search::seal_resume_version,
+    migration_rebuild_barrier::migration_rebuild_barrier_token_matches,
+    ocr_claim_is_current_in_connection,
+    ocr_publication::{
+        complete_ocr_search_publication_claim_in_connection,
+        insert_ocr_search_publication_facts_in_connection, validate_ocr_search_publication_commit,
+    },
+    read_document, refresh_all_candidate_version_counts_in_connection, Document, DocumentStatus,
+    MetaStoreError, MetadataStore, MetadataStoreAccess, MigrationRebuildBarrierToken,
+    OcrSearchPublicationCommit, OcrSearchPublicationOutcome, Result, SearchPublicationSession,
+    UnixTimestamp, DOCUMENT_COLUMNS,
 };
 
 use super::{
     model::{
-        SearchPublicationCommit, SearchPublicationDraft, SearchPublicationFailure,
-        SearchPublicationOutcome, SearchPublicationPrunePolicy, SearchPublicationRecord,
-        SearchPublicationState, SearchPublicationValidation, TerminalDocumentUpdate,
+        ProjectedDocumentSnapshot, SearchPublicationCommit, SearchPublicationDraft,
+        SearchPublicationFailure, SearchPublicationOutcome, SearchPublicationPrunePolicy,
+        SearchPublicationRecord, SearchPublicationState, SearchPublicationValidation,
+        TerminalDocumentUpdate,
     },
     persistence::{query_publications, search_publication_in_connection},
     validation::{
         publication_error, search_publication_fingerprint, u64_to_i64,
         validate_commit_against_publication, validate_commit_shape, validate_descriptors,
-        validate_draft, validate_projected_document_states, vector_mode_storage,
+        validate_draft, vector_mode_storage,
     },
 };
 
-impl MetaStore {
+impl SearchPublicationSession {
     pub fn begin_search_publication(
         &self,
         draft: &SearchPublicationDraft,
     ) -> Result<SearchPublicationOutcome> {
         validate_draft(draft)?;
-        let mut connection = self.connection.borrow_mut();
+        let mut connection = self.owned_store().connection.borrow_mut();
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(MetaStoreError::storage)?;
@@ -69,7 +80,7 @@ impl MetaStore {
         validation: &SearchPublicationValidation<'_>,
     ) -> Result<()> {
         validate_descriptors(validation)?;
-        let mut connection = self.connection.borrow_mut();
+        let mut connection = self.owned_store().connection.borrow_mut();
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(MetaStoreError::storage)?;
@@ -150,109 +161,126 @@ impl MetaStore {
         commit: &SearchPublicationCommit<'_>,
     ) -> Result<SearchPublicationOutcome> {
         validate_commit_shape(commit)?;
-        let mut connection = self.connection.borrow_mut();
+        self.commit_search_publication_with_precondition(
+            commit,
+            PublicationCommitPrecondition::CurrentHead,
+        )
+    }
+
+    /// Commits the first v27 publication only if the all-root rebuild barrier
+    /// captured before snapshot construction is still exact.
+    pub fn commit_migration_rebuild_search_publication(
+        &self,
+        commit: &SearchPublicationCommit<'_>,
+        barrier: &MigrationRebuildBarrierToken,
+    ) -> Result<SearchPublicationOutcome> {
+        validate_commit_shape(commit)?;
+        self.commit_search_publication_with_precondition(
+            commit,
+            PublicationCommitPrecondition::MigrationRebuild(barrier),
+        )
+    }
+
+    fn commit_search_publication_with_precondition(
+        &self,
+        commit: &SearchPublicationCommit<'_>,
+        precondition: PublicationCommitPrecondition<'_>,
+    ) -> Result<SearchPublicationOutcome> {
+        let mut connection = self.owned_store().connection.borrow_mut();
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(MetaStoreError::storage)?;
-        let publication = search_publication_in_connection(&transaction, commit.generation)?
-            .ok_or_else(|| publication_error(SearchPublicationFailure::InvalidState))?;
-        if publication.state != SearchPublicationState::Validated {
-            return Err(publication_error(SearchPublicationFailure::InvalidState));
-        }
-        let (head, visible_epoch) = ready_head_and_epoch(&transaction)?;
-        if head != publication.base_generation
-            || visible_epoch != publication.expected_visible_epoch
-        {
-            abandon_validated(&transaction, commit.generation, commit.now)?;
+        let Some((publication, service_precondition)) =
+            validated_publication_for_commit(&transaction, commit, precondition)?
+        else {
             transaction.commit().map_err(MetaStoreError::storage)?;
             return Ok(SearchPublicationOutcome::Superseded);
-        }
-        validate_commit_against_publication(&transaction, commit, &publication)?;
-
-        for projection in commit.projections {
-            seal_resume_version(&transaction, &projection.resume_version_id, commit.now)?;
-        }
-        apply_terminal_document_updates(&transaction, commit.terminal_documents, commit.now)?;
-        validate_projected_document_states(&transaction, commit.projections)?;
-
-        transaction
-            .execute(
-                "INSERT INTO search_publication_commit_guard (state_key, generation)
-                 VALUES ('default', ?1)",
-                params![commit.generation],
-            )
-            .map_err(MetaStoreError::storage)?;
-        transaction
-            .execute("DELETE FROM active_search_projection", [])
-            .map_err(MetaStoreError::storage)?;
-        for projection in commit.projections {
-            transaction
-                .execute(
-                    "INSERT INTO active_search_projection (
-                        document_id, resume_version_id, generation
-                     ) VALUES (?1, ?2, ?3)",
-                    params![
-                        projection.document_id.as_str(),
-                        projection.resume_version_id.as_str(),
-                        commit.generation,
-                    ],
-                )
-                .map_err(MetaStoreError::storage)?;
-        }
-        refresh_all_candidate_version_counts_in_connection(&transaction)?;
-        let changed = transaction
-            .execute(
-                "UPDATE search_publication_journal
-                 SET state = 'ready', updated_at_seconds = ?1
-                 WHERE generation = ?2 AND state = 'validated'",
-                params![commit.now.as_unix_seconds(), commit.generation],
-            )
-            .map_err(MetaStoreError::storage)?;
-        if changed != 1 {
-            return Err(publication_error(SearchPublicationFailure::InvalidState));
-        }
-        let next_epoch = publication
-            .expected_visible_epoch
-            .checked_add(1)
-            .ok_or_else(|| publication_error(SearchPublicationFailure::InvalidState))?;
-        let changed = transaction
-            .execute(
-                "UPDATE search_projection_state
-                 SET service_state = 'ready', generation = ?1, visible_epoch = ?2,
-                     repair_reason = NULL, updated_at_seconds = ?3
-                 WHERE state_key = 'default' AND generation IS ?4 AND visible_epoch = ?5",
-                params![
-                    commit.generation,
-                    u64_to_i64(next_epoch)?,
-                    commit.now.as_unix_seconds(),
-                    publication.base_generation,
-                    u64_to_i64(publication.expected_visible_epoch)?,
-                ],
-            )
-            .map_err(MetaStoreError::storage)?;
-        if changed != 1 {
-            return Err(publication_error(SearchPublicationFailure::InvalidState));
-        }
-        let cleared_guard = transaction
-            .execute(
-                "DELETE FROM search_publication_commit_guard
-                 WHERE state_key = 'default' AND generation = ?1",
-                params![commit.generation],
-            )
-            .map_err(MetaStoreError::storage)?;
-        if cleared_guard != 1 {
-            return Err(publication_error(SearchPublicationFailure::InvalidState));
-        }
+        };
+        apply_search_publication_commit(&transaction, commit, &publication, &service_precondition)?;
         transaction.commit().map_err(MetaStoreError::storage)?;
         Ok(SearchPublicationOutcome::Applied)
     }
 
+    /// Atomically publishes OCR-derived facts and the validated search
+    /// generation for one exact running OCR claim.
+    pub fn commit_ocr_search_publication(
+        &self,
+        publication: &OcrSearchPublicationCommit<'_>,
+    ) -> Result<OcrSearchPublicationOutcome> {
+        validate_ocr_search_publication_commit(publication)?;
+        validate_commit_shape(&publication.search)?;
+        let mut connection = self.owned_store().connection.borrow_mut();
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(MetaStoreError::storage)?;
+        if !ocr_claim_is_current_in_connection(&transaction, publication.claimed)? {
+            abandon_validated(
+                &transaction,
+                publication.search.generation,
+                publication.search.now,
+            )?;
+            discard_superseded_ocr_claim_in_connection(
+                &transaction,
+                publication.claimed,
+                publication.search.now,
+            )?;
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            return Ok(OcrSearchPublicationOutcome::ClaimSuperseded);
+        }
+        let Some((search_publication, service_precondition)) = validated_publication_for_commit(
+            &transaction,
+            &publication.search,
+            PublicationCommitPrecondition::CurrentHead,
+        )?
+        else {
+            transaction.commit().map_err(MetaStoreError::storage)?;
+            return Ok(OcrSearchPublicationOutcome::PublicationSuperseded);
+        };
+        let commit_result = (|| {
+            if search_publication.classifier_epoch != publication.classification.classifier_epoch {
+                return Err(publication_error(
+                    SearchPublicationFailure::ExactClassificationMissing,
+                ));
+            }
+            insert_ocr_search_publication_facts_in_connection(&transaction, publication)?;
+            apply_search_publication_commit(
+                &transaction,
+                &publication.search,
+                &search_publication,
+                &service_precondition,
+            )?;
+            complete_ocr_search_publication_claim_in_connection(&transaction, publication)
+        })();
+        if let Err(error) = commit_result {
+            transaction.rollback().map_err(MetaStoreError::storage)?;
+            abandon_failed_ocr_publication(
+                &mut connection,
+                publication.search.generation,
+                publication.search.now,
+            )?;
+            return Err(error);
+        }
+        if let Err(error) = transaction.commit() {
+            abandon_failed_ocr_publication(
+                &mut connection,
+                publication.search.generation,
+                publication.search.now,
+            )?;
+            return Err(MetaStoreError::storage(error));
+        }
+        Ok(OcrSearchPublicationOutcome::Applied)
+    }
+}
+
+impl<Access: MetadataStoreAccess> MetadataStore<Access> {
     pub fn search_publication(&self, generation: &str) -> Result<Option<SearchPublicationRecord>> {
         search_publication_in_connection(&self.connection.borrow(), generation)
     }
+}
 
+impl SearchPublicationSession {
     pub fn abandon_search_publication(&self, generation: &str, now: UnixTimestamp) -> Result<()> {
-        let mut connection = self.connection.borrow_mut();
+        let mut connection = self.owned_store().connection.borrow_mut();
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(MetaStoreError::storage)?;
@@ -284,7 +312,9 @@ impl MetaStore {
         transaction.commit().map_err(MetaStoreError::storage)?;
         Ok(())
     }
+}
 
+impl<Access: MetadataStoreAccess> MetadataStore<Access> {
     pub fn recent_ready_search_publications(
         &self,
         limit: usize,
@@ -316,7 +346,9 @@ impl MetaStore {
             params![limit],
         )
     }
+}
 
+impl SearchPublicationSession {
     pub fn prune_search_publication_history(
         &self,
         policy: SearchPublicationPrunePolicy,
@@ -329,7 +361,7 @@ impl MetaStore {
             .ok()
             .filter(|value| (1..=256).contains(value))
             .ok_or_else(|| publication_error(SearchPublicationFailure::InvalidDescriptor))?;
-        let mut connection = self.connection.borrow_mut();
+        let mut connection = self.owned_store().connection.borrow_mut();
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(MetaStoreError::storage)?;
@@ -375,6 +407,305 @@ impl MetaStore {
         transaction.commit().map_err(MetaStoreError::storage)?;
         Ok(changed)
     }
+}
+
+fn validated_publication_for_commit(
+    connection: &Connection,
+    commit: &SearchPublicationCommit<'_>,
+    precondition: PublicationCommitPrecondition<'_>,
+) -> Result<Option<(SearchPublicationRecord, PublicationServicePrecondition)>> {
+    let publication = search_publication_in_connection(connection, commit.generation)?
+        .ok_or_else(|| publication_error(SearchPublicationFailure::InvalidState))?;
+    if publication.state != SearchPublicationState::Validated {
+        return Err(publication_error(SearchPublicationFailure::InvalidState));
+    }
+    let service_precondition = publication_service_precondition(connection)?;
+    let precondition_matches = match precondition {
+        PublicationCommitPrecondition::CurrentHead => {
+            service_precondition.accepts_current_head_publication()
+        }
+        PublicationCommitPrecondition::MigrationRebuild(barrier) => {
+            migration_rebuild_barrier_token_matches(connection, barrier)?
+        }
+    };
+    let (head, visible_epoch) = ready_head_and_epoch(connection)?;
+    if !precondition_matches
+        || head != publication.base_generation
+        || visible_epoch != publication.expected_visible_epoch
+    {
+        abandon_validated(connection, commit.generation, commit.now)?;
+        return Ok(None);
+    }
+    Ok(Some((publication, service_precondition)))
+}
+
+fn apply_search_publication_commit(
+    connection: &Connection,
+    commit: &SearchPublicationCommit<'_>,
+    publication: &SearchPublicationRecord,
+    service_precondition: &PublicationServicePrecondition,
+) -> Result<()> {
+    validate_commit_against_publication(connection, commit, publication)?;
+    for projection in commit.projections {
+        seal_resume_version(connection, &projection.resume_version_id, commit.now)?;
+    }
+    apply_terminal_document_updates(connection, commit.terminal_documents, commit.now)?;
+    let projected_documents = projected_document_snapshots(connection, commit.projected_documents)?;
+
+    connection
+        .execute(
+            "INSERT INTO search_publication_commit_guard (state_key, generation)
+             VALUES ('default', ?1)",
+            params![commit.generation],
+        )
+        .map_err(MetaStoreError::storage)?;
+    connection
+        .execute("DELETE FROM active_search_projection", [])
+        .map_err(MetaStoreError::storage)?;
+    for (projection, document) in commit.projections.iter().zip(&projected_documents) {
+        let content_hash = document
+            .content_hash
+            .as_deref()
+            .ok_or_else(|| publication_error(SearchPublicationFailure::InvalidDocumentState))?;
+        connection
+            .execute(
+                "INSERT INTO active_search_projection (
+                    document_id, resume_version_id, generation,
+                    source_uri, normalized_path, file_name, extension, byte_size,
+                    mtime_seconds, content_hash, text_hash, is_deleted,
+                    created_at_seconds, updated_at_seconds, status
+                 ) VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                    ?13, ?14, ?15
+                 )",
+                params![
+                    projection.document_id.as_str(),
+                    projection.resume_version_id.as_str(),
+                    commit.generation,
+                    document.source_uri,
+                    document.normalized_path,
+                    document.file_name,
+                    file_extension_to_storage(&document.extension),
+                    i64::try_from(document.byte_size).map_err(|_| {
+                        publication_error(SearchPublicationFailure::InvalidDocumentState)
+                    })?,
+                    document.mtime.as_unix_seconds(),
+                    content_hash,
+                    document.text_hash,
+                    i64::from(document.is_deleted),
+                    document.created_at.as_unix_seconds(),
+                    document.updated_at.as_unix_seconds(),
+                    document_status_to_storage(document.status),
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+    }
+    refresh_all_candidate_version_counts_in_connection(connection)?;
+    let changed = connection
+        .execute(
+            "UPDATE search_publication_journal
+             SET state = 'ready', updated_at_seconds = ?1
+             WHERE generation = ?2 AND state = 'validated'",
+            params![commit.now.as_unix_seconds(), commit.generation],
+        )
+        .map_err(MetaStoreError::storage)?;
+    if changed != 1 {
+        return Err(publication_error(SearchPublicationFailure::InvalidState));
+    }
+    let next_epoch = publication
+        .expected_visible_epoch
+        .checked_add(1)
+        .ok_or_else(|| publication_error(SearchPublicationFailure::InvalidState))?;
+    let changed = connection
+        .execute(
+            "UPDATE search_projection_state
+             SET service_state = 'ready', generation = ?1, visible_epoch = ?2,
+                 repair_reason = NULL, updated_at_seconds = ?3
+             WHERE state_key = 'default' AND generation IS ?4 AND visible_epoch = ?5
+               AND service_state = ?6 AND repair_reason IS ?7",
+            params![
+                commit.generation,
+                u64_to_i64(next_epoch)?,
+                commit.now.as_unix_seconds(),
+                publication.base_generation,
+                u64_to_i64(publication.expected_visible_epoch)?,
+                service_precondition.service_state,
+                service_precondition.repair_reason,
+            ],
+        )
+        .map_err(MetaStoreError::storage)?;
+    if changed != 1 {
+        return Err(publication_error(SearchPublicationFailure::InvalidState));
+    }
+    let cleared_guard = connection
+        .execute(
+            "DELETE FROM search_publication_commit_guard
+             WHERE state_key = 'default' AND generation = ?1",
+            params![commit.generation],
+        )
+        .map_err(MetaStoreError::storage)?;
+    if cleared_guard != 1 {
+        return Err(publication_error(SearchPublicationFailure::InvalidState));
+    }
+    Ok(())
+}
+
+fn projected_document_snapshots(
+    connection: &Connection,
+    actions: &[ProjectedDocumentSnapshot],
+) -> Result<Vec<Document>> {
+    let active_sql = "SELECT document_id, source_uri, normalized_path, file_name, extension,
+                byte_size, mtime_seconds, content_hash, text_hash, is_deleted,
+                created_at_seconds, updated_at_seconds, status
+         FROM active_search_projection
+         WHERE document_id = ?1 AND resume_version_id = ?2";
+    let current_sql = format!("SELECT {DOCUMENT_COLUMNS} FROM document WHERE id = ?1");
+    let mut snapshots = Vec::with_capacity(actions.len());
+    for action in actions {
+        let projection = action.projection();
+        let retained = connection
+            .query_row(
+                active_sql,
+                params![
+                    projection.document_id.as_str(),
+                    projection.resume_version_id.as_str(),
+                ],
+                |row| read_document(row).map_err(|_| rusqlite::Error::InvalidQuery),
+            )
+            .optional()
+            .map_err(MetaStoreError::storage)?;
+        let document = match action {
+            ProjectedDocumentSnapshot::RetainedUnchanged { .. } => retained
+                .ok_or_else(|| publication_error(SearchPublicationFailure::InvalidDocumentState))?,
+            ProjectedDocumentSnapshot::MetadataChanged { document, .. } => {
+                let retained = retained.ok_or_else(|| {
+                    publication_error(SearchPublicationFailure::InvalidDocumentState)
+                })?;
+                if &retained == document {
+                    return Err(publication_error(
+                        SearchPublicationFailure::InvalidDocumentState,
+                    ));
+                }
+                validate_current_document_matches_snapshot(connection, &current_sql, document)?;
+                document.clone()
+            }
+            ProjectedDocumentSnapshot::Replacement { document, .. } => {
+                if retained.is_some() {
+                    return Err(publication_error(
+                        SearchPublicationFailure::InvalidDocumentState,
+                    ));
+                }
+                validate_current_document_matches_snapshot(connection, &current_sql, document)?;
+                document.clone()
+            }
+        };
+        if document.id != projection.document_id
+            || document.is_deleted
+            || document.status != DocumentStatus::Searchable
+            || !document_matches_exact_source_revision(connection, projection, &document)?
+        {
+            return Err(publication_error(
+                SearchPublicationFailure::InvalidDocumentState,
+            ));
+        }
+        snapshots.push(document);
+    }
+    Ok(snapshots)
+}
+
+fn validate_current_document_matches_snapshot(
+    connection: &Connection,
+    current_sql: &str,
+    planned: &Document,
+) -> Result<()> {
+    let current = connection
+        .query_row(current_sql, params![planned.id.as_str()], |row| {
+            read_document(row).map_err(|_| rusqlite::Error::InvalidQuery)
+        })
+        .optional()
+        .map_err(MetaStoreError::storage)?;
+    if current.as_ref() == Some(planned) {
+        Ok(())
+    } else {
+        Err(publication_error(
+            SearchPublicationFailure::InvalidDocumentState,
+        ))
+    }
+}
+
+fn document_matches_exact_source_revision(
+    connection: &Connection,
+    projection: &crate::ActiveSearchProjection,
+    document: &Document,
+) -> Result<bool> {
+    let Some(content_hash) = document.content_hash.as_deref() else {
+        return Ok(false);
+    };
+    connection
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1
+                FROM resume_version AS version
+                JOIN source_revision AS revision
+                  ON revision.id = version.source_revision_id
+                 AND revision.document_id = version.document_id
+                WHERE version.id = ?1 AND version.document_id = ?2
+                  AND revision.content_hash = ?3 AND revision.byte_size = ?4
+             )",
+            params![
+                projection.resume_version_id.as_str(),
+                projection.document_id.as_str(),
+                content_hash,
+                i64::try_from(document.byte_size).map_err(|_| {
+                    publication_error(SearchPublicationFailure::InvalidDocumentState)
+                })?,
+            ],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|matches| matches != 0)
+        .map_err(MetaStoreError::storage)
+}
+
+#[derive(Clone, Copy)]
+enum PublicationCommitPrecondition<'a> {
+    CurrentHead,
+    MigrationRebuild(&'a MigrationRebuildBarrierToken),
+}
+
+struct PublicationServicePrecondition {
+    service_state: String,
+    generation: Option<String>,
+    repair_reason: Option<String>,
+}
+
+impl PublicationServicePrecondition {
+    fn accepts_current_head_publication(&self) -> bool {
+        self.generation.is_some()
+            && matches!(
+                (self.service_state.as_str(), self.repair_reason.as_deref()),
+                ("ready", None) | ("repairing", Some("artifact_unavailable"))
+            )
+    }
+}
+
+fn publication_service_precondition(
+    connection: &Connection,
+) -> Result<PublicationServicePrecondition> {
+    connection
+        .query_row(
+            "SELECT service_state, generation, repair_reason
+             FROM search_projection_state
+             WHERE state_key = 'default'",
+            [],
+            |row| {
+                Ok(PublicationServicePrecondition {
+                    service_state: row.get(0)?,
+                    generation: row.get(1)?,
+                    repair_reason: row.get(2)?,
+                })
+            },
+        )
+        .map_err(MetaStoreError::storage)
 }
 
 fn apply_terminal_document_updates(
@@ -423,6 +754,18 @@ fn abandon_validated(connection: &Connection, generation: &str, now: UnixTimesta
     } else {
         Err(publication_error(SearchPublicationFailure::InvalidState))
     }
+}
+
+fn abandon_failed_ocr_publication(
+    connection: &mut Connection,
+    generation: &str,
+    now: UnixTimestamp,
+) -> Result<()> {
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(MetaStoreError::storage)?;
+    abandon_validated(&transaction, generation, now)?;
+    transaction.commit().map_err(MetaStoreError::storage)
 }
 
 fn ready_head_and_epoch(connection: &Connection) -> Result<(Option<String>, u64)> {

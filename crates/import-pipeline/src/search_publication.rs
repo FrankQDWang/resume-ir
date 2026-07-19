@@ -1,36 +1,52 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
 
-use core_domain::VectorRecordId;
 use index_fulltext::{IndexDocument, PublishedSnapshotMetadata};
-use index_vector::{
-    VectorDocument, VectorDocumentIdentity, VectorModelContract, VectorSnapshotRoot,
-    VectorSnapshotStore, VectorSnapshotSummary, VectorSnapshotUpdate,
-};
+use index_vector::{VectorModelContract, VectorSnapshotSummary};
 use meta_store::{
-    ActiveSearchProjection, ContentDigest, Document, DocumentId, MetaStore, ResumeVersionId,
-    SearchProjectionDigest, SearchProjectionServiceState, SearchPublicationCommit,
-    SearchPublicationDraft, SearchPublicationOutcome, SearchPublicationValidation,
-    TerminalDocumentUpdate, UnixTimestamp, VectorSnapshotDescriptor, VectorSnapshotMode,
+    ActiveSearchProjection, ContentDigest, Document, DocumentId, MigrationRebuildBarrierToken,
+    OwnedMetaStore, ProjectedDocumentSnapshot, ResumeVersionId, SearchProjectionDigest,
+    SearchProjectionServiceState, SearchPublicationCommit, SearchPublicationDraft,
+    SearchPublicationLease, SearchPublicationOutcome, SearchPublicationSession,
+    SearchPublicationState, SearchPublicationValidation, SearchRepairReason,
+    TerminalDocumentUpdate, UnixTimestamp,
 };
 
-use super::index_publication::SearchPublicationLock;
-use super::{
-    ImportPipelineError, Result, SearchPublicationEmbeddingFailure,
-    SearchPublicationEmbeddingInput, SearchPublicationVectorization,
+use super::search_publication_vector::{
+    meta_vector_descriptor, publish_vector_generation, validate_vector_publication,
+    vector_model_contract, StagedSearchVersionTexts,
 };
+use super::{ImportPipelineError, Result, SearchPublicationVectorization};
 
-pub(super) struct PreparedSearchPublication {
-    _publication_lock: SearchPublicationLock,
+pub(super) struct PreparedSearchPublication<'session> {
+    pub(super) publication_session: &'session SearchPublicationSession,
+    pub(super) _publication_lease: SearchPublicationLease,
     pub(super) fulltext: PublishedSnapshotMetadata,
     pub(super) vector: VectorSnapshotSummary,
     pub(super) projections: Vec<ActiveSearchProjection>,
-    vector_coverage: Vec<ActiveSearchProjection>,
+    pub(super) projected_documents: Vec<ProjectedDocumentPlan>,
+    pub(super) vector_coverage: Vec<ActiveSearchProjection>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum ProjectedDocumentPlan {
+    RetainedUnchanged(ActiveSearchProjection),
+    MetadataChanged(ActiveSearchProjection),
+    Replacement(ActiveSearchProjection),
+}
+
+impl ProjectedDocumentPlan {
+    fn projection(&self) -> &ActiveSearchProjection {
+        match self {
+            Self::RetainedUnchanged(projection)
+            | Self::MetadataChanged(projection)
+            | Self::Replacement(projection) => projection,
+        }
+    }
 }
 
 #[must_use = "release the committed publication fence after dependent work is complete"]
 pub(super) struct CommittedSearchPublication {
-    _publication_lock: SearchPublicationLock,
+    pub(super) _publication_lease: SearchPublicationLease,
     pub(super) fulltext: PublishedSnapshotMetadata,
     pub(super) projections: Vec<ActiveSearchProjection>,
 }
@@ -43,11 +59,11 @@ pub(super) struct PublishedSearchPublication {
 impl CommittedSearchPublication {
     pub(super) fn release(self) -> PublishedSearchPublication {
         let Self {
-            _publication_lock,
+            _publication_lease,
             fulltext,
             projections,
         } = self;
-        drop(_publication_lock);
+        drop(_publication_lease);
         PublishedSearchPublication {
             fulltext,
             projections,
@@ -63,21 +79,21 @@ pub(super) struct SearchPublicationBase {
     pub(super) vector_contract: VectorModelContract,
 }
 
-pub(super) fn load_search_publication_base(store: &MetaStore) -> Result<SearchPublicationBase> {
+pub(super) fn load_search_publication_base(
+    store: &OwnedMetaStore,
+) -> Result<SearchPublicationBase> {
     let state = store
         .search_projection_state()
         .map_err(ImportPipelineError::store)?;
-    if state.service_state == SearchProjectionServiceState::Repairing && state.generation.is_none()
+    if state.service_state == SearchProjectionServiceState::Repairing
+        && state.repair_reason == Some(SearchRepairReason::ArtifactUnavailable)
     {
-        return Ok(SearchPublicationBase {
-            generation: None,
-            visible_epoch: state.visible_epoch,
-            classifier_epoch: resume_classifier::CLASSIFIER_EPOCH.to_string(),
-            projections: Vec::new(),
-            vector_contract: VectorModelContract::Disabled,
-        });
+        return load_artifact_recovery_publication_base(store, state);
     }
-    if state.service_state != SearchProjectionServiceState::Ready {
+    if state.service_state != SearchProjectionServiceState::Ready
+        || state.repair_reason.is_some()
+        || state.generation.is_none()
+    {
         return Err(ImportPipelineError::store_invariant());
     }
     let (generation, visible_epoch, classifier_epoch, projections, vector_contract) = store
@@ -121,31 +137,115 @@ pub(super) fn load_search_publication_base(store: &MetaStore) -> Result<SearchPu
     })
 }
 
-fn vector_model_contract(descriptor: &VectorSnapshotDescriptor) -> Result<VectorModelContract> {
-    match descriptor.mode() {
-        VectorSnapshotMode::Disabled => Ok(VectorModelContract::Disabled),
-        VectorSnapshotMode::Enabled {
-            model_id,
-            dimension,
-        } => VectorModelContract::enabled(model_id.clone(), *dimension as usize)
-            .map_err(ImportPipelineError::vector),
-    }
+pub(super) fn load_migration_rebuild_publication_base(
+    store: &OwnedMetaStore,
+) -> Result<SearchPublicationBase> {
+    let state = store
+        .search_projection_state()
+        .map_err(ImportPipelineError::store)?;
+    migration_rebuild_publication_base_from_state(state)
 }
 
-pub(super) fn prepare_search_publication(
-    data_dir: &Path,
-    store: &MetaStore,
+pub(super) fn migration_rebuild_publication_base_from_state(
+    state: meta_store::SearchProjectionState,
+) -> Result<SearchPublicationBase> {
+    if state.service_state != SearchProjectionServiceState::Repairing
+        || state.repair_reason != Some(SearchRepairReason::MigrationRebuild)
+        || state.generation.is_some()
+        || state.publication.is_some()
+    {
+        return Err(ImportPipelineError::store_invariant());
+    }
+    Ok(SearchPublicationBase {
+        generation: None,
+        visible_epoch: state.visible_epoch,
+        classifier_epoch: resume_classifier::CLASSIFIER_EPOCH.to_string(),
+        projections: Vec::new(),
+        vector_contract: VectorModelContract::Disabled,
+    })
+}
+
+fn load_artifact_recovery_publication_base(
+    store: &OwnedMetaStore,
+    state: meta_store::SearchProjectionState,
+) -> Result<SearchPublicationBase> {
+    let generation = state
+        .generation
+        .ok_or_else(ImportPipelineError::store_invariant)?;
+    let publication = state
+        .publication
+        .ok_or_else(ImportPipelineError::store_invariant)?;
+    let fulltext = publication
+        .fulltext
+        .as_ref()
+        .ok_or_else(ImportPipelineError::store_invariant)?;
+    let vector = publication
+        .vector
+        .as_ref()
+        .ok_or_else(ImportPipelineError::store_invariant)?;
+    if publication.state != SearchPublicationState::Ready
+        || publication.generation != generation
+        || publication.expected_visible_epoch.checked_add(1) != Some(state.visible_epoch)
+        || fulltext.generation() != generation
+        || vector.generation() != generation
+    {
+        return Err(ImportPipelineError::store_invariant());
+    }
+
+    let projections = store
+        .searchable_document_ids()
+        .map_err(ImportPipelineError::store)?
+        .into_iter()
+        .map(|document_id| {
+            store
+                .active_search_projection_for_document(&document_id)
+                .map_err(ImportPipelineError::store)?
+                .ok_or_else(ImportPipelineError::store_invariant)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let projection_digest =
+        SearchProjectionDigest::from_pairs(projections.iter().map(|projection| {
+            (
+                projection.document_id.as_str(),
+                projection.resume_version_id.as_str(),
+            )
+        }))
+        .map_err(|_| ImportPipelineError::store_invariant())?;
+    if fulltext.document_count() != projections.len() as u64
+        || vector.projection_count() != projections.len() as u64
+        || fulltext.projection_digest() != &projection_digest
+        || vector.projection_digest() != &projection_digest
+        || publication.projection_digest != projection_digest
+    {
+        return Err(ImportPipelineError::store_invariant());
+    }
+
+    Ok(SearchPublicationBase {
+        generation: Some(generation),
+        visible_epoch: state.visible_epoch,
+        classifier_epoch: publication.classifier_epoch.clone(),
+        projections,
+        vector_contract: vector_model_contract(vector)?,
+    })
+}
+
+pub(super) fn prepare_search_publication<'session>(
+    publication_session: &'session SearchPublicationSession,
     now: UnixTimestamp,
     classifier_epoch: &str,
-    publication_lock: SearchPublicationLock,
     base: SearchPublicationBase,
     generation: &str,
     projections: Vec<ActiveSearchProjection>,
+    staged_version_texts: &StagedSearchVersionTexts,
     vectorization: &SearchPublicationVectorization,
     ensure_not_cancelled: Option<&dyn Fn() -> Result<()>>,
     write_fulltext: impl FnOnce() -> Result<PublishedSnapshotMetadata>,
-) -> Result<PreparedSearchPublication> {
+) -> Result<PreparedSearchPublication<'session>> {
+    let data_dir = publication_session.canonical_data_dir();
+    let store = publication_session.owned_store();
     validate_classifier_epoch(&base, classifier_epoch)?;
+    let projected_documents =
+        projected_document_plan(&base.projections, &projections, staged_version_texts)?;
     let projection_digest =
         SearchProjectionDigest::from_pairs(projections.iter().map(|projection| {
             (
@@ -162,7 +262,7 @@ pub(super) fn prepare_search_publication(
         projection_digest: projection_digest.clone(),
         now,
     };
-    if store
+    if publication_session
         .begin_search_publication(&draft)
         .map_err(ImportPipelineError::store)?
         == SearchPublicationOutcome::Superseded
@@ -184,6 +284,7 @@ pub(super) fn prepare_search_publication(
             generation,
             &base,
             &projections,
+            staged_version_texts,
             vectorization,
             ensure_not_cancelled,
         )?;
@@ -191,7 +292,7 @@ pub(super) fn prepare_search_publication(
             validate_vector_publication(&vector, generation, &projections, &projection_digest)?;
         let fulltext_descriptor = meta_fulltext_descriptor(&fulltext)?;
         let vector_descriptor = meta_vector_descriptor(&vector)?;
-        store
+        publication_session
             .validate_search_publication(&SearchPublicationValidation {
                 generation,
                 fulltext: &fulltext_descriptor,
@@ -200,103 +301,29 @@ pub(super) fn prepare_search_publication(
             })
             .map_err(ImportPipelineError::store)?;
         Ok(PreparedSearchPublication {
-            _publication_lock: publication_lock,
+            publication_session,
+            _publication_lease: publication_session.retain(),
             fulltext,
             vector,
             projections,
+            projected_documents,
             vector_coverage,
         })
     })();
     if result.is_err() {
-        store
+        publication_session
             .abandon_search_publication(generation, now)
             .map_err(ImportPipelineError::store)?;
     }
     result
 }
 
-fn publish_vector_generation(
-    data_dir: &Path,
-    store: &MetaStore,
-    generation: &str,
-    base: &SearchPublicationBase,
-    projections: &[ActiveSearchProjection],
-    vectorization: &SearchPublicationVectorization,
-    ensure_not_cancelled: Option<&dyn Fn() -> Result<()>>,
-) -> Result<VectorSnapshotSummary> {
-    let target_contract = vectorization
-        .vectorizer()
-        .map(|vectorizer| {
-            VectorModelContract::enabled(vectorizer.model_id(), vectorizer.dimension())
-                .map_err(ImportPipelineError::vector)
-        })
-        .transpose()?
-        .unwrap_or_else(|| base.vector_contract.clone());
-    let vector_store =
-        VectorSnapshotStore::new(data_dir.join("vector-index"), target_contract.clone())
-            .map_err(ImportPipelineError::vector)?;
-    if target_contract == VectorModelContract::Disabled {
-        return vector_store
-            .publish_generation(generation, projections.iter().cloned(), Vec::new())
-            .map_err(ImportPipelineError::vector);
-    }
-
-    if base.generation.is_some() && base.vector_contract == target_contract {
-        let root = VectorSnapshotRoot::new(data_dir.join("vector-index"));
-        let base_reader = root.and_then(|root| {
-            let lease = root.acquire_read_lease()?;
-            root.open_generation_with_lease(
-                base.generation
-                    .as_deref()
-                    .ok_or(index_vector::VectorIndexError::GenerationNotFound)?,
-                &target_contract,
-                lease,
-            )
-        });
-        if let Ok(base_reader) = base_reader {
-            let base_is_fully_covered = base_reader.summary().vector_document_count()
-                == base.projections.len()
-                && base_reader.summary().coverage_digest()
-                    == base_reader.summary().projection_digest();
-            if base_is_fully_covered {
-                let replacements = changed_projections(&base.projections, projections);
-                let replacement_vectors = embed_projections(
-                    store,
-                    &replacements,
-                    &target_contract,
-                    vectorization,
-                    ensure_not_cancelled,
-                )?;
-                let update = VectorSnapshotUpdate::new(
-                    projections.to_vec(),
-                    replacement_vectors,
-                    BTreeSet::new(),
-                )
-                .map_err(ImportPipelineError::vector)?;
-                return vector_store
-                    .publish_generation_from(base_reader, generation, update)
-                    .map_err(ImportPipelineError::vector);
-            }
-        }
-    }
-
-    let vectors = embed_projections(
-        store,
-        projections,
-        &target_contract,
-        vectorization,
-        ensure_not_cancelled,
-    )?;
-    vector_store
-        .publish_generation(generation, projections.iter().cloned(), vectors)
-        .map_err(ImportPipelineError::vector)
-}
-
-fn changed_projections(
+fn projected_document_plan(
     base: &[ActiveSearchProjection],
     target: &[ActiveSearchProjection],
-) -> Vec<ActiveSearchProjection> {
-    let base_versions = base
+    staged_version_texts: &StagedSearchVersionTexts,
+) -> Result<Vec<ProjectedDocumentPlan>> {
+    let base = base
         .iter()
         .map(|projection| {
             (
@@ -304,159 +331,28 @@ fn changed_projections(
                 projection.resume_version_id.as_str(),
             )
         })
-        .collect::<BTreeMap<_, _>>();
+        .collect::<std::collections::BTreeMap<_, _>>();
     target
         .iter()
-        .filter(|projection| {
-            base_versions.get(projection.document_id.as_str()).copied()
-                != Some(projection.resume_version_id.as_str())
-        })
-        .cloned()
-        .collect()
-}
-
-fn embed_projections(
-    store: &MetaStore,
-    projections: &[ActiveSearchProjection],
-    contract: &VectorModelContract,
-    vectorization: &SearchPublicationVectorization,
-    ensure_not_cancelled: Option<&dyn Fn() -> Result<()>>,
-) -> Result<Vec<VectorDocument>> {
-    if projections.is_empty() {
-        return Ok(Vec::new());
-    }
-    let vectorizer = vectorization
-        .vectorizer()
-        .ok_or_else(ImportPipelineError::vector_io)?;
-    let (Some(model_id), Some(dimension)) = (contract.model_id(), contract.dimension()) else {
-        return Err(ImportPipelineError::store_invariant());
-    };
-    if vectorizer.model_id() != model_id
-        || vectorizer.dimension() != dimension
-        || vectorizer.max_batch_inputs() == 0
-        || vectorizer.max_text_bytes() == 0
-    {
-        return Err(ImportPipelineError::store_invariant());
-    }
-
-    let mut inputs = Vec::with_capacity(projections.len());
-    for projection in projections {
-        let version = store
-            .resume_version_by_id(&projection.resume_version_id)
-            .map_err(ImportPipelineError::store)?
-            .filter(|version| version.document_id == projection.document_id)
-            .ok_or_else(ImportPipelineError::store_invariant)?;
-        let text = version
-            .clean_text
-            .as_deref()
-            .or(version.raw_text.as_deref())
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-            .ok_or_else(ImportPipelineError::store_invariant)?;
-        if text.len() > vectorizer.max_text_bytes() {
-            return Err(ImportPipelineError::vector_io());
-        }
-        inputs.push(SearchPublicationEmbeddingInput::new(
-            projection.resume_version_id.to_string(),
-            text,
-        ));
-    }
-
-    let mut outputs = BTreeMap::new();
-    for batch in inputs.chunks(vectorizer.max_batch_inputs()) {
-        if let Some(check) = ensure_not_cancelled {
-            check()?;
-        }
-        let cancelled = || ensure_not_cancelled.is_some_and(|check| check().is_err());
-        let batch_outputs = vectorizer
-            .embed_batch(batch, &cancelled)
-            .map_err(|failure| match failure {
-                SearchPublicationEmbeddingFailure::Cancelled => ImportPipelineError::cancelled(),
-                SearchPublicationEmbeddingFailure::RuntimeUnavailable
-                | SearchPublicationEmbeddingFailure::InvalidOutput => {
-                    ImportPipelineError::vector_io()
-                }
-            })?;
-        if batch_outputs.len() != batch.len() {
-            return Err(ImportPipelineError::store_invariant());
-        }
-        for output in batch_outputs {
-            if output.model_id() != model_id
-                || output.values().len() != dimension
-                || outputs.insert(output.id().to_string(), output).is_some()
-            {
-                return Err(ImportPipelineError::store_invariant());
-            }
-        }
-        if let Some(check) = ensure_not_cancelled {
-            check()?;
-        }
-    }
-
-    projections
-        .iter()
         .map(|projection| {
-            let output = outputs
-                .remove(projection.resume_version_id.as_str())
-                .ok_or_else(ImportPipelineError::store_invariant)?;
-            let vector_id = VectorRecordId::from_non_secret_parts(&[
-                projection.resume_version_id.as_str(),
-                model_id,
-                "document",
-            ]);
-            let identity = VectorDocumentIdentity::new(
-                vector_id.to_string(),
-                projection.document_id.to_string(),
-                projection.resume_version_id.to_string(),
-                model_id,
-            )
-            .map_err(ImportPipelineError::vector)?;
-            VectorDocument::new(identity, output.values().to_vec())
-                .map_err(ImportPipelineError::vector)
-        })
-        .collect::<Result<Vec<_>>>()
-        .and_then(|documents| {
-            if outputs.is_empty() {
-                Ok(documents)
-            } else {
-                Err(ImportPipelineError::store_invariant())
+            let staged = staged_version_texts
+                .get(projection.resume_version_id.as_str())
+                .is_some_and(|staged| staged.document_id == projection.document_id);
+            match (base.get(projection.document_id.as_str()).copied(), staged) {
+                (Some(version), false) if version == projection.resume_version_id.as_str() => {
+                    Ok(ProjectedDocumentPlan::RetainedUnchanged(projection.clone()))
+                }
+                (Some(version), true) if version == projection.resume_version_id.as_str() => {
+                    Ok(ProjectedDocumentPlan::MetadataChanged(projection.clone()))
+                }
+                (Some(version), true) if version != projection.resume_version_id.as_str() => {
+                    Ok(ProjectedDocumentPlan::Replacement(projection.clone()))
+                }
+                (None, true) => Ok(ProjectedDocumentPlan::Replacement(projection.clone())),
+                _ => Err(ImportPipelineError::store_invariant()),
             }
         })
-}
-
-fn validate_vector_publication(
-    vector: &VectorSnapshotSummary,
-    generation: &str,
-    projections: &[ActiveSearchProjection],
-    projection_digest: &SearchProjectionDigest,
-) -> Result<Vec<ActiveSearchProjection>> {
-    if vector.generation() != generation
-        || vector.projection_count() != projections.len()
-        || vector.projection_digest() != projection_digest
-    {
-        return Err(ImportPipelineError::store_invariant());
-    }
-    match vector.model_contract() {
-        VectorModelContract::Disabled
-            if vector.vector_count() == 0
-                && vector.vector_document_count() == 0
-                && vector.coverage_digest()
-                    == &SearchProjectionDigest::from_pairs::<_, &str, &str>([])
-                        .map_err(|_| ImportPipelineError::store_invariant())? =>
-        {
-            Ok(Vec::new())
-        }
-        VectorModelContract::Enabled { .. }
-            if vector.vector_count() >= projections.len()
-                && vector.vector_document_count() == projections.len()
-                && vector.coverage_digest() == projection_digest =>
-        {
-            Ok(projections.to_vec())
-        }
-        VectorModelContract::Disabled | VectorModelContract::Enabled { .. } => {
-            Err(ImportPipelineError::store_invariant())
-        }
-    }
+        .collect()
 }
 
 fn validate_classifier_epoch(base: &SearchPublicationBase, classifier_epoch: &str) -> Result<()> {
@@ -510,18 +406,46 @@ pub(super) fn projections_after_delta(
 }
 
 pub(super) fn commit_prepared_search_publication(
-    store: &MetaStore,
     now: UnixTimestamp,
-    publication: PreparedSearchPublication,
+    publication: PreparedSearchPublication<'_>,
     documents: &[Document],
 ) -> Result<CommittedSearchPublication> {
+    commit_prepared_search_publication_with(now, publication, documents, |session, commit| {
+        session.commit_search_publication(commit)
+    })
+    .and_then(|committed| committed.ok_or_else(ImportPipelineError::index_io))
+}
+
+pub(super) fn commit_migration_rebuild_search_publication(
+    now: UnixTimestamp,
+    publication: PreparedSearchPublication<'_>,
+    documents: &[Document],
+    barrier: &MigrationRebuildBarrierToken,
+) -> Result<Option<CommittedSearchPublication>> {
+    commit_prepared_search_publication_with(now, publication, documents, |session, commit| {
+        session.commit_migration_rebuild_search_publication(commit, barrier)
+    })
+}
+
+fn commit_prepared_search_publication_with(
+    now: UnixTimestamp,
+    publication: PreparedSearchPublication<'_>,
+    documents: &[Document],
+    commit_publication: impl FnOnce(
+        &SearchPublicationSession,
+        &SearchPublicationCommit<'_>,
+    ) -> meta_store::Result<SearchPublicationOutcome>,
+) -> Result<Option<CommittedSearchPublication>> {
     let PreparedSearchPublication {
-        _publication_lock,
+        publication_session,
+        _publication_lease,
         fulltext,
         vector,
         projections,
+        projected_documents,
         vector_coverage,
     } = publication;
+    let store = publication_session.owned_store();
     if fulltext.document_count() != projections.len()
         || vector.projection_count() != projections.len()
         || fulltext.generation() != vector.generation()
@@ -529,25 +453,95 @@ pub(super) fn commit_prepared_search_publication(
     {
         return Err(ImportPipelineError::store_invariant());
     }
-    let terminal_documents = terminal_document_updates(store, documents)?;
+    let publication_documents = publication_document_map(documents)?;
+    let projected_documents =
+        bind_projected_document_snapshots(&projected_documents, &publication_documents)?;
+    let metadata_changed_ids = projected_documents
+        .iter()
+        .filter_map(|snapshot| match snapshot {
+            ProjectedDocumentSnapshot::MetadataChanged { projection, .. } => {
+                Some(&projection.document_id)
+            }
+            ProjectedDocumentSnapshot::RetainedUnchanged { .. }
+            | ProjectedDocumentSnapshot::Replacement { .. } => None,
+        })
+        .collect::<BTreeSet<_>>();
+    let terminal_targets = documents
+        .iter()
+        .filter(|document| !metadata_changed_ids.contains(&document.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let terminal_documents = terminal_document_updates(store, &terminal_targets)?;
     let commit = SearchPublicationCommit {
         generation: fulltext.generation(),
         terminal_documents: &terminal_documents,
         projections: &projections,
+        projected_documents: &projected_documents,
         vector_coverage: &vector_coverage,
         now,
     };
-    match store
-        .commit_search_publication(&commit)
-        .map_err(ImportPipelineError::store)?
-    {
-        SearchPublicationOutcome::Applied => Ok(CommittedSearchPublication {
-            _publication_lock,
+    match commit_publication(publication_session, &commit).map_err(ImportPipelineError::store)? {
+        SearchPublicationOutcome::Applied => Ok(Some(CommittedSearchPublication {
+            _publication_lease,
             fulltext,
             projections,
-        }),
-        SearchPublicationOutcome::Superseded => Err(ImportPipelineError::index_io()),
+        })),
+        SearchPublicationOutcome::Superseded => Ok(None),
     }
+}
+
+pub(super) fn publication_document_map(
+    documents: &[Document],
+) -> Result<BTreeMap<&DocumentId, &Document>> {
+    let mut mapped = BTreeMap::new();
+    for document in documents {
+        if mapped.insert(&document.id, document).is_some() {
+            return Err(ImportPipelineError::store_invariant());
+        }
+    }
+    Ok(mapped)
+}
+
+pub(super) fn bind_projected_document_snapshots(
+    plans: &[ProjectedDocumentPlan],
+    documents: &BTreeMap<&DocumentId, &Document>,
+) -> Result<Vec<ProjectedDocumentSnapshot>> {
+    plans
+        .iter()
+        .map(|plan| {
+            let projection = plan.projection().clone();
+            match plan {
+                ProjectedDocumentPlan::RetainedUnchanged(_) => {
+                    if documents.contains_key(&projection.document_id) {
+                        return Err(ImportPipelineError::store_invariant());
+                    }
+                    Ok(ProjectedDocumentSnapshot::RetainedUnchanged { projection })
+                }
+                ProjectedDocumentPlan::MetadataChanged(_) => {
+                    let document = documents
+                        .get(&projection.document_id)
+                        .copied()
+                        .ok_or_else(ImportPipelineError::store_invariant)?
+                        .clone();
+                    Ok(ProjectedDocumentSnapshot::MetadataChanged {
+                        projection,
+                        document,
+                    })
+                }
+                ProjectedDocumentPlan::Replacement(_) => {
+                    let document = documents
+                        .get(&projection.document_id)
+                        .copied()
+                        .ok_or_else(ImportPipelineError::store_invariant)?
+                        .clone();
+                    Ok(ProjectedDocumentSnapshot::Replacement {
+                        projection,
+                        document,
+                    })
+                }
+            }
+        })
+        .collect()
 }
 
 fn meta_fulltext_descriptor(
@@ -563,43 +557,8 @@ fn meta_fulltext_descriptor(
     ))
 }
 
-fn meta_vector_descriptor(summary: &VectorSnapshotSummary) -> Result<VectorSnapshotDescriptor> {
-    match summary.model_contract() {
-        VectorModelContract::Disabled => Ok(VectorSnapshotDescriptor::disabled(
-            summary.generation().to_string(),
-            u64::try_from(summary.projection_count())
-                .map_err(|_| ImportPipelineError::store_invariant())?,
-            summary.projection_digest().clone(),
-            summary.coverage_digest().clone(),
-            summary.logical_content_digest().clone(),
-        )),
-        VectorModelContract::Enabled {
-            model_id,
-            dimension,
-        } => Ok(VectorSnapshotDescriptor::enabled(
-            meta_store::EnabledVectorSnapshotDescriptor {
-                generation: summary.generation().to_string(),
-                model_id: model_id.clone(),
-                dimension: u32::try_from(*dimension)
-                    .map_err(|_| ImportPipelineError::store_invariant())?,
-                projection_count: u64::try_from(summary.projection_count())
-                    .map_err(|_| ImportPipelineError::store_invariant())?,
-                projection_digest: summary.projection_digest().clone(),
-                coverage_digest: summary.coverage_digest().clone(),
-                vector_count: u64::try_from(summary.vector_count())
-                    .map_err(|_| ImportPipelineError::store_invariant())?,
-                document_count: u64::try_from(summary.vector_document_count())
-                    .map_err(|_| ImportPipelineError::store_invariant())?,
-                resume_version_count: u64::try_from(summary.vector_document_count())
-                    .map_err(|_| ImportPipelineError::store_invariant())?,
-                logical_content_digest: summary.logical_content_digest().clone(),
-            },
-        )),
-    }
-}
-
 fn terminal_document_updates(
-    store: &MetaStore,
+    store: &OwnedMetaStore,
     documents: &[Document],
 ) -> Result<Vec<TerminalDocumentUpdate>> {
     let mut updates = Vec::with_capacity(documents.len());

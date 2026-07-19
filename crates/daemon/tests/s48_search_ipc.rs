@@ -8,9 +8,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use import_pipeline::{import_root_with_options, ImportOptions, ImportParseWorkers};
 use meta_store::{
-    ActiveSearchProjection, ExactHitHydration, ImportTask, ImportTaskId, ImportTaskStatus,
-    MetaStore, SearchRepairReason, UnixTimestamp,
+    ActiveSearchProjection, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease,
+    ExactHitHydration, ImportTask, ImportTaskId, ImportTaskStatus, OwnedMetaStore, ReadMetaStore,
+    UnixTimestamp,
 };
+
+mod support;
 
 const TARGET_FILE: &str = "synthetic-target.txt";
 const DUPLICATE_FILE: &str = "synthetic-duplicate.txt";
@@ -242,7 +245,7 @@ fn content_update_publishes_a_new_immutable_version_pair() {
         .resume_version_by_id(&old_projection.resume_version_id)
         .unwrap()
         .unwrap();
-    let mut daemon = DaemonHarness::start(&corpus.data_dir, 2);
+    let mut daemon = DaemonHarness::start(&corpus.data_dir, 1);
 
     let before = daemon.search(
         "immutable-before",
@@ -250,6 +253,7 @@ fn content_update_publishes_a_new_immutable_version_pair() {
     );
     assert_ok_search(&before, "immutable-before");
     assert_selection(&before.body["results"][0], &old_projection);
+    daemon.finish();
 
     fs::write(
         corpus.source_root.join("versioned.txt"),
@@ -259,13 +263,15 @@ fn content_update_publishes_a_new_immutable_version_pair() {
         ),
     )
     .unwrap();
+    let store = open_owned_store(&corpus.data_dir);
     run_import(
         &corpus.data_dir,
         &corpus.source_root,
-        &corpus.store,
+        &store,
         "immutable-update-second",
         1_800_048_100,
     );
+    drop(store);
     let new_projection = active_projection_for_file(&corpus.store, "versioned.txt");
     assert_ne!(
         old_projection.resume_version_id,
@@ -280,6 +286,7 @@ fn content_update_publishes_a_new_immutable_version_pair() {
         old_version
     );
 
+    let mut daemon = DaemonHarness::start(&corpus.data_dir, 1);
     let after = daemon.search(
         "immutable-after",
         serde_json::json!({"query": "immutablebeta", "mode": "fulltext"}),
@@ -293,55 +300,59 @@ fn content_update_publishes_a_new_immutable_version_pair() {
 }
 
 #[test]
-fn corrupted_new_generation_never_falls_back_to_cached_results() {
+fn corrupted_published_generation_is_rebuilt_before_search() {
     let corpus = SyntheticCorpus::single(
         "corrupt-generation",
         "cached.txt",
         resume_text("cacheoldsentry", "Synthetic Cached Candidate"),
     );
-    let mut daemon = DaemonHarness::start(&corpus.data_dir, 2);
+    let mut daemon = DaemonHarness::start(&corpus.data_dir, 1);
     let cached = daemon.search(
         "cache-prime",
         serde_json::json!({"query": "cacheoldsentry", "mode": "fulltext"}),
     );
     assert_ok_search(&cached, "cache-prime");
     assert_eq!(cached.body["result_count"], 1);
+    daemon.finish();
 
     fs::write(
         corpus.source_root.join("new-generation.txt"),
         resume_text("newgenerationsentry", "Synthetic New Candidate"),
     )
     .unwrap();
+    let store = open_owned_store(&corpus.data_dir);
     run_import(
         &corpus.data_dir,
         &corpus.source_root,
-        &corpus.store,
+        &store,
         "corrupt-generation-second",
         1_800_048_200,
     );
-    let generation = corpus
-        .store
-        .search_projection_state()
-        .unwrap()
-        .generation
-        .unwrap();
+    let generation = store.search_projection_state().unwrap().generation.unwrap();
+    drop(store);
     let corrupted = corpus
         .data_dir
         .join("search-index")
         .join("snapshots")
-        .join(generation);
+        .join(&generation);
     fs::remove_dir_all(&corrupted).unwrap();
 
+    let mut daemon = DaemonHarness::start(&corpus.data_dir, 1);
     let response = daemon.search(
         "cache-must-not-fallback",
         serde_json::json!({"query": "cacheoldsentry", "mode": "fulltext"}),
     );
-    assert_eq!(response.status_code, 503, "{}", response.raw);
-    assert_eq!(response.body["error"]["code"], "QUERY_SERVICE_UNAVAILABLE");
-    assert!(response.body.get("results").is_none());
-    assert!(!response.raw.contains("cacheoldsentry"));
+    assert_ok_search(&response, "cache-must-not-fallback");
+    assert_eq!(response.body["result_count"], 1);
 
     daemon.finish();
+    let state = corpus.store.search_projection_state().unwrap();
+    assert_eq!(
+        state.service_state,
+        meta_store::SearchProjectionServiceState::Ready
+    );
+    assert_eq!(state.repair_reason, None);
+    assert_ne!(state.generation.as_deref(), Some(generation.as_str()));
     corpus.remove();
 }
 
@@ -367,33 +378,39 @@ fn client_disconnect_only_ends_that_connection() {
 }
 
 #[test]
-fn repairing_preflight_preserves_the_parsed_search_request_context() {
+fn startup_repair_converges_before_accepting_a_search_request() {
     let corpus = SyntheticCorpus::single(
         "repairing-context",
         "repairing.txt",
         resume_text("repairingsentry", "Synthetic Repairing Candidate"),
     );
-    let mut daemon = DaemonHarness::start(&corpus.data_dir, 1);
-    corpus
-        .store
-        .mark_search_repairing(
-            SearchRepairReason::ArtifactUnavailable,
+    let state = corpus.store.search_projection_state().unwrap();
+    let store = open_owned_store(&corpus.data_dir);
+    store
+        .begin_artifact_repair(
+            state.generation.as_deref().unwrap(),
+            state.visible_epoch,
             UnixTimestamp::from_unix_seconds(1_800_048_300),
         )
         .unwrap();
+    drop(store);
+    let mut daemon = DaemonHarness::start(&corpus.data_dir, 1);
 
     let response = daemon.search(
         "repairing-request-context",
         serde_json::json!({"query": "repairingsentry", "mode": "fulltext"}),
     );
-    assert_eq!(response.status_code, 503, "{}", response.raw);
-    assert_eq!(response.body["schema_version"], "resume-ir.error.v1");
+    assert_ok_search(&response, "repairing-request-context");
     assert_eq!(response.body["request_id"], "repairing-request-context");
-    assert_eq!(response.body["error"]["code"], "REPAIRING");
-    assert_eq!(response.body["error"]["action"], "wait_for_repair");
-    assert!(!response.raw.contains("repairingsentry"));
+    assert_eq!(response.body["result_count"], 1);
 
     daemon.finish();
+    let state = corpus.store.search_projection_state().unwrap();
+    assert_eq!(
+        state.service_state,
+        meta_store::SearchProjectionServiceState::Ready
+    );
+    assert_eq!(state.repair_reason, None);
     corpus.remove();
 }
 
@@ -401,7 +418,7 @@ struct SyntheticCorpus {
     base: PathBuf,
     data_dir: PathBuf,
     source_root: PathBuf,
-    store: MetaStore,
+    store: ReadMetaStore,
     target: ActiveSearchProjection,
     duplicate: ActiveSearchProjection,
 }
@@ -419,6 +436,8 @@ impl SyntheticCorpus {
             &format!("{label}-initial"),
             1_800_048_000,
         );
+        drop(store);
+        let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
         let target = active_projection_for_file(&store, TARGET_FILE);
         let duplicate = active_projection_for_file(&store, DUPLICATE_FILE);
         assert!(store
@@ -445,6 +464,8 @@ impl SyntheticCorpus {
             &format!("{label}-initial"),
             1_800_048_000,
         );
+        drop(store);
+        let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
         let target = active_projection_for_file(&store, file_name);
         Self {
             base,
@@ -461,18 +482,23 @@ impl SyntheticCorpus {
     }
 }
 
-fn empty_corpus(label: &str) -> (PathBuf, PathBuf, PathBuf, MetaStore) {
+fn empty_corpus(label: &str) -> (PathBuf, PathBuf, PathBuf, OwnedMetaStore) {
     let base = temp_dir(label);
     let data_dir = base.join("data");
     let source_root = base.join("source");
     fs::create_dir_all(&data_dir).unwrap();
     fs::create_dir_all(&source_root).unwrap();
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = open_owned_store(&data_dir);
     (base, data_dir, source_root, store)
 }
 
-fn run_import(data_dir: &Path, source_root: &Path, store: &MetaStore, label: &str, timestamp: i64) {
+fn run_import(
+    data_dir: &Path,
+    source_root: &Path,
+    store: &OwnedMetaStore,
+    label: &str,
+    timestamp: i64,
+) {
     let now = UnixTimestamp::from_unix_seconds(timestamp);
     let task = ImportTask {
         id: ImportTaskId::from_non_secret_parts(&["s48-v27", label]),
@@ -483,7 +509,7 @@ fn run_import(data_dir: &Path, source_root: &Path, store: &MetaStore, label: &st
         finished_at: None,
         updated_at: now,
     };
-    store.insert_import_task(&task).unwrap();
+    support::insert_import_task(store, &task);
     let options = ImportOptions {
         parse_workers: ImportParseWorkers::sequential(),
         ..ImportOptions::default()
@@ -496,7 +522,7 @@ fn run_import(data_dir: &Path, source_root: &Path, store: &MetaStore, label: &st
     );
 }
 
-fn document_for_file(store: &MetaStore, file_name: &str) -> meta_store::Document {
+fn document_for_file(store: &ReadMetaStore, file_name: &str) -> meta_store::Document {
     store
         .visible_documents()
         .unwrap()
@@ -505,7 +531,7 @@ fn document_for_file(store: &MetaStore, file_name: &str) -> meta_store::Document
         .unwrap()
 }
 
-fn active_projection_for_file(store: &MetaStore, file_name: &str) -> ActiveSearchProjection {
+fn active_projection_for_file(store: &ReadMetaStore, file_name: &str) -> ActiveSearchProjection {
     let document = document_for_file(store, file_name);
     store
         .active_search_projection_for_document(&document.id)
@@ -513,7 +539,10 @@ fn active_projection_for_file(store: &MetaStore, file_name: &str) -> ActiveSearc
         .unwrap()
 }
 
-fn candidate_id(store: &MetaStore, projection: &ActiveSearchProjection) -> meta_store::CandidateId {
+fn candidate_id(
+    store: &ReadMetaStore,
+    projection: &ActiveSearchProjection,
+) -> meta_store::CandidateId {
     store
         .with_search_metadata_snapshot(|snapshot| {
             let cap = NonZeroUsize::new(1).unwrap();
@@ -526,6 +555,14 @@ fn candidate_id(store: &MetaStore, projection: &ActiveSearchProjection) -> meta_
             Ok::<_, ()>(hits.into_iter().next().unwrap().candidate_id.unwrap())
         })
         .unwrap()
+}
+
+fn open_owned_store(data_dir: &Path) -> OwnedMetaStore {
+    let owner = match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("synthetic data directory is owned"),
+    };
+    owner.open_store().unwrap()
 }
 
 fn resume_text(keyword: &str, name: &str) -> String {

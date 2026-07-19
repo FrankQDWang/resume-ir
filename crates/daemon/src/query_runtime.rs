@@ -11,7 +11,10 @@ use search_runtime::{
 };
 
 use super::query_timing::{QueryStage, QueryStageTiming};
-use super::{redact_search_file_name, DaemonSearchArgs, DaemonSearchMode, RunOptions};
+use crate::search_contract::{
+    redact_search_file_name, DaemonSearchArgs, DaemonSearchMode, SearchCancellation, SearchDeadline,
+};
+use crate::search_runtime_config::SearchRuntimeConfig;
 
 const FILTER_SELECTION_LIMIT: usize = meta_store::MAX_BOUNDED_FILTER_SELECTION;
 
@@ -93,12 +96,12 @@ impl DaemonQueryRuntime {
     pub(crate) fn execute(
         &mut self,
         args: &DaemonSearchArgs,
-        options: &RunOptions,
-        deadline: &super::search_ipc::RequestDeadline,
-        cancellation: &super::search_ipc::RequestCancellation,
+        config: &SearchRuntimeConfig,
+        deadline: &SearchDeadline,
+        cancellation: &SearchCancellation,
         stage_timing: &mut QueryStageTiming,
     ) -> Result<SearchExecutionOutcome, QueryFailure> {
-        let semantic = prepare_semantic(args, options, deadline, cancellation)?;
+        let semantic = prepare_semantic(args, config, deadline, cancellation)?;
         if cancellation.is_cancelled() {
             return Ok(SearchExecutionOutcome::Cancelled { visible_epoch: 0 });
         }
@@ -242,25 +245,25 @@ impl DaemonQueryRuntime {
 
 fn prepare_semantic(
     args: &DaemonSearchArgs,
-    options: &RunOptions,
-    deadline: &super::search_ipc::RequestDeadline,
-    cancellation: &super::search_ipc::RequestCancellation,
+    config: &SearchRuntimeConfig,
+    deadline: &SearchDeadline,
+    cancellation: &SearchCancellation,
 ) -> Result<PreparedSemantic, QueryFailure> {
     if args.mode == DaemonSearchMode::FullText {
         return Ok(PreparedSemantic::NotRequested);
     }
     let (Some(embedder), Some(model_id), Some(dimension)) = (
-        options.resident_embedding.as_ref(),
-        options.embedding_model_id.as_ref(),
-        options.embedding_dimension,
+        config.resident_embedding.as_ref(),
+        config.embedding_model_id.as_ref(),
+        config.embedding_dimension,
     ) else {
         return Ok(PreparedSemantic::ConfigurationMissing);
     };
     let Some(remaining_ms) = deadline.remaining_ms() else {
         return Ok(PreparedSemantic::RuntimeUnavailable);
     };
-    let embedding_timeout_ms = options.embedding_timeout_ms.min(remaining_ms);
-    let deadline_limited = embedding_timeout_ms < options.embedding_timeout_ms;
+    let embedding_timeout_ms = config.embedding_timeout_ms.min(remaining_ms);
+    let deadline_limited = embedding_timeout_ms < config.embedding_timeout_ms;
     let input = EmbeddingInput::query("query", args.query.as_str());
     let vectors = match embedder.embed_batch_with_cancel(
         EmbeddingPriority::Interactive,

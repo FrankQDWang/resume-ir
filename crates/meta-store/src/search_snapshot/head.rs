@@ -130,7 +130,6 @@ pub(super) fn audit_active_projection(
               AND version.document_id = projection.document_id
              JOIN source_revision AS revision
                ON revision.id = version.source_revision_id
-             JOIN document AS document ON document.id = projection.document_id
              LEFT JOIN resume_version_seal AS seal
                ON seal.resume_version_id = projection.resume_version_id
              LEFT JOIN resume_version_classification AS classification
@@ -141,8 +140,10 @@ pub(super) fn audit_active_projection(
                AND (
                    seal.resume_version_id IS NULL
                    OR classification.resume_version_id IS NULL
-                   OR document.is_deleted <> 0
-                   OR document.status = 'deleted'
+                   OR projection.is_deleted <> 0
+                   OR projection.status <> 'searchable'
+                   OR projection.content_hash <> revision.content_hash
+                   OR projection.byte_size <> revision.byte_size
                )",
             params![head.generation, head.publication.classifier_epoch],
             |row| row.get::<_, i64>(0),

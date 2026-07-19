@@ -1,11 +1,13 @@
 use meta_store::{
     ActiveSearchProjection, ClassificationStatus, ContentDigest, Document, DocumentId,
-    DocumentStatus, FileExtension, FullTextSnapshotDescriptor, IdentityInsertOutcome, MetaStore,
-    ReasonCode, ResumeVersion, ResumeVersionClassification, ResumeVersionId, ReviewDisposition,
-    SearchProjectionDigest, SearchPublicationCommit, SearchPublicationDraft,
-    SearchPublicationOutcome, SearchPublicationValidation, SourceRevision, TerminalDocumentUpdate,
-    UnixTimestamp, VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
+    DocumentStatus, EphemeralMetaStore, FileExtension, FullTextSnapshotDescriptor,
+    IdentityInsertOutcome, OwnedMetaStore, ReasonCode, ResumeVersion, ResumeVersionClassification,
+    ResumeVersionId, ReviewDisposition, SearchProjectionDigest, SearchPublicationCommit,
+    SearchPublicationDraft, SearchPublicationOutcome, SearchPublicationValidation, SourceRevision,
+    TerminalDocumentUpdate, UnixTimestamp, VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
 };
+
+mod support;
 
 fn timestamp(seconds: i64) -> UnixTimestamp {
     UnixTimestamp::from_unix_seconds(seconds)
@@ -31,8 +33,8 @@ fn document(status: DocumentStatus) -> Document {
 }
 
 #[test]
-fn excluded_status_round_trips_in_v27_without_deletion() {
-    let store = MetaStore::open_in_memory().unwrap();
+fn excluded_status_round_trips_in_v28_without_deletion() {
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
     store.run_migrations().unwrap();
     let excluded = document(DocumentStatus::Excluded);
 
@@ -41,13 +43,12 @@ fn excluded_status_round_trips_in_v27_without_deletion() {
     let persisted = store.document_by_id(&excluded.id).unwrap().unwrap();
     assert_eq!(persisted.status, DocumentStatus::Excluded);
     assert!(!persisted.is_deleted);
-    assert_eq!(store.schema_version().unwrap(), 27);
+    assert_eq!(store.schema_version().unwrap(), 28);
 }
 
 #[test]
 fn publication_can_atomically_remove_an_active_version_as_excluded() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = support::owned_store();
     let mut staged = document(DocumentStatus::FieldsExtracted);
     let revision = SourceRevision::for_content(
         staged.id.clone(),
@@ -55,6 +56,7 @@ fn publication_can_atomically_remove_an_active_version_as_excluded() {
         25,
     );
     staged.content_hash = Some(revision.content_hash.as_str().to_string());
+    staged.byte_size = revision.byte_size;
     store.upsert_document(&staged).unwrap();
     assert_eq!(
         store.insert_source_revision(&revision).unwrap(),
@@ -140,13 +142,16 @@ fn publication_can_atomically_remove_an_active_version_as_excluded() {
 }
 
 fn publish(
-    store: &MetaStore,
+    store: &OwnedMetaStore,
     generation: &str,
     base_generation: Option<&str>,
     expected_visible_epoch: u64,
     projections: &[ActiveSearchProjection],
     terminal_documents: &[TerminalDocumentUpdate],
 ) {
+    let migration_barrier = base_generation
+        .is_none()
+        .then(|| support::acquire_migration_rebuild_barrier_owned(store, timestamp(1_799_999_999)));
     let projection_digest =
         SearchProjectionDigest::from_pairs(projections.iter().map(|projection| {
             (
@@ -156,8 +161,9 @@ fn publish(
         }))
         .unwrap();
     let empty_coverage = SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap();
+    let session = store.wait_for_search_publication_session().unwrap();
     assert_eq!(
-        store
+        session
             .begin_search_publication(&SearchPublicationDraft {
                 generation: generation.to_string(),
                 base_generation: base_generation.map(str::to_string),
@@ -182,7 +188,7 @@ fn publish(
         empty_coverage,
         ContentDigest::from_bytes(format!("vector:{generation}").as_bytes()),
     );
-    store
+    session
         .validate_search_publication(&SearchPublicationValidation {
             generation,
             fulltext: &fulltext,
@@ -190,16 +196,22 @@ fn publish(
             now: timestamp(1_800_100_020 + expected_visible_epoch as i64),
         })
         .unwrap();
-    assert_eq!(
-        store
-            .commit_search_publication(&SearchPublicationCommit {
-                generation,
-                terminal_documents,
-                projections,
-                vector_coverage: &[],
-                now: timestamp(1_800_100_030 + expected_visible_epoch as i64),
-            })
+    let commit_now = timestamp(1_800_100_030 + expected_visible_epoch as i64);
+    let projected_documents =
+        support::projected_documents_for_commit(store, projections, terminal_documents, commit_now);
+    let commit = SearchPublicationCommit {
+        generation,
+        terminal_documents,
+        projections,
+        projected_documents: &projected_documents,
+        vector_coverage: &[],
+        now: commit_now,
+    };
+    let outcome = match migration_barrier.as_ref() {
+        Some(barrier) => session
+            .commit_migration_rebuild_search_publication(&commit, barrier)
             .unwrap(),
-        SearchPublicationOutcome::Applied
-    );
+        None => session.commit_search_publication(&commit).unwrap(),
+    };
+    assert_eq!(outcome, SearchPublicationOutcome::Applied);
 }

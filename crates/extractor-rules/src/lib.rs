@@ -2,13 +2,13 @@ pub fn crate_name() -> &'static str {
     "extractor-rules"
 }
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::fmt;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::LazyLock;
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use core_domain::{MAX_ENTITY_MENTIONS_PER_VERSION, MAX_ENTITY_MENTION_VALUE_BYTES};
 use regex::Regex;
 
 #[cfg(test)]
@@ -16,7 +16,7 @@ static INDEXED_LINES_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 type IndexedLine<'a> = (usize, &'a str);
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FieldType {
     Name,
     Email,
@@ -33,6 +33,12 @@ pub enum FieldType {
     Skill,
     Certificate,
     YearsExperience,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuleEvidenceKind {
+    SourceSpan,
+    DerivedAggregate,
 }
 
 #[derive(Clone, PartialEq)]
@@ -58,12 +64,35 @@ impl fmt::Debug for RuleMatch {
             .field("span_start", &self.span_start)
             .field("span_end", &self.span_end)
             .field("confidence", &self.confidence)
+            .field("evidence_kind", &self.evidence_kind())
             .finish()
     }
 }
 
+impl RuleMatch {
+    pub fn evidence_kind(&self) -> RuleEvidenceKind {
+        match self.field_type {
+            FieldType::YearsExperience => RuleEvidenceKind::DerivedAggregate,
+            FieldType::Name
+            | FieldType::Email
+            | FieldType::Phone
+            | FieldType::WeChat
+            | FieldType::DateRange
+            | FieldType::School
+            | FieldType::SchoolTier
+            | FieldType::Degree
+            | FieldType::Major
+            | FieldType::Company
+            | FieldType::Title
+            | FieldType::Location
+            | FieldType::Skill
+            | FieldType::Certificate => RuleEvidenceKind::SourceSpan,
+        }
+    }
+}
+
 pub fn extract_strong_fields(text: &str) -> Vec<RuleMatch> {
-    let mut matches = Vec::new();
+    let mut matches = BoundedMatches::new();
     let indexed_lines = indexed_lines(text);
     extract_names(&indexed_lines, &mut matches);
     extract_emails(text, &mut matches);
@@ -85,8 +114,173 @@ pub fn extract_strong_fields(text: &str) -> Vec<RuleMatch> {
     extract_locations(&indexed_lines, &mut matches);
     extract_skills(&indexed_lines, &mut matches);
     extract_certificates(&indexed_lines, &mut matches);
-    matches.sort_by_key(|field| field.span_start);
-    matches
+    matches.into_retained()
+}
+
+fn rule_match_fits_entity_contract(field: &RuleMatch) -> bool {
+    field.raw_value.len() <= MAX_ENTITY_MENTION_VALUE_BYTES
+        && field
+            .normalized_value
+            .as_deref()
+            .is_none_or(|value| value.len() <= MAX_ENTITY_MENTION_VALUE_BYTES)
+}
+
+const FIELD_RETENTION_ORDER: [FieldType; 15] = [
+    FieldType::Name,
+    FieldType::Email,
+    FieldType::Phone,
+    FieldType::WeChat,
+    FieldType::YearsExperience,
+    FieldType::School,
+    FieldType::SchoolTier,
+    FieldType::Degree,
+    FieldType::Major,
+    FieldType::Company,
+    FieldType::Title,
+    FieldType::Location,
+    FieldType::Skill,
+    FieldType::Certificate,
+    FieldType::DateRange,
+];
+
+struct BoundedMatches {
+    by_type: [Vec<RuleMatch>; FIELD_RETENTION_ORDER.len()],
+}
+
+struct BoundedCanonicalValues {
+    values: BTreeSet<String>,
+}
+
+impl BoundedCanonicalValues {
+    fn new() -> Self {
+        Self {
+            values: BTreeSet::new(),
+        }
+    }
+
+    fn insert(&mut self, value: String) -> bool {
+        if self.values.contains(&value) {
+            return false;
+        }
+        if self.values.len() < MAX_ENTITY_MENTIONS_PER_VERSION {
+            self.values.insert(value);
+        }
+        true
+    }
+}
+
+impl BoundedMatches {
+    fn new() -> Self {
+        Self {
+            by_type: std::array::from_fn(|_| Vec::new()),
+        }
+    }
+
+    fn push(&mut self, candidate: RuleMatch) {
+        if !rule_match_fits_entity_contract(&candidate) {
+            return;
+        }
+
+        let bucket = &mut self.by_type[field_slot(candidate.field_type)];
+        if let Some(existing_index) = bucket
+            .iter()
+            .position(|existing| same_source_evidence(existing, &candidate))
+        {
+            if match_retention_order(&candidate, &bucket[existing_index]).is_lt() {
+                bucket[existing_index] = candidate;
+                bucket.sort_by(match_retention_order);
+            }
+            return;
+        }
+
+        if bucket.len() < MAX_ENTITY_MENTIONS_PER_VERSION {
+            bucket.push(candidate);
+            bucket.sort_by(match_retention_order);
+            return;
+        }
+
+        let worst = bucket.last().expect("bounded match bucket is non-empty");
+        if match_retention_order(&candidate, worst).is_lt() {
+            bucket.pop();
+            bucket.push(candidate);
+            bucket.sort_by(match_retention_order);
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &RuleMatch> {
+        self.by_type.iter().flatten()
+    }
+
+    fn into_retained(self) -> Vec<RuleMatch> {
+        let mut buckets = self.by_type.map(VecDeque::from);
+        let mut retained = Vec::with_capacity(MAX_ENTITY_MENTIONS_PER_VERSION);
+        while retained.len() < MAX_ENTITY_MENTIONS_PER_VERSION {
+            let mut made_progress = false;
+            for field_type in FIELD_RETENTION_ORDER {
+                if let Some(candidate) = buckets[field_slot(field_type)].pop_front() {
+                    retained.push(candidate);
+                    made_progress = true;
+                    if retained.len() == MAX_ENTITY_MENTIONS_PER_VERSION {
+                        break;
+                    }
+                }
+            }
+            if !made_progress {
+                break;
+            }
+        }
+        retained.sort_by(|left, right| {
+            left.span_start
+                .cmp(&right.span_start)
+                .then_with(|| left.span_end.cmp(&right.span_end))
+                .then_with(|| field_slot(left.field_type).cmp(&field_slot(right.field_type)))
+                .then_with(|| left.raw_value.as_bytes().cmp(right.raw_value.as_bytes()))
+        });
+        retained
+    }
+}
+
+fn field_slot(field_type: FieldType) -> usize {
+    FIELD_RETENTION_ORDER
+        .iter()
+        .position(|candidate| *candidate == field_type)
+        .expect("every field type participates in bounded retention")
+}
+
+fn same_source_evidence(left: &RuleMatch, right: &RuleMatch) -> bool {
+    left.field_type == right.field_type
+        && canonical_value(left) == canonical_value(right)
+        && left.span_start == right.span_start
+        && left.span_end == right.span_end
+}
+
+fn canonical_value(field: &RuleMatch) -> &str {
+    field
+        .normalized_value
+        .as_deref()
+        .unwrap_or(&field.raw_value)
+}
+
+fn match_retention_order(left: &RuleMatch, right: &RuleMatch) -> std::cmp::Ordering {
+    right
+        .confidence
+        .total_cmp(&left.confidence)
+        .then_with(|| left.span_start.cmp(&right.span_start))
+        .then_with(|| left.span_end.cmp(&right.span_end))
+        .then_with(|| left.raw_value.as_bytes().cmp(right.raw_value.as_bytes()))
+        .then_with(|| {
+            left.normalized_value
+                .as_deref()
+                .unwrap_or_default()
+                .as_bytes()
+                .cmp(
+                    right
+                        .normalized_value
+                        .as_deref()
+                        .unwrap_or_default()
+                        .as_bytes(),
+                )
+        })
 }
 
 struct WeightedAliasRegex {
@@ -308,7 +502,7 @@ fn certificate_alias_regexes() -> &'static [WeightedAliasRegex] {
     REGEXES.as_slice()
 }
 
-fn extract_names(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+fn extract_names(lines: &[IndexedLine<'_>], matches: &mut BoundedMatches) {
     if extract_labeled_name(lines, matches) {
         return;
     }
@@ -316,7 +510,7 @@ fn extract_names(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
     extract_heading_name(lines, matches);
 }
 
-fn extract_labeled_name(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) -> bool {
+fn extract_labeled_name(lines: &[IndexedLine<'_>], matches: &mut BoundedMatches) -> bool {
     for &(line_start, line) in lines.iter().take(12) {
         let leading = line.len() - line.trim_start().len();
         let trimmed_line = line.trim();
@@ -339,7 +533,7 @@ fn extract_labeled_name(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>)
     false
 }
 
-fn extract_heading_name(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+fn extract_heading_name(lines: &[IndexedLine<'_>], matches: &mut BoundedMatches) {
     for &(line_start, line) in lines.iter().take(5) {
         let leading = line.len() - line.trim_start().len();
         let trimmed = line.trim();
@@ -358,7 +552,7 @@ fn extract_heading_name(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>)
 }
 
 fn push_name_match(
-    matches: &mut Vec<RuleMatch>,
+    matches: &mut BoundedMatches,
     raw: &str,
     raw_span_start: usize,
     confidence: f32,
@@ -494,7 +688,7 @@ fn looks_like_contact_line(value: &str) -> bool {
         || lower.starts_with("微信")
 }
 
-fn extract_emails(text: &str, matches: &mut Vec<RuleMatch>) {
+fn extract_emails(text: &str, matches: &mut BoundedMatches) {
     for found in email_regex().find_iter(text) {
         matches.push(RuleMatch {
             field_type: FieldType::Email,
@@ -507,7 +701,7 @@ fn extract_emails(text: &str, matches: &mut Vec<RuleMatch>) {
     }
 }
 
-fn extract_phones(text: &str, matches: &mut Vec<RuleMatch>) {
+fn extract_phones(text: &str, matches: &mut BoundedMatches) {
     let mut claimed_spans = Vec::<(usize, usize)>::new();
     extract_chinese_mobile_phones(text, matches, &mut claimed_spans);
     extract_general_phones(text, matches, &mut claimed_spans);
@@ -515,7 +709,7 @@ fn extract_phones(text: &str, matches: &mut Vec<RuleMatch>) {
 
 fn extract_chinese_mobile_phones(
     text: &str,
-    matches: &mut Vec<RuleMatch>,
+    matches: &mut BoundedMatches,
     claimed_spans: &mut Vec<(usize, usize)>,
 ) {
     for captures in chinese_mobile_phone_regex().captures_iter(text) {
@@ -550,7 +744,7 @@ fn extract_chinese_mobile_phones(
 
 fn extract_general_phones(
     text: &str,
-    matches: &mut Vec<RuleMatch>,
+    matches: &mut BoundedMatches,
     claimed_spans: &mut Vec<(usize, usize)>,
 ) {
     for found in general_phone_regex().find_iter(text) {
@@ -598,7 +792,7 @@ fn normalize_international_phone(digits: &str) -> Option<String> {
     }
 }
 
-fn extract_wechats(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+fn extract_wechats(lines: &[IndexedLine<'_>], matches: &mut BoundedMatches) {
     for &(line_start, line) in lines {
         let Some(captures) = wechat_regex().captures(line) else {
             continue;
@@ -618,7 +812,7 @@ fn extract_wechats(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
     }
 }
 
-fn extract_numeric_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
+fn extract_numeric_date_ranges(text: &str, matches: &mut BoundedMatches) {
     for captures in numeric_date_range_regex().captures_iter(text) {
         let Some(found) = captures.get(0) else {
             continue;
@@ -634,7 +828,7 @@ fn extract_numeric_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
     }
 }
 
-fn extract_numeric_present_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
+fn extract_numeric_present_date_ranges(text: &str, matches: &mut BoundedMatches) {
     for captures in numeric_present_date_range_regex().captures_iter(text) {
         let Some(found) = captures.get(0) else {
             continue;
@@ -644,7 +838,7 @@ fn extract_numeric_present_date_ranges(text: &str, matches: &mut Vec<RuleMatch>)
     }
 }
 
-fn extract_chinese_year_month_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
+fn extract_chinese_year_month_date_ranges(text: &str, matches: &mut BoundedMatches) {
     for captures in chinese_year_month_date_range_regex().captures_iter(text) {
         let Some(found) = captures.get(0) else {
             continue;
@@ -660,7 +854,7 @@ fn extract_chinese_year_month_date_ranges(text: &str, matches: &mut Vec<RuleMatc
     }
 }
 
-fn extract_chinese_present_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
+fn extract_chinese_present_date_ranges(text: &str, matches: &mut BoundedMatches) {
     for captures in chinese_present_date_range_regex().captures_iter(text) {
         let Some(found) = captures.get(0) else {
             continue;
@@ -670,7 +864,7 @@ fn extract_chinese_present_date_ranges(text: &str, matches: &mut Vec<RuleMatch>)
     }
 }
 
-fn extract_named_month_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
+fn extract_named_month_date_ranges(text: &str, matches: &mut BoundedMatches) {
     for captures in named_month_date_range_regex().captures_iter(text) {
         let Some(found) = captures.get(0) else {
             continue;
@@ -689,7 +883,7 @@ fn extract_named_month_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
     }
 }
 
-fn extract_named_month_present_date_ranges(text: &str, matches: &mut Vec<RuleMatch>) {
+fn extract_named_month_present_date_ranges(text: &str, matches: &mut BoundedMatches) {
     for captures in named_month_present_date_range_regex().captures_iter(text) {
         let Some(found) = captures.get(0) else {
             continue;
@@ -702,90 +896,81 @@ fn extract_named_month_present_date_ranges(text: &str, matches: &mut Vec<RuleMat
     }
 }
 
-fn derive_years_experience(text: &str, matches: &mut Vec<RuleMatch>) {
-    let date_ranges = matches
+fn derive_years_experience(text: &str, matches: &mut BoundedMatches) {
+    let source_ranges = matches
         .iter()
         .filter(|field| field.field_type == FieldType::DateRange)
-        .filter_map(|field| {
-            let normalized = field.normalized_value.as_deref()?;
-            let months = months_in_normalized_range(normalized)?;
-            Some((field.span_start, field.span_end, months))
-        })
         .collect::<Vec<_>>();
-
-    if date_ranges.is_empty() {
+    if source_ranges.is_empty() {
         return;
     }
 
-    let total_months = date_ranges
+    let mut month_intervals = source_ranges
         .iter()
-        .map(|(_, _, months)| *months)
-        .sum::<i32>();
+        .filter_map(|field| closed_month_interval(field.normalized_value.as_deref()?))
+        .collect::<Vec<_>>();
+    month_intervals.sort_unstable();
+    let total_months = union_month_count(&month_intervals);
     if total_months < 1 {
         return;
     }
 
-    let span_start = date_ranges
+    let first = source_ranges
         .iter()
-        .map(|(span_start, _, _)| *span_start)
-        .min()
-        .unwrap();
-    let span_end = date_ranges
-        .iter()
-        .map(|(_, span_end, _)| *span_end)
-        .max()
+        .min_by_key(|field| field.span_start)
         .unwrap();
 
     matches.push(RuleMatch {
         field_type: FieldType::YearsExperience,
-        raw_value: text[span_start..span_end].to_string(),
+        raw_value: text[first.span_start..first.span_end].to_string(),
         normalized_value: Some(format!("{:.1}", total_months as f32 / 12.0)),
-        span_start,
-        span_end,
+        span_start: first.span_start,
+        span_end: first.span_end,
         confidence: 0.82,
     });
 }
 
-fn months_in_normalized_range(normalized: &str) -> Option<i32> {
+fn closed_month_interval(normalized: &str) -> Option<(i32, i32)> {
     let (start, end) = normalized.split_once('/')?;
+    if end == "PRESENT" {
+        return None;
+    }
     let (start_year, start_month) = parse_year_month(start)?;
-    let (end_year, end_month) = if end == "PRESENT" {
-        current_year_month()?
-    } else {
-        parse_year_month(end)?
-    };
-    let months = (end_year - start_year) * 12 + (end_month - start_month);
-    (months >= 0).then_some(months.max(1))
+    let (end_year, end_month) = parse_year_month(end)?;
+    let start_index = start_year.checked_mul(12)?.checked_add(start_month - 1)?;
+    let end_index = end_year.checked_mul(12)?.checked_add(end_month - 1)?;
+    if end_index < start_index {
+        return None;
+    }
+    Some((start_index, end_index.max(start_index + 1)))
 }
 
 fn parse_year_month(value: &str) -> Option<(i32, i32)> {
     let (year, month) = value.split_once('-')?;
-    Some((year.parse().ok()?, month.parse().ok()?))
+    let month = month.parse().ok()?;
+    (1..=12)
+        .contains(&month)
+        .then_some((year.parse().ok()?, month))
 }
 
-fn current_year_month() -> Option<(i32, i32)> {
-    let days_since_epoch = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() / 86_400;
-    let (year, month, _) = civil_from_days(days_since_epoch as i64);
-    Some((year, month))
+fn union_month_count(intervals: &[(i32, i32)]) -> i32 {
+    let Some(&(mut current_start, mut current_end)) = intervals.first() else {
+        return 0;
+    };
+    let mut total = 0;
+    for &(start, end) in &intervals[1..] {
+        if start <= current_end {
+            current_end = current_end.max(end);
+        } else {
+            total += current_end - current_start;
+            current_start = start;
+            current_end = end;
+        }
+    }
+    total + current_end - current_start
 }
 
-// Howard Hinnant's civil date conversion keeps this crate dependency-free.
-fn civil_from_days(days_since_epoch: i64) -> (i32, i32, i32) {
-    let days = days_since_epoch + 719_468;
-    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
-    let day_of_era = days - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_piece = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_piece + 2) / 5 + 1;
-    let month = month_piece + if month_piece < 10 { 3 } else { -9 };
-    let year = year + i64::from(month <= 2);
-    (year as i32, month as i32, day as i32)
-}
-
-fn extract_schools(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+fn extract_schools(lines: &[IndexedLine<'_>], matches: &mut BoundedMatches) {
     for &(line_start, line) in lines {
         let trimmed = line.trim();
         if trimmed.len() > 120 {
@@ -862,9 +1047,9 @@ fn normalize_school(value: &str) -> String {
         .to_lowercase()
 }
 
-fn extract_school_tiers(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+fn extract_school_tiers(lines: &[IndexedLine<'_>], matches: &mut BoundedMatches) {
     let mut education_context_lines = 0_usize;
-    let mut seen = BTreeSet::new();
+    let mut seen = BoundedCanonicalValues::new();
 
     for &(line_start, line) in lines {
         let trimmed = line.trim();
@@ -945,8 +1130,8 @@ fn is_school_tier_label(label: &str) -> bool {
 
 fn push_school_tier_matches(
     segment: LabeledSegment<'_>,
-    matches: &mut Vec<RuleMatch>,
-    seen: &mut BTreeSet<String>,
+    matches: &mut BoundedMatches,
+    seen: &mut BoundedCanonicalValues,
 ) {
     for alias in school_tier_alias_regexes() {
         for found in alias.regex.find_iter(segment.text) {
@@ -1007,7 +1192,7 @@ fn school_tier_digit_has_adjacent_digit(value: &str, start: usize, end: usize) -
     previous_is_digit || value.as_bytes().get(end).is_some_and(u8::is_ascii_digit)
 }
 
-fn extract_degrees(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+fn extract_degrees(lines: &[IndexedLine<'_>], matches: &mut BoundedMatches) {
     let mut claimed_spans = Vec::<(usize, usize)>::new();
     let mut education_context_lines = 0_usize;
 
@@ -1058,7 +1243,7 @@ fn extract_degrees(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
 
 fn push_first_degree_match(
     segment: LabeledSegment<'_>,
-    matches: &mut Vec<RuleMatch>,
+    matches: &mut BoundedMatches,
     claimed_spans: &mut Vec<(usize, usize)>,
 ) -> bool {
     let Some((normalized, confidence, relative_start, relative_end)) =
@@ -1172,9 +1357,9 @@ fn degree_alias_patterns() -> [(&'static str, f32, &'static str); 5] {
     ]
 }
 
-fn extract_majors(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+fn extract_majors(lines: &[IndexedLine<'_>], matches: &mut BoundedMatches) {
     let mut education_context_lines = 0_usize;
-    let mut seen = BTreeSet::new();
+    let mut seen = BoundedCanonicalValues::new();
 
     for &(line_start, line) in lines {
         let trimmed = line.trim();
@@ -1256,8 +1441,8 @@ fn is_major_label(label: &str) -> bool {
 
 fn push_first_major_match(
     segment: LabeledSegment<'_>,
-    matches: &mut Vec<RuleMatch>,
-    seen: &mut BTreeSet<String>,
+    matches: &mut BoundedMatches,
+    seen: &mut BoundedCanonicalValues,
     allow_freeform_labeled_value: bool,
 ) -> bool {
     let major_match = first_major_alias_match(segment.text).or_else(|| {
@@ -1396,9 +1581,9 @@ fn normalize_freeform_major(value: &str) -> Option<String> {
     (!normalized.is_empty()).then_some(normalized)
 }
 
-fn extract_skills(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+fn extract_skills(lines: &[IndexedLine<'_>], matches: &mut BoundedMatches) {
     let mut skill_context_lines = 0_usize;
-    let mut seen = BTreeSet::new();
+    let mut seen = BoundedCanonicalValues::new();
     for &(line_start, line) in lines {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -1476,8 +1661,8 @@ fn split_labeled_skill_line(line: &str) -> Option<(&str, &str, usize)> {
 fn push_skill_alias_matches(
     text: &str,
     span_start: usize,
-    matches: &mut Vec<RuleMatch>,
-    seen: &mut BTreeSet<String>,
+    matches: &mut BoundedMatches,
+    seen: &mut BoundedCanonicalValues,
 ) {
     let mut claimed_spans = Vec::<(usize, usize)>::new();
     for alias in skill_alias_regexes() {
@@ -1551,7 +1736,7 @@ fn skill_alias_patterns() -> [(&'static str, &'static str); 38] {
     ]
 }
 
-fn extract_companies(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+fn extract_companies(lines: &[IndexedLine<'_>], matches: &mut BoundedMatches) {
     for &(line_start, line) in lines {
         let trimmed = line.trim();
         if trimmed.len() > 120 {
@@ -1737,7 +1922,7 @@ fn normalize_company(value: &str) -> Option<String> {
     (!normalized.is_empty()).then_some(normalized)
 }
 
-fn extract_titles(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+fn extract_titles(lines: &[IndexedLine<'_>], matches: &mut BoundedMatches) {
     for &(line_start, line) in lines {
         let trimmed = line.trim();
         if trimmed.len() > 120 {
@@ -1897,8 +2082,8 @@ fn has_engineering_role_marker(lower: &str) -> bool {
         || lower.contains("开发")
 }
 
-fn extract_locations(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
-    let mut seen = BTreeSet::new();
+fn extract_locations(lines: &[IndexedLine<'_>], matches: &mut BoundedMatches) {
+    let mut seen = BoundedCanonicalValues::new();
     for &(line_start, line) in lines {
         let trimmed = line.trim();
         if trimmed.len() > 120 {
@@ -2186,9 +2371,9 @@ fn canonical_location_alias(value: &str) -> Option<&'static str> {
     }
 }
 
-fn extract_certificates(lines: &[IndexedLine<'_>], matches: &mut Vec<RuleMatch>) {
+fn extract_certificates(lines: &[IndexedLine<'_>], matches: &mut BoundedMatches) {
     let mut certificate_context_lines = 0_usize;
-    let mut seen = BTreeSet::new();
+    let mut seen = BoundedCanonicalValues::new();
 
     for &(line_start, line) in lines {
         let trimmed = line.trim();
@@ -2295,8 +2480,8 @@ fn split_labeled_certificate_line(line: &str) -> Option<(&str, &str, usize)> {
 fn push_certificate_alias_matches(
     text: &str,
     span_start: usize,
-    matches: &mut Vec<RuleMatch>,
-    seen: &mut BTreeSet<String>,
+    matches: &mut BoundedMatches,
+    seen: &mut BoundedCanonicalValues,
 ) -> bool {
     let mut pushed = false;
     let mut claimed_spans = Vec::<(usize, usize)>::new();
