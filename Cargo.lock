@@ -232,6 +232,7 @@ dependencies = [
  "index-vector",
  "meta-store",
  "ocr-client",
+ "process-containment",
  "rank-fusion",
  "serde",
  "serde_json",

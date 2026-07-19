@@ -3765,6 +3765,27 @@ guards, local runtime discovery, and PR #9 CI state.
   production lock change; hosted Windows proof, a fresh complete local gate,
   rebuilt native package and a new uninterrupted 120-minute soak remain
   required before merge or installation acceptance.
+- The next hosted Windows run advanced past compilation but exposed a latent
+  bounded-output race in the private benchmark command harness. A reader that
+  crossed the 8 MiB cap closed its pipe, while the parent waited only for the
+  direct `.cmd` process; under Windows load, a PowerShell descendant could keep
+  the command alive until timeout, and timeout cleanup discarded the already
+  observed output-limit failure. The same source had passed an earlier hosted
+  run, so this was a load-sensitive design defect rather than evidence that the
+  ownership fix regressed benchmark semantics. Raising the timeout or relaxing
+  the assertion was rejected.
+- Benchmark commands now use the existing cross-platform process-tree
+  containment boundary. A focused bounded-pipe module reports overflow to the
+  parent immediately; output overflow terminates and reaps the complete tree,
+  and timeout cleanup preserves an overflow already observed by either stream.
+  The deterministic oversized-then-block fixture was RED with the fixed
+  timeout error after 30.28 seconds and is GREEN with the exact output error in
+  0.31 seconds. All 11 benchmark unit tests, 45 CLI tests, 116 benchmark-runner
+  integration tests, eight containment tests, strict affected-crate Clippy,
+  formatting and diff checks pass locally. The complete local gate that passed
+  on the preceding commit is invalidated by this production process-boundary
+  change; hosted Windows proof and every final frozen-code gate still require a
+  new run.
 
 ### S806
 
