@@ -30,9 +30,10 @@ production-ready scope source.
   committed or uploaded.
   S807 installation acceptance also used a temporary local copy-on-write
   witness of the user-authorized desktop runtime store plus bounded redacted
-  diagnostics. The witness and App rollback copies were deleted after native
-  verification; no database, index, resume data, root path, query, token, raw
-  diagnostics, runtime receipt, or model artifact was committed or uploaded.
+  diagnostics. The current convergence witness was removed from its working
+  location to recoverable local Trash after verification; no database, index,
+  resume data, root path, query, token, raw diagnostics, runtime receipt, or
+  model artifact was committed or uploaded.
   S264 also used a private local-only OCR throughput smoke against the
   user-authorized local resume sample directory with temporary redacted
   manifests and local Tesseract/Poppler commands; no real resume data,
@@ -3359,6 +3360,44 @@ guards, local runtime discovery, and PR #9 CI state.
 
 ### S807
 
+- **Superseding correction, 2026-07-18:** the later native installation and
+  manual test invalidated the earlier statements below that called the v27
+  correctness train locally complete or suitable for continued manual testing.
+  The installed daemon stayed process-ready but its query service remained
+  `repairing/migration_rebuild` with no active generation. Those older bullets
+  remain as chronological evidence, not current acceptance truth. S807 is open
+  until a rebuilt package converges the installed corpus to `Ready` and all
+  final gates below pass.
+- The non-convergence was structural rather than a UI polling defect. The v27
+  store could retain a configured, failed or budgeted task as the canonical
+  root head while the migration claim gate required an exact full-corpus task;
+  one-shot execution also skipped the reconciliation performed by the resident
+  loop. Publication failures had no single durable attempt budget and cleanup
+  ownership boundary. The result could be a permanently queued/unclaimable
+  root or an unbounded retry cycle with no first generation.
+- The corrective data hard cut is schema v28. It uses copy-on-write activation,
+  preserves only stable source/root/document identity and authorization,
+  discards legacy task and derived state, and requires exact sealed dispositions
+  from unbounded full-corpus task heads. A data-directory processing lease spans
+  daemon/offline ownership; orphaned running tasks are normalized before
+  contract activation; configured enqueue and migration reconcile share one
+  SQLite `IMMEDIATE` per-root coordinator; one-shot and resident workers share
+  repair-before-claim orchestration. OCR remains unclaimed until the first
+  validated publication is `Ready`.
+- Publication attempts are now persisted across restart with closed failure
+  classes, fixed backoff and a five-attempt budget. Failed fulltext/vector
+  snapshots are cleaned only under the publication lock; missing/empty roots
+  are idempotent, while invalid or partial cleanup fails closed. A response,
+  heartbeat, cancellation or unrelated task timestamp cannot change import
+  ownership identity or permit a partial publication.
+- Current evidence at this checkpoint is code-level only: import-pipeline
+  migration tests pass 12/12, its complete all-target suite passes, daemon
+  migration/worker integration passes 22/22, meta-store suites pass, and the
+  affected four crates compile together. The final legacy-v27-to-v28 daemon
+  convergence regression, independent P0/P1 review, workspace gates, 120-minute
+  soak, PR/merge/sync, native rebuild/install and live installed `Ready` witness
+  are still required. No new install acceptance is claimed here.
+
 - The user elevated daemon residency and search-detail consistency above the
   deferred S806 Windows runtime evidence lane. A deterministic peer-reset
   witness established that a single response write error could escape the
@@ -3509,6 +3548,196 @@ guards, local runtime discovery, and PR #9 CI state.
   Query service truthfully remains `repairing` until the first rebuilt search
   publication; this is install/manual-test evidence, not stable-release or
   cross-platform completion.
+- Manual testing of that installed build exposed a third v26-to-v27 acceptance
+  defect: the metadata hard cut invalidated legacy derived data but left the
+  v26 full-text and vector roots in place. The v27 publishers correctly refused
+  those non-private, generation-unpinned layouts, so the migration import task
+  repeatedly moved from retryable failure back to running and the UI never
+  converged beyond `repairing`. A deterministic synthetic v26-layout RED failed
+  with the fixed `fulltext` class before the repair.
+- The correction train now retires the complete fixed full-text and vector
+  roots under the cross-index publication lock only while the projection has no
+  published generation; the inherited visible epoch remains monotonic and is
+  bound by the first-publication CAS. Retirement uses validated non-symlink
+  directories, fixed quarantine renames, parent-directory durability, and an
+  idempotent crash retry; any unsafe or failed retirement moves the query
+  service to `repair_blocked/runtime_invariant`. There is no legacy reader,
+  permission normalization, latest-row fallback, or v1/v2 dual path. Direct CLI
+  import uses the same hard-cut owner.
+- Running import tasks are now recovered from process death by probing the
+  per-task owner lock before changing the database task to `Running`, then
+  applying an observed-status/timestamp CAS. Recovery takes the same lock and
+  CAS-requeues only the exact unlocked, non-cancelled observation; a concurrent
+  heartbeat is rejected and clock rollback cannot strand an orphan. A live
+  owner is never displaced, including after the timestamp threshold.
+  Parent-lifecycle shutdown is threaded through scan, parse and publication
+  cancellation boundaries as `interrupted`, distinct from user cancellation;
+  the daemon immediately requeues that intentional interruption without normal
+  failure backoff while retaining an all-old publication.
+- Deterministic worker preflight, full-text internal, vector contract/schema/
+  corruption/layout, metadata invariant and artifact-retirement failures now
+  block an unfinished migration instead of creating an infinite retry loop.
+  Root-level missing, permission-denied and unreadable scan failures preserve a
+  typed `source_unavailable` class and move only an unfinished migration to
+  `repair_blocked/source_unavailable`; an already-ready corpus retains normal
+  retry behavior. While a migration is unfinished, imports stage immutable
+  revisions and version-bound derived data without publishing. The first v27
+  generation is built and committed once through a typed migration-rebuild
+  barrier token. The token binds the inherited visible epoch plus the exact
+  latest completed, non-cancelled task and complete scan scope for every active
+  authorized root; paused roots are atomically excluded. Any root/task/head,
+  cancellation, scan-error, scan-budget or projection change supersedes the
+  token in the same immediate transaction as publication, so task insertion
+  order, clock rollback, a valid-first/unavailable-later ordering, and daemon
+  restart cannot publish a partial corpus or claim `Ready` early. Migration OCR
+  completion only stages immutable derived data and shares the publication
+  lock with finalization, preventing an OCR write from crossing the token,
+  snapshot and metadata-CAS boundary. Migration blocking is a sticky lifecycle
+  transition rather than a mutable error label.
+  Invalid publication-lock layout is persisted as
+  `repair_blocked/runtime_invariant`; startup deliberately skips the same
+  reconcile and import seams, leaves pending tasks untouched, and keeps health/
+  diagnostics available. Status and diagnostics require an explicit nullable
+  `repair_reason`, enforce the complete service/reason matrix, and show either
+  the diagnostic action or source/permission recovery action in the real
+  sidebar instead of a generic zero-count line. The desktop candidate version
+  is hard-cut to `0.1.1` so the verified atomic upgrader cannot confuse the
+  corrected bundle with the installed `0.1.0` build.
+- Focused verification covers daemon import ownership-before-claim, exact
+  recovery CAS, clock rollback, heartbeat races, missing-scope blocking,
+  invalid publication-lock startup, active-import lifecycle interruption under
+  two seconds with no partial publication, default-backoff restart convergence,
+  vector error families, crash-idempotent artifact retirement, the all-root
+  first-publication barrier, valid-first/unavailable-later ordering,
+  required-null desktop contracts and both rendered blocked-repair actions.
+  Strict all-target Clippy passes for the affected workspace crates and Tauri
+  crate; frontend Vitest, all desktop packaging contract tests and the
+  production TypeScript/Vite build pass. A temporary private
+  copy-on-write runtime witness retired both v26 roots, published matching
+  full-text v2 and vector v3 generations, and reported `index health: ready`;
+  it was moved from its working location to recoverable local Trash and no
+  private artifact or raw diagnostic is committed. This 35-file,
+  approximately 3,310-net-line correctness/recovery hard cut uses the existing
+  S807 data-plane scope exception; most growth is deterministic integration
+  evidence, strict desktop contract coverage, and isolated retirement/recovery
+  modules. It remains one acceptance repair and does not reopen S806
+  query/performance semantics.
+- A later private copy-on-write witness reproduced the remaining v28
+  non-convergence without mutating the installed store. The first failed
+  immutable stage was a years-experience mention whose evidence copied all text
+  between the earliest and latest date and exceeded the 4 KiB value contract.
+  After that was fixed, the next exact failure was an embedded NUL retained by
+  text normalization and rejected by the resume-version clean-text invariant.
+  Both diagnostics were fixed static field identifiers; no path, filename,
+  query, candidate result or resume text was recorded.
+- The final producer contract is bounded while extracting, fair across field
+  types and deterministic. Exact source occurrences remain distinct; persisted
+  years experience unions only closed ranges, never reads the wall clock, and
+  carries no source span. Text normalization maps inline control bytes to stable
+  word boundaries before hashing. Immutable document/revision/version/
+  classification/mention/candidate staging is one immediate transaction, so a
+  derived-row rejection cannot leave partial identity state.
+- Processing-contract activation now has one restricted recovery for an
+  unpublished `repair_blocked/runtime_invariant` head: only a non-empty,
+  different old contract with null generation and no running task may
+  invalidate old task-derived state and return to
+  `repairing/migration_rebuild`. Synthetic cross-process coverage proves the
+  old contract converges to the current v2 projection while the same current
+  contract remains sticky across repeated restart.
+- The corrected daemon rebuilt a fresh private copy-on-write witness in one
+  attempt with zero worker failures, reached metadata/query `ready`, reported a
+  present ready index with equal indexed/searchable counts and empty import/
+  recovery queues, and served a synthetic zero-result query successfully.
+  Focused extractor, normalization, immutable staging, contract recovery,
+  full persisted-field, daemon convergence and strict affected-crate Clippy
+  checks pass. This is a local correctness witness; broad gates, frozen-code
+  soak, merge and installed 0.1.1 acceptance are recorded separately and are
+  not implied by this bullet.
+- GitHub issue #217 is the linked correctness/recovery owner for this
+  continuation; historical #138 remains the umbrella lane. `ACTIVE_GOAL.toml`,
+  loop state and paired synthetic-smoke pins now identify #217 and pass their
+  contract checks. No issue body or public artifact contains a private path,
+  corpus count, query, document text or runtime receipt.
+- A fresh `verify-local` run exposed a daemon delete IPC collision rather than
+  a delete semantic failure: the 25 ms reconciler and a foreground command
+  used one nonblocking OS publication lock, so a same-generation contender was
+  misclassified through metadata invariant/503. The root fix adds a fair
+  generation-local FIFO for foreground import/rebuild/delete/removal and a
+  separate non-queuing fail-fast acquisition for reconciliation, migration,
+  OCR and artifact maintenance. Same-thread recursion remains a typed storage
+  invariant; external-process ownership remains fail-closed. Independent
+  review found no P0/P1 in ticket fairness, panic/poison/overflow handling,
+  OS-lock release ordering or Windows handle behavior. The original daemon
+  closed-loop delete test and the three prior competition/deadlock tests pass.
+- Independent v28 review found that immutable stage still updated query-visible
+  mutable `document` metadata before publication. `ActiveSearchProjection` now
+  seals the complete bounded Document snapshot for its exact doc/version/
+  generation, validates exact source-revision hash and byte size, and switches
+  it with projection, journal, head and visible epoch in one transaction.
+  Detail/hydrate and retained full-text rebuild read only that snapshot. The
+  A-active/B-staged, failed-publication, unrelated-publication and successful
+  replacement witnesses prove all-old or all-new metadata with no doc-only or
+  latest fallback.
+- A second independent review caught the remaining same-version rename gap:
+  direct mutable path update plus exact-noop left active path and full-text file
+  name permanently old. Every commit now supplies one typed
+  `RetainedUnchanged`, `MetadataChanged` or `Replacement` snapshot action;
+  ordinary, migration and OCR commits share shape/transition validation. A
+  rename preserves the immutable version and current selection, builds a new
+  full-text/vector generation, advances epoch, and atomically publishes the new
+  path/name; a failed CAS keeps the old generation. The rename E2E, S807 34,
+  complete meta-store/import-pipeline/search-runtime suites, strict affected-
+  crate Clippy, formatting, diff and workspace all-target/all-feature check
+  pass. Final independent review found no new P0/P1.
+- macOS 0.1.1 establishes a self-contained installed-evidence trust root. Its
+  canonical bundle composition binds the desktop, exact native payloads,
+  runtime manifests and bytes, icon, bundle identity, version and target; the
+  owner-only receipt binds the installed composition. Install, upgrade and
+  uninstall now use a canonical phase journal, hard-link create CAS, owner-only
+  canonical lock file held by `/usr/bin/lockf`, pipe-released capability,
+  recursively durable txid partial promotion and tombstone-first idempotent GC.
+  Six recovery/rollback entries reject missing capabilities; parent SIGKILL,
+  concurrent invocation, partial copy/delete, tampering and permissions are
+  covered. Desktop verification passes 31 Vitest, 122 Node tests, production
+  build, script syntax and diff checks; a second independent review found no
+  actionable P0/P1. Legacy 0.1.0 remains ineligible for fabricated upgrade
+  evidence and will receive one authorized clean replacement preserving
+  Application Support.
+- The subsequent full-gate delete-after-publication failure refined the
+  remaining contention boundary: the foreground delete had committed, but the
+  25 ms maintenance reconciler encountered the still-held publication session,
+  propagated normal contention as an import-worker failure, and the daemon
+  promoted that worker exit to a fatal control-plane event. Reconciliation now
+  treats only typed `MigrationOwnershipRequired` contention as a no-op for the
+  current tick and retries on the next tick; same-thread recursive acquisition
+  remains `StorageInvariant`, and all other storage, invariant and I/O failures
+  still propagate. A deterministic cross-thread publication-holder regression
+  covers the maintenance path, the three prior competition tests now use real
+  cross-thread holders, and the original daemon delete closed loop passed three
+  consecutive runs after the correction.
+- The supervised `SearchService` boundary was split without API or behavior
+  changes into focused admission, cancellation, runtime and wire modules; every
+  new production module is below 500 lines. Focused service tests, formatting,
+  strict warnings-denied daemon Clippy and independent review pass, with no
+  P0/P1 finding and no lifecycle, permit, cancellation, deadline or wire-
+  contract change.
+- A fresh complete `./scripts/ci/verify-local.sh` run exits 0 after these
+  corrections, including workspace formatting, strict Clippy, tests and
+  doc-tests plus the repository contract and privacy gates exercised by that
+  script.
+- The first native packaging attempt then exposed a clean-worktree evidence bug:
+  the DMG verifier looked for the reviewed desktop executable under the
+  workspace Cargo target even though Tauri owns it under `src-tauri/target`.
+  The verifier and its synthetic trust fixture now use the exact Tauri build
+  output; all 19 focused bundle-composition tests pass. No digest or icon check
+  was bypassed.
+- Production code is frozen after these corrections. The complete workspace,
+  focused and local verification is complete, and the native arm64 0.1.1 DMG
+  now passes real read-only mount, exact sidecar/runtime/resource digest,
+  reviewed icon, ad-hoc deep-signature, hardened-runtime and embedding-only
+  entitlement verification. The final 120-minute frozen-code soak is running;
+  PR/merge/sync and installed 0.1.1 recovery evidence remain subsequent work
+  and are not claimed by the results above.
 
 ### S806
 

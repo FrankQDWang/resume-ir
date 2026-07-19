@@ -200,7 +200,9 @@ Windows 或 GUI/manual 完整验收已完成。
 
 ## 12. Native root/import/status 边界
 
-S765 固化了 root 到 import/status 的第二条桌面垂直路径：
+S765 固化了 root 到 import/status 的第二条桌面垂直路径。本节保留的
+`daemon.status.v1` 是历史 checkpoint；S807 已硬切为 `daemon.status.v2`，当前实现不得
+回退或双读 v1。
 
 1. 目录选择器由 Rust 原生进程持有，不给 WebView 浏览器文件系统权限；完整路径
    不进入 JavaScript、DOM、日志或返回 payload。
@@ -221,7 +223,9 @@ GUI/manual 完整验收仍未完成。
 
 ## 13. Redacted diagnostics/export 边界
 
-S766 固化了从 daemon 到 GUI 原生导出的第三条桌面垂直路径：
+S766 固化了从 daemon 到 GUI 原生导出的第三条桌面垂直路径。本节保留的
+`resume-ir.diagnostics.v2` 是历史 checkpoint；S807 已硬切为
+`resume-ir.diagnostics.v3`，当前实现不得回退或双读 v2。
 
 1. daemon endpoint manifest additive 提供 authenticated `GET /diagnostics`，成功合同
    是 `resume-ir.diagnostics.v2`；未认证请求返回 401。

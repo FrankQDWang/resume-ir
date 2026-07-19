@@ -194,24 +194,59 @@ child 完成后 server 关闭 response write half。这个 close-delimited NDJSO
 
 ```json
 {
-  "schema_version": "resume-ir.status.v2",
+  "schema_version": "daemon.status.v2",
+  "status": "ok",
+  "process_state": "ready",
+  "service_state": "ready",
+  "services": {
+    "metadata": "ready",
+    "query": "ready"
+  },
+  "repair_reason": null,
+  "error": null,
   "visible_epoch": 42,
-  "level_counts": {
-    "level1_discovered": 10000,
-    "level2_text_searchable": 8000,
-    "level3_enhanced": 4500
-  },
-  "queues": {
-    "parse": 0,
-    "ocr": 1200,
-    "embedding": 800,
-    "compaction": 1
-  },
-  "budget_profile": "balanced",
-  "health": "ok|degraded|repairing",
-  "partial_reasons": []
+  "indexed_documents": 10000,
+  "searchable_documents": 8000,
+  "partial_documents": 1200,
+  "failed_retryable": 0,
+  "failed_permanent": 0,
+  "recovery_queue_depth": 0,
+  "ocr_queue_depth": 1200,
+  "embedding_queue_depth": 800,
+  "entity_mentions": 4500,
+  "import_tasks_queued": 0,
+  "index_health": "ready",
+  "latest_import_scan": null,
+  "ipc": {
+    "accepted": 8,
+    "completed": 8,
+    "client_disconnect": 0,
+    "request_failure": 0,
+    "response_failure": 0
+  }
 }
 ```
+
+`repair_reason` 是 `daemon.status.v2` 的 **required-nullable** 字段：每个 response
+都必须包含该 key；无修复原因时值为 `null`，不得通过省略字段表达 `null`。允许的
+非空枚举只有 `migration_rebuild`、`artifact_unavailable`、
+`source_unavailable`、`runtime_invariant`。服务状态与原因的合法组合固定为：
+
+1. `metadata=ready, query=ready`：`repair_reason=null`，aggregate
+   `service_state=ready`，`status=ok`，`error=null`。
+2. `metadata=ready, query=repairing`：原因只能是 `migration_rebuild` 或
+   `artifact_unavailable`，aggregate `service_state=repairing`，`status=repairing`，
+   error 固定为 `REPAIRING/wait_for_repair`。
+3. `metadata=ready, query=unavailable`：原因只能是 `source_unavailable` 或
+   `runtime_invariant`，aggregate `service_state=degraded`，`status=degraded`，
+   error 固定为 `QUERY_SERVICE_UNAVAILABLE/retry`。
+4. `metadata=unavailable, query=unavailable`：`repair_reason=null`，aggregate
+   `service_state=degraded`，`status=degraded`，error 固定为
+   `METADATA_UNAVAILABLE/retry`；corpus counts、epoch 和 index health 可以为
+   `null`，但 process health 与 IPC counters 仍必须可读。
+
+其他 service/reason 组合必须被 daemon/Tauri bridge fail closed，不得映射成通用
+“修复中”。
 
 ## 4. Search Contract
 
@@ -399,19 +434,47 @@ Diagnostics 必须默认脱敏：
 {
   "schema_version": "resume-ir.diagnostics.v3",
   "privacy_boundary": "redacted_local_aggregate",
+  "evidence_lane": "gui_manual",
+  "evidence_status": "unaccepted",
   "contains_raw_resume_text": false,
   "contains_queries": false,
   "contains_resume_paths": false,
   "contains_candidate_results": false,
   "contains_snippet_text": false,
   "visible_epoch": 42,
-  "metrics": {},
-  "error_counts": {},
+  "process_state": "ready",
+  "service_state": "ready",
+  "services": {
+    "metadata": "ready",
+    "query": "ready"
+  },
+  "repair_reason": null,
+  "error": null,
+  "metrics": {
+    "ipc": {
+      "accepted": 8,
+      "completed": 8,
+      "client_disconnect": 0,
+      "request_failure": 0,
+      "response_failure": 0
+    },
+    "indexed_documents": 10000,
+    "searchable_documents": 8000,
+    "partial_documents": 1200
+  },
+  "error_counts": {
+    "scan_error_buckets": []
+  },
   "benchmark_refs": []
 }
 ```
 
 Diagnostics 只允许输出 aggregate metrics、bucket counts、hash/ref、redaction flags、error class、queue depth 和 redacted partial reason。不得输出 raw query、raw snippet、resume path、candidate identity、local capture path、token、cookie 或 diagnostics package 原文。
+
+`repair_reason` 在 `resume-ir.diagnostics.v3` 中同样是 required-nullable，使用与
+`daemon.status.v2` 完全相同的枚举和 service/reason 状态约束。metadata 不可用时
+仍必须输出该 key 且值为 `null`；缺失 key、未知枚举或非法组合都必须由 Tauri
+bridge 拒绝，而不是猜测状态。
 
 ## 7. GUI 依赖面
 
