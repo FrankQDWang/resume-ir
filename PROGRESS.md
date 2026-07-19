@@ -3735,9 +3735,18 @@ guards, local runtime discovery, and PR #9 CI state.
   focused and local verification is complete, and the native arm64 0.1.1 DMG
   now passes real read-only mount, exact sidecar/runtime/resource digest,
   reviewed icon, ad-hoc deep-signature, hardened-runtime and embedding-only
-  entitlement verification. The final 120-minute frozen-code soak is running;
-  PR/merge/sync and installed 0.1.1 recovery evidence remain subsequent work
-  and are not claimed by the results above.
+  entitlement verification.
+- Final integration review then found that the nonblocking accept loop still
+  promoted a pending connection abort/reset before `accept` completed into a
+  listener-level fatal error. Accept errors now cross an explicit typed
+  boundary: `WouldBlock` means no connection is ready;
+  `Interrupted`/`ConnectionAborted`/`ConnectionReset`/`TimedOut` remain
+  connection-local and retry; all other listener errors stay fatal. The
+  deterministic classification test was RED before the boundary existed and
+  is green afterward; all 41 daemon unit tests, strict all-target/all-feature
+  daemon Clippy, formatting and diff checks pass. The already-running soak was
+  stopped and invalidated immediately, so a fresh 120-minute frozen-code soak,
+  PR/merge/sync and installed 0.1.1 recovery evidence remain required.
 
 ### S806
 

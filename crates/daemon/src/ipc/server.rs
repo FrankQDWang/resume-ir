@@ -26,6 +26,24 @@ pub(crate) struct Context<'a> {
     pub(crate) daemon_owner: &'a DaemonGenerationOwner<'a>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AcceptErrorDisposition {
+    NoConnectionReady,
+    ConnectionLocal,
+    ListenerFatal,
+}
+
+fn classify_accept_error(kind: io::ErrorKind) -> AcceptErrorDisposition {
+    match kind {
+        io::ErrorKind::WouldBlock => AcceptErrorDisposition::NoConnectionReady,
+        io::ErrorKind::Interrupted
+        | io::ErrorKind::ConnectionAborted
+        | io::ErrorKind::ConnectionReset
+        | io::ErrorKind::TimedOut => AcceptErrorDisposition::ConnectionLocal,
+        _ => AcceptErrorDisposition::ListenerFatal,
+    }
+}
+
 /// Runs the IPC control plane. Its fatal channel is structurally limited to
 /// listener ownership/integrity failures and closed supervised runtime events.
 pub(crate) fn serve(context: Context<'_>) -> Result<(), DaemonFatalError> {
@@ -57,10 +75,15 @@ pub(crate) fn serve(context: Context<'_>) -> Result<(), DaemonFatalError> {
                 );
                 handled_requests += 1;
             }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(25));
-            }
-            Err(_) => return Err(DaemonFatalError::ControlPlaneFailure),
+            Err(error) => match classify_accept_error(error.kind()) {
+                AcceptErrorDisposition::NoConnectionReady
+                | AcceptErrorDisposition::ConnectionLocal => {
+                    thread::sleep(Duration::from_millis(25));
+                }
+                AcceptErrorDisposition::ListenerFatal => {
+                    return Err(DaemonFatalError::ControlPlaneFailure);
+                }
+            },
         }
     }
 
@@ -137,8 +160,33 @@ fn runtime_failure(event: RuntimeEvent) -> DaemonFatalError {
 
 #[cfg(test)]
 mod tests {
-    use super::fatal_for_event;
+    use std::io;
+
+    use super::{classify_accept_error, fatal_for_event, AcceptErrorDisposition};
     use crate::ipc::{DaemonFatalError, RuntimeEvent};
+
+    #[test]
+    fn pending_connection_accept_failures_never_become_daemon_fatal() {
+        for kind in [
+            io::ErrorKind::Interrupted,
+            io::ErrorKind::ConnectionAborted,
+            io::ErrorKind::ConnectionReset,
+            io::ErrorKind::TimedOut,
+        ] {
+            assert_eq!(
+                classify_accept_error(kind),
+                AcceptErrorDisposition::ConnectionLocal
+            );
+        }
+        assert_eq!(
+            classify_accept_error(io::ErrorKind::WouldBlock),
+            AcceptErrorDisposition::NoConnectionReady
+        );
+        assert_eq!(
+            classify_accept_error(io::ErrorKind::PermissionDenied),
+            AcceptErrorDisposition::ListenerFatal
+        );
+    }
 
     #[test]
     fn closed_runtime_events_have_deterministic_terminal_classification() {
