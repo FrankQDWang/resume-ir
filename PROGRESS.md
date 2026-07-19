@@ -3905,6 +3905,25 @@ guards, local runtime discovery, and PR #9 CI state.
   or retry changed. The exact case passes another 10/10 and the complete
   51-test parallel suite passes three consecutive runs; the failed full gate
   remains non-acceptance evidence until rerun on this test-only correction.
+- The fresh complete `./scripts/ci/verify-local.sh` rerun on frozen commit
+  `62f425ca92b1826b2d88160f1d8a04dc6ef823b3` exited 0 through workspace
+  formatting, strict warnings-denied Clippy, complete tests and doc-tests, and
+  the repository contract, loop-state and public privacy gates. This supersedes
+  the invalidated full-gate run above without changing production code.
+- Hosted Platform CI run `29690801160` passed on the same commit for both
+  `macos-latest` and `windows-latest`. Windows passed the complete 29-test
+  daemon IPC suite, including the cross-route disconnect/batch terminal-outcome
+  regression, and all three `s81_daemon_kill` native lifecycle cases in 74.12
+  seconds: strong kill/restart, graceful parent EOF and parent EOF during an
+  active import with no partial publication. The explicitly two-hour soak
+  remains ignored in hosted CI and is evidenced separately below.
+- The final uninterrupted frozen-code soak ran one resident daemon through the
+  exact ignored test
+  `daemon_survives_two_hour_mixed_connection_fault_soak` and exited 0 with
+  `1 passed; 0 failed` after 7,201.07 seconds. This is the fresh 120-minute
+  connection-fault gate required after the final test-only corrections. Merge,
+  synced-main rebuild, native 0.1.1 installation and live installed `Ready`
+  plus strong-kill recovery evidence remain required before handoff.
 
 ### S806
 
