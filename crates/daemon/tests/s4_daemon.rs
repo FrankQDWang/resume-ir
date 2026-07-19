@@ -4,6 +4,8 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+#[cfg(windows)]
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -21,8 +23,28 @@ mod support;
 
 const ACTIVE_KILL_FIXTURE_FILE_COUNT: usize = 128;
 
+// The integration suite intentionally runs several resident daemon processes. On Windows,
+// admitting more than one such test at a time can starve process startup and index writers;
+// production still supports its normal one-daemon-per-data-directory ownership model.
+macro_rules! serialize_windows_s4_daemon_test {
+    () => {
+        #[cfg(windows)]
+        let _guard = windows_s4_daemon_test_lock();
+    };
+}
+
+#[cfg(windows)]
+fn windows_s4_daemon_test_lock() -> MutexGuard<'static, ()> {
+    static WINDOWS_S4_DAEMON_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    WINDOWS_S4_DAEMON_TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[test]
 fn retired_embedding_writer_flags_are_rejected_before_daemon_startup() {
+    serialize_windows_s4_daemon_test!();
     for retired_args in [
         vec!["--once", "--work-embeddings-once"],
         vec!["--work-embeddings"],
@@ -45,6 +67,7 @@ fn retired_embedding_writer_flags_are_rejected_before_daemon_startup() {
 
 #[test]
 fn foreground_once_opens_store_reports_ready_and_exits() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-data");
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
@@ -71,6 +94,7 @@ fn foreground_once_opens_store_reports_ready_and_exits() {
 
 #[test]
 fn foreground_once_rejects_a_competing_import_processing_owner() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-processing-owner-data");
     let owner = match DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap() {
         DataDirectoryOwnerAcquisition::Acquired(lease) => lease,
@@ -122,6 +146,7 @@ fn foreground_once_rejects_a_competing_import_processing_owner() {
 
 #[test]
 fn foreground_once_worker_processes_queued_import_task_from_persistent_scope() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-import-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -172,6 +197,7 @@ fn foreground_once_worker_processes_queued_import_task_from_persistent_scope() {
 
 #[test]
 fn migration_rebuild_retires_legacy_search_artifacts_before_first_publication() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-migration-legacy-artifacts-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -233,6 +259,7 @@ fn migration_rebuild_retires_legacy_search_artifacts_before_first_publication() 
 
 #[test]
 fn migration_rebuild_invalid_publication_lock_blocks_repair_without_exiting_daemon() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-migration-invalid-publication-lock-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -311,6 +338,7 @@ fn migration_rebuild_invalid_publication_lock_blocks_repair_without_exiting_daem
 
 #[test]
 fn foreground_startup_rebuilds_missing_ready_snapshot_without_manual_worker() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-index-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -360,6 +388,7 @@ fn foreground_startup_rebuilds_missing_ready_snapshot_without_manual_worker() {
 
 #[test]
 fn foreground_startup_rebuilds_corrupt_ready_snapshot_without_manual_worker() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-index-worker-schema-mismatch-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -417,6 +446,7 @@ fn foreground_startup_rebuilds_corrupt_ready_snapshot_without_manual_worker() {
 
 #[test]
 fn foreground_index_worker_loop_observes_startup_repaired_snapshot() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-index-loop-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -469,6 +499,7 @@ fn foreground_index_worker_loop_observes_startup_repaired_snapshot() {
 
 #[test]
 fn foreground_once_worker_skips_cancelled_import_task() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-import-cancelled-data");
     initialize_empty_ready_store(&data_dir);
     let fixture_root = fixture_root();
@@ -525,6 +556,7 @@ fn foreground_once_worker_skips_cancelled_import_task() {
 
 #[test]
 fn foreground_once_worker_continues_after_retryable_import_failure() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-import-worker-failure-data");
     initialize_empty_ready_store(&data_dir);
     let missing_root = temp_dir("daemon-import-worker-missing-root");
@@ -585,6 +617,7 @@ fn foreground_once_worker_continues_after_retryable_import_failure() {
 
 #[test]
 fn migration_rebuild_never_publishes_valid_root_before_later_unavailable_root() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-migration-publication-barrier-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -657,6 +690,7 @@ fn migration_rebuild_never_publishes_valid_root_before_later_unavailable_root() 
 
 #[test]
 fn foreground_import_scheduler_processes_task_enqueued_after_startup() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-import-scheduler-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -716,6 +750,7 @@ fn foreground_import_scheduler_processes_task_enqueued_after_startup() {
 
 #[test]
 fn foreground_import_scheduler_rescans_completed_root_without_path_leak() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-import-rescan-data");
     let fixture_root = temp_dir("daemon-import-rescan-root");
     fs::write(
@@ -780,6 +815,7 @@ fn foreground_import_scheduler_rescans_completed_root_without_path_leak() {
 
 #[test]
 fn foreground_import_scheduler_catches_up_recent_completed_root_on_startup() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-import-startup-catchup-data");
     let fixture_root = temp_dir("daemon-import-startup-catchup-root");
     fs::write(
@@ -845,6 +881,7 @@ fn foreground_import_scheduler_catches_up_recent_completed_root_on_startup() {
 
 #[test]
 fn foreground_import_scheduler_backs_off_retryable_failures() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-import-scheduler-backoff-data");
     let missing_root = temp_dir("daemon-import-scheduler-backoff-missing-root");
     remove_dir(&missing_root);
@@ -900,6 +937,7 @@ fn foreground_import_scheduler_backs_off_retryable_failures() {
 
 #[test]
 fn foreground_import_scheduler_recovers_orphaned_running_import_task_immediately() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-import-scheduler-recovery-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -960,6 +998,7 @@ fn foreground_import_scheduler_recovers_orphaned_running_import_task_immediately
 
 #[test]
 fn foreground_import_scheduler_fails_closed_against_a_legacy_live_task_owner() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-import-live-owner-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -1018,6 +1057,7 @@ fn foreground_import_scheduler_fails_closed_against_a_legacy_live_task_owner() {
 
 #[test]
 fn foreground_import_scheduler_claims_only_after_acquiring_the_owner_lock() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-import-owner-handshake-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -1067,6 +1107,7 @@ fn foreground_import_scheduler_claims_only_after_acquiring_the_owner_lock() {
 
 #[test]
 fn migration_rebuild_reconciles_a_root_cancelled_after_the_first_worker_tick() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-migration-live-cancel-data");
     let fixture_root = active_kill_fixture_root(ACTIVE_KILL_FIXTURE_FILE_COUNT);
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -1155,6 +1196,7 @@ fn migration_rebuild_reconciles_a_root_cancelled_after_the_first_worker_tick() {
 
 #[test]
 fn foreground_import_scheduler_recovers_active_import_after_kill_and_restart() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-import-active-kill-data");
     let fixture_root = active_kill_fixture_root(ACTIVE_KILL_FIXTURE_FILE_COUNT);
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -1246,6 +1288,7 @@ fn foreground_import_scheduler_recovers_active_import_after_kill_and_restart() {
 
 #[test]
 fn foreground_import_watcher_requeues_completed_root_after_file_change_without_path_leak() {
+    serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-import-watcher-data");
     let watched_root = temp_dir("daemon-import-watcher-root");
     let watched_file = watched_root.join("candidate.txt");

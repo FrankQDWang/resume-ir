@@ -3828,6 +3828,23 @@ guards, local runtime discovery, and PR #9 CI state.
   and diff checks pass. The failed hosted run is not acceptance evidence; a new
   hosted Windows run, fresh complete local gate, rebuilt package and frozen-code
   soak are still required.
+- The following hosted Windows run passed the witness teardown correction and
+  all earlier platform regressions, then ran all 22 native `s4_daemon` tests in
+  one libtest process. Two unrelated deadlines expired while a sibling
+  128-document kill/restart fixture occupied Windows process, SQLCipher and
+  index-writer capacity for more than a minute. Both failed tests pass quickly
+  in isolation, the children were still alive rather than reporting a daemon
+  fatal event, and the migration cancellation/replacement state transitions
+  remain covered independently. This was test-process admission pressure, not
+  evidence for changing daemon startup, migration semantics or deadlines.
+  `s4_daemon` now reuses the established poison-tolerant Windows-only
+  `OnceLock<Mutex<()>>` admission pattern across all 22 native-process tests;
+  the guard lives through child teardown and temporary-directory cleanup while
+  macOS/Linux retain parallel execution. No timeout, retry, sleep or production
+  branch changed. The complete local `s4_daemon` suite passes 22/22, formatting,
+  strict daemon Clippy and diff checks pass, and the failed hosted run remains
+  non-acceptance evidence pending a fresh Windows job and complete frozen-code
+  gate.
 
 ### S806
 
