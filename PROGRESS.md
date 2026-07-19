@@ -3870,6 +3870,30 @@ guards, local runtime discovery, and PR #9 CI state.
   hosted job remains non-acceptance evidence; a fresh Windows job and all later
   frozen-code package/soak/install gates are still required.
 
+- Hosted run `29689448975` then passed that disconnect regression, the complete
+  search/detail IPC suites and all 22 native `s4_daemon` cases on Windows. Its
+  only failure was a five-second foreground-ready barrier in
+  `s81_daemon_kill` while a sibling test in the same libtest process drove a
+  1,024-file active import for more than a minute. The daemon remained alive,
+  the failure occurred before parent-lifecycle EOF was sent, and the heavy
+  sibling completed, so this is native test-process admission pressure rather
+  than a daemon shutdown or supervisor defect.
+- All three Windows `s81_daemon_kill` cases now share one poison-tolerant,
+  Windows-only native lifecycle admission slot for the lifetime of their child
+  and cleanup. Unix concurrency, product ownership, startup deadlines and EOF
+  behavior are unchanged; no timeout, sleep or retry was added. The complete
+  local macOS suite passes 5/5, and formatting, strict all-target/all-feature
+  daemon Clippy and diff checks pass. A direct macOS-to-MSVC Cargo check is not
+  admissible Windows evidence because the host lacks a Windows C/OpenSSL
+  toolchain; the fresh hosted Windows suite remains the acceptance signal.
+- The currently installed manual-test build is still version 0.1.0 and is not
+  S807 acceptance evidence. Its live daemon deterministically reported
+  `service_state=repairing`, `query=repairing`, `index_health=empty` and no
+  snapshot on three probes while the lifecycle process itself was ready. This
+  is the superseded non-converging migration behavior; only a merged, rebuilt
+  and composition-verified 0.1.1 that makes the same probe reach ready may be
+  handed to the user.
+
 ### S806
 
 - Continued closed historical issue #138 locally after accepted S805 and froze

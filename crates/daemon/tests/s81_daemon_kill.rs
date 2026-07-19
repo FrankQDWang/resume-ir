@@ -5,6 +5,8 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{Receiver, TryRecvError};
+#[cfg(windows)]
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -19,8 +21,30 @@ mod support;
 
 const ACTIVE_IMPORT_FILE_COUNT: usize = 1_024;
 
+// These tests each own a resident native daemon, and one deliberately drives a
+// large active import. Windows process and index-writer startup can otherwise
+// be starved by a sibling test in the same libtest process. Production daemon
+// ownership remains one daemon per data directory; only this test process has
+// a single native lifecycle admission slot on Windows.
+macro_rules! serialize_windows_s81_daemon_test {
+    () => {
+        #[cfg(windows)]
+        let _guard = windows_s81_daemon_test_lock();
+    };
+}
+
+#[cfg(windows)]
+fn windows_s81_daemon_test_lock() -> MutexGuard<'static, ()> {
+    static WINDOWS_S81_DAEMON_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    WINDOWS_S81_DAEMON_TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[test]
 fn foreground_daemon_can_be_killed_and_restarted_without_path_leak() {
+    serialize_windows_s81_daemon_test!();
     let data_dir = temp_dir("daemon-kill-restart-data");
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
@@ -75,6 +99,7 @@ fn foreground_daemon_can_be_killed_and_restarted_without_path_leak() {
 
 #[test]
 fn parent_lifecycle_eof_gracefully_stops_foreground_daemon() {
+    serialize_windows_s81_daemon_test!();
     let data_dir = temp_dir("parent-lifecycle-eof-data");
 
     let mut command = Command::new(env!("CARGO_BIN_EXE_resume-daemon"));
@@ -114,6 +139,7 @@ fn parent_lifecycle_eof_gracefully_stops_foreground_daemon() {
 
 #[test]
 fn parent_lifecycle_eof_interrupts_an_active_import_without_partial_publication() {
+    serialize_windows_s81_daemon_test!();
     let data_dir = temp_dir("parent-lifecycle-active-import-data");
     let import_root = active_import_root(ACTIVE_IMPORT_FILE_COUNT);
     let canonical_root = fs::canonicalize(&import_root).unwrap();
