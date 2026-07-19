@@ -3747,6 +3747,24 @@ guards, local runtime discovery, and PR #9 CI state.
   daemon Clippy, formatting and diff checks pass. The already-running soak was
   stopped and invalidated immediately, so a fresh 120-minute frozen-code soak,
   PR/merge/sync and installed 0.1.1 recovery evidence remain required.
+- Hosted Windows validation then exposed a second platform-boundary defect in
+  the v28 ownership protocol. The publication-lock opener requested read/write
+  access while sharing only reads, so Windows could reject the second handle
+  with sharing-violation code 32 before the kernel byte-range lock decided
+  ownership. That precise error had been reported as generic storage failure,
+  causing the two independent-owner migration tests to fail. The ownership
+  family now uses one explicit `fs4` adapter for blocking, nonblocking and
+  release operations; Windows lock handles share reads and writes so the
+  exclusive kernel lock is authoritative. Only Windows sharing violation 32 is
+  retained as a fail-closed contention fallback; other raw codes and platforms
+  remain storage failures, with no string or broad permission classification.
+  The pure classifier, adapter lifetime, both original ownership regressions,
+  all 79 all-feature meta-store unit tests, complete meta-store integration/doc tests,
+  all 90 import-pipeline tests, all 41 daemon unit tests and strict meta-store
+  Clippy pass locally. The earlier DMG and partial soak are invalidated by this
+  production lock change; hosted Windows proof, a fresh complete local gate,
+  rebuilt native package and a new uninterrupted 120-minute soak remain
+  required before merge or installation acceptance.
 
 ### S806
 

@@ -11,7 +11,10 @@ use crate::{
     ImportTaskStatus, MetaStoreError, OwnedMetaStore, Result as StoreResult, UnixTimestamp,
 };
 
+mod lock_ops;
 mod task_lock;
+
+use lock_ops::{ExclusiveLockAttempt, LockOpenErrorClass};
 
 pub(crate) use task_lock::acquire_legacy_task_locks;
 pub use task_lock::{import_task_owner_lock_path, ImportTaskOwnerLock};
@@ -126,17 +129,19 @@ impl DataDirectoryOwnerLease {
             fs::canonicalize(data_dir).map_err(|_| DataDirectoryOwnerAcquireError::Storage)?;
         let path = data_dir.join(DATA_DIRECTORY_OWNER_LOCK_FILE);
         let data_directory_lock = open_owner_lock_file(&path)?;
-        match data_directory_lock.try_lock() {
-            Ok(()) => {
+        match lock_ops::try_exclusive(&data_directory_lock) {
+            Ok(ExclusiveLockAttempt::Acquired) => {
                 validate_open_owner_lock_file(&path, &data_directory_lock)?;
                 let daemon_path = data_dir.join(LEGACY_DAEMON_OWNER_LOCK_FILE);
                 let legacy_daemon_lock = open_owner_lock_file(&daemon_path)?;
-                match legacy_daemon_lock.try_lock() {
-                    Ok(()) => validate_open_owner_lock_file(&daemon_path, &legacy_daemon_lock)?,
-                    Err(std::fs::TryLockError::WouldBlock) => {
+                match lock_ops::try_exclusive(&legacy_daemon_lock) {
+                    Ok(ExclusiveLockAttempt::Acquired) => {
+                        validate_open_owner_lock_file(&daemon_path, &legacy_daemon_lock)?;
+                    }
+                    Ok(ExclusiveLockAttempt::Contended) => {
                         return Ok(DataDirectoryOwnerAcquisition::Contended);
                     }
-                    Err(std::fs::TryLockError::Error(_)) => {
+                    Err(_) => {
                         return Err(DataDirectoryOwnerAcquireError::Storage);
                     }
                 }
@@ -149,8 +154,8 @@ impl DataDirectoryOwnerLease {
                     }),
                 }))
             }
-            Err(std::fs::TryLockError::WouldBlock) => Ok(DataDirectoryOwnerAcquisition::Contended),
-            Err(std::fs::TryLockError::Error(_)) => Err(DataDirectoryOwnerAcquireError::Storage),
+            Ok(ExclusiveLockAttempt::Contended) => Ok(DataDirectoryOwnerAcquisition::Contended),
+            Err(_) => Err(DataDirectoryOwnerAcquireError::Storage),
         }
     }
 
@@ -258,8 +263,8 @@ impl DataDirectoryOwnerGuard {
     ) -> StoreResult<SearchPublicationOwnershipGuard> {
         let path = self.data_dir.join(SEARCH_PUBLICATION_LOCK_FILE);
         let file = open_legacy_publication_lock_file(&path)?;
-        match file.try_lock() {
-            Ok(()) => {
+        match lock_ops::try_exclusive(&file) {
+            Ok(ExclusiveLockAttempt::Acquired) => {
                 validate_open_legacy_publication_lock_file(&path, &file)?;
                 Ok(SearchPublicationOwnershipGuard {
                     file,
@@ -267,10 +272,10 @@ impl DataDirectoryOwnerGuard {
                     _owner: Arc::clone(self),
                 })
             }
-            Err(std::fs::TryLockError::WouldBlock) => {
+            Ok(ExclusiveLockAttempt::Contended) => {
                 Err(MetaStoreError::migration_ownership_required())
             }
-            Err(std::fs::TryLockError::Error(error)) => Err(MetaStoreError::io_storage(error)),
+            Err(error) => Err(MetaStoreError::io_storage(error)),
         }
     }
 
@@ -467,8 +472,8 @@ fn waiting_count(state: &SearchPublicationArbiterState) -> StoreResult<usize> {
 
 impl Drop for DataDirectoryOwnerGuard {
     fn drop(&mut self) {
-        let _ = self.legacy_daemon_lock.unlock();
-        let _ = self.data_directory_lock.unlock();
+        let _ = lock_ops::unlock(&self.legacy_daemon_lock);
+        let _ = lock_ops::unlock(&self.data_directory_lock);
     }
 }
 
@@ -483,7 +488,7 @@ pub(crate) struct SearchPublicationOwnershipGuard {
 
 impl Drop for SearchPublicationOwnershipGuard {
     fn drop(&mut self) {
-        let _ = self.file.unlock();
+        let _ = lock_ops::unlock(&self.file);
     }
 }
 
@@ -518,13 +523,12 @@ fn open_legacy_publication_lock_file(path: &Path) -> StoreResult<File> {
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
-        options.share_mode(FILE_SHARE_READ);
+        options.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
     }
     let file = options.open(path).map_err(|error| {
-        if error.kind() == ErrorKind::PermissionDenied {
-            MetaStoreError::migration_ownership_required()
-        } else {
-            MetaStoreError::io_storage(error)
+        match lock_ops::classify_current_open_error(&error) {
+            LockOpenErrorClass::Contended => MetaStoreError::migration_ownership_required(),
+            LockOpenErrorClass::Storage => MetaStoreError::io_storage(error),
         }
     })?;
     validate_open_legacy_publication_lock_file(path, &file)?;
@@ -658,3 +662,7 @@ fn same_file_identity(
 #[cfg(test)]
 #[path = "data_directory_owner_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "data_directory_owner/lock_ops_tests.rs"]
+mod lock_ops_tests;

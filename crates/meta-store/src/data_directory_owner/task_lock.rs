@@ -3,6 +3,7 @@ use std::fs::{self, File};
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
+use super::lock_ops::{self, ExclusiveLockAttempt};
 use super::{private_lock_options, same_file_identity};
 use crate::{ImportTaskId, MetaStoreError, Result as StoreResult};
 
@@ -24,7 +25,7 @@ impl ImportTaskOwnerLock {
     pub fn acquire(data_dir: &Path, task_id: &ImportTaskId) -> io::Result<Self> {
         let path = import_task_owner_lock_path(data_dir, task_id);
         let file = open_task_lock_file(&path)?;
-        file.lock()?;
+        lock_ops::lock_exclusive(&file)?;
         validate_open_task_lock_file(&path, &file)?;
         Ok(Self { file })
     }
@@ -32,20 +33,20 @@ impl ImportTaskOwnerLock {
     pub fn try_acquire(data_dir: &Path, task_id: &ImportTaskId) -> io::Result<Option<Self>> {
         let path = import_task_owner_lock_path(data_dir, task_id);
         let file = open_task_lock_file(&path)?;
-        match file.try_lock() {
-            Ok(()) => {
+        match lock_ops::try_exclusive(&file) {
+            Ok(ExclusiveLockAttempt::Acquired) => {
                 validate_open_task_lock_file(&path, &file)?;
                 Ok(Some(Self { file }))
             }
-            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
-            Err(std::fs::TryLockError::Error(error)) => Err(error),
+            Ok(ExclusiveLockAttempt::Contended) => Ok(None),
+            Err(error) => Err(error),
         }
     }
 }
 
 impl Drop for ImportTaskOwnerLock {
     fn drop(&mut self) {
-        let _ = self.file.unlock();
+        let _ = lock_ops::unlock(&self.file);
     }
 }
 
@@ -90,12 +91,12 @@ pub(crate) fn acquire_legacy_task_locks(
             .join(IMPORT_TASK_OWNER_LOCKS_DIR)
             .join(format!("{task_id}.lock"));
         let file = open_task_lock_file(&path).map_err(MetaStoreError::io_storage)?;
-        let lock = match file.try_lock() {
-            Ok(()) => ImportTaskOwnerLock { file },
-            Err(std::fs::TryLockError::WouldBlock) => {
+        let lock = match lock_ops::try_exclusive(&file) {
+            Ok(ExclusiveLockAttempt::Acquired) => ImportTaskOwnerLock { file },
+            Ok(ExclusiveLockAttempt::Contended) => {
                 return Err(MetaStoreError::migration_ownership_required());
             }
-            Err(std::fs::TryLockError::Error(error)) => {
+            Err(error) => {
                 return Err(MetaStoreError::io_storage(error));
             }
         };
