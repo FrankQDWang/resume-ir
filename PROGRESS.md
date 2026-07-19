@@ -3842,9 +3842,10 @@ guards, local runtime discovery, and PR #9 CI state.
   the guard lives through child teardown and temporary-directory cleanup while
   macOS/Linux retain parallel execution. No timeout, retry, sleep or production
   branch changed. The complete local `s4_daemon` suite passes 22/22, formatting,
-  strict daemon Clippy and diff checks pass, and the failed hosted run remains
-  non-acceptance evidence pending a fresh Windows job and complete frozen-code
-  gate.
+  strict daemon Clippy and diff checks pass. Independent review found no
+  P0/P1/P2, and a fresh complete `./scripts/ci/verify-local.sh` run exits 0 on
+  the frozen code. The failed hosted run remains non-acceptance evidence
+  pending a fresh Windows job.
 
 ### S806
 
