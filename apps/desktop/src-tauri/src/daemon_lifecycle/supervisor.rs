@@ -466,13 +466,14 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
     }
 
     fn manual_retry(&mut self) {
-        if !matches!(
-            self.phase,
-            ActorPhase::CircuitOpen { .. } | ActorPhase::Blocked
-        ) {
-            return;
+        match self.phase {
+            ActorPhase::CircuitOpen { .. } if !self.policy.begin_manual_half_open() => return,
+            ActorPhase::CircuitOpen { .. } => {}
+            ActorPhase::Blocked => self.policy.begin_half_open(),
+            ActorPhase::Waiting { .. } | ActorPhase::Starting { .. } | ActorPhase::Ready { .. } => {
+                return;
+            }
         }
-        self.policy.begin_half_open();
         let now = Instant::now();
         self.phase = ActorPhase::Waiting { start_at: now };
         self.publish_state(

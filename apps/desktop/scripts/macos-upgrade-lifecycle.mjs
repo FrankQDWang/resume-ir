@@ -4,8 +4,6 @@ import {
   mkdir,
   mkdtemp,
   realpath,
-  rename,
-  rm,
   rmdir,
 } from "node:fs/promises";
 import os from "node:os";
@@ -15,17 +13,43 @@ import { fileURLToPath } from "node:url";
 import { inspectMacosAppBundle } from "./macos-install-lifecycle.mjs";
 import {
   validateMountedDmgLayout,
+  verifyAdHocSignedApp,
   verifyMacosDmg,
 } from "./verify-macos-dmg.mjs";
+import { verifyBundleComposition } from "./macos-bundle-composition.mjs";
+import {
+  createInstallReceipt,
+  defaultApplicationSupportRoot,
+  persistInstallReceipt,
+  readInstallReceipt,
+  verifyInstallReceipt,
+} from "./macos-install-receipt.mjs";
+import {
+  advanceLifecycleJournal,
+  createLifecycleJournal,
+  persistLifecycleJournal,
+  readLifecycleJournal,
+} from "./macos-lifecycle-journal.mjs";
+import {
+  recoverUpgradeTransaction,
+  rollbackUpgradeTransaction,
+} from "./macos-lifecycle-transaction.mjs";
+import {
+  assertNoLifecycleArtifacts,
+  lifecycleWorkspacePaths,
+  makeStagedAppDurable,
+  publishDurableStage,
+} from "./macos-lifecycle-workspace.mjs";
+import { runWithMacosLifecycleLock } from "./macos-lifecycle-execution.mjs";
+import { requireLifecycleLockCapability } from "./macos-lifecycle-lock.mjs";
 import { verifyBundledSidecar } from "./verify-bundled-sidecar.mjs";
 
 const APP_NAME = "resume-ir.app";
-const STAGE_NAME = ".resume-ir.app.upgrade-stage";
-const BACKUP_NAME = ".resume-ir.app.upgrade-backup";
 const EXPECTED_BUNDLE_ID = "local.resume-ir.desktop";
 const EXPECTED_DISPLAY_NAME = "resume-ir";
 const EXPECTED_ICON_FILE = "icon.icns";
 const MAX_TOOL_OUTPUT_BYTES = 64 * 1024;
+const MIN_EVIDENCE_VERSION = "0.1.1";
 const DEFAULT_LSREGISTER =
   "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 
@@ -85,6 +109,7 @@ async function requireApplicationsRoot(applicationsDirectory) {
   if (
     !metadata.isDirectory() ||
     metadata.isSymbolicLink() ||
+    path.resolve(applicationsDirectory) !== resolved ||
     path.basename(resolved) !== "Applications" ||
     path.basename(path.normalize(applicationsDirectory)) !== "Applications"
   ) {
@@ -119,15 +144,34 @@ function requireDmgReceipt(receipt, targetTriple) {
     receipt?.schema_version !== "resume-ir.macos-dmg-composition.v1" ||
     receipt?.target_triple !== targetTriple ||
     receipt?.release_claim !== "composition_only" ||
-    !["accepted", "not_accepted"].includes(receipt?.distribution_signature) ||
+    receipt?.distribution_signature !== "accepted" ||
+    receipt?.distribution_profile !== "internal_test" ||
+    receipt?.code_signature !== "ad_hoc_valid" ||
+    receipt?.hardened_runtime !== true ||
+    receipt?.library_validation_entitlement_scope !==
+      "embedding_runtime_only" ||
+    receipt?.notarization !== "not_requested" ||
+    receipt?.tester_allow_list_required !== true ||
     receipt?.dmg_count !== 1 ||
     receipt?.app_bundle_count !== 1 ||
     receipt?.digest_match !== true ||
     receipt?.architecture !== "arm64" ||
-    receipt?.build_machine_identity_path_markers !== 0
+    receipt?.build_machine_identity_path_markers !== 0 ||
+    !/^[a-f0-9]{64}$/.test(receipt?.dmg_sha256 ?? "") ||
+    !/^[a-f0-9]{64}$/.test(receipt?.app_composition_digest ?? "")
   ) {
     throw new Error("DMG composition receipt is invalid");
   }
+}
+
+function requireSignature(receipt) {
+  if (
+    receipt?.code_signature !== "ad_hoc_valid" ||
+    receipt?.hardened_runtime !== true
+  ) {
+    throw new Error("App signature is invalid");
+  }
+  return receipt;
 }
 
 function requireAppReceipt(receipt) {
@@ -180,11 +224,8 @@ function validateArguments({
   if (compareThreePartVersions(candidateVersion, installedVersion) <= 0) {
     throw new Error("candidate version is not newer");
   }
-}
-
-async function removeIfOwned(target, owned, remove) {
-  if (owned && (await targetExists(target))) {
-    await remove(target, { recursive: true, force: false });
+  if (compareThreePartVersions(installedVersion, MIN_EVIDENCE_VERSION) < 0) {
+    throw new Error("installed App predates upgrade evidence");
   }
 }
 
@@ -196,41 +237,87 @@ async function createExclusiveDirectory(target, makeDirectory) {
   }
 }
 
-async function moveEntry(source, target, move, message) {
-  try {
-    await move(source, target);
-  } catch {
-    throw new Error(message);
-  }
-}
-
-async function restoreOldApp({
-  target,
-  backup,
-  installedVersion,
+async function verifyCandidateApp({
+  appBundle,
+  expectedVersion,
+  expectedCompositionDigest,
+  repoRoot,
+  targetTriple,
   platform,
   runner,
   inspectApp,
   verifyApp,
-  launchServicesCommand,
-  move,
-  remove,
+  verifyComposition,
+  verifySignature,
 }) {
-  if (await targetExists(target)) {
-    await runner(launchServicesCommand, ["-u", target]);
-    await remove(target, { recursive: true, force: false });
-  }
-  await moveEntry(backup, target, move, "old App restoration failed");
   requireIdentity(
-    await inspectApp({ appBundle: target, platform, runner }),
-    installedVersion,
+    await inspectApp({ appBundle, platform, runner }),
+    expectedVersion,
   );
-  requireAppReceipt(await verifyApp({ appBundle: target }));
-  const registration = await runner(launchServicesCommand, ["-f", target]);
-  if (!succeeded(registration)) throw new Error("old App registration failed");
+  requireAppReceipt(await verifyApp({ repoRoot, targetTriple, appBundle }));
+  const composition = await verifyComposition({
+    appBundle,
+    targetTriple,
+    expectedVersion,
+  });
+  if (composition.composition_digest !== expectedCompositionDigest) {
+    throw new Error("candidate App composition is invalid");
+  }
+  requireSignature(await verifySignature({ appBundle, platform, runner }));
+  return composition;
 }
 
-export async function upgradeMacosDmg({
+async function verifyInstalledApp({
+  appBundle,
+  expectedVersion,
+  expectedReceipt,
+  targetTriple,
+  platform,
+  runner,
+  inspectApp,
+  verifyComposition,
+  verifySignature,
+  verifyReceipt,
+}) {
+  requireIdentity(
+    await inspectApp({ appBundle, platform, runner }),
+    expectedVersion,
+  );
+  const composition = await verifyComposition({
+    appBundle,
+    targetTriple,
+    expectedVersion,
+  });
+  requireSignature(await verifySignature({ appBundle, platform, runner }));
+  verifyReceipt({ receipt: expectedReceipt, composition });
+  return composition;
+}
+
+export async function upgradeMacosDmg(options) {
+  validateArguments({
+    repoRoot: options.repoRoot,
+    targetTriple: options.targetTriple,
+    dmg: options.dmg,
+    applicationsDirectory: options.applicationsDirectory,
+    installedVersion: options.installedVersion,
+    candidateVersion: options.candidateVersion,
+    temporaryRoot: options.temporaryRoot ?? os.tmpdir(),
+    platform: options.platform ?? process.platform,
+  });
+  return runWithMacosLifecycleLock({
+    applicationSupportRoot: options.applicationSupportRoot,
+    resolveApplicationSupportRoot:
+      options.resolveApplicationSupportRoot ?? defaultApplicationSupportRoot,
+    lifecycleLockTestRuntime: options.lifecycleLockTestRuntime,
+    execute: ({ applicationSupportRoot, lifecycleLockCapability }) =>
+      upgradeMacosDmgLocked(
+        { ...options, applicationSupportRoot },
+        lifecycleLockCapability,
+      ),
+  });
+}
+
+async function upgradeMacosDmgLocked({
   repoRoot,
   targetTriple,
   dmg,
@@ -244,9 +331,20 @@ export async function upgradeMacosDmg({
   validateLayout = validateMountedDmgLayout,
   inspectApp = inspectMacosAppBundle,
   verifyApp = verifyBundledSidecar,
+  verifyComposition = verifyBundleComposition,
+  verifySignature = verifyAdHocSignedApp,
+  applicationSupportRoot,
+  resolveApplicationSupportRoot = defaultApplicationSupportRoot,
+  readReceipt = readInstallReceipt,
+  verifyReceipt = verifyInstallReceipt,
+  createReceipt = createInstallReceipt,
+  persistReceipt = persistInstallReceipt,
+  readJournal = readLifecycleJournal,
+  persistJournal = persistLifecycleJournal,
   launchServicesCommand = DEFAULT_LSREGISTER,
   filesystem = {},
-}) {
+}, lifecycleLockCapability) {
+  requireLifecycleLockCapability(lifecycleLockCapability);
   validateArguments({
     repoRoot,
     targetTriple,
@@ -259,21 +357,133 @@ export async function upgradeMacosDmg({
   });
   const applicationsRoot = await requireApplicationsRoot(applicationsDirectory);
   const target = path.join(applicationsRoot, APP_NAME);
-  const stage = path.join(applicationsRoot, STAGE_NAME);
-  const backup = path.join(applicationsRoot, BACKUP_NAME);
-  const move = filesystem.rename ?? rename;
-  const remove = filesystem.rm ?? rm;
   const makeDirectory = filesystem.mkdir ?? mkdir;
+  const resolvedApplicationSupport =
+    applicationSupportRoot ?? (await resolveApplicationSupportRoot());
+  const verifyOld = async (appBundle, journal) => {
+    if (
+      journal.old_version !== installedVersion ||
+      journal.target_triple !== targetTriple
+    ) {
+      throw new Error("upgrade journal does not match installed release");
+    }
+    return verifyInstalledApp({
+      appBundle,
+      expectedVersion: installedVersion,
+      expectedReceipt: journal.old_receipt,
+      targetTriple,
+      platform,
+      runner,
+      inspectApp,
+      verifyComposition,
+      verifySignature,
+      verifyReceipt,
+    });
+  };
+  const verifyNew = async (appBundle, journal) => {
+    if (
+      journal.new_version !== candidateVersion ||
+      journal.target_triple !== targetTriple
+    ) {
+      throw new Error("upgrade journal does not match candidate release");
+    }
+    const composition = await verifyCandidateApp({
+      appBundle,
+      expectedVersion: candidateVersion,
+      expectedCompositionDigest: journal.new_composition_digest,
+      repoRoot,
+      targetTriple,
+      platform,
+      runner,
+      inspectApp,
+      verifyApp,
+      verifyComposition,
+      verifySignature,
+    });
+    verifyReceipt({ receipt: journal.new_receipt, composition });
+    return composition;
+  };
+  const classifyTarget = async (appBundle, journal) => {
+    const metadata = await inspectApp({ appBundle, platform, runner });
+    if (metadata.version === journal.old_version) {
+      await verifyOld(appBundle, journal);
+      return "old";
+    }
+    if (metadata.version === journal.new_version) {
+      await verifyNew(appBundle, journal);
+      return "new";
+    }
+    throw new Error("upgrade target does not match journal");
+  };
+  const register = async (appBundle) => {
+    const result = await runner(launchServicesCommand, ["-f", appBundle]);
+    if (!succeeded(result)) throw new Error("LaunchServices registration failed");
+  };
+  const unregister = async (appBundle) => {
+    const result = await runner(launchServicesCommand, ["-u", appBundle]);
+    if (!succeeded(result)) {
+      throw new Error("LaunchServices unregistration failed");
+    }
+  };
+  const transactionOptions = (journal) => ({
+    journal,
+    target,
+    applicationsRoot,
+    applicationSupportRoot: resolvedApplicationSupport,
+    readReceipt,
+    persistReceipt,
+    persistJournal,
+    verifyOld,
+    verifyNew,
+    classifyTarget,
+    register,
+    unregister,
+    filesystem,
+    lifecycleLockCapability,
+  });
+  const result = {
+    schema_version: "resume-ir.macos-app-upgrade.v1",
+    target_triple: targetTriple,
+    from_version: installedVersion,
+    to_version: candidateVersion,
+    app_bundle_count: 1,
+    runtime_composition_verified: true,
+    composition_digest_match: true,
+    install_receipt: "owner_only",
+    launch_services_registered: true,
+    rollback_required: false,
+    user_data_removed: false,
+    distribution_signature: "accepted",
+    release_claim: "local_upgrade_only",
+  };
 
-  if (!(await targetExists(target))) throw new Error("installed App is missing");
-  if ((await targetExists(stage)) || (await targetExists(backup))) {
-    throw new Error("upgrade workspace already exists");
+  const interrupted = await readJournal({
+    applicationSupportRoot: resolvedApplicationSupport,
+    allowMissing: true,
+  });
+  if (interrupted) {
+    const recovery = await recoverUpgradeTransaction(
+      transactionOptions(interrupted),
+    );
+    if (recovery.outcome === "committed") return result;
   }
-  requireIdentity(
-    await inspectApp({ appBundle: target, platform, runner }),
-    installedVersion,
-  );
-  requireAppReceipt(await verifyApp({ repoRoot, targetTriple, appBundle: target }));
+  if (!(await targetExists(target))) throw new Error("installed App is missing");
+  await assertNoLifecycleArtifacts(applicationsRoot);
+  const oldReceipt = await readReceipt({
+    applicationSupportRoot: resolvedApplicationSupport,
+  });
+  await verifyInstalledApp({
+    appBundle: target,
+    expectedVersion: installedVersion,
+    expectedReceipt: oldReceipt,
+    targetTriple,
+    platform,
+    runner,
+    inspectApp,
+    verifyComposition,
+    verifySignature,
+    verifyReceipt,
+  });
 
   const composition = await verifyDmg({
     repoRoot,
@@ -292,13 +502,8 @@ export async function upgradeMacosDmg({
     throw new Error("DMG temporary mount is unavailable");
   }
   let attached = false;
-  let stageOwned = false;
-  let backupReserved = false;
-  let backupOwned = false;
-  let newTargetOwned = false;
+  let journal;
   try {
-    await createExclusiveDirectory(backup, makeDirectory);
-    backupReserved = true;
     const attach = await runner("hdiutil", [
       "attach",
       dmg,
@@ -310,60 +515,77 @@ export async function upgradeMacosDmg({
     if (!succeeded(attach)) throw new Error("DMG attach failed");
     attached = true;
     const sourceApp = await validateLayout({ mountDirectory });
-    requireIdentity(
-      await inspectApp({ appBundle: sourceApp, platform, runner }),
-      candidateVersion,
-    );
-    requireAppReceipt(
-      await verifyApp({ repoRoot, targetTriple, appBundle: sourceApp }),
-    );
-
-    await createExclusiveDirectory(stage, makeDirectory);
-    stageOwned = true;
-    const copy = await runner("ditto", [sourceApp, stage]);
+    const sourceComposition = await verifyCandidateApp({
+      appBundle: sourceApp,
+      expectedVersion: candidateVersion,
+      expectedCompositionDigest: composition.app_composition_digest,
+      repoRoot,
+      targetTriple,
+      platform,
+      runner,
+      inspectApp,
+      verifyApp,
+      verifyComposition,
+      verifySignature,
+    });
+    const nextReceipt = createReceipt({
+      composition: sourceComposition,
+      dmgSha256: composition.dmg_sha256,
+    });
+    journal = createLifecycleJournal({
+      operation: "upgrade",
+      phase: "upgrade_prepared",
+      oldVersion: installedVersion,
+      newVersion: candidateVersion,
+      oldCompositionDigest: oldReceipt.composition_digest,
+      newCompositionDigest: sourceComposition.composition_digest,
+      oldReceipt,
+      newReceipt: nextReceipt,
+    });
+    await persistJournal({
+      applicationSupportRoot: resolvedApplicationSupport,
+      journal,
+    });
+    const paths = lifecycleWorkspacePaths({
+      applicationsRoot,
+      operation: "upgrade",
+      transactionId: journal.transaction_id,
+    });
+    await createExclusiveDirectory(paths.partial, makeDirectory);
+    const copy = await runner("ditto", [sourceApp, paths.partial]);
     if (!succeeded(copy)) throw new Error("candidate App copy failed");
-    requireIdentity(
-      await inspectApp({ appBundle: stage, platform, runner }),
-      candidateVersion,
-    );
-    requireAppReceipt(await verifyApp({ repoRoot, targetTriple, appBundle: stage }));
+    await verifyNew(paths.partial, journal);
+    await makeStagedAppDurable({
+      appBundle: paths.partial,
+      applicationsRoot,
+    });
+    await verifyNew(paths.partial, journal);
+    journal = advanceLifecycleJournal({
+      journal,
+      phase: "upgrade_before_stage_publish",
+    });
+    await persistJournal({
+      applicationSupportRoot: resolvedApplicationSupport,
+      journal,
+    });
+    await publishDurableStage({
+      partial: paths.partial,
+      ready: paths.ready,
+      applicationsRoot,
+      move: filesystem.rename,
+    });
+    journal = advanceLifecycleJournal({
+      journal,
+      phase: "upgrade_stage_ready",
+    });
+    await persistJournal({
+      applicationSupportRoot: resolvedApplicationSupport,
+      journal,
+    });
     await detachMount({ attached, mountDirectory, runner });
     attached = false;
-
-    await moveEntry(target, backup, move, "installed App backup failed");
-    backupReserved = false;
-    backupOwned = true;
-    await moveEntry(stage, target, move, "upgrade promotion failed");
-    stageOwned = false;
-    newTargetOwned = true;
-    requireIdentity(
-      await inspectApp({ appBundle: target, platform, runner }),
-      candidateVersion,
-    );
-    requireAppReceipt(await verifyApp({ repoRoot, targetTriple, appBundle: target }));
-    const registration = await runner(launchServicesCommand, ["-f", target]);
-    if (!succeeded(registration)) {
-      throw new Error("LaunchServices registration failed");
-    }
-    try {
-      await remove(backup, { recursive: true, force: false });
-    } catch {
-      throw new Error("old App backup cleanup failed");
-    }
-    backupOwned = false;
-    return {
-      schema_version: "resume-ir.macos-app-upgrade.v1",
-      target_triple: targetTriple,
-      from_version: installedVersion,
-      to_version: candidateVersion,
-      app_bundle_count: 1,
-      runtime_composition_verified: true,
-      launch_services_registered: true,
-      rollback_required: false,
-      user_data_removed: false,
-      distribution_signature: composition.distribution_signature,
-      release_claim: "local_upgrade_only",
-    };
+    await recoverUpgradeTransaction(transactionOptions(journal));
+    return result;
   } catch (error) {
     let cleanupError;
     if (attached) {
@@ -373,35 +595,24 @@ export async function upgradeMacosDmg({
         cleanupError = detachError;
       }
     }
-    let rollbackError;
-    if (backupOwned) {
-      newTargetOwned = false;
+    if (journal) {
       try {
-        await restoreOldApp({
-          target,
-          backup,
-          installedVersion,
-          platform,
-          runner,
-          inspectApp,
-          verifyApp: (args) => verifyApp({ repoRoot, targetTriple, ...args }),
-          launchServicesCommand,
-          move,
-          remove,
+        const current = await readJournal({
+          applicationSupportRoot: resolvedApplicationSupport,
         });
-        backupOwned = false;
-      } catch {
-        rollbackError = new Error("macOS upgrade rollback failed");
+        const recovery = await rollbackUpgradeTransaction(
+          transactionOptions(current),
+        );
+        if (recovery.outcome === "committed") {
+          throw new Error("macOS upgrade post-commit failure");
+        }
+      } catch (rollbackError) {
+        if (rollbackError.message === "macOS upgrade post-commit failure") {
+          throw rollbackError;
+        }
+        throw new Error("macOS upgrade rollback failed");
       }
     }
-    try {
-      await removeIfOwned(stage, stageOwned, remove);
-      await removeIfOwned(target, newTargetOwned, remove);
-      await removeIfOwned(backup, backupReserved, remove);
-    } catch {
-      throw new Error("macOS upgrade cleanup failed");
-    }
-    if (rollbackError) throw rollbackError;
     if (cleanupError) throw cleanupError;
     throw error;
   }

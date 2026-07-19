@@ -21,6 +21,10 @@ import {
   verifyMacosDmg,
   verifyMacosInternalTestEntitlements,
 } from "./verify-macos-dmg.mjs";
+import {
+  verifyBundleComposition,
+  writeBundleComposition,
+} from "./macos-bundle-composition.mjs";
 
 const TARGET_TRIPLE = "aarch64-apple-darwin";
 const PRODUCT_NAME = "resume-ir";
@@ -404,6 +408,10 @@ export async function applyMacosInternalTestEntitlements({
     if (!succeeded(signRuntime)) {
       throw new Error("macOS internal-test entitlement signing failed");
     }
+    await writeBundleComposition({
+      appBundle,
+      targetTriple: TARGET_TRIPLE,
+    });
     const signApp = await runner("codesign", [
       "--force",
       "--sign",
@@ -426,11 +434,19 @@ export async function applyMacosInternalTestEntitlements({
     if (!succeeded(signature)) {
       throw new Error("macOS internal-test entitlement signing failed");
     }
-    entitlementReceipt = await verifyMacosInternalTestEntitlements({
+    const entitlementScope = await verifyMacosInternalTestEntitlements({
       appBundle,
       platform,
       runner,
     });
+    const composition = await verifyBundleComposition({
+      appBundle,
+      targetTriple: TARGET_TRIPLE,
+    });
+    entitlementReceipt = {
+      ...entitlementScope,
+      app_composition_digest: composition.composition_digest,
+    };
   } catch (error) {
     operationError =
       error instanceof Error && error.message.startsWith("macOS internal-test")
@@ -676,6 +692,7 @@ export async function buildMacosInternalTestRelease({
       receipt?.notarization !== "not_requested" ||
       receipt?.tester_allow_list_required !== true ||
       !/^[a-f0-9]{64}$/.test(receipt?.dmg_sha256 ?? "") ||
+      !/^[a-f0-9]{64}$/.test(receipt?.app_composition_digest ?? "") ||
       receipt?.digest_match !== true ||
       receipt?.release_claim !== "composition_only"
     ) {

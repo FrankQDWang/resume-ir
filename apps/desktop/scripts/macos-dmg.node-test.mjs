@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import {
   chmod,
@@ -31,16 +32,41 @@ import {
   resolveMacosTestReleasePaths,
   stageMountedDmg,
 } from "./macos-test-release.mjs";
+import { writeBundleComposition } from "./macos-bundle-composition.mjs";
 
-async function createMountedLayout(root) {
+function syntheticMachO(payload) {
+  const suffix = Buffer.from(payload);
+  const header = Buffer.alloc(32);
+  header.writeUInt32LE(0xfeedfacf, 0);
+  header.writeUInt32LE(0x0100000c, 4);
+  return Buffer.concat([header, suffix]);
+}
+
+function sha256(body) {
+  return createHash("sha256").update(body).digest("hex");
+}
+
+async function createMountedLayout(root, { withComposition = false } = {}) {
   const appBundle = path.join(root, "resume-ir.app");
   const macosDirectory = path.join(appBundle, "Contents", "MacOS");
+  const resourcesDirectory = path.join(appBundle, "Contents", "Resources");
   await mkdir(macosDirectory, { recursive: true });
+  for (const directory of [
+    "classifier/runtime-pack",
+    "embedding/runtime-pack",
+    "ocr/runtime-pack",
+  ]) {
+    await mkdir(path.join(resourcesDirectory, directory), { recursive: true });
+  }
   await writeFile(
     path.join(appBundle, "Contents", "Info.plist"),
     [
       '<?xml version="1.0" encoding="UTF-8"?>',
       '<plist version="1.0"><dict>',
+      "<key>CFBundleIdentifier</key><string>local.resume-ir.desktop</string>",
+      "<key>CFBundleShortVersionString</key><string>0.1.1</string>",
+      "<key>CFBundleDisplayName</key><string>resume-ir</string>",
+      "<key>CFBundleIconFile</key><string>icon.icns</string>",
       "<key>CFBundleExecutable</key><string>resume-desktop</string>",
       "</dict></plist>",
     ].join(""),
@@ -52,8 +78,34 @@ async function createMountedLayout(root) {
     "resume-pdf-render-runtime",
   ]) {
     const executablePath = path.join(macosDirectory, executable);
-    await writeFile(executablePath, "synthetic-executable");
+    await writeFile(executablePath, syntheticMachO(`synthetic-${executable}`));
     await chmod(executablePath, 0o755);
+  }
+  for (const pack of ["classifier", "embedding", "ocr"]) {
+    const packDirectory = path.join(resourcesDirectory, pack, "runtime-pack");
+    const payload = Buffer.from(`synthetic-${pack}-payload`);
+    await writeFile(path.join(packDirectory, "payload.bin"), payload);
+    await writeFile(
+      path.join(packDirectory, "runtime-pack.json"),
+      `${JSON.stringify({
+        schema_version: `synthetic.${pack}.v1`,
+        files: [
+          {
+            role: "payload",
+            file: "payload.bin",
+            bytes: payload.length,
+            sha256: sha256(payload),
+          },
+        ],
+      })}\n`,
+    );
+  }
+  await writeFile(path.join(resourcesDirectory, "icon.icns"), "synthetic-icon");
+  if (withComposition) {
+    await writeBundleComposition({
+      appBundle,
+      targetTriple: "aarch64-apple-darwin",
+    });
   }
   await symlink("/Applications", path.join(root, "Applications"));
   await writeFile(path.join(root, ".DS_Store"), "synthetic");
@@ -135,6 +187,8 @@ function verifiedDmgReceipt() {
     notarization: "not_requested",
     tester_allow_list_required: true,
     dmg_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    app_composition_digest:
+      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     digest_match: true,
     release_claim: "composition_only",
   };
@@ -284,15 +338,17 @@ test("rebuilds the Tauri DMG from a clean staging root and signs only the embedd
     return { status: 0, stdout: "", stderr: "" };
   };
 
-  assert.deepEqual(
-    await applyMacosInternalTestEntitlements({
-      dmg,
-      entitlements: fileURLToPath(entitlements),
-      platform: "darwin",
-      runner,
-    }),
-    { library_validation_entitlement_scope: "embedding_runtime_only" },
+  const entitlementReceipt = await applyMacosInternalTestEntitlements({
+    dmg,
+    entitlements: fileURLToPath(entitlements),
+    platform: "darwin",
+    runner,
+  });
+  assert.equal(
+    entitlementReceipt.library_validation_entitlement_scope,
+    "embedding_runtime_only",
   );
+  assert.match(entitlementReceipt.app_composition_digest, /^[a-f0-9]{64}$/);
   assert.equal(await readFile(dmg, "utf8"), "rewritten-dmg");
 
   const signingCalls = calls.filter(
@@ -646,7 +702,7 @@ test("verifies one DMG, delegates exact App verification, and always detaches", 
     calls.push([command, ...args]);
     if (command === "hdiutil" && args[0] === "attach") {
       const mountDirectory = args.at(-1);
-      await createMountedLayout(mountDirectory);
+      await createMountedLayout(mountDirectory, { withComposition: true });
       return { status: 0, stdout: "", stderr: "" };
     }
     if (command === "hdiutil" && args[0] === "detach") {
@@ -720,12 +776,14 @@ test("verifies one DMG, delegates exact App verification, and always detaches", 
   ]);
   assert.equal(calls.at(-1)[1], "detach");
   assert.deepEqual(await readdir(temporaryRoot), []);
+  assert.match(receipt.app_composition_digest, /^[a-f0-9]{64}$/);
   assert.deepEqual(receipt, {
     schema_version: "resume-ir.macos-dmg-composition.v1",
     target_triple: "aarch64-apple-darwin",
     dmg_count: 1,
     dmg_bytes: 13,
     dmg_sha256: "bf55618abcf4f76365c1784a970a08f5c650c6fc3ad8a613a042601c9a688b61",
+    app_composition_digest: receipt.app_composition_digest,
     mounted_read_only: true,
     app_bundle_count: 1,
     applications_link_count: 1,
@@ -767,7 +825,7 @@ test("rejects an unsealed or non-ad-hoc App instead of issuing a test receipt", 
   for (const signatureCase of ["verify_failed", "developer_identity"]) {
     const runner = async (command, args) => {
       if (command === "hdiutil" && args[0] === "attach") {
-        await createMountedLayout(args.at(-1));
+        await createMountedLayout(args.at(-1), { withComposition: true });
         return { status: 0, stdout: "", stderr: "" };
       }
       if (command === "hdiutil" && args[0] === "detach") {
@@ -892,7 +950,7 @@ test("the verifier detaches a partial mount after attach times out", async (cont
   let detachCalls = 0;
   const runner = async (command, args) => {
     if (command === "hdiutil" && args[0] === "attach") {
-      await createMountedLayout(args.at(-1));
+      await createMountedLayout(args.at(-1), { withComposition: true });
       return {
         status: null,
         error: { code: "ETIMEDOUT" },
@@ -934,7 +992,7 @@ test("preserves the verification error when detach reports failure after unmount
   await writeFile(dmg, "synthetic-dmg");
   const runner = async (command, args) => {
     if (command === "hdiutil" && args[0] === "attach") {
-      await createMountedLayout(args.at(-1));
+      await createMountedLayout(args.at(-1), { withComposition: true });
       return { status: 0, stdout: "", stderr: "" };
     }
     if (command === "hdiutil" && args[0] === "detach") {
@@ -1033,7 +1091,7 @@ test("locks one credential-free arm64 internal-test build", async () => {
     "dmg",
     "--ci",
   ]);
-  assert.equal(path.basename(plan.dmg), "resume-ir_0.1.0_aarch64.dmg");
+  assert.equal(path.basename(plan.dmg), "resume-ir_0.1.1_aarch64.dmg");
   assert.equal(
     plan.entitlements,
     path.join(paths.frontendRoot, "src-tauri", "entitlements.internal-test.plist"),

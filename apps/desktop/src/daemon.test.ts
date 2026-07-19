@@ -26,6 +26,8 @@ import {
   searchResumes,
   sameSearchSelection,
   selectImportRoot,
+  type DiagnosticsBody,
+  type StatusBody,
 } from "./daemon"
 
 interface IpcCall {
@@ -110,6 +112,7 @@ describe("daemon health product states", () => {
       metadata: "ready" as const,
       query: serviceState === "ready" ? "ready" as const : serviceState === "repairing" ? "repairing" as const : "unavailable" as const,
     },
+    repair_reason: serviceState === "ready" ? null : serviceState === "repairing" ? "migration_rebuild" as const : "runtime_invariant" as const,
     error: serviceState === "ready" ? null : serviceState === "repairing"
       ? { code: "REPAIRING" as const, action: "wait_for_repair" as const }
       : { code: "QUERY_SERVICE_UNAVAILABLE" as const, action: "retry" as const },
@@ -130,13 +133,61 @@ describe("daemon health product states", () => {
   })
 
   it("only treats a ready service contract as healthy", () => {
-    expect(daemonHealth({ http_status: 200, body: status("ready") })).toBe("ok")
+    const ready: StatusBody = status("ready")
+    expect(Object.hasOwn(ready, "repair_reason")).toBe(true)
+    expect(ready.repair_reason).toBeNull()
+    expect(daemonHealth({ http_status: 200, body: ready })).toBe("ok")
     expect(daemonHealth({ http_status: 200, body: status("repairing") })).toBe("degraded")
     expect(daemonHealth({ http_status: 200, body: status("degraded") })).toBe("degraded")
   })
 
   it("keeps an unhealthy HTTP reply degraded even if its payload says ready", () => {
     expect(daemonHealth({ http_status: 503, body: status("ready") })).toBe("degraded")
+  })
+
+  it("keeps the required nullable repair reason in diagnostics wire fixtures", async () => {
+    const diagnostics = {
+      schema_version: "resume-ir.diagnostics.v3",
+      privacy_boundary: "redacted_local_aggregate",
+      evidence_lane: "gui_manual",
+      evidence_status: "unaccepted",
+      contains_raw_resume_text: false,
+      contains_queries: false,
+      contains_resume_paths: false,
+      contains_candidate_results: false,
+      contains_snippet_text: false,
+      visible_epoch: 7,
+      process_state: "ready",
+      service_state: "degraded",
+      services: { metadata: "ready", query: "unavailable" },
+      repair_reason: "runtime_invariant",
+      error: { code: "QUERY_SERVICE_UNAVAILABLE", action: "retry" },
+      metrics: {
+        ipc: { accepted: 1, completed: 1, client_disconnect: 0, request_failure: 0, response_failure: 0 },
+        indexed_documents: 0,
+        searchable_documents: 0,
+        partial_documents: 0,
+        ocr_queue_depth: 0,
+        embedding_queue_depth: 0,
+        recovery_queue_depth: 0,
+        import_tasks_queued: 0,
+        import_tasks_recoverable: 0,
+        import_tasks_cancelled: 0,
+        query_latency: null,
+      },
+      error_counts: {
+        failed_retryable: 0,
+        failed_permanent: 0,
+        import_scan_errors: 0,
+        ocr_page_budget_blocked: 0,
+        ocr_language_unavailable: 0,
+        scan_error_buckets: [],
+      },
+    } satisfies DiagnosticsBody
+    mockReply({ http_status: 200, body: diagnostics })
+
+    await expect(readDiagnostics()).resolves.toEqual({ http_status: 200, body: diagnostics })
+    expect(Object.hasOwn(diagnostics, "repair_reason")).toBe(true)
   })
 })
 
