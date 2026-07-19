@@ -10981,100 +10981,105 @@ fn witness_command(args: &[String]) -> Result<()> {
     let selection = collect_witness_inputs(&source_roots, witness_args.max_files, scan_profile)?;
     let temp_dirs = WitnessTempDirs::create()?;
     copy_witness_inputs(&selection.selected, &temp_dirs.input_root)?;
-    let data_directory_owner = import_processing::acquire_owner_for_mutation(
-        &temp_dirs.data_dir,
-        import_processing::OfflineImportProcessingMutation::PrivateWitness,
-    )?;
-
-    let store = open_owned_store(&data_directory_owner)?;
-    let now = current_timestamp()?;
-    let task = ImportTask {
-        id: new_import_task_id()?,
-        root_path: path_string(&temp_dirs.input_root),
-        status: ImportTaskStatus::Queued,
-        queued_at: now,
-        started_at: None,
-        finished_at: None,
-        updated_at: now,
-    };
-    let import_options = ImportOptions {
-        scan_profile,
-        max_files: None,
-        parse_workers: ImportParseWorkers::default(),
-        index_writer_heap_bytes: ImportResourcePolicy::detect().index_writer_heap_bytes,
-        linear_promotion: LinearPromotionPolicy::default(),
-        search_vectorization: SearchPublicationVectorization::default(),
-    };
-    let processing_contract = import_processing::current_contract(&import_options)?;
-    import_processing::normalize_orphaned_running_tasks(&store, now)?;
-    import_processing::activate_contract(&store, &processing_contract, now)?;
-    prepare_migration_rebuild_artifacts(&store, now).map_err(CliError::import)?;
-    import_processing::ensure_local_import_ready(
-        &store,
-        &processing_contract,
-        now,
-        &import_options.search_vectorization,
-    )?;
-    let scope = new_import_scan_scope(
-        &task,
-        path_string(&temp_dirs.input_root),
-        StoreImportRootKind::Explicit,
-        None,
-        scan_profile,
-        None,
-        now,
-    )?;
-    import_processing::insert_new_configured_task_head(
-        &store,
-        &task,
-        &scope,
-        &processing_contract,
-    )?;
-    let task_owner_lock = ImportTaskOwnerLock::acquire(&temp_dirs.data_dir, &task.id)
-        .map_err(|_| CliError::user("unable to acquire import task owner lock"))?;
-    let claimed_task =
-        import_processing::claim_task_for_local_execution(&store, &task, current_timestamp()?)?;
-    let summary = import_root_with_options(
-        &temp_dirs.data_dir,
-        &store,
-        &claimed_task,
-        &temp_dirs.input_root,
-        now,
-        import_options,
-    )
-    .map_err(CliError::import)?;
-    let witness_ocr = if witness_args.run_ocr {
-        run_witness_ocr_jobs(
+    let (summary, witness_ocr, witness_benchmark_corpus, witness_fields, witness_search) = {
+        let data_directory_owner = import_processing::acquire_owner_for_mutation(
+            &temp_dirs.data_dir,
+            import_processing::OfflineImportProcessingMutation::PrivateWitness,
+        )?;
+        let store = open_owned_store(&data_directory_owner)?;
+        let now = current_timestamp()?;
+        let task = ImportTask {
+            id: new_import_task_id()?,
+            root_path: path_string(&temp_dirs.input_root),
+            status: ImportTaskStatus::Queued,
+            queued_at: now,
+            started_at: None,
+            finished_at: None,
+            updated_at: now,
+        };
+        let import_options = ImportOptions {
+            scan_profile,
+            max_files: None,
+            parse_workers: ImportParseWorkers::default(),
+            index_writer_heap_bytes: ImportResourcePolicy::detect().index_writer_heap_bytes,
+            linear_promotion: LinearPromotionPolicy::default(),
+            search_vectorization: SearchPublicationVectorization::default(),
+        };
+        let processing_contract = import_processing::current_contract(&import_options)?;
+        import_processing::normalize_orphaned_running_tasks(&store, now)?;
+        import_processing::activate_contract(&store, &processing_contract, now)?;
+        prepare_migration_rebuild_artifacts(&store, now).map_err(CliError::import)?;
+        import_processing::ensure_local_import_ready(
+            &store,
+            &processing_contract,
+            now,
+            &import_options.search_vectorization,
+        )?;
+        let scope = new_import_scan_scope(
+            &task,
+            path_string(&temp_dirs.input_root),
+            StoreImportRootKind::Explicit,
+            None,
+            scan_profile,
+            None,
+            now,
+        )?;
+        import_processing::insert_new_configured_task_head(
+            &store,
+            &task,
+            &scope,
+            &processing_contract,
+        )?;
+        let _task_owner_lock = ImportTaskOwnerLock::acquire(&temp_dirs.data_dir, &task.id)
+            .map_err(|_| CliError::user("unable to acquire import task owner lock"))?;
+        let claimed_task =
+            import_processing::claim_task_for_local_execution(&store, &task, current_timestamp()?)?;
+        let summary = import_root_with_options(
             &temp_dirs.data_dir,
             &store,
-            &witness_args.ocr_worker_args,
-            witness_args.ocr_max_documents,
+            &claimed_task,
+            &temp_dirs.input_root,
             now,
-        )?
-    } else {
-        WitnessOcrStatus::NotRequested
+            import_options,
+        )
+        .map_err(CliError::import)?;
+        let witness_ocr = if witness_args.run_ocr {
+            run_witness_ocr_jobs(
+                &temp_dirs.data_dir,
+                &store,
+                &witness_args.ocr_worker_args,
+                witness_args.ocr_max_documents,
+                now,
+            )?
+        } else {
+            WitnessOcrStatus::NotRequested
+        };
+        let witness_read_store = open_store(&temp_dirs.data_dir)?;
+        let witness_benchmark_corpus = if witness_args.probe_benchmark_corpus {
+            WitnessBenchmarkCorpusStatus::Completed {
+                summary: benchmark_corpus_summary(&temp_dirs.data_dir, &witness_read_store)?,
+            }
+        } else {
+            WitnessBenchmarkCorpusStatus::NotRequested
+        };
+        let witness_fields = if witness_args.probe_fields {
+            run_witness_field_probe(&witness_read_store)?
+        } else {
+            WitnessFieldStatus::NotRequested
+        };
+        let witness_search = if witness_args.probe_search {
+            run_witness_search_probe(&temp_dirs.data_dir, &witness_read_store)?
+        } else {
+            WitnessSearchStatus::NotRequested
+        };
+        (
+            summary,
+            witness_ocr,
+            witness_benchmark_corpus,
+            witness_fields,
+            witness_search,
+        )
     };
-    let witness_read_store = open_store(&temp_dirs.data_dir)?;
-    let witness_benchmark_corpus = if witness_args.probe_benchmark_corpus {
-        WitnessBenchmarkCorpusStatus::Completed {
-            summary: benchmark_corpus_summary(&temp_dirs.data_dir, &witness_read_store)?,
-        }
-    } else {
-        WitnessBenchmarkCorpusStatus::NotRequested
-    };
-    let witness_fields = if witness_args.probe_fields {
-        run_witness_field_probe(&witness_read_store)?
-    } else {
-        WitnessFieldStatus::NotRequested
-    };
-    let witness_search = if witness_args.probe_search {
-        run_witness_search_probe(&temp_dirs.data_dir, &witness_read_store)?
-    } else {
-        WitnessSearchStatus::NotRequested
-    };
-    drop(task_owner_lock);
-    drop(store);
-    drop(data_directory_owner);
     let private_data_removed = temp_dirs.cleanup();
 
     println!("resume-ir local witness");

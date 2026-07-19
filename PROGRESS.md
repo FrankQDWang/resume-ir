@@ -3813,6 +3813,21 @@ guards, local runtime discovery, and PR #9 CI state.
   final acceptance; hosted Windows proof, a fresh complete local gate, rebuilt
   native package and a new uninterrupted 120-minute soak remain required before
   merge or installation acceptance.
+- The next hosted Windows run advanced through the ownership, bounded-command
+  and purge regressions, then exposed a deterministic private-witness resource
+  teardown defect. All nine witness paths completed their product work, but a
+  reopened read-only metadata store remained live when the temporary witness
+  root was removed. Windows correctly rejected deletion of the open database;
+  macOS unlink semantics had hidden the lifetime error. The witness execution
+  now has one lexical resource scope containing the data-directory owner,
+  mutable store, task-owner lock, read store and all probes. Only fully owned,
+  handle-free aggregate summaries leave that scope, so Rust drops every store
+  and lock before cleanup. There is no retry, sleep, platform branch or ignored
+  cleanup failure. The complete `s9_import_search` integration suite passes
+  30/30 locally, strict all-target/all-feature CLI Clippy passes, and formatting
+  and diff checks pass. The failed hosted run is not acceptance evidence; a new
+  hosted Windows run, fresh complete local gate, rebuilt package and frozen-code
+  soak are still required.
 
 ### S806
 
