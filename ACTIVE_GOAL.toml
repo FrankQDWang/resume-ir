@@ -1,6 +1,6 @@
 schema_version = "resume-ir.active-goal.v1"
 goal_id = "resume-ir.performance-gui-loop.2026-06"
-date = "2026-07-17"
+date = "2026-07-18"
 
 [authority]
 root_goal = "GOAL.md"
@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#138"
-name = "daemon_reliability_detail_snapshot_correctness_v27"
+issue = "#217"
+name = "daemon_reliability_detail_snapshot_correctness_v28_corrective"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = false
@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = true
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = true
-scope_exception_reason = "S807 is the user-prioritized local correctness train after a truthful evidence-only S806 checkpoint. A deterministic peer-reset witness proved that a request-local response write failure can terminate the resident daemon, while static inspection proved that the desktop has no runtime supervisor and that mutable resume-version identity plus non-atomic metadata/index publication can make one search result resolve to unavailable or changed detail content. The approved hard cut crosses daemon IPC, Tauri lifecycle, metadata schema v27, import publication, fulltext/vector version binding and GUI detail contracts; these boundaries cannot be safely shipped as compatibility shims or dual truth sources. GitHub capability attestation on 2026-07-17 found an invalid gh token and unavailable API connectivity, so a new linked issue cannot be created truthfully; closed historical #138 remains only the local umbrella reference and remote issue/PR/push actions remain blocked until credentials and network are restored. S806 Windows ONNX work remains same-lane deferred and is not claimed complete. This slice may use only synthetic fixtures and redacted bounded evidence, must preserve query semantics and privacy redlines, and must not claim Windows H0, installer, signing, updater, scale or product completion."
+scope_exception_reason = "S807 is the user-prioritized local correctness train after a truthful evidence-only S806 checkpoint. A deterministic peer-reset witness proved that a request-local response write failure can terminate the resident daemon, while static inspection proved that the desktop had no runtime supervisor and that mutable resume-version identity plus non-atomic metadata/index publication could make one search result resolve to unavailable or changed detail content. Native testing then invalidated the v27 first-publication acceptance claim because an installed legacy corpus could remain repairing indefinitely. The corrective hard cut crosses daemon IPC, Tauri lifecycle, metadata schema v28, copy-on-write migration, import ownership/task-head coordination, bounded publication recovery, fulltext/vector version binding and GUI detail contracts; these boundaries cannot be safely shipped as compatibility shims or dual truth sources. Issue #217 is the linked corrective owner; closed historical #138 remains only the local umbrella reference. S806 Windows ONNX work remains same-lane deferred and is not claimed complete. This slice may use only synthetic fixtures and redacted bounded evidence, must preserve query semantics and privacy redlines, and must not claim Windows H0, installer, signing, updater, scale or product completion."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",

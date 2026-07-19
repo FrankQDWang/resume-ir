@@ -5,14 +5,14 @@
   "experiment_state": "contract_locked",
   "evidence_lane": "soak_fault",
   "contract_pins": {
-    "active_goal_sha256": "e9edac122d23a3ba3c3080ee2719322aab3ca2cb68f7e3657c894a472ac8bc10",
+    "active_goal_sha256": "950168b89dde9ef6c02076e77c936cd902316f101398b93cebc4f6f39fec0277",
     "acceptance_matrix_sha256": "d59a157554790ae432d1006953322f17ae056bd0a70665851acd777404f21311",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "88519486545803bf698046d7f7e8bcd24a4308ca"
   },
-  "current_slice": "#138 S807 daemon reliability and detail snapshot correctness v27 local train",
+  "current_slice": "#217 S807 daemon reliability and detail snapshot correctness v28 corrective train",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -2801,7 +2801,7 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#138",
+    "primary_issue": "#217",
     "active_prs": [],
     "open_blockers": [
       "#53"
