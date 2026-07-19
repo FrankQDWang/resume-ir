@@ -4,14 +4,14 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
     classification::resume_version_has_resume_candidate_classification_at_epoch_in_connection,
-    document_status_to_storage, ActiveSearchProjection, ContentDigest, CurrentClassifierEpoch,
-    DocumentStatus, MetaStoreError, Result, SearchProjectionDigest,
+    ActiveSearchProjection, ContentDigest, CurrentClassifierEpoch, DocumentStatus, MetaStoreError,
+    Result, SearchProjectionDigest,
 };
 
 use super::model::{
-    FullTextSnapshotDescriptor, SearchPublicationCommit, SearchPublicationDraft,
-    SearchPublicationFailure, SearchPublicationRecord, SearchPublicationValidation,
-    VectorSnapshotDescriptor, VectorSnapshotMode,
+    FullTextSnapshotDescriptor, ProjectedDocumentSnapshot, SearchPublicationCommit,
+    SearchPublicationDraft, SearchPublicationFailure, SearchPublicationRecord,
+    SearchPublicationValidation, VectorSnapshotDescriptor, VectorSnapshotMode,
 };
 
 const MAX_GENERATION_BYTES: usize = 128;
@@ -142,6 +142,22 @@ pub(super) fn validate_commit_shape(commit: &SearchPublicationCommit<'_>) -> Res
     }
     let active = projection_map(commit.projections)?;
     projection_map(commit.vector_coverage)?;
+    if commit.projected_documents.len() != commit.projections.len()
+        || commit
+            .projected_documents
+            .iter()
+            .zip(commit.projections)
+            .any(|(document, projection)| {
+                document.projection() != projection
+                    || document
+                        .document()
+                        .is_some_and(|snapshot| snapshot.id != projection.document_id)
+            })
+    {
+        return Err(publication_error(
+            SearchPublicationFailure::ProjectionMismatch,
+        ));
+    }
 
     let mut documents = BTreeMap::new();
     for document in commit.terminal_documents {
@@ -207,6 +223,7 @@ pub(super) fn validate_commit_against_publication(
     validate_projection_transitions(
         connection,
         &active,
+        commit.projected_documents,
         commit.terminal_documents,
         publication.base_generation.as_deref(),
     )?;
@@ -255,6 +272,7 @@ pub(super) fn validate_commit_against_publication(
 fn validate_projection_transitions(
     connection: &Connection,
     target: &BTreeMap<&str, &str>,
+    projected_documents: &[ProjectedDocumentSnapshot],
     terminal_documents: &[super::model::TerminalDocumentUpdate],
     base_generation: Option<&str>,
 ) -> Result<()> {
@@ -283,13 +301,32 @@ fn validate_projection_transitions(
         .iter()
         .map(|terminal| (terminal.document_id.as_str(), terminal.terminal_status))
         .collect::<BTreeMap<_, _>>();
+    let actions = projected_documents
+        .iter()
+        .map(|action| (action.projection().document_id.as_str(), action))
+        .collect::<BTreeMap<_, _>>();
     for (document_id, current_version) in &current {
         let terminal_status = terminals.get(document_id.as_str()).copied();
         let target_version = target.get(document_id.as_str()).copied();
-        let valid_transition = match target_version {
-            Some(target_version) if target_version == current_version => terminal_status.is_none(),
-            Some(_) => terminal_status == Some(DocumentStatus::Searchable),
-            None => terminal_status.is_some_and(is_stable_nonsearch_terminal),
+        let action = actions.get(document_id.as_str()).copied();
+        let valid_transition = match (target_version, action) {
+            (Some(target_version), Some(ProjectedDocumentSnapshot::RetainedUnchanged { .. }))
+                if target_version == current_version =>
+            {
+                terminal_status.is_none()
+            }
+            (Some(target_version), Some(ProjectedDocumentSnapshot::MetadataChanged { .. }))
+                if target_version == current_version =>
+            {
+                terminal_status.is_none()
+            }
+            (Some(target_version), Some(ProjectedDocumentSnapshot::Replacement { .. }))
+                if target_version != current_version =>
+            {
+                terminal_status == Some(DocumentStatus::Searchable)
+            }
+            (None, _) => terminal_status.is_some_and(is_stable_nonsearch_terminal),
+            _ => false,
         };
         if !valid_transition {
             return Err(publication_error(
@@ -301,7 +338,12 @@ fn validate_projection_transitions(
         if current.contains_key(*document_id) {
             continue;
         }
-        if terminals.get(*document_id).copied() != Some(DocumentStatus::Searchable) {
+        if terminals.get(*document_id).copied() != Some(DocumentStatus::Searchable)
+            || !matches!(
+                actions.get(*document_id).copied(),
+                Some(ProjectedDocumentSnapshot::Replacement { .. })
+            )
+        {
             return Err(publication_error(
                 SearchPublicationFailure::InvalidProjectionTransition,
             ));
@@ -315,59 +357,6 @@ fn is_stable_nonsearch_terminal(status: DocumentStatus) -> bool {
         status,
         DocumentStatus::Excluded | DocumentStatus::FailedPermanent | DocumentStatus::Deleted
     )
-}
-
-pub(super) fn validate_projected_document_states(
-    connection: &Connection,
-    projections: &[ActiveSearchProjection],
-) -> Result<()> {
-    for projection in projections {
-        let state = connection
-            .query_row(
-                "SELECT document.is_deleted, document.status, document.content_hash,
-                        revision.content_hash,
-                        EXISTS (
-                            SELECT 1 FROM active_search_projection AS active
-                            WHERE active.document_id = ?1
-                              AND active.resume_version_id = ?2
-                        )
-                 FROM document
-                 JOIN resume_version AS version
-                   ON version.document_id = document.id AND version.id = ?2
-                 JOIN source_revision AS revision
-                   ON revision.id = version.source_revision_id
-                 WHERE document.id = ?1",
-                params![
-                    projection.document_id.as_str(),
-                    projection.resume_version_id.as_str(),
-                ],
-                |row| {
-                    Ok((
-                        row.get::<_, i64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, Option<String>>(2)?,
-                        row.get::<_, String>(3)?,
-                        row.get::<_, i64>(4)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(MetaStoreError::storage)?;
-        if state.is_none_or(
-            |(is_deleted, status, document_hash, revision_hash, retained)| {
-                is_deleted != 0
-                    || status == document_status_to_storage(DocumentStatus::Deleted)
-                    || retained == 0
-                        && (status != document_status_to_storage(DocumentStatus::Searchable)
-                            || document_hash.as_deref() != Some(revision_hash.as_str()))
-            },
-        ) {
-            return Err(publication_error(
-                SearchPublicationFailure::InvalidDocumentState,
-            ));
-        }
-    }
-    Ok(())
 }
 
 pub(super) fn projection_digest(

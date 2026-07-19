@@ -33,6 +33,7 @@ export interface SearchHit {
 }
 
 export type DaemonServiceState = "ready" | "degraded" | "repairing" | "unavailable"
+export type SearchRepairReason = "migration_rebuild" | "artifact_unavailable" | "source_unavailable" | "runtime_invariant"
 
 export interface DaemonServiceError {
   code: "UNAUTHORIZED" | "BAD_REQUEST" | "CONFLICT" | "NOT_FOUND" | "STALE_SELECTION" | "RESPONSE_TOO_LARGE" | "LIMIT_EXCEEDED" | "SEMANTIC_DISABLED" | "REPAIRING" | "METADATA_UNAVAILABLE" | "QUERY_SERVICE_UNAVAILABLE" | "OVERLOADED" | "INTERNAL"
@@ -66,6 +67,7 @@ export interface StatusBody {
     metadata: "ready" | "unavailable"
     query: "ready" | "repairing" | "unavailable"
   }
+  repair_reason: SearchRepairReason | null
   error: DaemonServiceError | null
   indexed_documents: number | null
   searchable_documents: number | null
@@ -265,6 +267,7 @@ export interface DiagnosticsBody {
     metadata: "ready" | "unavailable"
     query: "ready" | "repairing" | "unavailable"
   }
+  repair_reason: SearchRepairReason | null
   error: DaemonServiceError | null
   metrics: {
     ipc: IpcMetrics

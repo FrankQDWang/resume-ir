@@ -5,13 +5,19 @@ use std::net::Shutdown;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::str::FromStr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use import_pipeline::{import_root_with_options, ImportOptions};
+use import_pipeline::{
+    import_root_with_options, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease,
+    ImportOptions, ImportTaskOwnerLock,
+};
 use meta_store::{
     ImportRootControlStatus, ImportRootKind, ImportRootPreset, ImportScanProfile, ImportScanScope,
-    ImportTask, ImportTaskId, ImportTaskStatus, MetaStore, UnixTimestamp,
+    ImportTask, ImportTaskId, ImportTaskStatus, OwnedMetaStore, ReadMetaStore, UnixTimestamp,
 };
+
+mod support;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -25,6 +31,7 @@ const IMPORT_WORKER_STATUS_REQUEST_LIMIT: usize = 320;
 const IMPORT_WORKER_SEARCHABLE_MAX_REQUESTS: usize = 260;
 const IMPORT_WORKER_SEARCHABLE_TIMEOUT: Duration = Duration::from_secs(20);
 const IMPORT_WORKER_STATUS_POLL_DELAY: Duration = Duration::from_millis(50);
+const ACTIVE_IMPORT_FILE_COUNT: usize = 1_024;
 
 #[test]
 fn daemon_serves_redacted_status_over_loopback_ipc() {
@@ -402,8 +409,7 @@ fn daemon_requires_bearer_token_for_import_command_ipc() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     assert_eq!(store.status_summary().unwrap().import_tasks_queued, 0);
 
     remove_dir(&data_dir);
@@ -459,8 +465,7 @@ fn daemon_authenticates_and_queues_import_command_over_ipc() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let summary = store.status_summary().unwrap();
     assert_eq!(summary.import_tasks_queued, 1);
     let scope = store.latest_import_scan_scope().unwrap().unwrap();
@@ -476,6 +481,129 @@ fn daemon_authenticates_and_queues_import_command_over_ipc() {
     assert_eq!(task.status, ImportTaskStatus::Queued);
 
     remove_dir(&data_dir);
+}
+
+#[test]
+fn daemon_import_response_reflects_the_persisted_replacement_budget() {
+    let data_dir = temp_dir("ipc-import-budget-replacement-data");
+    seed_snapshot_state(&data_dir);
+    let root = temp_dir("ipc-import-budget-replacement-root");
+    let canonical_root = fs::canonicalize(&root).unwrap();
+    let mut child = start_ipc_daemon(&data_dir, 2);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
+    let token = read_ipc_auth_token(&data_dir);
+
+    let finite = http_post_import_command(&endpoint, Some(&token), &root, Some(1));
+    let unbounded = http_post_import_command(&endpoint, Some(&token), &root, None);
+    let finite_payload: serde_json::Value =
+        serde_json::from_str(finite.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    let unbounded_payload: serde_json::Value =
+        serde_json::from_str(unbounded.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    assert!(finite.contains("HTTP/1.1 202 Accepted"));
+    assert!(unbounded.contains("HTTP/1.1 202 Accepted"));
+    assert_eq!(finite_payload["new_tasks"], 1);
+    assert_eq!(finite_payload["scan_file_limit"], 1);
+    assert_eq!(unbounded_payload["new_tasks"], 1);
+    assert_eq!(
+        unbounded_payload["scan_file_limit"],
+        serde_json::Value::Null
+    );
+    let finite_id =
+        ImportTaskId::from_str(finite_payload["task_ids"][0].as_str().unwrap()).unwrap();
+    let unbounded_id =
+        ImportTaskId::from_str(unbounded_payload["task_ids"][0].as_str().unwrap()).unwrap();
+    assert_ne!(finite_id, unbounded_id);
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+    assert!(store.is_import_task_cancelled(&finite_id).unwrap());
+    assert_eq!(
+        store
+            .latest_import_task_by_root(path_str(&canonical_root))
+            .unwrap()
+            .unwrap()
+            .id,
+        unbounded_id
+    );
+    let persisted_scope = store
+        .import_scan_scope_by_task_id(&unbounded_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(persisted_scope.import_task_id, unbounded_id);
+    assert_eq!(persisted_scope.scan_budget_kind, None);
+    assert_eq!(persisted_scope.scan_budget_limit, None);
+    assert!(!finite.contains(path_str(&root)));
+    assert!(!unbounded.contains(path_str(&root)));
+
+    remove_dir(&data_dir);
+    remove_dir(&root);
+}
+
+#[test]
+fn daemon_multi_root_import_conflict_rolls_back_every_root() {
+    let data_dir = temp_dir("ipc-import-atomic-conflict-data");
+    seed_snapshot_state(&data_dir);
+    let roots_parent = temp_dir("ipc-import-atomic-conflict-roots");
+    let first_root = roots_parent.join("a-first");
+    let running_root = roots_parent.join("z-running");
+    fs::create_dir_all(&first_root).unwrap();
+    fs::create_dir_all(&running_root).unwrap();
+    populate_active_import_root(&running_root);
+    let canonical_first = fs::canonicalize(&first_root).unwrap();
+    let canonical_running = fs::canonicalize(&running_root).unwrap();
+    let running_id = seed_queued_import_task(
+        &data_dir,
+        "atomic-running",
+        &canonical_running,
+        1_800_300_000,
+    );
+
+    let mut child = start_ipc_import_worker_daemon(&data_dir, 1);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
+    let token = read_ipc_auth_token(&data_dir);
+    wait_until_import_task_running(&mut child, &data_dir, &running_id);
+
+    let response = http_post_import_command_value(
+        &endpoint,
+        Some(&token),
+        serde_json::json!({
+            "roots": [path_str(&first_root), path_str(&running_root)],
+            "profile": "explicit",
+            "max_files": null,
+        }),
+    );
+    assert!(response.contains("HTTP/1.1 409 Conflict"));
+    assert!(response.contains("import task is already running"));
+    assert!(!response.contains(path_str(&first_root)));
+    assert!(!response.contains(path_str(&running_root)));
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+    assert!(store
+        .latest_import_task_by_root(path_str(&canonical_first))
+        .unwrap()
+        .is_none());
+    assert!(!store
+        .active_authorized_import_roots()
+        .unwrap()
+        .iter()
+        .any(|root| root == path_str(&canonical_first)));
+    assert_eq!(
+        store
+            .latest_import_task_by_root(path_str(&canonical_running))
+            .unwrap()
+            .unwrap()
+            .id,
+        running_id
+    );
+    assert!(!store.is_import_task_cancelled(&running_id).unwrap());
+
+    remove_dir(&data_dir);
+    remove_dir(&roots_parent);
 }
 
 #[test]
@@ -524,8 +652,7 @@ fn daemon_controls_managed_root_durably_with_bounded_path_free_contract() {
     assert!(responses[7].contains("409 Conflict"));
     assert_responses_are_path_free(&responses, &[&root_a, &root_b, &unknown]);
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     assert_eq!(
         store.import_root_control_status(path_str(&root_a)).unwrap(),
         Some(ImportRootControlStatus::Paused)
@@ -546,8 +673,7 @@ fn daemon_controls_managed_root_durably_with_bounded_path_free_contract() {
     assert_root_control_response(&resume, "active", true, false, true);
     assert_root_control_response(&duplicate, "active", false, false, false);
     assert_responses_are_path_free(&[inspect, resume, duplicate], &[&root_a, &root_b, &unknown]);
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     assert_eq!(store.status_summary().unwrap().import_tasks_queued, 1);
     assert_eq!(
         store.import_root_control_status(path_str(&root_a)).unwrap(),
@@ -574,7 +700,7 @@ fn daemon_import_command_can_requeue_root_after_prior_task_cancelled() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "2",
+            "3",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -587,15 +713,11 @@ fn daemon_import_command_can_requeue_root_after_prior_task_cancelled() {
     assert!(first_response.contains("HTTP/1.1 202 Accepted"));
     assert!(first_response.contains("\"new_tasks\":1"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let first_scope = store.latest_import_scan_scope().unwrap().unwrap();
-    store
-        .cancel_import_task(
-            &first_scope.import_task_id,
-            UnixTimestamp::from_unix_seconds(1_800_020_000),
-        )
-        .unwrap();
+    let cancelled =
+        http_post_import_cancel_command(&endpoint, Some(&token), &first_scope.import_task_id);
+    assert!(cancelled.contains("HTTP/1.1 202 Accepted"));
 
     let second_response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
     assert!(second_response.contains("HTTP/1.1 202 Accepted"));
@@ -663,8 +785,7 @@ fn daemon_import_command_preserves_local_discovery_preset_scope() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scope = store.latest_import_scan_scope().unwrap().unwrap();
     assert_eq!(scope.root_kind, ImportRootKind::Preset);
     assert_eq!(scope.root_preset, Some(ImportRootPreset::LocalDiscovery));
@@ -730,8 +851,7 @@ fn daemon_import_cancel_command_records_cancellation_without_path_leak() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     assert!(store.is_import_task_cancelled(&task_id).unwrap());
     let summary = store.status_summary().unwrap();
     assert_eq!(summary.import_tasks_cancelled, 1);
@@ -776,8 +896,7 @@ fn daemon_rejects_wrong_bearer_token_for_import_command_ipc() {
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     assert_eq!(store.status_summary().unwrap().import_tasks_queued, 0);
 
     remove_dir(&data_dir);
@@ -812,7 +931,9 @@ fn daemon_rejects_malformed_ipc_request_without_stopping() {
     assert!(malformed.contains("HTTP/1.1 400 Bad Request"));
     assert!(status_response.contains("HTTP/1.1 200 OK"));
     assert!(status_response.contains("\"process_state\":\"ready\""));
-    assert!(status_response.contains("\"status\":\"repairing\""));
+    assert!(status_response.contains("\"status\":\"ok\""));
+    assert!(status_response.contains("\"service_state\":\"ready\""));
+    assert!(status_response.contains("\"repair_reason\":null"));
 
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
@@ -822,19 +943,182 @@ fn daemon_rejects_malformed_ipc_request_without_stopping() {
 }
 
 #[test]
-fn daemon_survives_client_disconnect_while_writing_ipc_response() {
-    let data_dir = temp_dir("ipc-response-disconnect-data");
-    let mut child = start_ipc_daemon(&data_dir, 3);
+fn daemon_survives_client_disconnect_across_every_product_ipc_route() {
+    const EXPECTED_ACCEPTED: u64 = 16;
+
+    let data_dir = temp_dir("ipc-response-disconnect-matrix-data");
+    seed_snapshot_state(&data_dir);
+    let mut child = start_ipc_daemon(&data_dir, EXPECTED_ACCEPTED as usize);
+    let child_id = child.id();
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
+    let instance_id = read_ipc_owner_file(&data_dir, "ipc.endpoints.json")["instance_id"]
+        .as_str()
+        .expect("daemon instance id")
+        .to_string();
 
-    disconnect_during_partial_request(&endpoint);
-    disconnect_during_import_progress(&endpoint, &token);
-    let status_response = http_get(&endpoint);
+    let setup_search = http_post_json(
+        &endpoint,
+        "/search",
+        &token,
+        search_request("disconnect-selection-setup", "codex_validation"),
+    );
+    assert_search_response(&setup_search, "disconnect-selection-setup");
+    let selection = response_json(&setup_search)["results"][0]["selection"].clone();
 
-    assert!(status_response.contains("HTTP/1.1 200 OK"));
-    assert!(status_response.contains("\"process_state\":\"ready\""));
-    assert!(status_response.contains("\"status\":\"repairing\""));
+    disconnect_after_response_started(
+        &endpoint,
+        authenticated_get_request(&endpoint, "/status", &token),
+    );
+    let status = http_get(&endpoint);
+    assert_ready_status(&status);
+    assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
+
+    disconnect_after_response_started(
+        &endpoint,
+        authenticated_post_request(
+            &endpoint,
+            "/search",
+            &token,
+            search_request("disconnect-search", "codex_validation"),
+        ),
+    );
+    let search = http_post_json(
+        &endpoint,
+        "/search",
+        &token,
+        search_request("disconnect-search-probe", "codex_validation"),
+    );
+    assert_search_response(&search, "disconnect-search-probe");
+    assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
+
+    disconnect_after_response_started(
+        &endpoint,
+        authenticated_post_request(
+            &endpoint,
+            "/search/batch",
+            &token,
+            search_batch_request("disconnect-batch", "disconnect-batch-child"),
+        ),
+    );
+    // A response header only proves that the batch stream started. The server
+    // finishes this route's child dispatch before accepting the next request,
+    // so advancing the same FIFO worker is a causal terminal barrier. The
+    // diagnostics closure below then proves every earlier connection recorded
+    // exactly one terminal outcome.
+    let batch_terminal_barrier = http_post_json(
+        &endpoint,
+        "/search",
+        &token,
+        search_request("disconnect-batch-terminal-barrier", "codex_validation"),
+    );
+    assert_search_response(&batch_terminal_barrier, "disconnect-batch-terminal-barrier");
+    let terminal_diagnostics = http_get_diagnostics(&endpoint, Some(&token));
+    let terminal_payload = response_json(&terminal_diagnostics);
+    let terminal_ipc = &terminal_payload["metrics"]["ipc"];
+    assert_eq!(terminal_ipc["accepted"], 8);
+    assert_eq!(
+        terminal_ipc["completed"].as_u64().unwrap()
+            + terminal_ipc["request_failure"].as_u64().unwrap()
+            + terminal_ipc["response_failure"].as_u64().unwrap(),
+        7,
+        "the disconnected batch must be terminal before its successor: {terminal_ipc}"
+    );
+    let batch = http_post_json(
+        &endpoint,
+        "/search/batch",
+        &token,
+        search_batch_request("disconnect-batch-probe", "disconnect-batch-probe-child"),
+    );
+    assert_batch_response(
+        &batch,
+        "disconnect-batch-probe",
+        "disconnect-batch-probe-child",
+    );
+    assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
+
+    disconnect_after_response_started(
+        &endpoint,
+        authenticated_post_request(
+            &endpoint,
+            "/details",
+            &token,
+            detail_request("disconnect-detail", &selection),
+        ),
+    );
+    let detail = http_post_json(
+        &endpoint,
+        "/details",
+        &token,
+        detail_request("disconnect-detail-probe", &selection),
+    );
+    assert_json_response(
+        &detail,
+        "resume-ir.detail-response.v3",
+        "disconnect-detail-probe",
+        &selection,
+    );
+    assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
+
+    disconnect_after_response_started(
+        &endpoint,
+        authenticated_post_request(
+            &endpoint,
+            "/details/hydrate",
+            &token,
+            hydrate_request("disconnect-hydrate", &selection),
+        ),
+    );
+    let hydrate = http_post_json(
+        &endpoint,
+        "/details/hydrate",
+        &token,
+        hydrate_request("disconnect-hydrate-probe", &selection),
+    );
+    assert_json_response(
+        &hydrate,
+        "resume-ir.detail-hydrate-response.v3",
+        "disconnect-hydrate-probe",
+        &selection,
+    );
+    assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
+
+    disconnect_after_response_started(
+        &endpoint,
+        authenticated_get_request(&endpoint, "/imports/progress", &token),
+    );
+    let progress = http_get_import_progress(&endpoint, Some(&token));
+    assert!(progress.contains("HTTP/1.1 200 OK"));
+    assert_eq!(
+        progress.matches("\"event\":\"snapshot\"").count(),
+        3,
+        "{progress}"
+    );
+    assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
+
+    let diagnostics = http_get_diagnostics(&endpoint, Some(&token));
+    let diagnostics_body = diagnostics.split("\r\n\r\n").nth(1).unwrap();
+    let diagnostics_payload: serde_json::Value = serde_json::from_str(diagnostics_body).unwrap();
+    let ipc = &diagnostics_payload["metrics"]["ipc"];
+    assert_eq!(ipc["accepted"], EXPECTED_ACCEPTED);
+    let completed = ipc["completed"].as_u64().unwrap();
+    let request_failure = ipc["request_failure"].as_u64().unwrap();
+    let response_failure = ipc["response_failure"].as_u64().unwrap();
+    assert_eq!(
+        completed + request_failure + response_failure,
+        // The diagnostics snapshot is rendered before this connection writes
+        // its response and records its own terminal outcome.
+        EXPECTED_ACCEPTED.saturating_sub(1),
+        "every accepted connection must have one terminal outcome: {ipc}"
+    );
+    assert!(
+        response_failure >= 1,
+        "response-side client disconnect was not observed: {ipc}"
+    );
+    assert_eq!(ipc["client_disconnect"], response_failure);
+    assert!(!diagnostics_body.contains(path_str(&data_dir)));
+    assert!(!diagnostics_body.contains(&token));
+
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
@@ -1093,9 +1377,10 @@ fn assert_soak_diagnostics(response: &str, expected_accepted: usize, data_dir: &
 #[test]
 fn daemon_rejects_import_command_for_running_root_without_rewriting_scope() {
     let data_dir = temp_dir("ipc-import-running-conflict-data");
-    let fixture_root = fixture_root();
+    let fixture_root = temp_dir("ipc-import-running-conflict-root");
+    populate_active_import_root(&fixture_root);
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    let task_id = seed_running_import_task(
+    let task_id = seed_queued_import_task(
         &data_dir,
         "ipc-running-conflict",
         &canonical_fixture_root,
@@ -1107,6 +1392,9 @@ fn daemon_rejects_import_command_for_running_root_without_rewriting_scope() {
             path_str(&data_dir),
             "run",
             "--foreground",
+            "--work-imports",
+            "--worker-interval-ms",
+            "1",
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
@@ -1119,6 +1407,7 @@ fn daemon_rejects_import_command_for_running_root_without_rewriting_scope() {
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
+    wait_until_import_task_running(&mut child, &data_dir, &task_id);
     let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
 
     assert!(response.contains("HTTP/1.1 409 Conflict"));
@@ -1132,10 +1421,15 @@ fn daemon_rejects_import_command_for_running_root_without_rewriting_scope() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
-    let task = store.import_task_by_id(&task_id).unwrap().unwrap();
-    assert_eq!(task.status, ImportTaskStatus::Running);
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+    assert_eq!(
+        store
+            .latest_import_task_by_root(path_str(&canonical_fixture_root))
+            .unwrap()
+            .unwrap()
+            .id,
+        task_id
+    );
     let scope = store
         .import_scan_scope_by_task_id(&task_id)
         .unwrap()
@@ -1143,6 +1437,7 @@ fn daemon_rejects_import_command_for_running_root_without_rewriting_scope() {
     assert_eq!(scope.scan_budget_limit, None);
 
     remove_dir(&data_dir);
+    remove_dir(&fixture_root);
 }
 
 #[test]
@@ -1190,8 +1485,7 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scope = store.latest_import_scan_scope().unwrap().unwrap();
     let task = store
         .import_task_by_id(&scope.import_task_id)
@@ -1280,16 +1574,15 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
         .expect("start resume-daemon ipc plus import worker");
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
+    let token = read_ipc_auth_token(&data_dir);
     let initial_response = http_get(&endpoint);
     assert!(initial_response.contains("HTTP/1.1 200 OK"));
     assert!(initial_response.contains("\"searchable_documents\":0"));
 
-    let task_id = seed_queued_import_task(
-        &data_dir,
-        "ipc-import-worker",
-        &canonical_fixture_root,
-        1_700_000_000,
-    );
+    let queued_response = http_post_import_command(&endpoint, Some(&token), &fixture_root, None);
+    assert!(queued_response.contains("HTTP/1.1 202 Accepted"));
+    let queued_payload = response_json(&queued_response);
+    let task_id = ImportTaskId::from_str(queued_payload["task_ids"][0].as_str().unwrap()).unwrap();
     let (worker_requests, completed_response) = wait_for_searchable_documents(
         &mut child,
         &data_dir,
@@ -1297,15 +1590,14 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
         2,
         IMPORT_WORKER_SEARCHABLE_MAX_REQUESTS,
     );
-    let used_requests = 1 + worker_requests;
+    let used_requests = 2 + worker_requests;
     drain_status_requests(&endpoint, request_limit - used_requests);
 
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let task = store.import_task_by_id(&task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Completed);
     assert_eq!(store.status_summary().unwrap().searchable_documents, 2);
@@ -1315,6 +1607,7 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
     assert!(!completed_response.contains(path_str(&data_dir)));
     assert!(!completed_response.contains(path_str(&fixture_root)));
     assert!(!completed_response.contains(path_str(&canonical_fixture_root)));
+    assert!(!queued_response.contains(&token));
 
     remove_dir(&data_dir);
 }
@@ -1351,8 +1644,7 @@ fn daemon_does_not_start_import_worker_when_ipc_bind_fails() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_fatal_event(&stderr, "control_plane_failure", "restartable");
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let task = store.import_task_by_id(&task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Queued);
     assert_eq!(store.status_summary().unwrap().searchable_documents, 0);
@@ -1496,7 +1788,7 @@ fn wait_for_searchable_documents(
 }
 
 fn describe_store_state(data_dir: &Path) -> String {
-    let store = match MetaStore::open_data_dir(data_dir) {
+    let store = match ReadMetaStore::open_data_dir(data_dir) {
         Ok(store) => store,
         Err(error) => return format!("store open failed: {error}"),
     };
@@ -1566,6 +1858,191 @@ fn http_get_diagnostics(endpoint: &str, token: Option<&str>) -> String {
     let mut response = String::new();
     stream.read_to_string(&mut response).expect("read response");
     response
+}
+
+fn http_post_json(
+    endpoint: &str,
+    request_path: &str,
+    token: &str,
+    payload: serde_json::Value,
+) -> String {
+    raw_ipc_request(
+        endpoint,
+        &authenticated_post_request(endpoint, request_path, token, payload),
+    )
+}
+
+fn authenticated_get_request(endpoint: &str, request_path: &str, token: &str) -> Vec<u8> {
+    let addr = endpoint_address(endpoint);
+    format!(
+        "GET {request_path} HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+    )
+    .into_bytes()
+}
+
+fn authenticated_post_request(
+    endpoint: &str,
+    request_path: &str,
+    token: &str,
+    payload: serde_json::Value,
+) -> Vec<u8> {
+    let addr = endpoint_address(endpoint);
+    let body = payload.to_string();
+    format!(
+        "POST {request_path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .into_bytes()
+}
+
+fn endpoint_address(endpoint: &str) -> &str {
+    endpoint
+        .strip_prefix("http://")
+        .expect("endpoint has http scheme")
+        .split_once('/')
+        .expect("endpoint has path")
+        .0
+}
+
+fn search_request(request_id: &str, client_capability: &str) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "resume-ir.ipc-request.v3",
+        "request_id": request_id,
+        "client_capability": client_capability,
+        "deadline_ms": 5_000,
+        "payload": {
+            "query": "Rust",
+            "mode": "fulltext",
+            "top_k": 1,
+        },
+    })
+}
+
+fn search_batch_request(batch_id: &str, child_request_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "resume-ir.search-batch-request.v1",
+        "batch_id": batch_id,
+        "requests": [search_request(child_request_id, "benchmark")],
+    })
+}
+
+fn detail_request(request_id: &str, selection: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "resume-ir.detail-request.v3",
+        "request_id": request_id,
+        "selection": selection,
+    })
+}
+
+fn hydrate_request(request_id: &str, selection: &serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": "resume-ir.detail-hydrate-request.v3",
+        "request_id": request_id,
+        "selection": selection,
+        "body_offset_bytes": 0,
+        "body_limit_bytes": 32 * 1024,
+    })
+}
+
+fn response_json(response: &str) -> serde_json::Value {
+    serde_json::from_str(response.split("\r\n\r\n").nth(1).unwrap()).unwrap()
+}
+
+fn assert_ready_status(response: &str) {
+    assert!(response.contains("HTTP/1.1 200 OK"), "{response}");
+    let payload = response_json(response);
+    assert_eq!(payload["schema_version"], "daemon.status.v2");
+    assert_eq!(payload["process_state"], "ready");
+    assert_eq!(payload["service_state"], "ready");
+    assert_eq!(payload["repair_reason"], serde_json::Value::Null);
+}
+
+fn assert_search_response(response: &str, request_id: &str) {
+    assert!(response.contains("HTTP/1.1 200 OK"), "{response}");
+    let payload = response_json(response);
+    assert_eq!(payload["schema_version"], "resume-ir.search-response.v3");
+    assert_eq!(payload["request_id"], request_id);
+    assert_eq!(payload["status"], "ok");
+    assert_eq!(payload["result_count"], 1);
+    assert_eq!(payload["results"].as_array().unwrap().len(), 1);
+}
+
+fn assert_batch_response(response: &str, batch_id: &str, child_request_id: &str) {
+    assert!(response.contains("HTTP/1.1 200 OK"), "{response}");
+    let body = response.split("\r\n\r\n").nth(1).unwrap();
+    let lines = body.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 1, "{response}");
+    let payload: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(
+        payload["schema_version"],
+        "resume-ir.search-batch-child-response.v1"
+    );
+    assert_eq!(payload["batch_id"], batch_id);
+    assert_eq!(payload["sequence"], 0);
+    assert_eq!(payload["http_status"], 200);
+    assert_eq!(payload["response"]["request_id"], child_request_id);
+    assert_eq!(payload["response"]["status"], "ok");
+}
+
+fn assert_json_response(
+    response: &str,
+    schema_version: &str,
+    request_id: &str,
+    selection: &serde_json::Value,
+) {
+    assert!(response.contains("HTTP/1.1 200 OK"), "{response}");
+    let payload = response_json(response);
+    assert_eq!(payload["schema_version"], schema_version);
+    assert_eq!(payload["request_id"], request_id);
+    assert_eq!(&payload["selection"], selection);
+    assert_eq!(payload["status"], "ok");
+}
+
+fn disconnect_after_response_started(endpoint: &str, request: Vec<u8>) {
+    const MAX_RESPONSE_HEADER_BYTES: usize = 8 * 1024;
+
+    let mut stream = TcpStream::connect(endpoint_address(endpoint)).expect("connect daemon ipc");
+    // Unix configures an abortive close (RST). Windows exercises the same
+    // request-local contract with an orderly client disconnect.
+    prepare_abortive_close(&stream);
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("bound response-start barrier");
+    stream
+        .write_all(&request)
+        .expect("write complete ipc request");
+
+    let mut response_head = Vec::with_capacity(256);
+    while !response_head.ends_with(b"\r\n\r\n") {
+        assert!(
+            response_head.len() < MAX_RESPONSE_HEADER_BYTES,
+            "response header exceeded test synchronization bound"
+        );
+        let mut byte = [0_u8; 1];
+        stream
+            .read_exact(&mut byte)
+            .expect("observe response write before client disconnect");
+        response_head.push(byte[0]);
+    }
+    assert!(response_head.starts_with(b"HTTP/1.1 "));
+    disconnect_client(stream);
+}
+
+fn assert_same_daemon_instance(
+    child: &mut Child,
+    data_dir: &Path,
+    expected_child_id: u32,
+    expected_instance_id: &str,
+) {
+    assert_eq!(child.id(), expected_child_id);
+    assert!(
+        child.try_wait().expect("poll daemon process").is_none(),
+        "daemon exited after a request-scoped client disconnect"
+    );
+    assert_eq!(
+        read_ipc_owner_file(data_dir, "ipc.endpoints.json")["instance_id"],
+        expected_instance_id
+    );
 }
 
 fn try_http_get(endpoint: &str) -> io::Result<String> {
@@ -1851,8 +2328,7 @@ fn seed_snapshot_state(data_dir: &Path) {
         "SUMMARY\nSynthetic candidate\nEXPERIENCE\nBuilt Rust systems\nSKILLS\nRust",
     )
     .unwrap();
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = open_owned_store(data_dir);
     let now = UnixTimestamp::from_unix_seconds(1_800_000_000);
     let task = ImportTask {
         id: ImportTaskId::from_non_secret_parts(&["s20", "status-publication"]),
@@ -1863,7 +2339,7 @@ fn seed_snapshot_state(data_dir: &Path) {
         finished_at: None,
         updated_at: now,
     };
-    store.insert_import_task(&task).unwrap();
+    support::insert_import_task(&store, &task);
     import_root_with_options(
         data_dir,
         &store,
@@ -1881,8 +2357,7 @@ fn seed_queued_import_task(
     canonical_root: &Path,
     queued_at_seconds: i64,
 ) -> ImportTaskId {
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = open_owned_store(data_dir);
     let now = UnixTimestamp::from_unix_seconds(queued_at_seconds);
     let task_id = ImportTaskId::from_non_secret_parts(&["s45", label]);
     let root_path = path_str(canonical_root).to_string();
@@ -1916,27 +2391,31 @@ fn seed_queued_import_task(
         scan_budget_exhausted: false,
         updated_at: now,
     };
-    store
-        .insert_import_task_with_scan_scope(&task, &scope)
-        .unwrap();
+    support::insert_import_task_with_scope(&store, &task, &scope);
     task_id
 }
 
 fn seed_completed_import_scope(data_dir: &Path, label: &str, root: &Path) {
     let task_id = seed_queued_import_task(data_dir, label, root, 1_800_200_000);
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
-    let running_at = UnixTimestamp::from_unix_seconds(1_800_200_001);
-    store
-        .update_import_task_status(&task_id, ImportTaskStatus::Running, running_at)
-        .unwrap();
-    store
-        .update_import_task_status(
-            &task_id,
-            ImportTaskStatus::Completed,
-            UnixTimestamp::from_unix_seconds(1_800_200_002),
+    let store = open_owned_store(data_dir);
+    let queued = store.import_task_by_id(&task_id).unwrap().unwrap();
+    let _owner_lock = ImportTaskOwnerLock::acquire(data_dir, &task_id).unwrap();
+    let task = store
+        .claim_observed_import_task_for_worker(
+            &queued,
+            UnixTimestamp::from_unix_seconds(1_800_200_001),
         )
+        .unwrap()
         .unwrap();
+    import_root_with_options(
+        data_dir,
+        &store,
+        &task,
+        root,
+        task.updated_at,
+        ImportOptions::default(),
+    )
+    .unwrap();
 }
 
 fn seed_running_import_task(
@@ -1945,50 +2424,45 @@ fn seed_running_import_task(
     canonical_root: &Path,
     started_at_seconds: i64,
 ) -> ImportTaskId {
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = open_owned_store(data_dir);
     let now = UnixTimestamp::from_unix_seconds(started_at_seconds);
     let task_id = ImportTaskId::from_non_secret_parts(&["s46", label]);
-    store
-        .insert_import_task(&ImportTask {
-            id: task_id.clone(),
-            root_path: path_str(canonical_root).to_string(),
-            status: ImportTaskStatus::Running,
-            queued_at: now,
-            started_at: Some(now),
-            finished_at: None,
-            updated_at: now,
-        })
-        .unwrap();
-    store
-        .upsert_import_scan_scope(&ImportScanScope {
-            import_task_id: task_id.clone(),
-            root_kind: ImportRootKind::Explicit,
-            root_preset: None,
-            scan_profile: ImportScanProfile::Explicit,
-            requested_root_path: path_str(canonical_root).to_string(),
-            canonical_root_path: path_str(canonical_root).to_string(),
-            files_discovered: 0,
-            ignored_entries: 0,
-            scan_errors: 0,
-            searchable_documents: 0,
-            ocr_required_documents: 0,
-            ocr_jobs_queued: 0,
-            failed_documents: 0,
-            deleted_documents: 0,
-            scan_budget_kind: None,
-            scan_budget_limit: None,
-            scan_budget_observed: None,
-            scan_budget_exhausted: false,
-            updated_at: now,
-        })
-        .unwrap();
+    let task = ImportTask {
+        id: task_id.clone(),
+        root_path: path_str(canonical_root).to_string(),
+        status: ImportTaskStatus::Running,
+        queued_at: now,
+        started_at: Some(now),
+        finished_at: None,
+        updated_at: now,
+    };
+    let scope = ImportScanScope {
+        import_task_id: task_id.clone(),
+        root_kind: ImportRootKind::Explicit,
+        root_preset: None,
+        scan_profile: ImportScanProfile::Explicit,
+        requested_root_path: path_str(canonical_root).to_string(),
+        canonical_root_path: path_str(canonical_root).to_string(),
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        scan_budget_kind: None,
+        scan_budget_limit: None,
+        scan_budget_observed: None,
+        scan_budget_exhausted: false,
+        updated_at: now,
+    };
+    support::insert_import_task_with_scope(&store, &task, &scope);
     task_id
 }
 
 fn seed_import_progress_scope(data_dir: &Path, task_id: &ImportTaskId, canonical_root: &Path) {
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = open_owned_store(data_dir);
     store
         .upsert_import_scan_scope(&ImportScanScope {
             import_task_id: task_id.clone(),
@@ -2012,6 +2486,19 @@ fn seed_import_progress_scope(data_dir: &Path, task_id: &ImportTaskId, canonical
             updated_at: UnixTimestamp::from_unix_seconds(1_800_040_100),
         })
         .unwrap();
+}
+
+fn acquire_test_processing_owner(data_dir: &Path) -> DataDirectoryOwnerLease {
+    match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("test processing owner contended"),
+    }
+}
+
+fn open_owned_store(data_dir: &Path) -> OwnedMetaStore {
+    acquire_test_processing_owner(data_dir)
+        .open_store()
+        .unwrap()
 }
 
 fn fixture_root() -> PathBuf {
@@ -2042,6 +2529,48 @@ fn start_ipc_daemon(data_dir: &Path, max_requests: usize) -> Child {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap()
+}
+
+fn start_ipc_import_worker_daemon(data_dir: &Path, max_requests: usize) -> Child {
+    let max_requests = max_requests.to_string();
+    Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(data_dir),
+            "run",
+            "--foreground",
+            "--work-imports",
+            "--worker-interval-ms",
+            "1",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            max_requests.as_str(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap()
+}
+
+fn wait_until_import_task_running(child: &mut Child, data_dir: &Path, task_id: &ImportTaskId) {
+    let store = ReadMetaStore::open_data_dir(data_dir).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if let Some(status) = child.try_wait().expect("poll import worker daemon") {
+            panic!("daemon exited before import task entered running: {status}");
+        }
+        match store.import_task_by_id(task_id).unwrap().unwrap().status {
+            ImportTaskStatus::Running => return,
+            ImportTaskStatus::Completed => {
+                panic!("synthetic import completed before conflict request")
+            }
+            _ => std::thread::sleep(Duration::from_millis(2)),
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    panic!("import task did not enter running before timeout");
 }
 
 fn wait_child(mut child: Child) -> ChildOutput {
@@ -2077,6 +2606,19 @@ fn temp_dir(label: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("resume-ir-s20-daemon-{label}-{unique}"));
     fs::create_dir_all(&path).unwrap();
     path
+}
+
+fn populate_active_import_root(root: &Path) {
+    let repeated_evidence = "Built deterministic local-first search systems in Rust. ".repeat(128);
+    for index in 0..ACTIVE_IMPORT_FILE_COUNT {
+        fs::write(
+            root.join(format!("synthetic-candidate-{index:04}.txt")),
+            format!(
+                "SUMMARY\nSynthetic Candidate {index}\nEXPERIENCE\n{repeated_evidence}\nSKILLS\nRust distributed systems"
+            ),
+        )
+        .unwrap();
+    }
 }
 
 fn path_str(path: &Path) -> &str {

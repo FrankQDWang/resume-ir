@@ -12,9 +12,10 @@ use index_vector::{
     VectorDocument, VectorDocumentIdentity, VectorModelContract, VectorSnapshotStore,
 };
 use meta_store::{
-    ActiveSearchProjection, ClassificationStatus, ContentDigest, Document, DocumentId,
-    DocumentStatus, EnabledVectorSnapshotDescriptor, EntityMention, EntityMentionId, EntityType,
-    FileExtension, FullTextSnapshotDescriptor, MetaStore, ReasonCode, ResumeVersion,
+    ActiveSearchProjection, ClassificationStatus, ContentDigest, DataDirectoryOwnerAcquisition,
+    DataDirectoryOwnerLease, Document, DocumentId, DocumentStatus, EnabledVectorSnapshotDescriptor,
+    EntityMention, EntityMentionId, EntityType, FileExtension, FullTextSnapshotDescriptor,
+    ImportProcessingContract, ProjectedDocumentSnapshot, ReasonCode, ResumeVersion,
     ResumeVersionClassification, ResumeVersionId, ReviewDisposition, SearchProjectionDigest,
     SearchPublicationCommit, SearchPublicationDraft, SearchPublicationOutcome,
     SearchPublicationValidation, SourceRevision, TerminalDocumentUpdate, UnixTimestamp,
@@ -26,6 +27,9 @@ use super::{synthetic_document, synthetic_query_workload, BenchmarkError, Result
 
 const SNAPSHOT_TOKEN: &str = "public-synthetic-query-hot-path-v1";
 const MODEL_ID: &str = "resume-ir-hash-embedding-v1";
+const PRIMARY_PARSE_VERSION: &str = "public-synthetic-primary-v28";
+const OCR_PARSE_VERSION: &str = "public-synthetic-ocr-v28";
+const DERIVED_SCHEMA_VERSION: &str = "public-synthetic-schema-v28";
 const VECTOR_DIMENSION: usize = 8;
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 const H0_MEMORY_CEILING_BYTES: u64 = 12 * BYTES_PER_GIB;
@@ -43,13 +47,30 @@ pub(super) fn prepare_fixture(data_dir: &Path) -> Result<()> {
         ));
     }
     fs::create_dir_all(data_dir).map_err(BenchmarkError::io)?;
-    let store = MetaStore::open_data_dir(data_dir)
-        .and_then(|store| {
-            store.run_migrations()?;
-            Ok(store)
-        })
+    let owner = match DataDirectoryOwnerLease::try_acquire(data_dir)
+        .map_err(|_| BenchmarkError::invalid_config("resident_query_fixture"))?
+    {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => {
+            return Err(BenchmarkError::invalid_config(
+                "resident_query_fixture_owned",
+            ));
+        }
+    };
+    let store = owner
+        .open_store()
         .map_err(|_| BenchmarkError::invalid_config("resident_query_fixture"))?;
     let now = UnixTimestamp::from_unix_seconds(1_800_100_000);
+    let processing_contract = ImportProcessingContract::new(
+        PRIMARY_PARSE_VERSION,
+        OCR_PARSE_VERSION,
+        DERIVED_SCHEMA_VERSION,
+        CLASSIFIER_EPOCH,
+    )
+    .map_err(|_| BenchmarkError::invalid_config("resident_query_fixture"))?;
+    store
+        .activate_migration_rebuild_contract(&processing_contract, now)
+        .map_err(|_| BenchmarkError::invalid_config("resident_query_fixture"))?;
     let count = synthetic_query_workload::CANONICAL_DOCUMENT_COUNT;
     let mut index_documents = Vec::with_capacity(count);
     let mut vector_documents = Vec::with_capacity(count);
@@ -70,8 +91,8 @@ pub(super) fn prepare_fixture(data_dir: &Path) -> Result<()> {
             &document_id,
             &revision.id,
             &normalized_text_hash,
-            "public-synthetic-v27",
-            "schema-v27",
+            processing_contract.primary_parse_version(),
+            processing_contract.derived_schema_version(),
         );
         indexed.doc_id = document_id.to_string();
         indexed.resume_version_id = version_id.to_string();
@@ -99,8 +120,8 @@ pub(super) fn prepare_fixture(data_dir: &Path) -> Result<()> {
             document_id: document_id.clone(),
             source_revision_id: revision.id,
             normalized_text_hash,
-            parse_version: "public-synthetic-v27".to_string(),
-            schema_version: "schema-v27".to_string(),
+            parse_version: processing_contract.primary_parse_version().to_string(),
+            schema_version: processing_contract.derived_schema_version().to_string(),
             language_set: vec!["en".to_string()],
             page_count: Some(1),
             raw_text: None,
@@ -140,7 +161,7 @@ pub(super) fn prepare_fixture(data_dir: &Path) -> Result<()> {
                         span_start: Some(0),
                         span_end: Some(8),
                         confidence: 1.0,
-                        extractor: "public-synthetic-v27".to_string(),
+                        extractor: PRIMARY_PARSE_VERSION.to_string(),
                     }],
                 )
                 .map_err(|_| BenchmarkError::invalid_config("resident_query_fixture"))?;
@@ -175,13 +196,36 @@ pub(super) fn prepare_fixture(data_dir: &Path) -> Result<()> {
         index_documents.push(indexed);
     }
     projections.sort_by(|left, right| left.document_id.cmp(&right.document_id));
+    let projected_documents = projections
+        .iter()
+        .map(|projection| {
+            let mut document = store
+                .document_by_id(&projection.document_id)
+                .map_err(|_| BenchmarkError::invalid_config("resident_query_fixture"))?
+                .ok_or_else(|| BenchmarkError::invalid_config("resident_query_fixture"))?;
+            document.status = DocumentStatus::Searchable;
+            document.is_deleted = false;
+            document.updated_at = now;
+            Ok(ProjectedDocumentSnapshot::Replacement {
+                projection: projection.clone(),
+                document,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
     let projection_digest = SearchProjectionDigest::from_pairs(
         projections
             .iter()
             .map(|item| (item.document_id.as_str(), item.resume_version_id.as_str())),
     )
     .map_err(|_| BenchmarkError::invalid_config("resident_query_fixture"))?;
-    if store
+    let migration_barrier = store
+        .acquire_migration_rebuild_barrier_token(processing_contract.id())
+        .map_err(|_| BenchmarkError::invalid_config("resident_query_fixture"))?
+        .ok_or_else(|| BenchmarkError::invalid_config("resident_query_fixture"))?;
+    let publication_session = store
+        .wait_for_search_publication_session()
+        .map_err(|_| BenchmarkError::invalid_config("resident_query_fixture"))?;
+    if publication_session
         .begin_search_publication(&SearchPublicationDraft {
             generation: SNAPSHOT_TOKEN.to_string(),
             base_generation: None,
@@ -196,22 +240,29 @@ pub(super) fn prepare_fixture(data_dir: &Path) -> Result<()> {
         return Err(BenchmarkError::invalid_config("resident_query_fixture"));
     }
     let fulltext = publish_snapshot(
-        &data_dir.join("search-index"),
+        &publication_session
+            .canonical_data_dir()
+            .join("search-index"),
         SNAPSHOT_TOKEN,
         index_documents,
     )
     .map_err(BenchmarkError::fulltext)?;
     let vector_contract = VectorModelContract::enabled(MODEL_ID, VECTOR_DIMENSION)
         .map_err(|_| BenchmarkError::invalid_config("resident_query_fixture"))?;
-    let vector = VectorSnapshotStore::new(data_dir.join("vector-index"), vector_contract)
-        .and_then(|store| {
-            store.publish_generation(
-                SNAPSHOT_TOKEN,
-                projections.iter().cloned(),
-                vector_documents,
-            )
-        })
-        .map_err(|_| BenchmarkError::invalid_config("resident_query_fixture"))?;
+    let vector = VectorSnapshotStore::new(
+        publication_session
+            .canonical_data_dir()
+            .join("vector-index"),
+        vector_contract,
+    )
+    .and_then(|store| {
+        store.publish_generation(
+            SNAPSHOT_TOKEN,
+            projections.iter().cloned(),
+            vector_documents,
+        )
+    })
+    .map_err(|_| BenchmarkError::invalid_config("resident_query_fixture"))?;
     let fulltext_descriptor = FullTextSnapshotDescriptor::new(
         SNAPSHOT_TOKEN.to_string(),
         fulltext.document_count() as u64,
@@ -230,7 +281,7 @@ pub(super) fn prepare_fixture(data_dir: &Path) -> Result<()> {
         resume_version_count: vector.vector_document_count() as u64,
         logical_content_digest: vector.logical_content_digest().clone(),
     });
-    store
+    publication_session
         .validate_search_publication(&SearchPublicationValidation {
             generation: SNAPSHOT_TOKEN,
             fulltext: &fulltext_descriptor,
@@ -238,13 +289,17 @@ pub(super) fn prepare_fixture(data_dir: &Path) -> Result<()> {
             now,
         })
         .and_then(|_| {
-            store.commit_search_publication(&SearchPublicationCommit {
-                generation: SNAPSHOT_TOKEN,
-                terminal_documents: &terminal_documents,
-                projections: &projections,
-                vector_coverage: &projections,
-                now,
-            })
+            publication_session.commit_migration_rebuild_search_publication(
+                &SearchPublicationCommit {
+                    generation: SNAPSHOT_TOKEN,
+                    terminal_documents: &terminal_documents,
+                    projections: &projections,
+                    projected_documents: &projected_documents,
+                    vector_coverage: &projections,
+                    now,
+                },
+                &migration_barrier,
+            )
         })
         .map_err(|_| BenchmarkError::invalid_config("resident_query_fixture"))?;
     Ok(())

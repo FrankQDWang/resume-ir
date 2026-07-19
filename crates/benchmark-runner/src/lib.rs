@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -24,14 +24,18 @@ use ocr_client::{
     LocalPdfRenderCommandSpec, OcrClient, OcrOptions, OcrPageRequest, OcrWorkerBudget,
     PdftoppmPdfRenderer, PdftoppmRenderSpec, RenderedPage, TesseractOcrClient, TesseractOcrSpec,
 };
+use process_containment::ContainedChild;
 use rank_fusion::{soft_dedupe_score, DedupeProfile};
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use sha2::{Digest, Sha256};
 
+mod private_query_command_pipe;
 mod resident_query_client;
 mod resident_query_fixture;
 mod resident_query_load;
 mod synthetic_query_workload;
+
+use private_query_command_pipe::{BoundedPipeReadError, BoundedPipeReader};
 
 pub use resident_query_load::{
     run_resident_public_query_load, ResidentQueryLoadConfig, ResidentQueryLoadReport,
@@ -7189,39 +7193,62 @@ fn run_private_query_resident_batch_command(
 ) -> Result<Vec<PrivateQueryCommandOutput>> {
     let expected_request_ids = private_query_batch_request_ids(expected_count);
     let started = Instant::now();
-    let mut child = Command::new(&command.command)
+    let mut process = Command::new(&command.command);
+    process
         .args(&command.args)
         .env("RESUME_IR_QUERY_BATCH_INPUT_PATH", query_batch_file)
         .env("RESUME_IR_QUERY_TOP_K", top_k.to_string())
         .env("RESUME_IR_QUERY_MODE", "hybrid")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(BenchmarkError::io)?;
+        .stderr(Stdio::piped());
+    let mut child = ContainedChild::spawn(&mut process).map_err(BenchmarkError::io)?;
     let stdout = child
-        .stdout
-        .take()
+        .take_stdout()
         .ok_or_else(|| BenchmarkError::invalid_config("private_query_resident_command_status"))?;
     let stderr = child
-        .stderr
-        .take()
+        .take_stderr()
         .ok_or_else(|| BenchmarkError::invalid_config("private_query_resident_command_status"))?;
-    let mut stdout_reader = Some(read_private_query_command_pipe(stdout));
-    let mut stderr_reader = Some(read_private_query_command_pipe(stderr));
+    let mut stdout_reader = Some(BoundedPipeReader::spawn(
+        stdout,
+        PRIVATE_QUERY_RESIDENT_COMMAND_PIPE_MAX_BYTES,
+    ));
+    let mut stderr_reader = Some(BoundedPipeReader::spawn(
+        stderr,
+        PRIVATE_QUERY_RESIDENT_COMMAND_PIPE_MAX_BYTES,
+    ));
     let request_count = u64::try_from(expected_count)
         .map_err(|_| BenchmarkError::invalid_config("private_query_count"))?;
     let timeout = Duration::from_millis(timeout_ms.saturating_mul(request_count));
     loop {
-        if let Some(status) = child.try_wait().map_err(BenchmarkError::io)? {
-            let stdout =
-                join_private_query_command_pipe(stdout_reader.take().ok_or_else(|| {
-                    BenchmarkError::invalid_config("private_query_resident_command_status")
-                })?)?;
-            let _stderr =
-                join_private_query_command_pipe(stderr_reader.take().ok_or_else(|| {
-                    BenchmarkError::invalid_config("private_query_resident_command_status")
-                })?)?;
+        if private_query_command_pipe_limit_exceeded(&mut stdout_reader)
+            || private_query_command_pipe_limit_exceeded(&mut stderr_reader)
+        {
+            child.terminate();
+            finish_private_query_command_pipes(stdout_reader.take(), stderr_reader.take());
+            return Err(BenchmarkError::invalid_config(
+                "private_query_resident_command_output",
+            ));
+        }
+        let child_status = match child.try_wait() {
+            Ok(status) => status,
+            Err(error) => {
+                child.terminate();
+                finish_private_query_command_pipes(stdout_reader.take(), stderr_reader.take());
+                return Err(BenchmarkError::io(error));
+            }
+        };
+        if let Some(status) = child_status {
+            let stdout_reader = stdout_reader.take().ok_or_else(|| {
+                BenchmarkError::invalid_config("private_query_resident_command_status")
+            })?;
+            let stderr_reader = stderr_reader.take().ok_or_else(|| {
+                BenchmarkError::invalid_config("private_query_resident_command_status")
+            })?;
+            let stdout = map_private_query_command_pipe_result(stdout_reader.finish());
+            let stderr = map_private_query_command_pipe_result(stderr_reader.finish());
+            let stdout = stdout?;
+            let _stderr = stderr?;
             if !status.success() {
                 return Err(BenchmarkError::invalid_config(
                     "private_query_resident_command_status",
@@ -7230,13 +7257,14 @@ fn run_private_query_resident_batch_command(
             return parse_private_query_batch_command_stdout(&stdout, top_k, &expected_request_ids);
         }
         if started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            if let Some(reader) = stdout_reader.take() {
-                let _ = join_private_query_command_pipe(reader);
-            }
-            if let Some(reader) = stderr_reader.take() {
-                let _ = join_private_query_command_pipe(reader);
+            child.terminate();
+            let output_exceeded =
+                private_query_command_pipe_finished_too_large(stdout_reader.take())
+                    | private_query_command_pipe_finished_too_large(stderr_reader.take());
+            if output_exceeded {
+                return Err(BenchmarkError::invalid_config(
+                    "private_query_resident_command_output",
+                ));
             }
             return Err(BenchmarkError::invalid_config(
                 "private_query_resident_command_timeout",
@@ -7246,48 +7274,43 @@ fn run_private_query_resident_batch_command(
     }
 }
 
-fn read_private_query_command_pipe<R>(
-    mut reader: R,
-) -> thread::JoinHandle<std::result::Result<Vec<u8>, PrivateQueryPipeReadError>>
-where
-    R: Read + Send + 'static,
-{
-    thread::spawn(move || {
-        let mut output = Vec::new();
-        let mut buffer = [0_u8; 8192];
-        loop {
-            let read = reader
-                .read(&mut buffer)
-                .map_err(PrivateQueryPipeReadError::Io)?;
-            if read == 0 {
-                break;
-            }
-            if output.len().saturating_add(read) > PRIVATE_QUERY_RESIDENT_COMMAND_PIPE_MAX_BYTES {
-                return Err(PrivateQueryPipeReadError::TooLarge);
-            }
-            output.extend_from_slice(&buffer[..read]);
-        }
-        Ok(output)
-    })
-}
-
-enum PrivateQueryPipeReadError {
-    TooLarge,
-    Io(std::io::Error),
-}
-
-fn join_private_query_command_pipe(
-    handle: thread::JoinHandle<std::result::Result<Vec<u8>, PrivateQueryPipeReadError>>,
+fn map_private_query_command_pipe_result(
+    result: std::result::Result<Vec<u8>, BoundedPipeReadError>,
 ) -> Result<Vec<u8>> {
-    match handle
-        .join()
-        .map_err(|_| BenchmarkError::invalid_config("private_query_resident_command_status"))?
-    {
+    match result {
         Ok(output) => Ok(output),
-        Err(PrivateQueryPipeReadError::TooLarge) => Err(BenchmarkError::invalid_config(
+        Err(BoundedPipeReadError::TooLarge) => Err(BenchmarkError::invalid_config(
             "private_query_resident_command_output",
         )),
-        Err(PrivateQueryPipeReadError::Io(error)) => Err(BenchmarkError::io(error)),
+        Err(BoundedPipeReadError::Io(error)) => Err(BenchmarkError::io(error)),
+        Err(BoundedPipeReadError::ReaderPanicked) => Err(BenchmarkError::invalid_config(
+            "private_query_resident_command_status",
+        )),
+    }
+}
+
+fn private_query_command_pipe_limit_exceeded(reader: &mut Option<BoundedPipeReader>) -> bool {
+    reader
+        .as_mut()
+        .is_some_and(BoundedPipeReader::limit_exceeded)
+}
+
+fn private_query_command_pipe_finished_too_large(reader: Option<BoundedPipeReader>) -> bool {
+    matches!(
+        reader.map(BoundedPipeReader::finish),
+        Some(Err(BoundedPipeReadError::TooLarge))
+    )
+}
+
+fn finish_private_query_command_pipes(
+    stdout: Option<BoundedPipeReader>,
+    stderr: Option<BoundedPipeReader>,
+) {
+    if let Some(reader) = stdout {
+        let _ = reader.finish();
+    }
+    if let Some(reader) = stderr {
+        let _ = reader.finish();
     }
 }
 

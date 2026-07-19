@@ -1,11 +1,15 @@
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use super::{
+    import_root_head::{
+        coordinate_import_root_task_head_in_connection, ImportRootTaskHeadOutcome,
+        ImportRootTaskHeadRequest,
+    },
     import_root_kind_from_storage, import_root_preset_from_storage,
     import_scan_budget_kind_from_storage, import_scan_profile_from_storage,
-    import_task_status_to_storage, insert_import_task_with_scan_scope_in_connection,
-    ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, MetaStore, MetaStoreError, Result,
-    UnixTimestamp,
+    import_task_status_to_storage, ImportProcessingContract, ImportScanScope, ImportTask,
+    ImportTaskId, ImportTaskStatus, MetaStoreError, MetadataStore, MetadataStoreAccess,
+    MetadataStoreWriteAccess, Result, UnixTimestamp,
 };
 
 pub(super) const SCHEMA_V26: &str = r#"
@@ -33,7 +37,7 @@ pub struct ImportRootControlUpdate {
     pub catch_up_queued: bool,
 }
 
-impl MetaStore {
+impl<Access: MetadataStoreAccess> MetadataStore<Access> {
     pub fn active_authorized_import_roots(&self) -> Result<Vec<String>> {
         let connection = self.connection.borrow();
         let mut statement = connection
@@ -56,20 +60,52 @@ impl MetaStore {
         &self,
         canonical_root_path: &str,
         task_id: &ImportTaskId,
+        contract: &ImportProcessingContract,
         updated_at: UnixTimestamp,
-    ) -> Result<bool> {
+    ) -> Result<ImportRootTaskHeadOutcome>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let mut connection = self.connection.borrow_mut();
-        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
-        if require_known_root(&transaction, canonical_root_path)? == ImportRootControlStatus::Paused
-            || pending_import_exists(&transaction, canonical_root_path)?
-        {
-            return Ok(false);
-        }
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(MetaStoreError::storage)?;
         let scope =
-            catch_up_scope_for_root(&transaction, canonical_root_path, task_id, updated_at)?;
-        insert_catch_up_import(&transaction, &scope, task_id, updated_at)?;
+            authorized_root_task_scope(&transaction, canonical_root_path, task_id, updated_at)?;
+        let task = queued_task(task_id, canonical_root_path, updated_at);
+        let outcome = coordinate_import_root_task_head_in_connection(
+            &transaction,
+            ImportRootTaskHeadRequest::Configured {
+                task: &task,
+                scope: &scope,
+                processing_contract: contract,
+            },
+        )?;
         transaction.commit().map_err(MetaStoreError::storage)?;
-        Ok(true)
+        Ok(outcome)
+    }
+
+    /// Enqueues an authorized root for a complete migration rebuild scan.
+    ///
+    /// The task scope is deliberately unbounded even when the root's normal
+    /// catch-up configuration has a scan budget. The stored root configuration
+    /// remains unchanged for later non-migration imports.
+    pub fn enqueue_full_corpus_migration_rebuild_root(
+        &self,
+        canonical_root_path: &str,
+        task_id: &ImportTaskId,
+        contract: &ImportProcessingContract,
+        updated_at: UnixTimestamp,
+    ) -> Result<ImportRootTaskHeadOutcome>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
+        self.coordinate_import_root_task_head(ImportRootTaskHeadRequest::MigrationRebuild {
+            canonical_root_path,
+            task_id,
+            processing_contract: contract,
+            queued_at: updated_at,
+        })
     }
 
     pub fn import_root_control_status(
@@ -84,9 +120,14 @@ impl MetaStore {
         &self,
         canonical_root_path: &str,
         updated_at: UnixTimestamp,
-    ) -> Result<ImportRootControlUpdate> {
+    ) -> Result<ImportRootControlUpdate>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let mut connection = self.connection.borrow_mut();
-        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(MetaStoreError::storage)?;
         let status = require_known_root(&transaction, canonical_root_path)?;
         let changed = status == ImportRootControlStatus::Active;
         let updated_at_seconds = updated_at.as_unix_seconds();
@@ -149,10 +190,16 @@ impl MetaStore {
         &self,
         canonical_root_path: &str,
         catch_up_task_id: &ImportTaskId,
+        contract: &ImportProcessingContract,
         updated_at: UnixTimestamp,
-    ) -> Result<ImportRootControlUpdate> {
+    ) -> Result<ImportRootControlUpdate>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
         let mut connection = self.connection.borrow_mut();
-        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(MetaStoreError::storage)?;
         let status = require_known_root(&transaction, canonical_root_path)?;
         if status == ImportRootControlStatus::Active {
             return Ok(ImportRootControlUpdate {
@@ -172,19 +219,22 @@ impl MetaStore {
                 params![updated_at.as_unix_seconds(), canonical_root_path],
             )
             .map_err(MetaStoreError::storage)?;
-        let pending_exists = pending_import_exists(&transaction, canonical_root_path)?;
-        let catch_up_queued = if pending_exists {
-            false
-        } else {
-            let scope = catch_up_scope_for_root(
-                &transaction,
-                canonical_root_path,
-                catch_up_task_id,
-                updated_at,
-            )?;
-            insert_catch_up_import(&transaction, &scope, catch_up_task_id, updated_at)?;
-            true
-        };
+        let scope = authorized_root_task_scope(
+            &transaction,
+            canonical_root_path,
+            catch_up_task_id,
+            updated_at,
+        )?;
+        let task = queued_task(catch_up_task_id, canonical_root_path, updated_at);
+        let outcome = coordinate_import_root_task_head_in_connection(
+            &transaction,
+            ImportRootTaskHeadRequest::Configured {
+                task: &task,
+                scope: &scope,
+                processing_contract: contract,
+            },
+        )?;
+        let catch_up_queued = matches!(outcome, ImportRootTaskHeadOutcome::HeadInserted { .. });
         transaction.commit().map_err(MetaStoreError::storage)?;
 
         Ok(ImportRootControlUpdate {
@@ -196,33 +246,6 @@ impl MetaStore {
     }
 }
 
-fn pending_import_exists(connection: &Connection, canonical_root_path: &str) -> Result<bool> {
-    connection
-        .query_row(
-            "\
-            SELECT EXISTS(
-                SELECT 1
-                FROM import_task
-                WHERE root_path = ?1
-                    AND status IN (?2, ?3, ?4)
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM import_task_cancellation AS cancellation
-                        WHERE cancellation.import_task_id = import_task.id
-                    )
-            )",
-            params![
-                canonical_root_path,
-                import_task_status_to_storage(ImportTaskStatus::Queued),
-                import_task_status_to_storage(ImportTaskStatus::Running),
-                import_task_status_to_storage(ImportTaskStatus::FailedRetryable),
-            ],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|exists| exists == 1)
-        .map_err(MetaStoreError::storage)
-}
-
 fn require_known_root(
     connection: &Connection,
     canonical_root_path: &str,
@@ -231,7 +254,7 @@ fn require_known_root(
         .ok_or_else(|| MetaStoreError::not_found("import_root"))
 }
 
-fn import_root_control_status_from_connection(
+pub(super) fn import_root_control_status_from_connection(
     connection: &Connection,
     canonical_root_path: &str,
 ) -> Result<Option<ImportRootControlStatus>> {
@@ -251,7 +274,7 @@ fn import_root_control_status_from_connection(
     }
 }
 
-fn catch_up_scope_for_root(
+pub(super) fn authorized_root_task_scope(
     connection: &Connection,
     canonical_root_path: &str,
     task_id: &ImportTaskId,
@@ -314,33 +337,18 @@ fn catch_up_scope_for_root(
         .ok_or_else(|| MetaStoreError::not_found("import_root"))
 }
 
-fn insert_catch_up_import(
-    connection: &Connection,
-    scope: &ImportScanScope,
+fn queued_task(
     task_id: &ImportTaskId,
+    canonical_root_path: &str,
     updated_at: UnixTimestamp,
-) -> Result<()> {
-    let task = ImportTask {
+) -> ImportTask {
+    ImportTask {
         id: task_id.clone(),
-        root_path: scope.canonical_root_path.clone(),
+        root_path: canonical_root_path.to_string(),
         status: ImportTaskStatus::Queued,
         queued_at: updated_at,
         started_at: None,
         finished_at: None,
         updated_at,
-    };
-    let mut next_scope = scope.clone();
-    next_scope.import_task_id = task_id.clone();
-    next_scope.files_discovered = 0;
-    next_scope.ignored_entries = 0;
-    next_scope.scan_errors = 0;
-    next_scope.searchable_documents = 0;
-    next_scope.ocr_required_documents = 0;
-    next_scope.ocr_jobs_queued = 0;
-    next_scope.failed_documents = 0;
-    next_scope.deleted_documents = 0;
-    next_scope.scan_budget_observed = next_scope.scan_budget_limit.map(|_| 0);
-    next_scope.scan_budget_exhausted = false;
-    next_scope.updated_at = updated_at;
-    insert_import_task_with_scan_scope_in_connection(connection, &task, &next_scope)
+    }
 }

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use meta_store::MetaStore;
+use meta_store::ReadMetaStore;
 
 use support::{assert_import_succeeded, import_text_resumes};
 
@@ -117,8 +117,7 @@ fn search_cli_fails_closed_when_the_active_fulltext_artifact_is_corrupt() {
             "SUMMARY\nCorrupt Candidate\nEXPERIENCE\nBuilt PRIVATE_CORRUPT_SENTINEL systems\nSKILLS\nRust",
         )],
     ));
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let generation = store.search_projection_state().unwrap().generation.unwrap();
     fs::write(
         data_dir

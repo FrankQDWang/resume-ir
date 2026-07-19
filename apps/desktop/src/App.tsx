@@ -182,6 +182,57 @@ function countLabel(value: number | null | undefined): string {
   return value === null || value === undefined ? "—" : value.toLocaleString()
 }
 
+export function indexServicePresentation(
+  service: DaemonService,
+  repairReason: StatusBody["repair_reason"],
+): { title: string; message: string } {
+  if (service === "ready") return { title: "索引可用", message: "daemon 可用" }
+  if (service === "repairing") {
+    return { title: "索引修复中", message: "daemon 已连接，索引正在修复" }
+  }
+  if (repairReason === "runtime_invariant") {
+    return {
+      title: "索引修复已阻塞",
+      message: "daemon 已连接，索引修复已阻塞，请导出诊断",
+    }
+  }
+  if (repairReason === "source_unavailable") {
+    return {
+      title: "索引修复已阻塞",
+      message: "daemon 已连接，来源不可用，请恢复来源磁盘连接或文件权限",
+    }
+  }
+  return { title: "索引能力降级", message: "daemon 已连接，索引能力降级" }
+}
+
+export function IndexServiceSummary({
+  lifecycle,
+  service,
+  status,
+  searchablePercent,
+  connectionMessage,
+}: {
+  lifecycle: DaemonLifecycleSnapshot
+  service: DaemonService
+  status: Pick<StatusBody, "repair_reason" | "searchable_documents" | "ocr_queue_depth"> | null
+  searchablePercent: number
+  connectionMessage: string
+}) {
+  const presentation = indexServicePresentation(service, status?.repair_reason ?? null)
+  const healthy = lifecycle.state === "ready" && service === "ready"
+  const title = lifecycle.state === "ready"
+    ? presentation.title
+    : lifecycleLabel(lifecycle, service)
+  const message = healthy && status
+    ? `${countLabel(status.searchable_documents)} 份可搜索 · OCR 队列 ${countLabel(status.ocr_queue_depth)}`
+    : lifecycle.state === "ready" ? presentation.message : connectionMessage
+  return <>
+    <div className="status-title"><strong>{title}</strong><span className={healthy ? "ok-text" : "warn-text"}>{searchablePercent}%</span></div>
+    <progress className="progress-track" data-health={healthy ? "ok" : "warn"} value={searchablePercent} max={100} aria-label="可搜索简历比例" />
+    <p>{message}</p>
+  </>
+}
+
 function DiagnosticsContent({ state, message, diagnostics, onExport }: { state: DiagnosticsState; message: string; diagnostics: DiagnosticsBody | null; onExport: () => void }) {
   const privacySafe = diagnostics !== null && !diagnostics.contains_raw_resume_text && !diagnostics.contains_queries && !diagnostics.contains_resume_paths && !diagnostics.contains_candidate_results && !diagnostics.contains_snippet_text
   return <div className="sheet-scroll diagnostics-content">
@@ -210,7 +261,7 @@ export function App() {
   const [service, setService] = useState<DaemonService>(preview ? "ready" : "degraded")
   const [resultFreshness, setResultFreshness] = useState<ResultFreshness>("current")
   const [connectionMessage, setConnectionMessage] = useState(preview ? "daemon 可用" : lifecycleMessage(STARTING_LIFECYCLE))
-  const [status, setStatus] = useState<StatusBody | null>(preview ? { schema_version: "daemon.status.v2", status: "ok", process_state: "ready", service_state: "ready", services: { metadata: "ready", query: "ready" }, error: null, indexed_documents: 1284, searchable_documents: 1098, partial_documents: 84, visible_epoch: 1, failed_retryable: 2, failed_permanent: 1, recovery_queue_depth: 0, ocr_queue_depth: 102, embedding_queue_depth: 186, entity_mentions: 0, import_tasks_queued: 0, index_health: "ready", latest_import_scan: { files_discovered: 1284, searchable_documents: 1098, ocr_required_documents: 102, failed_documents: 1 }, ipc: { accepted: 8, completed: 8, client_disconnect: 0, request_failure: 0, response_failure: 0 } } : null)
+  const [status, setStatus] = useState<StatusBody | null>(preview ? { schema_version: "daemon.status.v2", status: "ok", process_state: "ready", service_state: "ready", services: { metadata: "ready", query: "ready" }, repair_reason: null, error: null, indexed_documents: 1284, searchable_documents: 1098, partial_documents: 84, visible_epoch: 1, failed_retryable: 2, failed_permanent: 1, recovery_queue_depth: 0, ocr_queue_depth: 102, embedding_queue_depth: 186, entity_mentions: 0, import_tasks_queued: 0, index_health: "ready", latest_import_scan: { files_discovered: 1284, searchable_documents: 1098, ocr_required_documents: 102, failed_documents: 1 }, ipc: { accepted: 8, completed: 8, client_disconnect: 0, request_failure: 0, response_failure: 0 } } : null)
   const [query, setQuery] = useState(preview ? "Java Kafka 支付" : "")
   const [mode, setMode] = useState<Mode>(preview ? "hybrid" : "keyword")
   const [showFilters, setShowFilters] = useState(false)
@@ -283,7 +334,10 @@ export function App() {
           serviceVisibleEpoch: body.visible_epoch,
         }))
       }
-      setConnectionMessage(nextService === "ready" ? "daemon 可用" : nextService === "repairing" ? "daemon 已连接，索引正在修复" : "daemon 已连接，索引能力降级")
+      setConnectionMessage(indexServicePresentation(
+        nextService,
+        body?.repair_reason ?? null,
+      ).message)
     } catch (error) {
       if (bridgeFailureKind(error) === "overload") {
         setConnectionMessage("状态刷新繁忙，稍后自动重试")
@@ -631,9 +685,7 @@ export function App() {
         <button onClick={() => void openDiagnostics()}><ShieldCheck size={16} />隐私与诊断</button>
       </nav>
       <div className="sidebar-status">
-        <div className="status-title"><strong>{lifecycle.state !== "ready" ? lifecycleLabel(lifecycle, service) : service === "ready" ? "索引可用" : service === "repairing" ? "索引修复中" : "索引能力降级"}</strong><span className={health === "ok" ? "ok-text" : "warn-text"}>{searchablePercent}%</span></div>
-        <progress className="progress-track" data-health={health === "ok" ? "ok" : "warn"} value={searchablePercent} max={100} aria-label="可搜索简历比例" />
-        <p>{lifecycle.state === "ready" && status ? `${countLabel(status.searchable_documents)} 份可搜索 · OCR 队列 ${countLabel(status.ocr_queue_depth)}` : connectionMessage}</p>
+        <IndexServiceSummary lifecycle={lifecycle} service={service} status={status} searchablePercent={searchablePercent} connectionMessage={connectionMessage} />
         {(lifecycle.state === "circuit_open" || lifecycle.state === "blocked") && <button type="button" className="plain-button wide-button" onClick={() => void retryLifecycle()}>请求监督器重试</button>}
         <div className="local-only"><HardDriveDownload size={14} />完全本地运行 · 不上传</div>
       </div>

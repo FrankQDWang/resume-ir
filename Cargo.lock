@@ -232,6 +232,7 @@ dependencies = [
  "index-vector",
  "meta-store",
  "ocr-client",
+ "process-containment",
  "rank-fusion",
  "serde",
  "serde_json",
@@ -895,6 +896,7 @@ checksum = "d817e038c30374a4bcb22f94d0a8a0e216958d4c3dcde369b1439fec4bdda6e6"
 name = "extractor-rules"
 version = "0.1.0"
 dependencies = [
+ "core-domain",
  "regex",
 ]
 
@@ -1232,7 +1234,9 @@ dependencies = [
  "sectionizer",
  "serde",
  "serde_json",
+ "sha2",
  "sysinfo",
+ "tempfile",
  "text-normalizer",
  "zip",
 ]
@@ -1636,7 +1640,10 @@ dependencies = [
  "getrandom 0.2.17",
  "resume-classifier",
  "rusqlite",
+ "same-file",
  "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]
@@ -2368,7 +2375,6 @@ version = "0.1.0"
 dependencies = [
  "embedder",
  "embedding-protocol",
- "fs4",
  "getrandom 0.2.17",
  "import-pipeline",
  "index-fulltext",
@@ -2385,6 +2391,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
 ]
 
 [[package]]

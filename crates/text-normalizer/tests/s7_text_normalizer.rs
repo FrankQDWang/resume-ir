@@ -83,3 +83,24 @@ fn text_only_normalization_matches_origin_preserving_output() {
         );
     }
 }
+
+#[test]
+fn replaces_embedded_control_bytes_with_stable_word_boundaries() {
+    use text_normalizer::TextNormalizer;
+
+    let source = "Alpha\0Beta\u{001b}Gamma";
+    let normalized = TextNormalizer::normalize(source);
+
+    assert_eq!(normalized.text(), "Alpha Beta Gamma");
+    assert_eq!(
+        TextNormalizer::normalize_text_only(source),
+        normalized.text()
+    );
+    assert!(!normalized.text().chars().any(char::is_control));
+
+    let beta_start = normalized.text().find("Beta").unwrap();
+    let beta_source = normalized
+        .original_span_for_clean_range(beta_start..beta_start + "Beta".len())
+        .unwrap();
+    assert_eq!(&source[beta_source], "Beta");
+}

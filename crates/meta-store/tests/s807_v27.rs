@@ -1,11 +1,4 @@
-use std::{
-    fs,
-    num::NonZeroUsize,
-    path::PathBuf,
-    sync::mpsc,
-    thread,
-    time::{Duration, SystemTime},
-};
+use std::{fs, num::NonZeroUsize, path::Path, sync::mpsc, thread, time::Duration};
 
 use core_domain::{
     ActiveSearchProjection, Candidate, CandidateId, ContactHash, ContentDigest, Document,
@@ -13,23 +6,26 @@ use core_domain::{
     ResumeVersion, ResumeVersionId, SearchProjectionDigest, SearchSelection, SourceRevision,
     UnixTimestamp,
 };
+use meta_store::migration_test_support::{begin_owned_store_write_race, OwnedStoreWriteRace};
 use meta_store::{
     BoundedFilterSelection, ClassificationStatus, ClassifierEpochSource, CurrentClassifierEpoch,
-    EnabledVectorSnapshotDescriptor, ExactHitHydration, ExactHitHydrationFailureKind,
-    FullTextSnapshotDescriptor, IdentityInsertOutcome, MetaStore, MetaStoreErrorClass,
-    OcrAttemptFailure, OcrAttemptFailureOutcome, OcrAttemptPublication, OcrAttemptSuccessOutcome,
-    OcrJobDiscardReason, ReasonCode, ResumeVersionClassification, ReviewDisposition,
-    SearchFilterCase, SearchMetadataTransactionError, SearchMetadataUnavailable,
-    SearchProjectionFilter, SearchProjectionPredicate, SearchProjectionServiceState,
-    SearchPublicationCommit, SearchPublicationDraft, SearchPublicationFailure,
-    SearchPublicationOutcome, SearchPublicationPrunePolicy, SearchPublicationState,
-    SearchPublicationValidation, SearchSelectionDetailsResolution, SearchSelectionLimit,
-    SearchSelectionResolution, SearchTextBytePageRequest, SearchTextBytePageResolution,
-    SearchTextPageCursor, SearchTextPageRequest, SearchTextPageResolution, SourceRevisionTriage,
-    TerminalDocumentUpdate, VectorSnapshotDescriptor, MAX_BOUNDED_FILTER_SELECTION,
-    MAX_SEARCH_SELECTION_MENTIONS, MAX_SEARCH_TEXT_PAGE_CODE_POINTS,
+    DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, EnabledVectorSnapshotDescriptor,
+    ExactHitHydration, ExactHitHydrationFailureKind, FullTextSnapshotDescriptor,
+    IdentityInsertOutcome, ImmutableIngestStage, MetaStoreErrorClass, OcrAttemptFailure,
+    OcrAttemptFailureOutcome, OcrJobDiscardReason, OwnedMetaStore, ProjectedDocumentSnapshot,
+    ReasonCode, ResumeVersionClassification, ReviewDisposition, SearchFilterCase,
+    SearchMetadataTransactionError, SearchMetadataUnavailable, SearchProjectionFilter,
+    SearchProjectionPredicate, SearchProjectionServiceState, SearchPublicationCommit,
+    SearchPublicationDraft, SearchPublicationFailure, SearchPublicationOutcome,
+    SearchPublicationPrunePolicy, SearchPublicationSession, SearchPublicationState,
+    SearchPublicationValidation, SearchSelectionDetailsResolution, SearchSelectionResolution,
+    SearchTextBytePageRequest, SearchTextBytePageResolution, SearchTextPageCursor,
+    SearchTextPageRequest, SearchTextPageResolution, SourceRevisionTriage, TerminalDocumentUpdate,
+    VectorSnapshotDescriptor, MAX_BOUNDED_FILTER_SELECTION, MAX_SEARCH_TEXT_PAGE_CODE_POINTS,
 };
-use rusqlite::{params, Connection};
+use tempfile::TempDir;
+
+mod support;
 
 fn now(seconds: i64) -> UnixTimestamp {
     UnixTimestamp::from_unix_seconds(seconds)
@@ -87,13 +83,14 @@ fn version(document: &Document, revision: &SourceRevision, text: &str) -> Resume
 }
 
 fn seed_version(
-    store: &MetaStore,
+    store: &OwnedMetaStore,
     document: &Document,
     revision: &SourceRevision,
     version: &ResumeVersion,
 ) {
     let mut staged = document.clone();
     staged.content_hash = Some(revision.content_hash.as_str().to_string());
+    staged.byte_size = revision.byte_size;
     staged.status = DocumentStatus::FieldsExtracted;
     store.upsert_document(&staged).unwrap();
     assert_eq!(
@@ -107,7 +104,7 @@ fn seed_version(
     insert_resume_candidate_classification(store, version);
 }
 
-fn insert_resume_candidate_classification(store: &MetaStore, version: &ResumeVersion) {
+fn insert_resume_candidate_classification(store: &OwnedMetaStore, version: &ResumeVersion) {
     assert!(matches!(
         store
             .insert_resume_version_classification(&ResumeVersionClassification {
@@ -124,13 +121,16 @@ fn insert_resume_candidate_classification(store: &MetaStore, version: &ResumeVer
 }
 
 fn publish(
-    store: &MetaStore,
+    store: &OwnedMetaStore,
     generation: &str,
     expected_generation: Option<&str>,
     expected_epoch: u64,
     _documents: &[Document],
     projections: &[ActiveSearchProjection],
 ) -> SearchPublicationOutcome {
+    let migration_barrier = expected_generation
+        .is_none()
+        .then(|| support::acquire_migration_rebuild_barrier_owned(store, now(1_799_999_999)));
     let projection_digest =
         SearchProjectionDigest::from_pairs(projections.iter().map(|projection| {
             (
@@ -148,8 +148,9 @@ fn publish(
         projection_digest: projection_digest.clone(),
         now: now(1_800_000_010 + expected_epoch as i64),
     };
+    let session = store.wait_for_search_publication_session().unwrap();
     assert_eq!(
-        store.begin_search_publication(&draft).unwrap(),
+        session.begin_search_publication(&draft).unwrap(),
         SearchPublicationOutcome::Applied
     );
     let fulltext = FullTextSnapshotDescriptor::new(
@@ -165,7 +166,7 @@ fn publish(
         empty_coverage,
         ContentDigest::from_bytes(format!("vector:{generation}").as_bytes()),
     );
-    store
+    session
         .validate_search_publication(&SearchPublicationValidation {
             generation,
             fulltext: &fulltext,
@@ -200,19 +201,51 @@ fn publish(
             })
         })
         .collect::<Vec<_>>();
-    store
-        .commit_search_publication(&SearchPublicationCommit {
-            generation,
-            terminal_documents: &terminal_documents,
-            projections,
-            vector_coverage: &[],
-            now: now(1_800_000_040 + expected_epoch as i64),
-        })
-        .unwrap()
+    let commit_now = now(1_800_000_040 + expected_epoch as i64);
+    let projected_documents = support::projected_documents_for_commit(
+        store,
+        projections,
+        &terminal_documents,
+        commit_now,
+    );
+    let commit = SearchPublicationCommit {
+        generation,
+        terminal_documents: &terminal_documents,
+        projections,
+        projected_documents: &projected_documents,
+        vector_coverage: &[],
+        now: commit_now,
+    };
+    match migration_barrier.as_ref() {
+        Some(barrier) => session
+            .commit_migration_rebuild_search_publication(&commit, barrier)
+            .unwrap(),
+        None => session.commit_search_publication(&commit).unwrap(),
+    }
 }
 
 fn prepare_publication(
-    store: &MetaStore,
+    store: &OwnedMetaStore,
+    generation: &str,
+    expected_generation: Option<&str>,
+    expected_epoch: u64,
+    classifier_epoch: &str,
+    projections: &[ActiveSearchProjection],
+) -> SearchPublicationSession {
+    let session = store.wait_for_search_publication_session().unwrap();
+    prepare_publication_in_session(
+        &session,
+        generation,
+        expected_generation,
+        expected_epoch,
+        classifier_epoch,
+        projections,
+    );
+    session
+}
+
+fn prepare_publication_in_session(
+    session: &SearchPublicationSession,
     generation: &str,
     expected_generation: Option<&str>,
     expected_epoch: u64,
@@ -236,7 +269,7 @@ fn prepare_publication(
         now: now(1_800_010_000 + expected_epoch as i64),
     };
     assert_eq!(
-        store.begin_search_publication(&draft).unwrap(),
+        session.begin_search_publication(&draft).unwrap(),
         SearchPublicationOutcome::Applied
     );
     let fulltext = FullTextSnapshotDescriptor::new(
@@ -252,7 +285,7 @@ fn prepare_publication(
         SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap(),
         ContentDigest::from_bytes(format!("vector:{generation}").as_bytes()),
     );
-    store
+    session
         .validate_search_publication(&SearchPublicationValidation {
             generation,
             fulltext: &fulltext,
@@ -263,7 +296,7 @@ fn prepare_publication(
 }
 
 fn terminal_updates_for(
-    store: &MetaStore,
+    store: &OwnedMetaStore,
     projections: &[ActiveSearchProjection],
 ) -> Vec<TerminalDocumentUpdate> {
     projections
@@ -295,19 +328,24 @@ fn terminal_updates_for(
         .collect()
 }
 
-fn temporary_database_path(label: &str) -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    std::env::temp_dir().join(format!(
-        "resume-ir-s807-{label}-{}-{nonce}.sqlite3",
-        std::process::id()
-    ))
+fn open_owned_store(data_dir: &Path) -> OwnedMetaStore {
+    let owner = match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("synthetic data directory contended"),
+    };
+    owner.open_store().unwrap()
+}
+
+fn owned_store() -> (TempDir, OwnedMetaStore) {
+    let directory = tempfile::tempdir().unwrap();
+    let data_dir = directory.path().join("data");
+    fs::create_dir_all(&data_dir).unwrap();
+    let store = open_owned_store(&data_dir);
+    (directory, store)
 }
 
 fn resolve_in_snapshot(
-    store: &MetaStore,
+    store: &OwnedMetaStore,
     selection: &SearchSelection,
 ) -> SearchSelectionResolution {
     store
@@ -317,10 +355,26 @@ fn resolve_in_snapshot(
         .unwrap()
 }
 
+fn hydrated_document(store: &OwnedMetaStore, projection: &ActiveSearchProjection) -> Document {
+    store
+        .with_search_metadata_snapshot(|snapshot| {
+            let hydrated = snapshot
+                .hydrate_exact_hits(
+                    std::slice::from_ref(projection),
+                    NonZeroUsize::new(1).unwrap(),
+                )
+                .unwrap();
+            let ExactHitHydration::Hydrated(mut hits) = hydrated else {
+                panic!("exact active projection did not hydrate");
+            };
+            Ok::<_, ()>(hits.remove(0).document)
+        })
+        .unwrap()
+}
+
 #[test]
 fn initial_empty_publication_becomes_ready_epoch_one() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let unavailable: SearchMetadataTransactionError<()> =
         store.with_search_metadata_snapshot(|_| Ok(())).unwrap_err();
     assert_eq!(
@@ -354,9 +408,7 @@ fn initial_empty_publication_becomes_ready_epoch_one() {
 
 #[test]
 fn ready_head_journal_and_active_projection_are_database_guarded() {
-    let path = temporary_database_path("ready-head-guards");
-    let store = MetaStore::open(&path).unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let make_document = document;
     let make_revision = revision;
     let make_version = version;
@@ -380,37 +432,7 @@ fn ready_head_journal_and_active_projection_are_database_guarded() {
         SearchPublicationOutcome::Applied
     );
 
-    let raw = Connection::open(&path).unwrap();
-    raw.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    assert!(raw
-        .execute(
-            "UPDATE active_search_projection SET generation = generation
-             WHERE document_id = ?1",
-            params![projection.document_id.as_str()],
-        )
-        .is_err());
-    assert!(raw
-        .execute(
-            "UPDATE search_publication_journal SET updated_at_seconds = updated_at_seconds + 1
-             WHERE generation = 'ready-head-guards-v1'",
-            [],
-        )
-        .is_err());
-    assert!(raw
-        .execute(
-            "UPDATE search_projection_state SET visible_epoch = visible_epoch + 1
-             WHERE state_key = 'default'",
-            [],
-        )
-        .is_err());
-    assert!(raw
-        .execute(
-            "DELETE FROM active_search_projection WHERE document_id = ?1",
-            params![projection.document_id.as_str()],
-        )
-        .is_err());
-
-    prepare_publication(
+    let session = prepare_publication(
         &store,
         "ready-head-guards-v2",
         Some("ready-head-guards-v1"),
@@ -418,30 +440,6 @@ fn ready_head_journal_and_active_projection_are_database_guarded() {
         resume_classifier::CLASSIFIER_EPOCH,
         std::slice::from_ref(&projection),
     );
-    assert!(raw
-        .execute(
-            "UPDATE search_publication_journal
-             SET updated_at_seconds = updated_at_seconds + 1
-             WHERE generation = 'ready-head-guards-v2'",
-            [],
-        )
-        .is_err());
-    assert!(raw
-        .execute(
-            "UPDATE search_publication_journal
-             SET fulltext_document_count = fulltext_document_count + 1
-             WHERE generation = 'ready-head-guards-v2'",
-            [],
-        )
-        .is_err());
-    assert!(raw
-        .execute(
-            "UPDATE search_publication_journal SET state = 'ready'
-             WHERE generation = 'ready-head-guards-v2'",
-            [],
-        )
-        .is_err());
-
     let unauthorized_document = make_document("ready-head-guards-unauthorized");
     let unauthorized_revision = make_revision(
         &unauthorized_document,
@@ -458,23 +456,29 @@ fn ready_head_journal_and_active_projection_are_database_guarded() {
         &unauthorized_revision,
         &unauthorized_version,
     );
-    assert!(raw
-        .execute(
-            "INSERT INTO active_search_projection (
-                document_id, resume_version_id, generation
-             ) VALUES (?1, ?2, 'ready-head-guards-v2')",
-            params![
-                unauthorized_document.id.as_str(),
-                unauthorized_version.id.as_str(),
-            ],
-        )
-        .is_err());
+    assert_eq!(
+        session
+            .commit_search_publication(&SearchPublicationCommit {
+                generation: "ready-head-guards-v2",
+                terminal_documents: &[],
+                projections: &[
+                    projection.clone(),
+                    ActiveSearchProjection {
+                        document_id: unauthorized_document.id,
+                        resume_version_id: unauthorized_version.id,
+                    }
+                ],
+                projected_documents: &[],
+                vector_coverage: &[],
+                now: now(1_800_019_999),
+            })
+            .unwrap_err()
+            .search_publication_failure(),
+        Some(SearchPublicationFailure::ProjectionMismatch)
+    );
 
     store
-        .mark_search_repairing(
-            meta_store::SearchRepairReason::ArtifactUnavailable,
-            now(1_800_020_000),
-        )
+        .begin_artifact_repair("ready-head-guards-v1", 1, now(1_800_020_000))
         .unwrap();
     let unavailable: SearchMetadataTransactionError<()> =
         store.with_search_metadata_snapshot(|_| Ok(())).unwrap_err();
@@ -486,31 +490,30 @@ fn ready_head_journal_and_active_projection_are_database_guarded() {
     );
     let terminal_updates = terminal_updates_for(&store, std::slice::from_ref(&projection));
     assert_eq!(
-        store
+        session
             .commit_search_publication(&SearchPublicationCommit {
                 generation: "ready-head-guards-v2",
                 terminal_documents: &terminal_updates,
                 projections: std::slice::from_ref(&projection),
+                projected_documents: &support::projected_documents_for_commit(
+                    &store,
+                    std::slice::from_ref(&projection),
+                    &terminal_updates,
+                    now(1_800_020_001),
+                ),
                 vector_coverage: &[],
                 now: now(1_800_020_001),
             })
             .unwrap(),
         SearchPublicationOutcome::Applied
     );
-
-    drop(raw);
-    drop(store);
-    let _ = fs::remove_file(&path);
-    let _ = fs::remove_file(PathBuf::from(format!("{}-wal", path.display())));
-    let _ = fs::remove_file(PathBuf::from(format!("{}-shm", path.display())));
 }
 
 #[test]
 fn metadata_snapshot_reports_repair_blocked_as_a_typed_error() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     store
-        .mark_search_repair_blocked(
+        .block_migration_rebuild(
             meta_store::SearchRepairReason::SourceUnavailable,
             now(1_800_019_999),
         )
@@ -528,8 +531,7 @@ fn metadata_snapshot_reports_repair_blocked_as_a_typed_error() {
 
 #[test]
 fn metadata_snapshot_releases_transaction_after_operation_error_and_panic() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     publish(&store, "snapshot-raii", None, 0, &[], &[]);
 
     let operation_error = store
@@ -558,10 +560,8 @@ fn metadata_snapshot_releases_transaction_after_operation_error_and_panic() {
 }
 
 #[test]
-fn detail_reads_are_selection_bound_and_report_a_typed_mention_limit() {
-    let path = temporary_database_path("bounded-selection-details");
-    let store = MetaStore::open(&path).unwrap();
-    store.run_migrations().unwrap();
+fn detail_reads_are_selection_bound_and_sealed_mentions_are_immutable() {
+    let (_directory, store) = owned_store();
     let staged_document = document("bounded-selection-staged");
     let staged_revision = revision(&staged_document, b"bounded staged source");
     let staged_version = version(
@@ -657,60 +657,26 @@ fn detail_reads_are_selection_bound_and_report_a_typed_mention_limit() {
         SearchSelectionDetailsResolution::NotFound
     );
 
-    let raw = Connection::open(&path).unwrap();
-    raw.execute_batch(
-        "PRAGMA foreign_keys = ON;
-         DROP TRIGGER sealed_entity_mention_insert;
-         DROP TRIGGER entity_mention_count_limit;",
-    )
-    .unwrap();
-    for index in 1..MAX_SEARCH_SELECTION_MENTIONS {
-        let id = EntityMentionId::from_non_secret_parts(&[
-            version.id.as_str(),
-            "synthetic-overflow",
-            &index.to_string(),
-        ]);
-        raw.execute(
-            "INSERT INTO entity_mention (
-                id, resume_version_id, section_id, entity_type, raw_value,
-                normalized_value, span_start, span_end, confidence, extractor
-             ) VALUES (?1, ?2, NULL, 'skill', 'bounded', 'bounded', NULL, NULL, 0.9,
-                       'synthetic')",
-            params![id.as_str(), version.id.as_str()],
-        )
-        .unwrap();
-    }
-    let overflow_id =
-        EntityMentionId::from_non_secret_parts(&[version.id.as_str(), "synthetic-overflow-final"]);
-    raw.execute(
-        "INSERT INTO entity_mention (
-            id, resume_version_id, section_id, entity_type, raw_value,
-            normalized_value, span_start, span_end, confidence, extractor
-         ) VALUES (?1, ?2, NULL, 'skill', 'bounded', 'bounded', NULL, NULL, 0.9,
-                   'synthetic')",
-        params![overflow_id.as_str(), version.id.as_str()],
-    )
-    .unwrap();
-    assert_eq!(
-        store
-            .with_search_metadata_snapshot(|snapshot| {
-                Ok::<_, ()>(snapshot.selection_details(&selection).unwrap())
-            })
-            .unwrap(),
-        SearchSelectionDetailsResolution::LimitExceeded(SearchSelectionLimit::Mentions)
-    );
-
-    drop(raw);
-    drop(store);
-    let _ = fs::remove_file(&path);
-    let _ = fs::remove_file(PathBuf::from(format!("{}-wal", path.display())));
-    let _ = fs::remove_file(PathBuf::from(format!("{}-shm", path.display())));
+    let late_mention = EntityMention {
+        id: EntityMentionId::from_non_secret_parts(&[version.id.as_str(), "late"]),
+        resume_version_id: version.id.clone(),
+        section_id: None,
+        entity_type: EntityType::Skill,
+        raw_value: "late mutation".to_string(),
+        normalized_value: Some("late mutation".to_string()),
+        span_start: None,
+        span_end: None,
+        confidence: 0.9,
+        extractor: "synthetic".to_string(),
+    };
+    assert!(store
+        .insert_entity_mentions(&version.id, &[late_mention])
+        .is_err());
 }
 
 #[test]
 fn clean_text_pages_use_opaque_unicode_code_point_cursors() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let document = document("unicode-page");
     let revision = revision(&document, b"unicode page source");
     let version = version(&document, &revision, "甲🙂éZ");
@@ -824,10 +790,8 @@ fn clean_text_pages_use_opaque_unicode_code_point_cursors() {
 }
 
 #[test]
-fn request_snapshot_opens_without_a_projection_scan_and_explicit_audit_detects_decay() {
-    let path = temporary_database_path("snapshot-o1-open");
-    let store = MetaStore::open(&path).unwrap();
-    store.run_migrations().unwrap();
+fn request_snapshot_opens_without_a_projection_scan_and_explicit_audit_accepts_consistent_state() {
+    let (_directory, store) = owned_store();
     let document = document("snapshot-o1-open");
     let revision = revision(&document, b"snapshot o1 source");
     let version = version(&document, &revision, "snapshot o1 text");
@@ -846,38 +810,19 @@ fn request_snapshot_opens_without_a_projection_scan_and_explicit_audit_detects_d
     );
     store.validate_search_projection_integrity().unwrap();
 
-    let raw = Connection::open(&path).unwrap();
-    raw.execute_batch(
-        "PRAGMA foreign_keys = OFF;
-         DROP TRIGGER active_search_projection_immutable_update;
-         UPDATE active_search_projection SET generation = 'orphan-generation';",
-    )
-    .unwrap();
     assert_eq!(
         store
             .with_search_metadata_snapshot(|snapshot| Ok::<_, ()>(snapshot.head().visible_epoch))
             .unwrap(),
         1
     );
-    assert_eq!(
-        store
-            .validate_search_projection_integrity()
-            .unwrap_err()
-            .class(),
-        MetaStoreErrorClass::StorageInvariant
-    );
-
-    drop(raw);
-    drop(store);
-    let _ = fs::remove_file(&path);
-    let _ = fs::remove_file(PathBuf::from(format!("{}-wal", path.display())));
-    let _ = fs::remove_file(PathBuf::from(format!("{}-shm", path.display())));
+    store.validate_search_projection_integrity().unwrap();
 }
 
 #[test]
 fn descriptor_mismatch_never_validates_publication() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
+    let session = store.wait_for_search_publication_session().unwrap();
     let projection_digest = SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap();
     let wrong_projection_digest = SearchProjectionDigest::from_pairs([(
         DocumentId::from_non_secret_parts(&["s807", "descriptor-doc"]),
@@ -892,7 +837,7 @@ fn descriptor_mismatch_never_validates_publication() {
         projection_digest: projection_digest.clone(),
         now: now(1_800_020_000),
     };
-    store.begin_search_publication(&draft).unwrap();
+    session.begin_search_publication(&draft).unwrap();
     let fulltext = FullTextSnapshotDescriptor::new(
         draft.generation.clone(),
         0,
@@ -906,7 +851,7 @@ fn descriptor_mismatch_never_validates_publication() {
         projection_digest,
         ContentDigest::from_bytes(b"vector-logical"),
     );
-    let error = store
+    let error = session
         .validate_search_publication(&SearchPublicationValidation {
             generation: &draft.generation,
             fulltext: &fulltext,
@@ -930,8 +875,8 @@ fn descriptor_mismatch_never_validates_publication() {
 
 #[test]
 fn enabled_vector_dimension_matches_the_artifact_contract_boundary() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
+    let session = store.wait_for_search_publication_session().unwrap();
     let projection_digest = SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap();
     for (generation, dimension, expected_failure) in [
         ("vector-dimension-max", 65_536, None),
@@ -941,7 +886,7 @@ fn enabled_vector_dimension_matches_the_artifact_contract_boundary() {
             Some(SearchPublicationFailure::InvalidDescriptor),
         ),
     ] {
-        store
+        session
             .begin_search_publication(&SearchPublicationDraft {
                 generation: generation.to_string(),
                 base_generation: None,
@@ -971,7 +916,7 @@ fn enabled_vector_dimension_matches_the_artifact_contract_boundary() {
                 format!("vector:{generation}").as_bytes(),
             ),
         });
-        let result = store.validate_search_publication(&SearchPublicationValidation {
+        let result = session.validate_search_publication(&SearchPublicationValidation {
             generation,
             fulltext: &fulltext,
             vector: &vector,
@@ -983,13 +928,18 @@ fn enabled_vector_dimension_matches_the_artifact_contract_boundary() {
                 .and_then(|error| error.search_publication_failure()),
             expected_failure
         );
+        session
+            .abandon_search_publication(generation, now(1_800_020_012))
+            .unwrap();
     }
 }
 
 #[test]
 fn enabled_vector_coverage_is_an_exact_projection_subset() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
+    let session = store.wait_for_search_publication_session().unwrap();
+    let migration_barrier =
+        support::acquire_migration_rebuild_barrier_owned(&store, now(1_799_999_999));
     let document_a = document("vector-coverage-a");
     let revision_a = revision(&document_a, b"vector coverage source A");
     let version_a = version(&document_a, &revision_a, "vector coverage normalized A");
@@ -1027,7 +977,7 @@ fn enabled_vector_coverage_is_an_exact_projection_subset() {
         now: now(1_800_020_005),
     };
     assert_eq!(
-        store.begin_search_publication(&draft).unwrap(),
+        session.begin_search_publication(&draft).unwrap(),
         SearchPublicationOutcome::Applied
     );
     let fulltext = FullTextSnapshotDescriptor::new(
@@ -1048,7 +998,7 @@ fn enabled_vector_coverage_is_an_exact_projection_subset() {
         resume_version_count: 1,
         logical_content_digest: ContentDigest::from_bytes(b"vector-coverage-vector"),
     });
-    store
+    session
         .validate_search_publication(&SearchPublicationValidation {
             generation: &draft.generation,
             fulltext: &fulltext,
@@ -1062,27 +1012,45 @@ fn enabled_vector_coverage_is_an_exact_projection_subset() {
     };
     let terminal_documents = terminal_updates_for(&store, &projections);
     assert_eq!(
-        store
-            .commit_search_publication(&SearchPublicationCommit {
-                generation: &draft.generation,
-                terminal_documents: &terminal_documents,
-                projections: &projections,
-                vector_coverage: &[invalid_coverage],
-                now: now(1_800_020_007),
-            })
+        session
+            .commit_migration_rebuild_search_publication(
+                &SearchPublicationCommit {
+                    generation: &draft.generation,
+                    terminal_documents: &terminal_documents,
+                    projections: &projections,
+                    projected_documents: &support::projected_documents_for_commit(
+                        &store,
+                        &projections,
+                        &terminal_documents,
+                        now(1_800_020_007),
+                    ),
+                    vector_coverage: &[invalid_coverage],
+                    now: now(1_800_020_007),
+                },
+                &migration_barrier,
+            )
             .unwrap_err()
             .search_publication_failure(),
         Some(SearchPublicationFailure::VectorCoverageMismatch)
     );
     assert_eq!(
-        store
-            .commit_search_publication(&SearchPublicationCommit {
-                generation: &draft.generation,
-                terminal_documents: &terminal_documents,
-                projections: &projections,
-                vector_coverage: std::slice::from_ref(&projection_a),
-                now: now(1_800_020_008),
-            })
+        session
+            .commit_migration_rebuild_search_publication(
+                &SearchPublicationCommit {
+                    generation: &draft.generation,
+                    terminal_documents: &terminal_documents,
+                    projections: &projections,
+                    projected_documents: &support::projected_documents_for_commit(
+                        &store,
+                        &projections,
+                        &terminal_documents,
+                        now(1_800_020_008),
+                    ),
+                    vector_coverage: std::slice::from_ref(&projection_a),
+                    now: now(1_800_020_008),
+                },
+                &migration_barrier,
+            )
             .unwrap(),
         SearchPublicationOutcome::Applied
     );
@@ -1099,8 +1067,8 @@ fn enabled_vector_coverage_is_an_exact_projection_subset() {
 
 #[test]
 fn terminal_document_state_must_match_projection_membership() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
+    let session = store.wait_for_search_publication_session().unwrap();
     let projected_document = document("terminal-projected");
     let projected_version =
         ResumeVersionId::from_non_secret_parts(&["s807", "terminal-projected-version"]);
@@ -1116,11 +1084,14 @@ fn terminal_document_state_must_match_projection_membership() {
         terminal_status: DocumentStatus::FailedPermanent,
         terminal_is_deleted: false,
     };
-    let error = store
+    let error = session
         .commit_search_publication(&SearchPublicationCommit {
             generation: "terminal-shape-projected",
             terminal_documents: &[projected_but_not_searchable],
             projections: std::slice::from_ref(&projection),
+            projected_documents: &[ProjectedDocumentSnapshot::RetainedUnchanged {
+                projection: projection.clone(),
+            }],
             vector_coverage: &[],
             now: now(1_800_020_002),
         })
@@ -1138,11 +1109,14 @@ fn terminal_document_state_must_match_projection_membership() {
         terminal_status: DocumentStatus::Searchable,
         terminal_is_deleted: false,
     };
-    let error = store
+    let error = session
         .commit_search_publication(&SearchPublicationCommit {
             generation: "terminal-shape-unprojected",
             terminal_documents: &[unprojected_searchable],
             projections: std::slice::from_ref(&projection),
+            projected_documents: &[ProjectedDocumentSnapshot::RetainedUnchanged {
+                projection: projection.clone(),
+            }],
             vector_coverage: &[],
             now: now(1_800_020_003),
         })
@@ -1166,11 +1140,12 @@ fn terminal_document_state_must_match_projection_membership() {
             terminal_is_deleted: false,
         };
         assert_eq!(
-            store
+            session
                 .commit_search_publication(&SearchPublicationCommit {
                     generation: "terminal-shape-unstable",
                     terminal_documents: &[unstable_removal],
                     projections: &[],
+                    projected_documents: &[],
                     vector_coverage: &[],
                     now: now(1_800_020_004),
                 })
@@ -1183,8 +1158,9 @@ fn terminal_document_state_must_match_projection_membership() {
 
 #[test]
 fn projection_transition_requires_exact_terminal_updates() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
+    let migration_barrier =
+        support::acquire_migration_rebuild_barrier_owned(&store, now(1_799_999_999));
     let document_a = document("projection-transition-a");
     let revision_a1 = revision(&document_a, b"projection transition A1");
     let version_a1 = version(&document_a, &revision_a1, "projection transition A1");
@@ -1194,7 +1170,7 @@ fn projection_transition_requires_exact_terminal_updates() {
         resume_version_id: version_a1.id,
     };
 
-    prepare_publication(
+    let session = prepare_publication(
         &store,
         "transition-generation-1",
         None,
@@ -1203,36 +1179,56 @@ fn projection_transition_requires_exact_terminal_updates() {
         std::slice::from_ref(&projection_a1),
     );
     assert_eq!(
-        store
-            .commit_search_publication(&SearchPublicationCommit {
-                generation: "transition-generation-1",
-                terminal_documents: &[],
-                projections: std::slice::from_ref(&projection_a1),
-                vector_coverage: &[],
-                now: now(1_800_020_101),
-            })
+        session
+            .commit_migration_rebuild_search_publication(
+                &SearchPublicationCommit {
+                    generation: "transition-generation-1",
+                    terminal_documents: &[],
+                    projections: std::slice::from_ref(&projection_a1),
+                    projected_documents: &support::projected_documents_for_commit(
+                        &store,
+                        std::slice::from_ref(&projection_a1),
+                        &[],
+                        now(1_800_020_101),
+                    ),
+                    vector_coverage: &[],
+                    now: now(1_800_020_101),
+                },
+                &migration_barrier,
+            )
             .unwrap_err()
             .search_publication_failure(),
         Some(SearchPublicationFailure::InvalidProjectionTransition)
     );
     let activation = terminal_updates_for(&store, std::slice::from_ref(&projection_a1));
     assert_eq!(
-        store
-            .commit_search_publication(&SearchPublicationCommit {
-                generation: "transition-generation-1",
-                terminal_documents: &activation,
-                projections: std::slice::from_ref(&projection_a1),
-                vector_coverage: &[],
-                now: now(1_800_020_102),
-            })
+        session
+            .commit_migration_rebuild_search_publication(
+                &SearchPublicationCommit {
+                    generation: "transition-generation-1",
+                    terminal_documents: &activation,
+                    projections: std::slice::from_ref(&projection_a1),
+                    projected_documents: &support::projected_documents_for_commit(
+                        &store,
+                        std::slice::from_ref(&projection_a1),
+                        &activation,
+                        now(1_800_020_102),
+                    ),
+                    vector_coverage: &[],
+                    now: now(1_800_020_102),
+                },
+                &migration_barrier,
+            )
             .unwrap(),
         SearchPublicationOutcome::Applied
     );
+    drop(session);
 
     let revision_a2 = revision(&document_a, b"projection transition A2");
     let version_a2 = version(&document_a, &revision_a2, "projection transition A2");
     let mut staged_a2 = document_a.clone();
     staged_a2.content_hash = Some(revision_a2.content_hash.as_str().to_string());
+    staged_a2.byte_size = revision_a2.byte_size;
     staged_a2.status = DocumentStatus::FieldsExtracted;
     store.upsert_document(&staged_a2).unwrap();
     store.insert_source_revision(&revision_a2).unwrap();
@@ -1242,7 +1238,7 @@ fn projection_transition_requires_exact_terminal_updates() {
         document_id: document_a.id.clone(),
         resume_version_id: version_a2.id,
     };
-    prepare_publication(
+    let session = prepare_publication(
         &store,
         "transition-generation-2",
         Some("transition-generation-1"),
@@ -1251,11 +1247,17 @@ fn projection_transition_requires_exact_terminal_updates() {
         std::slice::from_ref(&projection_a2),
     );
     assert_eq!(
-        store
+        session
             .commit_search_publication(&SearchPublicationCommit {
                 generation: "transition-generation-2",
                 terminal_documents: &[],
                 projections: std::slice::from_ref(&projection_a2),
+                projected_documents: &support::projected_documents_for_commit(
+                    &store,
+                    std::slice::from_ref(&projection_a2),
+                    &[],
+                    now(1_800_020_103),
+                ),
                 vector_coverage: &[],
                 now: now(1_800_020_103),
             })
@@ -1265,19 +1267,26 @@ fn projection_transition_requires_exact_terminal_updates() {
     );
     let replacement = terminal_updates_for(&store, std::slice::from_ref(&projection_a2));
     assert_eq!(
-        store
+        session
             .commit_search_publication(&SearchPublicationCommit {
                 generation: "transition-generation-2",
                 terminal_documents: &replacement,
                 projections: std::slice::from_ref(&projection_a2),
+                projected_documents: &support::projected_documents_for_commit(
+                    &store,
+                    std::slice::from_ref(&projection_a2),
+                    &replacement,
+                    now(1_800_020_104),
+                ),
                 vector_coverage: &[],
                 now: now(1_800_020_104),
             })
             .unwrap(),
         SearchPublicationOutcome::Applied
     );
+    drop(session);
 
-    prepare_publication(
+    let session = prepare_publication(
         &store,
         "transition-generation-3",
         Some("transition-generation-2"),
@@ -1294,11 +1303,17 @@ fn projection_transition_requires_exact_terminal_updates() {
         terminal_is_deleted: false,
     };
     assert_eq!(
-        store
+        session
             .commit_search_publication(&SearchPublicationCommit {
                 generation: "transition-generation-3",
-                terminal_documents: &[retained_terminal],
+                terminal_documents: std::slice::from_ref(&retained_terminal),
                 projections: std::slice::from_ref(&projection_a2),
+                projected_documents: &support::projected_documents_for_commit(
+                    &store,
+                    std::slice::from_ref(&projection_a2),
+                    std::slice::from_ref(&retained_terminal),
+                    now(1_800_020_105),
+                ),
                 vector_coverage: &[],
                 now: now(1_800_020_105),
             })
@@ -1307,19 +1322,26 @@ fn projection_transition_requires_exact_terminal_updates() {
         Some(SearchPublicationFailure::InvalidProjectionTransition)
     );
     assert_eq!(
-        store
+        session
             .commit_search_publication(&SearchPublicationCommit {
                 generation: "transition-generation-3",
                 terminal_documents: &[],
                 projections: std::slice::from_ref(&projection_a2),
+                projected_documents: &support::projected_documents_for_commit(
+                    &store,
+                    std::slice::from_ref(&projection_a2),
+                    &[],
+                    now(1_800_020_106),
+                ),
                 vector_coverage: &[],
                 now: now(1_800_020_106),
             })
             .unwrap(),
         SearchPublicationOutcome::Applied
     );
+    drop(session);
 
-    prepare_publication(
+    let session = prepare_publication(
         &store,
         "transition-generation-4",
         Some("transition-generation-3"),
@@ -1328,11 +1350,12 @@ fn projection_transition_requires_exact_terminal_updates() {
         &[],
     );
     assert_eq!(
-        store
+        session
             .commit_search_publication(&SearchPublicationCommit {
                 generation: "transition-generation-4",
                 terminal_documents: &[],
                 projections: &[],
+                projected_documents: &[],
                 vector_coverage: &[],
                 now: now(1_800_020_107),
             })
@@ -1353,23 +1376,25 @@ fn projection_transition_requires_exact_terminal_updates() {
         terminal_is_deleted: false,
     };
     assert_eq!(
-        store
+        session
             .commit_search_publication(&SearchPublicationCommit {
                 generation: "transition-generation-4",
                 terminal_documents: &[removal],
                 projections: &[],
+                projected_documents: &[],
                 vector_coverage: &[],
                 now: now(1_800_020_108),
             })
             .unwrap(),
         SearchPublicationOutcome::Applied
     );
+    drop(session);
 
     let document_b = document("projection-transition-b");
     let revision_b = revision(&document_b, b"projection transition B");
     let version_b = version(&document_b, &revision_b, "projection transition B");
     seed_version(&store, &document_b, &revision_b, &version_b);
-    prepare_publication(
+    let session = prepare_publication(
         &store,
         "transition-generation-5",
         Some("transition-generation-4"),
@@ -1386,11 +1411,12 @@ fn projection_transition_requires_exact_terminal_updates() {
         terminal_is_deleted: false,
     };
     assert_eq!(
-        store
+        session
             .commit_search_publication(&SearchPublicationCommit {
                 generation: "transition-generation-5",
                 terminal_documents: &[never_active_terminal],
                 projections: &[],
+                projected_documents: &[],
                 vector_coverage: &[],
                 now: now(1_800_020_109),
             })
@@ -1409,9 +1435,7 @@ fn projection_transition_requires_exact_terminal_updates() {
 
 #[test]
 fn confirmed_deletion_is_only_published_by_atomic_cas() {
-    let path = temporary_database_path("atomic-delete");
-    let store = MetaStore::open(&path).unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let document = document("atomic-delete");
     let revision = revision(&document, b"atomic delete source");
     let version = version(&document, &revision, "atomic delete normalized");
@@ -1443,31 +1467,6 @@ fn confirmed_deletion_is_only_published_by_atomic_cas() {
         std::slice::from_ref(&document),
         std::slice::from_ref(&projection),
     );
-    let raw = Connection::open(&path).unwrap();
-    raw.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
-    assert!(raw
-        .execute(
-            "DELETE FROM resume_version_seal WHERE resume_version_id = ?1",
-            params![version.id.as_str()],
-        )
-        .is_err());
-    raw.execute(
-        "UPDATE document SET is_deleted = 1, status = 'deleted' WHERE id = ?1",
-        params![document.id.as_str()],
-    )
-    .unwrap();
-    drop(raw);
-    assert_eq!(
-        store.purge_deleted_documents().unwrap_err().class(),
-        MetaStoreErrorClass::InvalidTransition
-    );
-    let raw = Connection::open(&path).unwrap();
-    raw.execute(
-        "UPDATE document SET is_deleted = 0, status = 'searchable' WHERE id = ?1",
-        params![document.id.as_str()],
-    )
-    .unwrap();
-    drop(raw);
     let selection = SearchSelection {
         document_id: document.id.clone(),
         resume_version_id: version.id,
@@ -1495,7 +1494,7 @@ fn confirmed_deletion_is_only_published_by_atomic_cas() {
         SearchSelectionResolution::Current { .. }
     ));
 
-    prepare_publication(
+    let session = prepare_publication(
         &store,
         "atomic-delete-generation-2",
         Some("atomic-delete-generation-1"),
@@ -1512,11 +1511,12 @@ fn confirmed_deletion_is_only_published_by_atomic_cas() {
         terminal_is_deleted: true,
     };
     assert_eq!(
-        store
+        session
             .commit_search_publication(&SearchPublicationCommit {
                 generation: "atomic-delete-generation-2",
                 terminal_documents: &[deletion],
                 projections: &[],
+                projected_documents: &[],
                 vector_coverage: &[],
                 now: now(1_800_020_010),
             })
@@ -1548,33 +1548,11 @@ fn confirmed_deletion_is_only_published_by_atomic_cas() {
         .entity_mentions_for_version(&selection.resume_version_id)
         .unwrap()
         .is_empty());
-
-    let raw = Connection::open(&path).unwrap();
-    let remaining_private_rows = raw
-        .query_row(
-            "SELECT
-                (SELECT COUNT(*) FROM resume_version
-                 WHERE raw_text IS NOT NULL OR clean_text IS NOT NULL)
-              + (SELECT COUNT(*) FROM entity_mention)
-              + (SELECT COUNT(*) FROM resume_version_seal)
-              + (SELECT COUNT(*) FROM source_revision)",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap();
-    assert_eq!(remaining_private_rows, 0);
-    drop(raw);
-    drop(store);
-    let _ = fs::remove_file(&path);
-    let _ = fs::remove_file(PathBuf::from(format!("{}-wal", path.display())));
-    let _ = fs::remove_file(PathBuf::from(format!("{}-shm", path.display())));
 }
 
 #[test]
 fn deletion_upsert_rechecks_projection_after_a_competing_writer() {
-    let path = temporary_database_path("delete-upsert-race");
-    let store = MetaStore::open(&path).unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let document = document("delete-upsert-race");
     let revision = revision(&document, b"delete upsert race source");
     let version = version(&document, &revision, "delete upsert race normalized");
@@ -1583,37 +1561,25 @@ fn deletion_upsert_rechecks_projection_after_a_competing_writer() {
         document_id: document.id.clone(),
         resume_version_id: version.id,
     };
-    prepare_publication(
+    let _publication_session = prepare_publication(
         &store,
-        "delete-upsert-race-generation",
+        "synthetic-delete-upsert-race-generation",
         None,
         0,
         resume_classifier::CLASSIFIER_EPOCH,
         std::slice::from_ref(&projection),
     );
-    let contender = MetaStore::open(&path).unwrap();
+    let contender = store.open_sibling().unwrap();
     let mut deletion = store.document_by_id(&document.id).unwrap().unwrap();
     deletion.is_deleted = true;
     deletion.status = DocumentStatus::Deleted;
 
-    let raw = Connection::open(&path).unwrap();
-    raw.execute_batch("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE;")
-        .unwrap();
-    raw.execute(
-        "INSERT INTO search_publication_commit_guard (state_key, generation)
-         VALUES ('default', 'delete-upsert-race-generation')",
-        [],
-    )
-    .unwrap();
-    raw.execute(
-        "INSERT INTO active_search_projection (
-            document_id, resume_version_id, generation
-         ) VALUES (?1, ?2, ?3)",
-        params![
-            projection.document_id.as_str(),
-            projection.resume_version_id.as_str(),
-            "delete-upsert-race-generation",
-        ],
+    let held_writer = begin_owned_store_write_race(
+        &store,
+        OwnedStoreWriteRace::StageSyntheticProjectionCommit {
+            projection: projection.clone(),
+            generation: "synthetic-delete-upsert-race-generation".to_string(),
+        },
     )
     .unwrap();
 
@@ -1625,7 +1591,7 @@ fn deletion_upsert_rechecks_projection_after_a_competing_writer() {
     started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     thread::sleep(Duration::from_millis(100));
     assert!(!deletion_thread.is_finished());
-    raw.execute_batch("COMMIT;").unwrap();
+    held_writer.commit().unwrap();
 
     assert_eq!(
         deletion_thread.join().unwrap().unwrap_err().class(),
@@ -1634,35 +1600,23 @@ fn deletion_upsert_rechecks_projection_after_a_competing_writer() {
     let persisted = store.document_by_id(&document.id).unwrap().unwrap();
     assert!(!persisted.is_deleted);
     assert_ne!(persisted.status, DocumentStatus::Deleted);
-
-    drop(raw);
-    drop(store);
-    let _ = fs::remove_file(&path);
-    let _ = fs::remove_file(PathBuf::from(format!("{}-wal", path.display())));
-    let _ = fs::remove_file(PathBuf::from(format!("{}-shm", path.display())));
 }
 
 #[test]
 fn purge_reads_tombstones_after_acquiring_the_writer_lock() {
-    let path = temporary_database_path("purge-restore-race");
-    let store = MetaStore::open(&path).unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let document = document("purge-restore-race");
     store.upsert_document(&document).unwrap();
     let mut tombstone = document.clone();
     tombstone.is_deleted = true;
     tombstone.status = DocumentStatus::Deleted;
     store.upsert_document(&tombstone).unwrap();
-    let contender = MetaStore::open(&path).unwrap();
-
-    let raw = Connection::open(&path).unwrap();
-    raw.execute_batch("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE;")
-        .unwrap();
-    raw.execute(
-        "UPDATE document
-         SET is_deleted = 0, status = 'discovered'
-         WHERE id = ?1",
-        params![document.id.as_str()],
+    let contender = store.open_sibling().unwrap();
+    let held_writer = begin_owned_store_write_race(
+        &store,
+        OwnedStoreWriteRace::RestoreSyntheticDocument {
+            document_id: document.id.clone(),
+        },
     )
     .unwrap();
 
@@ -1674,24 +1628,19 @@ fn purge_reads_tombstones_after_acquiring_the_writer_lock() {
     started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     thread::sleep(Duration::from_millis(100));
     assert!(!purge_thread.is_finished());
-    raw.execute_batch("COMMIT;").unwrap();
+    held_writer.commit().unwrap();
 
     assert_eq!(purge_thread.join().unwrap().unwrap().deleted_documents, 0);
     let restored = store.document_by_id(&document.id).unwrap().unwrap();
     assert!(!restored.is_deleted);
     assert_eq!(restored.status, DocumentStatus::Discovered);
-
-    drop(raw);
-    drop(store);
-    let _ = fs::remove_file(&path);
-    let _ = fs::remove_file(PathBuf::from(format!("{}-wal", path.display())));
-    let _ = fs::remove_file(PathBuf::from(format!("{}-shm", path.display())));
 }
 
 #[test]
 fn failed_terminal_update_rolls_back_in_cas_seal_and_head() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
+    let migration_barrier =
+        support::acquire_migration_rebuild_barrier_owned(&store, now(1_799_999_999));
     let document = document("terminal-cas-rollback");
     let revision = revision(&document, b"terminal source");
     let version = version(&document, &revision, "terminal normalized");
@@ -1700,7 +1649,7 @@ fn failed_terminal_update_rolls_back_in_cas_seal_and_head() {
         document_id: document.id.clone(),
         resume_version_id: version.id.clone(),
     };
-    prepare_publication(
+    let session = prepare_publication(
         &store,
         "terminal-cas-rollback",
         None,
@@ -1716,14 +1665,23 @@ fn failed_terminal_update_rolls_back_in_cas_seal_and_head() {
         terminal_status: DocumentStatus::Searchable,
         terminal_is_deleted: false,
     };
-    let error = store
-        .commit_search_publication(&SearchPublicationCommit {
-            generation: "terminal-cas-rollback",
-            terminal_documents: &[invalid_update],
-            projections: std::slice::from_ref(&projection),
-            vector_coverage: &[],
-            now: now(1_800_020_010),
-        })
+    let error = session
+        .commit_migration_rebuild_search_publication(
+            &SearchPublicationCommit {
+                generation: "terminal-cas-rollback",
+                terminal_documents: std::slice::from_ref(&invalid_update),
+                projections: std::slice::from_ref(&projection),
+                projected_documents: &support::projected_documents_for_commit(
+                    &store,
+                    std::slice::from_ref(&projection),
+                    std::slice::from_ref(&invalid_update),
+                    now(1_800_020_010),
+                ),
+                vector_coverage: &[],
+                now: now(1_800_020_010),
+            },
+            &migration_barrier,
+        )
         .unwrap_err();
     assert_eq!(
         error.search_publication_failure(),
@@ -1755,10 +1713,8 @@ fn failed_terminal_update_rolls_back_in_cas_seal_and_head() {
 
 #[test]
 fn metadata_snapshot_remains_all_old_while_writer_commits_new_head() {
-    let path = temporary_database_path("snapshot-isolation");
-    let reader = MetaStore::open(&path).unwrap();
-    reader.run_migrations().unwrap();
-    let writer = MetaStore::open(&path).unwrap();
+    let (_directory, reader) = owned_store();
+    let writer = reader.open_sibling().unwrap();
     let document = document("snapshot-isolation");
     let revision = revision(&document, b"snapshot source");
     let version = version(&document, &revision, "snapshot normalized");
@@ -1775,30 +1731,47 @@ fn metadata_snapshot_remains_all_old_while_writer_commits_new_head() {
         std::slice::from_ref(&document),
         std::slice::from_ref(&projection),
     );
-    prepare_publication(
-        &writer,
-        "snapshot-generation-2",
-        Some("snapshot-generation-1"),
-        1,
-        resume_classifier::CLASSIFIER_EPOCH,
-        std::slice::from_ref(&projection),
-    );
+    let commit_projection = projection.clone();
+    let prepared_projection = projection.clone();
+    let (prepared_tx, prepared_rx) = mpsc::channel();
+    let (commit_tx, commit_rx) = mpsc::channel();
+    let (finished_tx, finished_rx) = mpsc::channel();
+    let writer_thread = thread::spawn(move || {
+        let session = prepare_publication(
+            &writer,
+            "snapshot-generation-2",
+            Some("snapshot-generation-1"),
+            1,
+            resume_classifier::CLASSIFIER_EPOCH,
+            std::slice::from_ref(&prepared_projection),
+        );
+        prepared_tx.send(()).unwrap();
+        commit_rx.recv().unwrap();
+        let result = session.commit_search_publication(&SearchPublicationCommit {
+            generation: "snapshot-generation-2",
+            terminal_documents: &[],
+            projections: std::slice::from_ref(&commit_projection),
+            projected_documents: &support::projected_documents_for_commit(
+                &writer,
+                std::slice::from_ref(&commit_projection),
+                &[],
+                now(1_800_020_020),
+            ),
+            vector_coverage: &[],
+            now: now(1_800_020_020),
+        });
+        finished_tx.send(()).unwrap();
+        result
+    });
+    prepared_rx.recv_timeout(Duration::from_secs(1)).unwrap();
 
     let observed = reader
         .with_search_metadata_snapshot(|snapshot| {
             assert_eq!(snapshot.head().generation, "snapshot-generation-1");
-            assert_eq!(
-                writer
-                    .commit_search_publication(&SearchPublicationCommit {
-                        generation: "snapshot-generation-2",
-                        terminal_documents: &[],
-                        projections: std::slice::from_ref(&projection),
-                        vector_coverage: &[],
-                        now: now(1_800_020_020),
-                    })
-                    .unwrap(),
-                SearchPublicationOutcome::Applied
-            );
+            commit_tx.send(()).unwrap();
+            assert!(finished_rx
+                .recv_timeout(Duration::from_millis(100))
+                .is_err());
             Ok::<_, ()>((
                 snapshot.head().generation.clone(),
                 snapshot
@@ -1811,6 +1784,10 @@ fn metadata_snapshot_remains_all_old_while_writer_commits_new_head() {
     assert_eq!(observed.0, "snapshot-generation-1");
     assert_eq!(observed.1, projection);
     assert_eq!(
+        writer_thread.join().unwrap().unwrap(),
+        SearchPublicationOutcome::Applied
+    );
+    assert_eq!(
         reader
             .search_projection_state()
             .unwrap()
@@ -1818,17 +1795,11 @@ fn metadata_snapshot_remains_all_old_while_writer_commits_new_head() {
             .as_deref(),
         Some("snapshot-generation-2")
     );
-    drop(writer);
-    drop(reader);
-    let _ = fs::remove_file(&path);
-    let _ = fs::remove_file(PathBuf::from(format!("{}-wal", path.display())));
-    let _ = fs::remove_file(PathBuf::from(format!("{}-shm", path.display())));
 }
 
 #[test]
 fn unrelated_publication_preserves_a_staging_documents_old_projection() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let document_a = document("staging-retained-a");
     let revision_a1 = revision(&document_a, b"retained source A1");
     let version_a1 = version(&document_a, &revision_a1, "retained normalized A1");
@@ -1850,6 +1821,7 @@ fn unrelated_publication_preserves_a_staging_documents_old_projection() {
     let version_a2 = version(&document_a, &revision_a2, "retained normalized A2");
     let mut staging_a = document_a.clone();
     staging_a.content_hash = Some(revision_a2.content_hash.as_str().to_string());
+    staging_a.byte_size = revision_a2.byte_size;
     staging_a.status = DocumentStatus::FieldsExtracted;
     store.upsert_document(&staging_a).unwrap();
     store.insert_source_revision(&revision_a2).unwrap();
@@ -1865,7 +1837,7 @@ fn unrelated_publication_preserves_a_staging_documents_old_projection() {
         resume_version_id: version_b.id,
     };
     let projections = [projection_a1.clone(), projection_b.clone()];
-    prepare_publication(
+    let session = prepare_publication(
         &store,
         "retained-generation-2",
         Some("retained-generation-1"),
@@ -1882,11 +1854,17 @@ fn unrelated_publication_preserves_a_staging_documents_old_projection() {
         terminal_is_deleted: false,
     };
     assert_eq!(
-        store
+        session
             .commit_search_publication(&SearchPublicationCommit {
                 generation: "retained-generation-2",
-                terminal_documents: &[invalid_retained_terminal],
+                terminal_documents: std::slice::from_ref(&invalid_retained_terminal),
                 projections: &projections,
+                projected_documents: &support::projected_documents_for_commit(
+                    &store,
+                    &projections,
+                    std::slice::from_ref(&invalid_retained_terminal),
+                    now(1_800_020_029),
+                ),
                 vector_coverage: &[],
                 now: now(1_800_020_029),
             })
@@ -1896,11 +1874,17 @@ fn unrelated_publication_preserves_a_staging_documents_old_projection() {
     );
     let terminal_b = terminal_updates_for(&store, std::slice::from_ref(&projection_b));
     assert_eq!(
-        store
+        session
             .commit_search_publication(&SearchPublicationCommit {
                 generation: "retained-generation-2",
                 terminal_documents: &terminal_b,
                 projections: &projections,
+                projected_documents: &support::projected_documents_for_commit(
+                    &store,
+                    &projections,
+                    &terminal_b,
+                    now(1_800_020_030),
+                ),
                 vector_coverage: &[],
                 now: now(1_800_020_030),
             })
@@ -1931,13 +1915,284 @@ fn unrelated_publication_preserves_a_staging_documents_old_projection() {
 }
 
 #[test]
-fn v27_identity_and_derived_rows_are_insert_once() {
-    let store = MetaStore::open_in_memory().unwrap();
+fn immutable_stage_metadata_is_query_invisible_until_exact_publication_cas() {
+    let (_directory, store) = owned_store();
+    let document_a = document("projection-metadata-stage");
+    let revision_a = revision(&document_a, b"projection metadata source A");
+    let version_a = version(&document_a, &revision_a, "projection metadata normalized A");
+    seed_version(&store, &document_a, &revision_a, &version_a);
+    let projection_a = ActiveSearchProjection {
+        document_id: document_a.id.clone(),
+        resume_version_id: version_a.id.clone(),
+    };
     assert_eq!(
-        store.run_migrations().unwrap().applied_versions().last(),
-        Some(&27)
+        publish(
+            &store,
+            "projection-metadata-generation-a",
+            None,
+            0,
+            std::slice::from_ref(&document_a),
+            std::slice::from_ref(&projection_a),
+        ),
+        SearchPublicationOutcome::Applied
     );
-    assert_eq!(store.schema_version().unwrap(), 27);
+    let published_a = hydrated_document(&store, &projection_a);
+    assert_eq!(published_a.status, DocumentStatus::Searchable);
+    assert_eq!(
+        published_a.content_hash.as_deref(),
+        Some(revision_a.content_hash.as_str())
+    );
+
+    let revision_b = revision(&document_a, b"projection metadata source B");
+    let version_b = version(&document_a, &revision_b, "projection metadata normalized B");
+    let mut staged_b = document_a.clone();
+    staged_b.source_uri = "synthetic://s807/projection-metadata-stage-b".to_string();
+    staged_b.normalized_path = "synthetic/s807/projection-metadata-stage-b.pdf".to_string();
+    staged_b.file_name = "projection-metadata-stage-b.pdf".to_string();
+    staged_b.extension = FileExtension::Pdf;
+    staged_b.byte_size = revision_b.byte_size;
+    staged_b.mtime = now(1_800_030_001);
+    staged_b.content_hash = Some(revision_b.content_hash.as_str().to_string());
+    staged_b.text_hash = Some(version_b.normalized_text_hash.as_str().to_string());
+    staged_b.updated_at = now(1_800_030_001);
+    staged_b.status = DocumentStatus::FieldsExtracted;
+    let classification_b = ResumeVersionClassification {
+        resume_version_id: version_b.id.clone(),
+        status: ClassificationStatus::ResumeCandidate,
+        classifier_epoch: resume_classifier::CLASSIFIER_EPOCH.to_string(),
+        reason_codes: vec![ReasonCode::CorroboratedResumeSignals],
+        classified_at: now(1_800_030_002),
+        review_disposition: ReviewDisposition::NotRequired,
+    };
+    store
+        .stage_immutable_ingest(ImmutableIngestStage::ClassifiedResume {
+            document: &staged_b,
+            source_revision: &revision_b,
+            version: &version_b,
+            classification: &classification_b,
+            mentions: &[],
+            email_hash: None,
+            phone_hash: None,
+        })
+        .unwrap();
+
+    assert_eq!(hydrated_document(&store, &projection_a), published_a);
+
+    let projection_b = ActiveSearchProjection {
+        document_id: document_a.id.clone(),
+        resume_version_id: version_b.id.clone(),
+    };
+    let session = prepare_publication(
+        &store,
+        "projection-metadata-generation-b",
+        Some("projection-metadata-generation-a"),
+        1,
+        resume_classifier::CLASSIFIER_EPOCH,
+        std::slice::from_ref(&projection_b),
+    );
+    let invalid_terminal = TerminalDocumentUpdate {
+        document_id: document_a.id.clone(),
+        expected_status: DocumentStatus::FieldsExtracted,
+        expected_is_deleted: false,
+        expected_content_hash: revision_a.content_hash.clone(),
+        terminal_status: DocumentStatus::Searchable,
+        terminal_is_deleted: false,
+    };
+    assert_eq!(
+        session
+            .commit_search_publication(&SearchPublicationCommit {
+                generation: "projection-metadata-generation-b",
+                terminal_documents: std::slice::from_ref(&invalid_terminal),
+                projections: std::slice::from_ref(&projection_b),
+                projected_documents: &support::projected_documents_for_commit(
+                    &store,
+                    std::slice::from_ref(&projection_b),
+                    std::slice::from_ref(&invalid_terminal),
+                    now(1_800_030_003),
+                ),
+                vector_coverage: &[],
+                now: now(1_800_030_003),
+            })
+            .unwrap_err()
+            .search_publication_failure(),
+        Some(SearchPublicationFailure::InvalidDocumentState)
+    );
+    assert_eq!(hydrated_document(&store, &projection_a), published_a);
+
+    let terminal_b = terminal_updates_for(&store, std::slice::from_ref(&projection_b));
+    assert_eq!(
+        session
+            .commit_search_publication(&SearchPublicationCommit {
+                generation: "projection-metadata-generation-b",
+                terminal_documents: &terminal_b,
+                projections: std::slice::from_ref(&projection_b),
+                projected_documents: &support::projected_documents_for_commit(
+                    &store,
+                    std::slice::from_ref(&projection_b),
+                    &terminal_b,
+                    now(1_800_030_004),
+                ),
+                vector_coverage: &[],
+                now: now(1_800_030_004),
+            })
+            .unwrap(),
+        SearchPublicationOutcome::Applied
+    );
+
+    assert_eq!(
+        resolve_in_snapshot(
+            &store,
+            &SearchSelection {
+                document_id: projection_a.document_id.clone(),
+                resume_version_id: projection_a.resume_version_id.clone(),
+                visible_epoch: 1,
+            },
+        ),
+        SearchSelectionResolution::Stale
+    );
+    let published_b = hydrated_document(&store, &projection_b);
+    assert_eq!(published_b.source_uri, staged_b.source_uri);
+    assert_eq!(published_b.normalized_path, staged_b.normalized_path);
+    assert_eq!(published_b.file_name, staged_b.file_name);
+    assert_eq!(published_b.extension, staged_b.extension);
+    assert_eq!(published_b.byte_size, staged_b.byte_size);
+    assert_eq!(published_b.mtime, staged_b.mtime);
+    assert_eq!(published_b.content_hash, staged_b.content_hash);
+    assert_eq!(published_b.text_hash, staged_b.text_hash);
+    assert_eq!(published_b.status, DocumentStatus::Searchable);
+}
+
+#[test]
+fn same_version_metadata_change_requires_exact_snapshot_and_advances_head_atomically() {
+    let (_directory, store) = owned_store();
+    let document = document("same-version-metadata");
+    let revision = revision(&document, b"same version metadata source");
+    let version = version(&document, &revision, "same version metadata text");
+    seed_version(&store, &document, &revision, &version);
+    let projection = ActiveSearchProjection {
+        document_id: document.id.clone(),
+        resume_version_id: version.id.clone(),
+    };
+    assert_eq!(
+        publish(
+            &store,
+            "same-version-metadata-a",
+            None,
+            0,
+            std::slice::from_ref(&document),
+            std::slice::from_ref(&projection),
+        ),
+        SearchPublicationOutcome::Applied
+    );
+    let published = hydrated_document(&store, &projection);
+
+    let mut renamed = published.clone();
+    renamed.source_uri = "synthetic://s807/same-version-renamed.txt".to_string();
+    renamed.normalized_path = "synthetic/s807/same-version-renamed.txt".to_string();
+    renamed.file_name = "same-version-renamed.txt".to_string();
+    renamed.mtime = now(1_800_030_101);
+    renamed.updated_at = now(1_800_030_101);
+    store.upsert_document(&renamed).unwrap();
+    assert_eq!(hydrated_document(&store, &projection), published);
+
+    let session = prepare_publication(
+        &store,
+        "same-version-metadata-b",
+        Some("same-version-metadata-a"),
+        1,
+        resume_classifier::CLASSIFIER_EPOCH,
+        std::slice::from_ref(&projection),
+    );
+    let mut mismatched = renamed.clone();
+    mismatched.file_name = "not-the-staged-name.txt".to_string();
+    let mismatched_action = [ProjectedDocumentSnapshot::MetadataChanged {
+        projection: projection.clone(),
+        document: mismatched,
+    }];
+    let error = session
+        .commit_search_publication(&SearchPublicationCommit {
+            generation: "same-version-metadata-b",
+            terminal_documents: &[],
+            projections: std::slice::from_ref(&projection),
+            projected_documents: &mismatched_action,
+            vector_coverage: &[],
+            now: now(1_800_030_102),
+        })
+        .unwrap_err();
+    assert_eq!(
+        error.search_publication_failure(),
+        Some(SearchPublicationFailure::InvalidDocumentState)
+    );
+    assert_eq!(hydrated_document(&store, &projection), published);
+    assert_eq!(
+        store
+            .search_projection_state()
+            .unwrap()
+            .generation
+            .as_deref(),
+        Some("same-version-metadata-a")
+    );
+
+    let changed_action = [ProjectedDocumentSnapshot::MetadataChanged {
+        projection: projection.clone(),
+        document: renamed.clone(),
+    }];
+    assert_eq!(
+        session
+            .commit_search_publication(&SearchPublicationCommit {
+                generation: "same-version-metadata-b",
+                terminal_documents: &[],
+                projections: std::slice::from_ref(&projection),
+                projected_documents: &changed_action,
+                vector_coverage: &[],
+                now: now(1_800_030_102),
+            })
+            .unwrap(),
+        SearchPublicationOutcome::Applied
+    );
+    assert_eq!(hydrated_document(&store, &projection), renamed);
+    let head = store.search_projection_state().unwrap();
+    assert_eq!(head.generation.as_deref(), Some("same-version-metadata-b"));
+    assert_eq!(head.visible_epoch, 2);
+    assert_eq!(
+        store.resume_versions_for_document(&document.id).unwrap(),
+        vec![version]
+    );
+    drop(session);
+
+    let noop_session = prepare_publication(
+        &store,
+        "same-version-metadata-noop",
+        Some("same-version-metadata-b"),
+        2,
+        resume_classifier::CLASSIFIER_EPOCH,
+        std::slice::from_ref(&projection),
+    );
+    let noop_action = [ProjectedDocumentSnapshot::MetadataChanged {
+        projection: projection.clone(),
+        document: renamed,
+    }];
+    let error = noop_session
+        .commit_search_publication(&SearchPublicationCommit {
+            generation: "same-version-metadata-noop",
+            terminal_documents: &[],
+            projections: std::slice::from_ref(&projection),
+            projected_documents: &noop_action,
+            vector_coverage: &[],
+            now: now(1_800_030_103),
+        })
+        .unwrap_err();
+    assert_eq!(
+        error.search_publication_failure(),
+        Some(SearchPublicationFailure::InvalidDocumentState)
+    );
+    assert_eq!(store.search_projection_state().unwrap(), head);
+}
+
+#[test]
+fn v28_identity_and_derived_rows_are_insert_once() {
+    let (_directory, store) = owned_store();
+    assert_eq!(store.schema_version().unwrap(), 28);
     assert_eq!(
         store.search_projection_state().unwrap().service_state,
         SearchProjectionServiceState::Repairing
@@ -2021,8 +2276,7 @@ fn v27_identity_and_derived_rows_are_insert_once() {
 
 #[test]
 fn ocr_triage_and_final_version_classification_are_independently_immutable() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let mut document = document("classification");
     let revision = revision(&document, b"classified source");
     document.content_hash = Some(revision.content_hash.as_str().to_string());
@@ -2134,8 +2388,7 @@ fn ocr_triage_and_final_version_classification_are_independently_immutable() {
 
 #[test]
 fn non_resume_classification_is_bound_to_one_exact_version() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let document = document("non-resume-version-bound");
     let revision = revision(&document, b"same source");
     store.upsert_document(&document).unwrap();
@@ -2171,8 +2424,7 @@ fn non_resume_classification_is_bound_to_one_exact_version() {
 
 #[test]
 fn ocr_job_identity_is_bound_to_exact_source_revision_and_triage_epoch() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let mut document = document("ocr-job-spec");
     document.status = DocumentStatus::OcrRequired;
     let first_revision = revision(&document, b"ocr source A");
@@ -2266,39 +2518,15 @@ fn ocr_job_identity_is_bound_to_exact_source_revision_and_triage_epoch() {
             .unwrap(),
         OcrAttemptFailureOutcome::Superseded
     );
-    let mut stale_published_document = document.clone();
-    stale_published_document.content_hash = Some(first_revision.content_hash.as_str().to_string());
-    stale_published_document.status = DocumentStatus::FieldsExtracted;
-    let stale_version = version(
-        &stale_published_document,
-        &first_revision,
-        "stale OCR normalized resume",
-    );
-    let stale_classification = ResumeVersionClassification {
-        resume_version_id: stale_version.id.clone(),
-        status: ClassificationStatus::ResumeCandidate,
-        classifier_epoch: promoted_epoch.clone(),
-        reason_codes: vec![ReasonCode::CorroboratedResumeSignals],
-        classified_at: now(1_800_000_152),
-        review_disposition: ReviewDisposition::NotRequired,
-    };
     assert_eq!(
         store
-            .finish_ocr_attempt_success(
+            .finish_ocr_attempt_failure(
                 &promoted_claimed,
-                OcrAttemptPublication {
-                    document: &stale_published_document,
-                    source_revision: &first_revision,
-                    version: &stale_version,
-                    classification: &stale_classification,
-                    mentions: &[],
-                    email_hash: None,
-                    phone_hash: None,
-                },
+                OcrAttemptFailure::Retryable,
                 now(1_800_000_152),
             )
             .unwrap(),
-        OcrAttemptSuccessOutcome::Superseded
+        OcrAttemptFailureOutcome::Superseded
     );
     assert_eq!(
         store.ocr_job_discard_reason(&claimed.job.id).unwrap(),
@@ -2370,8 +2598,9 @@ fn current_classifier_epoch_accepts_only_the_deterministic_or_bound_model_genera
 
 #[test]
 fn projection_rejects_version_without_current_resume_candidate_classification() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
+    let migration_barrier =
+        support::acquire_migration_rebuild_barrier_owned(&store, now(1_799_999_999));
     let document = document("unclassified-projection");
     let revision = revision(&document, b"unclassified source");
     let version = version(&document, &revision, "unclassified normalized text");
@@ -2387,7 +2616,7 @@ fn projection_rejects_version_without_current_resume_candidate_classification() 
         document_id: document.id.clone(),
         resume_version_id: version.id,
     };
-    prepare_publication(
+    let session = prepare_publication(
         &store,
         generation,
         None,
@@ -2397,14 +2626,23 @@ fn projection_rejects_version_without_current_resume_candidate_classification() 
     );
     let terminal_documents = terminal_updates_for(&store, std::slice::from_ref(&projection));
     assert_eq!(
-        store
-            .commit_search_publication(&SearchPublicationCommit {
-                generation,
-                terminal_documents: &terminal_documents,
-                projections: std::slice::from_ref(&projection),
-                vector_coverage: &[],
-                now: now(1_800_000_133),
-            })
+        session
+            .commit_migration_rebuild_search_publication(
+                &SearchPublicationCommit {
+                    generation,
+                    terminal_documents: &terminal_documents,
+                    projections: std::slice::from_ref(&projection),
+                    projected_documents: &support::projected_documents_for_commit(
+                        &store,
+                        std::slice::from_ref(&projection),
+                        &terminal_documents,
+                        now(1_800_000_133),
+                    ),
+                    vector_coverage: &[],
+                    now: now(1_800_000_133),
+                },
+                &migration_barrier,
+            )
             .unwrap_err()
             .search_publication_failure(),
         Some(SearchPublicationFailure::ExactClassificationMissing)
@@ -2419,8 +2657,7 @@ fn projection_rejects_version_without_current_resume_candidate_classification() 
 
 #[test]
 fn selection_stays_current_across_unrelated_epoch_and_stales_on_target_switch() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let document_a = document("selection-a");
     let revision_a = revision(&document_a, b"source A1");
     let version_a = version(&document_a, &revision_a, "normalized A1");
@@ -2514,6 +2751,7 @@ fn selection_stays_current_across_unrelated_epoch_and_stales_on_target_switch() 
     let version_a2 = version(&document_a, &revision_a2, "normalized A2");
     let mut staged_document_a2 = document_a.clone();
     staged_document_a2.content_hash = Some(revision_a2.content_hash.as_str().to_string());
+    staged_document_a2.byte_size = revision_a2.byte_size;
     staged_document_a2.status = DocumentStatus::FieldsExtracted;
     store.upsert_document(&staged_document_a2).unwrap();
     store.insert_source_revision(&revision_a2).unwrap();
@@ -2531,7 +2769,7 @@ fn selection_stays_current_across_unrelated_epoch_and_stales_on_target_switch() 
         document_id: document_a.id.clone(),
         resume_version_id: version_a2.id,
     };
-    prepare_publication(
+    let session = prepare_publication(
         &store,
         "generation-3",
         Some("generation-2"),
@@ -2550,11 +2788,17 @@ fn selection_stays_current_across_unrelated_epoch_and_stales_on_target_switch() 
     };
     let terminal_updates = [terminal_a2[0].clone(), removal_b];
     assert_eq!(
-        store
+        session
             .commit_search_publication(&SearchPublicationCommit {
                 generation: "generation-3",
                 terminal_documents: &terminal_updates,
                 projections: std::slice::from_ref(&projection_a2),
+                projected_documents: &support::projected_documents_for_commit(
+                    &store,
+                    std::slice::from_ref(&projection_a2),
+                    &terminal_updates,
+                    now(1_800_000_163),
+                ),
                 vector_coverage: &[],
                 now: now(1_800_000_163),
             })
@@ -2577,8 +2821,7 @@ fn selection_stays_current_across_unrelated_epoch_and_stales_on_target_switch() 
 
 #[test]
 fn projection_failure_and_wrong_expected_head_preserve_old_snapshot() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let document = document("cas");
     let revision = revision(&document, b"cas source");
     let version = version(&document, &revision, "cas normalized");
@@ -2603,7 +2846,7 @@ fn projection_failure_and_wrong_expected_head_preserve_old_snapshot() {
             "missing-publication-version",
         ]),
     };
-    prepare_publication(
+    let session = prepare_publication(
         &store,
         "generation-invalid-projection",
         Some("generation-1"),
@@ -2612,11 +2855,17 @@ fn projection_failure_and_wrong_expected_head_preserve_old_snapshot() {
         std::slice::from_ref(&invalid_projection),
     );
     assert_eq!(
-        store
+        session
             .commit_search_publication(&SearchPublicationCommit {
                 generation: "generation-invalid-projection",
                 terminal_documents: &[],
                 projections: std::slice::from_ref(&invalid_projection),
+                projected_documents: &support::projected_documents_for_commit(
+                    &store,
+                    std::slice::from_ref(&invalid_projection),
+                    &[],
+                    now(1_800_000_193),
+                ),
                 vector_coverage: &[],
                 now: now(1_800_000_193),
             })
@@ -2627,31 +2876,55 @@ fn projection_failure_and_wrong_expected_head_preserve_old_snapshot() {
     let preserved = store.search_projection_state().unwrap();
     assert_eq!(preserved.generation.as_deref(), Some("generation-1"));
     assert_eq!(preserved.visible_epoch, 1);
-    prepare_publication(
-        &store,
+    session
+        .abandon_search_publication("generation-invalid-projection", now(1_800_000_194))
+        .unwrap();
+    prepare_publication_in_session(
+        &session,
         "generation-stale-cas",
         Some("generation-1"),
         1,
         resume_classifier::CLASSIFIER_EPOCH,
         std::slice::from_ref(&projection),
     );
+    prepare_publication_in_session(
+        &session,
+        "generation-2",
+        Some("generation-1"),
+        1,
+        resume_classifier::CLASSIFIER_EPOCH,
+        std::slice::from_ref(&projection),
+    );
     assert_eq!(
-        publish(
-            &store,
-            "generation-2",
-            Some("generation-1"),
-            1,
-            std::slice::from_ref(&document),
-            std::slice::from_ref(&projection),
-        ),
+        session
+            .commit_search_publication(&SearchPublicationCommit {
+                generation: "generation-2",
+                terminal_documents: &[],
+                projections: std::slice::from_ref(&projection),
+                projected_documents: &support::projected_documents_for_commit(
+                    &store,
+                    std::slice::from_ref(&projection),
+                    &[],
+                    now(1_800_000_202),
+                ),
+                vector_coverage: &[],
+                now: now(1_800_000_202),
+            })
+            .unwrap(),
         SearchPublicationOutcome::Applied
     );
     assert_eq!(
-        store
+        session
             .commit_search_publication(&SearchPublicationCommit {
                 generation: "generation-stale-cas",
                 terminal_documents: &[],
                 projections: std::slice::from_ref(&projection),
+                projected_documents: &support::projected_documents_for_commit(
+                    &store,
+                    std::slice::from_ref(&projection),
+                    &[],
+                    now(1_800_000_203),
+                ),
                 vector_coverage: &[],
                 now: now(1_800_000_203),
             })
@@ -2665,8 +2938,8 @@ fn projection_failure_and_wrong_expected_head_preserve_old_snapshot() {
 
 #[test]
 fn publications_are_abandoned_exactly_idempotently_and_pruned_with_a_bound() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
+    let session = store.wait_for_search_publication_session().unwrap();
     let empty_digest = SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap();
     let preparing = SearchPublicationDraft {
         generation: "interrupted-preparing".to_string(),
@@ -2677,11 +2950,11 @@ fn publications_are_abandoned_exactly_idempotently_and_pruned_with_a_bound() {
         now: now(1_800_000_210),
     };
     assert_eq!(
-        store.begin_search_publication(&preparing).unwrap(),
+        session.begin_search_publication(&preparing).unwrap(),
         SearchPublicationOutcome::Applied
     );
-    prepare_publication(
-        &store,
+    prepare_publication_in_session(
+        &session,
         "interrupted-validated",
         None,
         0,
@@ -2690,10 +2963,10 @@ fn publications_are_abandoned_exactly_idempotently_and_pruned_with_a_bound() {
     );
 
     for generation in ["interrupted-preparing", "interrupted-validated"] {
-        store
+        session
             .abandon_search_publication(generation, now(1_800_000_220))
             .unwrap();
-        store
+        session
             .abandon_search_publication(generation, now(1_800_000_221))
             .unwrap();
         assert_eq!(
@@ -2702,22 +2975,24 @@ fn publications_are_abandoned_exactly_idempotently_and_pruned_with_a_bound() {
         );
     }
     assert_eq!(
-        store
+        session
             .abandon_search_publication("missing-generation", now(1_800_000_222))
             .unwrap_err()
             .search_publication_failure(),
         Some(SearchPublicationFailure::InvalidState)
     );
+    drop(session);
     publish(&store, "ready-cannot-abandon", None, 0, &[], &[]);
+    let session = store.wait_for_search_publication_session().unwrap();
     assert_eq!(
-        store
+        session
             .abandon_search_publication("ready-cannot-abandon", now(1_800_000_223))
             .unwrap_err()
             .search_publication_failure(),
         Some(SearchPublicationFailure::InvalidState)
     );
     assert_eq!(
-        store
+        session
             .prune_search_publication_history(SearchPublicationPrunePolicy {
                 retain_ready: 1,
                 abandoned_updated_before: now(1_800_000_220),
@@ -2727,7 +3002,7 @@ fn publications_are_abandoned_exactly_idempotently_and_pruned_with_a_bound() {
         1
     );
     assert_eq!(
-        store
+        session
             .prune_search_publication_history(SearchPublicationPrunePolicy {
                 retain_ready: 1,
                 abandoned_updated_before: now(1_800_000_220),
@@ -2740,8 +3015,7 @@ fn publications_are_abandoned_exactly_idempotently_and_pruned_with_a_bound() {
 
 #[test]
 fn artifact_retention_uses_only_one_typed_metadata_snapshot() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     publish(&store, "retention-ready-1", None, 0, &[], &[]);
     publish(
         &store,
@@ -2760,8 +3034,9 @@ fn artifact_retention_uses_only_one_typed_metadata_snapshot() {
         &[],
     );
     let empty_digest = SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap();
+    let session = store.wait_for_search_publication_session().unwrap();
     assert_eq!(
-        store
+        session
             .begin_search_publication(&SearchPublicationDraft {
                 generation: "retention-preparing".to_string(),
                 base_generation: Some("retention-ready-3".to_string()),
@@ -2773,8 +3048,8 @@ fn artifact_retention_uses_only_one_typed_metadata_snapshot() {
             .unwrap(),
         SearchPublicationOutcome::Applied
     );
-    prepare_publication(
-        &store,
+    prepare_publication_in_session(
+        &session,
         "retention-validated",
         Some("retention-ready-3"),
         3,
@@ -2782,7 +3057,7 @@ fn artifact_retention_uses_only_one_typed_metadata_snapshot() {
         &[],
     );
     assert_eq!(
-        store
+        session
             .begin_search_publication(&SearchPublicationDraft {
                 generation: "retention-abandoned".to_string(),
                 base_generation: Some("retention-ready-1".to_string()),
@@ -2821,12 +3096,17 @@ fn artifact_retention_uses_only_one_typed_metadata_snapshot() {
             Some(SearchPublicationFailure::InvalidDescriptor)
         );
     }
+    session
+        .abandon_search_publication("retention-preparing", now(1_800_000_232))
+        .unwrap();
+    session
+        .abandon_search_publication("retention-validated", now(1_800_000_232))
+        .unwrap();
 }
 
 #[test]
 fn candidate_assignment_is_immutable_and_only_active_projection_counts() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let document = document("candidate");
     let revision = revision(&document, b"candidate source");
     let version = version(&document, &revision, "candidate normalized");
@@ -2910,8 +3190,7 @@ fn candidate_assignment_is_immutable_and_only_active_projection_counts() {
 
 #[test]
 fn publication_seals_version_bound_derived_data() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let document = document("sealed-derived");
     let revision = revision(&document, b"sealed source");
     let version = version(&document, &revision, "sealed normalized");
@@ -2981,8 +3260,7 @@ fn publication_seals_version_bound_derived_data() {
 
 #[test]
 fn snapshot_filter_is_generation_bound_bounded_and_returns_exact_pairs() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let rust_document = document("snapshot-filter-rust");
     let rust_revision = revision(&rust_document, b"snapshot filter rust source");
     let rust_version = version(&rust_document, &rust_revision, "Rust systems engineer");
@@ -3083,8 +3361,7 @@ fn snapshot_filter_is_generation_bound_bounded_and_returns_exact_pairs() {
 
 #[test]
 fn exact_hit_hydration_preserves_order_and_rejects_non_current_pairs() {
-    let store = MetaStore::open_in_memory().unwrap();
-    store.run_migrations().unwrap();
+    let (_directory, store) = owned_store();
     let first_document = document("hydrate-exact-first");
     let first_revision = revision(&first_document, b"hydrate exact first");
     let first_version = version(&first_document, &first_revision, "first exact body");

@@ -29,6 +29,7 @@ use tantivy::schema::{
 use tantivy::{Index, IndexReader, IndexWriter, Term};
 
 mod manifest;
+mod purge_artifact;
 mod snapshot_gc;
 mod snapshot_generation;
 mod snapshot_identity;
@@ -41,6 +42,7 @@ use manifest::{
 pub use manifest::{
     FullTextSnapshotSchema, PublishedSnapshotMetadata, FULLTEXT_SNAPSHOT_SCHEMA_V2,
 };
+pub use purge_artifact::{classify_purge_artifact, FullTextPurgeArtifactClass};
 pub use snapshot_gc::{
     commit_snapshot_gc, prepare_snapshot_gc, try_acquire_snapshot_gc,
     FullTextSnapshotGcAcquisition, FullTextSnapshotGcCommitReport, FullTextSnapshotGcFailureClass,
@@ -2658,6 +2660,51 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn purge_classifier_excludes_only_exact_empty_fulltext_controls() {
+        let root = temp_dir("purge-classifier");
+        publish_snapshot(&root, "generation-one", Vec::<IndexDocument>::new()).unwrap();
+        let canonical = fs::canonicalize(&root).unwrap();
+
+        for path in [
+            canonical.join(SNAPSHOT_READER_LOCK_FILE),
+            canonical.join(SNAPSHOT_PUBLICATION_LOCK_FILE),
+            canonical
+                .join(GENERATION_PINS_DIR)
+                .join("generation-one.lock"),
+        ] {
+            assert_eq!(
+                classify_purge_artifact(&canonical, &path).unwrap(),
+                FullTextPurgeArtifactClass::ControlPlaneFile
+            );
+        }
+        assert_eq!(
+            classify_purge_artifact(&canonical, &canonical.join(GENERATION_PINS_DIR)).unwrap(),
+            FullTextPurgeArtifactClass::ControlPlaneDirectory
+        );
+        let similar = canonical.join("snapshot-readers.lock.backup");
+        fs::write(&similar, b"ordinary data").unwrap();
+        assert_eq!(
+            classify_purge_artifact(&canonical, &similar).unwrap(),
+            FullTextPurgeArtifactClass::Data
+        );
+        fs::write(
+            canonical.join(SNAPSHOT_PUBLICATION_LOCK_FILE),
+            b"contaminated",
+        )
+        .unwrap();
+        assert!(classify_purge_artifact(
+            &canonical,
+            &canonical.join(SNAPSHOT_PUBLICATION_LOCK_FILE)
+        )
+        .is_err());
+        assert!(
+            classify_purge_artifact(&canonical, &canonical.parent().unwrap().join("outside"))
+                .is_err()
+        );
+        remove_dir(&root);
+    }
 
     #[test]
     fn borrowed_snapshot_publish_indexes_documents_without_taking_ownership() {

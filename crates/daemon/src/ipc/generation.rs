@@ -1,11 +1,10 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use fs4::fs_std::FileExt;
+use meta_store::DataDirectoryOwnerLease;
 
-const OWNER_LOCK_FILE: &str = "daemon.owner.lock";
 const AUTH_FILE: &str = "ipc.auth";
 const ENDPOINT_FILE: &str = "ipc.endpoints.json";
 const AUTH_SCHEMA_VERSION: &str = "resume-ir.daemon-auth.v2";
@@ -31,44 +30,26 @@ impl OwnerMode {
     }
 }
 
-/// Owns one daemon generation and the exclusive data-directory lease.
-///
-/// The lock is held until drop. Discovery artifacts are generation-bound, so a
-/// stale process can never remove files published by a later owner.
-pub(crate) struct DaemonGenerationOwner {
-    _lock: File,
-    data_dir: PathBuf,
+/// Owns generation-bound discovery artifacts under the process-wide metadata
+/// owner. The borrowed owner keeps the legacy daemon namespace locked until
+/// every artifact from this generation has been removed.
+pub(crate) struct DaemonGenerationOwner<'owner> {
+    data_directory_owner: &'owner DataDirectoryOwnerLease,
     instance_id: String,
     auth_token: String,
     owner_mode: OwnerMode,
 }
 
-impl DaemonGenerationOwner {
-    pub(crate) fn acquire(data_dir: &Path, owner_mode: OwnerMode) -> Result<Self, GenerationError> {
-        fs::create_dir_all(data_dir).map_err(|_| GenerationError::Storage)?;
-        let lock_path = data_dir.join(OWNER_LOCK_FILE);
-        reject_unsafe_regular_file_or_missing(&lock_path)?;
-        let mut options = OpenOptions::new();
-        options.create(true).read(true).write(true);
-        #[cfg(unix)]
-        options.mode(0o600);
-        let lock = options
-            .open(&lock_path)
-            .map_err(|_| GenerationError::Storage)?;
-        match FileExt::try_lock_exclusive(&lock) {
-            Ok(true) => {}
-            Ok(false) => return Err(GenerationError::OwnershipConflict),
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                return Err(GenerationError::OwnershipConflict);
-            }
-            Err(_) => return Err(GenerationError::Storage),
-        }
-        secure_owner_file(&lock_path)?;
+impl<'owner> DaemonGenerationOwner<'owner> {
+    pub(crate) fn acquire(
+        data_directory_owner: &'owner DataDirectoryOwnerLease,
+        owner_mode: OwnerMode,
+    ) -> Result<Self, GenerationError> {
+        let data_dir = data_directory_owner.canonical_data_dir();
         clear_stale_owner_file(&data_dir.join(ENDPOINT_FILE))?;
         clear_stale_owner_file(&data_dir.join(AUTH_FILE))?;
         Ok(Self {
-            _lock: lock,
-            data_dir: data_dir.to_path_buf(),
+            data_directory_owner,
             instance_id: random_hex(GENERATION_ID_BYTES)?,
             auth_token: random_hex(GENERATION_ID_BYTES)?,
             owner_mode,
@@ -80,6 +61,7 @@ impl DaemonGenerationOwner {
     }
 
     pub(crate) fn publish(&self, addr: SocketAddr) -> Result<(), GenerationError> {
+        let data_dir = self.data_directory_owner.canonical_data_dir();
         let auth = serde_json::json!({
             "schema_version": AUTH_SCHEMA_VERSION,
             "instance_id": self.instance_id,
@@ -103,35 +85,30 @@ impl DaemonGenerationOwner {
         })
         .to_string();
 
-        atomic_write_private(
-            &self.data_dir,
-            AUTH_FILE,
-            &self.instance_id,
-            auth.as_bytes(),
-        )?;
+        atomic_write_private(data_dir, AUTH_FILE, &self.instance_id, auth.as_bytes())?;
         if let Err(error) = atomic_write_private(
-            &self.data_dir,
+            data_dir,
             ENDPOINT_FILE,
             &self.instance_id,
             endpoints.as_bytes(),
         ) {
-            remove_if_owned(&self.data_dir.join(AUTH_FILE), &self.instance_id);
+            remove_if_owned(&data_dir.join(AUTH_FILE), &self.instance_id);
             return Err(error);
         }
         Ok(())
     }
 }
 
-impl Drop for DaemonGenerationOwner {
+impl Drop for DaemonGenerationOwner<'_> {
     fn drop(&mut self) {
-        remove_if_owned(&self.data_dir.join(ENDPOINT_FILE), &self.instance_id);
-        remove_if_owned(&self.data_dir.join(AUTH_FILE), &self.instance_id);
+        let data_dir = self.data_directory_owner.canonical_data_dir();
+        remove_if_owned(&data_dir.join(ENDPOINT_FILE), &self.instance_id);
+        remove_if_owned(&data_dir.join(AUTH_FILE), &self.instance_id);
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum GenerationError {
-    OwnershipConflict,
     RuntimeIntegrity,
     Storage,
 }
@@ -220,17 +197,6 @@ fn reject_unsafe_regular_file_or_missing(path: &Path) -> Result<(), GenerationEr
     }
 }
 
-#[cfg(unix)]
-fn secure_owner_file(path: &Path) -> Result<(), GenerationError> {
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-        .map_err(|_| GenerationError::Storage)
-}
-
-#[cfg(not(unix))]
-fn secure_owner_file(_path: &Path) -> Result<(), GenerationError> {
-    Ok(())
-}
-
 fn random_hex(byte_count: usize) -> Result<String, GenerationError> {
     let mut bytes = vec![0_u8; byte_count];
     getrandom::getrandom(&mut bytes).map_err(|_| GenerationError::Storage)?;
@@ -249,34 +215,48 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use meta_store::{DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease};
+
     use super::{DaemonGenerationOwner, GenerationError, OwnerMode};
 
     #[test]
     fn owner_is_exclusive_and_generation_credentials_rotate() {
         let data_dir = temp_dir("exclusive");
-        let first = DaemonGenerationOwner::acquire(&data_dir, OwnerMode::Standalone).unwrap();
+        let first_data_directory_owner = data_directory_owner(&data_dir);
+        let first =
+            DaemonGenerationOwner::acquire(&first_data_directory_owner, OwnerMode::Standalone)
+                .unwrap();
         let first_instance = first.instance_id.clone();
         let first_token = first.auth_token.clone();
-        assert_eq!(
-            DaemonGenerationOwner::acquire(&data_dir, OwnerMode::Standalone)
-                .err()
-                .unwrap(),
-            GenerationError::OwnershipConflict
-        );
+        assert!(matches!(
+            DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap(),
+            DataDirectoryOwnerAcquisition::Contended
+        ));
         drop(first);
+        assert!(matches!(
+            DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap(),
+            DataDirectoryOwnerAcquisition::Contended
+        ));
+        drop(first_data_directory_owner);
 
-        let second = DaemonGenerationOwner::acquire(&data_dir, OwnerMode::Standalone).unwrap();
+        let second_data_directory_owner = data_directory_owner(&data_dir);
+        let second =
+            DaemonGenerationOwner::acquire(&second_data_directory_owner, OwnerMode::Standalone)
+                .unwrap();
         assert_ne!(second.instance_id, first_instance);
         assert_ne!(second.auth_token, first_token);
         drop(second);
+        drop(second_data_directory_owner);
         let _ = fs::remove_dir_all(data_dir);
     }
 
     #[test]
     fn published_auth_and_manifest_share_generation_and_cleanup_is_owned() {
         let data_dir = temp_dir("publication");
+        let data_directory_owner = data_directory_owner(&data_dir);
         let owner =
-            DaemonGenerationOwner::acquire(&data_dir, OwnerMode::DesktopSupervised).unwrap();
+            DaemonGenerationOwner::acquire(&data_directory_owner, OwnerMode::DesktopSupervised)
+                .unwrap();
         owner
             .publish("127.0.0.1:43111".parse::<SocketAddr>().unwrap())
             .unwrap();
@@ -298,6 +278,7 @@ mod tests {
             read_json(data_dir.join("ipc.endpoints.json"))["instance_id"],
             replacement_instance
         );
+        drop(data_directory_owner);
         let _ = fs::remove_dir_all(data_dir);
     }
 
@@ -305,15 +286,26 @@ mod tests {
     fn unsafe_discovery_artifact_is_an_integrity_failure() {
         let data_dir = temp_dir("unsafe-artifact");
         fs::create_dir(data_dir.join("ipc.auth")).unwrap();
+        let data_directory_owner = data_directory_owner(&data_dir);
 
         assert_eq!(
-            DaemonGenerationOwner::acquire(&data_dir, OwnerMode::Standalone)
+            DaemonGenerationOwner::acquire(&data_directory_owner, OwnerMode::Standalone)
                 .err()
                 .unwrap(),
             GenerationError::RuntimeIntegrity
         );
 
+        drop(data_directory_owner);
         let _ = fs::remove_dir_all(data_dir);
+    }
+
+    fn data_directory_owner(data_dir: &std::path::Path) -> DataDirectoryOwnerLease {
+        match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+            DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+            DataDirectoryOwnerAcquisition::Contended => {
+                panic!("data-directory owner unexpectedly contended")
+            }
+        }
     }
 
     fn read_json(path: PathBuf) -> serde_json::Value {

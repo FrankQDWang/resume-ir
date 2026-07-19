@@ -1,15 +1,20 @@
 use std::{fmt, str::FromStr};
 
+use core_domain::{
+    MAX_ENTITY_MENTIONS_PER_VERSION, MAX_ENTITY_MENTION_EXTRACTOR_BYTES,
+    MAX_ENTITY_MENTION_VALUE_BYTES,
+};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{head::active_projection_for_generation, SearchMetadataSnapshot};
 use crate::{
-    read_document, read_entity_mention, CandidateId, ContentDigest, Document, DocumentId,
-    EntityMention, MetaStoreError, Result, ResumeVersionId, SearchSelection,
-    SearchSelectionResolution, SourceRevisionId, DOCUMENT_COLUMNS, ENTITY_MENTION_COLUMNS,
+    immutable_search::active_search_document_from_connection, read_entity_mention,
+    ActiveSearchProjection, CandidateId, ContentDigest, Document, DocumentId, EntityMention,
+    FileExtension, MetaStoreError, Result, ResumeVersionId, SearchSelection,
+    SearchSelectionResolution, SourceRevisionId, ENTITY_MENTION_COLUMNS,
 };
 
-pub const MAX_SEARCH_SELECTION_MENTIONS: usize = 256;
+pub const MAX_SEARCH_SELECTION_MENTIONS: usize = MAX_ENTITY_MENTIONS_PER_VERSION;
 const MAX_VERSION_LABEL_BYTES: usize = 256;
 const MAX_LANGUAGE_SET_BYTES: usize = 4 * 1024;
 const MAX_LANGUAGE_COUNT: usize = 64;
@@ -18,8 +23,8 @@ const MAX_DOCUMENT_SOURCE_URI_BYTES: u64 = 128 * 1024;
 const MAX_DOCUMENT_NORMALIZED_PATH_BYTES: u64 = 128 * 1024;
 const MAX_DOCUMENT_FILE_NAME_BYTES: u64 = 4 * 1024;
 const MAX_DOCUMENT_EXTENSION_BYTES: u64 = 256;
-pub(crate) const MAX_MENTION_VALUE_BYTES: usize = 4 * 1024;
-pub(crate) const MAX_MENTION_EXTRACTOR_BYTES: usize = 256;
+pub(crate) const MAX_MENTION_VALUE_BYTES: usize = MAX_ENTITY_MENTION_VALUE_BYTES;
+pub(crate) const MAX_MENTION_EXTRACTOR_BYTES: usize = MAX_ENTITY_MENTION_EXTRACTOR_BYTES;
 
 #[derive(Clone, PartialEq)]
 pub struct SearchSelectionDetails {
@@ -272,61 +277,47 @@ fn bounded_selection_version(
     }))
 }
 
-fn document_by_id(connection: &Connection, document_id: &DocumentId) -> Result<Option<Document>> {
-    let sql = format!("SELECT {DOCUMENT_COLUMNS} FROM document WHERE id = ?1");
-    connection
-        .query_row(&sql, params![document_id.as_str()], |row| {
-            read_document(row).map_err(|_| rusqlite::Error::InvalidQuery)
-        })
-        .optional()
-        .map_err(MetaStoreError::storage)
-}
-
 pub(super) enum BoundedDocument {
     Document(Box<Document>),
     LimitExceeded,
 }
 
-pub(super) fn bounded_document_by_id(
+pub(super) fn bounded_projected_document(
     connection: &Connection,
-    document_id: &DocumentId,
+    generation: &str,
+    projection: &ActiveSearchProjection,
 ) -> Result<BoundedDocument> {
-    let lengths = connection
-        .query_row(
-            "SELECT length(CAST(source_uri AS BLOB)),
-                    length(CAST(normalized_path AS BLOB)),
-                    length(CAST(file_name AS BLOB)),
-                    length(CAST(extension AS BLOB))
-             FROM document WHERE id = ?1",
-            params![document_id.as_str()],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, i64>(3)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(MetaStoreError::storage)?
-        .ok_or_else(MetaStoreError::storage_invariant)?;
+    let (document, published_generation) =
+        active_search_document_from_connection(connection, projection)?
+            .ok_or_else(MetaStoreError::storage_invariant)?;
+    if published_generation != generation {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    let extension_bytes = match &document.extension {
+        FileExtension::Other(value) => "other:".len() + value.len(),
+        FileExtension::Docx | FileExtension::Image => 5,
+        FileExtension::Pdf | FileExtension::Doc | FileExtension::Txt => 3,
+    };
+    let source_uri_bytes = u64::try_from(document.source_uri.len())
+        .map_err(|_| MetaStoreError::storage_invariant())?;
+    let normalized_path_bytes = u64::try_from(document.normalized_path.len())
+        .map_err(|_| MetaStoreError::storage_invariant())?;
+    let file_name_bytes =
+        u64::try_from(document.file_name.len()).map_err(|_| MetaStoreError::storage_invariant())?;
+    let extension_bytes =
+        u64::try_from(extension_bytes).map_err(|_| MetaStoreError::storage_invariant())?;
     let lengths = [
-        (lengths.0, MAX_DOCUMENT_SOURCE_URI_BYTES),
-        (lengths.1, MAX_DOCUMENT_NORMALIZED_PATH_BYTES),
-        (lengths.2, MAX_DOCUMENT_FILE_NAME_BYTES),
-        (lengths.3, MAX_DOCUMENT_EXTENSION_BYTES),
+        (source_uri_bytes, MAX_DOCUMENT_SOURCE_URI_BYTES),
+        (normalized_path_bytes, MAX_DOCUMENT_NORMALIZED_PATH_BYTES),
+        (file_name_bytes, MAX_DOCUMENT_FILE_NAME_BYTES),
+        (extension_bytes, MAX_DOCUMENT_EXTENSION_BYTES),
     ];
     for (actual, maximum) in lengths {
-        let actual = u64::try_from(actual)
-            .map_err(|_| MetaStoreError::invalid_value("document.metadata_length"))?;
         if actual > maximum {
             return Ok(BoundedDocument::LimitExceeded);
         }
     }
-    Ok(BoundedDocument::Document(Box::new(
-        document_by_id(connection, document_id)?.ok_or_else(MetaStoreError::storage_invariant)?,
-    )))
+    Ok(BoundedDocument::Document(Box::new(document)))
 }
 
 pub(super) enum BoundedMentions {

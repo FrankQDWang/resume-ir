@@ -15,6 +15,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { verifyBundledSidecar } from "./verify-bundled-sidecar.mjs";
+import { verifyBundleComposition } from "./macos-bundle-composition.mjs";
 
 export const MAX_DMG_BYTES = 1024 * 1024 * 1024;
 export const APPLE_TOOL_TIMEOUT_MS = 120 * 1000;
@@ -459,6 +460,10 @@ export async function verifyMacosDmg({
     const appBundle = await validateMountedDmgLayout({ mountDirectory });
     const volumeIcon = await lstat(path.join(mountDirectory, VOLUME_ICON));
     const appReceipt = await verifyApp({ repoRoot, targetTriple, appBundle });
+    const appComposition = await verifyBundleComposition({
+      appBundle,
+      targetTriple,
+    });
     const signature = await verifyAdHocSignedApp({
       appBundle,
       platform,
@@ -482,6 +487,7 @@ export async function verifyMacosDmg({
       dmg_count: 1,
       dmg_bytes: dmgMetadata.size,
       dmg_sha256: dmgSha256,
+      app_composition_digest: appComposition.composition_digest,
       mounted_read_only: true,
       app_bundle_count: 1,
       applications_link_count: 1,

@@ -1,5 +1,5 @@
 use meta_store::{
-    MetaStore, SearchTextBytePage, SearchTextBytePageRequest, SearchTextBytePageResolution,
+    ReadMetaStore, SearchTextBytePage, SearchTextBytePageRequest, SearchTextBytePageResolution,
 };
 use serde::Deserialize;
 
@@ -16,7 +16,7 @@ pub(crate) const MAX_BODY_PAGE_BYTES: usize = 32 * 1024;
 pub(crate) const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 const MIN_BODY_PAGE_BYTES: usize = 4;
 
-pub(crate) fn execute(store: &MetaStore, body: &[u8]) -> Result<String, DetailHydrateError> {
+pub(crate) fn execute(store: &ReadMetaStore, body: &[u8]) -> Result<String, DetailHydrateError> {
     let request = DetailHydrateRequest::parse(body)?;
     let page_request = SearchTextBytePageRequest::new(
         request.context.selection.clone(),

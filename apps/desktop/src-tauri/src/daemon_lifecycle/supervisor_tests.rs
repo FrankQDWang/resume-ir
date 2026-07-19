@@ -244,6 +244,42 @@ fn repeated_start_failures_open_the_circuit_and_manual_retry_is_half_open() {
 }
 
 #[test]
+fn failed_manual_half_open_cannot_spawn_again_before_cooldown() {
+    let fake = Arc::new(FakeState::default());
+    fake.transient_spawn_failure.store(true, Ordering::Release);
+    let state = DaemonLifecycleState::launch_with_timing(
+        FakeRuntime {
+            state: Arc::clone(&fake),
+        },
+        test_timing(),
+    )
+    .unwrap();
+    wait_until(|| state.snapshot().unwrap().state == DaemonLifecycleKind::CircuitOpen);
+
+    let attempts_before_manual_retry = fake.spawn_count.load(Ordering::Acquire);
+    assert_eq!(
+        state.retry().unwrap().state,
+        DaemonLifecycleKind::Recovering
+    );
+    wait_until(|| {
+        state.snapshot().unwrap().state == DaemonLifecycleKind::CircuitOpen
+            && fake.spawn_count.load(Ordering::Acquire) > attempts_before_manual_retry
+    });
+    let attempts_after_failed_half_open = fake.spawn_count.load(Ordering::Acquire);
+
+    assert_eq!(
+        state.retry().unwrap().state,
+        DaemonLifecycleKind::CircuitOpen
+    );
+    thread::sleep(Duration::from_millis(10));
+    assert_eq!(
+        fake.spawn_count.load(Ordering::Acquire),
+        attempts_after_failed_half_open
+    );
+    state.shutdown();
+}
+
+#[test]
 fn an_open_circuit_makes_one_automatic_half_open_attempt_after_the_cooldown() {
     let fake = Arc::new(FakeState::default());
     fake.transient_spawn_failure.store(true, Ordering::Release);

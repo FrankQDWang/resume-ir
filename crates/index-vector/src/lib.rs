@@ -8,6 +8,7 @@ mod codec;
 mod model;
 mod model_contract;
 mod private_storage;
+mod purge_artifact;
 mod snapshot_gc;
 mod snapshot_gc_candidates;
 mod snapshot_identity;
@@ -17,6 +18,7 @@ mod store;
 
 pub use model::{QueryVector, VectorDocument, VectorDocumentIdentity, VectorHit, VectorIndexError};
 pub use model_contract::{VectorModelContract, MAX_VECTOR_DIMENSION};
+pub use purge_artifact::{classify_purge_artifact, VectorPurgeArtifactClass};
 pub use snapshot_gc::{
     commit_snapshot_gc, PreparedVectorSnapshotGc, VectorGcPartialFailure, VectorGcSummary,
     VectorSnapshotGcAcquisition, VectorSnapshotGcCommitReport, VectorSnapshotGcFailureClass,

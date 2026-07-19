@@ -22,25 +22,27 @@ use embedder::{
 use fs4::fs_std::FileExt;
 use fs_crawler::{crawl_directory_with_options, ScanOptions as CrawlerScanOptions};
 use import_pipeline::{
-    detect_ocr_page_count, import_root_with_options, index_claimed_ocr_text,
-    publish_search_projection_removals, rebuild_search_artifacts, reconcile_search_artifacts,
-    ImportFailureKind, ImportHardwareTier, ImportMilestoneTimings, ImportOptions,
-    ImportParseWorkers, ImportResourcePolicy, ImportScanBudgetKind as PipelineImportScanBudgetKind,
-    ImportSummary, ImportTaskOwnerLock, LinearPromotionPolicy, ScanProfile,
+    detect_ocr_page_count, import_root_with_options, index_claimed_ocr_text, ocr_preclaim_decision,
+    prepare_migration_rebuild_artifacts, publish_search_projection_removals,
+    rebuild_search_artifacts, reconcile_search_artifacts, ImportFailureKind, ImportHardwareTier,
+    ImportMilestoneTimings, ImportOptions, ImportParseWorkers, ImportResourcePolicy, ImportSummary,
+    ImportTaskOwnerLock, LinearPromotionPolicy, OcrPreclaimDecision, ScanProfile,
     SearchProjectionRemoval, SearchProjectionRemovalReason, SearchPublicationVectorization,
 };
 use meta_store::{
-    backup_metadata_encryption_key, restore_metadata_encryption_key,
-    rotate_metadata_encryption_key, CandidateId, ContactHash, Document, DocumentId, DocumentStatus,
-    EntityMention, EntityType, FileExtension, ImportRootKind as StoreImportRootKind,
-    ImportRootPreset as StoreImportRootPreset, ImportScanBudgetKind as StoreImportScanBudgetKind,
-    ImportScanErrorSummary, ImportScanProfile as StoreImportScanProfile, ImportScanScope,
-    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJobFailureKind,
-    IngestJobKind, IngestJobStatus, MetaStore, MetadataEncryptionState, OcrAttemptFailure,
-    OcrPageCacheEntry, OcrPageCacheKey, PendingImportTaskByRootDiagnostic, QueryLatencySummary,
-    ResumeVersion, ResumeVersionId, SearchFilterCase, SearchProjectionFilter,
-    SearchProjectionPredicate, SearchSelection, SearchSelectionDetailResolution,
-    SearchTextBytePageRequest, UnixTimestamp, VectorSnapshotMode, WorkerTaskKind,
+    backup_metadata_encryption_key, metadata_store_path, restore_metadata_encryption_key,
+    CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention, EntityType,
+    FileExtension, ImportRootKind as StoreImportRootKind,
+    ImportRootPreset as StoreImportRootPreset, ImportRootTaskHeadBatchOutcome,
+    ImportRootTaskHeadBatchRejection, ImportRootTaskHeadOutcome, ImportRootTaskHeadRequest,
+    ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanErrorSummary,
+    ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexStateStatus, IngestJobFailureKind, IngestJobKind, IngestJobStatus,
+    MetadataEncryptionState, OcrAttemptFailure, OcrPageCacheEntry, OcrPageCacheKey, OwnedMetaStore,
+    PendingImportTaskByRootDiagnostic, QueryLatencySummary, ReadMetaStore, ResumeVersion,
+    ResumeVersionId, SearchFilterCase, SearchProjectionFilter, SearchProjectionPredicate,
+    SearchSelection, SearchSelectionDetailResolution, SearchTextBytePageRequest, UnixTimestamp,
+    VectorSnapshotMode, WorkerTaskKind,
 };
 use ocr_client::{
     inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
@@ -69,8 +71,11 @@ use sysinfo::{
     get_current_pid, DiskRefreshKind, Disks, ProcessRefreshKind, ProcessesToUpdate, System,
 };
 
+mod import_processing;
+mod purge_residual;
 mod release_readiness_matrix;
 
+use purge_residual::PurgeResidualProbe;
 use release_readiness_matrix::release_readiness_goal_gap_matrix_json;
 
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
@@ -133,12 +138,8 @@ const MODEL_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.model-manifest.v1";
 const OCR_RUNTIME_MANIFEST_SCHEMA_VERSION: &str = "resume-ir.ocr-runtime-manifest.v1";
 const FIELD_FILTER_CONFIDENCE_THRESHOLD: f32 = 0.75;
 const WITNESS_DEFAULT_MAX_FILES: usize = 10_000;
-const WITNESS_CLEANUP_RETRY_ATTEMPTS: usize = 6;
-const WITNESS_CLEANUP_RETRY_DELAY: Duration = Duration::from_millis(25);
 const WITNESS_SEARCH_PROBE_LIMIT: usize = 5;
 const WITNESS_SEARCH_PROBE_MAX_CANDIDATES: usize = 64;
-const PURGE_RESIDUAL_MARKER_MIN_BYTES: usize = 8;
-const PURGE_RESIDUAL_SCAN_CHUNK_BYTES: usize = 64 * 1024;
 const WITNESS_FIELD_LABELS: &[&str] = &[
     "name",
     "email",
@@ -5211,8 +5212,7 @@ fn candidate_review_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let Some(action) = args.first().map(String::as_str) else {
         return Err(CliError::usage(candidate_review_usage()));
     };
-    let store = MetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
-    store.run_migrations().map_err(CliError::store)?;
+    let store = ReadMetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
 
     match action {
         "list" => candidate_review_list_command(&store, &args[1..]),
@@ -5221,7 +5221,7 @@ fn candidate_review_command(data_dir: &Path, args: &[String]) -> Result<()> {
     }
 }
 
-fn candidate_review_list_command(store: &MetaStore, args: &[String]) -> Result<()> {
+fn candidate_review_list_command(store: &ReadMetaStore, args: &[String]) -> Result<()> {
     let review_args = parse_candidate_review_list_args(args)?;
     let suggestions = candidate_review_suggestions(store, review_args.limit)?;
 
@@ -5241,7 +5241,7 @@ fn candidate_review_list_command(store: &MetaStore, args: &[String]) -> Result<(
     Ok(())
 }
 
-fn candidate_review_conflicts_command(store: &MetaStore, args: &[String]) -> Result<()> {
+fn candidate_review_conflicts_command(store: &ReadMetaStore, args: &[String]) -> Result<()> {
     let review_args = parse_candidate_review_list_args(args)?;
     let mut conflicts = store
         .candidate_contact_conflicts()
@@ -5318,7 +5318,7 @@ fn take_candidate_review_value<'a>(args: &'a [String], index: &mut usize) -> Res
 }
 
 fn candidate_review_suggestions(
-    store: &MetaStore,
+    store: &ReadMetaStore,
     limit: usize,
 ) -> Result<Vec<CandidateReviewSuggestion>> {
     let mut profiles_by_name = BTreeMap::<String, Vec<CandidateReviewProfile>>::new();
@@ -5404,7 +5404,7 @@ fn candidate_review_suggestions(
 }
 
 fn dedupe_profile_for_review_version(
-    store: &MetaStore,
+    store: &ReadMetaStore,
     document_id: &DocumentId,
     version: &ResumeVersion,
 ) -> Result<Option<DedupeProfile>> {
@@ -5543,6 +5543,7 @@ fn privacy_command(data_dir: &Path, args: &[String]) -> Result<()> {
         "restore-contact-key" => {
             let key_args = parse_privacy_key_file_args(&args[1..], "--input")?;
             let passphrase = read_privacy_passphrase_file(&key_args.passphrase_path)?;
+            let _owner = import_processing::acquire_owner(data_dir)?;
             restore_contact_hash_key(data_dir, &key_args.key_path, &passphrase)
                 .map_err(CliError::privacy)?;
             println!("contact hash key restore: restored");
@@ -5559,7 +5560,8 @@ fn privacy_command(data_dir: &Path, args: &[String]) -> Result<()> {
         "restore-metadata-key" => {
             let key_args = parse_privacy_key_file_args(&args[1..], "--input")?;
             let passphrase = read_privacy_passphrase_file(&key_args.passphrase_path)?;
-            restore_metadata_encryption_key(data_dir, &key_args.key_path, &passphrase)
+            let owner = import_processing::acquire_owner(data_dir)?;
+            restore_metadata_encryption_key(&owner, &key_args.key_path, &passphrase)
                 .map_err(CliError::store)?;
             println!("metadata encryption key restore: restored");
             Ok(())
@@ -5568,7 +5570,12 @@ fn privacy_command(data_dir: &Path, args: &[String]) -> Result<()> {
             if args.len() != 1 {
                 return Err(CliError::usage(privacy_usage()));
             }
-            rotate_metadata_encryption_key(data_dir).map_err(CliError::store)?;
+            let owner = import_processing::acquire_owner(data_dir)?;
+            owner
+                .open_store()
+                .map_err(CliError::store)?
+                .rotate_metadata_encryption_key()
+                .map_err(CliError::store)?;
             println!("metadata encryption key rotation: rotated");
             Ok(())
         }
@@ -9625,12 +9632,13 @@ fn simulate_index_snapshot_corrupt_probe_dir(
         ),
     )
     .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let data_directory_owner = import_processing::acquire_owner_for_mutation(
+        probe_dir,
+        import_processing::OfflineImportProcessingMutation::SyntheticFaultProbe,
+    )?;
 
-    let store = MetaStore::open_data_dir(probe_dir)
-        .and_then(|store| {
-            store.run_migrations()?;
-            Ok(store)
-        })
+    let store = data_directory_owner
+        .open_store()
         .map_err(|_| CliError::user("fault simulation probe failed"))?;
     let task = ImportTask {
         id: ImportTaskId::from_non_secret_parts(&["fault-probe", "snapshot-corrupt"]),
@@ -9641,23 +9649,48 @@ fn simulate_index_snapshot_corrupt_probe_dir(
         finished_at: None,
         updated_at: first_now,
     };
-    store
-        .insert_import_task(&task)
+    let import_options = ImportOptions {
+        scan_profile: ScanProfile::Explicit,
+        max_files: None,
+        parse_workers: ImportParseWorkers::sequential(),
+        index_writer_heap_bytes: ImportResourcePolicy::detect().index_writer_heap_bytes,
+        linear_promotion: LinearPromotionPolicy::default(),
+        search_vectorization: SearchPublicationVectorization::default(),
+    };
+    let processing_contract = import_processing::current_contract(&import_options)?;
+    import_processing::normalize_orphaned_running_tasks(&store, first_now)?;
+    import_processing::activate_contract(&store, &processing_contract, first_now)?;
+    prepare_migration_rebuild_artifacts(&store, first_now)
         .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    import_processing::ensure_local_import_ready(
+        &store,
+        &processing_contract,
+        first_now,
+        &import_options.search_vectorization,
+    )
+    .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let scope = new_import_scan_scope(
+        &task,
+        path_string(&input_root),
+        StoreImportRootKind::Explicit,
+        None,
+        ScanProfile::Explicit,
+        None,
+        first_now,
+    )?;
+    import_processing::insert_new_configured_task_head(&store, &task, &scope, &processing_contract)
+        .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let _task_owner_lock = ImportTaskOwnerLock::acquire(probe_dir, &task.id)
+        .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let claimed_task =
+        import_processing::claim_task_for_local_execution(&store, &task, current_timestamp()?)?;
     let imported = import_root_with_options(
         probe_dir,
         &store,
-        &task,
+        &claimed_task,
         &input_root,
         first_now,
-        ImportOptions {
-            scan_profile: ScanProfile::Explicit,
-            max_files: None,
-            parse_workers: ImportParseWorkers::sequential(),
-            index_writer_heap_bytes: ImportResourcePolicy::detect().index_writer_heap_bytes,
-            linear_promotion: LinearPromotionPolicy::default(),
-            search_vectorization: SearchPublicationVectorization::default(),
-        },
+        import_options,
     )
     .map_err(|_| CliError::user("fault simulation probe failed"))?;
     if imported.searchable_documents != 1 {
@@ -9684,7 +9717,6 @@ fn simulate_index_snapshot_corrupt_probe_dir(
         .and_then(|mut coordinator| coordinator.with_query(|_| Ok(())))
         .is_err();
     let recovery = reconcile_search_artifacts(
-        probe_dir,
         &store,
         UnixTimestamp::from_unix_seconds(1_800_003_002),
         &SearchPublicationVectorization::default(),
@@ -9761,9 +9793,16 @@ fn simulate_metadata_migration_failure_probe_dir(
         .map_err(sqlite_probe_error)?;
     drop(connection);
 
-    let store = MetaStore::open(&db_path).map_err(|_| metadata_migration_probe_error())?;
+    let owner = match meta_store::DataDirectoryOwnerLease::try_acquire(probe_dir)
+        .map_err(|_| metadata_migration_probe_error())?
+    {
+        meta_store::DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        meta_store::DataDirectoryOwnerAcquisition::Contended => {
+            return Err(metadata_migration_probe_error());
+        }
+    };
     Ok(MetadataMigrationProbeResult {
-        reproduced: store.run_migrations().is_err(),
+        reproduced: owner.open_store().is_err(),
     })
 }
 
@@ -10713,70 +10752,102 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     if let Some(endpoint) = &import_args.ipc_endpoint {
         return import_ipc_command(endpoint, &import_args);
     }
+    let data_directory_owner = import_processing::acquire_owner_for_mutation(
+        data_dir,
+        import_processing::OfflineImportProcessingMutation::DirectImport,
+    )?;
 
     let requested_roots = expand_import_root_selection(&import_args.root_selection)?;
     let roots = canonical_import_roots(&requested_roots)?;
+    let linear_promotion = import_args
+        .linear_promotion_artifact
+        .as_deref()
+        .map(LinearPromotionPolicy::load_local)
+        .unwrap_or_default();
+    let import_options = ImportOptions {
+        scan_profile: import_args.profile,
+        max_files: import_args.max_files,
+        parse_workers: import_args.parse_workers,
+        index_writer_heap_bytes: import_args.index_writer_heap_bytes,
+        linear_promotion: linear_promotion.clone(),
+        search_vectorization: SearchPublicationVectorization::default(),
+    };
+    let processing_contract = import_processing::current_contract(&import_options)?;
 
-    let store = open_store(data_dir)?;
+    let store = open_owned_store(&data_directory_owner)?;
     let now = current_timestamp()?;
+    import_processing::normalize_orphaned_running_tasks(&store, now)?;
+    import_processing::activate_contract(&store, &processing_contract, now)?;
+    prepare_migration_rebuild_artifacts(&store, now).map_err(CliError::import)?;
+    import_processing::ensure_local_import_ready(
+        &store,
+        &processing_contract,
+        now,
+        &import_options.search_vectorization,
+    )?;
     if !import_args.enqueue {
-        reconcile_search_artifacts(
-            data_dir,
-            &store,
-            now,
-            &SearchPublicationVectorization::default(),
-        )
-        .map_err(CliError::import)?;
+        reconcile_search_artifacts(&store, now, &SearchPublicationVectorization::default())
+            .map_err(CliError::import)?;
     }
-    let mut tasks = Vec::new();
-    let mut new_tasks = Vec::new();
-
-    for root in &roots {
-        let canonical_root_path = path_string(&root.canonical);
-        let requested_root_path = path_string(&root.requested);
-        let task = match pending_import_task(
-            data_dir,
-            &store,
-            &canonical_root_path,
-            &requested_root_path,
-            now,
-        )? {
-            Some(task) if task.status == ImportTaskStatus::Running => {
-                return Err(CliError::user("import task is already running"));
+    let requested_heads = roots
+        .iter()
+        .map(|root| {
+            let canonical_root_path = path_string(&root.canonical);
+            let task = ImportTask {
+                id: new_import_task_id()?,
+                root_path: canonical_root_path,
+                status: ImportTaskStatus::Queued,
+                queued_at: now,
+                started_at: None,
+                finished_at: None,
+                updated_at: now,
+            };
+            let scope = initial_import_scan_scope(&task, root, &import_args, now)?;
+            Ok((task, scope))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let requests = requested_heads
+        .iter()
+        .map(|(task, scope)| ImportRootTaskHeadRequest::Configured {
+            task,
+            scope,
+            processing_contract: &processing_contract,
+        })
+        .collect::<Vec<_>>();
+    let outcomes = match store
+        .coordinate_import_root_task_heads(&requests)
+        .map_err(CliError::store)?
+    {
+        ImportRootTaskHeadBatchOutcome::Committed { outcomes } => outcomes,
+        ImportRootTaskHeadBatchOutcome::Rejected(
+            ImportRootTaskHeadBatchRejection::RunningTaskConflict,
+        ) => return Err(CliError::user("import task is already running")),
+        ImportRootTaskHeadBatchOutcome::Rejected(ImportRootTaskHeadBatchRejection::RootPaused) => {
+            return Err(CliError::user("managed root is paused"));
+        }
+        ImportRootTaskHeadBatchOutcome::Rejected(
+            ImportRootTaskHeadBatchRejection::MigrationRebuildSuperseded,
+        ) => {
+            return Err(CliError::user(
+                "offline import is blocked until migration rebuild completes",
+            ));
+        }
+    };
+    let tasks = outcomes
+        .into_iter()
+        .map(|outcome| match outcome {
+            ImportRootTaskHeadOutcome::HeadInserted { task, .. }
+            | ImportRootTaskHeadOutcome::HeadPromoted { task, .. }
+            | ImportRootTaskHeadOutcome::HeadRetained { task, .. } => Ok(task),
+            ImportRootTaskHeadOutcome::RunningTaskConflict
+            | ImportRootTaskHeadOutcome::RootPaused
+            | ImportRootTaskHeadOutcome::MigrationRebuildSuperseded => {
+                Err(CliError::user("import root coordination failed"))
             }
-            Some(task) => task,
-            None => {
-                let task = ImportTask {
-                    id: new_import_task_id()?,
-                    root_path: canonical_root_path,
-                    status: ImportTaskStatus::Queued,
-                    queued_at: now,
-                    started_at: None,
-                    finished_at: None,
-                    updated_at: now,
-                };
-                new_tasks.push(task.clone());
-                task
-            }
-        };
-        tasks.push(task);
-    }
-
-    for task in &new_tasks {
-        store.insert_import_task(task).map_err(CliError::store)?;
-    }
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     let mut summary = ImportSummary::default();
-    for (task, root) in tasks.iter().zip(roots.iter()) {
-        upsert_import_scan_scope(
-            &store,
-            task,
-            root,
-            &import_args,
-            &initial_import_summary(&import_args),
-            now,
-        )?;
-    }
 
     if import_args.enqueue {
         let task_ids = tasks
@@ -10817,32 +10888,21 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     }
 
     let import_started = Instant::now();
-    let linear_promotion = import_args
-        .linear_promotion_artifact
-        .as_deref()
-        .map(LinearPromotionPolicy::load_local)
-        .unwrap_or_default();
     for (task, root) in tasks.iter().zip(roots.iter()) {
         let _task_owner_lock = ImportTaskOwnerLock::acquire(data_dir, &task.id)
             .map_err(|_| CliError::user("unable to acquire import task owner lock"))?;
+        let claimed_task =
+            import_processing::claim_task_for_local_execution(&store, task, current_timestamp()?)?;
         let root_offset = import_started.elapsed();
         let root_summary = import_root_with_options(
             data_dir,
             &store,
-            task,
+            &claimed_task,
             &root.canonical,
             now,
-            ImportOptions {
-                scan_profile: import_args.profile,
-                max_files: import_args.max_files,
-                parse_workers: import_args.parse_workers,
-                index_writer_heap_bytes: import_args.index_writer_heap_bytes,
-                linear_promotion: linear_promotion.clone(),
-                search_vectorization: SearchPublicationVectorization::default(),
-            },
+            import_options.clone(),
         )
         .map_err(CliError::import)?;
-        upsert_import_scan_scope(&store, task, root, &import_args, &root_summary, now)?;
         merge_import_summary(&mut summary, root_summary, root_offset);
     }
 
@@ -10921,64 +10981,105 @@ fn witness_command(args: &[String]) -> Result<()> {
     let selection = collect_witness_inputs(&source_roots, witness_args.max_files, scan_profile)?;
     let temp_dirs = WitnessTempDirs::create()?;
     copy_witness_inputs(&selection.selected, &temp_dirs.input_root)?;
-
-    let store = open_store(&temp_dirs.data_dir)?;
-    let now = current_timestamp()?;
-    let task = ImportTask {
-        id: new_import_task_id()?,
-        root_path: path_string(&temp_dirs.input_root),
-        status: ImportTaskStatus::Queued,
-        queued_at: now,
-        started_at: None,
-        finished_at: None,
-        updated_at: now,
-    };
-    store.insert_import_task(&task).map_err(CliError::store)?;
-    let summary = import_root_with_options(
-        &temp_dirs.data_dir,
-        &store,
-        &task,
-        &temp_dirs.input_root,
-        now,
-        ImportOptions {
+    let (summary, witness_ocr, witness_benchmark_corpus, witness_fields, witness_search) = {
+        let data_directory_owner = import_processing::acquire_owner_for_mutation(
+            &temp_dirs.data_dir,
+            import_processing::OfflineImportProcessingMutation::PrivateWitness,
+        )?;
+        let store = open_owned_store(&data_directory_owner)?;
+        let now = current_timestamp()?;
+        let task = ImportTask {
+            id: new_import_task_id()?,
+            root_path: path_string(&temp_dirs.input_root),
+            status: ImportTaskStatus::Queued,
+            queued_at: now,
+            started_at: None,
+            finished_at: None,
+            updated_at: now,
+        };
+        let import_options = ImportOptions {
             scan_profile,
             max_files: None,
             parse_workers: ImportParseWorkers::default(),
             index_writer_heap_bytes: ImportResourcePolicy::detect().index_writer_heap_bytes,
             linear_promotion: LinearPromotionPolicy::default(),
             search_vectorization: SearchPublicationVectorization::default(),
-        },
-    )
-    .map_err(CliError::import)?;
-    let witness_ocr = if witness_args.run_ocr {
-        run_witness_ocr_jobs(
+        };
+        let processing_contract = import_processing::current_contract(&import_options)?;
+        import_processing::normalize_orphaned_running_tasks(&store, now)?;
+        import_processing::activate_contract(&store, &processing_contract, now)?;
+        prepare_migration_rebuild_artifacts(&store, now).map_err(CliError::import)?;
+        import_processing::ensure_local_import_ready(
+            &store,
+            &processing_contract,
+            now,
+            &import_options.search_vectorization,
+        )?;
+        let scope = new_import_scan_scope(
+            &task,
+            path_string(&temp_dirs.input_root),
+            StoreImportRootKind::Explicit,
+            None,
+            scan_profile,
+            None,
+            now,
+        )?;
+        import_processing::insert_new_configured_task_head(
+            &store,
+            &task,
+            &scope,
+            &processing_contract,
+        )?;
+        let _task_owner_lock = ImportTaskOwnerLock::acquire(&temp_dirs.data_dir, &task.id)
+            .map_err(|_| CliError::user("unable to acquire import task owner lock"))?;
+        let claimed_task =
+            import_processing::claim_task_for_local_execution(&store, &task, current_timestamp()?)?;
+        let summary = import_root_with_options(
             &temp_dirs.data_dir,
             &store,
-            &witness_args.ocr_worker_args,
-            witness_args.ocr_max_documents,
+            &claimed_task,
+            &temp_dirs.input_root,
             now,
-        )?
-    } else {
-        WitnessOcrStatus::NotRequested
+            import_options,
+        )
+        .map_err(CliError::import)?;
+        let witness_ocr = if witness_args.run_ocr {
+            run_witness_ocr_jobs(
+                &temp_dirs.data_dir,
+                &store,
+                &witness_args.ocr_worker_args,
+                witness_args.ocr_max_documents,
+                now,
+            )?
+        } else {
+            WitnessOcrStatus::NotRequested
+        };
+        let witness_read_store = open_store(&temp_dirs.data_dir)?;
+        let witness_benchmark_corpus = if witness_args.probe_benchmark_corpus {
+            WitnessBenchmarkCorpusStatus::Completed {
+                summary: benchmark_corpus_summary(&temp_dirs.data_dir, &witness_read_store)?,
+            }
+        } else {
+            WitnessBenchmarkCorpusStatus::NotRequested
+        };
+        let witness_fields = if witness_args.probe_fields {
+            run_witness_field_probe(&witness_read_store)?
+        } else {
+            WitnessFieldStatus::NotRequested
+        };
+        let witness_search = if witness_args.probe_search {
+            run_witness_search_probe(&temp_dirs.data_dir, &witness_read_store)?
+        } else {
+            WitnessSearchStatus::NotRequested
+        };
+        (
+            summary,
+            witness_ocr,
+            witness_benchmark_corpus,
+            witness_fields,
+            witness_search,
+        )
     };
-    let witness_benchmark_corpus = if witness_args.probe_benchmark_corpus {
-        WitnessBenchmarkCorpusStatus::Completed {
-            summary: benchmark_corpus_summary(&temp_dirs.data_dir, &store)?,
-        }
-    } else {
-        WitnessBenchmarkCorpusStatus::NotRequested
-    };
-    let witness_fields = if witness_args.probe_fields {
-        run_witness_field_probe(&store)?
-    } else {
-        WitnessFieldStatus::NotRequested
-    };
-    let witness_search = if witness_args.probe_search {
-        run_witness_search_probe(&temp_dirs.data_dir, &store)?
-    } else {
-        WitnessSearchStatus::NotRequested
-    };
-    drop(store);
     let private_data_removed = temp_dirs.cleanup();
 
     println!("resume-ir local witness");
@@ -11291,11 +11392,24 @@ fn default_ocr_worker_args() -> OcrWorkerArgs {
 
 fn run_witness_ocr_jobs(
     data_dir: &Path,
-    store: &MetaStore,
+    store: &OwnedMetaStore,
     worker_args: &OcrWorkerArgs,
     max_documents: Option<usize>,
     now: UnixTimestamp,
 ) -> Result<WitnessOcrStatus> {
+    match ocr_preclaim_decision(store).map_err(CliError::import)? {
+        OcrPreclaimDecision::Ready => {}
+        OcrPreclaimDecision::NotReady(_) => {
+            return Ok(WitnessOcrStatus::Blocked {
+                reason: "search publication is not ready",
+                documents_processed: 0,
+                documents_failed: 0,
+                cache_writes: 0,
+                cache_hits: 0,
+                budget_exhausted: false,
+            });
+        }
+    }
     if worker_args.command.is_none() && worker_args.tesseract_command.is_none() {
         return Ok(WitnessOcrStatus::Blocked {
             reason: "local OCR command not configured",
@@ -11461,7 +11575,7 @@ fn print_witness_benchmark_corpus_status(status: &WitnessBenchmarkCorpusStatus) 
     }
 }
 
-fn run_witness_field_probe(store: &MetaStore) -> Result<WitnessFieldStatus> {
+fn run_witness_field_probe(store: &ReadMetaStore) -> Result<WitnessFieldStatus> {
     let mut documents = 0_usize;
     let mut mentions = 0_usize;
     let mut counts = WitnessFieldCounts::default();
@@ -11563,7 +11677,7 @@ fn print_witness_field_counts(counts: &WitnessFieldCounts) {
     }
 }
 
-fn run_witness_search_probe(data_dir: &Path, store: &MetaStore) -> Result<WitnessSearchStatus> {
+fn run_witness_search_probe(data_dir: &Path, store: &ReadMetaStore) -> Result<WitnessSearchStatus> {
     let candidates = witness_search_probe_candidates(store)?;
     if candidates.is_empty() {
         return Ok(WitnessSearchStatus::Blocked {
@@ -11610,7 +11724,7 @@ fn run_witness_search_probe(data_dir: &Path, store: &MetaStore) -> Result<Witnes
     })
 }
 
-fn witness_search_probe_candidates(store: &MetaStore) -> Result<Vec<String>> {
+fn witness_search_probe_candidates(store: &ReadMetaStore) -> Result<Vec<String>> {
     let mut candidates = Vec::new();
 
     for document in store.visible_documents().map_err(CliError::store)? {
@@ -11920,18 +12034,10 @@ impl Drop for WitnessTempDirs {
 }
 
 fn remove_witness_temp_root(root: &Path) -> bool {
-    for attempt in 0..WITNESS_CLEANUP_RETRY_ATTEMPTS {
-        match fs::remove_dir_all(root) {
-            Ok(()) => return true,
-            Err(_) if !root.exists() => return true,
-            Err(_) if attempt + 1 < WITNESS_CLEANUP_RETRY_ATTEMPTS => {
-                std::thread::sleep(WITNESS_CLEANUP_RETRY_DELAY);
-            }
-            Err(_) => return !root.exists(),
-        }
+    match fs::remove_dir_all(root) {
+        Ok(()) => true,
+        Err(_) => !root.exists(),
     }
-
-    !root.exists()
 }
 
 fn unique_witness_temp_root() -> Result<PathBuf> {
@@ -12478,60 +12584,54 @@ fn bytes_to_mib(bytes: usize) -> usize {
     bytes / (1024 * 1024)
 }
 
-fn initial_import_summary(import_args: &ImportArgs) -> ImportSummary {
-    ImportSummary {
-        scan_budget: import_args
-            .max_files
-            .map(|limit| import_pipeline::ImportScanBudget {
-                kind: PipelineImportScanBudgetKind::Files,
-                limit,
-                observed: 0,
-                exhausted: false,
-            }),
-        ..ImportSummary::default()
-    }
-}
-
-fn upsert_import_scan_scope(
-    store: &MetaStore,
+fn initial_import_scan_scope(
     task: &ImportTask,
     root: &CanonicalImportRoot,
     import_args: &ImportArgs,
-    summary: &ImportSummary,
     updated_at: UnixTimestamp,
-) -> Result<()> {
+) -> Result<ImportScanScope> {
     let (root_kind, root_preset) = import_scan_scope_root(&import_args.root_selection);
-    store
-        .upsert_import_scan_scope(&ImportScanScope {
-            import_task_id: task.id.clone(),
-            root_kind,
-            root_preset,
-            scan_profile: import_scan_profile(import_args.profile),
-            requested_root_path: path_string(&root.requested),
-            canonical_root_path: path_string(&root.canonical),
-            files_discovered: usize_to_u64(summary.files_discovered)?,
-            ignored_entries: usize_to_u64(summary.ignored_entries)?,
-            scan_errors: usize_to_u64(summary.scan_errors)?,
-            searchable_documents: usize_to_u64(summary.searchable_documents)?,
-            ocr_required_documents: usize_to_u64(summary.ocr_required_documents)?,
-            ocr_jobs_queued: usize_to_u64(summary.ocr_jobs_queued)?,
-            failed_documents: usize_to_u64(summary.failed_documents)?,
-            deleted_documents: usize_to_u64(summary.deleted_documents)?,
-            scan_budget_kind: summary
-                .scan_budget
-                .map(|budget| import_scan_budget_kind(budget.kind)),
-            scan_budget_limit: summary
-                .scan_budget
-                .map(|budget| usize_to_u64(budget.limit))
-                .transpose()?,
-            scan_budget_observed: summary
-                .scan_budget
-                .map(|budget| usize_to_u64(budget.observed))
-                .transpose()?,
-            scan_budget_exhausted: summary.scan_budget.is_some_and(|budget| budget.exhausted),
-            updated_at,
-        })
-        .map_err(CliError::store)
+    new_import_scan_scope(
+        task,
+        path_string(&root.requested),
+        root_kind,
+        root_preset,
+        import_args.profile,
+        import_args.max_files,
+        updated_at,
+    )
+}
+
+fn new_import_scan_scope(
+    task: &ImportTask,
+    requested_root_path: String,
+    root_kind: StoreImportRootKind,
+    root_preset: Option<StoreImportRootPreset>,
+    scan_profile: ScanProfile,
+    max_files: Option<usize>,
+    updated_at: UnixTimestamp,
+) -> Result<ImportScanScope> {
+    Ok(ImportScanScope {
+        import_task_id: task.id.clone(),
+        root_kind,
+        root_preset,
+        scan_profile: import_scan_profile(scan_profile),
+        requested_root_path,
+        canonical_root_path: task.root_path.clone(),
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        scan_budget_kind: max_files.map(|_| StoreImportScanBudgetKind::Files),
+        scan_budget_limit: max_files.map(usize_to_u64).transpose()?,
+        scan_budget_observed: max_files.map(|_| 0),
+        scan_budget_exhausted: false,
+        updated_at,
+    })
 }
 
 fn import_scan_scope_root(
@@ -12550,12 +12650,6 @@ fn import_scan_profile(profile: ScanProfile) -> StoreImportScanProfile {
     match profile {
         ScanProfile::Explicit => StoreImportScanProfile::Explicit,
         ScanProfile::Discovery => StoreImportScanProfile::Discovery,
-    }
-}
-
-fn import_scan_budget_kind(kind: PipelineImportScanBudgetKind) -> StoreImportScanBudgetKind {
-    match kind {
-        PipelineImportScanBudgetKind::Files => StoreImportScanBudgetKind::Files,
     }
 }
 
@@ -12940,58 +13034,6 @@ fn canonical_import_roots(requested_roots: &[PathBuf]) -> Result<Vec<CanonicalIm
     Ok(roots)
 }
 
-fn pending_import_task(
-    data_dir: &Path,
-    store: &MetaStore,
-    canonical_root_path: &str,
-    requested_root_path: &str,
-    now: UnixTimestamp,
-) -> Result<Option<ImportTask>> {
-    if let Some(task) = store
-        .pending_import_task_by_root(canonical_root_path)
-        .map_err(CliError::store)?
-    {
-        return recover_stale_running_import_task(data_dir, store, task, now).map(Some);
-    }
-
-    if requested_root_path == canonical_root_path {
-        return Ok(None);
-    }
-
-    store
-        .pending_import_task_by_root(requested_root_path)
-        .map_err(CliError::store)
-        .and_then(|task| {
-            task.map(|task| recover_stale_running_import_task(data_dir, store, task, now))
-                .transpose()
-        })
-}
-
-fn recover_stale_running_import_task(
-    data_dir: &Path,
-    store: &MetaStore,
-    task: ImportTask,
-    now: UnixTimestamp,
-) -> Result<ImportTask> {
-    if task.status != ImportTaskStatus::Running {
-        return Ok(task);
-    }
-
-    let Some(_owner_lock) = ImportTaskOwnerLock::try_acquire(data_dir, &task.id)
-        .map_err(|_| CliError::user("unable to inspect import task owner lock"))?
-    else {
-        return Ok(task);
-    };
-
-    store
-        .update_import_task_status(&task.id, ImportTaskStatus::FailedRetryable, now)
-        .map_err(CliError::store)?;
-    store
-        .import_task_by_id(&task.id)
-        .map_err(CliError::store)?
-        .ok_or_else(|| CliError::user("recovered import task disappeared"))
-}
-
 fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let search_args = parse_search_args(data_dir, args)?;
     if search_args.ipc_auto {
@@ -13006,7 +13048,6 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return search_ipc_command(endpoint, &search_args);
     }
 
-    let query_started = Instant::now();
     let hits = match run_local_search(data_dir, &search_args)? {
         LocalSearchOutcome::Hits(hits) => hits,
         LocalSearchOutcome::SearchServiceUnavailable => {
@@ -13016,12 +13057,6 @@ fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
         }
     };
 
-    record_search_query_observation(
-        data_dir,
-        search_args.mode,
-        query_started.elapsed(),
-        hits.len(),
-    );
     print_search_hits(hits);
 
     Ok(())
@@ -13135,7 +13170,6 @@ fn run_benchmark_query_protocol_once(
         query_parse_ms: duration_ms(protocol_started.elapsed()),
         ..BenchmarkQueryProtocolStageTimings::default()
     };
-    let query_started = Instant::now();
     let hits = match run_benchmark_query_protocol_search(data_dir, search_args, &mut stage_timings)?
     {
         LocalSearchOutcome::Hits(hits) => hits,
@@ -13143,12 +13177,6 @@ fn run_benchmark_query_protocol_once(
             return Err(CliError::user("benchmark query search service unavailable"));
         }
     };
-    record_search_query_observation(
-        data_dir,
-        search_args.mode,
-        query_started.elapsed(),
-        hits.len(),
-    );
     Ok(BenchmarkQueryProtocolOutcome {
         hit_count: hits.len(),
         elapsed_ms: duration_ms(protocol_started.elapsed()),
@@ -13381,11 +13409,18 @@ fn benchmark_query_set_preflight_agent_replay_command(
     args: &[String],
 ) -> Result<()> {
     let args = parse_benchmark_agent_replay_preflight_args(args)?;
-    let store = MetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
-    store.run_migrations().map_err(CliError::store)?;
+    let store_path = metadata_store_path(data_dir).map_err(CliError::store)?;
+    let store = if store_path
+        .try_exists()
+        .map_err(|_| CliError::user("query set blocked: metadata availability is unknown"))?
+    {
+        Some(ReadMetaStore::open_data_dir(data_dir).map_err(CliError::store)?)
+    } else {
+        None
+    };
     let preflight = preflight_trace_backed_private_queries(
         data_dir,
-        &store,
+        store.as_ref(),
         &args.trace_root,
         args.max_queries,
     )?;
@@ -13442,8 +13477,7 @@ fn benchmark_query_set_preflight_agent_replay_command(
 
 fn benchmark_query_set_freeze_agent_replay_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let args = parse_benchmark_agent_replay_freeze_args(args)?;
-    let store = MetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
-    store.run_migrations().map_err(CliError::store)?;
+    let store = ReadMetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
     if args.max_queries == D10K_TRACE_QUERY_SET_COUNT {
         let corpus_summary = benchmark_corpus_summary(data_dir, &store)?;
         if !d10k_corpus_ready(&corpus_summary) {
@@ -13996,7 +14030,7 @@ fn query_set_summary_path(query_set_path: &Path) -> PathBuf {
 
 fn preflight_trace_backed_private_queries(
     data_dir: &Path,
-    store: &MetaStore,
+    store: Option<&ReadMetaStore>,
     trace_root: &Path,
     max_queries: usize,
 ) -> Result<TraceQueryPreflight> {
@@ -14012,7 +14046,10 @@ fn preflight_trace_backed_private_queries(
     if !query_index_available {
         coordinator = None;
     }
-    let corpus_summary = benchmark_corpus_summary(data_dir, store)?;
+    let corpus_summary = match store {
+        Some(store) => benchmark_corpus_summary(data_dir, store)?,
+        None => BenchmarkCorpusSummary::unavailable(),
+    };
 
     let mut trace_paths = Vec::new();
     collect_runtime_trace_logs(trace_root, &mut trace_paths)?;
@@ -14121,7 +14158,7 @@ fn d10k_corpus_not_ready_message(summary: &BenchmarkCorpusSummary) -> String {
 
 fn freeze_trace_backed_private_queries(
     data_dir: &Path,
-    _store: &MetaStore,
+    _store: &ReadMetaStore,
     trace_root: &Path,
     max_queries: usize,
 ) -> Result<FrozenAgentReplayQueries> {
@@ -14635,7 +14672,30 @@ struct BenchmarkCorpusSummary {
     ingest_job_failure_counts: BTreeMap<String, u64>,
 }
 
-fn benchmark_corpus_summary(_data_dir: &Path, store: &MetaStore) -> Result<BenchmarkCorpusSummary> {
+impl BenchmarkCorpusSummary {
+    fn unavailable() -> Self {
+        Self {
+            document_count: 0,
+            searchable_document_count: 0,
+            vector_indexed_document_count: 0,
+            active_vector_document_count: 0,
+            vector_count: 0,
+            vector_deleted_count: 0,
+            vector_index_state: "unavailable",
+            vector_search_backend: "none",
+            hot_index_fully_covered: false,
+            document_status_counts: BTreeMap::new(),
+            ingest_job_status_counts: BTreeMap::new(),
+            ingest_job_kind_status_counts: BTreeMap::new(),
+            ingest_job_failure_counts: BTreeMap::new(),
+        }
+    }
+}
+
+fn benchmark_corpus_summary(
+    _data_dir: &Path,
+    store: &ReadMetaStore,
+) -> Result<BenchmarkCorpusSummary> {
     let document_count = store.visible_document_count().map_err(CliError::store)?;
     let documents = store.visible_documents().map_err(CliError::store)?;
     let ingest_jobs = store.ingest_jobs().map_err(CliError::store)?;
@@ -15144,21 +15204,6 @@ fn search_runtime_cli_error(error: SearchRuntimeError) -> CliError {
         SearchRuntimeErrorCode::SelectionTooLarge => "search filter selection is too large",
         SearchRuntimeErrorCode::InvalidRequest => "search request is invalid",
     })
-}
-
-fn record_search_query_observation(
-    data_dir: &Path,
-    mode: SearchMode,
-    duration: Duration,
-    result_count: usize,
-) {
-    let Ok(observed_at) = current_timestamp() else {
-        return;
-    };
-    let Ok(store) = open_store(data_dir) else {
-        return;
-    };
-    let _ = store.record_query_observation(mode.label(), duration, result_count, observed_at);
 }
 
 fn search_ipc_command(endpoint: &IpcSearchEndpoint, search_args: &SearchArgs) -> Result<()> {
@@ -15745,7 +15790,7 @@ fn is_valid_detail_field_type_label(value: &str) -> bool {
     )
 }
 
-fn build_resume_detail(store: &MetaStore, selection: &SearchSelection) -> Result<ResumeDetail> {
+fn build_resume_detail(store: &ReadMetaStore, selection: &SearchSelection) -> Result<ResumeDetail> {
     let request = SearchTextBytePageRequest::new(selection.clone(), 0, 240)
         .map_err(|_| CliError::user("detail selection is invalid"))?;
     let bundle = match store.search_selection_detail(&request) {
@@ -15890,9 +15935,14 @@ fn delete_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return delete_ipc_command(endpoint, &delete_args);
     }
 
+    let data_directory_owner = import_processing::acquire_owner_for_mutation(
+        data_dir,
+        import_processing::OfflineImportProcessingMutation::DirectDelete,
+    )?;
+
     let document_id = DocumentId::from_str(&delete_args.doc_id)
         .map_err(|_| CliError::user("delete doc id is invalid"))?;
-    let store = open_store(data_dir)?;
+    let store = open_owned_store(&data_directory_owner)?;
     let now = current_timestamp()?;
     let Some(document) = store
         .document_by_id(&document_id)
@@ -15904,7 +15954,6 @@ fn delete_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return Err(CliError::user("delete document was not found"));
     }
     let publication = publish_search_projection_removals(
-        data_dir,
         &store,
         &[SearchProjectionRemoval {
             document_id: document_id.clone(),
@@ -16119,15 +16168,25 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
         return Err(CliError::usage(purge_usage()));
     }
 
-    let store = open_store(data_dir)?;
-    let deleted_document_ids = store.deleted_document_ids().map_err(CliError::store)?;
+    let data_directory_owner = import_processing::acquire_owner_for_mutation(
+        data_dir,
+        import_processing::OfflineImportProcessingMutation::PurgeDeleted,
+    )?;
+
+    let store = open_owned_store(&data_directory_owner)?;
+    let deleted_document_ids = store
+        .deleted_document_ids()
+        .map_err(|_| CliError::user("purge could not enumerate deleted documents"))?;
     let deleted_doc_id_set = deleted_document_ids
         .iter()
         .map(|document_id| document_id.to_string())
         .collect::<BTreeSet<_>>();
     let mut deleted_content_hashes = BTreeSet::new();
     for document_id in &deleted_document_ids {
-        if let Some(document) = store.document_by_id(document_id).map_err(CliError::store)? {
+        if let Some(document) = store
+            .document_by_id(document_id)
+            .map_err(|_| CliError::user("purge could not inspect a deleted document"))?
+        {
             if let Some(content_hash) = document.content_hash {
                 deleted_content_hashes.insert(content_hash);
             }
@@ -16135,7 +16194,7 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
     }
     let live_content_hashes = store
         .visible_documents()
-        .map_err(CliError::store)?
+        .map_err(|_| CliError::user("purge could not inspect active documents"))?
         .into_iter()
         .filter_map(|document| document.content_hash)
         .collect::<BTreeSet<_>>();
@@ -16145,38 +16204,31 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
         PurgeResidualProbe::collect(&store, &deleted_document_ids, &ocr_cache_hashes)?;
 
     let import_task_purge = store
-        .purge_import_tasks_for_deleted_document_roots(&deleted_document_ids)
-        .map_err(CliError::store)?;
+        .purge_import_tasks_for_deleted_documents(&deleted_document_ids)
+        .map_err(|_| CliError::user("purge could not remove deleted import state"))?;
     let ingest_job_purge = store
         .purge_ingest_jobs_for_documents(&deleted_document_ids)
-        .map_err(CliError::store)?;
+        .map_err(|_| CliError::user("purge could not remove deleted ingest state"))?;
     let ocr_cache_purge = store
         .purge_ocr_page_cache_by_content_hashes(&ocr_cache_hashes)
-        .map_err(CliError::store)?;
+        .map_err(|_| CliError::user("purge could not remove deleted OCR state"))?;
     let now = current_timestamp()?;
     let rebuild = if deleted_document_ids.is_empty() {
         None
     } else {
         Some(
-            rebuild_search_artifacts(
-                data_dir,
-                &store,
-                now,
-                &SearchPublicationVectorization::default(),
-            )
-            .map_err(CliError::import)?,
+            rebuild_search_artifacts(&store, now, &SearchPublicationVectorization::default())
+                .map_err(CliError::import)?,
         )
     };
-    let snapshot_purge = reconcile_search_artifacts(
-        data_dir,
-        &store,
-        now,
-        &SearchPublicationVectorization::default(),
-    )
-    .map_err(CliError::import)?;
+    let snapshot_purge =
+        reconcile_search_artifacts(&store, now, &SearchPublicationVectorization::default())
+            .map_err(CliError::import)?;
     let vector_documents_purged = deleted_doc_id_set.len();
-    let purged_documents = store.purge_deleted_documents().map_err(CliError::store)?;
-    let residual_scan = residual_probe.scan_data_dir(data_dir)?;
+    let purged_documents = store
+        .purge_deleted_documents()
+        .map_err(|_| CliError::user("purge could not compact deleted metadata"))?;
+    let residual_scan = residual_probe.scan_data_dir(&data_directory_owner)?;
     if residual_scan.retained_markers > 0 {
         return Err(CliError::user(
             "purge residual scan detected retained deleted material",
@@ -16248,206 +16300,17 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
     Ok(())
 }
 
-#[derive(Default)]
-struct PurgeResidualProbe {
-    markers: BTreeSet<Vec<u8>>,
-}
-
-impl PurgeResidualProbe {
-    fn collect(
-        store: &MetaStore,
-        document_ids: &[DocumentId],
-        ocr_cache_hashes: &[String],
-    ) -> Result<Self> {
-        let mut probe = Self::default();
-
-        for document_id in document_ids {
-            probe.add_marker(document_id.as_str());
-            let Some(document) = store.document_by_id(document_id).map_err(CliError::store)? else {
-                continue;
-            };
-            probe.add_marker(&document.source_uri);
-            probe.add_marker(&document.normalized_path);
-            probe.add_marker(&document.file_name);
-
-            for version in store
-                .resume_versions_for_document(&document.id)
-                .map_err(CliError::store)?
-            {
-                probe.add_marker(version.id.as_str());
-                if let Some(raw_text) = &version.raw_text {
-                    probe.add_marker(raw_text);
-                }
-                if let Some(clean_text) = &version.clean_text {
-                    probe.add_marker(clean_text);
-                }
-
-                for mention in store
-                    .entity_mentions_for_version(&version.id)
-                    .map_err(CliError::store)?
-                {
-                    probe.add_marker(&mention.raw_value);
-                    if let Some(normalized_value) = &mention.normalized_value {
-                        probe.add_marker(normalized_value);
-                    }
-                }
-            }
-        }
-
-        for marker in store
-            .import_root_markers_for_deleted_document_roots(document_ids)
-            .map_err(CliError::store)?
-        {
-            probe.add_marker(&marker);
-        }
-
-        for entry in store
-            .ocr_page_cache_entries_for_content_hashes(ocr_cache_hashes)
-            .map_err(CliError::store)?
-        {
-            if let Some(text) = entry.text() {
-                probe.add_marker(text);
-            }
-            for word_box in entry.word_boxes() {
-                probe.add_marker(word_box.text());
-            }
-        }
-
-        Ok(probe)
-    }
-
-    fn add_marker(&mut self, value: &str) {
-        let marker = value.trim().as_bytes();
-        if marker.len() >= PURGE_RESIDUAL_MARKER_MIN_BYTES {
-            self.markers.insert(marker.to_vec());
-        }
-    }
-
-    fn scan_data_dir(&self, data_dir: &Path) -> Result<PurgeResidualScan> {
-        let markers_checked = self.markers.len();
-        let Some(max_marker_len) = self.markers.iter().map(Vec::len).max() else {
-            return Ok(PurgeResidualScan {
-                markers_checked,
-                ..PurgeResidualScan::default()
-            });
-        };
-
-        let mut scan = PurgeResidualScan {
-            markers_checked,
-            ..PurgeResidualScan::default()
-        };
-        let mut pending_dirs = vec![data_dir.to_path_buf()];
-        while let Some(dir) = pending_dirs.pop() {
-            let entries = fs::read_dir(&dir)
-                .map_err(|_| CliError::user("purge residual scan could not read local artifact"))?;
-            for entry in entries {
-                let entry = entry.map_err(|_| {
-                    CliError::user("purge residual scan could not read local artifact")
-                })?;
-                let file_type = entry.file_type().map_err(|_| {
-                    CliError::user("purge residual scan could not read local artifact")
-                })?;
-                if file_type.is_dir() {
-                    pending_dirs.push(entry.path());
-                } else if file_type.is_file() {
-                    scan.files_scanned += 1;
-                    let file_scan = scan_file_for_purge_residual_markers(
-                        &entry.path(),
-                        &self.markers,
-                        max_marker_len,
-                    )?;
-                    scan.bytes_scanned = scan
-                        .bytes_scanned
-                        .checked_add(file_scan.bytes_scanned)
-                        .ok_or_else(|| {
-                            CliError::user("purge residual scan byte count overflowed")
-                        })?;
-                    if file_scan.retained_marker {
-                        scan.retained_markers += 1;
-                    }
-                } else {
-                    return Err(CliError::user(
-                        "purge residual scan blocked by unsupported local artifact",
-                    ));
-                }
-            }
-        }
-
-        Ok(scan)
-    }
-}
-
-#[derive(Default)]
-struct PurgeResidualScan {
-    markers_checked: usize,
-    files_scanned: usize,
-    bytes_scanned: u64,
-    retained_markers: usize,
-}
-
-#[derive(Default)]
-struct PurgeResidualFileScan {
-    bytes_scanned: u64,
-    retained_marker: bool,
-}
-
-fn scan_file_for_purge_residual_markers(
-    path: &Path,
-    markers: &BTreeSet<Vec<u8>>,
-    max_marker_len: usize,
-) -> Result<PurgeResidualFileScan> {
-    let mut file = fs::File::open(path)
-        .map_err(|_| CliError::user("purge residual scan could not read local artifact"))?;
-    let mut scan = PurgeResidualFileScan::default();
-    let mut buffer = vec![0_u8; PURGE_RESIDUAL_SCAN_CHUNK_BYTES];
-    let mut carry = Vec::new();
-    let carry_len = max_marker_len.saturating_sub(1);
-
-    loop {
-        let bytes_read = file
-            .read(&mut buffer)
-            .map_err(|_| CliError::user("purge residual scan could not read local artifact"))?;
-        if bytes_read == 0 {
-            return Ok(scan);
-        }
-
-        scan.bytes_scanned = scan
-            .bytes_scanned
-            .checked_add(
-                u64::try_from(bytes_read)
-                    .map_err(|_| CliError::user("purge residual scan byte count overflowed"))?,
-            )
-            .ok_or_else(|| CliError::user("purge residual scan byte count overflowed"))?;
-        let mut window = Vec::with_capacity(carry.len() + bytes_read);
-        window.extend_from_slice(&carry);
-        window.extend_from_slice(&buffer[..bytes_read]);
-
-        if purge_residual_window_contains_marker(&window, markers) {
-            scan.retained_marker = true;
-            return Ok(scan);
-        }
-
-        carry.clear();
-        if carry_len > 0 {
-            let start = window.len().saturating_sub(carry_len);
-            carry.extend_from_slice(&window[start..]);
-        }
-    }
-}
-
-fn purge_residual_window_contains_marker(buffer: &[u8], markers: &BTreeSet<Vec<u8>>) -> bool {
-    markers.iter().any(|marker| {
-        marker.len() <= buffer.len() && buffer.windows(marker.len()).any(|window| window == marker)
-    })
-}
-
 fn purge_usage() -> &'static str {
     "usage: resume-cli purge --deleted"
 }
 
 fn task_control_command(data_dir: &Path, args: &[String], paused: bool) -> Result<()> {
     let task = parse_worker_task_control_args(args)?;
-    let store = open_store(data_dir)?;
+    let owner = import_processing::acquire_owner_for_mutation(
+        data_dir,
+        import_processing::OfflineImportProcessingMutation::TaskControl,
+    )?;
+    let store = open_owned_store(&owner)?;
     let now = current_timestamp()?;
     store
         .set_worker_task_paused(task, paused, now)
@@ -16485,7 +16348,12 @@ fn cancel_command(data_dir: &Path, args: &[String]) -> Result<()> {
         );
     }
 
-    let store = open_store(data_dir)?;
+    let data_directory_owner = import_processing::acquire_owner_for_mutation(
+        data_dir,
+        import_processing::OfflineImportProcessingMutation::DirectCancel,
+    )?;
+
+    let store = open_owned_store(&data_directory_owner)?;
     let now = current_timestamp()?;
     store
         .cancel_import_task(&cancel_args.task_id, now)
@@ -16617,8 +16485,22 @@ fn task_control_usage() -> CliError {
 
 fn ocr_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let worker_args = parse_ocr_worker_args(args)?;
-    let store = open_store(data_dir)?;
+    let owner = import_processing::acquire_owner_for_mutation(
+        data_dir,
+        import_processing::OfflineImportProcessingMutation::OcrWorker,
+    )?;
+    let store = open_owned_store(&owner)?;
     let now = current_timestamp()?;
+    match ocr_preclaim_decision(&store).map_err(CliError::import)? {
+        OcrPreclaimDecision::Ready => {}
+        OcrPreclaimDecision::NotReady(_) => {
+            println!("ocr worker: not ready");
+            println!("documents processed: 0");
+            println!("cache writes: 0");
+            println!("cache hits: 0");
+            return Ok(());
+        }
+    }
     if store
         .worker_task_control(WorkerTaskKind::Ocr)
         .map_err(CliError::store)?
@@ -16664,7 +16546,7 @@ fn ocr_worker_command(data_dir: &Path, args: &[String]) -> Result<()> {
 
 fn run_claimed_ocr_job(
     data_dir: &Path,
-    store: &MetaStore,
+    store: &OwnedMetaStore,
     job: &meta_store::ClaimedOcrJob,
     worker_args: &OcrWorkerArgs,
     now: UnixTimestamp,
@@ -17358,6 +17240,7 @@ impl PostPendingImportTaskRecoveryBoundary {
 
 fn diagnose_post_pending_import_task_recovery_boundary(
     data_dir: &Path,
+    store: &OwnedMetaStore,
     requested_root: &Path,
 ) -> Result<PostPendingImportTaskRecoveryBoundary> {
     let roots = canonical_import_roots(&[requested_root.to_path_buf()])?;
@@ -17365,7 +17248,6 @@ fn diagnose_post_pending_import_task_recovery_boundary(
         .into_iter()
         .next()
         .ok_or_else(|| CliError::user("import root must exist and be a directory"))?;
-    let store = open_store(data_dir)?;
     let now = current_timestamp()?;
     let canonical_root_path = path_string(&root.canonical);
     if let Some(task) = store
@@ -17373,7 +17255,7 @@ fn diagnose_post_pending_import_task_recovery_boundary(
         .map_err(CliError::store)?
     {
         return diagnose_post_pending_import_task_recovery_boundary_for_task(
-            data_dir, &store, task, now,
+            data_dir, store, task, now,
         );
     }
     let requested_root_path = path_string(&root.requested);
@@ -17383,7 +17265,7 @@ fn diagnose_post_pending_import_task_recovery_boundary(
             .map_err(CliError::store)?
         {
             return diagnose_post_pending_import_task_recovery_boundary_for_task(
-                data_dir, &store, task, now,
+                data_dir, store, task, now,
             );
         }
     }
@@ -17392,7 +17274,7 @@ fn diagnose_post_pending_import_task_recovery_boundary(
 
 fn diagnose_post_pending_import_task_recovery_boundary_for_task(
     data_dir: &Path,
-    store: &MetaStore,
+    store: &OwnedMetaStore,
     task: ImportTask,
     now: UnixTimestamp,
 ) -> Result<PostPendingImportTaskRecoveryBoundary> {
@@ -17423,7 +17305,13 @@ fn print_post_pending_import_task_recovery_boundary_report(
     data_dir: &Path,
     requested_root: &Path,
 ) -> Result<()> {
-    let boundary = diagnose_post_pending_import_task_recovery_boundary(data_dir, requested_root)?;
+    let data_directory_owner = import_processing::acquire_owner_for_mutation(
+        data_dir,
+        import_processing::OfflineImportProcessingMutation::DoctorRecovery,
+    )?;
+    let store = open_owned_store(&data_directory_owner)?;
+    let boundary =
+        diagnose_post_pending_import_task_recovery_boundary(data_dir, &store, requested_root)?;
     println!("resume-ir doctor");
     println!("diagnostic scope: post_pending_import_task_recovery_boundary");
     println!(
@@ -17489,7 +17377,7 @@ fn diagnose_post_recovery_retained_lineage_convergence_boundary(
 }
 
 fn latest_import_task_for_requested_root(
-    store: &MetaStore,
+    store: &ReadMetaStore,
     root: &CanonicalImportRoot,
 ) -> Result<Option<ImportTask>> {
     let canonical_root_path = path_string(&root.canonical);
@@ -18924,7 +18812,7 @@ struct ResumeDetailField {
     extractor: String,
 }
 
-fn inspect_search_index(data_dir: &Path, store: &MetaStore) -> SearchIndexDiagnostic {
+fn inspect_search_index(data_dir: &Path, store: &ReadMetaStore) -> SearchIndexDiagnostic {
     let staging_orphans = None;
     let Ok(state) = store.search_projection_state() else {
         return SearchIndexDiagnostic::Corrupt { staging_orphans };
@@ -19027,7 +18915,7 @@ impl SearchIndexDiagnostic {
 }
 
 fn inspect_vector_index(data_dir: &Path) -> VectorIndexDiagnostic {
-    let Ok(store) = MetaStore::open_data_dir(data_dir) else {
+    let Ok(store) = ReadMetaStore::open_data_dir(data_dir) else {
         return VectorIndexDiagnostic::unavailable();
     };
     let Ok(state) = store.search_projection_state() else {
@@ -19102,12 +18990,12 @@ impl VectorIndexDiagnostic {
     }
 }
 
-fn open_store(data_dir: &Path) -> Result<MetaStore> {
-    fs::create_dir_all(data_dir)
-        .map_err(|_| CliError::user("unable to prepare local metadata directory"))?;
-    let store = MetaStore::open_data_dir(data_dir).map_err(CliError::store)?;
-    store.run_migrations().map_err(CliError::store)?;
-    Ok(store)
+fn open_store(data_dir: &Path) -> Result<ReadMetaStore> {
+    ReadMetaStore::open_data_dir(data_dir).map_err(CliError::store)
+}
+
+fn open_owned_store(owner: &import_pipeline::DataDirectoryOwnerLease) -> Result<OwnedMetaStore> {
+    owner.open_store().map_err(CliError::store)
 }
 
 fn current_timestamp() -> Result<UnixTimestamp> {
@@ -19296,6 +19184,10 @@ impl fmt::Display for CliError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use meta_store::{
+        ClassificationStatus, ContentDigest, CurrentClassifierEpoch, ReasonCode,
+        SearchRepairReason, SourceRevision, SourceRevisionTriage, CLASSIFIER_EPOCH,
+    };
 
     #[test]
     fn import_parse_workers_argument_sets_direct_import_override() {
@@ -19365,6 +19257,97 @@ mod tests {
 
         assert_eq!(status, ServiceRuntimeState::Unknown);
         assert_eq!(status.label(), "unknown");
+    }
+
+    #[test]
+    fn witness_ocr_repair_blocked_is_bounded_and_does_not_claim() {
+        let temp_dirs = WitnessTempDirs::create().unwrap();
+        let owner = import_processing::acquire_owner_for_mutation(
+            &temp_dirs.data_dir,
+            import_processing::OfflineImportProcessingMutation::SyntheticFaultProbe,
+        )
+        .unwrap();
+        let store = owner.open_store().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_800_411_000);
+        let digest = ContentDigest::from_bytes(b"synthetic-witness-ocr-gate");
+        let document_id = DocumentId::from_non_secret_parts(&["synthetic-witness-ocr-gate"]);
+        store
+            .upsert_document(&Document {
+                id: document_id.clone(),
+                source_uri: "synthetic://witness-ocr-gate".to_string(),
+                normalized_path: "/synthetic/witness-ocr-gate.pdf".to_string(),
+                file_name: "synthetic-witness-ocr-gate.pdf".to_string(),
+                extension: FileExtension::Pdf,
+                byte_size: 32,
+                mtime: now,
+                content_hash: Some(digest.as_str().to_string()),
+                text_hash: None,
+                is_deleted: false,
+                created_at: now,
+                updated_at: now,
+                status: DocumentStatus::OcrRequired,
+            })
+            .unwrap();
+        let revision = SourceRevision::for_content(document_id, digest, 32);
+        store.insert_source_revision(&revision).unwrap();
+        store
+            .insert_source_revision_triage(&SourceRevisionTriage {
+                source_revision_id: revision.id.clone(),
+                status: ClassificationStatus::OcrBacklog,
+                triage_epoch: CLASSIFIER_EPOCH.to_string(),
+                reason_codes: vec![ReasonCode::OcrRequired],
+                triaged_at: now,
+            })
+            .unwrap();
+        let queued = store
+            .enqueue_ocr_job_for_source_triage(
+                &revision.id,
+                CurrentClassifierEpoch::parse(CLASSIFIER_EPOCH).unwrap(),
+                now,
+            )
+            .unwrap();
+        store
+            .block_migration_rebuild(SearchRepairReason::RuntimeInvariant, now)
+            .unwrap();
+
+        let status = run_witness_ocr_jobs(
+            &temp_dirs.data_dir,
+            &store,
+            &default_ocr_worker_args(),
+            None,
+            now,
+        )
+        .unwrap();
+
+        match status {
+            WitnessOcrStatus::Blocked {
+                reason,
+                documents_processed,
+                documents_failed,
+                cache_writes,
+                cache_hits,
+                budget_exhausted,
+            } => {
+                assert_eq!(reason, "search publication is not ready");
+                assert_eq!(documents_processed, 0);
+                assert_eq!(documents_failed, 0);
+                assert_eq!(cache_writes, 0);
+                assert_eq!(cache_hits, 0);
+                assert!(!budget_exhausted);
+            }
+            _ => panic!("repair-blocked witness OCR must return the bounded blocked state"),
+        }
+        let job = store.ingest_job_by_id(&queued.job.id).unwrap().unwrap();
+        assert_eq!(job.status, IngestJobStatus::Queued);
+        assert_eq!(job.attempt_count, 0);
+        assert_eq!(
+            store
+                .document_by_id(&job.document_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            DocumentStatus::OcrRequired
+        );
     }
 
     fn strings(values: &[&str]) -> Vec<String> {

@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use meta_store::{EntityType, MetaStore};
+use meta_store::{
+    DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, EntityType, OwnedMetaStore,
+    ReadMetaStore,
+};
 
 const CLASSIFIER_RESUME_PREFIX: &str =
     "SUMMARY\nSynthetic fixture profile.\nEXPERIENCE\nBuilt systems.\n";
@@ -13,8 +16,7 @@ fn filtered_search_uses_persisted_field_mentions_without_reextracting_clean_text
     let data_dir = temp_dir("persisted-fields-data");
     import_fixtures(&data_dir);
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = create_owned_store(&data_dir);
     let versions = store
         .visible_documents()
         .unwrap()
@@ -42,6 +44,7 @@ fn filtered_search_uses_persisted_field_mentions_without_reextracting_clean_text
         version.clean_text = None;
         assert!(store.insert_resume_version(&version).is_err());
     }
+    drop(store);
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -117,8 +120,7 @@ Skills: Java
     assert!(!stdout.contains("PMP"));
     assert!(!stdout.contains("cert-candidate@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -206,8 +208,7 @@ Skills: needle Java
     assert!(!import_stdout.contains("Security Specialist"));
     assert!(!import_stdout.contains("broader-cert-target@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let target = store
         .visible_documents()
         .unwrap()
@@ -315,8 +316,7 @@ Skills: Java
     assert!(!stdout.contains("Shanghai"));
     assert!(!stdout.contains("location-candidate@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -402,8 +402,7 @@ Skills: needle Rust
     assert!(!import_stdout.contains("香港"));
     assert!(!import_stdout.contains("location-alias-target@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let target = store
         .visible_documents()
         .unwrap()
@@ -518,8 +517,7 @@ Skills: needle Rust
     assert!(!import_stdout.contains("Queen's Road"));
     assert!(!import_stdout.contains("address-location-target@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let target = store
         .visible_documents()
         .unwrap()
@@ -633,8 +631,7 @@ Skills: needle Rust
     assert!(!import_stdout.contains("queen's road"));
     assert!(!import_stdout.contains("address-city-alias-target@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let target = store
         .visible_documents()
         .unwrap()
@@ -740,8 +737,7 @@ Java island migration
     assert!(!stdout.contains("Python"));
     assert!(!stdout.contains("skill-candidate@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -838,8 +834,7 @@ needle delivery platform
     assert!(!stdout.contains("Amazon Web Services"));
     assert!(!stdout.contains("broader-skill-target@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -961,8 +956,7 @@ Skills: Java
     assert!(!stdout.contains("博士研究生"));
     assert!(!stdout.contains("education-candidate@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -1064,8 +1058,7 @@ Skills: needle Rust
     assert!(!import_stdout.contains("M.Tech"));
     assert!(!import_stdout.contains("degree-alias-target@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let target = store
         .visible_documents()
         .unwrap()
@@ -1183,8 +1176,7 @@ needle needle needle needle needle needle needle needle needle needle
     assert!(!stdout.contains("数据科学"));
     assert!(!stdout.contains("major-candidate@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -1304,8 +1296,7 @@ needle needle needle needle needle
     assert!(!stdout.contains("会计学"));
     assert!(!stdout.contains("broader-major-candidate@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -1426,8 +1417,7 @@ Skills: needle Rust
     assert!(!import_stdout.contains("大专"));
     assert!(!import_stdout.contains("chinese-degree-target@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let target = store
         .visible_documents()
         .unwrap()
@@ -1526,8 +1516,7 @@ Skills: Java
     assert!(!stdout.contains("Synthetic 985 University"));
     assert!(!stdout.contains("school-tier-candidate@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -1659,8 +1648,7 @@ Skills: needle Java
     assert!(!import_stdout.contains("Ivy League"));
     assert!(!import_stdout.contains("school-tier-alias-target@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let target = store
         .visible_documents()
         .unwrap()
@@ -1764,8 +1752,7 @@ Bachelor of Science in Computer Science
     assert!(!stdout.contains("Bachelor"));
     assert!(!stdout.contains("degree-context-candidate@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -1850,8 +1837,7 @@ Skills: Java
     assert!(!stdout.contains("高级后端"));
     assert!(!stdout.contains("labeled-role-candidate@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -1957,8 +1943,7 @@ Skills: needle Rust
     assert!(!import_stdout.contains("合成科技"));
     assert!(!import_stdout.contains("company-suffix-target@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let target = store
         .visible_documents()
         .unwrap()
@@ -2074,8 +2059,7 @@ Skills: Java
     assert!(!stdout.contains("DevOps Engineer"));
     assert!(!stdout.contains("title-alias-candidate@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -2171,8 +2155,7 @@ Title: Business Analyst
     assert!(!stdout.contains("AWS Certified"));
     assert!(!stdout.contains("Platform Engineer"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -2301,8 +2284,7 @@ Synthetic Payments Inc.
     assert!(!stdout.contains("2020年1月"));
     assert!(!stdout.contains("date-candidate@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -2333,8 +2315,10 @@ Synthetic Payments Inc.
         .find(|mention| mention.entity_type == EntityType::YearsExperience)
         .unwrap();
     assert_eq!(years.normalized_value.as_deref(), Some("4.2"));
-    assert!(years.span_start.is_some());
-    assert!(years.span_end.is_some());
+    assert_eq!(years.span_start, None);
+    assert_eq!(years.span_end, None);
+    assert_eq!(years.raw_value, "4.2");
+    assert_eq!(years.extractor, "rules-v2-derived");
     assert!(!format!("{years:?}").contains("2020年1月"));
 
     remove_dir(&data_dir);
@@ -2342,7 +2326,7 @@ Synthetic Payments Inc.
 }
 
 #[test]
-fn import_persists_present_date_range_and_years_mentions_without_output_leaks() {
+fn import_persists_present_date_ranges_without_time_dependent_years() {
     let data_dir = temp_dir("persisted-present-date-data");
     let resume_root = temp_dir("persisted-present-date-resumes");
     write_resume_fixture(
@@ -2385,8 +2369,7 @@ Skills: Java
     assert!(!stdout.contains("Present"));
     assert!(!stdout.contains("present-date-candidate@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -2415,16 +2398,9 @@ Skills: Java
         vec!["2020-01/PRESENT", "2021-01/PRESENT", "2022-03/PRESENT"]
     );
 
-    let years = mentions
+    assert!(mentions
         .iter()
-        .find(|mention| mention.entity_type == EntityType::YearsExperience)
-        .unwrap();
-    let years_value = years.normalized_value.as_deref().unwrap();
-    let years_value = years_value.parse::<f32>().unwrap();
-    assert!(years_value >= 10.0, "{years_value}");
-    assert!(years.span_start.is_some());
-    assert!(years.span_end.is_some());
-    assert!(!format!("{years:?}").contains("Present"));
+        .all(|mention| mention.entity_type != EntityType::YearsExperience));
 
     remove_dir(&data_dir);
     remove_dir(&resume_root);
@@ -2472,8 +2448,7 @@ Skills: Java
     assert!(!stdout.contains("Candidate_2026"));
     assert!(!stdout.contains("mobile-candidate@example.test"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -2540,6 +2515,14 @@ fn import_fixtures(data_dir: &Path) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn create_owned_store(data_dir: &Path) -> OwnedMetaStore {
+    let owner = match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("test store owner contended"),
+    };
+    owner.open_store().unwrap()
 }
 
 fn temp_dir(label: &str) -> PathBuf {

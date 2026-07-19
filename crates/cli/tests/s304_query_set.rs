@@ -372,6 +372,10 @@ fn benchmark_query_set_preflight_agent_replay_reports_trace_counts_without_local
             "preflight artifact leaked {forbidden}"
         );
     }
+    assert!(
+        fs::read_dir(&data_dir).unwrap().next().is_none(),
+        "read-only preflight must not create or migrate metadata"
+    );
 
     remove_dir(&data_dir);
     remove_dir(&out_dir);

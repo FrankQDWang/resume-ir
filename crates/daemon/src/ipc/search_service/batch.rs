@@ -3,7 +3,7 @@ use std::net::{Shutdown, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::search_ipc::{BatchAdmissionPermit, RequestEnvelope};
+use super::{BatchAdmissionPermit, RequestEnvelope};
 
 const REQUEST_SCHEMA_VERSION: &str = "resume-ir.search-batch-request.v1";
 const CHILD_RESPONSE_SCHEMA_VERSION: &str = "resume-ir.search-batch-child-response.v1";
@@ -36,7 +36,7 @@ pub(crate) fn parse_request(body: &[u8]) -> Result<BatchRequest, &'static str> {
     let batch_id = value
         .get("batch_id")
         .and_then(serde_json::Value::as_str)
-        .filter(|batch_id| super::search_ipc::valid_opaque_id(batch_id))
+        .filter(|batch_id| super::valid_opaque_id(batch_id))
         .ok_or("batch_id is invalid")?
         .to_string();
     let requests = value
@@ -49,7 +49,7 @@ pub(crate) fn parse_request(body: &[u8]) -> Result<BatchRequest, &'static str> {
     let mut request_ids = HashSet::with_capacity(requests.len());
     let mut cancel_tokens = HashSet::with_capacity(requests.len());
     for request in requests {
-        let envelope = super::search_ipc::parse_request(
+        let envelope = super::parse_request(
             serde_json::to_string(request)
                 .map_err(|_| "child request is invalid")?
                 .as_bytes(),
@@ -86,6 +86,8 @@ struct BatchWriterInner {
     batch_id: String,
     remaining: AtomicUsize,
     admission: Mutex<Option<BatchAdmissionPermit>>,
+    completion: crate::ipc::ConnectionCompletion,
+    response_failure: Mutex<Option<crate::ipc::ResponseSinkError>>,
 }
 
 impl BatchWriter {
@@ -94,18 +96,21 @@ impl BatchWriter {
         batch_id: String,
         child_count: usize,
         admission: BatchAdmissionPermit,
-    ) -> super::Result<Self> {
-        super::ipc::response::write_all(
+        completion: crate::ipc::ConnectionCompletion,
+    ) -> crate::Result<Self> {
+        crate::ipc::response::write_all(
             &mut stream,
             b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nConnection: close\r\n\r\n",
         )
-        .map_err(super::DaemonError::response_sink)?;
+        .map_err(crate::DaemonError::response_sink)?;
         Ok(Self {
             inner: Arc::new(BatchWriterInner {
                 stream: Mutex::new(stream),
                 batch_id,
                 remaining: AtomicUsize::new(child_count),
                 admission: Mutex::new(Some(admission)),
+                completion,
+                response_failure: Mutex::new(None),
             }),
         })
     }
@@ -117,6 +122,14 @@ impl BatchWriter {
             request_id,
             completed: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub(crate) fn finish_failure(&self, failure: crate::ipc::RequestFailure) {
+        self.inner
+            .completion
+            .finish(crate::ipc::ConnectionOutcome::from_request_result(Err(
+                failure,
+            )));
     }
 }
 
@@ -157,10 +170,18 @@ impl BatchChildReply {
             "response": response,
         })
         .to_string();
-        if let Ok(mut stream) = self.writer.stream.lock() {
-            let _ = super::ipc::response::write_all(&mut stream, line.as_bytes())
-                .and_then(|()| super::ipc::response::write_all(&mut stream, b"\n"))
-                .and_then(|()| super::ipc::response::flush(&mut stream));
+        let response_failure = if let Ok(mut stream) = self.writer.stream.lock() {
+            crate::ipc::response::write_all(&mut stream, line.as_bytes())
+                .and_then(|()| crate::ipc::response::write_all(&mut stream, b"\n"))
+                .and_then(|()| crate::ipc::response::flush(&mut stream))
+                .err()
+        } else {
+            Some(crate::ipc::ResponseSinkError::Unavailable)
+        };
+        if let Some(error) = response_failure {
+            if let Ok(mut failure) = self.writer.response_failure.lock() {
+                failure.get_or_insert(error);
+            }
         }
         if self.writer.remaining.fetch_sub(1, Ordering::AcqRel) == 1 {
             if let Ok(stream) = self.writer.stream.lock() {
@@ -169,6 +190,18 @@ impl BatchChildReply {
             if let Ok(mut admission) = self.writer.admission.lock() {
                 admission.take();
             }
+            let outcome = self
+                .writer
+                .response_failure
+                .lock()
+                .ok()
+                .and_then(|failure| *failure)
+                .map_or(crate::ipc::ConnectionOutcome::Completed, |error| {
+                    crate::ipc::ConnectionOutcome::from_request_result(Err(
+                        crate::ipc::RequestFailure::ResponseSink(error),
+                    ))
+                });
+            self.writer.completion.finish(outcome);
         }
     }
 }
@@ -188,5 +221,5 @@ pub(crate) fn overload_body(batch_id: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "search_batch_tests.rs"]
+#[path = "batch_tests.rs"]
 mod tests;

@@ -1,11 +1,13 @@
-use meta_store::MetaStore;
+use meta_store::ReadMetaStore;
 
-use crate::ipc::{process_metrics, IpcMetricsSnapshot, ServiceHealth, ServiceState};
-use crate::{projection_service_health, service_error_json};
+use super::{
+    process_metrics, projection_service_health, search_repair_reason_label, service_error_json,
+    IpcMetricsSnapshot, ServiceHealth, ServiceState,
+};
 
 const MAX_ERROR_BUCKETS: usize = 16;
 
-pub(crate) fn render(store: &MetaStore) -> String {
+pub(crate) fn render(store: &ReadMetaStore) -> String {
     render_result(render_available(store))
 }
 
@@ -13,7 +15,7 @@ fn render_result<E>(result: std::result::Result<String, E>) -> String {
     result.unwrap_or_else(|_| render_unavailable())
 }
 
-fn render_available(store: &MetaStore) -> meta_store::Result<String> {
+fn render_available(store: &ReadMetaStore) -> meta_store::Result<String> {
     let summary = store.status_summary()?;
     let projection = store.search_projection_state()?;
     let visible_epoch = projection.visible_epoch;
@@ -48,6 +50,7 @@ fn render_available(store: &MetaStore) -> meta_store::Result<String> {
             "metadata": services.metadata.label(),
             "query": services.query.label(),
         },
+        "repair_reason": projection.repair_reason.map(search_repair_reason_label),
         "error": service_error_json(services),
         "metrics": {
             "ipc": ipc_json(ipc),
@@ -103,6 +106,7 @@ fn render_unavailable() -> String {
             "metadata": services.metadata.label(),
             "query": services.query.label(),
         },
+        "repair_reason": serde_json::Value::Null,
         "metrics": {
             "ipc": ipc_json(process_metrics().snapshot()),
             "indexed_documents": serde_json::Value::Null,

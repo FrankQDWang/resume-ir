@@ -5,14 +5,46 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::mpsc::{Receiver, TryRecvError};
+#[cfg(windows)]
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use meta_store::MetaStore;
+use import_pipeline::ImportTaskOwnerLock;
+use meta_store::{
+    DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, ImportRootKind, ImportScanProfile,
+    ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, ReadMetaStore, UnixTimestamp,
+};
 use process_containment::ContainedChild;
+
+mod support;
+
+const ACTIVE_IMPORT_FILE_COUNT: usize = 1_024;
+
+// These tests each own a resident native daemon, and one deliberately drives a
+// large active import. Windows process and index-writer startup can otherwise
+// be starved by a sibling test in the same libtest process. Production daemon
+// ownership remains one daemon per data directory; only this test process has
+// a single native lifecycle admission slot on Windows.
+macro_rules! serialize_windows_s81_daemon_test {
+    () => {
+        #[cfg(windows)]
+        let _guard = windows_s81_daemon_test_lock();
+    };
+}
+
+#[cfg(windows)]
+fn windows_s81_daemon_test_lock() -> MutexGuard<'static, ()> {
+    static WINDOWS_S81_DAEMON_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    WINDOWS_S81_DAEMON_TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 #[test]
 fn foreground_daemon_can_be_killed_and_restarted_without_path_leak() {
+    serialize_windows_s81_daemon_test!();
     let data_dir = temp_dir("daemon-kill-restart-data");
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
@@ -59,7 +91,7 @@ fn foreground_daemon_can_be_killed_and_restarted_without_path_leak() {
     let restart_stdout = String::from_utf8_lossy(&restart.stdout);
     assert!(restart_stdout.contains("resume-daemon foreground ready"));
     assert!(restart_stdout.contains("mode: once"));
-    assert!(restart_stdout.contains("index health: empty"));
+    assert!(restart_stdout.contains("index health: ready"));
     assert!(!restart_stdout.contains(path_str(&data_dir)));
 
     remove_dir(&data_dir);
@@ -67,6 +99,7 @@ fn foreground_daemon_can_be_killed_and_restarted_without_path_leak() {
 
 #[test]
 fn parent_lifecycle_eof_gracefully_stops_foreground_daemon() {
+    serialize_windows_s81_daemon_test!();
     let data_dir = temp_dir("parent-lifecycle-eof-data");
 
     let mut command = Command::new(env!("CARGO_BIN_EXE_resume-daemon"));
@@ -102,6 +135,99 @@ fn parent_lifecycle_eof_gracefully_stops_foreground_daemon() {
     assert!(!stopped.stdout.contains(path_str(&data_dir)));
 
     remove_dir(&data_dir);
+}
+
+#[test]
+fn parent_lifecycle_eof_interrupts_an_active_import_without_partial_publication() {
+    serialize_windows_s81_daemon_test!();
+    let data_dir = temp_dir("parent-lifecycle-active-import-data");
+    let import_root = active_import_root(ACTIVE_IMPORT_FILE_COUNT);
+    let canonical_root = fs::canonicalize(&import_root).unwrap();
+    let task_id = seed_queued_import_task(&data_dir, &canonical_root);
+    let observer = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_resume-daemon"));
+    command
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--parent-lifecycle-stdin",
+            "--work-imports",
+            "--worker-interval-ms",
+            "10",
+            "--max-worker-ticks",
+            "2400",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = ContainedChild::spawn(&mut command).expect("start active import daemon");
+    let lifecycle_stdin = child.take_stdin().expect("daemon lifecycle stdin");
+    let stdout = child.take_stdout().expect("daemon stdout");
+    let stderr = child.take_stderr().expect("daemon stderr");
+    let stdout = spawn_stdout_reader(stdout);
+    wait_until_import_task_is_running_and_owned(&mut child, &observer, &data_dir, &task_id);
+
+    let started = Instant::now();
+    drop(lifecycle_stdin);
+    let stopped = wait_contained_child(child, stdout, stderr, Duration::from_secs(4));
+    let elapsed = started.elapsed();
+    assert!(stopped.success, "stderr:\n{}", stopped.stderr);
+    assert!(stopped.stderr.is_empty());
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "active import did not stop cooperatively: {elapsed:?}"
+    );
+
+    assert_eq!(
+        observer
+            .import_task_by_id(&task_id)
+            .unwrap()
+            .unwrap()
+            .status,
+        ImportTaskStatus::Queued
+    );
+    let interrupted_state = observer.search_projection_state().unwrap();
+    assert_eq!(interrupted_state.visible_epoch, 0);
+    assert!(interrupted_state.generation.is_none());
+    drop(observer);
+
+    let restart = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-imports",
+            "--worker-interval-ms",
+            "1",
+            "--max-worker-ticks",
+            "2",
+        ])
+        .output()
+        .expect("restart interrupted import daemon");
+    assert!(
+        restart.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&restart.stdout),
+        String::from_utf8_lossy(&restart.stderr)
+    );
+    assert!(restart.stderr.is_empty());
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+    assert_eq!(
+        store.import_task_by_id(&task_id).unwrap().unwrap().status,
+        ImportTaskStatus::Completed
+    );
+    assert!(store
+        .search_projection_state()
+        .unwrap()
+        .generation
+        .is_some());
+
+    remove_dir(&data_dir);
+    remove_dir(&import_root);
 }
 
 #[cfg(unix)]
@@ -215,7 +341,7 @@ fn term_ignoring_daemon_command() -> Command {
 fn wait_until_metadata_store_ready(child: &mut Child, data_dir: &Path) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
-        if MetaStore::open_data_dir(data_dir)
+        if ReadMetaStore::open_data_dir(data_dir)
             .and_then(|store| store.status_summary().map(|_| ()))
             .is_ok()
         {
@@ -230,6 +356,36 @@ fn wait_until_metadata_store_ready(child: &mut Child, data_dir: &Path) {
     let _ = child.kill();
     let _ = child.wait();
     panic!("daemon did not prepare metadata store before timeout");
+}
+
+fn wait_until_import_task_is_running_and_owned(
+    child: &mut ContainedChild,
+    store: &ReadMetaStore,
+    data_dir: &Path,
+    task_id: &ImportTaskId,
+) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let task_is_running = store
+            .import_task_by_id(task_id)
+            .ok()
+            .flatten()
+            .is_some_and(|task| task.status == ImportTaskStatus::Running);
+        if task_is_running
+            && matches!(
+                ImportTaskOwnerLock::try_acquire(data_dir, task_id),
+                Ok(None)
+            )
+        {
+            return;
+        }
+        if let Some(status) = child.try_wait().expect("poll active import daemon") {
+            panic!("daemon exited before active import ownership: {status}");
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    child.terminate();
+    panic!("daemon did not own an active import before timeout");
 }
 
 struct StdoutReader {
@@ -419,6 +575,66 @@ fn temp_dir(label: &str) -> PathBuf {
     remove_dir(&path);
     fs::create_dir_all(&path).unwrap();
     path
+}
+
+fn active_import_root(file_count: usize) -> PathBuf {
+    let root = temp_dir("active-import-root");
+    for index in 0..file_count {
+        fs::write(
+            root.join(format!("candidate-{index:04}.txt")),
+            format!(
+                "SUMMARY\nLifecycleCandidate{index} backend engineer.\nEXPERIENCE\nBuilt reliable Rust services. {}\nSKILLS\nRust distributed systems",
+                "local-first search publication ".repeat(64)
+            ),
+        )
+        .unwrap();
+    }
+    root
+}
+
+fn seed_queued_import_task(data_dir: &Path, canonical_root: &Path) -> ImportTaskId {
+    let owner = match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("synthetic data directory is owned"),
+    };
+    let store = owner.open_store().unwrap();
+    let now = UnixTimestamp::from_unix_seconds(1_700_000_000);
+    let task_id = ImportTaskId::from_non_secret_parts(&["s807", "lifecycle-active-import"]);
+    let task = ImportTask {
+        id: task_id.clone(),
+        root_path: path_str(canonical_root).to_string(),
+        status: ImportTaskStatus::Queued,
+        queued_at: now,
+        started_at: None,
+        finished_at: None,
+        updated_at: now,
+    };
+    let scope = ImportScanScope {
+        import_task_id: task_id.clone(),
+        root_kind: ImportRootKind::Explicit,
+        root_preset: None,
+        scan_profile: ImportScanProfile::Explicit,
+        requested_root_path: path_str(canonical_root).to_string(),
+        canonical_root_path: path_str(canonical_root).to_string(),
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        scan_budget_kind: None,
+        scan_budget_limit: None,
+        scan_budget_observed: None,
+        scan_budget_exhausted: false,
+        updated_at: now,
+    };
+    let contract = support::activate_default_processing_contract(&store, now);
+    store
+        .insert_import_task_with_scan_scope(&task, &scope, &contract)
+        .unwrap();
+    task_id
 }
 
 fn path_str(path: &Path) -> &str {

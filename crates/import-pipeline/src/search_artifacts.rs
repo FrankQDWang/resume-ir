@@ -7,26 +7,29 @@ use index_fulltext::{
     publish_trusted_redacted_snapshot_with_control, IndexDocument, PublishedSnapshotMetadata,
     SnapshotPublishControl, SnapshotPublishPhase,
 };
-use meta_store::{ActiveSearchProjection, Document, MetaStore, ResumeVersion, UnixTimestamp};
+use meta_store::{
+    ActiveSearchProjection, Document, MigrationRebuildProjectionRow, OwnedMetaStore, ResumeVersion,
+    SearchPublicationSession, UnixTimestamp,
+};
 use sectionizer::Sectionizer;
 
-use super::index_publication::SearchPublicationLock;
 use super::search_artifact_cache::{
     apply_document_delta, ensure_cache_matches_generation, CurrentImportCacheMode,
     CurrentImportDocumentCache,
 };
 use super::search_publication::{
-    load_search_publication_base, prepare_search_publication, projections_after_delta,
-    PreparedSearchPublication, SearchPublicationBase,
+    load_migration_rebuild_publication_base, load_search_publication_base,
+    prepare_search_publication, projections_after_delta, PreparedSearchPublication,
+    SearchPublicationBase,
 };
+use super::search_publication_vector::staged_search_version_texts;
 use super::{
     sections_to_index, ImportCancelCheckPhase, ImportPipelineError, ImportResourcePolicy, Result,
     SearchPublicationVectorization,
 };
 
-pub(super) fn write_incremental_search_artifacts(
-    data_dir: &Path,
-    store: &MetaStore,
+pub(super) fn write_incremental_search_artifacts<'session>(
+    publication_session: &'session SearchPublicationSession,
     now: UnixTimestamp,
     classifier_epoch: &str,
     replacement_documents: Vec<IndexDocument>,
@@ -40,11 +43,12 @@ pub(super) fn write_incremental_search_artifacts(
     record_phase_timing: Option<&dyn Fn(SnapshotPublishPhase, Duration)>,
     index_writer_heap_bytes: usize,
     vectorization: &SearchPublicationVectorization,
-) -> Result<PreparedSearchPublication> {
-    let publication_lock =
-        SearchPublicationLock::acquire(data_dir).map_err(|_| ImportPipelineError::index_io())?;
+) -> Result<PreparedSearchPublication<'session>> {
+    let data_dir = publication_session.canonical_data_dir();
+    let store = publication_session.owned_store();
     let base = load_search_publication_base(store)?;
     let index_root = data_dir.join("search-index");
+    let staged_version_texts = staged_search_version_texts(&replacement_documents)?;
     let next_projections = projections_after_delta(
         &base.projections,
         &replacement_documents,
@@ -70,14 +74,13 @@ pub(super) fn write_incremental_search_artifacts(
         );
         let sectionizer = Sectionizer::default();
         let publication = prepare_search_publication(
-            data_dir,
-            store,
+            publication_session,
             now,
             classifier_epoch,
-            publication_lock,
             base,
             &generation,
             next_projections,
+            &staged_version_texts,
             vectorization,
             ensure_not_cancelled,
             || match current_import_cache_mode {
@@ -125,14 +128,13 @@ pub(super) fn write_incremental_search_artifacts(
         deleted_documents,
     );
     let publication = prepare_search_publication(
-        data_dir,
-        store,
+        publication_session,
         now,
         classifier_epoch,
-        publication_lock,
         base,
         &generation,
         next_projections,
+        &staged_version_texts,
         vectorization,
         ensure_not_cancelled,
         || {
@@ -154,23 +156,20 @@ pub(super) fn write_incremental_search_artifacts(
     Ok(publication)
 }
 
-pub(super) fn write_rebuilt_search_artifacts(
-    data_dir: &Path,
-    store: &MetaStore,
+pub(super) fn write_rebuilt_search_artifacts<'session>(
+    publication_session: &'session SearchPublicationSession,
     now: UnixTimestamp,
     classifier_epoch: &str,
-    publication_lock: SearchPublicationLock,
     pending_document_ids: &BTreeSet<String>,
     pending_index_documents: Vec<IndexDocument>,
     vectorization: &SearchPublicationVectorization,
-) -> Result<PreparedSearchPublication> {
+) -> Result<PreparedSearchPublication<'session>> {
+    let store = publication_session.owned_store();
     let base = load_search_publication_base(store)?;
     write_rebuilt_search_artifacts_from_base(
-        data_dir,
-        store,
+        publication_session,
         now,
         classifier_epoch,
-        publication_lock,
         pending_document_ids,
         pending_index_documents,
         base,
@@ -178,18 +177,40 @@ pub(super) fn write_rebuilt_search_artifacts(
     )
 }
 
-pub(super) fn write_rebuilt_search_artifacts_from_base(
-    data_dir: &Path,
-    store: &MetaStore,
+pub(super) fn write_migration_rebuild_search_artifacts<'session>(
+    publication_session: &'session SearchPublicationSession,
     now: UnixTimestamp,
     classifier_epoch: &str,
-    publication_lock: SearchPublicationLock,
+    pending_document_ids: &BTreeSet<String>,
+    pending_index_documents: Vec<IndexDocument>,
+    vectorization: &SearchPublicationVectorization,
+) -> Result<PreparedSearchPublication<'session>> {
+    let store = publication_session.owned_store();
+    let base = load_migration_rebuild_publication_base(store)?;
+    write_rebuilt_search_artifacts_from_base(
+        publication_session,
+        now,
+        classifier_epoch,
+        pending_document_ids,
+        pending_index_documents,
+        base,
+        vectorization,
+    )
+}
+
+pub(super) fn write_rebuilt_search_artifacts_from_base<'session>(
+    publication_session: &'session SearchPublicationSession,
+    now: UnixTimestamp,
+    classifier_epoch: &str,
     pending_document_ids: &BTreeSet<String>,
     pending_index_documents: Vec<IndexDocument>,
     base: SearchPublicationBase,
     vectorization: &SearchPublicationVectorization,
-) -> Result<PreparedSearchPublication> {
+) -> Result<PreparedSearchPublication<'session>> {
+    let data_dir = publication_session.canonical_data_dir();
+    let store = publication_session.owned_store();
     let sectionizer = Sectionizer::default();
+    let staged_version_texts = staged_search_version_texts(&pending_index_documents)?;
     let mut index_documents =
         persisted_index_documents(store, &base.projections, &sectionizer, pending_document_ids)?;
     index_documents.extend(pending_index_documents);
@@ -212,14 +233,13 @@ pub(super) fn write_rebuilt_search_artifacts_from_base(
     let indexed_documents = index_documents.len();
     let generation = search_generation_token(now, indexed_documents, 0, 0);
     let publication = prepare_search_publication(
-        data_dir,
-        store,
+        publication_session,
         now,
         classifier_epoch,
-        publication_lock,
         base,
         &generation,
         projections,
+        &staged_version_texts,
         vectorization,
         None,
         || {
@@ -344,7 +364,7 @@ fn write_cached_fulltext_snapshot_consuming(
 }
 
 fn persisted_index_documents(
-    store: &MetaStore,
+    store: &OwnedMetaStore,
     projections: &[ActiveSearchProjection],
     sectionizer: &Sectionizer,
     pending_document_ids: &BTreeSet<String>,
@@ -355,7 +375,7 @@ fn persisted_index_documents(
             continue;
         }
         let Some(document) = store
-            .document_by_id(&projection.document_id)
+            .active_search_document(projection)
             .map_err(ImportPipelineError::store)?
         else {
             return Err(ImportPipelineError::store_invariant());
@@ -375,7 +395,7 @@ fn persisted_index_documents(
     Ok(index_documents)
 }
 
-fn index_document_from_resume_version(
+pub(crate) fn index_document_from_resume_version(
     document: &Document,
     version: &ResumeVersion,
     sectionizer: &Sectionizer,
@@ -391,6 +411,31 @@ fn index_document_from_resume_version(
         clean_text: clean_text.clone(),
         sections: sections_to_index(sectionizer.sectionize(clean_text)),
     })
+}
+
+pub(super) fn migration_index_documents_from_exact_projection(
+    projection_rows: Vec<MigrationRebuildProjectionRow>,
+) -> Result<Vec<(Document, IndexDocument)>> {
+    let sectionizer = Sectionizer::default();
+    let mut staged = projection_rows
+        .into_iter()
+        .map(|row| {
+            let index_document = index_document_from_resume_version(
+                &row.document,
+                &row.resume_version,
+                &sectionizer,
+            )
+            .ok_or_else(ImportPipelineError::store_invariant)?;
+            Ok((row.document, index_document))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    staged.sort_by(|left, right| {
+        left.1
+            .doc_id
+            .cmp(&right.1.doc_id)
+            .then_with(|| left.1.resume_version_id.cmp(&right.1.resume_version_id))
+    });
+    Ok(staged)
 }
 
 fn sort_index_documents(documents: &mut [IndexDocument]) {

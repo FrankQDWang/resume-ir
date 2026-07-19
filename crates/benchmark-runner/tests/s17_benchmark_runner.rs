@@ -1633,9 +1633,10 @@ fn private_query_benchmark_rejects_oversized_resident_batch_stdout() {
 
     let error = run_private_query_benchmark(config).unwrap_err();
 
-    assert!(error
-        .to_string()
-        .contains("private_query_resident_command_output"));
+    assert_eq!(
+        error.to_string(),
+        "benchmark configuration is invalid for private_query_resident_command_output"
+    );
 
     remove_dir(query_set.parent().unwrap());
     remove_dir(command.parent().unwrap());
@@ -4538,7 +4539,8 @@ fn missing_stage_latency_query_fixture_script_body() -> &'static str {
 fn oversized_stdout_query_fixture_script_body() -> &'static str {
     concat!(
         "#!/bin/sh\n",
-        "dd if=/dev/zero bs=1048576 count=9 2>/dev/null\n",
+        "dd if=/dev/zero bs=1048576 count=9 2>/dev/null || true\n",
+        "sleep 30\n",
     )
 }
 
@@ -5014,7 +5016,7 @@ fn missing_stage_latency_query_fixture_script_body() -> &'static str {
 fn oversized_stdout_query_fixture_script_body() -> &'static str {
     concat!(
         "@echo off\r\n",
-        "powershell -NoProfile -Command \"$s='x'*9437184; [Console]::Out.Write($s)\"\r\n",
+        "powershell -NoProfile -Command \"$s='x'*9437184; try { [Console]::Out.Write($s) } catch {}; Start-Sleep -Seconds 30\"\r\n",
     )
 }
 

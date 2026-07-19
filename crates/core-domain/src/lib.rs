@@ -15,6 +15,14 @@ const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 const ID_DIGEST_HEX_LEN: usize = 32;
 const CONTACT_HASH_HEX_LEN: usize = 64;
 
+/// Maximum UTF-8 bytes retained for either the raw or normalized value of one
+/// version-bound entity mention.
+pub const MAX_ENTITY_MENTION_VALUE_BYTES: usize = 4 * 1024;
+/// Maximum version-bound entity mentions retained for one immutable version.
+pub const MAX_ENTITY_MENTIONS_PER_VERSION: usize = 256;
+/// Maximum UTF-8 bytes retained for an entity mention extractor identity.
+pub const MAX_ENTITY_MENTION_EXTRACTOR_BYTES: usize = 256;
+
 pub fn crate_name() -> &'static str {
     "core-domain"
 }

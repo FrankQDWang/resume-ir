@@ -8,13 +8,18 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(windows)]
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use import_pipeline::ImportTaskOwnerLock;
+use import_pipeline::{
+    DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, ImportTaskOwnerLock,
+};
 use meta_store::{
-    EntityType, ImportRootKind, ImportRootPreset, ImportScanBudgetKind, ImportScanProfile,
-    ImportTask, ImportTaskId, ImportTaskStatus, MetaStore, UnixTimestamp,
+    metadata_store_path, DocumentId, EntityType, ImportRootKind, ImportRootPreset,
+    ImportScanBudgetKind, ImportScanProfile, ImportTask, ImportTaskId, ImportTaskStatus,
+    ReadMetaStore, UnixTimestamp,
 };
 #[cfg(unix)]
 use meta_store::{ImportScanErrorKind, ImportScanErrorOperation};
+
+mod support;
 
 const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
 const SNAPSHOT_TEST_WRITE_RETRY_ATTEMPTS: usize = 100;
@@ -187,6 +192,8 @@ fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
     let empty_import_stdout = String::from_utf8_lossy(&empty_import.stdout);
     assert!(empty_import_stdout.contains("files discovered: 0"));
     assert!(!empty_import_stdout.contains(path_str(&empty_root)));
+    let metadata_path = metadata_store_path(&data_dir).unwrap();
+    let metadata_before_read_only_queries = fs::read(&metadata_path).unwrap();
 
     let search_after_empty_import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args(["--data-dir", path_str(&data_dir), "search", "Java"])
@@ -205,10 +212,10 @@ fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
     assert!(telemetry_status.status.success());
     assert!(telemetry_status.stderr.is_empty());
     let telemetry_status_stdout = String::from_utf8_lossy(&telemetry_status.stdout);
-    assert!(telemetry_status_stdout.contains("query telemetry samples: 3"));
-    assert!(telemetry_status_stdout.contains("query latency p50 ms:"));
-    assert!(telemetry_status_stdout.contains("query latency p95 ms:"));
-    assert!(telemetry_status_stdout.contains("query latency p99 ms:"));
+    assert!(telemetry_status_stdout.contains("query telemetry samples: 0"));
+    assert!(!telemetry_status_stdout.contains("query latency p50 ms:"));
+    assert!(!telemetry_status_stdout.contains("query latency p95 ms:"));
+    assert!(!telemetry_status_stdout.contains("query latency p99 ms:"));
     assert!(!telemetry_status_stdout.contains("Java"));
     assert!(!telemetry_status_stdout.contains(path_str(&data_dir)));
     assert!(!telemetry_status_stdout.contains(path_str(&fixture_root)));
@@ -221,8 +228,8 @@ fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
     assert!(telemetry_doctor.status.success());
     assert!(telemetry_doctor.stderr.is_empty());
     let telemetry_doctor_stdout = String::from_utf8_lossy(&telemetry_doctor.stdout);
-    assert!(telemetry_doctor_stdout.contains("query telemetry samples: 3"));
-    assert!(telemetry_doctor_stdout.contains("query latency p95 ms:"));
+    assert!(telemetry_doctor_stdout.contains("query telemetry samples: 0"));
+    assert!(!telemetry_doctor_stdout.contains("query latency p95 ms:"));
     assert!(!telemetry_doctor_stdout.contains("Java"));
     assert!(!telemetry_doctor_stdout.contains(path_str(&data_dir)));
 
@@ -240,16 +247,124 @@ fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
     let telemetry_diagnostics_stdout = String::from_utf8_lossy(&telemetry_diagnostics.stdout);
     let telemetry_json: serde_json::Value =
         serde_json::from_slice(&telemetry_diagnostics.stdout).unwrap();
-    assert_eq!(telemetry_json["query_latency"]["sample_count"], 3);
-    assert!(telemetry_json["query_latency"]["p50_ms"].as_u64().is_some());
-    assert!(telemetry_json["query_latency"]["p95_ms"].as_u64().is_some());
-    assert!(telemetry_json["query_latency"]["p99_ms"].as_u64().is_some());
+    assert_eq!(telemetry_json["query_latency"]["sample_count"], 0);
+    assert!(telemetry_json["query_latency"]["p50_ms"].is_null());
+    assert!(telemetry_json["query_latency"]["p95_ms"].is_null());
+    assert!(telemetry_json["query_latency"]["p99_ms"].is_null());
     assert_eq!(telemetry_json["raw_queries"], "<redacted>");
     assert!(!telemetry_diagnostics_stdout.contains("Java"));
     assert!(!telemetry_diagnostics_stdout.contains(path_str(&data_dir)));
+    assert_eq!(
+        fs::read(metadata_path).unwrap(),
+        metadata_before_read_only_queries,
+        "query, status, doctor, and diagnostics must keep metadata read-only"
+    );
 
     remove_dir(&data_dir);
     remove_dir(&empty_root);
+}
+
+#[test]
+fn direct_import_rejects_a_competing_import_processing_owner() {
+    serialize_windows_s9_import_test!();
+    let data_dir = temp_dir("import-processing-owner-data");
+    let fixture_root = fixture_root();
+    let owner = match DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(lease) => lease,
+        DataDirectoryOwnerAcquisition::Contended => panic!("test data dir is already owned"),
+    };
+
+    let blocked = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&fixture_root),
+        ])
+        .output()
+        .expect("run competing resume-cli import");
+
+    assert_eq!(blocked.status.code(), Some(1));
+    assert!(blocked.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&blocked.stderr);
+    assert_eq!(
+        stderr.trim(),
+        "resume-cli: offline import processing is already owned"
+    );
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&fixture_root)));
+
+    drop(owner);
+    let recovered = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&fixture_root),
+        ])
+        .output()
+        .expect("run resume-cli import after processing ownership release");
+    assert!(
+        recovered.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&recovered.stdout),
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn offline_import_lifecycle_mutations_reject_a_competing_processing_owner() {
+    serialize_windows_s9_import_test!();
+    let data_dir = temp_dir("offline-mutation-owner-data");
+    let root_dir = temp_dir("offline-mutation-owner-root");
+    let owner = match DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(lease) => lease,
+        DataDirectoryOwnerAcquisition::Contended => panic!("test data dir is already owned"),
+    };
+    let task_id = ImportTaskId::from_non_secret_parts(&["offline-mutation-owner"]);
+    let document_id = DocumentId::from_non_secret_parts(&["offline-mutation-owner"]);
+    let commands = [
+        vec!["purge".to_string(), "--deleted".to_string()],
+        vec![
+            "cancel".to_string(),
+            "import".to_string(),
+            "--task-id".to_string(),
+            task_id.to_string(),
+        ],
+        vec![
+            "delete".to_string(),
+            "--doc-id".to_string(),
+            document_id.to_string(),
+        ],
+        vec![
+            "doctor".to_string(),
+            "--post-pending-import-task-recovery-boundary".to_string(),
+            "--root".to_string(),
+            path_str(&root_dir).to_string(),
+        ],
+    ];
+
+    for command in commands {
+        let blocked = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+            .args(["--data-dir", path_str(&data_dir)])
+            .args(command)
+            .output()
+            .expect("run competing offline mutation");
+        assert_eq!(blocked.status.code(), Some(1));
+        assert!(blocked.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8_lossy(&blocked.stderr).trim(),
+            "resume-cli: offline import processing is already owned"
+        );
+    }
+
+    drop(owner);
+    remove_dir(&data_dir);
+    remove_dir(&root_dir);
 }
 
 #[test]
@@ -859,8 +974,7 @@ fn import_txt_resume_builds_searchable_index_without_path_leakage() {
     assert!(!search_stdout.contains(path_str(&private_root)));
     assert!(!search_stdout.contains(path_str(&canonical_private_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let document = store
         .visible_documents()
         .unwrap()
@@ -919,8 +1033,7 @@ fn import_rebuilds_from_metadata_when_ready_generation_is_unreadable() {
         String::from_utf8_lossy(&first_import.stderr)
     );
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let ready_generation = store.search_projection_state().unwrap().generation.unwrap();
     write_snapshot_test_file_with_retry(
         &data_dir
@@ -1067,8 +1180,7 @@ fn import_enqueue_persists_task_without_running_foreground_import() {
     assert!(!stdout.contains(path_str(&fixture_root)));
     assert!(!stdout.contains(path_str(&canonical_fixture_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let summary = store.status_summary().unwrap();
     assert_eq!(summary.import_tasks_queued, 1);
     assert_eq!(summary.searchable_documents, 0);
@@ -1085,11 +1197,11 @@ fn import_enqueue_persists_task_without_running_foreground_import() {
         .args(["--data-dir", path_str(&data_dir), "search", "Java"])
         .output()
         .expect("search before daemon import worker");
-    assert!(!search.status.success());
-    assert!(search.stdout.is_empty());
-    let search_stderr = String::from_utf8_lossy(&search.stderr);
-    assert!(search_stderr.contains("search service unavailable"));
-    assert!(!search_stderr.contains("Java"));
+    assert!(search.status.success());
+    assert!(search.stderr.is_empty());
+    let search_stdout = String::from_utf8_lossy(&search.stdout);
+    assert!(search_stdout.contains("results: 0"));
+    assert!(!search_stdout.contains("Java"));
 
     remove_dir(&data_dir);
 }
@@ -1262,8 +1374,7 @@ fn explicit_root_import_without_max_files_has_no_default_scan_budget() {
     assert!(!import_stdout.contains(path_str(&private_root)));
     assert!(!import_stdout.contains(path_str(&canonical_private_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scope = store
         .latest_import_scan_scope()
         .unwrap()
@@ -1342,8 +1453,7 @@ fn local_discovery_root_preset_uses_discovery_profile_without_path_leak() {
     assert!(search_stdout.contains("synthetic-java-platform.pdf"));
     assert!(!search_stdout.contains("synthetic-java-engineer.docx"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scope = store
         .latest_import_scan_scope()
         .unwrap()
@@ -1418,8 +1528,7 @@ fn local_discovery_root_preset_allows_explicit_file_budget_override_without_path
     assert!(!import_stdout.contains(path_str(&local_root)));
     assert!(!import_stdout.contains(path_str(&canonical_local_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scope = store
         .latest_import_scan_scope()
         .unwrap()
@@ -1485,8 +1594,7 @@ fn import_max_files_limits_scan_and_persists_budget_state_without_path_leak() {
     assert!(!import_stdout.contains(path_str(&private_root)));
     assert!(!import_stdout.contains(path_str(&canonical_private_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scope = store
         .latest_import_scan_scope()
         .unwrap()
@@ -1649,8 +1757,7 @@ fn import_persists_scan_errors_without_path_leak() {
     assert!(!diagnostics_stdout.contains("unreadable-synthetic-subdir"));
     assert!(!diagnostics_stdout.contains("sha256:"));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let scope = store
         .latest_import_scan_scope()
         .unwrap()
@@ -1702,8 +1809,7 @@ fn import_reuses_recoverable_task_after_restart() {
     assert!(!import_stdout.contains(path_str(&fixture_root)));
     assert!(!import_stdout.contains(path_str(&canonical_fixture_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Completed);
     assert_eq!(store.status_summary().unwrap().import_tasks_recoverable, 0);
@@ -1730,8 +1836,9 @@ fn import_reuses_stale_running_task_after_cli_process_kill() {
         CLI_IMPORT_KILL_RESTART_FIXTURE_FILE_COUNT,
         "CliKillRestartToken",
     );
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = acquire_test_processing_owner(&data_dir)
+        .open_store()
+        .unwrap();
     drop(store);
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
@@ -1762,8 +1869,7 @@ fn import_reuses_stale_running_task_after_cli_process_kill() {
     assert!(!String::from_utf8_lossy(&killed.stderr).contains(path_str(&fixture_root)));
     assert!(!String::from_utf8_lossy(&killed.stderr).contains(path_str(&canonical_fixture_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let running_task = store.import_task_by_id(&task_id).unwrap().unwrap();
     assert_eq!(running_task.status, ImportTaskStatus::Running);
     assert_eq!(store.status_summary().unwrap().import_tasks_recoverable, 1);
@@ -1792,8 +1898,7 @@ fn import_reuses_stale_running_task_after_cli_process_kill() {
     assert!(!resumed_stdout.contains(path_str(&fixture_root)));
     assert!(!resumed_stdout.contains(path_str(&canonical_fixture_root)));
 
-    let recovered_store = MetaStore::open_data_dir(&data_dir).unwrap();
-    recovered_store.run_migrations().unwrap();
+    let recovered_store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let recovered_task = recovered_store
         .import_task_by_id(&task_id)
         .unwrap()
@@ -1847,11 +1952,10 @@ fn import_does_not_take_over_live_running_task() {
     assert!(!import.status.success());
     assert!(import.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&import.stderr);
-    assert!(stderr.contains("import task is already running"));
+    assert!(stderr.contains("offline import processing conflicts with a legacy task owner"));
     assert!(!stderr.contains(path_str(&fixture_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Running);
 
@@ -1881,11 +1985,10 @@ fn discovery_import_does_not_take_over_live_running_task_for_same_root() {
     assert!(!import.status.success());
     assert!(import.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&import.stderr);
-    assert!(stderr.contains("import task is already running"));
+    assert!(stderr.contains("offline import processing conflicts with a legacy task owner"));
     assert!(!stderr.contains(path_str(&fixture_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Running);
 
@@ -1898,6 +2001,7 @@ fn multi_root_import_does_not_take_over_live_running_task_for_any_root() {
     let data_dir = temp_dir("multi-root-live-running-data");
     let fixture_root = fixture_root();
     let second_root = temp_dir("multi-root-live-second");
+    let canonical_second_root = fs::canonicalize(&second_root).unwrap();
     let (pending_task_id, _owner_lock) = seed_live_running_import_task(&data_dir, &fixture_root);
 
     let import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
@@ -1916,14 +2020,22 @@ fn multi_root_import_does_not_take_over_live_running_task_for_any_root() {
     assert!(!import.status.success());
     assert!(import.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&import.stderr);
-    assert!(stderr.contains("import task is already running"));
+    assert!(stderr.contains("offline import processing conflicts with a legacy task owner"));
     assert!(!stderr.contains(path_str(&fixture_root)));
     assert!(!stderr.contains(path_str(&second_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Running);
+    assert!(store
+        .latest_import_task_by_root(path_str(&canonical_second_root))
+        .unwrap()
+        .is_none());
+    assert!(!store
+        .active_authorized_import_roots()
+        .unwrap()
+        .iter()
+        .any(|root| root == path_str(&canonical_second_root)));
 
     remove_dir(&data_dir);
     remove_dir(&second_root);
@@ -1967,8 +2079,7 @@ fn multi_root_import_reuses_recoverable_task_for_each_root() {
     assert!(!import_stdout.contains(path_str(&canonical_fixture_root)));
     assert!(!import_stdout.contains(path_str(&canonical_second_root)));
 
-    let store = MetaStore::open_data_dir(&data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     let task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
     assert_eq!(task.status, ImportTaskStatus::Completed);
     assert_eq!(store.status_summary().unwrap().import_tasks_recoverable, 0);
@@ -1978,15 +2089,16 @@ fn multi_root_import_reuses_recoverable_task_for_each_root() {
 }
 
 fn seed_retryable_import_task(data_dir: &Path, fixture_root: &Path) -> ImportTaskId {
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let processing_owner = acquire_test_processing_owner(data_dir);
+    let store = processing_owner.open_store().unwrap();
     let queued_at = UnixTimestamp::from_unix_seconds(1_700_000_000);
     let started_at = UnixTimestamp::from_unix_seconds(1_700_000_010);
     let finished_at = UnixTimestamp::from_unix_seconds(1_700_000_020);
     let id = ImportTaskId::from_non_secret_parts(&["s9", "recoverable-import-task"]);
     let canonical_root = fs::canonicalize(fixture_root).unwrap();
-    store
-        .insert_import_task(&ImportTask {
+    support::insert_import_task(
+        &store,
+        &ImportTask {
             id: id.clone(),
             root_path: path_str(&canonical_root).to_string(),
             status: ImportTaskStatus::FailedRetryable,
@@ -1994,8 +2106,8 @@ fn seed_retryable_import_task(data_dir: &Path, fixture_root: &Path) -> ImportTas
             started_at: Some(started_at),
             finished_at: Some(finished_at),
             updated_at: finished_at,
-        })
-        .unwrap();
+        },
+    );
     id
 }
 
@@ -2003,11 +2115,12 @@ fn seed_live_running_import_task(
     data_dir: &Path,
     fixture_root: &Path,
 ) -> (ImportTaskId, ImportTaskOwnerLock) {
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
+    let processing_owner = acquire_test_processing_owner(data_dir);
+    let store = processing_owner.open_store().unwrap();
     let canonical_root = fs::canonicalize(fixture_root).unwrap();
-    store
-        .insert_import_task(&ImportTask {
+    support::insert_import_task(
+        &store,
+        &ImportTask {
             id: ImportTaskId::from_non_secret_parts(&["s9", "older-queued-import-task"]),
             root_path: path_str(&canonical_root).to_string(),
             status: ImportTaskStatus::Queued,
@@ -2015,14 +2128,15 @@ fn seed_live_running_import_task(
             started_at: None,
             finished_at: None,
             updated_at: UnixTimestamp::from_unix_seconds(1_699_999_000),
-        })
-        .unwrap();
+        },
+    );
 
     let queued_at = UnixTimestamp::from_unix_seconds(1_700_000_000);
     let started_at = UnixTimestamp::from_unix_seconds(1_700_000_010);
     let id = ImportTaskId::from_non_secret_parts(&["s9", "live-running-import-task"]);
-    store
-        .insert_import_task(&ImportTask {
+    support::insert_import_task(
+        &store,
+        &ImportTask {
             id: id.clone(),
             root_path: path_str(&canonical_root).to_string(),
             status: ImportTaskStatus::Running,
@@ -2030,10 +2144,17 @@ fn seed_live_running_import_task(
             started_at: Some(started_at),
             finished_at: None,
             updated_at: started_at,
-        })
-        .unwrap();
+        },
+    );
     let owner_lock = ImportTaskOwnerLock::acquire(data_dir, &id).unwrap();
     (id, owner_lock)
+}
+
+fn acquire_test_processing_owner(data_dir: &Path) -> DataDirectoryOwnerLease {
+    match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("test processing owner contended"),
+    }
 }
 
 fn seed_large_import_fixture(root: &Path, file_count: usize, token: &str) {
@@ -2054,8 +2175,6 @@ fn wait_until_import_task_running(
     data_dir: &Path,
     canonical_root: &Path,
 ) -> ImportTaskId {
-    let store = MetaStore::open_data_dir(data_dir).unwrap();
-    store.run_migrations().unwrap();
     let deadline = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -2065,12 +2184,14 @@ fn wait_until_import_task_running(
         if let Some(status) = child.try_wait().expect("poll import child") {
             panic!("resume-cli import exited before active kill window: {status}");
         }
-        if let Some(task) = store
-            .pending_import_task_by_root(path_str(canonical_root))
-            .unwrap()
-            .filter(|task| task.status == ImportTaskStatus::Running)
-        {
-            return task.id;
+        if let Ok(store) = ReadMetaStore::open_data_dir(data_dir) {
+            if let Some(task) = store
+                .pending_import_task_by_root(path_str(canonical_root))
+                .unwrap()
+                .filter(|task| task.status == ImportTaskStatus::Running)
+            {
+                return task.id;
+            }
         }
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)

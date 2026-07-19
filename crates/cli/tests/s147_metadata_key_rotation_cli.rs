@@ -3,11 +3,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use meta_store::{metadata_encryption_key_path, metadata_store_path, MetaStore};
+use meta_store::{metadata_encryption_key_path, metadata_store_path, ReadMetaStore};
+use rusqlite::{Connection, OpenFlags};
+
+mod support;
 
 #[test]
 fn privacy_cli_rotates_metadata_sqlcipher_key_without_output_leaks() {
     let data_dir = temp_dir("metadata-key-rotation");
+
+    drop(support::create_store(&data_dir));
 
     let initialize = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args(["--data-dir", path_str(&data_dir), "doctor"])
@@ -20,7 +25,7 @@ fn privacy_cli_rotates_metadata_sqlcipher_key_without_output_leaks() {
     let key_path = metadata_encryption_key_path(&data_dir);
     let old_key_hex = fs::read_to_string(&key_path).unwrap();
     let old_key = decode_key(old_key_hex.trim());
-    assert!(MetaStore::open_encrypted(&db_path, &old_key).is_ok());
+    assert!(can_read_schema_with_key(&db_path, &old_key));
 
     let rotation = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
@@ -44,9 +49,10 @@ fn privacy_cli_rotates_metadata_sqlcipher_key_without_output_leaks() {
     let new_key = decode_key(new_key_hex.trim());
     assert_ne!(old_key_hex.trim(), new_key_hex.trim());
     assert!(!String::from_utf8_lossy(&rotation.stdout).contains(new_key_hex.trim()));
-    assert!(MetaStore::open_encrypted(&db_path, &old_key).is_err());
-    let reopened = MetaStore::open_encrypted(&db_path, &new_key).unwrap();
-    assert_eq!(reopened.schema_version().unwrap(), 27);
+    assert!(!can_read_schema_with_key(&db_path, &old_key));
+    assert!(can_read_schema_with_key(&db_path, &new_key));
+    let reopened = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+    assert_eq!(reopened.schema_version().unwrap(), 28);
 
     let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args(["--data-dir", path_str(&data_dir), "doctor"])
@@ -89,4 +95,23 @@ fn decode_key(value: &str) -> [u8; 32] {
         *slot = u8::from_str_radix(&value[start..start + 2], 16).unwrap();
     }
     key
+}
+
+fn can_read_schema_with_key(path: &Path, key: &[u8; 32]) -> bool {
+    let Ok(connection) = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) else {
+        return false;
+    };
+    let key_hex = key
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    if connection
+        .pragma_update(None, "key", format!("x'{key_hex}'"))
+        .is_err()
+    {
+        return false;
+    }
+    connection
+        .query_row("SELECT COUNT(*) FROM sqlite_master", [], |_| Ok(()))
+        .is_ok()
 }

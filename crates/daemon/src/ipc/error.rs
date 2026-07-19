@@ -1,12 +1,36 @@
 use std::fmt;
 use std::io;
 
+/// A process-level daemon failure. Only the IPC listener and supervised
+/// runtime events are allowed to construct this type while the server runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DaemonFatalError {
+    OwnershipConflict,
+    ConfigurationInvalid,
+    RuntimeIntegrity,
+    ProtocolMismatch,
+    ControlPlaneFailure,
+}
+
+/// A closed control-plane event observed by the IPC server.
+#[derive(Debug)]
+pub(crate) enum RuntimeEvent {
+    Running,
+    ShutdownRequested,
+    ImportWorkerStopped,
+    ImportWorkerFailed(DaemonFatalError),
+    QueryWorkerStopped,
+}
+
 /// The terminal outcome of one accepted IPC connection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ConnectionOutcome {
     Completed,
     ClientDisconnected(ResponseSinkError),
     RequestFailed(RequestFailure),
+    /// The response stream and its completion capability moved to a supervised
+    /// asynchronous responder. This is not a terminal metric outcome.
+    Deferred,
 }
 
 impl ConnectionOutcome {

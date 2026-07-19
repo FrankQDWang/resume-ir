@@ -7,7 +7,7 @@ use super::{
 use crate::{
     search_snapshot::{
         selection::{
-            bounded_document_by_id, bounded_entity_mentions_for_version,
+            bounded_entity_mentions_for_version, bounded_projected_document,
             candidate_id_for_current_version, resolve_selection, BoundedDocument, BoundedMentions,
         },
         SearchMetadataSnapshot,
@@ -60,15 +60,17 @@ impl SearchMetadataSnapshot<'_> {
                 SearchSelectionResolution::Current { .. } => {}
             }
 
-            let document = match bounded_document_by_id(self.connection, &identity.document_id)? {
-                BoundedDocument::Document(document) => *document,
-                BoundedDocument::LimitExceeded => {
-                    return Ok(hydration_limit(
-                        Some(position),
-                        SearchHitMetadataLimit::DocumentMetadata,
-                    ));
-                }
-            };
+            let document =
+                match bounded_projected_document(self.connection, &self.head.generation, identity)?
+                {
+                    BoundedDocument::Document(document) => *document,
+                    BoundedDocument::LimitExceeded => {
+                        return Ok(hydration_limit(
+                            Some(position),
+                            SearchHitMetadataLimit::DocumentMetadata,
+                        ));
+                    }
+                };
             let mentions = match bounded_entity_mentions_for_version(
                 self.connection,
                 &identity.resume_version_id,

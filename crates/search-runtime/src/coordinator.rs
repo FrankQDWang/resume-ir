@@ -6,7 +6,7 @@ use index_vector::{
     VectorModelContract, VectorSnapshotReadLease, VectorSnapshotReader, VectorSnapshotRoot,
 };
 use meta_store::{
-    MetaStore, MetaStoreError, MetaStoreErrorClass, SearchMetadataSnapshot,
+    MetaStoreError, MetaStoreErrorClass, ReadMetaStore, SearchMetadataSnapshot,
     SearchMetadataTransactionError, SearchPublicationRecord, VectorSnapshotMode,
 };
 
@@ -14,7 +14,7 @@ use crate::error::SearchRuntimeError;
 use crate::scope::QueryScope;
 
 pub struct QueryCoordinator {
-    store: MetaStore,
+    store: ReadMetaStore,
     fulltext_root: PathBuf,
     vector_root: VectorSnapshotRoot,
     cache: Option<ValidatedGeneration>,
@@ -34,7 +34,7 @@ struct CacheKey {
 
 impl QueryCoordinator {
     pub fn open(data_dir: &Path) -> Result<Self, SearchRuntimeError> {
-        let store = MetaStore::open_data_dir(data_dir).map_err(map_store_error)?;
+        let store = ReadMetaStore::open_data_dir(data_dir).map_err(map_store_error)?;
         let fulltext_root = data_dir.join("search-index");
         let vector_root = VectorSnapshotRoot::new(data_dir.join("vector-index"))
             .map_err(|_| SearchRuntimeError::unavailable())?;

@@ -12,7 +12,6 @@ path = "src/main.rs"
 [dependencies]
 embedder = { path = "../embedder" }
 embedding-protocol = { path = "../embedding-protocol" }
-fs4 = "0.13.1"
 getrandom = "0.2"
 import-pipeline = { path = "../import-pipeline" }
 meta-store = { path = "../meta-store" }
@@ -29,7 +28,9 @@ serde_json = "1"
 [dev-dependencies]
 index-fulltext = { path = "../index-fulltext" }
 index-vector = { path = "../index-vector" }
+meta-store = { path = "../meta-store", features = ["migration-test-support"] }
 sha2 = "0.10"
+tempfile = "3"
 
 [target.'cfg(unix)'.dev-dependencies]
 nix = { version = "=0.30.1", default-features = false, features = ["socket"] }
