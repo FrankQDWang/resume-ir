@@ -475,7 +475,9 @@ pub(crate) fn open_lock_file(path: &Path, create: bool) -> Result<File, VectorIn
     Ok(file)
 }
 
-fn validate_private_lock_metadata(metadata: &fs::Metadata) -> Result<(), VectorIndexError> {
+pub(crate) fn validate_private_lock_metadata(
+    metadata: &fs::Metadata,
+) -> Result<(), VectorIndexError> {
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
         return Err(VectorIndexError::StorageLayoutInvalid);
     }

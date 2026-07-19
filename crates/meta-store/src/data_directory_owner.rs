@@ -12,10 +12,12 @@ use crate::{
 };
 
 mod lock_ops;
+mod purge_artifact;
 mod task_lock;
 
 use lock_ops::{ExclusiveLockAttempt, LockOpenErrorClass};
 
+pub use purge_artifact::MetaStorePurgeArtifactClass;
 pub(crate) use task_lock::acquire_legacy_task_locks;
 pub use task_lock::{import_task_owner_lock_path, ImportTaskOwnerLock};
 

@@ -7,8 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{
     DataDirectoryOwnerAcquireError, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease,
-    ImportProcessingOrphanNormalizationError, ImportTaskOwnerLock, DATA_DIRECTORY_OWNER_LOCK_FILE,
-    LEGACY_DAEMON_OWNER_LOCK_FILE, SEARCH_PUBLICATION_LOCK_FILE,
+    ImportProcessingOrphanNormalizationError, ImportTaskOwnerLock, MetaStorePurgeArtifactClass,
+    DATA_DIRECTORY_OWNER_LOCK_FILE, LEGACY_DAEMON_OWNER_LOCK_FILE, SEARCH_PUBLICATION_LOCK_FILE,
 };
 use crate::{
     ImportProcessingContract, ImportRootKind, ImportRootTaskHeadOutcome, ImportScanProfile,
@@ -18,6 +18,77 @@ use crate::{
 };
 
 static NEXT_TEST_DIR_ID: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn held_owner_classifies_only_exact_empty_control_plane_artifacts() {
+    let temp = TestDir::new("purge-control-artifacts");
+    let owner = acquired(&temp.0);
+    let root = owner.canonical_data_dir();
+    let marker = root.join("retained-marker.bin");
+    fs::write(&marker, b"synthetic retained marker").unwrap();
+
+    for name in [
+        DATA_DIRECTORY_OWNER_LOCK_FILE,
+        LEGACY_DAEMON_OWNER_LOCK_FILE,
+    ] {
+        assert_eq!(
+            owner.classify_purge_artifact(&root.join(name)).unwrap(),
+            MetaStorePurgeArtifactClass::ControlPlaneFile
+        );
+    }
+    assert_eq!(
+        owner.classify_purge_artifact(&marker).unwrap(),
+        MetaStorePurgeArtifactClass::Data
+    );
+    assert_eq!(
+        owner
+            .classify_purge_artifact(&root.join("data-directory-owner.lock.backup"))
+            .unwrap(),
+        MetaStorePurgeArtifactClass::Data
+    );
+}
+
+#[test]
+fn purge_control_classification_fails_closed_for_malformed_known_artifacts() {
+    let temp = TestDir::new("purge-malformed-controls");
+    let owner = acquired(&temp.0);
+    let root = owner.canonical_data_dir();
+    let publication = root.join(SEARCH_PUBLICATION_LOCK_FILE);
+    fs::write(&publication, b"contaminated").unwrap();
+    assert!(owner.classify_purge_artifact(&publication).is_err());
+
+    let task_locks = root.join("import-task-locks");
+    fs::create_dir(&task_locks).unwrap();
+    fs::write(task_locks.join(".lock"), b"").unwrap();
+    assert!(owner
+        .classify_purge_artifact(&task_locks.join(".lock"))
+        .is_err());
+    let similar = task_locks.join("task.lock.backup");
+    fs::write(&similar, b"ordinary data").unwrap();
+    assert_eq!(
+        owner.classify_purge_artifact(&similar).unwrap(),
+        MetaStorePurgeArtifactClass::Data
+    );
+    let outside = TestDir::new("purge-outside-controls");
+    assert!(owner
+        .classify_purge_artifact(&outside.0.join(DATA_DIRECTORY_OWNER_LOCK_FILE))
+        .is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn purge_control_classification_rejects_a_known_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TestDir::new("purge-control-symlink");
+    let owner = acquired(&temp.0);
+    let root = owner.canonical_data_dir();
+    let target = root.join("ordinary-empty-file");
+    fs::write(&target, b"").unwrap();
+    let migration_lock = root.join(crate::migration_v27::MIGRATION_LOCK_FILE);
+    symlink(&target, &migration_lock).unwrap();
+    assert!(owner.classify_purge_artifact(&migration_lock).is_err());
+}
 
 #[test]
 fn one_data_directory_has_exactly_one_live_storage_import_owner() {

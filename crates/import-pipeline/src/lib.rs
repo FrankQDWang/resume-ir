@@ -13,6 +13,7 @@ mod migration_rebuild;
 mod ocr_publication;
 mod processing_contract;
 mod publication_coordinator;
+mod purge_artifact;
 mod search_artifact_cache;
 mod search_artifacts;
 mod search_publication;
@@ -86,6 +87,9 @@ use publication_coordinator::take_pending_searchable_documents;
 #[cfg(test)]
 use publication_coordinator::{flush_pending_searchable_documents, PendingProjectionRemovals};
 pub use publication_coordinator::{publish_search_projection_removals, rebuild_search_artifacts};
+pub use purge_artifact::{
+    PurgeArtifactClass, PurgeArtifactClassificationError, PurgeArtifactClassifier,
+};
 #[cfg(test)]
 use search_artifact_cache::{CurrentImportCacheMode, CurrentImportDocumentCache};
 #[cfg(test)]

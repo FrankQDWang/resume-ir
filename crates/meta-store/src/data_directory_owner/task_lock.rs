@@ -7,7 +7,7 @@ use super::lock_ops::{self, ExclusiveLockAttempt};
 use super::{private_lock_options, same_file_identity};
 use crate::{ImportTaskId, MetaStoreError, Result as StoreResult};
 
-const IMPORT_TASK_OWNER_LOCKS_DIR: &str = "import-task-locks";
+pub(super) const IMPORT_TASK_OWNER_LOCKS_DIR: &str = "import-task-locks";
 
 pub fn import_task_owner_lock_path(data_dir: &Path, task_id: &ImportTaskId) -> PathBuf {
     data_dir
@@ -61,7 +61,7 @@ pub(crate) fn acquire_legacy_task_locks(
     let locks_dir = data_dir.join(IMPORT_TASK_OWNER_LOCKS_DIR);
     match fs::symlink_metadata(&locks_dir) {
         Ok(metadata) => {
-            if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+            if validate_task_lock_directory_metadata(&metadata).is_err() {
                 return Err(MetaStoreError::invalid_value("import_task.owner_locks_dir"));
             }
             for entry in fs::read_dir(&locks_dir).map_err(MetaStoreError::io_storage)? {
@@ -106,7 +106,7 @@ pub(crate) fn acquire_legacy_task_locks(
     Ok(locks)
 }
 
-fn validate_legacy_task_id(value: &str) -> StoreResult<()> {
+pub(super) fn validate_legacy_task_id(value: &str) -> StoreResult<()> {
     if value.is_empty()
         || value.len() > 256
         || matches!(value, "." | "..")
@@ -144,11 +144,21 @@ fn validate_open_task_lock_file(path: &Path, file: &File) -> io::Result<()> {
     Ok(())
 }
 
-fn validate_task_lock_metadata(metadata: &fs::Metadata) -> io::Result<()> {
+pub(super) fn validate_task_lock_metadata(metadata: &fs::Metadata) -> io::Result<()> {
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
         return Err(io::Error::new(
             ErrorKind::InvalidData,
             "import task owner lock is not a regular file",
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_task_lock_directory_metadata(metadata: &fs::Metadata) -> io::Result<()> {
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "import task owner lock directory is not a regular directory",
         ));
     }
     Ok(())

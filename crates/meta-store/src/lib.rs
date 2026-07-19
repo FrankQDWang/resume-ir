@@ -91,6 +91,7 @@ pub use classification::{
 pub use data_directory_owner::{
     import_task_owner_lock_path, DataDirectoryOwnerAcquireError, DataDirectoryOwnerAcquisition,
     DataDirectoryOwnerLease, ImportProcessingOrphanNormalizationError, ImportTaskOwnerLock,
+    MetaStorePurgeArtifactClass,
 };
 pub use immutable_ingest_stage::ImmutableIngestStage;
 pub use immutable_search::{

@@ -3786,6 +3786,33 @@ guards, local runtime discovery, and PR #9 CI state.
   on the preceding commit is invalidated by this production process-boundary
   change; hosted Windows proof and every final frozen-code gate still require a
   new run.
+- A fresh complete `./scripts/ci/verify-local.sh` run on the bounded-command
+  correction exited 0, but the next hosted Windows run exposed a separate
+  control/data artifact boundary defect after advancing past the earlier lock
+  and benchmark failures. Physical-purge residual verification recursively read
+  every file while deliberately retaining the v28 mutation owner. On Windows,
+  the two empty owner lock files remain protected by whole-file `LockFileEx`
+  ranges, so a second handle could inspect their identity but could not read
+  their bytes. Four CLI purge tests therefore stopped at the generic unreadable
+  artifact error before proving either a clean purge or a retained marker. The
+  fix does not release the mutation fence, retry, sleep, ignore read failures or
+  special-case Windows. Metadata, full-text and vector storage now each own a
+  narrow typed classifier for their exact empty regular non-symlink control
+  locks; import-pipeline aggregates those classifications, and the residual
+  scanner was extracted from the oversized CLI main file. Validated lock files
+  are never content-read, control directories are still traversed and
+  classified entry by entry, and similar names, non-empty or malformed controls,
+  unknown artifacts, metadata/index/vector/OCR payloads and ordinary read
+  failures remain fail-closed. The held-owner regression proves one synthetic
+  marker file is still detected while the two live owner locks are excluded;
+  all nine delete/purge integration tests, complete all-feature meta-store,
+  full-text, vector and import-pipeline suites, CLI unit tests, strict affected-
+  crate Clippy, formatting and diff checks pass. Independent review found no
+  P0/P1/P2 and confirmed the same owner lease remains live through the scan.
+  This production correction invalidates the preceding local-gate result for
+  final acceptance; hosted Windows proof, a fresh complete local gate, rebuilt
+  native package and a new uninterrupted 120-minute soak remain required before
+  merge or installation acceptance.
 
 ### S806
 

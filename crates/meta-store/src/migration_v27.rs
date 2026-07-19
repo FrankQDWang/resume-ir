@@ -19,7 +19,7 @@ pub(super) use store_validation::{
     store_identity, validate_active_store,
 };
 
-const MIGRATION_LOCK_FILE: &str = "metadata-migration.lock";
+pub(crate) const MIGRATION_LOCK_FILE: &str = "metadata-migration.lock";
 
 pub(super) fn with_migration_lock<T>(
     data_dir: &Path,
