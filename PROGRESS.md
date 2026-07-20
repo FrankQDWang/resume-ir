@@ -28,12 +28,24 @@ production-ready scope source.
   user-authorized local resume sample directory through temporary witness
   copies; no real resume data, filenames, paths, raw text, or diagnostics were
   committed or uploaded.
-  S807 installation acceptance also used a temporary local copy-on-write
-  witness of the user-authorized desktop runtime store plus bounded redacted
-  diagnostics. The current convergence witness was removed from its working
+  S807 used an installed-runtime investigation/private copy-on-write witness;
+  it is historical incident evidence, not current installation acceptance. It
+  used a temporary local witness of the user-authorized desktop runtime store
+  plus bounded redacted diagnostics. The convergence witness was removed from its working
   location to recoverable local Trash after verification; no database, index,
   resume data, root path, query, token, raw diagnostics, runtime receipt, or
   model artifact was committed or uploaded.
+  S808 used synthetic daemon/index fixtures plus bounded redacted lifecycle and
+  aggregate status evidence from the user-authorized installed runtime store;
+  no database, index, resume data, root path, query, token, raw diagnostics,
+  runtime receipt, process identity, or model artifact is committed or uploaded.
+  S809 currently uses synthetic v28/v29 migration, publication-lock, daemon IPC
+  and desktop lifecycle fixtures plus read-only installed 0.1.1 lifecycle and
+  version evidence. Its post-merge gate is authorized to use a future temporary
+  APFS copy-on-write witness of the user-authorized installed runtime store.
+  Only bounded redacted aggregate outcomes may be retained; no database, index,
+  resume data, root path, query, token, raw diagnostics, lifecycle/restart
+  ledger, process identity or model artifact is committed or uploaded.
   S264 also used a private local-only OCR throughput smoke against the
   user-authorized local resume sample directory with temporary redacted
   manifests and local Tesseract/Poppler commands; no real resume data,
@@ -3358,6 +3370,297 @@ guards, local runtime discovery, and PR #9 CI state.
 
 ## Command Log
 
+### S809
+
+- Installed manual testing invalidated S808 acceptance: the desktop process and
+  IPC status remained alive, but query health stayed `repairing`. The confirmed
+  code path was a blocking operating-system fulltext/vector publication lock
+  inside the only resident maintenance worker. No timeout increase, background
+  retry loop or compatibility reader was added.
+- Metadata schema v29 is an additive COW correction over v28. Before manifest
+  publication, every pre-existing v29 target is treated as uncommitted staging,
+  deleted and recopied from the current v28 authority. Migration temporarily
+  accepts legacy artifact descriptors only inside its transaction; active v29
+  reopen exactly validates the permanent current-only FT v3/vector v4 trigger.
+- Fulltext and vector publication now use one non-blocking lock attempt and
+  return typed `PublicationBusy`. Artifact repair records one closed exact
+  failure kind, distinguishing fulltext/vector publication contention from
+  other subsystem failures, anchors 1/4/15/30/60-second backoff to failure
+  completion, persists across daemon restart, and becomes explicit
+  `repair_blocked` after five failures. Status and diagnostics expose bounded
+  `last_error_kind`; status, detail and search all return `repair_required` for
+  a blocked projection.
+- Retryable import/index worker failures are tick-local and use bounded resident
+  backoff. Lifecycle cancellation is a clean stop; only closed configuration,
+  ownership, protocol, control-plane and runtime-invariant classes terminate
+  the daemon. Persistent IPC stdout remains discovery-only.
+- The OCR resident-daemon status regression is now deterministic instead of
+  timing-dependent. A synthetic OCR gate holds the worker inside indexing while
+  authenticated status remains HTTP 200 with zero searchable documents; after
+  release, the same daemon generation publishes the document and reports one
+  searchable result. The HTTP witness uses one absolute deadline across
+  connect/write/read, treats only transient reset/read interruption inside that
+  deadline as retryable, caps the response at 1 MiB, and keeps daemon lifetime
+  bound to parent-lifecycle stdin rather than a request-count shortcut. The
+  exact regression and the complete `s50_ocr_worker` target both pass 13/13,
+  including serial execution, and strict daemon Clippy remains green.
+- The desktop rolling restart window, scheduled backoff, circuit and one-shot
+  clean-shutdown authority are stored in a bounded owner-only ledger. A corrupt,
+  unsafe, oversized, future-clock or unwritable ledger fails closed with a typed
+  lifecycle reason while desktop diagnostics remain available. Reopening the
+  App cannot reset the five-attempt budget; normal Ready shutdown does not count
+  as a failure.
+- Broad testing exposed two additional cross-layer regressions and converted
+  both into permanent tests. Read-only query-set preflight now distinguishes an
+  absent store, including a nonexistent data directory, from a legacy store
+  without creating or migrating either one.
+  Direct offline import opens the exact current fulltext and vector payloads
+  before consuming them as a publication base, so corrupt payload bytes rebuild
+  from immutable metadata instead of being copied forward. If that deep repair
+  is in progress, not due, blocked, superseded, failed or otherwise not fully
+  Ready, offline mutation now fails closed before creating or replacing any
+  import task head. Resident daemon coverage separately holds the physical
+  fulltext and vector publication locks; vector contention crosses two resident
+  attempts before recovery, and persistent fulltext contention runs all five
+  attempts in one real daemon/IPC generation before entering the typed
+  `repair_required` state rather than exiting or remaining indefinitely
+  `repairing`.
+- An independent failure-path review found that a fulltext write could finish
+  before vector publication returned busy, leaving the abandoned unpublished
+  generation behind on every retry. The correction persists an immutable typed
+  authority for the current head, exact migration attempt or exact artifact
+  repair attempt. Before any physical delete it atomically records exact
+  fulltext/vector expectations and marks the journal `Abandoned`; monotonic
+  per-artifact completion then makes every crash cut replayable. A deferred,
+  partial or identity-mismatched cleanup atomically settles that exact attempt
+  and blocks only the head it still owns as
+  `runtime_invariant/repair_required`; a stale migration with the same
+  NULL-generation/zero-epoch shape cannot block its replacement. Pending
+  retirement is non-prunable, bounded to 64, and must be replayed before new
+  publication/attempt work or broad GC; overflow fails closed. An absent
+  artifact counts as replayed only under the exact pending intent when the
+  generation is not retained. A final migration RED also proved that v28
+  `preparing`/`validated` journals could not be backfilled as already clean;
+  v29 now converts them to `Abandoned` plus pending `may_exist` retirement.
+- The first complete workspace rerun then exposed one more daemon-survival cut:
+  after an unsafe artifact root had already atomically blocked the exact head,
+  restart replay classified that same blocked authority as a general
+  supersession and terminated the daemon with `runtime_integrity`. The final
+  contract now returns `ExactHeadAlreadyBlocked` only inside the metadata
+  transaction that proves the publication authority, blocked head and exact
+  migration/artifact terminal cleanup attempt all match. General
+  `HeadSuperseded` remains fatal, so attempt-identity/ABA mismatches cannot be
+  hidden by generation/epoch inference. Exact-match and mismatch regressions
+  cover both migration and artifact repair, while the native S48 witness keeps
+  one child alive across status, detail, search and a second status request.
+- The v29 hard cut also invalidated one S49 test fixture rather than product
+  behavior: initial migration publication requires the exact durable migration
+  rebuild attempt owned by the same publication session, but the fixture had
+  created only a barrier. It now reserves and proves that exact attempt before
+  publication and uses RAII temporary storage. All four detail/hydrate tests
+  pass repeatedly in parallel and serial execution; the production hard cut was
+  not weakened with a barrier-only or latest-version fallback.
+- Focused meta-store, fulltext, vector, import-pipeline, CLI, daemon, desktop and
+  frontend tests plus strict workspace/desktop Clippy passed during
+  implementation. After the unsafe-artifact-root and S49 regressions were
+  corrected, the frozen-code workspace test suite, workspace all-target/all-
+  feature Clippy with warnings denied, desktop 83-test suite and strict Clippy,
+  frontend Vitest 32/32 plus Node 225/225, production frontend build, formatting
+  and diff checks all passed. The target arm64 Tauri App build also exited zero:
+  it produced version 0.1.2 with the reviewed icon hash
+  `0773cef6a3a2d8627874eb4cb9341b0039c5144b03b3612c617a03769c1a3747`,
+  embedded classifier/OCR/embedding packs and a valid strict deep ad-hoc
+  signature. Governance, complete local and public-boundary gates have now
+  passed; normal protected merge and merged-main 0.1.2 installation are the
+  next checkpoints. The private COW cold-start,
+  Ready/migration/index recovery, independent fulltext/vector lock contention,
+  native strong-kill, clean quit/reopen and redacted diagnostics checks are hard
+  gates. Only after those installed checks find no new issue will the exact code
+  freeze for the final two-hour soak; a new deployed failure requires a
+  regression, remerge and reinstall, and restarts that soak from zero. The
+  renewed 120-minute soak has not run; the ignored workspace test and the
+  superseded S807 soak are not S809 evidence.
+- The first complete `verify-local` rerun passed its Rust workspace, CLI,
+  embedder and benchmark targets, then correctly failed at the daemon
+  closed-loop policy because that historical script still required background
+  `import worker processed` stdout. Persistent IPC mode now deliberately keeps
+  stdout as a startup discovery protocol: background summaries could otherwise
+  write after the bootstrap reader closes and recreate a process-level broken-
+  pipe failure. The closed-loop already proves import/OCR/index completion via
+  authenticated status, search, detail and delete. Its contract now rejects
+  background import/OCR summaries, and the workflow policy rejects restoring
+  those old positive assertions. Shell syntax, the focused daemon closed loop
+  and workflow policy pass.
+- The next complete gate exposed two additional test-contract REDs instead of
+  being waived as flakes. First, the direct-CLI strong-kill test could kill a
+  writer inside a rollback-journal transaction and then ask a read-only
+  connection to recover it. The test now acquires the new data-directory owner,
+  opens the writer to perform journal recovery, drops ownership, and only then
+  resumes the CLI. The exact strong-kill regression passed ten consecutive
+  runs and the complete 32-test S9 target passed. Second, an S84 convergence
+  poll treated a request-scoped SQLite `Storage` observation during resident
+  publication as a fatal assertion. Its bounded poll now retries only the
+  fixed `MetaStoreErrorClass::Storage`; migration, identity and invariant
+  failures still fail immediately. The vector contention case passed five
+  consecutive runs and all five S84 migration/repair cases passed together.
+- After those corrections, a fresh complete `./scripts/ci/verify-local.sh`
+  exited zero from the beginning, including workspace tests and strict Clippy,
+  daemon/CLI closed loops, all governance mutations and packaging/public
+  boundary checks. A separate `./scripts/ci/guard-public-repo.sh` also exited
+  zero. Machine `release-readiness --json` exited one as expected with stable
+  release still blocked by signing/notarization, Windows/clean-host lifecycle,
+  private quality/performance, reviewed runtime/model, diagnostics and hardware
+  evidence outside this correctness train. No merged-main installation or
+  S809 soak is claimed: `/Applications/resume-ir.app` remains 0.1.1 until the
+  protected merge and exact-main installed gate complete.
+- A read-only replay of the last installed lifecycle receipt is the deployment
+  failure witness for the historical installed 0.1.1 non-recovery: after the current
+  `child_exited` event it contains four consecutive `startup_timeout` outcomes
+  and no higher-generation `ready`. Live inspection also proved that the App in
+  `/Applications` is still 0.1.1, so no 0.1.2 installed claim is valid yet.
+- The merged-main installed gate is agent-runnable as
+  `acceptance:macos:installed-main`. It derives the exact commit, version and
+  icon from a clean worktree whose HEAD equals fresh remote `main`, then requires
+  bundle/DMG/install evidence v2 to bind that commit; caller assertions cannot
+  substitute for provenance. It holds the real lifecycle lock across the full
+  run, uses an explicitly authorized v28 source and an APFS no-fallback COW
+  clone, binds strong-kill evidence to the current receipt boundary, targets
+  normal quit by exact PID, and checks all four native executables for residue.
+  Fulltext and vector locks must each produce exact `publication_busy` across
+  two same-generation timed attempts, and a real fifth-attempt
+  `repair_required` outcome is mandatory before the gate can pass. The native
+  combined diagnostics save dialog remains an explicit post-install check
+  rather than a fabricated automated export claim.
+- A read-only preflight against the authorized installed v28 store exposed a
+  real acceptance-harness RED: the canonical `metadata-active.v1` producer has
+  four records followed by exactly one LF, while the first parser counted the
+  trailing empty split item and rejected it. The strict regression now accepts
+  only those four records plus one LF and rejects missing/extra LF, CRLF, extra
+  records and filename/schema mismatch. The same preflight now passes without
+  launching the App or modifying the source. Build and installed provenance
+  also pins `/usr/bin/git`, disables global/system config and replace objects,
+  and requires both raw local and effective origin to equal the single
+  canonical HTTPS repository before accepting a fresh remote-main commit.
+- A second independent macOS acceptance review converted three trust-boundary
+  gaps into deterministic regressions. Bundle/DMG/install/upgrade/legacy and
+  installed-main verification now require one exact ad-hoc hardened signature
+  policy for the App plus all four nested native executables, with the single
+  library-validation entitlement present only on the embedding runtime. All
+  Apple trust/copy/mount tools use fixed absolute paths, a closed environment
+  and `shell:false`; the Tauri build runner cannot be reused as that system-tool
+  runner. Installed acceptance repeats source/composition/receipt/signature and
+  entitlement binding before every launch and at final teardown. Diagnostics
+  validation rejects unknown nested fields such as `error.detail`, unknown
+  enums, attempt values above five and unbounded latencies. The focused RED
+  suites first failed 0/4 for signature/tool trust and 7/9 for diagnostics.
+  A later immutable-build RED proved that inherited `PATH` could still select an
+  ignored source-worktree `node_modules/.bin/npm`, and that Tauri did not yet
+  receive the same closed build environment. The exact-commit clone now uses a
+  private tool directory bound to canonical Node/npm and realpath-validated
+  Cargo/Rust binaries, with private HOME/CARGO_HOME/npm cache/config/TMPDIR and
+  one fixed PATH carried through `beforeBuildCommand`. Regressions reject fake
+  npm, inherited PATH/HOME/NODE_OPTIONS, Tauri environment drift and mutable
+  rustup-proxy targets. After correction, independent `npm test` passed Vitest
+  32/32 plus Node 225/225, the installed-acceptance Node contract suite passed
+  66/66, and `npm run build` passed. Exact Node/npm versions remain outside the
+  contract;
+  introducing such a pin would require a tracked toolchain manifest and receipt.
+- Supervisor manual retry now has the same closed state contract as the plan:
+  only `circuit_open` may consume its one half-open attempt. A deterministic
+  RED test showed `configuration_invalid` incorrectly moved from `blocked` to
+  `recovering`; the correction keeps all six blocked reasons unchanged and
+  spawns no child. The focused regression, 17 supervisor tests, all 83 desktop
+  Rust tests and strict desktop Clippy passed while the existing circuit-open
+  history tests remained green.
+- Publication retirement review found one post-validation cancellation window
+  in the normal incremental caller: cancellation after artifact preparation but
+  before the consuming commit could drop the prepared owner without abandoning
+  its journal or retiring its exact generation. The regression now exercises
+  that boundary and requires cancellation to return its original typed class,
+  journal `Abandoned`, and remove only the exact fulltext/vector snapshots,
+  pins and staging. The production API is hard-cut so prepared ownership remains
+  private to `search_publication.rs` inside one transaction closure rather than
+  relying on `#[must_use]` or caller convention. Incremental, rebuild, removal,
+  OCR, migration and reconciliation callers receive only a borrowed view; only
+  `Applied` returns a committed fence. The complete import-pipeline suite passes
+  126 unit tests plus one integration test, strict all-target Clippy passes, and
+  the v28-to-v29 daemon repair target passes all five migration, fulltext/vector
+  contention, bounded-attempt and resident-survival regressions.
+- A final macOS trust review found that hashing a DMG pathname and mounting it
+  later could bind a receipt to different bytes, install/upgrade verified then
+  remounted the pathname, partial attach failure could leave a mount behind,
+  bundle composition did not bind every App resource, and the OCR assembler
+  still inherited PATH for Mach-O tools. Deterministic regressions now require
+  one verified mounted-image lease through copy, pre/post image identity and
+  digest equality, probe-and-detach cleanup, a bounded complete regular-file
+  App manifest, and absolute closed-environment Apple tool execution. Final
+  merged-main DMG/install verification remains pending and no installed
+  acceptance is claimed.
+- An independent governance audit found that the machine delivery graph could
+  still move directly from `pr_merged` to issue reconciliation and that its only
+  merge edge required auto-merge even though this scope exception forbids it.
+  The active contract now requires protected normal squash merge, branch/worktree
+  cleanup with local/remote `main` equality, exact merged-main 0.1.2 build and
+  installation, authorized v28 COW installed acceptance, same-commit freeze and
+  the uninterrupted 120-minute soak before issue reconciliation. Any deployed
+  failure returns to a new regression-backed branch and invalidates the soak.
+  The acceptance matrix also specifies exact non-Applied publication cleanup and
+  the installed gate's source, COW, artifact, recovery, final-relaunch,
+  diagnostics and commit-equality requirements. A follow-up mutation audit then
+  proved those new fields were documented but not actually machine-bound: the
+  old checkers still passed after deleting the final-soak transition or changing
+  120 minutes to one. The checkers now require the exact protected normal merge,
+  cleanup, install, COW acceptance, freeze, soak, failure-regression and issue-
+  reconciliation graph; exact permissions and no-bypass policy; and the v29
+  retirement, installed-acceptance and same-commit soak fields. Six mutation
+  tests delete, tamper or add bypasses across every critical field and are wired
+  into `verify-local`; all pass together with the positive contract, autonomous-
+  goal, loop-state and workflow checks. These are governance gates only; none of
+  the post-merge native states is claimed yet.
+
+### S808
+
+- Post-merge installed 0.1.1 testing invalidated the earlier cold-restart
+  acceptance claim. The first migrated 7,607-document generation did converge
+  to `Ready`, but a strong-killed owned daemon then missed the fixed ten-second
+  startup deadline on consecutive supervised generations. The lifecycle
+  receipt classified each attempt as `startup_timeout`; no IPC manifest or
+  authenticated status surface existed before the deadline. This is distinct
+  from the repaired v27/v28 migration convergence failure.
+- The live causal chain was synchronous data-plane work before control-plane
+  publication: startup opened and validated the active fulltext/vector
+  snapshots, reconciled interrupted publication state and performed recovery/
+  GC before `TcpListener::bind` and generation manifest publication. The worker
+  also forced configured completed-root rescan age to zero on every first tick,
+  so process restart immediately requeued a full corpus and could create the
+  interrupted publication paid by the next restart. Raising the supervisor
+  timeout, adding retries or treating permanent repairing as ready were rejected.
+- The deterministic RED removes the active fulltext generation, occupies the
+  requested IPC port and starts combined index-worker/IPC mode. Before the fix,
+  search-artifact recovery rebuilt and advanced the active generation before
+  the daemon discovered the listener conflict. The regression now requires the
+  projection and missing artifact root to remain untouched when bind fails.
+- `BoundServer` is now the typed capability proving that loopback bind,
+  generation credentials and the discovery manifest are published. Combined
+  resident mode must acquire it before spawning startup search maintenance;
+  the listener remains owned by the main control plane while validation,
+  interrupted-publication recovery, rebuild and GC run in the supervised
+  worker. IPC-only/offline behavior remains explicit and no request is replayed.
+- Completed-root rescan policy moved to `CompletedRootRescanSchedule`. Its API
+  accepts durable completion time, configured interval and observation time,
+  but has no tick or generation input. The exact boundary witness proves
+  `finished_at=100`, interval 300, `now=399` queues nothing, `now=400` queues
+  once, and a repeated observation does not duplicate the head. The native
+  daemon regression proves a recent completed root is not rescanned merely
+  because the process restarted; explicit interval zero and watcher-driven
+  changes continue to rescan.
+- The control-plane RED is green. The complete 22-test native daemon suite,
+  30 non-ignored IPC tests, five lifecycle kill/EOF tests, all 43 daemon unit
+  tests and the complete `resume-daemon` crate pass; strict all-target daemon
+  Clippy also passes. PR/hosted Windows, frozen-code local gates, the renewed
+  two-hour fault soak, merged-main 0.1.2 bundle/upgrade and installed
+  Ready/strong-kill/clean-quit evidence remain required before manual handoff.
+
 ### S807
 
 - **Superseding correction, 2026-07-18:** the later native installation and
@@ -3365,9 +3668,11 @@ guards, local runtime discovery, and PR #9 CI state.
   correctness train locally complete or suitable for continued manual testing.
   The installed daemon stayed process-ready but its query service remained
   `repairing/migration_rebuild` with no active generation. Those older bullets
-  remain as chronological evidence, not current acceptance truth. S807 is open
-  until a rebuilt package converges the installed corpus to `Ready` and all
-  final gates below pass.
+  remain as chronological evidence, not current acceptance truth. Every earlier
+  S807/S808 completion, code-freeze, package, native-install and soak result is
+  superseded and cannot satisfy the v29/S809 gates. S807 is open until a rebuilt
+  package converges the installed corpus to `Ready` and all final gates below
+  pass in the required merged-main-installed-before-soak order.
 - The non-convergence was structural rather than a UI polling defect. The v27
   store could retain a configured, failed or budgeted task as the canonical
   root head while the migration claim gate required an exact full-corpus task;

@@ -34,6 +34,7 @@ platform_workflow=".github/workflows/ci-platform.yml"
 release_workflow=".github/workflows/release.yml"
 verify_script="scripts/ci/verify-local.sh"
 search_runtime_boundary_script="scripts/ci/check-search-runtime-boundary.py"
+governance_mutation_script="scripts/ci/test-governance-contract-mutations.py"
 cli_closed_loop_script="scripts/ci/check-cli-closed-loop.sh"
 daemon_closed_loop_script="scripts/ci/check-daemon-closed-loop.sh"
 daemon_incremental_script="scripts/ci/check-daemon-incremental-import.sh"
@@ -50,7 +51,7 @@ local_ocr_runtime_script="scripts/ci/check-local-ocr-runtime.sh"
 local_diagnostics_evidence_script="scripts/ci/check-local-diagnostics-release-evidence.sh"
 local_quality_evidence_script="scripts/ci/check-local-quality-release-evidence.sh"
 
-for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script" "$search_runtime_boundary_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$daemon_incremental_script" "$benchmark_smoke_script" "$runtime_bundle_policy_script" "$runtime_bundle_manifest_script" "$runtime_bundle_payload_script" "$runtime_bundle_sbom_script" "$runtime_bundle_package_script" "$current_stage_handoff_script" "$current_stage_validation_script" "$current_stage_observability_script" "$local_ocr_runtime_script" "$local_diagnostics_evidence_script" "$local_quality_evidence_script"; do
+for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script" "$search_runtime_boundary_script" "$governance_mutation_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$daemon_incremental_script" "$benchmark_smoke_script" "$runtime_bundle_policy_script" "$runtime_bundle_manifest_script" "$runtime_bundle_payload_script" "$runtime_bundle_sbom_script" "$runtime_bundle_package_script" "$current_stage_handoff_script" "$current_stage_validation_script" "$current_stage_observability_script" "$local_ocr_runtime_script" "$local_diagnostics_evidence_script" "$local_quality_evidence_script"; do
   require_file "$file"
 done
 
@@ -94,6 +95,7 @@ require_text "$platform_workflow" "actions/checkout@v6"
 
 require_text "$verify_script" "./scripts/ci/check-workflows.sh"
 require_text "$verify_script" "python3 scripts/ci/check-search-runtime-boundary.py"
+require_text "$verify_script" "python3 scripts/ci/test-governance-contract-mutations.py"
 require_text "$verify_script" "./scripts/ci/check-cli-closed-loop.sh"
 require_text "$verify_script" "./scripts/ci/check-daemon-closed-loop.sh"
 require_text "$verify_script" "./scripts/ci/check-daemon-incremental-import.sh"
@@ -165,8 +167,12 @@ require_text "$daemon_closed_loop_script" "--version-id"
 require_text "$daemon_closed_loop_script" "--visible-epoch"
 require_text "$daemon_closed_loop_script" "delete --doc-id"
 require_text "$daemon_closed_loop_script" "daemon closed-loop check passed"
+require_text "$daemon_closed_loop_script" 'reject_text "$daemon_stdout" "import worker processed:"'
+require_text "$daemon_closed_loop_script" 'reject_text "$daemon_stdout" "ocr worker processed:"'
 reject_text "$daemon_closed_loop_script" "--work-embeddings"
 reject_text "$daemon_closed_loop_script" "embedding worker processed:"
+reject_text "$daemon_closed_loop_script" 'require_text "$daemon_stdout" "import worker processed:"'
+reject_text "$daemon_closed_loop_script" 'require_text "$daemon_stdout" "ocr worker processed:"'
 reject_text "$daemon_closed_loop_script" 'require_text "$search_out" "synthetic-java-platform.pdf"'
 reject_text "$daemon_closed_loop_script" 'require_text "$search_out" "synthetic-java-engineer.docx"'
 reject_text "$daemon_closed_loop_script" 'require_text "$ocr_search_out" "synthetic-scanned-resume.pdf"'

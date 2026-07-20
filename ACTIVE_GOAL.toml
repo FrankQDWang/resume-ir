@@ -13,7 +13,7 @@ acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩�
 
 [scope.active_slice]
 issue = "#217"
-name = "daemon_reliability_detail_snapshot_correctness_v28_corrective"
+name = "daemon_bounded_artifact_repair_v29_corrective"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = false
@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = true
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = true
-scope_exception_reason = "S807 is the user-prioritized local correctness train after a truthful evidence-only S806 checkpoint. A deterministic peer-reset witness proved that a request-local response write failure can terminate the resident daemon, while static inspection proved that the desktop had no runtime supervisor and that mutable resume-version identity plus non-atomic metadata/index publication could make one search result resolve to unavailable or changed detail content. Native testing then invalidated the v27 first-publication acceptance claim because an installed legacy corpus could remain repairing indefinitely. The corrective hard cut crosses daemon IPC, Tauri lifecycle, metadata schema v28, copy-on-write migration, import ownership/task-head coordination, bounded publication recovery, fulltext/vector version binding and GUI detail contracts; these boundaries cannot be safely shipped as compatibility shims or dual truth sources. Issue #217 is the linked corrective owner; closed historical #138 remains only the local umbrella reference. S806 Windows ONNX work remains same-lane deferred and is not claimed complete. This slice may use only synthetic fixtures and redacted bounded evidence, must preserve query semantics and privacy redlines, and must not claim Windows H0, installer, signing, updater, scale or product completion."
+scope_exception_reason = "S807 is the user-prioritized local correctness train after a truthful evidence-only S806 checkpoint. A deterministic peer-reset witness proved that a request-local response write failure can terminate the resident daemon, while static inspection proved that the desktop had no runtime supervisor and that mutable resume-version identity plus non-atomic metadata/index publication could make one search result resolve to unavailable or changed detail content. Native testing then invalidated the v27 first-publication acceptance claim because an installed legacy corpus could remain repairing indefinitely. Post-merge installed strong-kill testing exposed the S808 control-plane correction: artifact recovery ran before IPC publication and the first worker tick bypassed the durable rescan interval, so a valid large corpus could repeatedly exceed the fixed startup deadline. S809 then proved that physical fulltext/vector publication locks could block the resident worker indefinitely while status continued to report repairing, repair backoff was anchored to attempt start, a pre-manifest v29 staging store could be stale, and the desktop restart budget was not durable across App generations. The v29 hard cut crosses daemon IPC, Tauri lifecycle, metadata copy-on-write migration and exact trigger authority, durable repair/restart ledgers, non-blocking fulltext/vector publication, import worker supervision and GUI diagnostics; these boundaries cannot be safely shipped as compatibility shims or dual truth sources. Issue #217 is the linked corrective owner; closed historical #138 remains only the local umbrella reference. S806 Windows ONNX work remains same-lane deferred and is not claimed complete. Public or committed artifacts may contain only synthetic fixtures and bounded redacted evidence. The explicitly authorized local v28 store may be read only as the source of a temporary APFS copy-on-write installed-acceptance witness; neither the source nor its copy, paths, contents or runtime artifacts may be committed or uploaded. This slice must preserve query semantics and privacy redlines and must not claim Windows H0, signing, updater, scale or product completion."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -126,7 +126,9 @@ github_issue_write_allowed = true
 github_pr_write_allowed = true
 commit_push_allowed = true
 auto_merge_allowed = true
+protected_merge_allowed = true
 branch_cleanup_allowed = true
+local_install_allowed = true
 direct_main_push_allowed = false
 admin_bypass_allowed = false
 raw_private_data_commit_allowed = false
@@ -305,6 +307,54 @@ required_evidence = ["verification_summary", "next_slice_decision", "privacy_bou
 allowed_actions = ["comment_issue", "update_issue", "open_follow_up_issue"]
 
 [[autonomous_delivery.transitions]]
+name = "prepare_correctness_plan"
+from = ["slice_complete"]
+to = "plan_ready"
+required_permissions = []
+required_evidence = ["linked_issue", "correctness_spec", "correctness_plan"]
+allowed_actions = ["write_redacted_evidence"]
+
+[[autonomous_delivery.transitions]]
+name = "review_correctness_plan"
+from = ["plan_ready"]
+to = "plan_reviewed"
+required_permissions = []
+required_evidence = ["plan_review", "acceptance_gate", "privacy_boundary"]
+allowed_actions = ["write_redacted_evidence"]
+
+[[autonomous_delivery.transitions]]
+name = "activate_correctness_slice"
+from = ["plan_reviewed", "evidence_review"]
+to = "slice_active"
+required_permissions = ["production_code_allowed"]
+required_evidence = ["linked_issue", "primary_lane", "slice_scope", "acceptance_gate"]
+allowed_actions = ["update_issue"]
+
+[[autonomous_delivery.transitions]]
+name = "activate_correctness_branch"
+from = ["slice_active"]
+to = "branch_active"
+required_permissions = ["commit_push_allowed"]
+required_evidence = ["git_base_sha", "linked_issue"]
+allowed_actions = ["create_branch"]
+
+[[autonomous_delivery.transitions]]
+name = "capture_correctness_regression"
+from = ["slice_active"]
+to = "red_check_written"
+required_permissions = []
+required_evidence = ["reproduction", "failing_regression", "privacy_boundary"]
+allowed_actions = ["run_tests", "write_redacted_evidence"]
+
+[[autonomous_delivery.transitions]]
+name = "implement_correctness_regression"
+from = ["red_check_written"]
+to = "implementation_active"
+required_permissions = ["production_code_allowed"]
+required_evidence = ["linked_issue", "failing_regression"]
+allowed_actions = ["edit", "test", "commit"]
+
+[[autonomous_delivery.transitions]]
 name = "open_pr"
 from = ["evidence_review"]
 to = "pr_opened"
@@ -361,19 +411,67 @@ required_evidence = ["merge_method", "branch_protection_satisfied", "admin_bypas
 allowed_actions = ["update_pr_body", "record_merge_method"]
 
 [[autonomous_delivery.transitions]]
-name = "merge_pr"
+name = "merge_scope_exception_pr"
 from = ["merge_method_selected"]
 to = "pr_merged"
-required_permissions = ["auto_merge_allowed"]
-required_evidence = ["ci_green", "local_gate_green", "privacy_gate_green", "branch_protection_satisfied"]
-allowed_actions = ["enable_auto_merge", "squash_merge"]
+required_permissions = ["protected_merge_allowed"]
+required_evidence = ["ci_green", "local_gate_green", "privacy_gate_green", "branch_protection_satisfied", "scope_exception_normal_merge", "admin_bypass_absent"]
+allowed_actions = ["squash_merge"]
+
+[[autonomous_delivery.transitions]]
+name = "cleanup_branch_and_sync_main"
+from = ["pr_merged"]
+to = "branch_cleaned_main_synced"
+required_permissions = ["branch_cleanup_allowed"]
+required_evidence = ["merged_commit", "local_main_equals_remote_main", "feature_branch_removed", "unrelated_worktree_changes_preserved"]
+allowed_actions = ["fetch_base", "sync_main", "remove_worktree", "delete_branch"]
+
+[[autonomous_delivery.transitions]]
+name = "build_and_install_exact_merged_main"
+from = ["branch_cleaned_main_synced"]
+to = "merged_main_0_1_2_installed"
+required_permissions = ["local_install_allowed"]
+required_evidence = ["fresh_remote_main", "clean_merged_main", "stable_serial_source_authority", "exact_commit_isolated_build_source", "exact_version_0_1_2", "verified_bundle_dmg_receipt_commit_equality", "installed_app_commit_equality"]
+allowed_actions = ["build_release", "verify_release", "install_local"]
+
+[[autonomous_delivery.transitions]]
+name = "accept_installed_v28_cow"
+from = ["merged_main_0_1_2_installed"]
+to = "installed_v28_cow_acceptance_green"
+required_permissions = ["private_resume_root_read_allowed"]
+required_evidence = ["authorized_v28_source", "apfs_cow_no_fallback", "source_unchanged", "mutation_authority_revalidated", "cold_v29_ready", "artifact_identity_consistent", "ciphertext_digest_verified", "nonzero_exact_epoch_synthetic_canary", "durable_process_group_cleanup", "strong_kill_recovered", "fulltext_vector_contention_bounded", "final_quit_relaunch_ready", "redacted_diagnostics"]
+allowed_actions = ["run_installed_acceptance", "write_redacted_evidence"]
+
+[[autonomous_delivery.transitions]]
+name = "freeze_installed_acceptance_commit"
+from = ["installed_v28_cow_acceptance_green"]
+to = "exact_commit_frozen"
+required_permissions = []
+required_evidence = ["installed_acceptance_commit", "local_main_equals_remote_main", "worktree_clean"]
+allowed_actions = ["record_frozen_commit"]
+
+[[autonomous_delivery.transitions]]
+name = "run_final_frozen_soak"
+from = ["exact_commit_frozen"]
+to = "soak_120m_green"
+required_permissions = []
+required_evidence = ["soak_commit_equals_installed_acceptance_commit", "uninterrupted_120_minute_soak", "soak_result_green"]
+allowed_actions = ["run_tests", "write_redacted_evidence"]
+
+[[autonomous_delivery.transitions]]
+name = "regress_deployed_failure"
+from = ["pr_merged", "branch_cleaned_main_synced", "merged_main_0_1_2_installed", "installed_v28_cow_acceptance_green", "exact_commit_frozen", "soak_120m_green"]
+to = "slice_selected"
+required_permissions = ["github_issue_write_allowed"]
+required_evidence = ["deployed_failure", "repeatable_regression", "soak_invalidated", "linked_issue", "privacy_boundary"]
+allowed_actions = ["comment_issue", "update_issue"]
 
 [[autonomous_delivery.transitions]]
 name = "reconcile_issue_lifecycle"
-from = ["pr_merged"]
+from = ["soak_120m_green"]
 to = "issue_reconciled_with_evidence"
 required_permissions = ["github_issue_write_allowed"]
-required_evidence = ["main_reachable_commit", "issue_lifecycle_outcome", "before_after_metrics", "privacy_boundary"]
+required_evidence = ["main_reachable_commit", "installed_acceptance_commit", "soak_commit", "issue_lifecycle_outcome", "before_after_metrics", "privacy_boundary"]
 allowed_actions = ["comment_issue", "close_issue", "open_follow_up_issue"]
 
 [[autonomous_delivery.transitions]]

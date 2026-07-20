@@ -344,8 +344,8 @@ reject_paths "$local_status_out"
 
 require_text "$daemon_stdout" "resume-daemon foreground ready"
 require_text "$daemon_stdout" "ipc status endpoint: http://127.0.0.1:"
-require_text "$daemon_stdout" "import worker processed:"
-require_text "$daemon_stdout" "ocr worker processed:"
+reject_text "$daemon_stdout" "import worker processed:" "background import worker summary"
+reject_text "$daemon_stdout" "ocr worker processed:" "background OCR worker summary"
 reject_text "$daemon_stdout" "DaemonClosedLoopOCRToken" "OCR text"
 reject_paths "$daemon_stdout"
 
