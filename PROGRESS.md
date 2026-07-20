@@ -3627,6 +3627,16 @@ guards, local runtime discovery, and PR #9 CI state.
   desktop suite pass, including a 96 KiB binary-output witness and rejection of
   any caller budget above the cap. No installation, COW acceptance or soak is
   claimed until this regression merges and the exact new `main` is rerun.
+- The same pre-mutation review found that the immutable exact-commit clone could
+  not contain Git-ignored local runtime packs, while its release build still
+  expected those packs under clone-local `.cache`. The immutable builder now
+  stages only the three reviewed classifier, embedding and OCR pack payloads:
+  source bytes come from the local approved pack roots, but the exact commit's
+  tracked manifests define and verify every copied file and digest. The clone is
+  rechecked as Git-clean after staging, so ignored inputs cannot replace tracked
+  source authority. A deterministic orchestration regression and a local-only
+  real reviewed-pack staging witness pass; no debug/profile extras were copied
+  or committed. Native build, installation and COW acceptance remain pending.
 
 ### S808
 

@@ -17,6 +17,7 @@ import test from "node:test";
 
 import { runBoundedTool, toolSucceeded } from "./bounded-process.mjs";
 import { createImmutableBuildSource } from "./immutable-build-source.mjs";
+import { stageImmutableRuntimePacks } from "./immutable-runtime-packs.mjs";
 
 async function git(repo, args) {
   const result = await runBoundedTool("/usr/bin/git", ["-C", repo, ...args], {
@@ -26,6 +27,60 @@ async function git(repo, args) {
   assert.equal(toolSucceeded(result), true, result.stderr);
   return result.stdout.trim();
 }
+
+test("stages only manifest-reviewed runtime inputs into the exact build clone", async (context) => {
+  const root = await realpath(
+    await mkdtemp(path.join(os.tmpdir(), "resume-ir-immutable-packs-")),
+  );
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await chmod(root, 0o700);
+  const immutableRepoRoot = path.join(root, "immutable");
+  const sourceRepoRoot = path.join(root, "source");
+  await Promise.all([mkdir(immutableRepoRoot), mkdir(sourceRepoRoot)]);
+  const calls = [];
+  const resource = (kind) => ({
+    destination: `/ignored/${kind}`,
+    expectedManifest: `/exact/${kind}.json`,
+    sourcePackRoot: `/reviewed/${kind}`,
+    targetTriple: "aarch64-apple-darwin",
+  });
+  await stageImmutableRuntimePacks(
+    { immutableRepoRoot, sourceRepoRoot },
+    {
+      createPlan: (options) => {
+        assert.equal(options.repoRoot, immutableRepoRoot);
+        assert.equal(options.targetTriple, "aarch64-apple-darwin");
+        assert.equal(
+          options.sourcePackRoot,
+          path.join(sourceRepoRoot, ".cache", "resume-ir-native-e5-qint8-pack"),
+        );
+        return {
+          classifierResourcePack: resource("classifier"),
+          ocrResourcePack: resource("ocr"),
+          resourcePack: resource("embedding"),
+        };
+      },
+      stageClassifier: async (plan) => calls.push(["classifier", plan]),
+      stageEmbedding: async (plan) => calls.push(["embedding", plan]),
+      stageOcr: async (plan) => calls.push(["ocr", plan]),
+    },
+  );
+  assert.deepEqual(
+    calls.map(([kind, plan]) => [
+      kind,
+      path.relative(immutableRepoRoot, plan.destination),
+    ]),
+    [
+      ["embedding", ".cache/resume-ir-native-e5-qint8-pack"],
+      ["ocr", ".cache/resume-ir-macos-ocr-runtime-pack"],
+      ["classifier", ".cache/resume-ir-classifier-model-pack"],
+    ],
+  );
+  assert.deepEqual(
+    calls.map(([, plan]) => plan.expectedManifest),
+    ["/exact/embedding.json", "/exact/ocr.json", "/exact/classifier.json"],
+  );
+});
 
 test("creates and removes an inode-bound exact-commit build clone", async (context) => {
   const root = await realpath(
@@ -59,12 +114,19 @@ test("creates and removes an inode-bound exact-commit build clone", async (conte
   await git(repo, ["commit", "--quiet", "-m", "synthetic fixture"]);
   const head = await git(repo, ["rev-parse", "HEAD"]);
 
+  let staged = false;
   const immutable = await createImmutableBuildSource({
     repoRoot: repo,
     runTool: runBoundedTool,
     source: { gitHead: head },
+    stageRuntimePacks: async ({ immutableRepoRoot, sourceRepoRoot }) => {
+      assert.notEqual(immutableRepoRoot, repo);
+      assert.equal(sourceRepoRoot, repo);
+      staged = true;
+    },
     temporaryParent,
   });
+  assert.equal(staged, true);
   assert.notEqual(immutable.repoRoot, repo);
   assert.equal(await git(immutable.repoRoot, ["rev-parse", "HEAD"]), head);
   await writeFile(packageFile, "source drift that must not reach the clone\n");
@@ -134,6 +196,7 @@ test("pins npm and the Tauri build PATH outside ignored source dependencies", as
           repoRoot: process.argv[3],
           runTool: runBoundedTool,
           source: { gitHead: process.argv[4] },
+          stageRuntimePacks: async () => {},
           temporaryParent: process.argv[5],
         });
         const npm = await runBoundedTool("/usr/bin/which", ["npm"], {
@@ -240,6 +303,7 @@ test("canonicalizes Rust shims before exposing the closed build PATH", async (co
     runTool: runBoundedTool,
     runtime: { homeDirectory: runtimeHome, nodeExecutable: process.execPath },
     source: { gitHead: head },
+    stageRuntimePacks: async () => {},
     temporaryParent,
   });
   const toolBin = immutable.buildEnvironment.PATH.split(":")[0];

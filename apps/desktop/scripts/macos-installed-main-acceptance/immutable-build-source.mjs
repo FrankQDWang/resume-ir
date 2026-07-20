@@ -23,6 +23,7 @@ import {
   fail,
 } from "./core.mjs";
 import { requireSecureDirectory } from "./filesystem-cow.mjs";
+import { stageImmutableRuntimePacks } from "./immutable-runtime-packs.mjs";
 
 const BUILD_PREFIX = ".resume-ir-installed-main-build-";
 const EXPECTED_ORIGIN = "https://github.com/FrankQDWang/resume-ir.git";
@@ -230,6 +231,7 @@ export async function createImmutableBuildSource({
   runtime,
   signal,
   source,
+  stageRuntimePacks = stageImmutableRuntimePacks,
   temporaryParent,
 }) {
   if (
@@ -322,6 +324,18 @@ export async function createImmutableBuildSource({
     if (!exactSuccess(head, `${source.gitHead}\n`) || !exactSuccess(status)) {
       fail("immutable_build_source_invalid");
     }
+    await stageRuntimePacks({
+      immutableRepoRoot,
+      sourceRepoRoot: repoRoot,
+    });
+    const stagedStatus = await git([
+      "-C",
+      immutableRepoRoot,
+      "status",
+      "--porcelain=v1",
+      "--untracked-files=all",
+    ]);
+    if (!exactSuccess(stagedStatus)) fail("immutable_build_source_invalid");
     const frontendRoot = path.join(immutableRepoRoot, "apps", "desktop");
     const install = await runTool(
       toolchain.nodeExecutable,
