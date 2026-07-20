@@ -76,13 +76,14 @@ function validDmgMetadata(metadata, maxDmgBytes) {
 }
 
 function sameDmgIdentity(left, right) {
+  // hdiutil may update extended metadata during a read-only attach, which
+  // changes ctime without changing the file identity or the verified bytes.
   return (
     left.dev === right.dev &&
     left.ino === right.ino &&
     left.mode === right.mode &&
     left.size === right.size &&
-    left.mtimeMs === right.mtimeMs &&
-    left.ctimeMs === right.ctimeMs
+    left.mtimeMs === right.mtimeMs
   );
 }
 
