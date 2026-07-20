@@ -761,18 +761,21 @@ test("detaches a partial mount after attach times out and preserves the attach e
   assert.deepEqual((await readdir(root)).sort(), ["resume-ir.dmg"]);
 });
 
-test("verifies one DMG, delegates exact App verification, and always detaches", async (context) => {
+test("verifies one DMG across a read-only attach ctime change and always detaches", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "resume-ir-dmg-verify-"));
   const temporaryRoot = path.join(root, "mounts");
   const dmg = path.join(root, "resume-ir.dmg");
   context.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(temporaryRoot);
   await writeFile(dmg, "synthetic-dmg");
+  const initialCtimeMs = (await lstat(dmg)).ctimeMs;
   const calls = [];
   const runner = async (command, args) => {
     calls.push([command, ...args]);
     const tool = path.basename(command);
     if (tool === "hdiutil" && args[0] === "attach") {
+      await chmod(dmg, 0o600);
+      await chmod(dmg, 0o644);
       const mountDirectory = args.at(-1);
       await createMountedLayout(mountDirectory, { withComposition: true });
       return { status: 0, stdout: "", stderr: "" };
@@ -854,6 +857,7 @@ test("verifies one DMG, delegates exact App verification, and always detaches", 
 
   assert.equal(verifiedApps.length, 1);
   assert.equal(leaseConsumed, true);
+  assert.notEqual((await lstat(dmg)).ctimeMs, initialCtimeMs);
   assert.deepEqual(calls[0].slice(0, 6), [
     "/usr/bin/hdiutil",
     "attach",

@@ -3637,6 +3637,15 @@ guards, local runtime discovery, and PR #9 CI state.
   source authority. A deterministic orchestration regression and a local-only
   real reviewed-pack staging witness pass; no debug/profile extras were copied
   or committed. Native build, installation and COW acceptance remain pending.
+- The next exact merged-main deployment reached the verified DMG stage and then
+  failed before installation because the verifier treated `ctime` as immutable
+  file identity. A bounded reproduction proved that read-only `hdiutil attach`
+  changed only `ctime`; device, inode, mode, size, `mtime`, birth time and both
+  pre/post SHA-256 digests remained equal. DMG identity now excludes `ctime`
+  while retaining the same-inode metadata checks and byte digests. A regression
+  simulates the attach metadata side effect and remains paired with the existing
+  pathname-replacement rejection. Installation, COW acceptance and soak are
+  still unclaimed until this correction merges and exact merged `main` passes.
 
 ### S808
 
