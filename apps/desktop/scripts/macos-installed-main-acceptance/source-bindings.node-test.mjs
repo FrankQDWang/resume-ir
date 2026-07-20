@@ -214,6 +214,7 @@ test("derives version and binary icon digest from exact commit blobs", async () 
     version: "0.1.2",
   });
   assert.equal(calls.at(-1).options.stdoutMode, "buffer");
+  assert.equal(calls.at(-1).options.maxStdoutBytes, 8 * 1024 * 1024);
   assert.ok(
     calls.every(({ args }) => args.at(-1).startsWith(`${HEAD}:apps/desktop/`)),
   );

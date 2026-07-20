@@ -118,6 +118,41 @@ test("bounded tools always use argv execution with shell disabled", async () => 
   assert.equal(typeof captured.command, "string");
 });
 
+test("a caller can raise one bounded stdout budget without removing the global cap", async () => {
+  const payload = Buffer.alloc(96 * 1024, 7);
+  const spawnTool = () => {
+    const child = new EventEmitter();
+    child.pid = 9_998;
+    child.exitCode = null;
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.kill = () => {};
+    queueMicrotask(() => {
+      child.stdout.end(payload);
+      child.stderr.end();
+      child.exitCode = 0;
+      child.emit("exit", 0, null);
+    });
+    return child;
+  };
+  const result = await runBoundedTool("/synthetic/tool", [], {
+    maxStdoutBytes: 128 * 1024,
+    spawnTool,
+    stdoutMode: "buffer",
+    timeoutMs: 1_000,
+  });
+  assert.equal(result.status, 0);
+  assert.deepEqual(result.stdout, payload);
+  await assert.rejects(
+    runBoundedTool("/synthetic/tool", [], {
+      maxStdoutBytes: 8 * 1024 * 1024 + 1,
+      spawnTool,
+      timeoutMs: 1_000,
+    }),
+    /tool_invocation_invalid/,
+  );
+});
+
 test("an aborted bounded helper is terminated by its exact spawned process group", async () => {
   const controller = new AbortController();
   const signals = [];
