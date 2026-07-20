@@ -51,13 +51,8 @@ pub(super) fn single(
         }
     };
     if let Some(code) = query_service_error(store) {
-        return write_search_error(
-            &mut stream,
-            &envelope.request_id,
-            503,
-            code.label(),
-            "search service is unavailable",
-        );
+        let body = search_service::service_error_body(&envelope.request_id, code);
+        return write(&mut stream, 503, "application/json", &body);
     }
     query_service
         .dispatch(
@@ -126,11 +121,7 @@ pub(super) fn batch(
         children.push((envelope, args, query_parse_started.elapsed()));
     }
     if let Some(code) = query_service_error(store) {
-        let body = search_service::error_body(
-            &batch.batch_id,
-            code.label(),
-            "search service is unavailable",
-        );
+        let body = search_service::service_error_body(&batch.batch_id, code);
         return write(&mut stream, 503, "application/json", &body);
     }
     let Some(admission) = query_service.acquire_batch() else {

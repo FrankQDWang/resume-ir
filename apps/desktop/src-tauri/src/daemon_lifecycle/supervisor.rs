@@ -4,9 +4,17 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+use std::path::Path;
+
+#[path = "restart_ledger.rs"]
+mod restart_ledger;
+
 use super::policy::{RecoveryDecision, RestartPolicy, RestartPolicyConfig};
 use super::receipt::LifecycleReceiptRecorder;
 use crate::daemon_client::DesktopError;
+pub(super) use restart_ledger::RestartLedgerReason;
+use restart_ledger::{unix_time_ms, RestartWindowLedger};
 
 const SCHEMA_VERSION: &str = "resume-ir.desktop-daemon-lifecycle.v1";
 
@@ -28,6 +36,7 @@ pub(crate) enum DaemonBlockedReason {
     ProtocolMismatch,
     OwnershipConflict,
     SupervisorUnavailable,
+    RestartLedgerInvalid,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -51,6 +60,7 @@ pub(crate) struct DaemonLifecycleSnapshot {
     pub(super) consecutive_heartbeat_failures: u8,
     pub(super) blocked_reason: Option<DaemonBlockedReason>,
     pub(super) last_exit: Option<DaemonExitClass>,
+    pub(super) restart_ledger_reason: Option<RestartLedgerReason>,
 }
 
 impl DaemonLifecycleSnapshot {
@@ -65,6 +75,7 @@ impl DaemonLifecycleSnapshot {
             consecutive_heartbeat_failures: 0,
             blocked_reason: None,
             last_exit: None,
+            restart_ledger_reason: None,
         }
     }
 }
@@ -150,13 +161,47 @@ impl DaemonLifecycleState {
         runtime: R,
         timing: SupervisorTiming,
     ) -> Result<Self, DesktopError> {
-        Self::launch_with_timing_and_receipt(runtime, timing, LifecycleReceiptRecorder::disabled())
+        Self::launch_with_components(
+            runtime,
+            timing,
+            LifecycleReceiptRecorder::disabled(),
+            RestartWindowLedger::disabled(timing.policy),
+        )
+    }
+
+    #[cfg(test)]
+    fn launch_with_timing_and_data_dir<R: DaemonRuntime>(
+        runtime: R,
+        timing: SupervisorTiming,
+        data_dir: &Path,
+    ) -> Result<Self, DesktopError> {
+        Self::launch_with_components(
+            runtime,
+            timing,
+            LifecycleReceiptRecorder::initialize(data_dir),
+            RestartWindowLedger::initialize(data_dir, unix_time_ms(), timing.policy),
+        )
     }
 
     fn launch_with_timing_and_receipt<R: DaemonRuntime>(
         runtime: R,
         timing: SupervisorTiming,
         receipt: LifecycleReceiptRecorder,
+    ) -> Result<Self, DesktopError> {
+        let restart_ledger = receipt
+            .data_dir()
+            .map(|data_dir| {
+                RestartWindowLedger::initialize(data_dir, unix_time_ms(), timing.policy)
+            })
+            .unwrap_or_else(|| RestartWindowLedger::disabled(timing.policy));
+        Self::launch_with_components(runtime, timing, receipt, restart_ledger)
+    }
+
+    fn launch_with_components<R: DaemonRuntime>(
+        runtime: R,
+        timing: SupervisorTiming,
+        receipt: LifecycleReceiptRecorder,
+        restart_ledger: RestartWindowLedger,
     ) -> Result<Self, DesktopError> {
         let (commands, receiver) = mpsc::sync_channel(8);
         let snapshot = Arc::new(Mutex::new(DaemonLifecycleSnapshot::initial()));
@@ -166,7 +211,14 @@ impl DaemonLifecycleState {
         let thread = thread::Builder::new()
             .name("resume-daemon-supervisor".to_string())
             .spawn(move || {
-                SupervisorActor::new(runtime, timing, actor_snapshot, actor_receipt).run(receiver)
+                SupervisorActor::new(
+                    runtime,
+                    timing,
+                    actor_snapshot,
+                    actor_receipt,
+                    restart_ledger,
+                )
+                .run(receiver)
             })
             .map_err(|_| {
                 DesktopError::new(
@@ -261,6 +313,7 @@ struct SupervisorActor<R: DaemonRuntime> {
     child: Option<R::Child>,
     snapshot: Arc<Mutex<DaemonLifecycleSnapshot>>,
     receipt: Arc<LifecycleReceiptRecorder>,
+    restart_ledger: RestartWindowLedger,
 }
 
 impl<R: DaemonRuntime> SupervisorActor<R> {
@@ -269,20 +322,25 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
         timing: SupervisorTiming,
         snapshot: Arc<Mutex<DaemonLifecycleSnapshot>>,
         receipt: Arc<LifecycleReceiptRecorder>,
+        restart_ledger: RestartWindowLedger,
     ) -> Self {
         let started_at = Instant::now();
-        Self {
+        let attempt_ages = restart_ledger.restart_attempt_ages(unix_time_ms());
+        let mut actor = Self {
             runtime,
             timing,
             started_at,
-            policy: RestartPolicy::new(timing.policy),
+            policy: RestartPolicy::with_restart_attempt_ages(timing.policy, attempt_ages),
             phase: ActorPhase::Waiting {
                 start_at: started_at,
             },
             child: None,
             snapshot,
             receipt,
-        }
+            restart_ledger,
+        };
+        actor.restore_persisted_phase(started_at);
+        actor
     }
 
     fn run(mut self, receiver: mpsc::Receiver<SupervisorCommand>) {
@@ -293,6 +351,7 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
                     let _ = reply.send(self.current_snapshot());
                 }
                 Ok(SupervisorCommand::Stop(reply)) => {
+                    self.authorize_clean_restart_if_ready();
                     self.stop_child();
                     let _ = reply.send(());
                     return;
@@ -307,6 +366,40 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
         }
     }
 
+    fn restore_persisted_phase(&mut self, now: Instant) {
+        if self.restart_ledger.reason().is_some() {
+            self.block(DaemonBlockedReason::RestartLedgerInvalid);
+            return;
+        }
+        if let Some(remaining) = self
+            .restart_ledger
+            .circuit_remaining(unix_time_ms(), self.timing.policy.circuit_open)
+        {
+            if !remaining.is_zero() {
+                self.policy.restore_circuit_open();
+                self.phase = ActorPhase::CircuitOpen {
+                    retry_at: now + remaining,
+                };
+                self.publish_state(DaemonLifecycleKind::CircuitOpen, Some(remaining), None, 0);
+            } else {
+                self.begin_durable_half_open(now);
+            }
+            return;
+        }
+        if let Some(remaining) = self
+            .restart_ledger
+            .scheduled_restart_remaining(unix_time_ms())
+        {
+            self.phase = ActorPhase::Waiting {
+                start_at: now + remaining,
+            };
+            self.publish_state(DaemonLifecycleKind::Recovering, Some(remaining), None, 0);
+            return;
+        }
+        self.phase = ActorPhase::Waiting { start_at: now };
+        self.publish_state(DaemonLifecycleKind::Starting, None, None, 0);
+    }
+
     fn tick(&mut self) {
         let now = Instant::now();
         match self.phase {
@@ -318,14 +411,7 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
                 heartbeat_failures,
             } => self.observe_ready(now, stable_since, heartbeat_at, heartbeat_failures),
             ActorPhase::CircuitOpen { retry_at } if now >= retry_at => {
-                self.policy.begin_half_open();
-                self.phase = ActorPhase::Waiting { start_at: now };
-                self.publish_state(
-                    DaemonLifecycleKind::Recovering,
-                    Some(Duration::ZERO),
-                    None,
-                    0,
-                );
+                self.begin_durable_half_open(now);
             }
             ActorPhase::Waiting { .. } | ActorPhase::CircuitOpen { .. } | ActorPhase::Blocked => {}
         }
@@ -342,6 +428,14 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
                 return;
             }
             DaemonProbe::Unavailable => {}
+        }
+        if self
+            .restart_ledger
+            .consume_start_authority(unix_time_ms())
+            .is_err()
+        {
+            self.block(DaemonBlockedReason::RestartLedgerInvalid);
+            return;
         }
         match self.runtime.spawn() {
             Ok(child) => {
@@ -367,6 +461,15 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
         }
         match self.runtime.probe(self.timing.heartbeat_timeout) {
             DaemonProbe::Ready => {
+                if self
+                    .restart_ledger
+                    .record_probation_ready(unix_time_ms())
+                    .is_err()
+                {
+                    self.stop_child();
+                    self.block(DaemonBlockedReason::RestartLedgerInvalid);
+                    return;
+                }
                 self.policy.on_ready(self.elapsed(now));
                 self.phase = ActorPhase::Ready {
                     stable_since: now,
@@ -404,9 +507,6 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
         if self.handle_child_exit(now) {
             return;
         }
-        if self.policy.observe_ready(self.elapsed(now)) {
-            self.update_snapshot(|snapshot| snapshot.restart_attempt = 0);
-        }
         if now < heartbeat_at {
             return;
         }
@@ -418,6 +518,7 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
                     heartbeat_failures: 0,
                 };
                 self.publish_heartbeat_failures(0);
+                self.clear_restart_budget_if_stable(now);
             }
             DaemonProbe::ProtocolMismatch => {
                 self.stop_child();
@@ -445,12 +546,28 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
         self.update_snapshot(|snapshot| snapshot.last_exit = Some(exit));
         match self.policy.on_failure(self.elapsed(now)) {
             RecoveryDecision::RetryAfter(delay) => {
+                if self
+                    .restart_ledger
+                    .record_restart_attempt(unix_time_ms(), delay)
+                    .is_err()
+                {
+                    self.block(DaemonBlockedReason::RestartLedgerInvalid);
+                    return;
+                }
                 self.phase = ActorPhase::Waiting {
                     start_at: now + delay,
                 };
                 self.publish_state(DaemonLifecycleKind::Recovering, Some(delay), None, 0);
             }
             RecoveryDecision::OpenCircuit(delay) => {
+                if self
+                    .restart_ledger
+                    .record_circuit_open(unix_time_ms())
+                    .is_err()
+                {
+                    self.block(DaemonBlockedReason::RestartLedgerInvalid);
+                    return;
+                }
                 self.phase = ActorPhase::CircuitOpen {
                     retry_at: now + delay,
                 };
@@ -468,9 +585,20 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
     fn manual_retry(&mut self) {
         match self.phase {
             ActorPhase::CircuitOpen { .. } if !self.policy.begin_manual_half_open() => return,
-            ActorPhase::CircuitOpen { .. } => {}
-            ActorPhase::Blocked => self.policy.begin_half_open(),
-            ActorPhase::Waiting { .. } | ActorPhase::Starting { .. } | ActorPhase::Ready { .. } => {
+            ActorPhase::CircuitOpen { .. } => {
+                if self
+                    .restart_ledger
+                    .record_circuit_open(unix_time_ms())
+                    .is_err()
+                {
+                    self.block(DaemonBlockedReason::RestartLedgerInvalid);
+                    return;
+                }
+            }
+            ActorPhase::Blocked
+            | ActorPhase::Waiting { .. }
+            | ActorPhase::Starting { .. }
+            | ActorPhase::Ready { .. } => {
                 return;
             }
         }
@@ -482,6 +610,66 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
             None,
             0,
         );
+    }
+
+    fn begin_durable_half_open(&mut self, now: Instant) {
+        if self
+            .restart_ledger
+            .record_circuit_open(unix_time_ms())
+            .is_err()
+        {
+            self.block(DaemonBlockedReason::RestartLedgerInvalid);
+            return;
+        }
+        self.policy.begin_half_open();
+        self.phase = ActorPhase::Waiting { start_at: now };
+        self.publish_state(
+            DaemonLifecycleKind::Recovering,
+            Some(Duration::ZERO),
+            None,
+            0,
+        );
+    }
+
+    fn clear_restart_budget_if_stable(&mut self, now: Instant) {
+        if !self.policy.stable_reset_due(self.elapsed(now)) {
+            return;
+        }
+        if self.restart_ledger.clear_after_stable_ready().is_ok() {
+            self.policy.complete_stable_reset(self.elapsed(now));
+            self.update_snapshot(|snapshot| {
+                snapshot.restart_attempt = 0;
+                snapshot.restart_ledger_reason = None;
+            });
+            self.record_snapshot();
+        } else {
+            let reason = self.restart_ledger.reason();
+            let changed = self.current_snapshot().restart_ledger_reason != reason;
+            self.update_snapshot(|snapshot| snapshot.restart_ledger_reason = reason);
+            if changed {
+                self.record_snapshot();
+            }
+        }
+    }
+
+    fn authorize_clean_restart_if_ready(&mut self) {
+        if !matches!(self.phase, ActorPhase::Ready { .. })
+            || !self
+                .child
+                .as_mut()
+                .is_some_and(|child| child.poll_exit() == ChildExitOutcome::Running)
+        {
+            return;
+        }
+        if self
+            .restart_ledger
+            .authorize_clean_restart(unix_time_ms())
+            .is_err()
+        {
+            let reason = self.restart_ledger.reason();
+            self.update_snapshot(|snapshot| snapshot.restart_ledger_reason = reason);
+            self.record_snapshot();
+        }
     }
 
     fn handle_child_exit(&mut self, now: Instant) -> bool {
@@ -524,12 +712,14 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
         heartbeat_failures: u8,
     ) {
         let attempts = self.policy.restart_attempts(self.elapsed(Instant::now()));
+        let restart_ledger_reason = self.restart_ledger.reason();
         self.update_snapshot(|snapshot| {
             snapshot.state = state;
             snapshot.restart_attempt = attempts;
             snapshot.retry_delay_ms = retry.map(duration_millis);
             snapshot.consecutive_heartbeat_failures = heartbeat_failures;
             snapshot.blocked_reason = blocked_reason;
+            snapshot.restart_ledger_reason = restart_ledger_reason;
         });
         self.record_snapshot();
     }

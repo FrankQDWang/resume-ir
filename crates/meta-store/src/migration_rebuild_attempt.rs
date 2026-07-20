@@ -3,7 +3,8 @@ use std::{fmt, str::FromStr};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 
 use crate::migration_rebuild_barrier::{
-    migration_rebuild_barrier_token_matches, MigrationRebuildBarrierToken,
+    migration_rebuild_barrier_token_matches, migration_rebuild_terminal_block_token_matches,
+    MigrationRebuildBarrierToken,
 };
 use crate::{
     ContentDigest, ImportProcessingContractId, MetaStoreError, MetadataStore, MetadataStoreAccess,
@@ -70,6 +71,7 @@ pub enum MigrationRebuildPublicationAttemptFailureOutcome {
 pub enum MigrationRebuildPublicationAttemptPhase {
     Running,
     RetryWait,
+    Terminal,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -148,6 +150,7 @@ fn acquire_publication_attempt(
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(MetaStoreError::storage)?;
+    crate::search_publication::ensure_no_pending_retirement(&transaction)?;
     if !migration_rebuild_barrier_token_matches(&transaction, barrier)? {
         transaction.commit().map_err(MetaStoreError::storage)?;
         return Ok(MigrationRebuildPublicationAttemptAcquire::Superseded);
@@ -218,6 +221,9 @@ fn acquire_publication_attempt(
                         });
                     }
                 }
+                MigrationRebuildPublicationAttemptPhase::Terminal => {
+                    return Err(MetaStoreError::storage_invariant());
+                }
             }
         }
     }
@@ -280,24 +286,6 @@ fn finish_publication_attempt_failure(
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(MetaStoreError::storage)?;
-    if error_class == MigrationRebuildPublicationErrorClass::Cleanup {
-        transaction
-            .execute(
-                "UPDATE migration_rebuild_publication_attempt
-                     SET phase = 'retry_wait', next_retry_at_seconds = ?1,
-                         last_error_class = 'cleanup', updated_at_seconds = ?1
-                     WHERE state_key = 'default'",
-                params![now.as_unix_seconds()],
-            )
-            .map_err(MetaStoreError::storage)?;
-        let blocked = block_unpublished_migration_head(&transaction, now)?;
-        transaction.commit().map_err(MetaStoreError::storage)?;
-        return Ok(if blocked {
-            MigrationRebuildPublicationAttemptFailureOutcome::RepairBlocked
-        } else {
-            MigrationRebuildPublicationAttemptFailureOutcome::Superseded
-        });
-    }
     let exact_attempt = transaction
         .query_row(
             "SELECT EXISTS (
@@ -306,17 +294,12 @@ fn finish_publication_attempt_failure(
                      JOIN migration_rebuild_contract_state AS rebuild
                        ON rebuild.state_key = attempt.state_key
                       AND rebuild.active_contract_id = attempt.processing_contract_id
-                     JOIN search_projection_state AS projection
-                       ON projection.state_key = attempt.state_key
                      WHERE attempt.state_key = 'default'
                        AND attempt.processing_contract_id = ?1
                        AND attempt.barrier_digest = ?2
                        AND attempt.attempt_id = ?3
                        AND attempt.attempt_count = ?4
                        AND attempt.phase = 'running'
-                       AND projection.service_state = 'repairing'
-                       AND projection.repair_reason = 'migration_rebuild'
-                       AND projection.generation IS NULL
                  )",
             params![
                 attempt.processing_contract_id.as_str(),
@@ -328,7 +311,12 @@ fn finish_publication_attempt_failure(
         )
         .map_err(MetaStoreError::storage)?
         == 1;
-    if !exact_attempt || !migration_rebuild_barrier_token_matches(&transaction, &attempt.barrier)? {
+    let exact_repairing_head =
+        exact_attempt && migration_rebuild_barrier_token_matches(&transaction, &attempt.barrier)?;
+    let exact_terminal_block = terminal
+        && exact_attempt
+        && migration_rebuild_terminal_block_token_matches(&transaction, &attempt.barrier)?;
+    if !exact_repairing_head && !exact_terminal_block {
         if exact_attempt {
             delete_exact_attempt(&transaction, attempt)?;
         }
@@ -336,7 +324,7 @@ fn finish_publication_attempt_failure(
         return Ok(MigrationRebuildPublicationAttemptFailureOutcome::Superseded);
     }
 
-    transaction
+    let changed = transaction
         .execute(
             "UPDATE migration_rebuild_publication_attempt
                  SET phase = 'retry_wait', last_error_class = ?1,
@@ -355,9 +343,12 @@ fn finish_publication_attempt_failure(
             ],
         )
         .map_err(MetaStoreError::storage)?;
+    if changed != 1 {
+        return Err(MetaStoreError::storage_invariant());
+    }
 
     if terminal || attempt.attempt_count >= MAX_ATTEMPTS {
-        let blocked = block_unpublished_migration_head(&transaction, now)?;
+        let blocked = exact_terminal_block || block_unpublished_migration_head(&transaction, now)?;
         transaction.commit().map_err(MetaStoreError::storage)?;
         return Ok(if blocked {
             MigrationRebuildPublicationAttemptFailureOutcome::RepairBlocked
@@ -532,6 +523,7 @@ fn phase_from_storage(value: &str) -> Result<MigrationRebuildPublicationAttemptP
     match value {
         "running" => Ok(MigrationRebuildPublicationAttemptPhase::Running),
         "retry_wait" => Ok(MigrationRebuildPublicationAttemptPhase::RetryWait),
+        "terminal" => Ok(MigrationRebuildPublicationAttemptPhase::Terminal),
         _ => Err(MetaStoreError::storage_invariant()),
     }
 }
@@ -542,16 +534,19 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    use rusqlite::params;
     use tempfile::{tempdir, TempDir};
 
     use crate::{
-        DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, ImportProcessingContract,
-        OwnedMetaStore, SearchProjectionServiceState, SearchPublicationSession, SearchRepairReason,
+        ContentDigest, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease,
+        ImportProcessingContract, OwnedMetaStore, SearchProjectionDigest,
+        SearchProjectionServiceState, SearchPublicationDraft, SearchPublicationOutcome,
+        SearchPublicationRetirementFailureOutcome, SearchPublicationSession, SearchRepairReason,
         UnixTimestamp, CLASSIFIER_EPOCH,
     };
 
     use super::{
-        MigrationRebuildPublicationAttemptAcquire,
+        random_attempt_id, MigrationRebuildPublicationAttemptAcquire,
         MigrationRebuildPublicationAttemptFailureOutcome, MigrationRebuildPublicationAttemptPhase,
         MigrationRebuildPublicationErrorClass, MigrationRebuildPublicationFailure,
     };
@@ -663,6 +658,168 @@ mod tests {
                 )
                 .unwrap(),
             MigrationRebuildPublicationAttemptFailureOutcome::RepairBlocked
+        );
+    }
+
+    #[test]
+    fn terminal_retirement_failure_settles_the_exact_already_blocked_attempt_after_reopen() {
+        let directory = tempdir().unwrap();
+        let owner = match DataDirectoryOwnerLease::try_acquire(directory.path()).unwrap() {
+            DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+            DataDirectoryOwnerAcquisition::Contended => panic!("test data directory was contended"),
+        };
+        let store = owner.open_store().unwrap();
+        let contract = contract();
+        store
+            .activate_migration_rebuild_contract(&contract, UnixTimestamp::from_unix_seconds(200))
+            .unwrap();
+        let barrier = store
+            .acquire_migration_rebuild_barrier_token(contract.id())
+            .unwrap()
+            .unwrap();
+        let mut session = store.wait_for_search_publication_session().unwrap();
+        let _attempt = started_attempt(&mut session, &barrier, 200);
+        let projection_digest = SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap();
+        assert_eq!(
+            session
+                .begin_search_publication(&SearchPublicationDraft {
+                    generation: "migration-retirement-terminal".to_string(),
+                    base_generation: None,
+                    expected_visible_epoch: 0,
+                    classifier_epoch: CLASSIFIER_EPOCH.to_string(),
+                    projection_digest,
+                    now: UnixTimestamp::from_unix_seconds(201),
+                })
+                .unwrap(),
+            SearchPublicationOutcome::Applied
+        );
+        session
+            .begin_search_publication_retirement(
+                "migration-retirement-terminal",
+                UnixTimestamp::from_unix_seconds(202),
+                crate::SearchPublicationRetirementPlan {
+                    fulltext: crate::SearchArtifactExpectation::MayExist,
+                    vector: crate::SearchArtifactExpectation::MayExist,
+                },
+            )
+            .unwrap();
+        assert!(session
+            .fail_search_publication_retirement_settlement_before_commit_for_test(
+                "migration-retirement-terminal",
+                UnixTimestamp::from_unix_seconds(203),
+            )
+            .is_err());
+        let rolled_back_head = store.search_projection_state().unwrap();
+        assert_eq!(
+            rolled_back_head.service_state,
+            SearchProjectionServiceState::Repairing
+        );
+        assert_eq!(
+            rolled_back_head.repair_reason,
+            Some(SearchRepairReason::MigrationRebuild)
+        );
+        let rolled_back_attempt = store
+            .migration_rebuild_publication_attempt_state()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            rolled_back_attempt.phase,
+            MigrationRebuildPublicationAttemptPhase::Running
+        );
+        assert_eq!(rolled_back_attempt.last_error_class, None);
+        assert_eq!(
+            session
+                .block_search_head_after_publication_retirement_failure(
+                    "migration-retirement-terminal",
+                    UnixTimestamp::from_unix_seconds(203),
+                )
+                .unwrap(),
+            SearchPublicationRetirementFailureOutcome::HeadBlocked
+        );
+
+        drop(session);
+        drop(store);
+        drop(owner);
+
+        let owner = match DataDirectoryOwnerLease::try_acquire(directory.path()).unwrap() {
+            DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+            DataDirectoryOwnerAcquisition::Contended => panic!("test data directory was contended"),
+        };
+        let store = owner.open_store().unwrap();
+        let blocked = store.search_projection_state().unwrap();
+        assert_eq!(
+            blocked.service_state,
+            SearchProjectionServiceState::RepairBlocked
+        );
+        assert_eq!(
+            blocked.repair_reason,
+            Some(SearchRepairReason::RuntimeInvariant)
+        );
+        assert_eq!(blocked.generation, None);
+        assert_eq!(blocked.visible_epoch, 0);
+        let settled = store
+            .migration_rebuild_publication_attempt_state()
+            .unwrap()
+            .unwrap();
+        assert_eq!(settled.attempt_count, 1);
+        assert_eq!(
+            settled.phase,
+            MigrationRebuildPublicationAttemptPhase::Terminal
+        );
+        assert_eq!(
+            settled.last_error_class,
+            Some(MigrationRebuildPublicationErrorClass::Cleanup)
+        );
+        let mut session = store.wait_for_search_publication_session().unwrap();
+        assert!(session
+            .acquire_migration_rebuild_publication_attempt(
+                &barrier,
+                UnixTimestamp::from_unix_seconds(1_000),
+            )
+            .is_err());
+        assert_eq!(
+            store.migration_rebuild_publication_attempt_state().unwrap(),
+            Some(settled.clone())
+        );
+        assert_eq!(
+            session
+                .block_search_head_after_publication_retirement_failure(
+                    "migration-retirement-terminal",
+                    UnixTimestamp::from_unix_seconds(204),
+                )
+                .unwrap(),
+            SearchPublicationRetirementFailureOutcome::ExactHeadAlreadyBlocked
+        );
+        assert_eq!(store.search_projection_state().unwrap(), blocked);
+        assert_eq!(
+            store.migration_rebuild_publication_attempt_state().unwrap(),
+            Some(settled.clone())
+        );
+
+        let mismatched_attempt_id =
+            ContentDigest::from_bytes(b"mismatched migration cleanup attempt");
+        store
+            .connection
+            .borrow()
+            .execute(
+                "UPDATE migration_rebuild_publication_attempt
+                 SET attempt_id = ?1 WHERE state_key = 'default'",
+                [mismatched_attempt_id.as_str()],
+            )
+            .unwrap();
+        assert_eq!(
+            session
+                .block_search_head_after_publication_retirement_failure(
+                    "migration-retirement-terminal",
+                    UnixTimestamp::from_unix_seconds(205),
+                )
+                .unwrap(),
+            SearchPublicationRetirementFailureOutcome::HeadSuperseded
+        );
+        assert_eq!(store.search_projection_state().unwrap(), blocked);
+        assert_eq!(
+            store.migration_rebuild_publication_attempt_state().unwrap(),
+            Some(settled)
         );
     }
 
@@ -992,7 +1149,7 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_failure_blocks_the_current_unpublished_head_after_supersession() {
+    fn stale_cleanup_failure_cannot_block_the_superseding_unpublished_head() {
         let fixture = owned_fixture();
         let store = &fixture.store;
         let contract_a = contract();
@@ -1025,16 +1182,123 @@ mod tests {
                     UnixTimestamp::from_unix_seconds(302),
                 )
                 .unwrap(),
-            MigrationRebuildPublicationAttemptFailureOutcome::RepairBlocked
+            MigrationRebuildPublicationAttemptFailureOutcome::Superseded
         );
         let projection = store.search_projection_state().unwrap();
         assert_eq!(
             projection.service_state,
-            SearchProjectionServiceState::RepairBlocked
+            SearchProjectionServiceState::Repairing
         );
         assert_eq!(
             projection.repair_reason,
-            Some(SearchRepairReason::RuntimeInvariant)
+            Some(SearchRepairReason::MigrationRebuild)
+        );
+        let current = store
+            .migration_rebuild_publication_attempt_state()
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.attempt_count, 1);
+        assert_eq!(
+            current.phase,
+            MigrationRebuildPublicationAttemptPhase::Running
+        );
+        assert_eq!(current.last_error_class, None);
+    }
+
+    #[test]
+    fn stale_publication_cleanup_cannot_block_a_new_null_generation_contract() {
+        let fixture = owned_fixture();
+        let store = &fixture.store;
+        let contract_a = contract();
+        let contract_b = alternate_contract();
+        store
+            .activate_migration_rebuild_contract(&contract_a, UnixTimestamp::from_unix_seconds(300))
+            .unwrap();
+        let barrier_a = store
+            .acquire_migration_rebuild_barrier_token(contract_a.id())
+            .unwrap()
+            .unwrap();
+        let mut session = store.wait_for_search_publication_session().unwrap();
+        let _stale_attempt = started_attempt(&mut session, &barrier_a, 300);
+        let projection_digest = SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap();
+        assert_eq!(
+            session
+                .begin_search_publication(&SearchPublicationDraft {
+                    generation: "contract-a-retirement".to_string(),
+                    base_generation: None,
+                    expected_visible_epoch: 0,
+                    classifier_epoch: CLASSIFIER_EPOCH.to_string(),
+                    projection_digest,
+                    now: UnixTimestamp::from_unix_seconds(301),
+                })
+                .unwrap(),
+            SearchPublicationOutcome::Applied
+        );
+        session
+            .begin_search_publication_retirement(
+                "contract-a-retirement",
+                UnixTimestamp::from_unix_seconds(302),
+                crate::SearchPublicationRetirementPlan {
+                    fulltext: crate::SearchArtifactExpectation::MayExist,
+                    vector: crate::SearchArtifactExpectation::MayExist,
+                },
+            )
+            .unwrap();
+
+        store
+            .activate_migration_rebuild_contract(&contract_b, UnixTimestamp::from_unix_seconds(303))
+            .unwrap();
+        let barrier_b = store
+            .acquire_migration_rebuild_barrier_token(contract_b.id())
+            .unwrap()
+            .unwrap();
+        assert!(session
+            .acquire_migration_rebuild_publication_attempt(
+                &barrier_b,
+                UnixTimestamp::from_unix_seconds(303),
+            )
+            .is_err());
+        let barrier_b_digest = barrier_b.identity_digest();
+        let current_attempt_id = random_attempt_id().unwrap();
+        store
+            .connection
+            .borrow()
+            .execute(
+                "INSERT INTO migration_rebuild_publication_attempt (
+                     state_key, processing_contract_id, barrier_digest, attempt_id,
+                     attempt_count, phase, started_at_seconds, next_retry_at_seconds,
+                     last_error_class, updated_at_seconds
+                 ) VALUES ('default', ?1, ?2, ?3, 1, 'running', 303, NULL, NULL, 303)",
+                params![
+                    contract_b.id().as_str(),
+                    barrier_b_digest.as_str(),
+                    current_attempt_id.as_str(),
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(
+            session
+                .block_search_head_after_publication_retirement_failure(
+                    "contract-a-retirement",
+                    UnixTimestamp::from_unix_seconds(304),
+                )
+                .unwrap(),
+            SearchPublicationRetirementFailureOutcome::HeadSuperseded
+        );
+        let head = store.search_projection_state().unwrap();
+        assert_eq!(head.service_state, SearchProjectionServiceState::Repairing);
+        assert_eq!(
+            head.repair_reason,
+            Some(SearchRepairReason::MigrationRebuild)
+        );
+        assert_eq!(
+            store
+                .migration_rebuild_publication_attempt_state()
+                .unwrap()
+                .unwrap()
+                .phase,
+            MigrationRebuildPublicationAttemptPhase::Running
         );
     }
 

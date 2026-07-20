@@ -6,8 +6,9 @@ use embedder::{EmbeddingBudget, EmbeddingInput, EmbeddingPriority};
 use meta_store::{ActiveSearchProjection, CandidateId, ResumeVersionId, SearchSelection};
 use rank_fusion::{fuse_hybrid_rrf, HybridRecall, RankedHit};
 use search_runtime::{
-    FullTextCandidate, HitLimit, HydratedSearchHit, QueryCoordinator, SearchRuntimeErrorCode,
-    SelectionLimit, SemanticCandidate, SemanticContract, SemanticQueryVector,
+    FullTextCandidate, HitLimit, HydratedSearchHit, QueryCoordinator, SearchArtifactFaultKey,
+    SearchRuntimeErrorCode, SelectionLimit, SemanticCandidate, SemanticContract,
+    SemanticQueryVector,
 };
 
 use super::query_timing::{QueryStage, QueryStageTiming};
@@ -91,6 +92,10 @@ impl DaemonQueryRuntime {
         QueryCoordinator::open(data_dir)
             .map(|coordinator| Self { coordinator })
             .map_err(map_runtime_error)
+    }
+
+    pub(crate) fn take_artifact_fault(&mut self) -> Option<SearchArtifactFaultKey> {
+        self.coordinator.take_artifact_fault()
     }
 
     pub(crate) fn execute(

@@ -1,5 +1,7 @@
-use crate::codec::{read_snapshot, write_snapshot, KEY_FILE, MANIFEST_FILE, SNAPSHOT_FILE};
-use crate::model::{validate_documents, VectorDocument, VectorIndexError};
+use crate::codec::{
+    read_snapshot_with_control, write_snapshot_with_control, KEY_FILE, MANIFEST_FILE, SNAPSHOT_FILE,
+};
+use crate::model::{validate_documents_with_control, VectorDocument, VectorIndexError};
 use crate::model_contract::VectorModelContract;
 use crate::private_storage::{
     create_private_directory, random_suffix, same_open_file_identity, sync_directory,
@@ -7,6 +9,7 @@ use crate::private_storage::{
 };
 use crate::snapshot_model::{VectorSnapshotSummary, VectorSnapshotUpdate};
 use crate::snapshot_root::VectorSnapshotReader;
+use crate::VectorSnapshotPublishControl;
 use core_domain::ActiveSearchProjection;
 use fs4::fs_std::FileExt;
 use std::fmt;
@@ -35,6 +38,14 @@ pub struct VectorSnapshotStore {
     root: PathBuf,
     root_identity: Arc<PinnedPrivateDirectory>,
     model_contract: VectorModelContract,
+}
+
+#[derive(Clone, Copy)]
+struct StagedPublication<'a> {
+    generation: &'a str,
+    staging: &'a PinnedPrivateDirectory,
+    published: &'a Path,
+    lease: &'a VectorSnapshotPublicationLease,
 }
 
 impl VectorSnapshotStore {
@@ -75,14 +86,37 @@ impl VectorSnapshotStore {
         P: IntoIterator<Item = ActiveSearchProjection>,
         I: IntoIterator<Item = VectorDocument>,
     {
-        self.publish_generation_with_staging_observer(
+        self.publish_generation_with_control(
             generation,
             active_projection,
             documents,
+            VectorSnapshotPublishControl::disabled(),
+        )
+    }
+
+    /// Builds and publishes one generation with cooperative cancellation at
+    /// record batches and crash-safe phase boundaries.
+    pub fn publish_generation_with_control<P, I>(
+        &self,
+        generation: &str,
+        active_projection: P,
+        documents: I,
+        control: VectorSnapshotPublishControl<'_>,
+    ) -> Result<VectorSnapshotSummary, VectorIndexError>
+    where
+        P: IntoIterator<Item = ActiveSearchProjection>,
+        I: IntoIterator<Item = VectorDocument>,
+    {
+        self.publish_generation_with_control_and_staging_observer(
+            generation,
+            active_projection,
+            documents,
+            control,
             |_| {},
         )
     }
 
+    #[cfg(test)]
     fn publish_generation_with_staging_observer<P, I, O>(
         &self,
         generation: &str,
@@ -95,14 +129,45 @@ impl VectorSnapshotStore {
         I: IntoIterator<Item = VectorDocument>,
         O: FnOnce(&Path),
     {
+        self.publish_generation_with_control_and_staging_observer(
+            generation,
+            active_projection,
+            documents,
+            VectorSnapshotPublishControl::disabled(),
+            staging_observer,
+        )
+    }
+
+    fn publish_generation_with_control_and_staging_observer<P, I, O>(
+        &self,
+        generation: &str,
+        active_projection: P,
+        documents: I,
+        control: VectorSnapshotPublishControl<'_>,
+        staging_observer: O,
+    ) -> Result<VectorSnapshotSummary, VectorIndexError>
+    where
+        P: IntoIterator<Item = ActiveSearchProjection>,
+        I: IntoIterator<Item = VectorDocument>,
+        O: FnOnce(&Path),
+    {
         validate_generation(generation)?;
-        let active_projection = active_projection.into_iter().collect::<Vec<_>>();
-        let documents = documents.into_iter().collect::<Vec<_>>();
-        validate_documents(&self.model_contract, &active_projection, &documents)?;
+        control.check()?;
+        let active_projection = collect_with_control(active_projection, control)?;
+        let documents = collect_with_control(documents, control)?;
+        validate_documents_with_control(
+            &self.model_contract,
+            &active_projection,
+            &documents,
+            control,
+        )?;
+        control.check()?;
         self.prepare_layout()?;
+        control.check()?;
         let publication_lease =
             VectorSnapshotPublicationLease::acquire(&self.root, &self.root_identity)?;
         publication_lease.validate_root(&self.root, &self.root_identity)?;
+        control.check()?;
         let published = self.root.join(SNAPSHOTS_DIR).join(generation);
         reject_symlink_or_existing_generation(&published)?;
 
@@ -113,14 +178,15 @@ impl VectorSnapshotStore {
         create_private_directory(&staging)?;
         let staging = PinnedPrivateDirectory::acquire(&staging)?;
         staging_observer(staging.path());
-        let result = self.build_validate_and_publish(
+        control.check()?;
+        let publication = StagedPublication {
             generation,
-            &active_projection,
-            &documents,
-            &staging,
-            &published,
-            &publication_lease,
-        );
+            staging: &staging,
+            published: &published,
+            lease: &publication_lease,
+        };
+        let result =
+            self.build_validate_and_publish(&active_projection, &documents, publication, control);
         preserve_primary_after_cleanup(
             result,
             || self.cleanup_failed_staging(&staging, &publication_lease),
@@ -137,45 +203,60 @@ impl VectorSnapshotStore {
         generation: &str,
         update: VectorSnapshotUpdate,
     ) -> Result<VectorSnapshotSummary, VectorIndexError> {
+        self.publish_generation_from_with_control(
+            base,
+            generation,
+            update,
+            VectorSnapshotPublishControl::disabled(),
+        )
+    }
+
+    /// Materializes an exact-base update with cooperative cancellation, then
+    /// releases the base reader before entering normal controlled publication.
+    pub fn publish_generation_from_with_control(
+        &self,
+        base: VectorSnapshotReader,
+        generation: &str,
+        update: VectorSnapshotUpdate,
+        control: VectorSnapshotPublishControl<'_>,
+    ) -> Result<VectorSnapshotSummary, VectorIndexError> {
         if !base.belongs_to(&self.root) {
             return Err(VectorIndexError::LeaseRootMismatch);
         }
         if base.summary().model_contract() != &self.model_contract {
             return Err(VectorIndexError::InvalidModelContract);
         }
-        let (active_projection, documents) = update.apply(base.documents());
+        control.check()?;
+        let materialized = update.apply_with_control(base.documents(), control);
         drop(base);
-        self.publish_generation(generation, active_projection, documents)
+        let (active_projection, documents) = materialized?;
+        self.publish_generation_with_control(generation, active_projection, documents, control)
     }
 
     fn build_validate_and_publish(
         &self,
-        generation: &str,
         active_projection: &[ActiveSearchProjection],
         documents: &[VectorDocument],
-        staging: &PinnedPrivateDirectory,
-        published: &Path,
-        publication_lease: &VectorSnapshotPublicationLease,
+        publication: StagedPublication<'_>,
+        control: VectorSnapshotPublishControl<'_>,
     ) -> Result<VectorSnapshotSummary, VectorIndexError> {
-        staging.validate_current()?;
-        let expected = write_snapshot(
-            staging.path(),
-            &self.root.join(KEY_FILE),
-            generation,
+        control.check()?;
+        publication.staging.validate_current()?;
+        let expected = write_snapshot_with_control(
+            publication.staging.path(),
+            &publication.staging.path().join(KEY_FILE),
+            publication.generation,
             &self.model_contract,
             active_projection,
             documents,
+            control,
         )?;
-        staging.validate_current()?;
-        self.validate_and_publish_staging(
-            generation,
-            expected,
-            staging,
-            published,
-            publication_lease,
-        )
+        control.check()?;
+        publication.staging.validate_current()?;
+        self.validate_and_publish_staging_with_control(expected, publication, control)
     }
 
+    #[cfg(test)]
     fn validate_and_publish_staging(
         &self,
         generation: &str,
@@ -184,16 +265,35 @@ impl VectorSnapshotStore {
         published: &Path,
         publication_lease: &VectorSnapshotPublicationLease,
     ) -> Result<VectorSnapshotSummary, VectorIndexError> {
-        self.validate_and_publish_staging_with_observer(
+        let publication = StagedPublication {
             generation,
-            expected,
             staging,
             published,
-            publication_lease,
+            lease: publication_lease,
+        };
+        self.validate_and_publish_staging_with_control_and_observer(
+            expected,
+            publication,
+            VectorSnapshotPublishControl::disabled(),
             |_| {},
         )
     }
 
+    fn validate_and_publish_staging_with_control(
+        &self,
+        expected: VectorSnapshotSummary,
+        publication: StagedPublication<'_>,
+        control: VectorSnapshotPublishControl<'_>,
+    ) -> Result<VectorSnapshotSummary, VectorIndexError> {
+        self.validate_and_publish_staging_with_control_and_observer(
+            expected,
+            publication,
+            control,
+            |_| {},
+        )
+    }
+
+    #[cfg(test)]
     fn validate_and_publish_staging_with_observer(
         &self,
         generation: &str,
@@ -203,26 +303,56 @@ impl VectorSnapshotStore {
         publication_lease: &VectorSnapshotPublicationLease,
         after_rename: impl FnOnce(&Path),
     ) -> Result<VectorSnapshotSummary, VectorIndexError> {
-        publication_lease.validate_root(&self.root, &self.root_identity)?;
-        staging.validate_current()?;
-        let (_, _, validated) = read_snapshot(
-            staging.path(),
-            &self.root.join(KEY_FILE),
+        let publication = StagedPublication {
             generation,
+            staging,
+            published,
+            lease: publication_lease,
+        };
+        self.validate_and_publish_staging_with_control_and_observer(
+            expected,
+            publication,
+            VectorSnapshotPublishControl::disabled(),
+            after_rename,
+        )
+    }
+
+    fn validate_and_publish_staging_with_control_and_observer(
+        &self,
+        expected: VectorSnapshotSummary,
+        publication: StagedPublication<'_>,
+        control: VectorSnapshotPublishControl<'_>,
+        after_rename: impl FnOnce(&Path),
+    ) -> Result<VectorSnapshotSummary, VectorIndexError> {
+        control.check()?;
+        publication
+            .lease
+            .validate_root(&self.root, &self.root_identity)?;
+        publication.staging.validate_current()?;
+        let (_, _, validated) = read_snapshot_with_control(
+            publication.staging.path(),
+            &publication.staging.path().join(KEY_FILE),
+            publication.generation,
             &self.model_contract,
+            control,
         )?;
-        staging.validate_current()?;
+        publication.staging.validate_current()?;
         if validated != expected {
             return Err(VectorIndexError::CorruptSnapshot);
         }
+        control.check()?;
 
-        reject_symlink_or_existing_generation(published)?;
-        let pin_path = generation_pin_path(&self.root, generation);
+        // Cancellation is intentionally not observed after this point. Pin
+        // creation, atomic rename, and directory durability form one commit.
+        reject_symlink_or_existing_generation(publication.published)?;
+        let pin_path = generation_pin_path(&self.root, publication.generation);
         reject_symlink_or_existing_generation(&pin_path)?;
         drop(open_lock_file(&pin_path, true)?);
-        publication_lease.validate_root(&self.root, &self.root_identity)?;
-        staging.validate_current()?;
-        if fs::rename(staging.path(), published).is_err() {
+        publication
+            .lease
+            .validate_root(&self.root, &self.root_identity)?;
+        publication.staging.validate_current()?;
+        if fs::rename(publication.staging.path(), publication.published).is_err() {
             return preserve_primary_after_cleanup(
                 Err(VectorIndexError::Storage),
                 || {
@@ -232,11 +362,17 @@ impl VectorSnapshotStore {
                 |_| {},
             );
         }
-        after_rename(published);
-        staging.validate_identity_at(published)?;
+        after_rename(publication.published);
+        publication
+            .staging
+            .validate_identity_at(publication.published)?;
         sync_directory(&self.root.join(SNAPSHOTS_DIR))?;
-        publication_lease.validate_root(&self.root, &self.root_identity)?;
-        staging.validate_identity_at(published)?;
+        publication
+            .lease
+            .validate_root(&self.root, &self.root_identity)?;
+        publication
+            .staging
+            .validate_identity_at(publication.published)?;
         Ok(expected)
     }
 
@@ -297,7 +433,23 @@ impl FailedStagingCleanupClass {
             VectorIndexError::LeaseRootMismatch | VectorIndexError::StorageLayoutInvalid => {
                 Self::LayoutChanged
             }
-            _ => Self::StorageUnavailable,
+            VectorIndexError::Cancelled
+            | VectorIndexError::PublicationBusy
+            | VectorIndexError::InvalidDimension { .. }
+            | VectorIndexError::InvalidVectorValue
+            | VectorIndexError::InvalidModelId
+            | VectorIndexError::InvalidIdentity
+            | VectorIndexError::InvalidGeneration
+            | VectorIndexError::InvalidModelContract
+            | VectorIndexError::SemanticUnavailable
+            | VectorIndexError::PublicationProjectionMismatch
+            | VectorIndexError::DuplicateVectorId
+            | VectorIndexError::ConflictingDocumentVersion
+            | VectorIndexError::GenerationAlreadyExists
+            | VectorIndexError::GenerationNotFound
+            | VectorIndexError::SchemaMismatch
+            | VectorIndexError::CorruptSnapshot
+            | VectorIndexError::Storage => Self::StorageUnavailable,
         }
     }
 }
@@ -344,8 +496,11 @@ impl VectorSnapshotPublicationLease {
         let staging_identity = PinnedPrivateDirectory::acquire(&root.join(STAGING_DIR))?;
         let pins_identity = PinnedPrivateDirectory::acquire(&root.join(GENERATION_PINS_DIR))?;
         let file = open_lock_file(&root.join(PUBLICATION_LOCK_FILE), false)?;
-        file.lock_exclusive()
-            .map_err(|_| VectorIndexError::Storage)?;
+        match file.try_lock_exclusive() {
+            Ok(true) => {}
+            Ok(false) => return Err(VectorIndexError::PublicationBusy),
+            Err(_) => return Err(VectorIndexError::Storage),
+        }
         let lease = Self {
             root: root.to_path_buf(),
             root_identity,
@@ -396,6 +551,21 @@ impl fmt::Debug for VectorSnapshotStore {
             .field("model_contract", &self.model_contract)
             .finish()
     }
+}
+
+fn collect_with_control<T>(
+    values: impl IntoIterator<Item = T>,
+    control: VectorSnapshotPublishControl<'_>,
+) -> Result<Vec<T>, VectorIndexError> {
+    control.check()?;
+    let values = values.into_iter();
+    let mut collected = Vec::with_capacity(values.size_hint().0);
+    for (index, value) in values.enumerate() {
+        collected.push(value);
+        control.check_after_record(index + 1)?;
+    }
+    control.check()?;
+    Ok(collected)
 }
 
 pub(crate) fn validate_generation(generation: &str) -> Result<(), VectorIndexError> {

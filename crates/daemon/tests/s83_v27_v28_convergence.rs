@@ -29,7 +29,7 @@ fn migration_fixture_builder_rejects_non_synthetic_roots() {
 }
 
 #[test]
-fn bounded_daemon_loop_converges_a_failed_v27_rebuild_to_one_ready_v28_publication() {
+fn bounded_daemon_loop_converges_a_failed_v27_rebuild_to_one_ready_v29_publication() {
     let workspace = tempdir().unwrap();
     let data_dir = workspace.path().join("data");
     let source_root = workspace.path().join("resume-ir-synthetic-v27-source");
@@ -81,7 +81,7 @@ fn bounded_daemon_loop_converges_a_failed_v27_rebuild_to_one_ready_v28_publicati
     }
 
     let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 28);
+    assert_eq!(store.schema_version().unwrap(), 29);
     assert!(store
         .import_task_by_id(legacy.legacy_task_id())
         .unwrap()
@@ -209,7 +209,7 @@ fn daemon_hard_cuts_a_blocked_old_v28_contract_and_publishes_only_current_rows()
     run_bounded_daemon(&data_dir, workspace.path(), &canonical_root);
 
     let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 28);
+    assert_eq!(store.schema_version().unwrap(), 29);
     assert!(store
         .import_task_by_id(fixture.legacy_task_id())
         .unwrap()

@@ -5,10 +5,10 @@ use crate::{
     SearchProjectionDigest, UnixTimestamp,
 };
 
-pub const FULLTEXT_MANIFEST_SCHEMA_V2: &str = "fulltext.snapshot.v2";
-pub const FULLTEXT_INDEX_SCHEMA_V2: &str = "tantivy.fulltext.v2";
-pub const VECTOR_MANIFEST_SCHEMA_V3: &str = "vector.snapshot.v3";
-pub const VECTOR_INDEX_SCHEMA_V3: &str = "hnsw-vector.v3";
+pub const FULLTEXT_MANIFEST_SCHEMA_V3: &str = "fulltext.snapshot.v3";
+pub const FULLTEXT_INDEX_SCHEMA_V3: &str = "tantivy.fulltext.v3";
+pub const VECTOR_MANIFEST_SCHEMA_V4: &str = "vector.snapshot.v4";
+pub const VECTOR_INDEX_SCHEMA_V4: &str = "hnsw-vector.v4";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SearchPublicationState {
@@ -33,6 +33,21 @@ impl SearchPublicationState {
 pub enum SearchPublicationOutcome {
     Applied,
     Superseded,
+}
+
+/// Durable head-fencing result after one abandoned publication's exact
+/// artifacts could not be fully retired.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchPublicationRetirementFailureOutcome {
+    /// The abandoned publication still named the exact current base head, and
+    /// that head is now blocked with a runtime invariant.
+    HeadBlocked,
+    /// The same immutable publication authority already blocked the same head;
+    /// attempt-backed authorities also match the exact terminal cleanup attempt.
+    ExactHeadAlreadyBlocked,
+    /// The head no longer matches the abandoned publication's immutable base
+    /// authority, so the different or newer head was left unchanged.
+    HeadSuperseded,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,11 +93,11 @@ impl FullTextSnapshotDescriptor {
     }
 
     pub fn manifest_schema(&self) -> &'static str {
-        FULLTEXT_MANIFEST_SCHEMA_V2
+        FULLTEXT_MANIFEST_SCHEMA_V3
     }
 
     pub fn index_schema(&self) -> &'static str {
-        FULLTEXT_INDEX_SCHEMA_V2
+        FULLTEXT_INDEX_SCHEMA_V3
     }
 
     pub fn document_count(&self) -> u64 {
@@ -201,11 +216,11 @@ impl VectorSnapshotDescriptor {
     }
 
     pub fn manifest_schema(&self) -> &'static str {
-        VECTOR_MANIFEST_SCHEMA_V3
+        VECTOR_MANIFEST_SCHEMA_V4
     }
 
     pub fn index_schema(&self) -> &'static str {
-        VECTOR_INDEX_SCHEMA_V3
+        VECTOR_INDEX_SCHEMA_V4
     }
 
     pub fn mode(&self) -> &VectorSnapshotMode {

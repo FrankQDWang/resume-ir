@@ -41,6 +41,9 @@ fn run_snapshot_gc(
 fn complete_gc_summary(report: FullTextSnapshotGcCommitReport) -> SnapshotPurgeSummary {
     match report {
         FullTextSnapshotGcCommitReport::Complete(summary) => summary,
+        FullTextSnapshotGcCommitReport::Interrupted(_) => {
+            panic!("full-text GC unexpectedly interrupted")
+        }
         FullTextSnapshotGcCommitReport::PartialFailure(failure) => {
             panic!(
                 "full-text GC unexpectedly failed: {:?}",
@@ -198,8 +201,8 @@ fn exact_snapshot_open_keeps_immutable_generations_independent() {
     let metadata =
         publish_snapshot(&index_root, "generation-a", [java_payment_document()]).unwrap();
     assert_eq!(metadata.generation(), "generation-a");
-    assert_eq!(metadata.schema().manifest_schema(), "fulltext.snapshot.v2");
-    assert_eq!(metadata.schema().index_schema(), "tantivy.fulltext.v2");
+    assert_eq!(metadata.schema().manifest_schema(), "fulltext.snapshot.v3");
+    assert_eq!(metadata.schema().index_schema(), "tantivy.fulltext.v3");
     assert_eq!(metadata.document_count(), 1);
 
     let generation_a = open_snapshot(&index_root, "generation-a").unwrap().unwrap();
@@ -277,7 +280,7 @@ fn exact_open_rejects_key_symlink() {
     let index_root = temp_dir("symlink-key");
     let generation = "key-generation";
     publish_snapshot(&index_root, generation, [java_payment_document()]).unwrap();
-    let key_path = index_root.join("fulltext.snapshot.key-v2");
+    let key_path = index_root.join("snapshots/key-generation/fulltext.snapshot.key-v3");
     let backup_path = index_root.join("key-regular-backup");
     fs::rename(&key_path, &backup_path).unwrap();
     symlink(&backup_path, &key_path).unwrap();
@@ -292,7 +295,7 @@ fn exact_open_rejects_permissive_key_without_changing_permissions() {
     let index_root = temp_dir("permissive-key");
     let generation = "permissive-key-generation";
     publish_snapshot(&index_root, generation, [java_payment_document()]).unwrap();
-    let key_path = index_root.join("fulltext.snapshot.key-v2");
+    let key_path = index_root.join("snapshots/permissive-key-generation/fulltext.snapshot.key-v3");
     fs::set_permissions(&key_path, fs::Permissions::from_mode(0o644)).unwrap();
 
     assert!(open_snapshot(&index_root, generation).is_err());
@@ -305,6 +308,44 @@ fn exact_open_rejects_permissive_key_without_changing_permissions() {
         0o644,
         "query path must not chmod the key"
     );
+    remove_dir(&index_root);
+}
+
+#[cfg(unix)]
+#[test]
+fn damaged_generation_key_does_not_poison_later_publications() {
+    let index_root = temp_dir("generation-local-keys");
+    publish_snapshot(&index_root, "generation-a", [java_payment_document()]).unwrap();
+    let first_key = index_root.join("snapshots/generation-a/fulltext.snapshot.key-v3");
+    let first_key_bytes = fs::read(&first_key).unwrap();
+    fs::remove_file(&first_key).unwrap();
+
+    publish_snapshot(&index_root, "generation-b", [java_payment_document()]).unwrap();
+    let second_key = index_root.join("snapshots/generation-b/fulltext.snapshot.key-v3");
+    let second_key_bytes = fs::read(&second_key).unwrap();
+    assert_ne!(second_key_bytes, first_key_bytes);
+    fs::write(&second_key, b"corrupt generation key").unwrap();
+
+    publish_snapshot(&index_root, "generation-c", [java_payment_document()]).unwrap();
+    let third_key = index_root.join("snapshots/generation-c/fulltext.snapshot.key-v3");
+    let third_key_bytes = fs::read(&third_key).unwrap();
+    assert_ne!(third_key_bytes, second_key_bytes);
+    fs::set_permissions(&third_key, fs::Permissions::from_mode(0o644)).unwrap();
+
+    publish_snapshot(&index_root, "generation-d", [java_payment_document()]).unwrap();
+    let fourth_key = index_root.join("snapshots/generation-d/fulltext.snapshot.key-v3");
+    let fourth_key_bytes = fs::read(&fourth_key).unwrap();
+    assert_ne!(fourth_key_bytes, third_key_bytes);
+    let fourth_backup = fourth_key.with_extension("backup");
+    fs::rename(&fourth_key, &fourth_backup).unwrap();
+    symlink(&fourth_backup, &fourth_key).unwrap();
+
+    publish_snapshot(&index_root, "generation-e", [java_payment_document()]).unwrap();
+    assert!(open_snapshot(&index_root, "generation-a").is_err());
+    assert!(open_snapshot(&index_root, "generation-b").is_err());
+    assert!(open_snapshot(&index_root, "generation-c").is_err());
+    assert!(open_snapshot(&index_root, "generation-d").is_err());
+    open_snapshot(&index_root, "generation-e").unwrap();
     remove_dir(&index_root);
 }
 
@@ -1016,7 +1057,7 @@ fn published_snapshot_encrypts_payload_at_rest() {
 
     let snapshot_dir = index_root.join("snapshots").join(snapshot_name);
     let envelope = fs::read(snapshot_dir.join("fulltext.snapshot.enc")).unwrap();
-    assert!(envelope.starts_with(b"resume-ir-fulltext-snapshot-encrypted-v2\n"));
+    assert!(envelope.starts_with(b"resume-ir-fulltext-snapshot-encrypted-v3\n"));
     assert!(!snapshot_dir.join("meta.json").exists());
     let snapshot_bytes = recursive_bytes(&snapshot_dir);
     assert!(!String::from_utf8_lossy(&snapshot_bytes).contains(private_payload));
@@ -1033,7 +1074,7 @@ fn published_snapshot_encrypts_payload_at_rest() {
 }
 
 #[test]
-fn v1_manifest_rejects_exact_generation_without_implicit_fallback() {
+fn v2_manifest_rejects_exact_generation_without_implicit_fallback() {
     let index_root = temp_dir("snapshot-schema-mismatch");
     publish_snapshot(
         &index_root,
@@ -1062,11 +1103,11 @@ fn v1_manifest_rejects_exact_generation_without_implicit_fallback() {
         .join("fulltext-1800003200-1-0-0")
         .join("snapshot-manifest.json");
     let manifest = fs::read_to_string(&manifest_path).unwrap();
-    assert!(manifest.contains("\"schema_version\":\"fulltext.snapshot.v2\""));
+    assert!(manifest.contains("\"schema_version\":\"fulltext.snapshot.v3\""));
     assert!(!manifest.contains("Java payment"));
     fs::write(
         &manifest_path,
-        manifest.replace("fulltext.snapshot.v2", "fulltext.snapshot.v1"),
+        manifest.replace("fulltext.snapshot.v3", "fulltext.snapshot.v2"),
     )
     .unwrap();
 

@@ -8,7 +8,7 @@ use std::path::Path;
 
 use meta_store::{OwnedMetaStore, SearchProjectionServiceState, SearchRepairReason, UnixTimestamp};
 
-use super::{ImportPipelineError, Result};
+use super::{ImportPipelineError, PipelineRunControl, Result};
 
 const LEGACY_ARTIFACT_ROOTS: [(&str, &str); 2] = [
     ("search-index", ".search-index.v26-retired"),
@@ -40,7 +40,9 @@ impl MigrationArtifactRetirement {
 pub fn prepare_migration_rebuild_artifacts(
     store: &OwnedMetaStore,
     now: UnixTimestamp,
+    control: &PipelineRunControl,
 ) -> Result<MigrationArtifactRetirement> {
+    control.ensure_running()?;
     let state = store
         .search_projection_state()
         .map_err(ImportPipelineError::store)?;
@@ -60,6 +62,7 @@ pub fn prepare_migration_rebuild_artifacts(
             return Err(ImportPipelineError::artifact_retirement());
         }
     };
+    control.ensure_running()?;
     let data_dir = publication_session.canonical_data_dir();
     if validate_data_directory(data_dir).is_err() {
         let _ = store.block_migration_rebuild(SearchRepairReason::RuntimeInvariant, now);
@@ -72,8 +75,9 @@ pub fn prepare_migration_rebuild_artifacts(
         return Ok(MigrationArtifactRetirement::default());
     }
 
-    match retire_fixed_roots(data_dir) {
+    match retire_fixed_roots(data_dir, control) {
         Ok(summary) => Ok(summary),
+        Err(error) if error.class() == super::ImportPipelineErrorClass::Interrupted => Err(error),
         Err(_) => {
             let _ = store.block_migration_rebuild(SearchRepairReason::RuntimeInvariant, now);
             Err(ImportPipelineError::artifact_retirement())
@@ -87,27 +91,38 @@ fn eligible_for_hard_cut(state: &meta_store::SearchProjectionState) -> bool {
         && state.repair_reason == Some(SearchRepairReason::MigrationRebuild)
 }
 
-fn retire_fixed_roots(data_dir: &Path) -> io::Result<MigrationArtifactRetirement> {
-    validate_data_directory(data_dir)?;
+fn retire_fixed_roots(
+    data_dir: &Path,
+    control: &PipelineRunControl,
+) -> Result<MigrationArtifactRetirement> {
+    validate_data_directory(data_dir).map_err(|_| ImportPipelineError::artifact_retirement())?;
     let mut summary = MigrationArtifactRetirement::default();
     for (index, (root_name, quarantine_name)) in LEGACY_ARTIFACT_ROOTS.iter().enumerate() {
+        control.ensure_running()?;
         let root = data_dir.join(root_name);
         let quarantine = data_dir.join(quarantine_name);
-        remove_validated_directory_if_present(&quarantine)?;
-        let Some(metadata) = validated_directory_metadata(&root)? else {
+        remove_validated_directory_if_present(&quarantine)
+            .map_err(|_| ImportPipelineError::artifact_retirement())?;
+        let Some(metadata) = validated_directory_metadata(&root)
+            .map_err(|_| ImportPipelineError::artifact_retirement())?
+        else {
             continue;
         };
-        restrict_owner_directory(&root, &metadata)?;
-        fs::rename(&root, &quarantine)?;
-        sync_directory(data_dir)?;
-        remove_validated_directory_if_present(&quarantine)?;
-        sync_directory(data_dir)?;
+        restrict_owner_directory(&root, &metadata)
+            .map_err(|_| ImportPipelineError::artifact_retirement())?;
+        fs::rename(&root, &quarantine).map_err(|_| ImportPipelineError::artifact_retirement())?;
+        sync_directory(data_dir).map_err(|_| ImportPipelineError::artifact_retirement())?;
+        control.ensure_running()?;
+        remove_validated_directory_if_present(&quarantine)
+            .map_err(|_| ImportPipelineError::artifact_retirement())?;
+        sync_directory(data_dir).map_err(|_| ImportPipelineError::artifact_retirement())?;
         if index == 0 {
             summary.fulltext_root_retired = true;
         } else {
             summary.vector_root_retired = true;
         }
     }
+    control.ensure_running()?;
     Ok(summary)
 }
 
@@ -250,9 +265,12 @@ mod tests {
         seed_legacy_root(&temp.0.join("search-index"), "fulltext.snapshot.key-v1");
         seed_legacy_root(&temp.0.join("vector-index"), "vector.snapshot.key-v1");
 
-        let summary =
-            prepare_migration_rebuild_artifacts(&store, UnixTimestamp::from_unix_seconds(2))
-                .unwrap();
+        let summary = prepare_migration_rebuild_artifacts(
+            &store,
+            UnixTimestamp::from_unix_seconds(2),
+            &crate::PipelineRunControl::default(),
+        )
+        .unwrap();
 
         assert!(summary.fulltext_root_retired);
         assert!(summary.vector_root_retired);
@@ -278,9 +296,12 @@ mod tests {
         });
         acquired_receiver.recv().unwrap();
 
-        let error =
-            prepare_migration_rebuild_artifacts(&store, UnixTimestamp::from_unix_seconds(2))
-                .unwrap_err();
+        let error = prepare_migration_rebuild_artifacts(
+            &store,
+            UnixTimestamp::from_unix_seconds(2),
+            &crate::PipelineRunControl::default(),
+        )
+        .unwrap_err();
 
         assert_eq!(
             error.metadata_class_label(),
@@ -306,17 +327,23 @@ mod tests {
         );
         seed_legacy_root(&temp.0.join("vector-index"), "vector.snapshot.key-v1");
 
-        let summary =
-            prepare_migration_rebuild_artifacts(&store, UnixTimestamp::from_unix_seconds(2))
-                .unwrap();
+        let summary = prepare_migration_rebuild_artifacts(
+            &store,
+            UnixTimestamp::from_unix_seconds(2),
+            &crate::PipelineRunControl::default(),
+        )
+        .unwrap();
 
         assert!(!summary.fulltext_root_retired);
         assert!(summary.vector_root_retired);
         assert!(!temp.0.join(".search-index.v26-retired").exists());
         assert!(!temp.0.join("vector-index").exists());
-        let retry =
-            prepare_migration_rebuild_artifacts(&store, UnixTimestamp::from_unix_seconds(3))
-                .unwrap();
+        let retry = prepare_migration_rebuild_artifacts(
+            &store,
+            UnixTimestamp::from_unix_seconds(3),
+            &crate::PipelineRunControl::default(),
+        )
+        .unwrap();
         assert_eq!(retry, super::MigrationArtifactRetirement::default());
     }
 
@@ -331,10 +358,12 @@ mod tests {
         fs::create_dir(&outside).unwrap();
         symlink(&outside, temp.0.join("search-index")).unwrap();
 
-        assert!(
-            prepare_migration_rebuild_artifacts(&store, UnixTimestamp::from_unix_seconds(2))
-                .is_err()
-        );
+        assert!(prepare_migration_rebuild_artifacts(
+            &store,
+            UnixTimestamp::from_unix_seconds(2),
+            &crate::PipelineRunControl::default(),
+        )
+        .is_err());
         let state = store.search_projection_state().unwrap();
         assert_eq!(
             state.service_state,
@@ -354,10 +383,12 @@ mod tests {
         fs::remove_file(temp.0.join("search-publication.lock")).unwrap();
         fs::create_dir(temp.0.join("search-publication.lock")).unwrap();
 
-        assert!(
-            prepare_migration_rebuild_artifacts(&store, UnixTimestamp::from_unix_seconds(2))
-                .is_err()
-        );
+        assert!(prepare_migration_rebuild_artifacts(
+            &store,
+            UnixTimestamp::from_unix_seconds(2),
+            &crate::PipelineRunControl::default(),
+        )
+        .is_err());
         let state = store.search_projection_state().unwrap();
         assert_eq!(
             state.service_state,

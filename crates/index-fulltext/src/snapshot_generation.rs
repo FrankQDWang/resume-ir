@@ -48,6 +48,10 @@ impl SnapshotGenerationGcPin {
     pub(super) fn pin_path(&self) -> &Path {
         &self.pin_path
     }
+
+    pub(super) fn validate_current(&self) -> Result<()> {
+        validate_open_private_lock(&self.pin_path, &self.file)
+    }
 }
 
 impl Drop for SnapshotGenerationGcPin {

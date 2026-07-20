@@ -22,27 +22,28 @@ use embedder::{
 use fs4::fs_std::FileExt;
 use fs_crawler::{crawl_directory_with_options, ScanOptions as CrawlerScanOptions};
 use import_pipeline::{
-    detect_ocr_page_count, import_root_with_options, index_claimed_ocr_text, ocr_preclaim_decision,
-    prepare_migration_rebuild_artifacts, publish_search_projection_removals,
-    rebuild_search_artifacts, reconcile_search_artifacts, ImportFailureKind, ImportHardwareTier,
+    begin_reported_artifact_repair, detect_ocr_page_count, import_root_with_options,
+    index_claimed_ocr_text, ocr_preclaim_decision, prepare_migration_rebuild_artifacts,
+    publish_search_projection_removals, rebuild_search_artifacts, reconcile_search_artifacts,
+    reconcile_search_artifacts_for_offline_mutation, ImportFailureKind, ImportHardwareTier,
     ImportMilestoneTimings, ImportOptions, ImportParseWorkers, ImportResourcePolicy, ImportSummary,
-    ImportTaskOwnerLock, LinearPromotionPolicy, OcrPreclaimDecision, ScanProfile,
-    SearchProjectionRemoval, SearchProjectionRemovalReason, SearchPublicationVectorization,
+    ImportTaskOwnerLock, LinearPromotionPolicy, OcrPreclaimDecision, ReportedArtifactRepairOutcome,
+    ScanProfile, SearchProjectionRemoval, SearchProjectionRemovalReason,
+    SearchPublicationVectorization,
 };
 use meta_store::{
-    backup_metadata_encryption_key, metadata_store_path, restore_metadata_encryption_key,
-    CandidateId, ContactHash, Document, DocumentId, DocumentStatus, EntityMention, EntityType,
-    FileExtension, ImportRootKind as StoreImportRootKind,
-    ImportRootPreset as StoreImportRootPreset, ImportRootTaskHeadBatchOutcome,
-    ImportRootTaskHeadBatchRejection, ImportRootTaskHeadOutcome, ImportRootTaskHeadRequest,
-    ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanErrorSummary,
-    ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
-    ImportTaskStatus, IndexStateStatus, IngestJobFailureKind, IngestJobKind, IngestJobStatus,
-    MetadataEncryptionState, OcrAttemptFailure, OcrPageCacheEntry, OcrPageCacheKey, OwnedMetaStore,
-    PendingImportTaskByRootDiagnostic, QueryLatencySummary, ReadMetaStore, ResumeVersion,
-    ResumeVersionId, SearchFilterCase, SearchProjectionFilter, SearchProjectionPredicate,
-    SearchSelection, SearchSelectionDetailResolution, SearchTextBytePageRequest, UnixTimestamp,
-    VectorSnapshotMode, WorkerTaskKind,
+    backup_metadata_encryption_key, restore_metadata_encryption_key, CandidateId, ContactHash,
+    Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
+    ImportRootKind as StoreImportRootKind, ImportRootPreset as StoreImportRootPreset,
+    ImportRootTaskHeadBatchOutcome, ImportRootTaskHeadBatchRejection, ImportRootTaskHeadOutcome,
+    ImportRootTaskHeadRequest, ImportScanBudgetKind as StoreImportScanBudgetKind,
+    ImportScanErrorSummary, ImportScanProfile as StoreImportScanProfile, ImportScanScope,
+    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJobFailureKind,
+    IngestJobKind, IngestJobStatus, MetadataEncryptionState, OcrAttemptFailure, OcrPageCacheEntry,
+    OcrPageCacheKey, OwnedMetaStore, PendingImportTaskByRootDiagnostic, QueryLatencySummary,
+    ReadMetaStore, ResumeVersion, ResumeVersionId, SearchFilterCase, SearchProjectionFilter,
+    SearchProjectionPredicate, SearchSelection, SearchSelectionDetailResolution,
+    SearchTextBytePageRequest, UnixTimestamp, VectorSnapshotMode, WorkerTaskKind,
 };
 use ocr_client::{
     inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
@@ -9660,8 +9661,12 @@ fn simulate_index_snapshot_corrupt_probe_dir(
     let processing_contract = import_processing::current_contract(&import_options)?;
     import_processing::normalize_orphaned_running_tasks(&store, first_now)?;
     import_processing::activate_contract(&store, &processing_contract, first_now)?;
-    prepare_migration_rebuild_artifacts(&store, first_now)
-        .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    prepare_migration_rebuild_artifacts(
+        &store,
+        first_now,
+        &import_pipeline::PipelineRunControl::default(),
+    )
+    .map_err(|_| CliError::user("fault simulation probe failed"))?;
     import_processing::ensure_local_import_ready(
         &store,
         &processing_contract,
@@ -9713,13 +9718,27 @@ fn simulate_index_snapshot_corrupt_probe_dir(
     )
     .map_err(|_| CliError::user("fault simulation probe failed"))?;
 
-    let ready_generation_corrupt = QueryCoordinator::open(probe_dir)
-        .and_then(|mut coordinator| coordinator.with_query(|_| Ok(())))
-        .is_err();
+    let mut corrupt_coordinator = QueryCoordinator::open(probe_dir)
+        .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    let ready_generation_corrupt = corrupt_coordinator.with_query(|_| Ok(())).is_err();
+    let fault = corrupt_coordinator
+        .take_artifact_fault()
+        .ok_or_else(|| CliError::user("fault simulation probe failed"))?;
+    let repair = begin_reported_artifact_repair(
+        &store,
+        fault.generation(),
+        fault.publication_fingerprint(),
+        UnixTimestamp::from_unix_seconds(1_800_003_001),
+    )
+    .map_err(|_| CliError::user("fault simulation probe failed"))?;
+    if repair != ReportedArtifactRepairOutcome::Started {
+        return Err(CliError::user("fault simulation probe failed"));
+    }
     let recovery = reconcile_search_artifacts(
         &store,
         UnixTimestamp::from_unix_seconds(1_800_003_002),
         &SearchPublicationVectorization::default(),
+        &import_pipeline::PipelineRunControl::default(),
     )
     .map_err(|_| CliError::user("fault simulation probe failed"))?;
     let recovered_generation = store
@@ -10778,7 +10797,12 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let now = current_timestamp()?;
     import_processing::normalize_orphaned_running_tasks(&store, now)?;
     import_processing::activate_contract(&store, &processing_contract, now)?;
-    prepare_migration_rebuild_artifacts(&store, now).map_err(CliError::import)?;
+    prepare_migration_rebuild_artifacts(
+        &store,
+        now,
+        &import_pipeline::PipelineRunControl::default(),
+    )
+    .map_err(CliError::import)?;
     import_processing::ensure_local_import_ready(
         &store,
         &processing_contract,
@@ -10786,8 +10810,13 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
         &import_options.search_vectorization,
     )?;
     if !import_args.enqueue {
-        reconcile_search_artifacts(&store, now, &SearchPublicationVectorization::default())
-            .map_err(CliError::import)?;
+        reconcile_search_artifacts_for_offline_mutation(
+            &store,
+            now,
+            &SearchPublicationVectorization::default(),
+            &import_pipeline::PipelineRunControl::default(),
+        )
+        .map_err(CliError::import)?;
     }
     let requested_heads = roots
         .iter()
@@ -11008,7 +11037,12 @@ fn witness_command(args: &[String]) -> Result<()> {
         let processing_contract = import_processing::current_contract(&import_options)?;
         import_processing::normalize_orphaned_running_tasks(&store, now)?;
         import_processing::activate_contract(&store, &processing_contract, now)?;
-        prepare_migration_rebuild_artifacts(&store, now).map_err(CliError::import)?;
+        prepare_migration_rebuild_artifacts(
+            &store,
+            now,
+            &import_pipeline::PipelineRunControl::default(),
+        )
+        .map_err(CliError::import)?;
         import_processing::ensure_local_import_ready(
             &store,
             &processing_contract,
@@ -13409,15 +13443,7 @@ fn benchmark_query_set_preflight_agent_replay_command(
     args: &[String],
 ) -> Result<()> {
     let args = parse_benchmark_agent_replay_preflight_args(args)?;
-    let store_path = metadata_store_path(data_dir).map_err(CliError::store)?;
-    let store = if store_path
-        .try_exists()
-        .map_err(|_| CliError::user("query set blocked: metadata availability is unknown"))?
-    {
-        Some(ReadMetaStore::open_data_dir(data_dir).map_err(CliError::store)?)
-    } else {
-        None
-    };
+    let store = ReadMetaStore::open_data_dir_if_published(data_dir).map_err(CliError::store)?;
     let preflight = preflight_trace_backed_private_queries(
         data_dir,
         store.as_ref(),
@@ -16221,9 +16247,13 @@ fn purge_command(data_dir: &Path, args: &[String]) -> Result<()> {
                 .map_err(CliError::import)?,
         )
     };
-    let snapshot_purge =
-        reconcile_search_artifacts(&store, now, &SearchPublicationVectorization::default())
-            .map_err(CliError::import)?;
+    let snapshot_purge = reconcile_search_artifacts(
+        &store,
+        now,
+        &SearchPublicationVectorization::default(),
+        &import_pipeline::PipelineRunControl::default(),
+    )
+    .map_err(CliError::import)?;
     let vector_documents_purged = deleted_doc_id_set.len();
     let purged_documents = store
         .purge_deleted_documents()

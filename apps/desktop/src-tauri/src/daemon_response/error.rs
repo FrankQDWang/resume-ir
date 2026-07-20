@@ -66,6 +66,7 @@ enum UnifiedErrorAction {
     RefreshSearch,
     ReducePageSize,
     WaitForRepair,
+    RepairRequired,
     Retry,
     SelectSupportedMode,
 }
@@ -157,6 +158,9 @@ fn action_matches(code: &UnifiedErrorCode, action: &UnifiedErrorAction) -> bool 
         ) | (
             UnifiedErrorCode::SemanticDisabled,
             UnifiedErrorAction::SelectSupportedMode
+        ) | (
+            UnifiedErrorCode::QueryServiceUnavailable,
+            UnifiedErrorAction::RepairRequired
         ) | (
             UnifiedErrorCode::Conflict
                 | UnifiedErrorCode::MetadataUnavailable

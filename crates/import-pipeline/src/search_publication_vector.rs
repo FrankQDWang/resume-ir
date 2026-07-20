@@ -4,8 +4,8 @@ use std::path::Path;
 use core_domain::VectorRecordId;
 use index_fulltext::IndexDocument;
 use index_vector::{
-    VectorDocument, VectorDocumentIdentity, VectorModelContract, VectorSnapshotRoot,
-    VectorSnapshotStore, VectorSnapshotSummary, VectorSnapshotUpdate,
+    VectorDocument, VectorDocumentIdentity, VectorModelContract, VectorSnapshotPublishControl,
+    VectorSnapshotRoot, VectorSnapshotStore, VectorSnapshotSummary, VectorSnapshotUpdate,
 };
 use meta_store::{
     ActiveSearchProjection, DocumentId, OwnedMetaStore, ResumeVersionId, SearchProjectionDigest,
@@ -27,9 +27,13 @@ pub(super) type StagedSearchVersionTexts = BTreeMap<String, StagedSearchVersionT
 
 pub(super) fn staged_search_version_texts(
     documents: &[IndexDocument],
+    ensure_not_cancelled: Option<&dyn Fn() -> Result<()>>,
 ) -> Result<StagedSearchVersionTexts> {
     let mut staged = BTreeMap::new();
     for document in documents {
+        if let Some(check) = ensure_not_cancelled {
+            check()?;
+        }
         let document_id = document
             .doc_id
             .parse::<DocumentId>()
@@ -51,6 +55,9 @@ pub(super) fn staged_search_version_texts(
         {
             return Err(ImportPipelineError::store_invariant());
         }
+    }
+    if let Some(check) = ensure_not_cancelled {
+        check()?;
     }
     Ok(staged)
 }
@@ -89,9 +96,20 @@ pub(super) fn publish_vector_generation(
     let vector_store =
         VectorSnapshotStore::new(data_dir.join("vector-index"), target_contract.clone())
             .map_err(ImportPipelineError::vector)?;
+    let cancelled = || ensure_not_cancelled.is_some_and(|check| check().is_err());
+    let publish_control = if ensure_not_cancelled.is_some() {
+        VectorSnapshotPublishControl::from_cancel_check(&cancelled)
+    } else {
+        VectorSnapshotPublishControl::disabled()
+    };
     if target_contract == VectorModelContract::Disabled {
         return vector_store
-            .publish_generation(generation, projections.iter().cloned(), Vec::new())
+            .publish_generation_with_control(
+                generation,
+                projections.iter().cloned(),
+                Vec::new(),
+                publish_control,
+            )
             .map_err(ImportPipelineError::vector);
     }
 
@@ -129,7 +147,12 @@ pub(super) fn publish_vector_generation(
                 )
                 .map_err(ImportPipelineError::vector)?;
                 return vector_store
-                    .publish_generation_from(base_reader, generation, update)
+                    .publish_generation_from_with_control(
+                        base_reader,
+                        generation,
+                        update,
+                        publish_control,
+                    )
                     .map_err(ImportPipelineError::vector);
             }
         }
@@ -144,7 +167,12 @@ pub(super) fn publish_vector_generation(
         ensure_not_cancelled,
     )?;
     vector_store
-        .publish_generation(generation, projections.iter().cloned(), vectors)
+        .publish_generation_with_control(
+            generation,
+            projections.iter().cloned(),
+            vectors,
+            publish_control,
+        )
         .map_err(ImportPipelineError::vector)
 }
 
@@ -179,6 +207,9 @@ fn embed_projections(
     vectorization: &SearchPublicationVectorization,
     ensure_not_cancelled: Option<&dyn Fn() -> Result<()>>,
 ) -> Result<Vec<VectorDocument>> {
+    if let Some(check) = ensure_not_cancelled {
+        check()?;
+    }
     if projections.is_empty() {
         return Ok(Vec::new());
     }
@@ -198,6 +229,9 @@ fn embed_projections(
 
     let mut inputs = Vec::with_capacity(projections.len());
     for projection in projections {
+        if let Some(check) = ensure_not_cancelled {
+            check()?;
+        }
         let text =
             if let Some(staged) = staged_version_texts.get(projection.resume_version_id.as_str()) {
                 if staged.document_id != projection.document_id {
@@ -229,6 +263,9 @@ fn embed_projections(
             projection.resume_version_id.to_string(),
             text,
         ));
+        if let Some(check) = ensure_not_cancelled {
+            check()?;
+        }
     }
 
     let mut outputs = BTreeMap::new();
@@ -250,11 +287,17 @@ fn embed_projections(
             return Err(ImportPipelineError::store_invariant());
         }
         for output in batch_outputs {
+            if let Some(check) = ensure_not_cancelled {
+                check()?;
+            }
             if output.model_id() != model_id
                 || output.values().len() != dimension
                 || outputs.insert(output.id().to_string(), output).is_some()
             {
                 return Err(ImportPipelineError::store_invariant());
+            }
+            if let Some(check) = ensure_not_cancelled {
+                check()?;
             }
         }
         if let Some(check) = ensure_not_cancelled {
@@ -262,35 +305,41 @@ fn embed_projections(
         }
     }
 
-    projections
-        .iter()
-        .map(|projection| {
-            let output = outputs
-                .remove(projection.resume_version_id.as_str())
-                .ok_or_else(ImportPipelineError::store_invariant)?;
-            let vector_id = VectorRecordId::from_non_secret_parts(&[
-                projection.resume_version_id.as_str(),
-                model_id,
-                "document",
-            ]);
-            let identity = VectorDocumentIdentity::new(
-                vector_id.to_string(),
-                projection.document_id.to_string(),
-                projection.resume_version_id.to_string(),
-                model_id,
-            )
-            .map_err(ImportPipelineError::vector)?;
+    let mut documents = Vec::with_capacity(projections.len());
+    for projection in projections {
+        if let Some(check) = ensure_not_cancelled {
+            check()?;
+        }
+        let output = outputs
+            .remove(projection.resume_version_id.as_str())
+            .ok_or_else(ImportPipelineError::store_invariant)?;
+        let vector_id = VectorRecordId::from_non_secret_parts(&[
+            projection.resume_version_id.as_str(),
+            model_id,
+            "document",
+        ]);
+        let identity = VectorDocumentIdentity::new(
+            vector_id.to_string(),
+            projection.document_id.to_string(),
+            projection.resume_version_id.to_string(),
+            model_id,
+        )
+        .map_err(ImportPipelineError::vector)?;
+        documents.push(
             VectorDocument::new(identity, output.values().to_vec())
-                .map_err(ImportPipelineError::vector)
-        })
-        .collect::<Result<Vec<_>>>()
-        .and_then(|documents| {
-            if outputs.is_empty() {
-                Ok(documents)
-            } else {
-                Err(ImportPipelineError::store_invariant())
-            }
-        })
+                .map_err(ImportPipelineError::vector)?,
+        );
+        if let Some(check) = ensure_not_cancelled {
+            check()?;
+        }
+    }
+    if !outputs.is_empty() {
+        return Err(ImportPipelineError::store_invariant());
+    }
+    if let Some(check) = ensure_not_cancelled {
+        check()?;
+    }
+    Ok(documents)
 }
 
 pub(super) fn validate_vector_publication(
@@ -362,5 +411,174 @@ pub(super) fn meta_vector_descriptor(
                 logical_content_digest: summary.logical_content_digest().clone(),
             },
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use meta_store::{DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease};
+
+    use super::*;
+    use crate::{SearchPublicationEmbeddingOutput, SearchPublicationVectorizer};
+
+    struct LargeBatchVectorizer {
+        embed_calls: Arc<AtomicUsize>,
+        max_batch_inputs: usize,
+    }
+
+    impl SearchPublicationVectorizer for LargeBatchVectorizer {
+        fn model_id(&self) -> &str {
+            "synthetic-cancellation-v1"
+        }
+
+        fn dimension(&self) -> usize {
+            2
+        }
+
+        fn max_batch_inputs(&self) -> usize {
+            self.max_batch_inputs
+        }
+
+        fn max_text_bytes(&self) -> usize {
+            1024
+        }
+
+        fn embed_batch(
+            &self,
+            inputs: &[SearchPublicationEmbeddingInput],
+            _is_cancelled: &dyn Fn() -> bool,
+        ) -> std::result::Result<
+            Vec<SearchPublicationEmbeddingOutput>,
+            SearchPublicationEmbeddingFailure,
+        > {
+            self.embed_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(inputs
+                .iter()
+                .map(|input| {
+                    SearchPublicationEmbeddingOutput::new(
+                        input.id(),
+                        self.model_id(),
+                        vec![1.0, 2.0],
+                    )
+                })
+                .collect())
+        }
+    }
+
+    fn synthetic_projections(
+        count: usize,
+    ) -> (Vec<ActiveSearchProjection>, StagedSearchVersionTexts) {
+        let mut projections = Vec::with_capacity(count);
+        let mut staged = StagedSearchVersionTexts::new();
+        for index in 0..count {
+            let label = format!("synthetic-{index}");
+            let document_id = DocumentId::from_non_secret_parts(&[&label]);
+            let resume_version_id = ResumeVersionId::from_non_secret_parts(&[&label]);
+            staged.insert(
+                resume_version_id.to_string(),
+                StagedSearchVersionText {
+                    document_id: document_id.clone(),
+                    text: "bounded synthetic resume text".to_string(),
+                },
+            );
+            projections.push(ActiveSearchProjection {
+                document_id,
+                resume_version_id,
+            });
+        }
+        (projections, staged)
+    }
+
+    fn test_store() -> (tempfile::TempDir, OwnedMetaStore) {
+        let directory = tempfile::tempdir().unwrap();
+        let owner = match DataDirectoryOwnerLease::try_acquire(directory.path()).unwrap() {
+            DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+            DataDirectoryOwnerAcquisition::Contended => panic!("synthetic owner contended"),
+        };
+        let store = owner.open_store().unwrap();
+        store.run_migrations().unwrap();
+        (directory, store)
+    }
+
+    #[test]
+    fn large_projection_input_materialization_observes_cancellation_before_embedding() {
+        const PROJECTION_COUNT: usize = 4096;
+        const CANCEL_POLL: usize = 257;
+        let (_directory, store) = test_store();
+        let (projections, staged) = synthetic_projections(PROJECTION_COUNT);
+        let embed_calls = Arc::new(AtomicUsize::new(0));
+        let vectorization =
+            SearchPublicationVectorization::enabled(Arc::new(LargeBatchVectorizer {
+                embed_calls: Arc::clone(&embed_calls),
+                max_batch_inputs: PROJECTION_COUNT,
+            }));
+        let contract = VectorModelContract::enabled("synthetic-cancellation-v1", 2).unwrap();
+        let cancel_polls = AtomicUsize::new(0);
+        let ensure_running = || {
+            let poll = cancel_polls.fetch_add(1, Ordering::SeqCst) + 1;
+            if poll == CANCEL_POLL {
+                Err(ImportPipelineError::interrupted())
+            } else {
+                Ok(())
+            }
+        };
+
+        let error = embed_projections(
+            &store,
+            &projections,
+            &staged,
+            &contract,
+            &vectorization,
+            Some(&ensure_running),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.class(), crate::ImportPipelineErrorClass::Interrupted);
+        assert_eq!(cancel_polls.load(Ordering::SeqCst), CANCEL_POLL);
+        assert_eq!(embed_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn large_vector_document_materialization_observes_cancellation_per_projection() {
+        const PROJECTION_COUNT: usize = 2048;
+        // One initial check, two per input, one before the single batch, two
+        // per embedded output, and one after the batch precede this boundary.
+        const CHECKS_BEFORE_DOCUMENTS: usize = 4 * PROJECTION_COUNT + 3;
+        const CANCEL_POLL: usize = CHECKS_BEFORE_DOCUMENTS + 257;
+        let (_directory, store) = test_store();
+        let (projections, staged) = synthetic_projections(PROJECTION_COUNT);
+        let embed_calls = Arc::new(AtomicUsize::new(0));
+        let vectorization =
+            SearchPublicationVectorization::enabled(Arc::new(LargeBatchVectorizer {
+                embed_calls: Arc::clone(&embed_calls),
+                max_batch_inputs: PROJECTION_COUNT,
+            }));
+        let contract = VectorModelContract::enabled("synthetic-cancellation-v1", 2).unwrap();
+        let cancel_polls = AtomicUsize::new(0);
+        let ensure_running = || {
+            let poll = cancel_polls.fetch_add(1, Ordering::SeqCst) + 1;
+            if poll == CANCEL_POLL {
+                Err(ImportPipelineError::interrupted())
+            } else {
+                Ok(())
+            }
+        };
+
+        let error = embed_projections(
+            &store,
+            &projections,
+            &staged,
+            &contract,
+            &vectorization,
+            Some(&ensure_running),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.class(), crate::ImportPipelineErrorClass::Interrupted);
+        assert_eq!(cancel_polls.load(Ordering::SeqCst), CANCEL_POLL);
+        assert_eq!(embed_calls.load(Ordering::SeqCst), 1);
     }
 }

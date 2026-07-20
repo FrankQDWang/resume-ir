@@ -10,8 +10,12 @@ use meta_store::{
 
 use crate::immutable_ingest::{self, StagedDerivedData, StagedResume};
 use crate::search_artifact_cache::{CurrentImportCacheMode, CurrentImportDocumentCache};
-use crate::search_artifacts::{write_incremental_search_artifacts, write_rebuilt_search_artifacts};
-use crate::search_publication::commit_prepared_search_publication;
+use crate::search_artifacts::{
+    publish_incremental_search_artifacts, publish_rebuilt_search_artifacts,
+};
+use crate::search_publication_commit::{
+    decide_search_publication, decide_search_publication_cancellable,
+};
 use crate::{
     measure_result_stage, ImportCancelCheckPhase, ImportMilestoneTimings, ImportPipelineError,
     ImportResourcePolicy, ImportSummary, ImportWorkerMetrics, PendingSearchableDocument,
@@ -178,7 +182,15 @@ pub(super) fn flush_pending_searchable_documents(
     let publication_session = store
         .wait_for_search_publication_session()
         .map_err(ImportPipelineError::store)?;
-    let write_result = write_incremental_search_artifacts(
+    for document in &mut pending_documents {
+        document.status = DocumentStatus::Searchable;
+        document.updated_at = now;
+    }
+    let new_searchable_count = pending_documents.len();
+    pending_documents.extend(pending_excluded_doc_ids.publication_documents().cloned());
+
+    let index_elapsed = RefCell::new(None);
+    let write_result = publish_incremental_search_artifacts(
         &publication_session,
         now,
         &classifier_epoch,
@@ -193,27 +205,26 @@ pub(super) fn flush_pending_searchable_documents(
         Some(&record_phase_timing),
         index_writer_heap_bytes,
         search_vectorization,
+        |publication| {
+            *index_elapsed.borrow_mut() = Some(index_started.elapsed());
+            set_cancel_phase(ImportCancelCheckPhase::DbWrite);
+            measure_result_stage(&mut summary.stage_timings.db, || {
+                decide_search_publication_cancellable(
+                    publication,
+                    now,
+                    &pending_documents,
+                    ensure_not_cancelled,
+                )
+            })
+        },
     );
-    summary.stage_timings.index += index_started.elapsed();
+    summary.stage_timings.index += index_elapsed
+        .into_inner()
+        .unwrap_or_else(|| index_started.elapsed());
     summary
         .worker_metrics
         .add_assign(&phase_worker_metrics.into_inner());
-    let publication = write_result?;
-
-    set_cancel_phase(ImportCancelCheckPhase::DbWrite);
-    for document in &mut pending_documents {
-        ensure_not_cancelled()?;
-        document.status = DocumentStatus::Searchable;
-        document.updated_at = now;
-    }
-    let new_searchable_count = pending_documents.len();
-    pending_documents.extend(pending_excluded_doc_ids.publication_documents().cloned());
-
-    set_cancel_phase(ImportCancelCheckPhase::DbWrite);
-    ensure_not_cancelled()?;
-    let committed_publication = measure_result_stage(&mut summary.stage_timings.db, || {
-        commit_prepared_search_publication(now, publication, &pending_documents)
-    })?;
+    let committed_publication = write_result?.into_committed()?;
     committed_publication.release();
     summary.searchable_documents += new_searchable_count;
     pending_excluded_doc_ids.clear();
@@ -302,15 +313,17 @@ pub fn rebuild_search_artifacts(
         .wait_for_search_publication_session()
         .map_err(ImportPipelineError::store)?;
     let classifier_epoch = publication_classifier_epoch(store, &[])?;
-    let publication = write_rebuilt_search_artifacts(
+    let publication = publish_rebuilt_search_artifacts(
         &publication_session,
         now,
         &classifier_epoch,
         &BTreeSet::new(),
         Vec::new(),
         vectorization,
-    )?;
-    let publication = commit_prepared_search_publication(now, publication, &[])?.release();
+        |publication| decide_search_publication(publication, now, &[]),
+    )?
+    .into_committed()?
+    .release();
 
     Ok(SearchArtifactPublicationSummary {
         active_projection_count: publication.projections.len(),
@@ -349,7 +362,7 @@ pub fn publish_search_projection_removals(
     let publication_session = store
         .wait_for_search_publication_session()
         .map_err(ImportPipelineError::store)?;
-    let publication = write_incremental_search_artifacts(
+    let publication = publish_incremental_search_artifacts(
         &publication_session,
         now,
         &publication_classifier_epoch(store, &[])?,
@@ -364,8 +377,10 @@ pub fn publish_search_projection_removals(
         None,
         ImportResourcePolicy::detect().index_writer_heap_bytes,
         vectorization,
-    )?;
-    let publication = commit_prepared_search_publication(now, publication, &documents)?.release();
+        |publication| decide_search_publication(publication, now, &documents),
+    )?
+    .into_committed()?
+    .release();
 
     Ok(SearchArtifactPublicationSummary {
         active_projection_count: publication.projections.len(),

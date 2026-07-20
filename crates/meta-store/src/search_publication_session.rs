@@ -70,6 +70,27 @@ impl OwnedMetaStore {
         })
     }
 
+    /// Test-only seam for publishing a synthetic pre-v29 fixture without
+    /// reopening it through the current migration boundary first.
+    #[cfg(any(test, feature = "migration-test-support"))]
+    pub(crate) fn into_search_publication_session_without_prepare_for_test(
+        self,
+    ) -> Result<SearchPublicationSession> {
+        self.access
+            .guard()
+            .ensure_search_publication_wait_is_not_reentrant()?;
+        let ownership = Rc::new(
+            self.access
+                .guard()
+                .wait_for_search_publication_ownership()?,
+        );
+        Ok(SearchPublicationSession {
+            store: self,
+            ownership,
+            active_attempt_id: None,
+        })
+    }
+
     /// Tries to acquire the single search-publication namespace without
     /// waiting or issuing a FIFO ticket when another writer is active.
     ///

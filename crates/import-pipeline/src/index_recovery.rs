@@ -16,10 +16,13 @@ pub struct SearchArtifactRecoverySummary {
     pub active_generation_rebuilt: bool,
     pub gc_deferred: bool,
     pub gc_partial: bool,
+    pub gc_failed: bool,
 }
 
 pub use migration_publication::finalize_migration_rebuild;
-pub use reconciliation::reconcile_search_artifacts;
+pub use reconciliation::{
+    reconcile_search_artifacts, reconcile_search_artifacts_for_offline_mutation,
+};
 
 #[cfg(test)]
 pub(super) use migration_publication::{

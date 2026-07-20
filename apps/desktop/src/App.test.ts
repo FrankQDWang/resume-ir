@@ -23,10 +23,12 @@ describe("visible index service state", () => {
         consecutive_heartbeat_failures: 0,
         blocked_reason: null,
         last_exit: null,
+        restart_ledger_reason: null,
       },
       service: "degraded",
       status: {
         repair_reason: "runtime_invariant",
+        repair_progress: { phase: "blocked", attempt: 5, max_attempts: 5, retry_after_ms: null, last_error_kind: "fulltext_failure" },
         searchable_documents: 0,
         ocr_queue_depth: 0,
       },
@@ -51,6 +53,16 @@ describe("visible index service state", () => {
       title: "索引能力降级",
       message: "daemon 已连接，索引能力降级",
     })
+    expect(indexServicePresentation("repairing", "artifact_unavailable", {
+      phase: "retry_wait",
+      attempt: 2,
+      max_attempts: 5,
+      retry_after_ms: 3_100,
+      last_error_kind: "fulltext_publication_busy",
+    })).toEqual({
+      title: "索引修复等待重试",
+      message: "第 2/5 次修复未完成，4 秒后继续",
+    })
 
     const blockedSourceMarkup = renderToStaticMarkup(createElement(IndexServiceSummary, {
       lifecycle: {
@@ -63,10 +75,12 @@ describe("visible index service state", () => {
         consecutive_heartbeat_failures: 0,
         blocked_reason: null,
         last_exit: null,
+        restart_ledger_reason: null,
       },
       service: "degraded",
       status: {
         repair_reason: "source_unavailable",
+        repair_progress: { phase: "source_unavailable", attempt: null, max_attempts: null, retry_after_ms: null, last_error_kind: null },
         searchable_documents: 0,
         ocr_queue_depth: 0,
       },

@@ -400,8 +400,14 @@ fn owner_capability_creates_and_reopens_only_its_bound_store() {
     let first_store = first_owner.open_store().unwrap();
     let second_store = second_owner.open_store().unwrap();
 
-    assert_eq!(first_store.schema_version().unwrap(), 28);
-    assert_eq!(second_store.schema_version().unwrap(), 28);
+    assert_eq!(
+        first_store.schema_version().unwrap(),
+        crate::schema_v29::VERSION
+    );
+    assert_eq!(
+        second_store.schema_version().unwrap(),
+        crate::schema_v29::VERSION
+    );
     assert!(first_store.open_sibling().is_ok());
     assert!(second_store.open_sibling().is_ok());
 }

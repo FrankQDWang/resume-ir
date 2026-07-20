@@ -87,7 +87,7 @@ impl VectorSnapshotRoot {
         require_regular_snapshot_directory(&snapshot_dir)?;
         let (projection, documents, summary) = read_snapshot(
             &snapshot_dir,
-            &self.root.join(KEY_FILE),
+            &snapshot_dir.join(KEY_FILE),
             generation,
             expected_model_contract,
         )?;
@@ -120,7 +120,7 @@ impl VectorSnapshotRoot {
         match require_regular_snapshot_directory(&snapshot_dir).and_then(|_| {
             read_snapshot(
                 &snapshot_dir,
-                &self.root.join(KEY_FILE),
+                &snapshot_dir.join(KEY_FILE),
                 generation,
                 expected_model_contract,
             )
@@ -162,7 +162,7 @@ pub struct VectorSnapshotReadLease {
 }
 
 impl VectorSnapshotReadLease {
-    fn validate_for(&self, owner: &VectorSnapshotRoot) -> Result<(), VectorIndexError> {
+    pub(crate) fn validate_for(&self, owner: &VectorSnapshotRoot) -> Result<(), VectorIndexError> {
         if self.root != owner.root {
             return Err(VectorIndexError::LeaseRootMismatch);
         }

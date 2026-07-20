@@ -2,6 +2,7 @@
 // these shape lints for the crate.
 #![allow(clippy::too_many_arguments, clippy::large_enum_variant)]
 
+mod artifact_fault;
 mod classification;
 mod data_directory_owner;
 mod file_processing;
@@ -17,6 +18,8 @@ mod purge_artifact;
 mod search_artifact_cache;
 mod search_artifacts;
 mod search_publication;
+mod search_publication_commit;
+mod search_publication_failure;
 mod search_publication_ocr;
 mod search_publication_vector;
 mod search_vectorizer;
@@ -27,6 +30,10 @@ mod timing;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::num::NonZeroUsize;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::thread;
 use std::time::Duration;
 
@@ -43,6 +50,7 @@ pub use resume_classifier::LinearPromotionPolicy;
 use sectionizer::Sectionizer;
 use sysinfo::System;
 
+pub use artifact_fault::{begin_reported_artifact_repair, ReportedArtifactRepairOutcome};
 pub(crate) use classification::AdmissionDecision;
 pub use data_directory_owner::{
     DataDirectoryOwnerAcquireError, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease,
@@ -68,11 +76,10 @@ use import_run::{
     document_path_is_deletion_candidate, finish_import_file, should_flush_searchable_documents,
     CancelCheckMetrics, ImportCancelPoller, ParseWorkerClock,
 };
-pub use import_run::{
-    import_root, import_root_with_options, import_root_with_options_and_control, ImportRunControl,
-};
+pub use import_run::{import_root, import_root_with_options, import_root_with_options_and_control};
 pub use index_recovery::{
-    finalize_migration_rebuild, reconcile_search_artifacts, SearchArtifactRecoverySummary,
+    finalize_migration_rebuild, reconcile_search_artifacts,
+    reconcile_search_artifacts_for_offline_mutation, SearchArtifactRecoverySummary,
 };
 pub use meta_store::{import_task_owner_lock_path, ImportTaskOwnerLock};
 pub use migration_artifacts::{prepare_migration_rebuild_artifacts, MigrationArtifactRetirement};
@@ -93,9 +100,9 @@ pub use purge_artifact::{
 #[cfg(test)]
 use search_artifact_cache::{CurrentImportCacheMode, CurrentImportDocumentCache};
 #[cfg(test)]
-use search_artifacts::write_incremental_search_artifacts;
+use search_artifacts::write_incremental_search_artifacts_for_test;
 #[cfg(test)]
-use search_publication::commit_prepared_search_publication;
+use search_publication::commit_prepared_search_publication_for_test;
 pub use search_vectorizer::{
     SearchPublicationEmbeddingFailure, SearchPublicationEmbeddingInput,
     SearchPublicationEmbeddingOutput, SearchPublicationVectorization, SearchPublicationVectorizer,
@@ -125,6 +132,43 @@ pub fn crate_name() -> &'static str {
 }
 
 pub type Result<T> = std::result::Result<T, ImportPipelineError>;
+
+/// Cooperative lifecycle control shared by supervised import and search
+/// artifact work.
+///
+/// Shutdown is observed only at crash-safe pipeline boundaries. Callers may
+/// clone the control or bind it to an existing process-level shutdown flag.
+#[derive(Clone, Debug)]
+pub struct PipelineRunControl {
+    shutdown_requested: Arc<AtomicBool>,
+}
+
+impl PipelineRunControl {
+    pub fn from_shutdown_signal(shutdown_requested: Arc<AtomicBool>) -> Self {
+        Self { shutdown_requested }
+    }
+
+    pub fn request_shutdown(&self) {
+        self.shutdown_requested.store(true, Ordering::Release);
+    }
+
+    pub fn shutdown_requested(&self) -> bool {
+        self.shutdown_requested.load(Ordering::Acquire)
+    }
+
+    fn ensure_running(&self) -> Result<()> {
+        if self.shutdown_requested() {
+            return Err(ImportPipelineError::interrupted());
+        }
+        Ok(())
+    }
+}
+
+impl Default for PipelineRunControl {
+    fn default() -> Self {
+        Self::from_shutdown_signal(Arc::new(AtomicBool::new(false)))
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SearchProjectionRemovalReason {
@@ -752,14 +796,36 @@ impl ImportPipelineError {
         }
     }
 
-    fn index(error: index_fulltext::FullTextError) -> Self {
-        if matches!(error, index_fulltext::FullTextError::Cancelled) {
-            return Self::cancelled();
-        }
-
+    fn fulltext_artifact_retirement() -> Self {
         Self {
-            kind: ImportPipelineErrorKind::Index,
-            retryable: !matches!(error, index_fulltext::FullTextError::Internal { .. }),
+            kind: ImportPipelineErrorKind::FullTextArtifactRetirement,
+            retryable: false,
+        }
+    }
+
+    fn vector_artifact_retirement() -> Self {
+        Self {
+            kind: ImportPipelineErrorKind::VectorArtifactRetirement,
+            retryable: false,
+        }
+    }
+
+    fn index(error: index_fulltext::FullTextError) -> Self {
+        match error {
+            index_fulltext::FullTextError::Cancelled => Self::cancelled(),
+            index_fulltext::FullTextError::PublicationBusy => Self {
+                kind: ImportPipelineErrorKind::FullTextPublicationBusy,
+                retryable: true,
+            },
+            index_fulltext::FullTextError::Io { .. }
+            | index_fulltext::FullTextError::Tantivy { .. } => Self {
+                kind: ImportPipelineErrorKind::Index,
+                retryable: true,
+            },
+            index_fulltext::FullTextError::Internal { .. } => Self {
+                kind: ImportPipelineErrorKind::Index,
+                retryable: false,
+            },
         }
     }
 
@@ -772,6 +838,9 @@ impl ImportPipelineError {
 
     fn vector(error: index_vector::VectorIndexError) -> Self {
         let (kind, retryable) = match error {
+            index_vector::VectorIndexError::Cancelled => {
+                (ImportPipelineErrorKind::Cancelled, false)
+            }
             index_vector::VectorIndexError::InvalidDimension { .. }
             | index_vector::VectorIndexError::InvalidVectorValue
             | index_vector::VectorIndexError::InvalidModelId
@@ -791,6 +860,9 @@ impl ImportPipelineError {
             | index_vector::VectorIndexError::CorruptSnapshot
             | index_vector::VectorIndexError::StorageLayoutInvalid => {
                 (ImportPipelineErrorKind::VectorStorage, false)
+            }
+            index_vector::VectorIndexError::PublicationBusy => {
+                (ImportPipelineErrorKind::VectorPublicationBusy, true)
             }
             index_vector::VectorIndexError::Storage => {
                 (ImportPipelineErrorKind::VectorStorage, true)
@@ -825,7 +897,9 @@ impl ImportPipelineError {
             ImportPipelineErrorKind::Cancelled => ImportPipelineErrorClass::Cancelled,
             ImportPipelineErrorKind::Interrupted => ImportPipelineErrorClass::Interrupted,
             ImportPipelineErrorKind::Repairing => ImportPipelineErrorClass::Repairing,
-            ImportPipelineErrorKind::ArtifactRetirement => {
+            ImportPipelineErrorKind::ArtifactRetirement
+            | ImportPipelineErrorKind::FullTextArtifactRetirement
+            | ImportPipelineErrorKind::VectorArtifactRetirement => {
                 ImportPipelineErrorClass::ArtifactRetirement
             }
             ImportPipelineErrorKind::Store => ImportPipelineErrorClass::Metadata,
@@ -841,9 +915,14 @@ impl ImportPipelineError {
             ImportPipelineErrorKind::Crawl(CrawlErrorKind::Cancelled) => {
                 ImportPipelineErrorClass::Cancelled
             }
-            ImportPipelineErrorKind::Index => ImportPipelineErrorClass::FullText,
+            ImportPipelineErrorKind::Index | ImportPipelineErrorKind::FullTextPublicationBusy => {
+                ImportPipelineErrorClass::FullText
+            }
             ImportPipelineErrorKind::VectorContract => ImportPipelineErrorClass::VectorContract,
-            ImportPipelineErrorKind::VectorStorage => ImportPipelineErrorClass::VectorStorage,
+            ImportPipelineErrorKind::VectorStorage
+            | ImportPipelineErrorKind::VectorPublicationBusy => {
+                ImportPipelineErrorClass::VectorStorage
+            }
             ImportPipelineErrorKind::EmbeddingRuntime => ImportPipelineErrorClass::EmbeddingRuntime,
             ImportPipelineErrorKind::Privacy => ImportPipelineErrorClass::Privacy,
             ImportPipelineErrorKind::Parser => ImportPipelineErrorClass::Parser,
@@ -899,19 +978,24 @@ impl fmt::Display for ImportPipelineError {
             ImportPipelineErrorKind::Repairing => {
                 formatter.write_str("search publication is repairing")
             }
-            ImportPipelineErrorKind::ArtifactRetirement => {
-                formatter.write_str("legacy search artifact retirement failed")
+            ImportPipelineErrorKind::ArtifactRetirement
+            | ImportPipelineErrorKind::FullTextArtifactRetirement
+            | ImportPipelineErrorKind::VectorArtifactRetirement => {
+                formatter.write_str("search artifact retirement failed")
             }
             ImportPipelineErrorKind::Store => formatter.write_str("metadata update failed"),
             ImportPipelineErrorKind::StoreInvariant(_) => {
                 formatter.write_str("metadata invariant failed")
             }
             ImportPipelineErrorKind::Crawl(_) => formatter.write_str("file scan failed"),
-            ImportPipelineErrorKind::Index => formatter.write_str("search index update failed"),
+            ImportPipelineErrorKind::Index | ImportPipelineErrorKind::FullTextPublicationBusy => {
+                formatter.write_str("search index update failed")
+            }
             ImportPipelineErrorKind::VectorContract => {
                 formatter.write_str("vector publication contract failed")
             }
-            ImportPipelineErrorKind::VectorStorage => {
+            ImportPipelineErrorKind::VectorStorage
+            | ImportPipelineErrorKind::VectorPublicationBusy => {
                 formatter.write_str("vector index storage failed")
             }
             ImportPipelineErrorKind::EmbeddingRuntime => {
@@ -933,12 +1017,16 @@ enum ImportPipelineErrorKind {
     Interrupted,
     Repairing,
     ArtifactRetirement,
+    FullTextArtifactRetirement,
+    VectorArtifactRetirement,
     Store,
     StoreInvariant(meta_store::MetaStoreErrorClass),
     Crawl(CrawlErrorKind),
     Index,
+    FullTextPublicationBusy,
     VectorContract,
     VectorStorage,
+    VectorPublicationBusy,
     EmbeddingRuntime,
     Privacy,
     Parser,
@@ -1008,11 +1096,12 @@ mod tests {
         DocumentStatus, EntityMention, EntityMentionId, EntityType, FileExtension, ImportRootKind,
         ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanProfile, ImportScanScope,
         ImportTask, ImportTaskFailure, ImportTaskPurpose, ImportTaskStatus, IngestJobStatus,
-        OcrAttemptFailure, OwnedMetaStore, ReadMetaStore, ReasonCode, ResumeVersion,
-        ResumeVersionClassification, ResumeVersionId, ReviewDisposition, SearchMetadataHead,
-        SearchProjectionServiceState, SearchProjectionTransitionOutcome, SearchPublicationState,
-        SearchRepairReason, SearchSelection, SearchSelectionResolution, SourceRevision,
-        UnixTimestamp, CLASSIFIER_EPOCH,
+        MigrationRebuildPublicationAttemptAcquire, OcrAttemptFailure, OwnedMetaStore,
+        ReadMetaStore, ReasonCode, ResumeVersion, ResumeVersionClassification, ResumeVersionId,
+        ReviewDisposition, SearchMetadataHead, SearchProjectionServiceState,
+        SearchProjectionTransitionOutcome, SearchPublicationState, SearchRepairReason,
+        SearchSelection, SearchSelectionResolution, SourceRevision, UnixTimestamp,
+        CLASSIFIER_EPOCH,
     };
     use resume_classifier::LinearPromotionPolicy;
 
@@ -1028,24 +1117,24 @@ mod tests {
 
     use super::search_artifact_cache::CachedSearchDocument;
     use super::{
-        classify_language_set, commit_prepared_search_publication, current_timestamp_or,
+        classify_language_set, commit_prepared_search_publication_for_test, current_timestamp_or,
         document_path_is_deletion_candidate, finish_import_file,
         flush_pending_searchable_documents, import_root_with_options,
         import_root_with_options_and_control, index_claimed_ocr_text, process_file,
         reconcile_search_artifacts, recv_parse_result_with_cancel_poll,
         should_flush_searchable_documents, take_pending_searchable_documents,
-        write_incremental_search_artifacts, AdmissionDecision, CurrentImportCacheMode,
+        write_incremental_search_artifacts_for_test, AdmissionDecision, CurrentImportCacheMode,
         CurrentImportDocumentCache, ImportCancelCheckPhase, ImportFailureKind,
         ImportHardwareProfile, ImportHardwareTier, ImportOptions, ImportParseWorkers,
         ImportPipelineError, ImportPipelineErrorClass, ImportPipelineErrorKind,
-        ImportResourcePolicy, ImportRunControl, ImportStageTimings, ImportSummary,
-        ImportWorkerMetrics, IndexDocument, IndexSection, OcrTextIndexOutcome, ParseWorkOutcome,
-        ParseWorkResult, PendingProjectionRemovals, PendingSearchableDocument,
-        PendingSearchablePublicationKind, ProcessedFile, SearchProjectionRemoval,
-        SearchProjectionRemovalReason, SearchPublicationEmbeddingFailure,
-        SearchPublicationEmbeddingInput, SearchPublicationEmbeddingOutput,
-        SearchPublicationVectorization, SearchPublicationVectorizer, Sectionizer,
-        SnapshotPublishPhase, BYTES_PER_GIB, H2_INDEX_WRITER_HEAP_BYTES,
+        ImportResourcePolicy, ImportStageTimings, ImportSummary, ImportWorkerMetrics,
+        IndexDocument, IndexSection, OcrTextIndexOutcome, ParseWorkOutcome, ParseWorkResult,
+        PendingProjectionRemovals, PendingSearchableDocument, PendingSearchablePublicationKind,
+        PipelineRunControl, ProcessedFile, SearchProjectionRemoval, SearchProjectionRemovalReason,
+        SearchPublicationEmbeddingFailure, SearchPublicationEmbeddingInput,
+        SearchPublicationEmbeddingOutput, SearchPublicationVectorization,
+        SearchPublicationVectorizer, Sectionizer, SnapshotPublishPhase, BYTES_PER_GIB,
+        H2_INDEX_WRITER_HEAP_BYTES,
     };
 
     #[path = "ocr_publication_tests.rs"]
@@ -1119,6 +1208,14 @@ mod tests {
             assert_eq!(error.class(), ImportPipelineErrorClass::VectorContract);
             assert!(!error.is_retryable(), "{failure:?} must fail closed");
         }
+    }
+
+    #[test]
+    fn vector_publication_cancellation_preserves_cancelled_class() {
+        let error = ImportPipelineError::vector(VectorIndexError::Cancelled);
+
+        assert_eq!(error.class(), ImportPipelineErrorClass::Cancelled);
+        assert!(!error.is_retryable());
     }
 
     #[test]
@@ -1250,6 +1347,7 @@ mod tests {
             now,
             &contract,
             &SearchPublicationVectorization::default(),
+            &PipelineRunControl::default(),
         )
         .unwrap();
         assert!(summary.active_generation_rebuilt);
@@ -1296,6 +1394,7 @@ mod tests {
             UnixTimestamp::from_unix_seconds(1_700_000_100),
             &contract,
             &SearchPublicationVectorization::default(),
+            &PipelineRunControl::default(),
         )
         .unwrap_err();
         assert_eq!(error.class(), ImportPipelineErrorClass::MetadataInvariant);
@@ -1361,9 +1460,14 @@ mod tests {
                 .unwrap()
                 .next_retry_at
                 .expect("failed migration publication must be in retry_wait");
-            let error =
-                super::finalize_migration_rebuild(&store, retry_at, &contract, &vectorization)
-                    .unwrap_err();
+            let error = super::finalize_migration_rebuild(
+                &store,
+                retry_at,
+                &contract,
+                &vectorization,
+                &PipelineRunControl::default(),
+            )
+            .unwrap_err();
             assert_eq!(error.class(), ImportPipelineErrorClass::EmbeddingRuntime);
             assert_eq!(
                 store
@@ -1418,6 +1522,7 @@ mod tests {
                 UnixTimestamp::from_unix_seconds(attempt_at),
                 &contract,
                 &SearchPublicationVectorization::default(),
+                &PipelineRunControl::default(),
                 super::index_recovery::MigrationPublicationFault::RetryableFullText,
             )
             .unwrap_err();
@@ -1460,6 +1565,7 @@ mod tests {
             started_at,
             &contract,
             &SearchPublicationVectorization::default(),
+            &PipelineRunControl::default(),
             super::index_recovery::MigrationPublicationFault::RetryableFullTextFinishedAt(
                 finished_at,
             ),
@@ -1479,7 +1585,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn migration_rebuild_partial_cleanup_blocks_on_the_first_attempt() {
+    fn migration_rebuild_fulltext_failure_does_not_collect_an_unrelated_locked_generation() {
         use std::os::unix::fs::PermissionsExt;
 
         let temp = TestDir::new("import-pipeline-migration-partial-cleanup");
@@ -1511,6 +1617,7 @@ mod tests {
             UnixTimestamp::from_unix_seconds(1_700_000_400),
             &contract,
             &SearchPublicationVectorization::default(),
+            &PipelineRunControl::default(),
             super::index_recovery::MigrationPublicationFault::RetryableFullText,
         )
         .unwrap_err();
@@ -1524,17 +1631,21 @@ mod tests {
         assert_eq!(attempt.attempt_count, 1);
         assert_eq!(
             attempt.last_error_class,
-            Some(meta_store::MigrationRebuildPublicationErrorClass::Cleanup)
+            Some(meta_store::MigrationRebuildPublicationErrorClass::FullText)
         );
         assert_eq!(
             store.search_projection_state().unwrap().service_state,
-            SearchProjectionServiceState::RepairBlocked
+            SearchProjectionServiceState::Repairing
+        );
+        assert_eq!(
+            attempt.next_retry_at,
+            Some(UnixTimestamp::from_unix_seconds(1_700_000_401))
         );
         assert!(fulltext_root.join("snapshots/orphan-generation").exists());
     }
 
     #[test]
-    fn migration_rebuild_cleanup_error_blocks_on_the_first_attempt() {
+    fn migration_rebuild_fulltext_failure_preserves_an_unrelated_invalid_root() {
         let temp = TestDir::new("import-pipeline-migration-cleanup-error");
         let data_dir = temp.path().join("data");
         fs::create_dir_all(&data_dir).unwrap();
@@ -1555,6 +1666,7 @@ mod tests {
             UnixTimestamp::from_unix_seconds(1_700_000_500),
             &contract,
             &SearchPublicationVectorization::default(),
+            &PipelineRunControl::default(),
             super::index_recovery::MigrationPublicationFault::RetryableFullText,
         )
         .unwrap_err();
@@ -1567,12 +1679,17 @@ mod tests {
         assert_eq!(attempt.attempt_count, 1);
         assert_eq!(
             attempt.last_error_class,
-            Some(meta_store::MigrationRebuildPublicationErrorClass::Cleanup)
+            Some(meta_store::MigrationRebuildPublicationErrorClass::FullText)
         );
         assert_eq!(
             store.search_projection_state().unwrap().service_state,
-            SearchProjectionServiceState::RepairBlocked
+            SearchProjectionServiceState::Repairing
         );
+        assert_eq!(
+            attempt.next_retry_at,
+            Some(UnixTimestamp::from_unix_seconds(1_700_000_501))
+        );
+        assert!(data_dir.join("search-index").is_file());
     }
 
     fn assert_no_search_artifact_candidates(data_dir: &Path) {
@@ -1691,7 +1808,7 @@ mod tests {
 
         let now = UnixTimestamp::from_unix_seconds(1_700_200_000);
         let first_session = store.wait_for_search_publication_session().unwrap();
-        let first_publication = write_incremental_search_artifacts(
+        let first_publication = write_incremental_search_artifacts_for_test(
             &first_session,
             now,
             CLASSIFIER_EPOCH,
@@ -1711,7 +1828,7 @@ mod tests {
         let mut first_document = first.document.clone();
         first_document.status = DocumentStatus::Searchable;
         first_document.updated_at = now;
-        let first_publication = commit_prepared_search_publication(
+        let first_publication = commit_prepared_search_publication_for_test(
             now,
             first_publication,
             std::slice::from_ref(&first_document),
@@ -1721,7 +1838,7 @@ mod tests {
         drop(first_session);
         let second_now = UnixTimestamp::from_unix_seconds(now.as_unix_seconds() + 1);
         let second_session = store.wait_for_search_publication_session().unwrap();
-        let second_publication = write_incremental_search_artifacts(
+        let second_publication = write_incremental_search_artifacts_for_test(
             &second_session,
             second_now,
             CLASSIFIER_EPOCH,
@@ -1741,7 +1858,7 @@ mod tests {
         let mut second_document = second.document.clone();
         second_document.status = DocumentStatus::Searchable;
         second_document.updated_at = second_now;
-        let second_publication = commit_prepared_search_publication(
+        let second_publication = commit_prepared_search_publication_for_test(
             second_now,
             second_publication,
             std::slice::from_ref(&second_document),
@@ -1809,7 +1926,7 @@ mod tests {
             }));
         let first_now = UnixTimestamp::from_unix_seconds(1_700_210_000);
         let first_session = store.wait_for_search_publication_session().unwrap();
-        let first_publication = write_incremental_search_artifacts(
+        let first_publication = write_incremental_search_artifacts_for_test(
             &first_session,
             first_now,
             CLASSIFIER_EPOCH,
@@ -1829,7 +1946,7 @@ mod tests {
         let mut first_document = first.document.clone();
         first_document.status = DocumentStatus::Searchable;
         first_document.updated_at = first_now;
-        commit_prepared_search_publication(
+        commit_prepared_search_publication_for_test(
             first_now,
             first_publication,
             std::slice::from_ref(&first_document),
@@ -1844,7 +1961,7 @@ mod tests {
                 fail: true,
             }));
         let failing_session = store.wait_for_search_publication_session().unwrap();
-        let failed = write_incremental_search_artifacts(
+        let failed = write_incremental_search_artifacts_for_test(
             &failing_session,
             UnixTimestamp::from_unix_seconds(1_700_210_001),
             CLASSIFIER_EPOCH,
@@ -1872,7 +1989,7 @@ mod tests {
 
         let second_now = UnixTimestamp::from_unix_seconds(1_700_210_002);
         let second_session = store.wait_for_search_publication_session().unwrap();
-        let second_publication = write_incremental_search_artifacts(
+        let second_publication = write_incremental_search_artifacts_for_test(
             &second_session,
             second_now,
             CLASSIFIER_EPOCH,
@@ -1892,7 +2009,7 @@ mod tests {
         let mut second_document = second.document.clone();
         second_document.status = DocumentStatus::Searchable;
         second_document.updated_at = second_now;
-        commit_prepared_search_publication(
+        commit_prepared_search_publication_for_test(
             second_now,
             second_publication,
             std::slice::from_ref(&second_document),
@@ -1945,7 +2062,7 @@ mod tests {
         .unwrap();
         let now = UnixTimestamp::from_unix_seconds(1_700_220_000);
         let publication_session = store.wait_for_search_publication_session().unwrap();
-        let publication = write_incremental_search_artifacts(
+        let publication = write_incremental_search_artifacts_for_test(
             &publication_session,
             now,
             CLASSIFIER_EPOCH,
@@ -1965,9 +2082,13 @@ mod tests {
         let mut document = pending.document.clone();
         document.status = DocumentStatus::Searchable;
         document.updated_at = now;
-        commit_prepared_search_publication(now, publication, std::slice::from_ref(&document))
-            .unwrap()
-            .release();
+        commit_prepared_search_publication_for_test(
+            now,
+            publication,
+            std::slice::from_ref(&document),
+        )
+        .unwrap()
+        .release();
         drop(publication_session);
 
         let enabled =
@@ -1978,6 +2099,7 @@ mod tests {
             &store,
             UnixTimestamp::from_unix_seconds(1_700_220_001),
             &enabled,
+            &PipelineRunControl::default(),
         )
         .unwrap();
 
@@ -2013,6 +2135,7 @@ mod tests {
             &store,
             UnixTimestamp::from_unix_seconds(1_700_220_102),
             &SearchPublicationVectorization::default(),
+            &PipelineRunControl::default(),
         )
         .unwrap();
 
@@ -2021,6 +2144,57 @@ mod tests {
         assert_eq!(ready.service_state, SearchProjectionServiceState::Ready);
         assert_eq!(ready.repair_reason, None);
         assert_eq!(ready.visible_epoch, observed.visible_epoch + 1);
+    }
+
+    #[test]
+    fn reported_artifact_fault_starts_only_the_exact_current_head_once() {
+        let temp = TestDir::new("reported-artifact-fault-cas");
+        let data_dir = temp.path().join("data");
+        fs::create_dir_all(&data_dir).unwrap();
+        let store = create_test_store(&data_dir);
+        initialize_ready_empty_search(
+            &data_dir,
+            &store,
+            UnixTimestamp::from_unix_seconds(1_700_220_200),
+        );
+        let observed = store.search_projection_state().unwrap();
+        let generation = observed.generation.as_deref().unwrap();
+        let fingerprint = observed
+            .publication
+            .as_ref()
+            .and_then(|publication| publication.publication_fingerprint.as_ref())
+            .unwrap();
+
+        assert_eq!(
+            super::begin_reported_artifact_repair(
+                &store,
+                generation,
+                &ContentDigest::from_bytes(b"stale-publication"),
+                UnixTimestamp::from_unix_seconds(1_700_220_201),
+            )
+            .unwrap(),
+            super::ReportedArtifactRepairOutcome::Superseded
+        );
+        assert_eq!(
+            super::begin_reported_artifact_repair(
+                &store,
+                generation,
+                fingerprint,
+                UnixTimestamp::from_unix_seconds(1_700_220_202),
+            )
+            .unwrap(),
+            super::ReportedArtifactRepairOutcome::Started
+        );
+        assert_eq!(
+            super::begin_reported_artifact_repair(
+                &store,
+                generation,
+                fingerprint,
+                UnixTimestamp::from_unix_seconds(1_700_220_203),
+            )
+            .unwrap(),
+            super::ReportedArtifactRepairOutcome::AlreadyRepairing
+        );
     }
 
     fn assert_vector_generation(
@@ -2158,7 +2332,7 @@ mod tests {
         let mut current_import_index_documents = CurrentImportDocumentCache::default();
 
         let first_session = store.wait_for_search_publication_session().unwrap();
-        let first_publication = write_incremental_search_artifacts(
+        let first_publication = write_incremental_search_artifacts_for_test(
             &first_session,
             UnixTimestamp::from_unix_seconds(1_700_000_050),
             CLASSIFIER_EPOCH,
@@ -2175,7 +2349,7 @@ mod tests {
             &SearchPublicationVectorization::default(),
         )
         .unwrap();
-        let first_publication = commit_prepared_search_publication(
+        let first_publication = commit_prepared_search_publication_for_test(
             UnixTimestamp::from_unix_seconds(1_700_000_050),
             first_publication,
             &[terminal_searchable_document(
@@ -2197,7 +2371,7 @@ mod tests {
         let intervening_index_document = stage_test_index_document(&store, "doc-2");
         let intervening_doc_id = intervening_index_document.doc_id.clone();
         let intervening_session = store.wait_for_search_publication_session().unwrap();
-        let intervening_publication = write_incremental_search_artifacts(
+        let intervening_publication = write_incremental_search_artifacts_for_test(
             &intervening_session,
             UnixTimestamp::from_unix_seconds(1_700_000_051),
             CLASSIFIER_EPOCH,
@@ -2214,7 +2388,7 @@ mod tests {
             &SearchPublicationVectorization::default(),
         )
         .unwrap();
-        let intervening_publication = commit_prepared_search_publication(
+        let intervening_publication = commit_prepared_search_publication_for_test(
             UnixTimestamp::from_unix_seconds(1_700_000_051),
             intervening_publication,
             &[terminal_searchable_document(
@@ -2229,7 +2403,7 @@ mod tests {
         assert_eq!(intervening_publication.fulltext.document_count(), 2);
 
         let second_session = store.wait_for_search_publication_session().unwrap();
-        let second_publication = write_incremental_search_artifacts(
+        let second_publication = write_incremental_search_artifacts_for_test(
             &second_session,
             UnixTimestamp::from_unix_seconds(1_700_000_052),
             CLASSIFIER_EPOCH,
@@ -2247,7 +2421,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(second_publication.fulltext.document_count(), 3);
+        assert_eq!(second_publication.fulltext().document_count(), 3);
         let cached_doc_ids = current_import_index_documents
             .documents
             .iter()
@@ -2262,7 +2436,7 @@ mod tests {
         assert_eq!(cached_doc_ids, expected_doc_ids);
         let active_doc_ids = incremental_snapshot_documents(
             &data_dir.join("search-index"),
-            Some(second_publication.fulltext.generation()),
+            Some(second_publication.fulltext().generation()),
             Vec::new(),
             &BTreeSet::new(),
         )
@@ -2293,7 +2467,7 @@ mod tests {
         let ready_now = UnixTimestamp::from_unix_seconds(1_700_000_060);
 
         let ready_session = store.wait_for_search_publication_session().unwrap();
-        let ready = write_incremental_search_artifacts(
+        let ready = write_incremental_search_artifacts_for_test(
             &ready_session,
             ready_now,
             CLASSIFIER_EPOCH,
@@ -2310,7 +2484,7 @@ mod tests {
             &SearchPublicationVectorization::default(),
         )
         .unwrap();
-        let ready = commit_prepared_search_publication(
+        let ready = commit_prepared_search_publication_for_test(
             ready_now,
             ready,
             &[terminal_searchable_document(&store, "doc-1", ready_now)],
@@ -2320,7 +2494,7 @@ mod tests {
         drop(ready_session);
 
         let uncommitted_session = store.wait_for_search_publication_session().unwrap();
-        let uncommitted = write_incremental_search_artifacts(
+        let uncommitted = write_incremental_search_artifacts_for_test(
             &uncommitted_session,
             UnixTimestamp::from_unix_seconds(1_700_000_061),
             CLASSIFIER_EPOCH,
@@ -2337,11 +2511,11 @@ mod tests {
             &SearchPublicationVectorization::default(),
         )
         .unwrap();
-        let uncommitted_generation = uncommitted.fulltext.generation().to_string();
+        let uncommitted_generation = uncommitted.fulltext().generation().to_string();
         drop(uncommitted);
         drop(uncommitted_session);
         let next_session = store.wait_for_search_publication_session().unwrap();
-        let next = write_incremental_search_artifacts(
+        let next = write_incremental_search_artifacts_for_test(
             &next_session,
             UnixTimestamp::from_unix_seconds(1_700_000_062),
             CLASSIFIER_EPOCH,
@@ -2358,7 +2532,7 @@ mod tests {
             &SearchPublicationVectorization::default(),
         )
         .unwrap();
-        let next_generation = next.fulltext.generation().to_string();
+        let next_generation = next.fulltext().generation().to_string();
 
         let indexed_doc_ids = incremental_snapshot_documents(
             &data_dir.join("search-index"),
@@ -2384,6 +2558,7 @@ mod tests {
             &store,
             UnixTimestamp::from_unix_seconds(1_700_000_063),
             &SearchPublicationVectorization::default(),
+            &PipelineRunControl::default(),
         )
         .unwrap();
         assert_eq!(recovery.interrupted_publications_abandoned, 2);
@@ -2460,6 +2635,7 @@ mod tests {
             &store,
             UnixTimestamp::from_unix_seconds(1_700_000_071),
             &SearchPublicationVectorization::default(),
+            &PipelineRunControl::default(),
         )
         .unwrap();
         assert!(recovery.active_generation_rebuilt);
@@ -2516,7 +2692,7 @@ mod tests {
         let mut current_import_index_documents = CurrentImportDocumentCache::default();
 
         let ready_session = store.wait_for_search_publication_session().unwrap();
-        let ready_publication = write_incremental_search_artifacts(
+        let ready_publication = write_incremental_search_artifacts_for_test(
             &ready_session,
             UnixTimestamp::from_unix_seconds(1_700_000_050),
             CLASSIFIER_EPOCH,
@@ -2533,7 +2709,7 @@ mod tests {
             &SearchPublicationVectorization::default(),
         )
         .unwrap();
-        commit_prepared_search_publication(
+        commit_prepared_search_publication_for_test(
             UnixTimestamp::from_unix_seconds(1_700_000_050),
             ready_publication,
             &[terminal_searchable_document(
@@ -2548,7 +2724,7 @@ mod tests {
         assert_eq!(current_import_index_documents.documents.len(), 1);
 
         let final_session = store.wait_for_search_publication_session().unwrap();
-        let final_publication = write_incremental_search_artifacts(
+        let final_publication = write_incremental_search_artifacts_for_test(
             &final_session,
             UnixTimestamp::from_unix_seconds(1_700_000_051),
             CLASSIFIER_EPOCH,
@@ -2566,7 +2742,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(final_publication.fulltext.document_count(), 2);
+        assert_eq!(final_publication.fulltext().document_count(), 2);
         assert!(current_import_index_documents.documents.is_empty());
     }
 
@@ -3587,6 +3763,7 @@ mod tests {
             UnixTimestamp::from_unix_seconds(1_700_000_505),
             &contract,
             &SearchPublicationVectorization::default(),
+            &PipelineRunControl::default(),
         )
         .unwrap();
 
@@ -3657,7 +3834,7 @@ mod tests {
         let (publisher_ready_sender, publisher_ready_receiver) = mpsc::sync_channel(1);
         let (publisher_release_sender, publisher_release_receiver) = mpsc::sync_channel(1);
         let publisher = thread::spawn(move || {
-            let publication_session = publisher_store
+            let mut publication_session = publisher_store
                 .wait_for_search_publication_session()
                 .unwrap();
             publisher_ready_sender.send(()).unwrap();
@@ -3666,29 +3843,42 @@ mod tests {
                 .acquire_migration_rebuild_barrier_token(&publisher_contract_id)
                 .unwrap()
                 .unwrap();
+            assert!(matches!(
+                publication_session
+                    .acquire_migration_rebuild_publication_attempt(
+                        &barrier,
+                        UnixTimestamp::from_unix_seconds(1_700_000_524),
+                    )
+                    .unwrap(),
+                MigrationRebuildPublicationAttemptAcquire::Started(_)
+            ));
             let staged = super::search_artifacts::migration_index_documents_from_exact_projection(
                 publisher_store
                     .migration_rebuild_projection_rows(&barrier)
                     .unwrap(),
+                None,
             )
             .unwrap();
             assert!(staged.is_empty());
-            let publication = super::search_artifacts::write_migration_rebuild_search_artifacts(
+            super::search_artifacts::publish_migration_rebuild_search_artifacts(
                 &publication_session,
                 UnixTimestamp::from_unix_seconds(1_700_000_524),
                 CLASSIFIER_EPOCH,
                 &BTreeSet::new(),
                 Vec::new(),
                 &SearchPublicationVectorization::default(),
-            )
-            .unwrap();
-            super::search_publication::commit_migration_rebuild_search_publication(
-                UnixTimestamp::from_unix_seconds(1_700_000_524),
-                publication,
-                &[],
-                &barrier,
+                None,
+                |publication| {
+                    super::search_publication_commit::decide_migration_rebuild_search_publication(
+                        publication,
+                        UnixTimestamp::from_unix_seconds(1_700_000_524),
+                        &[],
+                        &barrier,
+                    )
+                },
             )
             .unwrap()
+            .into_committed()
             .expect("unchanged migration barrier must commit")
             .release();
         });
@@ -3898,6 +4088,52 @@ mod tests {
     }
 
     #[test]
+    fn migration_projection_materialization_stops_at_per_document_cancel_boundary() {
+        let projection_rows = (0..128)
+            .map(|index| {
+                let document = test_document(
+                    &format!("migration-cancel-{index}"),
+                    DocumentStatus::Discovered,
+                );
+                let source_revision = super::immutable_ingest::source_revision(
+                    &document,
+                    format!("source-{index}").as_bytes(),
+                );
+                let resume_version = super::immutable_ingest::resume_version(
+                    &document,
+                    &source_revision,
+                    synthetic_resume_text(&format!("Candidate {index}"), "Rust Search"),
+                    "parser-v1",
+                    "schema-v28",
+                    vec!["en".to_string()],
+                    Some(1),
+                    Some(0.9),
+                );
+                meta_store::MigrationRebuildProjectionRow {
+                    document,
+                    resume_version,
+                }
+            })
+            .collect::<Vec<_>>();
+        let polls = AtomicUsize::new(0);
+        let cancel_after_five = || {
+            if polls.fetch_add(1, Ordering::SeqCst) >= 4 {
+                return Err(ImportPipelineError::interrupted());
+            }
+            Ok(())
+        };
+
+        let error = super::search_artifacts::migration_index_documents_from_exact_projection(
+            projection_rows,
+            Some(&cancel_after_five),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.class(), ImportPipelineErrorClass::Interrupted);
+        assert_eq!(polls.load(Ordering::SeqCst), 5);
+    }
+
+    #[test]
     fn migration_rebuild_budget_exhaustion_blocks_without_partial_publication() {
         let temp = TestDir::new("import-pipeline-migration-budget-block");
         let data_dir = temp.path().join("data");
@@ -4036,7 +4272,7 @@ mod tests {
         let now = UnixTimestamp::from_unix_seconds(1_700_000_607);
         let publication_session = store.wait_for_search_publication_session().unwrap();
 
-        let incremental_result = write_incremental_search_artifacts(
+        let incremental_result = write_incremental_search_artifacts_for_test(
             &publication_session,
             now,
             CLASSIFIER_EPOCH,
@@ -4060,13 +4296,14 @@ mod tests {
             ImportPipelineErrorClass::MetadataInvariant
         );
 
-        let rebuild_result = super::search_artifacts::write_rebuilt_search_artifacts(
+        let rebuild_result = super::search_artifacts::publish_rebuilt_search_artifacts(
             &publication_session,
             now,
             CLASSIFIER_EPOCH,
             &BTreeSet::new(),
             Vec::new(),
             &SearchPublicationVectorization::default(),
+            |_| panic!("migration base must fail before the decision closure"),
         );
         let Err(rebuild_error) = rebuild_result else {
             panic!("normal rebuild publication must reject the migration empty base");
@@ -4294,7 +4531,7 @@ mod tests {
         let now = UnixTimestamp::from_unix_seconds(1_700_000_000);
         let task = import_task("shutdown-interrupted-import", root.to_str().unwrap(), now);
         insert_test_import_task(&store, &task, &ImportOptions::default());
-        let control = ImportRunControl::default();
+        let control = PipelineRunControl::default();
         control.request_shutdown();
 
         let error = import_root_with_options_and_control(

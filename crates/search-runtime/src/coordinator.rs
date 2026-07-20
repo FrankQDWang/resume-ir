@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 use core_domain::{ActiveSearchProjection, ContentDigest};
@@ -18,6 +19,34 @@ pub struct QueryCoordinator {
     fulltext_root: PathBuf,
     vector_root: VectorSnapshotRoot,
     cache: Option<ValidatedGeneration>,
+    pending_artifact_fault: Option<SearchArtifactFaultKey>,
+}
+
+/// Exact immutable publication identity whose payload failed deep validation.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SearchArtifactFaultKey {
+    generation: String,
+    publication_fingerprint: ContentDigest,
+}
+
+impl SearchArtifactFaultKey {
+    pub fn generation(&self) -> &str {
+        &self.generation
+    }
+
+    pub fn publication_fingerprint(&self) -> &ContentDigest {
+        &self.publication_fingerprint
+    }
+}
+
+impl fmt::Debug for SearchArtifactFaultKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SearchArtifactFaultKey")
+            .field("generation", &"<redacted>")
+            .field("publication_fingerprint", &self.publication_fingerprint)
+            .finish()
+    }
 }
 
 struct ValidatedGeneration {
@@ -26,7 +55,7 @@ struct ValidatedGeneration {
     vector: VectorSnapshotReader,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 struct CacheKey {
     generation: String,
     publication_fingerprint: ContentDigest,
@@ -43,7 +72,15 @@ impl QueryCoordinator {
             fulltext_root,
             vector_root,
             cache: None,
+            pending_artifact_fault: None,
         })
+    }
+
+    /// Takes the most recent exact publication fault produced while opening
+    /// immutable payloads. The fault remains pending across metadata and
+    /// request failures until taken or replaced by a later artifact fault.
+    pub fn take_artifact_fault(&mut self) -> Option<SearchArtifactFaultKey> {
+        self.pending_artifact_fault.take()
     }
 
     pub fn with_query<T>(
@@ -61,12 +98,13 @@ impl QueryCoordinator {
         let fulltext_root = &self.fulltext_root;
         let vector_root = &self.vector_root;
         let cache = &mut self.cache;
+        let pending_artifact_fault = &mut self.pending_artifact_fault;
         self.store
             .with_search_metadata_snapshot(|snapshot| {
                 let key = cache_key(snapshot.head().publication.clone())?;
                 if cache.as_ref().is_none_or(|cached| cached.key != key) {
                     *cache = None;
-                    let validated = validate_generation(
+                    let validated = match validate_generation(
                         snapshot,
                         fulltext_root,
                         vector_root,
@@ -75,7 +113,17 @@ impl QueryCoordinator {
                             .take()
                             .ok_or_else(SearchRuntimeError::integrity)?,
                         key,
-                    )?;
+                    ) {
+                        Ok(validated) => validated,
+                        Err(GenerationValidationError::Metadata(error)) => return Err(error),
+                        Err(GenerationValidationError::Artifact { key, error }) => {
+                            *pending_artifact_fault = Some(SearchArtifactFaultKey {
+                                generation: key.generation,
+                                publication_fingerprint: key.publication_fingerprint,
+                            });
+                            return Err(error);
+                        }
+                    };
                     *cache = Some(validated);
                 } else {
                     drop(fulltext_lease);
@@ -90,6 +138,14 @@ impl QueryCoordinator {
             })
             .map_err(map_transaction_error)
     }
+}
+
+enum GenerationValidationError {
+    Metadata(SearchRuntimeError),
+    Artifact {
+        key: CacheKey,
+        error: SearchRuntimeError,
+    },
 }
 
 fn cache_key(publication: SearchPublicationRecord) -> Result<CacheKey, SearchRuntimeError> {
@@ -109,36 +165,58 @@ fn validate_generation(
     fulltext_lease: SnapshotReadLease,
     vector_lease: VectorSnapshotReadLease,
     key: CacheKey,
-) -> Result<ValidatedGeneration, SearchRuntimeError> {
+) -> Result<ValidatedGeneration, GenerationValidationError> {
     let publication = &snapshot.head().publication;
     let fulltext_descriptor = publication
         .fulltext
         .as_ref()
-        .ok_or_else(SearchRuntimeError::integrity)?;
+        .ok_or_else(|| GenerationValidationError::Metadata(SearchRuntimeError::integrity()))?;
     let vector_descriptor = publication
         .vector
         .as_ref()
-        .ok_or_else(SearchRuntimeError::integrity)?;
+        .ok_or_else(|| GenerationValidationError::Metadata(SearchRuntimeError::integrity()))?;
     if snapshot.head().generation != key.generation
         || fulltext_descriptor.generation() != key.generation
         || vector_descriptor.generation() != key.generation
     {
-        return Err(SearchRuntimeError::integrity());
+        return Err(GenerationValidationError::Metadata(
+            SearchRuntimeError::integrity(),
+        ));
     }
     let projections = snapshot
         .validated_active_projections()
-        .map_err(|_| SearchRuntimeError::integrity())?;
+        .map_err(|_| GenerationValidationError::Metadata(SearchRuntimeError::integrity()))?;
     let fulltext =
         FullTextIndex::open_snapshot_with_lease(fulltext_root, &key.generation, fulltext_lease)
-            .map_err(|_| SearchRuntimeError::integrity())?
-            .ok_or_else(SearchRuntimeError::unavailable)?;
-    validate_fulltext(&fulltext, fulltext_descriptor, &projections)?;
+            .map_err(|_| GenerationValidationError::Artifact {
+                key: key.clone(),
+                error: SearchRuntimeError::integrity(),
+            })?
+            .ok_or_else(|| GenerationValidationError::Artifact {
+                key: key.clone(),
+                error: SearchRuntimeError::unavailable(),
+            })?;
+    validate_fulltext(&fulltext, fulltext_descriptor, &projections).map_err(|error| {
+        GenerationValidationError::Artifact {
+            key: key.clone(),
+            error,
+        }
+    })?;
 
-    let vector_contract = vector_contract(vector_descriptor.mode())?;
+    let vector_contract =
+        vector_contract(vector_descriptor.mode()).map_err(GenerationValidationError::Metadata)?;
     let vector = vector_root
         .open_generation_with_lease(&key.generation, &vector_contract, vector_lease)
-        .map_err(|_| SearchRuntimeError::integrity())?;
-    validate_vector(&vector, vector_descriptor, &projections, &vector_contract)?;
+        .map_err(|_| GenerationValidationError::Artifact {
+            key: key.clone(),
+            error: SearchRuntimeError::integrity(),
+        })?;
+    validate_vector(&vector, vector_descriptor, &projections, &vector_contract).map_err(
+        |error| GenerationValidationError::Artifact {
+            key: key.clone(),
+            error,
+        },
+    )?;
     Ok(ValidatedGeneration {
         key,
         fulltext,

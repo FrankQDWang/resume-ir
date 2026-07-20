@@ -319,13 +319,21 @@ fn response_body(response: SearchResponse) -> String {
 }
 
 pub(crate) fn error_body(request_id: &str, code: &str, _message: &str) -> String {
+    error_contract_body(request_id, code, error_action(code))
+}
+
+pub(crate) fn service_error_body(request_id: &str, code: crate::ipc::ServiceErrorCode) -> String {
+    error_contract_body(request_id, code.label(), code.action())
+}
+
+fn error_contract_body(request_id: &str, code: &str, action: &str) -> String {
     serde_json::json!({
         "schema_version": "resume-ir.error.v1",
         "request_id": request_id,
         "status": "error",
         "error": {
             "code": code,
-            "action": error_action(code),
+            "action": action,
         },
     })
     .to_string()

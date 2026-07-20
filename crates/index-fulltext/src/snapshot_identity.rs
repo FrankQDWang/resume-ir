@@ -103,7 +103,7 @@ impl FullTextIndex {
 
 fn logical_content_digest(records: &[(String, String, String, String)]) -> ContentDigest {
     let mut canonical = Vec::with_capacity(64 + records.len() * 4 * 71);
-    canonical.extend_from_slice(b"resume-ir.fulltext.logical-content.v2");
+    canonical.extend_from_slice(b"resume-ir.fulltext.logical-content.v3");
     canonical.extend_from_slice(&(records.len() as u64).to_le_bytes());
     for (document_id, resume_version_id, file_name, clean_text) in records {
         for value in [document_id, resume_version_id, file_name, clean_text] {

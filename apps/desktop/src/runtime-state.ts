@@ -8,6 +8,15 @@ export type DaemonBlockedReason =
   | "protocol_mismatch"
   | "ownership_conflict"
   | "supervisor_unavailable"
+  | "restart_ledger_invalid"
+
+export type RestartLedgerReason =
+  | "invalid_format"
+  | "unsafe_file"
+  | "oversized"
+  | "read_unavailable"
+  | "clock_invalid"
+  | "persistence_unavailable"
 
 export type DaemonExitClass =
   | "child_exited"
@@ -26,6 +35,7 @@ export interface DaemonLifecycleSnapshot {
   consecutive_heartbeat_failures: number
   blocked_reason: DaemonBlockedReason | null
   last_exit: DaemonExitClass | null
+  restart_ledger_reason: RestartLedgerReason | null
 }
 
 export function blockedReasonMessage(reason: DaemonBlockedReason | null): string {
@@ -35,6 +45,7 @@ export function blockedReasonMessage(reason: DaemonBlockedReason | null): string
     case "protocol_mismatch": return "桌面端与 daemon 协议不匹配，需安装同一版本"
     case "ownership_conflict": return "已有其他进程持有 daemon 数据目录，已拒绝抢占"
     case "supervisor_unavailable": return "桌面原生监督器不可用，需重新启动应用"
+    case "restart_ledger_invalid": return "daemon 重启记录无效，已停止自动启动；请导出诊断后修复本地状态"
     case null: return "daemon 启动已阻止"
   }
 }
@@ -161,6 +172,7 @@ export function isDaemonLifecycleSnapshot(value: unknown): value is DaemonLifecy
   const state = String(candidate.state)
   const blockedReason = candidate.blocked_reason
   const lastExit = candidate.last_exit
+  const restartLedgerReason = candidate.restart_ledger_reason
   return candidate.schema_version === "resume-ir.desktop-daemon-lifecycle.v1"
     && ["starting", "ready", "recovering", "circuit_open", "blocked"].includes(state)
     && Number.isSafeInteger(candidate.generation)
@@ -173,7 +185,9 @@ export function isDaemonLifecycleSnapshot(value: unknown): value is DaemonLifecy
     && Number.isSafeInteger(candidate.consecutive_heartbeat_failures)
     && Number(candidate.consecutive_heartbeat_failures) >= 0
     && Number(candidate.consecutive_heartbeat_failures) <= 3
-    && (blockedReason === null || ["configuration_invalid", "runtime_integrity", "protocol_mismatch", "ownership_conflict", "supervisor_unavailable"].includes(String(blockedReason)))
+    && (blockedReason === null || ["configuration_invalid", "runtime_integrity", "protocol_mismatch", "ownership_conflict", "supervisor_unavailable", "restart_ledger_invalid"].includes(String(blockedReason)))
     && (lastExit === null || ["child_exited", "startup_timeout", "heartbeat_timeout", "start_failed", "control_plane_failure"].includes(String(lastExit)))
+    && (restartLedgerReason === null || ["invalid_format", "unsafe_file", "oversized", "read_unavailable", "clock_invalid", "persistence_unavailable"].includes(String(restartLedgerReason)))
+    && (blockedReason !== "restart_ledger_invalid" || restartLedgerReason !== null)
     && (state === "blocked") === (blockedReason !== null)
 }

@@ -2,7 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::model_contract::VectorModelContract;
-use crate::snapshot_model::validate_projection;
+use crate::publish_control::VectorSnapshotPublishControl;
+use crate::snapshot_model::validate_projection_with_control;
 use core_domain::ActiveSearchProjection;
 
 pub(crate) const MAX_MODEL_ID_CHARS: usize = 128;
@@ -173,6 +174,8 @@ impl fmt::Debug for VectorHit {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VectorIndexError {
+    Cancelled,
+    PublicationBusy,
     InvalidDimension { expected: usize, actual: usize },
     InvalidVectorValue,
     InvalidModelId,
@@ -195,6 +198,8 @@ pub enum VectorIndexError {
 impl fmt::Display for VectorIndexError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Cancelled => formatter.write_str("vector snapshot publication cancelled"),
+            Self::PublicationBusy => formatter.write_str("vector snapshot publication is busy"),
             Self::InvalidDimension { expected, actual } => {
                 write!(
                     formatter,
@@ -231,19 +236,21 @@ impl fmt::Display for VectorIndexError {
 
 impl std::error::Error for VectorIndexError {}
 
-pub(crate) fn validate_documents(
+pub(crate) fn validate_documents_with_control(
     model_contract: &VectorModelContract,
     projection: &[ActiveSearchProjection],
     documents: &[VectorDocument],
+    control: VectorSnapshotPublishControl<'_>,
 ) -> Result<(), VectorIndexError> {
+    control.check()?;
     model_contract.validate()?;
-    let active_versions = validate_projection(projection)?;
+    let active_versions = validate_projection_with_control(projection, control)?;
     if matches!(model_contract, VectorModelContract::Disabled) && !documents.is_empty() {
         return Err(VectorIndexError::InvalidModelContract);
     }
     let mut vector_ids = BTreeSet::new();
     let mut document_versions = BTreeMap::new();
-    for document in documents {
+    for (index, document) in documents.iter().enumerate() {
         let VectorModelContract::Enabled {
             model_id,
             dimension,
@@ -272,7 +279,9 @@ pub(crate) fn validate_documents(
             }
             _ => {}
         }
+        control.check_after_record(index + 1)?;
     }
+    control.check()?;
     Ok(())
 }
 

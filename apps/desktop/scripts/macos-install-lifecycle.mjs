@@ -1,29 +1,26 @@
-import { spawnSync } from "node:child_process";
 import {
   lstat,
   mkdir,
-  mkdtemp,
   realpath,
-  rmdir,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  validateMountedDmgLayout,
-  verifyAdHocSignedApp,
-  verifyMacosDmg,
+  verifyMacosInternalTestSignaturePolicy,
+  withVerifiedMacosDmg,
 } from "./verify-macos-dmg.mjs";
 import { verifyBundleComposition } from "./macos-bundle-composition.mjs";
 import {
+  createInstallReceiptEvidence,
   createInstallReceipt,
   defaultApplicationSupportRoot,
-  persistInstallReceipt,
   readInstallReceipt,
   removeInstallReceipt,
   verifyInstallReceipt,
 } from "./macos-install-receipt.mjs";
+import { readLegacyExactInstallReceipt } from "./macos-legacy-exact-artifact.mjs";
 import {
   advanceLifecycleJournal,
   createLifecycleJournal,
@@ -45,6 +42,10 @@ import {
 import { runWithMacosLifecycleLock } from "./macos-lifecycle-execution.mjs";
 import { requireLifecycleLockCapability } from "./macos-lifecycle-lock.mjs";
 import { verifyBundledSidecar } from "./verify-bundled-sidecar.mjs";
+import {
+  MACOS_SYSTEM_TOOLS,
+  runClosedSystemTool,
+} from "./macos-system-tools.mjs";
 
 const APP_NAME = "resume-ir.app";
 const EXPECTED_BUNDLE_ID = "local.resume-ir.desktop";
@@ -52,7 +53,7 @@ const EXPECTED_DISPLAY_NAME = "resume-ir";
 const EXPECTED_ICON_FILE = "icon.icns";
 const MAX_TOOL_OUTPUT_BYTES = 64 * 1024;
 const MAX_METADATA_BYTES = 256;
-const MIN_EVIDENCE_VERSION = [0, 1, 1];
+const MIN_EVIDENCE_VERSION = [0, 1, 2];
 const DEFAULT_LSREGISTER =
   "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 
@@ -73,12 +74,11 @@ function supportsUpgradeEvidence(version) {
   return true;
 }
 
-async function defaultRunner(command, args) {
-  return spawnSync(command, args, {
+async function defaultSystemRunner(command, args) {
+  return runClosedSystemTool(command, args, {
     encoding: "utf8",
     maxBuffer: MAX_TOOL_OUTPUT_BYTES,
-    shell: false,
-    windowsHide: true,
+    timeout: 120_000,
   });
 }
 
@@ -134,8 +134,9 @@ function requireIdentity(metadata, expectedVersion) {
 
 function requireDmgReceipt(receipt, targetTriple) {
   if (
-    receipt?.schema_version !== "resume-ir.macos-dmg-composition.v1" ||
+    receipt?.schema_version !== "resume-ir.macos-dmg-composition.v2" ||
     receipt?.target_triple !== targetTriple ||
+    !/^[a-f0-9]{40}$/.test(receipt?.source_commit ?? "") ||
     receipt?.release_claim !== "composition_only" ||
     receipt?.dmg_count !== 1 ||
     receipt?.app_bundle_count !== 1 ||
@@ -161,7 +162,9 @@ function requireDmgReceipt(receipt, targetTriple) {
 function requireSignature(receipt) {
   if (
     receipt?.code_signature !== "ad_hoc_valid" ||
-    receipt?.hardened_runtime !== true
+    receipt?.hardened_runtime !== true ||
+    receipt?.library_validation_entitlement_scope !==
+      "embedding_runtime_only"
   ) {
     throw new Error("installed App signature is invalid");
   }
@@ -169,7 +172,7 @@ function requireSignature(receipt) {
 }
 
 async function readPlistField({ appBundle, field, runner }) {
-  const result = await runner("plutil", [
+  const result = await runner(MACOS_SYSTEM_TOOLS.plutil, [
     "-extract",
     field,
     "raw",
@@ -188,7 +191,7 @@ async function readPlistField({ appBundle, field, runner }) {
 export async function inspectMacosAppBundle({
   appBundle,
   platform = process.platform,
-  runner = defaultRunner,
+  runner = defaultSystemRunner,
 }) {
   if (platform !== "darwin" || !path.isAbsolute(appBundle)) {
     throw new Error("App metadata arguments are invalid");
@@ -216,23 +219,6 @@ export async function inspectMacosAppBundle({
   };
 }
 
-async function detachMount({ attached, mountDirectory, runner }) {
-  let failed = false;
-  if (attached) {
-    let result = await runner("hdiutil", ["detach", mountDirectory]);
-    if (!succeeded(result)) {
-      result = await runner("hdiutil", ["detach", mountDirectory, "-force"]);
-    }
-    failed = !succeeded(result);
-  }
-  try {
-    await rmdir(mountDirectory);
-  } catch {
-    failed = true;
-  }
-  if (failed) throw new Error("DMG detach or cleanup failed");
-}
-
 function validateArguments({
   repoRoot,
   targetTriple,
@@ -256,7 +242,7 @@ export async function installMacosDmg(options) {
     repoRoot: options.repoRoot,
     targetTriple: options.targetTriple,
     applicationsDirectory: options.applicationsDirectory,
-    expectedVersion: options.expectedVersion ?? "0.1.1",
+    expectedVersion: options.expectedVersion ?? "0.1.2",
     platform: options.platform ?? process.platform,
   });
   if (
@@ -283,21 +269,21 @@ async function installMacosDmgLocked({
   targetTriple,
   dmg,
   applicationsDirectory,
-  expectedVersion = "0.1.1",
+  expectedVersion = "0.1.2",
   temporaryRoot = os.tmpdir(),
   platform = process.platform,
-  runner = defaultRunner,
-  verifyDmg = verifyMacosDmg,
-  validateLayout = validateMountedDmgLayout,
+  systemRunner = defaultSystemRunner,
+  withVerifiedDmg = withVerifiedMacosDmg,
   inspectApp = inspectMacosAppBundle,
   verifyApp = verifyBundledSidecar,
   verifyComposition = verifyBundleComposition,
-  verifySignature = verifyAdHocSignedApp,
+  verifySignaturePolicy = verifyMacosInternalTestSignaturePolicy,
   applicationSupportRoot,
   resolveApplicationSupportRoot = defaultApplicationSupportRoot,
   createReceipt = createInstallReceipt,
   readReceipt = readInstallReceipt,
-  persistReceipt = persistInstallReceipt,
+  persistReceipt = createInstallReceiptEvidence,
+  readLegacyReceipt = readLegacyExactInstallReceipt,
   readJournal = readLifecycleJournal,
   persistJournal = persistLifecycleJournal,
   launchServicesCommand = DEFAULT_LSREGISTER,
@@ -318,6 +304,14 @@ async function installMacosDmgLocked({
   const target = path.join(resolvedApplications, APP_NAME);
   const resolvedApplicationSupport =
     applicationSupportRoot ?? (await resolveApplicationSupportRoot());
+  if (
+    (await readLegacyReceipt({
+      applicationSupportRoot: resolvedApplicationSupport,
+      allowMissing: true,
+    })) !== undefined
+  ) {
+    throw new Error("legacy install receipt is invalid for current install");
+  }
 
   let installedSignature;
   const verifyNew = async (appBundle, journal) => {
@@ -328,27 +322,37 @@ async function installMacosDmgLocked({
       throw new Error("install journal does not match requested release");
     }
     requireIdentity(
-      await inspectApp({ appBundle, platform, runner }),
+      await inspectApp({
+        appBundle,
+        platform,
+        runner: systemRunner,
+      }),
       expectedVersion,
     );
     await verifyApp({ repoRoot, targetTriple, appBundle });
+    installedSignature = requireSignature(
+      await verifySignaturePolicy({
+        appBundle,
+        platform,
+        runner: systemRunner,
+      }),
+    );
     const composition = await verifyComposition({
       appBundle,
       targetTriple,
       expectedVersion,
+      expectedSourceCommit: journal.new_receipt.source_commit,
+      verifySignaturePolicy: async () => installedSignature,
     });
     verifyInstallReceipt({ receipt: journal.new_receipt, composition });
-    installedSignature = requireSignature(
-      await verifySignature({ appBundle, platform, runner }),
-    );
     return composition;
   };
   const register = async (appBundle) => {
-    const result = await runner(launchServicesCommand, ["-f", appBundle]);
+    const result = await systemRunner(launchServicesCommand, ["-f", appBundle]);
     if (!succeeded(result)) throw new Error("LaunchServices registration failed");
   };
   const unregister = async (appBundle) => {
-    const result = await runner(launchServicesCommand, ["-u", appBundle]);
+    const result = await systemRunner(launchServicesCommand, ["-u", appBundle]);
     if (!succeeded(result)) throw new Error("installed App cleanup failed");
   };
   const transactionOptions = (journal) => ({
@@ -397,88 +401,75 @@ async function installMacosDmgLocked({
   }
   if (await targetExists(target)) throw new Error("install target already exists");
   await assertNoLifecycleArtifacts(resolvedApplications);
-  if (
-    (await readReceipt({
-      applicationSupportRoot: resolvedApplicationSupport,
-      allowMissing: true,
-    })) !== undefined
-  ) {
+  const existingCurrentReceipt = await readReceipt({
+    applicationSupportRoot: resolvedApplicationSupport,
+    allowMissing: true,
+  });
+  if (existingCurrentReceipt !== undefined) {
     throw new Error("install receipt exists without an installed App");
   }
 
-  const dmgReceipt = requireDmgReceipt(
-    await verifyDmg({
+  let journal;
+  try {
+    const paths = await withVerifiedDmg({
       repoRoot,
       targetTriple,
       dmg,
       temporaryRoot,
       platform,
-      runner,
-    }),
-    targetTriple,
-  );
-
-  const mountDirectory = await mkdtemp(path.join(temporaryRoot, "resume-ir-install-"));
-  let attached = false;
-  let journal;
-  try {
-    const attach = await runner("hdiutil", [
-      "attach",
-      dmg,
-      "-readonly",
-      "-nobrowse",
-      "-mountpoint",
-      mountDirectory,
-    ]);
-    if (!succeeded(attach)) throw new Error("DMG attach failed");
-    attached = true;
-    const sourceApp = await validateLayout({ mountDirectory });
-    requireIdentity(
-      await inspectApp({ appBundle: sourceApp, platform, runner }),
-      expectedVersion,
-    );
-    await verifyApp({ repoRoot, targetTriple, appBundle: sourceApp });
-    const sourceComposition = await verifyComposition({
-      appBundle: sourceApp,
-      targetTriple,
-      expectedVersion,
+      systemRunner,
+      consumeVerifiedImage: async ({
+        appBundle: sourceApp,
+        appComposition: sourceComposition,
+        receipt,
+      }) => {
+        const dmgReceipt = requireDmgReceipt(receipt, targetTriple);
+        if (
+          sourceComposition?.bundle_id !== EXPECTED_BUNDLE_ID ||
+          sourceComposition?.version !== expectedVersion ||
+          sourceComposition?.target_triple !== targetTriple ||
+          sourceComposition?.source_commit !== dmgReceipt.source_commit ||
+          sourceComposition?.composition_digest !==
+            dmgReceipt.app_composition_digest
+        ) {
+          throw new Error("DMG composition receipt is invalid");
+        }
+        const nextReceipt = createReceipt({
+          composition: sourceComposition,
+          dmgSha256: dmgReceipt.dmg_sha256,
+        });
+        journal = createLifecycleJournal({
+          operation: "install",
+          phase: "install_prepared",
+          newVersion: expectedVersion,
+          newCompositionDigest: sourceComposition.composition_digest,
+          newReceipt: nextReceipt,
+        });
+        await persistJournal({
+          applicationSupportRoot: resolvedApplicationSupport,
+          journal,
+        });
+        const paths = lifecycleWorkspacePaths({
+          applicationsRoot: resolvedApplications,
+          operation: "install",
+          transactionId: journal.transaction_id,
+        });
+        try {
+          await (filesystem.mkdir ?? mkdir)(paths.partial);
+        } catch (error) {
+          if (error?.code === "EEXIST") {
+            throw new Error("install workspace already exists");
+          }
+          throw new Error("install workspace is unavailable");
+        }
+        const copiedResult = await systemRunner(MACOS_SYSTEM_TOOLS.ditto, [
+          sourceApp,
+          paths.partial,
+        ]);
+        if (!succeeded(copiedResult)) throw new Error("App copy failed");
+        return paths;
+      },
     });
-    if (sourceComposition.composition_digest !== dmgReceipt.app_composition_digest) {
-      throw new Error("DMG composition receipt is invalid");
-    }
-    requireSignature(
-      await verifySignature({ appBundle: sourceApp, platform, runner }),
-    );
-    const nextReceipt = createReceipt({
-      composition: sourceComposition,
-      dmgSha256: dmgReceipt.dmg_sha256,
-    });
-    journal = createLifecycleJournal({
-      operation: "install",
-      phase: "install_prepared",
-      newVersion: expectedVersion,
-      newCompositionDigest: sourceComposition.composition_digest,
-      newReceipt: nextReceipt,
-    });
-    await persistJournal({
-      applicationSupportRoot: resolvedApplicationSupport,
-      journal,
-    });
-    const paths = lifecycleWorkspacePaths({
-      applicationsRoot: resolvedApplications,
-      operation: "install",
-      transactionId: journal.transaction_id,
-    });
-    try {
-      await (filesystem.mkdir ?? mkdir)(paths.partial);
-    } catch (error) {
-      if (error?.code === "EEXIST") {
-        throw new Error("install workspace already exists");
-      }
-      throw new Error("install workspace is unavailable");
-    }
-    const copiedResult = await runner("ditto", [sourceApp, paths.partial]);
-    if (!succeeded(copiedResult)) throw new Error("App copy failed");
     await verifyNew(paths.partial, journal);
     await makeStagedAppDurable({
       appBundle: paths.partial,
@@ -507,19 +498,10 @@ async function installMacosDmgLocked({
       applicationSupportRoot: resolvedApplicationSupport,
       journal,
     });
-    await detachMount({ attached, mountDirectory, runner });
-    attached = false;
     await recoverInstallTransaction(transactionOptions(journal));
     return result();
   } catch (error) {
     let cleanupError;
-    if (attached) {
-      try {
-        await detachMount({ attached, mountDirectory, runner });
-      } catch {
-        cleanupError = new Error("DMG detach or cleanup failed");
-      }
-    }
     if (journal) {
       try {
         const current = await readJournal({
@@ -540,7 +522,7 @@ export async function uninstallMacosApp(options) {
     repoRoot: options.repoRoot,
     targetTriple: options.targetTriple,
     applicationsDirectory: options.applicationsDirectory,
-    expectedVersion: options.expectedVersion ?? "0.1.1",
+    expectedVersion: options.expectedVersion ?? "0.1.2",
     platform: options.platform ?? process.platform,
   });
   return runWithMacosLifecycleLock({
@@ -560,18 +542,19 @@ async function uninstallMacosAppLocked({
   repoRoot,
   targetTriple,
   applicationsDirectory,
-  expectedVersion = "0.1.1",
+  expectedVersion = "0.1.2",
   platform = process.platform,
-  runner = defaultRunner,
+  systemRunner = defaultSystemRunner,
   inspectApp = inspectMacosAppBundle,
   verifyComposition = verifyBundleComposition,
-  verifySignature = verifyAdHocSignedApp,
+  verifySignaturePolicy = verifyMacosInternalTestSignaturePolicy,
   applicationSupportRoot,
   resolveApplicationSupportRoot = defaultApplicationSupportRoot,
   readReceipt = readInstallReceipt,
   verifyReceipt = verifyInstallReceipt,
   removeReceipt = removeInstallReceipt,
-  persistReceipt = persistInstallReceipt,
+  persistReceipt = createInstallReceiptEvidence,
+  readLegacyReceipt = readLegacyExactInstallReceipt,
   readJournal = readLifecycleJournal,
   persistJournal = persistLifecycleJournal,
   launchServicesCommand = DEFAULT_LSREGISTER,
@@ -589,6 +572,14 @@ async function uninstallMacosAppLocked({
   const target = path.join(resolvedApplications, APP_NAME);
   const resolvedApplicationSupport =
     applicationSupportRoot ?? (await resolveApplicationSupportRoot());
+  if (
+    (await readLegacyReceipt({
+      applicationSupportRoot: resolvedApplicationSupport,
+      allowMissing: true,
+    })) !== undefined
+  ) {
+    throw new Error("legacy install receipt is invalid for current uninstall");
+  }
   const verifyOld = async (appBundle, journal) => {
     if (
       journal.old_version !== expectedVersion ||
@@ -597,26 +588,36 @@ async function uninstallMacosAppLocked({
       throw new Error("uninstall journal does not match requested release");
     }
     requireIdentity(
-      await inspectApp({ appBundle, platform, runner }),
+      await inspectApp({
+        appBundle,
+        platform,
+        runner: systemRunner,
+      }),
       expectedVersion,
+    );
+    const signaturePolicy = requireSignature(
+      await verifySignaturePolicy({
+        appBundle,
+        platform,
+        runner: systemRunner,
+      }),
     );
     const composition = await verifyComposition({
       appBundle,
       targetTriple,
       expectedVersion,
+      expectedSourceCommit: journal.old_receipt.source_commit,
+      verifySignaturePolicy: async () => signaturePolicy,
     });
-    requireSignature(
-      await verifySignature({ appBundle, platform, runner }),
-    );
     verifyReceipt({ receipt: journal.old_receipt, composition });
     return composition;
   };
   const register = async (appBundle) => {
-    const result = await runner(launchServicesCommand, ["-f", appBundle]);
+    const result = await systemRunner(launchServicesCommand, ["-f", appBundle]);
     if (!succeeded(result)) throw new Error("LaunchServices registration failed");
   };
   const unregister = async (appBundle) => {
-    const result = await runner(launchServicesCommand, ["-u", appBundle]);
+    const result = await systemRunner(launchServicesCommand, ["-u", appBundle]);
     if (!succeeded(result)) {
       throw new Error("LaunchServices unregistration failed");
     }

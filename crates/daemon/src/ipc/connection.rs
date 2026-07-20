@@ -6,8 +6,7 @@ use meta_store::{ImportProcessingContract, OwnedMetaStore, ReadMetaStore};
 use super::protocol::ReadOutcome;
 use super::search_service::SearchService;
 use super::{
-    response, routes, ConnectionCompletion, ConnectionOutcome, DaemonGenerationOwner,
-    RequestFailure, ResponseSinkError,
+    response, routes, ConnectionCompletion, ConnectionOutcome, RequestFailure, ResponseSinkError,
 };
 
 pub(crate) struct Context<'a> {
@@ -15,7 +14,7 @@ pub(crate) struct Context<'a> {
     pub(crate) owned_store: &'a OwnedMetaStore,
     pub(crate) query_service: &'a SearchService,
     pub(crate) processing_contract: &'a ImportProcessingContract,
-    pub(crate) daemon_owner: &'a DaemonGenerationOwner<'a>,
+    pub(crate) auth_token: &'a str,
 }
 
 /// Handles one accepted connection. Socket configuration, parsing, routing,
@@ -62,7 +61,7 @@ fn handle_request(
             owned_store: context.owned_store,
             query_service: context.query_service,
             processing_contract: context.processing_contract,
-            auth_token: context.daemon_owner.auth_token(),
+            auth_token: context.auth_token,
         },
         request,
         stream,

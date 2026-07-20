@@ -5,9 +5,9 @@ use meta_store::{
     UnixTimestamp,
 };
 
-use super::search_publication::{
-    bind_projected_document_snapshots, publication_document_map, CommittedSearchPublication,
-    PreparedSearchPublication,
+use super::search_publication::{SearchPublicationDecision, SearchPublicationView};
+use super::search_publication_commit::{
+    bind_projected_document_snapshots, publication_document_map,
 };
 use super::{ImportPipelineError, Result};
 
@@ -22,26 +22,22 @@ pub(super) struct OcrPublicationFacts<'a> {
     pub(super) phone_hash: Option<&'a ContactHash>,
 }
 
-pub(super) enum OcrPublicationCommitOutcome {
-    Applied(CommittedSearchPublication),
+pub(super) enum OcrPublicationDecisionOutcome {
     ClaimSuperseded,
     PublicationSuperseded,
 }
 
-pub(super) fn commit_prepared_ocr_search_publication(
+pub(super) fn decide_ocr_search_publication(
     now: UnixTimestamp,
-    publication: PreparedSearchPublication<'_>,
+    publication: &SearchPublicationView<'_>,
     facts: OcrPublicationFacts<'_>,
-) -> Result<OcrPublicationCommitOutcome> {
-    let PreparedSearchPublication {
-        publication_session,
-        _publication_lease,
-        fulltext,
-        vector,
-        projections,
-        projected_documents,
-        vector_coverage,
-    } = publication;
+) -> Result<(
+    SearchPublicationDecision,
+    Option<OcrPublicationDecisionOutcome>,
+)> {
+    let fulltext = publication.fulltext();
+    let vector = publication.vector();
+    let projections = publication.projections();
     if fulltext.document_count() != projections.len()
         || vector.projection_count() != projections.len()
         || fulltext.generation() != vector.generation()
@@ -73,14 +69,16 @@ pub(super) fn commit_prepared_ocr_search_publication(
         });
     let publication_documents = projected_document.into_iter().collect::<Vec<_>>();
     let publication_documents = publication_document_map(&publication_documents)?;
-    let projected_documents =
-        bind_projected_document_snapshots(&projected_documents, &publication_documents)?;
+    let projected_documents = bind_projected_document_snapshots(
+        publication.projected_documents(),
+        &publication_documents,
+    )?;
     let search = SearchPublicationCommit {
         generation: fulltext.generation(),
         terminal_documents: &terminal_documents,
-        projections: &projections,
+        projections,
         projected_documents: &projected_documents,
-        vector_coverage: &vector_coverage,
+        vector_coverage: publication.vector_coverage(),
         now,
     };
     let commit = OcrSearchPublicationCommit {
@@ -93,22 +91,21 @@ pub(super) fn commit_prepared_ocr_search_publication(
         email_hash: facts.email_hash,
         phone_hash: facts.phone_hash,
     };
-    match publication_session
-        .commit_ocr_search_publication(&commit)
-        .map_err(ImportPipelineError::store)?
-    {
-        OcrSearchPublicationOutcome::Applied => Ok(OcrPublicationCommitOutcome::Applied(
-            CommittedSearchPublication {
-                _publication_lease,
-                fulltext,
-                projections,
-            },
-        )),
-        OcrSearchPublicationOutcome::ClaimSuperseded => {
-            Ok(OcrPublicationCommitOutcome::ClaimSuperseded)
-        }
-        OcrSearchPublicationOutcome::PublicationSuperseded => {
-            Ok(OcrPublicationCommitOutcome::PublicationSuperseded)
-        }
-    }
+    Ok(
+        match publication
+            .publication_session()
+            .commit_ocr_search_publication(&commit)
+            .map_err(ImportPipelineError::store)?
+        {
+            OcrSearchPublicationOutcome::Applied => (SearchPublicationDecision::Applied, None),
+            OcrSearchPublicationOutcome::ClaimSuperseded => (
+                SearchPublicationDecision::NotApplied,
+                Some(OcrPublicationDecisionOutcome::ClaimSuperseded),
+            ),
+            OcrSearchPublicationOutcome::PublicationSuperseded => (
+                SearchPublicationDecision::NotApplied,
+                Some(OcrPublicationDecisionOutcome::PublicationSuperseded),
+            ),
+        },
+    )
 }

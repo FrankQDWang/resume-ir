@@ -26,6 +26,8 @@ use rusqlite::{
 };
 
 mod active_store_manifest;
+mod artifact_repair_attempt;
+mod artifact_repair_context;
 mod classification;
 mod data_directory_owner;
 mod immutable_ingest_stage;
@@ -43,10 +45,13 @@ mod migration_rebuild_barrier;
 pub mod migration_test_support;
 mod migration_v27;
 mod migration_v28;
+mod migration_v29;
 mod ocr_publication;
 mod privacy_maintenance;
 mod schema_v27;
 mod schema_v28;
+mod schema_v29;
+mod schema_v29_publication_retirement;
 mod search_publication;
 mod search_publication_session;
 mod search_snapshot;
@@ -84,6 +89,13 @@ pub type OwnedMetaStore = MetadataStore<OwnedStoreAccess>;
 /// Explicit in-memory writer for tests and synthetic computation only.
 pub type EphemeralMetaStore = MetadataStore<EphemeralStoreAccess>;
 
+pub use artifact_repair_attempt::{
+    ArtifactRepairAttempt, ArtifactRepairAttemptAcquire, ArtifactRepairAttemptCancellationOutcome,
+    ArtifactRepairAttemptErrorKind, ArtifactRepairAttemptFailure,
+    ArtifactRepairAttemptFailureOutcome, ArtifactRepairAttemptPhase, ArtifactRepairAttemptState,
+    ArtifactRepairKey, ARTIFACT_REPAIR_MAX_ATTEMPTS,
+};
+pub use artifact_repair_context::{ArtifactRepairContext, ArtifactRepairVectorContext};
 pub use classification::{
     ClassificationCounts, ClassificationStatus, ClassifierEpochSource, CurrentClassifierEpoch,
     ReasonCode, ResumeVersionClassification, ReviewDisposition, SourceRevisionTriage,
@@ -124,11 +136,14 @@ pub use resume_classifier::{
 };
 pub use search_publication::{
     search_publication_fingerprint, EnabledVectorSnapshotDescriptor, FullTextSnapshotDescriptor,
-    ProjectedDocumentSnapshot, SearchPublicationCommit, SearchPublicationDraft,
-    SearchPublicationFailure, SearchPublicationOutcome, SearchPublicationPrunePolicy,
-    SearchPublicationRecord, SearchPublicationState, SearchPublicationValidation,
-    TerminalDocumentUpdate, VectorSnapshotDescriptor, VectorSnapshotMode, FULLTEXT_INDEX_SCHEMA_V2,
-    FULLTEXT_MANIFEST_SCHEMA_V2, VECTOR_INDEX_SCHEMA_V3, VECTOR_MANIFEST_SCHEMA_V3,
+    ProjectedDocumentSnapshot, SearchArtifactExpectation, SearchPublicationCommit,
+    SearchPublicationDraft, SearchPublicationFailure, SearchPublicationOutcome,
+    SearchPublicationPrunePolicy, SearchPublicationRecord, SearchPublicationRetirement,
+    SearchPublicationRetirementArtifact, SearchPublicationRetirementFailureOutcome,
+    SearchPublicationRetirementPhase, SearchPublicationRetirementPlan, SearchPublicationState,
+    SearchPublicationValidation, TerminalDocumentUpdate, VectorSnapshotDescriptor,
+    VectorSnapshotMode, FULLTEXT_INDEX_SCHEMA_V3, FULLTEXT_MANIFEST_SCHEMA_V3,
+    SEARCH_PUBLICATION_RETIREMENT_REPLAY_LIMIT, VECTOR_INDEX_SCHEMA_V4, VECTOR_MANIFEST_SCHEMA_V4,
 };
 pub use search_publication_session::{SearchPublicationLease, SearchPublicationSession};
 pub use search_snapshot::{
@@ -233,7 +248,7 @@ pub enum PendingImportTaskByRootDiagnostic {
 }
 
 pub fn metadata_store_path(data_dir: &Path) -> Result<PathBuf> {
-    migration_v28::active_store_path(data_dir)
+    migration_v29::active_store_path(data_dir)
 }
 
 pub fn metadata_encryption_key_path(data_dir: &Path) -> PathBuf {
@@ -715,14 +730,31 @@ impl fmt::Debug for MetadataEncryptionKeyRotation {
 }
 
 impl ReadMetaStore {
-    /// Opens only an already-published v28 metadata store.
+    /// Opens only an already-published v29 metadata store.
     ///
     /// This path never creates a key, runs copy-on-write migration, publishes a
     /// manifest, changes SQLite journal state, performs privacy maintenance, or
     /// repairs any artifact. Legacy or absent stores require an explicit
     /// [`DataDirectoryOwnerLease`].
     pub fn open_data_dir(data_dir: &Path) -> Result<Self> {
-        let (db_path, key, store_id_digest) = migration_v28::open_current_v28_store(data_dir)?;
+        let published = migration_v29::open_current_v29_store(data_dir)?;
+        Self::open_published_v29(published)
+    }
+
+    /// Opens an already-published v29 metadata store when one exists.
+    ///
+    /// Absence is reported as `None` without creating or migrating storage.
+    /// A published legacy store still returns the typed migration-ownership
+    /// error instead of being treated as absent.
+    pub fn open_data_dir_if_published(data_dir: &Path) -> Result<Option<Self>> {
+        migration_v29::open_optional_current_v29_store(data_dir)?
+            .map(Self::open_published_v29)
+            .transpose()
+    }
+
+    fn open_published_v29(
+        (db_path, key, store_id_digest): (PathBuf, [u8; METADATA_ENCRYPTION_KEY_LEN], String),
+    ) -> Result<Self> {
         validate_metadata_encryption_key(&key)?;
         let connection = Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(MetaStoreError::storage)?;
@@ -734,7 +766,7 @@ impl ReadMetaStore {
         connection
             .execute_batch("PRAGMA query_only = ON; PRAGMA foreign_keys = ON;")
             .map_err(MetaStoreError::storage)?;
-        migration_v28::validate_current_v28_connection(&connection, &store_id_digest)?;
+        migration_v29::validate_current_v29_connection(&connection, &store_id_digest)?;
         let query_only = connection
             .query_row("PRAGMA query_only", [], |row| row.get::<_, i64>(0))
             .map_err(MetaStoreError::storage)?;
@@ -755,7 +787,7 @@ impl OwnedMetaStore {
     /// unique canonical data-directory owner capability.
     pub(crate) fn open_data_dir_for_owner(owner: &DataDirectoryOwnerLease) -> Result<Self> {
         let owner_guard = owner.shared_guard();
-        let (db_path, key) = migration_v28::prepare_active_v28_store(&owner_guard)?;
+        let (db_path, key) = migration_v29::prepare_active_v29_store(&owner_guard)?;
         Self::open_owned_encrypted(db_path, &key, owner_guard)
     }
 
@@ -763,7 +795,7 @@ impl OwnedMetaStore {
     /// guard. The kernel lock remains held until every sibling is dropped.
     pub fn open_sibling(&self) -> Result<Self> {
         let owner_guard = Arc::clone(self.access.guard());
-        let (db_path, key) = migration_v28::prepare_active_v28_store(&owner_guard)?;
+        let (db_path, key) = migration_v29::prepare_active_v29_store(&owner_guard)?;
         Self::open_owned_encrypted(db_path, &key, owner_guard)
     }
 
@@ -873,7 +905,7 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
             .map_err(MetaStoreError::migration)?;
 
         let initial_version = schema_version_in_connection(&connection)?;
-        if self.file_backed && (1..schema_v28::VERSION).contains(&initial_version) {
+        if self.file_backed && (1..schema_v29::VERSION).contains(&initial_version) {
             return Err(MetaStoreError::migration_ownership_required());
         }
         let mut applied_versions = Vec::new();
@@ -904,6 +936,10 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
         if !migration_applied(&connection, schema_v28::VERSION)? {
             apply_v28_target_schema(&mut connection)?;
             applied_versions.push(schema_v28::VERSION);
+        }
+        if !migration_applied(&connection, schema_v29::VERSION)? {
+            apply_v29_target_schema(&mut connection)?;
+            applied_versions.push(schema_v29::VERSION);
         }
 
         privacy_maintenance::complete_privacy_maintenance_after_migration(
@@ -5965,6 +6001,32 @@ fn apply_v28_target_schema(connection: &mut Connection) -> Result<()> {
         .execute(
             "INSERT INTO schema_migrations (version, applied_at_seconds) VALUES (?1, 0)",
             params![i64::from(schema_v28::VERSION)],
+        )
+        .map_err(MetaStoreError::migration)?;
+    transaction.commit().map_err(MetaStoreError::migration)
+}
+
+pub(crate) fn apply_v29_target_schema(connection: &mut Connection) -> Result<()> {
+    let transaction = connection
+        .transaction()
+        .map_err(MetaStoreError::migration)?;
+    transaction
+        .execute_batch(schema_v29::SCHEMA)
+        .map_err(MetaStoreError::migration)?;
+    transaction
+        .execute_batch(schema_v29::DROP_LEGACY_ISOLATION_TRIGGERS)
+        .map_err(MetaStoreError::migration)?;
+    transaction
+        .execute_batch(schema_v29_publication_retirement::SCHEMA)
+        .map_err(MetaStoreError::migration)?;
+    transaction
+        .execute_batch(schema_v29::RESTORE_LEGACY_ISOLATION_TRIGGERS)
+        .map_err(MetaStoreError::migration)?;
+    migration_v29::apply_v29_contract_migration(&transaction)?;
+    transaction
+        .execute(
+            "INSERT INTO schema_migrations (version, applied_at_seconds) VALUES (?1, 0)",
+            params![i64::from(schema_v29::VERSION)],
         )
         .map_err(MetaStoreError::migration)?;
     transaction.commit().map_err(MetaStoreError::migration)

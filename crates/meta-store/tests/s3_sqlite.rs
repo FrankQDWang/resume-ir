@@ -13,18 +13,19 @@ use meta_store::{
     ImportScanBudgetKind, ImportScanError, ImportScanErrorKind, ImportScanErrorOperation,
     ImportScanErrorSummary, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
     ImportTaskStatus, IndexStateStatus, IngestJob, IngestJobId, IngestJobKind, IngestJobStatus,
-    MetaStoreErrorClass, MetadataEncryptionState, MigrationRebuildBarrierToken, OcrPageCacheEntry,
-    OcrPageCacheKey, OcrPageCacheStatus, OcrWordBox, OwnedMetaStore, ReadMetaStore, ReasonCode,
-    ResumeVersion, ResumeVersionClassification, ResumeVersionId, ReviewDisposition,
-    SearchProjectionDigest, SearchPublicationCommit, SearchPublicationDraft,
-    SearchPublicationOutcome, SearchPublicationSession, SearchPublicationState,
-    SearchPublicationValidation, SearchRepairReason, SourceRevision, TerminalDocumentUpdate,
-    UnixTimestamp, VectorSnapshotDescriptor, WorkerTaskControl, WorkerTaskKind, CLASSIFIER_EPOCH,
+    MetaStoreErrorClass, MetadataEncryptionState, MigrationRebuildBarrierToken,
+    MigrationRebuildPublicationAttemptAcquire, OcrPageCacheEntry, OcrPageCacheKey,
+    OcrPageCacheStatus, OcrWordBox, OwnedMetaStore, ReadMetaStore, ReasonCode, ResumeVersion,
+    ResumeVersionClassification, ResumeVersionId, ReviewDisposition, SearchProjectionDigest,
+    SearchPublicationCommit, SearchPublicationDraft, SearchPublicationOutcome,
+    SearchPublicationSession, SearchPublicationState, SearchPublicationValidation,
+    SearchRepairReason, SourceRevision, TerminalDocumentUpdate, UnixTimestamp,
+    VectorSnapshotDescriptor, WorkerTaskControl, WorkerTaskKind, CLASSIFIER_EPOCH,
 };
 mod support;
 
 #[test]
-fn migrations_are_idempotent_and_schema_v28_is_queryable() {
+fn migrations_are_idempotent_and_schema_v29_is_queryable() {
     let store = EphemeralMetaStore::open_in_memory().unwrap();
 
     assert!(store.foreign_keys_enabled().unwrap());
@@ -34,10 +35,10 @@ fn migrations_are_idempotent_and_schema_v28_is_queryable() {
         first.applied_versions(),
         &[
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25, 26, 27, 28,
+            25, 26, 27, 28, 29,
         ]
     );
-    assert_eq!(store.schema_version().unwrap(), 28);
+    assert_eq!(store.schema_version().unwrap(), 29);
 
     for table_name in [
         "candidate",
@@ -68,13 +69,15 @@ fn migrations_are_idempotent_and_schema_v28_is_queryable() {
         "import_task_contract_binding",
         "import_task_source_disposition",
         "import_task_completion",
+        "artifact_repair_context",
+        "artifact_repair_attempt",
     ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 28);
+    assert_eq!(store.schema_version().unwrap(), 29);
 }
 
 #[test]
@@ -105,7 +108,7 @@ fn owner_created_metadata_store_survives_read_reopen_without_plaintext_header() 
         );
         assert_eq!(store.metadata_encryption_state().label(), "sqlcipher");
         store.upsert_document(&document).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 28);
+        assert_eq!(store.schema_version().unwrap(), 29);
     }
 
     let db_path = meta_store::metadata_store_path(&data_dir).unwrap();
@@ -131,7 +134,7 @@ fn owner_created_metadata_store_survives_read_reopen_without_plaintext_header() 
 
 #[test]
 fn read_open_rejects_an_unpublished_plaintext_database() {
-    let data_dir = temp_data_dir("unowned-plaintext-v28");
+    let data_dir = temp_data_dir("unowned-plaintext-v29");
     let db_path = data_dir.join("unpublished.sqlite3");
 
     fs::write(&db_path, b"SQLite format 3\0synthetic unpublished fixture").unwrap();
@@ -2066,7 +2069,7 @@ fn import_tasks_persist_without_document_foreign_key() {
 
     {
         let reopened = ReadMetaStore::open_data_dir(&data_dir).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 28);
+        assert_eq!(reopened.schema_version().unwrap(), 29);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -2788,7 +2791,7 @@ fn migration_commit_rejects_a_root_that_arrives_and_completes_during_snapshot_bu
         UnixTimestamp::from_unix_seconds(1_799_999_999),
     );
     let generation = "migration-new-root-race";
-    let session = prepare_empty_migration_publication(&store, generation);
+    let session = prepare_empty_migration_publication(&store, generation, &token);
 
     let new_root = import_task(
         "migration-new-root-completed",
@@ -2834,7 +2837,7 @@ fn migration_commit_rejects_a_changed_latest_task_head() {
         .unwrap()
         .unwrap();
     let generation = "migration-task-head-race";
-    let session = prepare_empty_migration_publication(&store, generation);
+    let session = prepare_empty_migration_publication(&store, generation, &token);
 
     let second = import_task(
         "migration-head-second",
@@ -2859,14 +2862,14 @@ fn migration_commit_rejects_a_changed_latest_task_head() {
 }
 
 #[test]
-fn migration_commit_abandons_validated_publication_after_repair_blocked_race() {
+fn migration_commit_leaves_validated_publication_for_cleanup_after_repair_blocked_race() {
     let (_directory, store) = support::owned_store();
     let token = support::acquire_migration_rebuild_barrier_owned(
         &store,
         UnixTimestamp::from_unix_seconds(1_799_999_999),
     );
     let generation = "migration-repair-blocked-race";
-    let session = prepare_empty_migration_publication(&store, generation);
+    let session = prepare_empty_migration_publication(&store, generation, &token);
     store
         .block_migration_rebuild(
             SearchRepairReason::RuntimeInvariant,
@@ -2890,8 +2893,12 @@ fn migration_commit_abandons_validated_publication_after_repair_blocked_race() {
 #[test]
 fn ordinary_publication_cannot_overwrite_repair_blocked() {
     let (_directory, store) = support::owned_store();
+    let token = support::acquire_migration_rebuild_barrier_owned(
+        &store,
+        UnixTimestamp::from_unix_seconds(1_799_999_999),
+    );
     let generation = "ordinary-repair-blocked";
-    let session = prepare_empty_migration_publication(&store, generation);
+    let session = prepare_empty_migration_publication(&store, generation, &token);
     store
         .block_migration_rebuild(
             SearchRepairReason::SourceUnavailable,
@@ -2905,7 +2912,7 @@ fn ordinary_publication_cannot_overwrite_repair_blocked() {
     assert_eq!(outcome, SearchPublicationOutcome::Superseded);
     assert_eq!(
         store.search_publication(generation).unwrap().unwrap().state,
-        SearchPublicationState::Abandoned
+        SearchPublicationState::Validated
     );
 }
 
@@ -3289,7 +3296,17 @@ fn publish_active_versions(store: &OwnedMetaStore, versions: &[&ResumeVersion]) 
         UnixTimestamp::from_unix_seconds(1_799_999_999),
     );
     let generation = "s3-active-projection";
-    let session = store.wait_for_search_publication_session().unwrap();
+    let mut session = store.wait_for_search_publication_session().unwrap();
+    assert!(matches!(
+        session
+            .acquire_migration_rebuild_publication_attempt(
+                &migration_barrier,
+                UnixTimestamp::from_unix_seconds(1_799_999_999),
+            )
+            .unwrap(),
+        MigrationRebuildPublicationAttemptAcquire::Started(_)
+            | MigrationRebuildPublicationAttemptAcquire::InProgress
+    ));
     assert_eq!(
         session
             .begin_search_publication(&SearchPublicationDraft {
@@ -3457,9 +3474,20 @@ fn migration_scan_scope(task: &ImportTask) -> ImportScanScope {
 fn prepare_empty_migration_publication(
     store: &OwnedMetaStore,
     generation: &str,
+    token: &MigrationRebuildBarrierToken,
 ) -> SearchPublicationSession {
     let projection_digest = SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap();
-    let session = store.wait_for_search_publication_session().unwrap();
+    let mut session = store.wait_for_search_publication_session().unwrap();
+    assert!(matches!(
+        session
+            .acquire_migration_rebuild_publication_attempt(
+                token,
+                UnixTimestamp::from_unix_seconds(1_800_000_009),
+            )
+            .unwrap(),
+        MigrationRebuildPublicationAttemptAcquire::Started(_)
+            | MigrationRebuildPublicationAttemptAcquire::InProgress
+    ));
     assert_eq!(
         session
             .begin_search_publication(&SearchPublicationDraft {
@@ -3530,7 +3558,7 @@ fn assert_migration_commit_superseded(
             .unwrap()
             .unwrap()
             .state,
-        SearchPublicationState::Abandoned
+        SearchPublicationState::Validated
     );
 }
 

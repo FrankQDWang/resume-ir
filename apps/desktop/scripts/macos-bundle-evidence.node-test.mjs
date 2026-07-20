@@ -12,6 +12,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
+import { createServer } from "node:net";
 import path from "node:path";
 import test from "node:test";
 
@@ -27,10 +28,17 @@ import {
   persistInstallReceipt,
   readInstallReceipt,
   removeInstallReceipt,
+  verifyInstallReceipt,
 } from "./macos-install-receipt.mjs";
 
 const TARGET = "aarch64-apple-darwin";
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
+const SOURCE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
+const verifySyntheticSignaturePolicy = async () => ({
+  code_signature: "ad_hoc_valid",
+  hardened_runtime: true,
+  library_validation_entitlement_scope: "embedding_runtime_only",
+});
 
 function syntheticMachO(payload) {
   const suffix = Buffer.from(payload);
@@ -49,8 +57,11 @@ async function writeExecutable(file, body) {
   await chmod(file, 0o755);
 }
 
-async function bundleFixture(context) {
-  const temporary = await mkdtemp(path.join(os.tmpdir(), "resume-ir-bundle-evidence-"));
+async function bundleFixture(
+  context,
+  temporaryPrefix = path.join(os.tmpdir(), "resume-ir-bundle-evidence-"),
+) {
+  const temporary = await mkdtemp(temporaryPrefix);
   const root = await realpath(temporary);
   context.after(() => rm(root, { recursive: true, force: true }));
   const appBundle = path.join(root, "resume-ir.app");
@@ -117,26 +128,80 @@ test("writes and verifies one canonical version-bound bundle composition", async
   const expected = await createBundleComposition({
     appBundle: fixture.appBundle,
     targetTriple: TARGET,
+    sourceCommit: SOURCE_COMMIT,
   });
   await writeBundleComposition({
     appBundle: fixture.appBundle,
     targetTriple: TARGET,
+    sourceCommit: SOURCE_COMMIT,
   });
+  const signatureDirectory = path.join(
+    fixture.appBundle,
+    "Contents",
+    "_CodeSignature",
+  );
+  await mkdir(signatureDirectory);
+  await writeFile(path.join(signatureDirectory, "CodeResources"), "signature-slot");
   const verified = await verifyBundleComposition({
     appBundle: fixture.appBundle,
     targetTriple: TARGET,
     expectedVersion: VERSION,
+    expectedSourceCommit: SOURCE_COMMIT,
+    verifySignaturePolicy: verifySyntheticSignaturePolicy,
   });
 
   assert.deepEqual(verified, expected);
   assert.equal(verified.executables.length, 4);
   assert.equal(verified.runtime_manifests.length, 3);
+  assert.equal(verified.app_files.length, 12);
+  assert.equal(
+    verified.app_files.some(({ file }) => file === "Contents/Info.plist"),
+    true,
+  );
+  assert.equal(
+    verified.app_files.some(({ file }) =>
+      file.endsWith(BUNDLE_COMPOSITION_FILE),
+    ),
+    false,
+  );
+  assert.match(verified.app_tree_digest, /^[a-f0-9]{64}$/);
   assert.match(verified.composition_digest, /^[a-f0-9]{64}$/);
   const manifestBody = await readFile(
     path.join(fixture.resources, BUNDLE_COMPOSITION_FILE),
     "utf8",
   );
   assert.equal(manifestBody, `${JSON.stringify(verified)}\n`);
+});
+
+test("binds v2 composition verification to the exact signature policy", async (context) => {
+  const fixture = await bundleFixture(context);
+  await writeBundleComposition({
+    appBundle: fixture.appBundle,
+    targetTriple: TARGET,
+    sourceCommit: SOURCE_COMMIT,
+  });
+  const request = {
+    appBundle: fixture.appBundle,
+    targetTriple: TARGET,
+    expectedVersion: VERSION,
+    expectedSourceCommit: SOURCE_COMMIT,
+  };
+  for (const verifySignaturePolicy of [
+    undefined,
+    async () => ({
+      code_signature: "ad_hoc_valid",
+      hardened_runtime: true,
+    }),
+    async () => ({
+      ...(await verifySyntheticSignaturePolicy()),
+      unknown_policy_field: "not-allowed",
+    }),
+  ]) {
+    await assert.rejects(
+      verifyBundleComposition({ ...request, verifySignaturePolicy }),
+      /bundle signature policy/,
+    );
+  }
 });
 
 test("fails closed on missing, non-canonical, unknown, or tampered bundle evidence", async (context) => {
@@ -146,11 +211,17 @@ test("fails closed on missing, non-canonical, unknown, or tampered bundle eviden
       appBundle: fixture.appBundle,
       targetTriple: TARGET,
       expectedVersion: VERSION,
+      expectedSourceCommit: SOURCE_COMMIT,
+      verifySignaturePolicy: verifySyntheticSignaturePolicy,
     }),
     /bundle composition evidence is unavailable/,
   );
 
-  await writeBundleComposition({ appBundle: fixture.appBundle, targetTriple: TARGET });
+  await writeBundleComposition({
+    appBundle: fixture.appBundle,
+    targetTriple: TARGET,
+    sourceCommit: SOURCE_COMMIT,
+  });
   const evidence = path.join(fixture.resources, BUNDLE_COMPOSITION_FILE);
   const manifest = JSON.parse(await readFile(evidence, "utf8"));
   await chmod(evidence, 0o600);
@@ -160,12 +231,18 @@ test("fails closed on missing, non-canonical, unknown, or tampered bundle eviden
       appBundle: fixture.appBundle,
       targetTriple: TARGET,
       expectedVersion: VERSION,
+      expectedSourceCommit: SOURCE_COMMIT,
+      verifySignaturePolicy: verifySyntheticSignaturePolicy,
     }),
     /bundle composition evidence is invalid/,
   );
 
   await rm(evidence);
-  await writeBundleComposition({ appBundle: fixture.appBundle, targetTriple: TARGET });
+  await writeBundleComposition({
+    appBundle: fixture.appBundle,
+    targetTriple: TARGET,
+    sourceCommit: SOURCE_COMMIT,
+  });
   await writeExecutable(
     path.join(fixture.appBundle, "Contents", "MacOS", "resume-daemon"),
     syntheticMachO("tampered-daemon"),
@@ -175,6 +252,8 @@ test("fails closed on missing, non-canonical, unknown, or tampered bundle eviden
       appBundle: fixture.appBundle,
       targetTriple: TARGET,
       expectedVersion: VERSION,
+      expectedSourceCommit: SOURCE_COMMIT,
+      verifySignaturePolicy: verifySyntheticSignaturePolicy,
     }),
     /bundle composition payload does not match/,
   );
@@ -192,6 +271,8 @@ test("fails closed on missing, non-canonical, unknown, or tampered bundle eviden
       appBundle: fixture.appBundle,
       targetTriple: TARGET,
       expectedVersion: VERSION,
+      expectedSourceCommit: SOURCE_COMMIT,
+      verifySignaturePolicy: verifySyntheticSignaturePolicy,
     }),
     /runtime pack does not match manifest/,
   );
@@ -225,6 +306,7 @@ test("rejects bundle payloads reached through an internal directory symlink", as
     createBundleComposition({
       appBundle: fixture.appBundle,
       targetTriple: TARGET,
+      sourceCommit: SOURCE_COMMIT,
     }),
     /bundle composition runtime manifest is invalid/,
   );
@@ -240,8 +322,191 @@ test("rejects an unbound fifth native payload", async (context) => {
     createBundleComposition({
       appBundle: fixture.appBundle,
       targetTriple: TARGET,
+      sourceCommit: SOURCE_COMMIT,
     }),
     /bundle composition native payload is invalid/,
+  );
+});
+
+test("binds every regular App file and rejects unbound resource drift", async (context) => {
+  const fixture = await bundleFixture(context);
+  const frontend = path.join(fixture.resources, "frontend");
+  const frontendAsset = path.join(frontend, "index.html");
+  await mkdir(frontend);
+  await writeFile(frontendAsset, "verified-frontend");
+  await writeBundleComposition({
+    appBundle: fixture.appBundle,
+    targetTriple: TARGET,
+    sourceCommit: SOURCE_COMMIT,
+  });
+
+  await writeFile(frontendAsset, "mutated-frontend");
+  await assert.rejects(
+    verifyBundleComposition({
+      appBundle: fixture.appBundle,
+      targetTriple: TARGET,
+      expectedVersion: VERSION,
+      expectedSourceCommit: SOURCE_COMMIT,
+      verifySignaturePolicy: verifySyntheticSignaturePolicy,
+    }),
+    /bundle composition payload does not match/,
+  );
+});
+
+test("orders the complete App file tree by UTF-8 bytes", async (context) => {
+  const fixture = await bundleFixture(context);
+  const byteEarlier = "\uE000.bin";
+  const byteLater = "\u{10000}.bin";
+  await writeFile(path.join(fixture.resources, byteLater), "later");
+  await writeFile(path.join(fixture.resources, byteEarlier), "earlier");
+
+  const composition = await writeBundleComposition({
+    appBundle: fixture.appBundle,
+    targetTriple: TARGET,
+    sourceCommit: SOURCE_COMMIT,
+  });
+  const unicodeFiles = composition.app_files
+    .map(({ file }) => file)
+    .filter((file) => file.endsWith(byteEarlier) || file.endsWith(byteLater));
+
+  assert.deepEqual(unicodeFiles, [
+    `Contents/Resources/${byteEarlier}`,
+    `Contents/Resources/${byteLater}`,
+  ]);
+  assert.deepEqual(
+    await verifyBundleComposition({
+      appBundle: fixture.appBundle,
+      targetTriple: TARGET,
+      expectedVersion: VERSION,
+      expectedSourceCommit: SOURCE_COMMIT,
+      verifySignaturePolicy: verifySyntheticSignaturePolicy,
+    }),
+    composition,
+  );
+});
+
+test("rejects unsafe entries inside the excluded code-signature subtree", async (context) => {
+  const fixture = await bundleFixture(context);
+  await writeBundleComposition({
+    appBundle: fixture.appBundle,
+    targetTriple: TARGET,
+    sourceCommit: SOURCE_COMMIT,
+  });
+  const signatureDirectory = path.join(
+    fixture.appBundle,
+    "Contents",
+    "_CodeSignature",
+  );
+  await mkdir(signatureDirectory);
+  await symlink(
+    path.join(fixture.resources, "icon.icns"),
+    path.join(signatureDirectory, "unsafe-link"),
+  );
+
+  await assert.rejects(
+    verifyBundleComposition({
+      appBundle: fixture.appBundle,
+      targetTriple: TARGET,
+      expectedVersion: VERSION,
+      expectedSourceCommit: SOURCE_COMMIT,
+      verifySignaturePolicy: verifySyntheticSignaturePolicy,
+    }),
+    /bundle composition App file tree is invalid/,
+  );
+});
+
+test(
+  "rejects irregular entries in the complete App file tree",
+  { skip: process.platform === "win32" },
+  async (context) => {
+    const fixture = await bundleFixture(context, "/tmp/ri-bundle-");
+    const socketPath = path.join(fixture.resources, "irregular.sock");
+    const server = createServer();
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+    try {
+      await assert.rejects(
+        createBundleComposition({
+          appBundle: fixture.appBundle,
+          targetTriple: TARGET,
+          sourceCommit: SOURCE_COMMIT,
+        }),
+        /bundle composition App file tree is invalid/,
+      );
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  },
+);
+
+test("rejects file 4097 at the cap before validating or hashing it", async (context) => {
+  const fixture = await bundleFixture(context);
+  const baseline = await createBundleComposition({
+    appBundle: fixture.appBundle,
+    targetTriple: TARGET,
+    sourceCommit: SOURCE_COMMIT,
+  });
+  const capDirectory = path.join(fixture.appBundle, "Contents", "zz-cap");
+  await mkdir(capDirectory);
+  const extraFileCount = 4096 - baseline.app_files.length + 1;
+  for (let start = 0; start < extraFileCount; start += 128) {
+    await Promise.all(
+      Array.from(
+        { length: Math.min(128, extraFileCount - start) },
+        (_, offset) => {
+          const index = start + offset;
+          const body = index === extraFileCount - 1 ? "" : "x";
+          return writeFile(
+            path.join(capDirectory, `file-${index.toString().padStart(4, "0")}`),
+            body,
+          );
+        },
+      ),
+    );
+  }
+
+  await assert.rejects(
+    createBundleComposition({
+      appBundle: fixture.appBundle,
+      targetTriple: TARGET,
+      sourceCommit: SOURCE_COMMIT,
+    }),
+    /bundle composition App file cap exceeded/,
+  );
+});
+
+test("installed receipt rejects added App files after evidence regeneration and ad-hoc resign", async (context) => {
+  const fixture = await bundleFixture(context);
+  const original = await writeBundleComposition({
+    appBundle: fixture.appBundle,
+    targetTriple: TARGET,
+    sourceCommit: SOURCE_COMMIT,
+  });
+  const receipt = createInstallReceipt({
+    composition: original,
+    dmgSha256: sha256("verified-dmg"),
+  });
+  await writeFile(path.join(fixture.resources, "injected.js"), "injected");
+  await rm(path.join(fixture.resources, BUNDLE_COMPOSITION_FILE));
+  await writeBundleComposition({
+    appBundle: fixture.appBundle,
+    targetTriple: TARGET,
+    sourceCommit: SOURCE_COMMIT,
+  });
+  const resigned = await verifyBundleComposition({
+    appBundle: fixture.appBundle,
+    targetTriple: TARGET,
+    expectedVersion: VERSION,
+    expectedSourceCommit: SOURCE_COMMIT,
+    verifySignaturePolicy: verifySyntheticSignaturePolicy,
+  });
+
+  assert.notEqual(resigned.composition_digest, original.composition_digest);
+  assert.throws(
+    () => verifyInstallReceipt({ receipt, composition: resigned }),
+    /install receipt does not match bundle composition/,
   );
 });
 
@@ -252,6 +517,7 @@ test("persists and reloads an owner-only receipt bound to the verified compositi
   const composition = await createBundleComposition({
     appBundle: fixture.appBundle,
     targetTriple: TARGET,
+    sourceCommit: SOURCE_COMMIT,
   });
   const receipt = createInstallReceipt({
     composition,
@@ -272,13 +538,14 @@ test("receipt replacement is atomic and rejects drift or unsafe roots", async (c
   const composition = await createBundleComposition({
     appBundle: fixture.appBundle,
     targetTriple: TARGET,
+    sourceCommit: SOURCE_COMMIT,
   });
   const first = createInstallReceipt({
     composition,
     dmgSha256: sha256("first-dmg"),
   });
   const second = createInstallReceipt({
-    composition: { ...composition, version: "0.1.2" },
+    composition: { ...composition, version: "0.1.3" },
     dmgSha256: sha256("second-dmg"),
   });
   await persistInstallReceipt({ applicationSupportRoot, receipt: first });

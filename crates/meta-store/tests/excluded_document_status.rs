@@ -1,10 +1,11 @@
 use meta_store::{
     ActiveSearchProjection, ClassificationStatus, ContentDigest, Document, DocumentId,
     DocumentStatus, EphemeralMetaStore, FileExtension, FullTextSnapshotDescriptor,
-    IdentityInsertOutcome, OwnedMetaStore, ReasonCode, ResumeVersion, ResumeVersionClassification,
-    ResumeVersionId, ReviewDisposition, SearchProjectionDigest, SearchPublicationCommit,
-    SearchPublicationDraft, SearchPublicationOutcome, SearchPublicationValidation, SourceRevision,
-    TerminalDocumentUpdate, UnixTimestamp, VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
+    IdentityInsertOutcome, MigrationRebuildPublicationAttemptAcquire, OwnedMetaStore, ReasonCode,
+    ResumeVersion, ResumeVersionClassification, ResumeVersionId, ReviewDisposition,
+    SearchProjectionDigest, SearchPublicationCommit, SearchPublicationDraft,
+    SearchPublicationOutcome, SearchPublicationValidation, SourceRevision, TerminalDocumentUpdate,
+    UnixTimestamp, VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
 };
 
 mod support;
@@ -33,7 +34,7 @@ fn document(status: DocumentStatus) -> Document {
 }
 
 #[test]
-fn excluded_status_round_trips_in_v28_without_deletion() {
+fn excluded_status_round_trips_in_v29_without_deletion() {
     let store = EphemeralMetaStore::open_in_memory().unwrap();
     store.run_migrations().unwrap();
     let excluded = document(DocumentStatus::Excluded);
@@ -43,7 +44,7 @@ fn excluded_status_round_trips_in_v28_without_deletion() {
     let persisted = store.document_by_id(&excluded.id).unwrap().unwrap();
     assert_eq!(persisted.status, DocumentStatus::Excluded);
     assert!(!persisted.is_deleted);
-    assert_eq!(store.schema_version().unwrap(), 28);
+    assert_eq!(store.schema_version().unwrap(), 29);
 }
 
 #[test]
@@ -161,7 +162,19 @@ fn publish(
         }))
         .unwrap();
     let empty_coverage = SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap();
-    let session = store.wait_for_search_publication_session().unwrap();
+    let mut session = store.wait_for_search_publication_session().unwrap();
+    if let Some(barrier) = migration_barrier.as_ref() {
+        assert!(matches!(
+            session
+                .acquire_migration_rebuild_publication_attempt(
+                    barrier,
+                    timestamp(1_800_100_009 + expected_visible_epoch as i64),
+                )
+                .unwrap(),
+            MigrationRebuildPublicationAttemptAcquire::Started(_)
+                | MigrationRebuildPublicationAttemptAcquire::InProgress
+        ));
+    }
     assert_eq!(
         session
             .begin_search_publication(&SearchPublicationDraft {

@@ -2,6 +2,8 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::num::NonZeroUsize;
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -337,7 +339,8 @@ fn corrupted_published_generation_is_rebuilt_before_search() {
         .join(&generation);
     fs::remove_dir_all(&corrupted).unwrap();
 
-    let mut daemon = DaemonHarness::start(&corpus.data_dir, 1);
+    let mut daemon = DaemonHarness::start_with_index_worker(&corpus.data_dir, 1);
+    wait_for_repaired_generation(&mut daemon, &corpus.store, &generation);
     let response = daemon.search(
         "cache-must-not-fallback",
         serde_json::json!({"query": "cacheoldsentry", "mode": "fulltext"}),
@@ -378,7 +381,7 @@ fn client_disconnect_only_ends_that_connection() {
 }
 
 #[test]
-fn startup_repair_converges_before_accepting_a_search_request() {
+fn persisted_startup_repair_converges_before_the_first_post_repair_search() {
     let corpus = SyntheticCorpus::single(
         "repairing-context",
         "repairing.txt",
@@ -394,7 +397,9 @@ fn startup_repair_converges_before_accepting_a_search_request() {
         )
         .unwrap();
     drop(store);
-    let mut daemon = DaemonHarness::start(&corpus.data_dir, 1);
+    let repair_generation = state.generation.unwrap();
+    let mut daemon = DaemonHarness::start_with_index_worker(&corpus.data_dir, 1);
+    wait_for_repaired_generation(&mut daemon, &corpus.store, &repair_generation);
 
     let response = daemon.search(
         "repairing-request-context",
@@ -411,6 +416,199 @@ fn startup_repair_converges_before_accepting_a_search_request() {
         meta_store::SearchProjectionServiceState::Ready
     );
     assert_eq!(state.repair_reason, None);
+    corpus.remove();
+}
+
+#[test]
+fn status_only_does_not_deep_open_a_corrupt_search_payload() {
+    let corpus = SyntheticCorpus::single(
+        "status-shallow-probe",
+        "status-shallow.txt",
+        resume_text("statusshallowsentry", "Synthetic Shallow Status Candidate"),
+    );
+    let generation = corrupt_active_fulltext_payload(&corpus);
+    let mut daemon = DaemonHarness::start(&corpus.data_dir, 1);
+
+    let response = daemon.status();
+    assert_eq!(response.status_code, 200, "{}", response.raw);
+    daemon.finish();
+
+    let state = corpus.store.search_projection_state().unwrap();
+    assert_eq!(
+        state.service_state,
+        meta_store::SearchProjectionServiceState::Ready
+    );
+    assert_eq!(state.generation.as_deref(), Some(generation.as_str()));
+    corpus.remove();
+}
+
+#[test]
+fn routine_index_ticks_use_manifests_without_deep_opening_payloads() {
+    let corpus = SyntheticCorpus::single(
+        "routine-shallow-probe",
+        "routine-shallow.txt",
+        resume_text("routineshallowsentry", "Synthetic Shallow Tick Candidate"),
+    );
+    let generation = corrupt_active_fulltext_payload(&corpus);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&corpus.data_dir),
+            "run",
+            "--foreground",
+            "--work-index",
+            "--worker-interval-ms",
+            "1",
+            "--max-worker-ticks",
+            "3",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "daemon stderr:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+
+    let state = corpus.store.search_projection_state().unwrap();
+    assert_eq!(
+        state.service_state,
+        meta_store::SearchProjectionServiceState::Ready
+    );
+    assert_eq!(state.generation.as_deref(), Some(generation.as_str()));
+    corpus.remove();
+}
+
+#[test]
+fn closed_bootstrap_stdout_does_not_interrupt_query_fault_repair_or_final_accepted_response() {
+    let corpus = SyntheticCorpus::single(
+        "query-fault-repair",
+        "query-fault.txt",
+        resume_text("queryfaultsentry", "Synthetic Query Fault Candidate"),
+    );
+    let corrupt_generation = corrupt_active_fulltext_payload(&corpus);
+    let mut daemon = DaemonHarness::start_with_index_worker(&corpus.data_dir, 2);
+
+    let failed = daemon.search(
+        "query-fault-first",
+        serde_json::json!({"query": "queryfaultsentry", "mode": "fulltext"}),
+    );
+    assert_eq!(failed.status_code, 503, "{}", failed.raw);
+    assert_eq!(failed.body["error"]["code"], "QUERY_SERVICE_UNAVAILABLE");
+    wait_for_repaired_generation(&mut daemon, &corpus.store, &corrupt_generation);
+
+    let recovered = daemon.search(
+        "query-fault-recovered",
+        serde_json::json!({"query": "queryfaultsentry", "mode": "fulltext"}),
+    );
+    assert_ok_search(&recovered, "query-fault-recovered");
+    assert_eq!(recovered.body["result_count"], 1);
+    daemon.finish();
+    corpus.remove();
+}
+
+#[test]
+fn generation_local_key_fault_is_repaired_without_restarting_daemon() {
+    let corpus = SyntheticCorpus::single(
+        "query-key-fault-repair",
+        "query-key-fault.txt",
+        resume_text("querykeyfaultsentry", "Synthetic Query Key Fault Candidate"),
+    );
+    let corrupt_generation = corrupt_active_fulltext_key(&corpus);
+    let mut daemon = DaemonHarness::start_with_index_worker(&corpus.data_dir, 2);
+
+    let failed = daemon.search(
+        "query-key-fault-first",
+        serde_json::json!({"query": "querykeyfaultsentry", "mode": "fulltext"}),
+    );
+    assert_eq!(failed.status_code, 503, "{}", failed.raw);
+    assert_eq!(failed.body["error"]["code"], "QUERY_SERVICE_UNAVAILABLE");
+    wait_for_repaired_generation(&mut daemon, &corpus.store, &corrupt_generation);
+
+    let recovered = daemon.search(
+        "query-key-fault-recovered",
+        serde_json::json!({"query": "querykeyfaultsentry", "mode": "fulltext"}),
+    );
+    assert_ok_search(&recovered, "query-key-fault-recovered");
+    assert_eq!(recovered.body["result_count"], 1);
+    daemon.finish();
+    corpus.remove();
+}
+
+#[cfg(unix)]
+#[test]
+fn unsafe_artifact_root_blocks_services_without_exiting_daemon() {
+    let corpus = SyntheticCorpus::single(
+        "unsafe-artifact-root",
+        "unsafe-root.txt",
+        resume_text("unsaferootsentry", "Synthetic Unsafe Root Candidate"),
+    );
+    let ready = corpus.store.search_projection_state().unwrap();
+    let snapshots = corpus.data_dir.join("search-index/snapshots");
+    let real_snapshots = corpus.data_dir.join("search-index/snapshots-real");
+    fs::rename(&snapshots, &real_snapshots).unwrap();
+    symlink(&real_snapshots, &snapshots).unwrap();
+    let mut daemon = DaemonHarness::start_with_index_worker(&corpus.data_dir, 4);
+    wait_for_repair_blocked(&mut daemon, &corpus.store);
+
+    let status = daemon.status();
+    assert_eq!(status.status_code, 200, "{}", status.raw);
+    assert_eq!(status.body["status"], "degraded");
+    assert_eq!(status.body["process_state"], "ready");
+    assert_eq!(status.body["service_state"], "degraded");
+    assert_eq!(status.body["services"]["metadata"], "ready");
+    assert_eq!(status.body["services"]["query"], "unavailable");
+    assert_eq!(status.body["repair_reason"], "runtime_invariant");
+    assert_eq!(status.body["repair_progress"]["phase"], "blocked");
+    assert_eq!(status.body["error"]["code"], "QUERY_SERVICE_UNAVAILABLE");
+    assert_eq!(
+        status.body["error"]["action"], "repair_required",
+        "{}",
+        status.raw
+    );
+
+    let selection = serde_json::json!({
+        "doc_id": corpus.target.document_id.as_str(),
+        "version_id": corpus.target.resume_version_id.as_str(),
+        "visible_epoch": ready.visible_epoch,
+    });
+    let detail = daemon.detail("unsafe-root-detail", &selection);
+    assert_eq!(detail.status_code, 503, "{}", detail.raw);
+    assert_eq!(detail.body["request_id"], "unsafe-root-detail");
+    assert_eq!(detail.body["error"]["code"], "QUERY_SERVICE_UNAVAILABLE");
+    assert_eq!(detail.body["error"]["action"], "repair_required");
+
+    let search = daemon.search(
+        "unsafe-root-search",
+        serde_json::json!({"query": "unsaferootsentry", "mode": "fulltext"}),
+    );
+    assert_eq!(search.status_code, 503, "{}", search.raw);
+    assert_eq!(search.body["request_id"], "unsafe-root-search");
+    assert_eq!(search.body["error"]["code"], "QUERY_SERVICE_UNAVAILABLE");
+    assert_eq!(search.body["error"]["action"], "repair_required");
+
+    daemon.assert_running("after unsafe-root detail and search requests");
+    let next_status = daemon.status();
+    assert_eq!(next_status.status_code, 200, "{}", next_status.raw);
+    assert_eq!(next_status.body["status"], "degraded");
+    assert_eq!(next_status.body["process_state"], "ready");
+    assert_eq!(next_status.body["services"]["query"], "unavailable");
+    assert_eq!(next_status.body["repair_reason"], "runtime_invariant");
+    daemon.finish();
+
+    let blocked = corpus.store.search_projection_state().unwrap();
+    assert_eq!(
+        blocked.service_state,
+        meta_store::SearchProjectionServiceState::RepairBlocked
+    );
+    assert_eq!(
+        blocked.repair_reason,
+        Some(meta_store::SearchRepairReason::RuntimeInvariant)
+    );
+    assert_eq!(blocked.generation, ready.generation);
+    assert_eq!(blocked.visible_epoch, ready.visible_epoch);
     corpus.remove();
 }
 
@@ -571,6 +769,94 @@ fn resume_text(keyword: &str, name: &str) -> String {
     )
 }
 
+fn corrupt_active_fulltext_payload(corpus: &SyntheticCorpus) -> String {
+    let generation = corpus
+        .store
+        .search_projection_state()
+        .unwrap()
+        .generation
+        .unwrap();
+    fs::write(
+        corpus
+            .data_dir
+            .join("search-index/snapshots")
+            .join(&generation)
+            .join("fulltext.snapshot.enc"),
+        b"synthetic corrupt encrypted payload",
+    )
+    .unwrap();
+    generation
+}
+
+fn corrupt_active_fulltext_key(corpus: &SyntheticCorpus) -> String {
+    let generation = corpus
+        .store
+        .search_projection_state()
+        .unwrap()
+        .generation
+        .unwrap();
+    fs::write(
+        corpus
+            .data_dir
+            .join("search-index/snapshots")
+            .join(&generation)
+            .join("fulltext.snapshot.key-v3"),
+        b"synthetic corrupt generation-local key",
+    )
+    .unwrap();
+    generation
+}
+
+fn wait_for_repaired_generation(
+    daemon: &mut DaemonHarness,
+    store: &ReadMetaStore,
+    corrupt_generation: &str,
+) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        let state = store.search_projection_state().unwrap();
+        if state.service_state == meta_store::SearchProjectionServiceState::Ready
+            && state.generation.as_deref() != Some(corrupt_generation)
+        {
+            return;
+        }
+        if let Some(status) = daemon
+            .child
+            .as_mut()
+            .unwrap()
+            .try_wait()
+            .expect("poll daemon during artifact repair")
+        {
+            panic!("daemon exited during artifact repair: {status}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("reported query artifact fault did not converge");
+}
+
+fn wait_for_repair_blocked(daemon: &mut DaemonHarness, store: &ReadMetaStore) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        let state = store.search_projection_state().unwrap();
+        if state.service_state == meta_store::SearchProjectionServiceState::RepairBlocked
+            && state.repair_reason == Some(meta_store::SearchRepairReason::RuntimeInvariant)
+        {
+            return;
+        }
+        if let Some(status) = daemon
+            .child
+            .as_mut()
+            .unwrap()
+            .try_wait()
+            .expect("poll daemon during artifact block")
+        {
+            panic!("daemon exited during artifact block: {status}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("unsafe artifact layout did not become repair-blocked");
+}
+
 struct DaemonHarness {
     child: Option<Child>,
     endpoint: String,
@@ -579,17 +865,29 @@ struct DaemonHarness {
 
 impl DaemonHarness {
     fn start(data_dir: &Path, max_requests: usize) -> Self {
+        Self::start_with_args(data_dir, max_requests, &[])
+    }
+
+    fn start_with_index_worker(data_dir: &Path, max_requests: usize) -> Self {
+        Self::start_with_args(
+            data_dir,
+            max_requests,
+            &["--work-index", "--worker-interval-ms", "10"],
+        )
+    }
+
+    fn start_with_args(data_dir: &Path, max_requests: usize, extra: &[&str]) -> Self {
+        let max_requests = max_requests.to_string();
+        let mut args = vec!["--data-dir", path_str(data_dir), "run", "--foreground"];
+        args.extend_from_slice(extra);
+        args.extend_from_slice(&[
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            max_requests.as_str(),
+        ]);
         let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
-            .args([
-                "--data-dir",
-                path_str(data_dir),
-                "run",
-                "--foreground",
-                "--ipc-listen",
-                "127.0.0.1:0",
-                "--max-requests",
-                &max_requests.to_string(),
-            ])
+            .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -602,6 +900,13 @@ impl DaemonHarness {
             endpoint,
             token,
         }
+    }
+
+    fn status(&self) -> HttpResponse {
+        self.request(&format!(
+            "GET /status HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+            self.address()
+        ))
     }
 
     fn search(&self, request_id: &str, payload: serde_json::Value) -> HttpResponse {
@@ -622,6 +927,22 @@ impl DaemonHarness {
         ))
     }
 
+    fn detail(&self, request_id: &str, selection: &serde_json::Value) -> HttpResponse {
+        let body = serde_json::json!({
+            "schema_version": "resume-ir.detail-request.v3",
+            "request_id": request_id,
+            "selection": selection,
+        })
+        .to_string();
+        self.request(&format!(
+            "POST /details HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nAuthorization: Bearer {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            self.address(),
+            self.token,
+            body.len(),
+            body
+        ))
+    }
+
     fn disconnect_mid_request(&self) {
         let mut stream = TcpStream::connect(self.address()).unwrap();
         let prefix = format!(
@@ -635,11 +956,54 @@ impl DaemonHarness {
     }
 
     fn request(&self, request: &str) -> HttpResponse {
-        let mut stream = TcpStream::connect(self.address()).unwrap();
-        stream.write_all(request.as_bytes()).unwrap();
-        let mut raw = String::new();
-        stream.read_to_string(&mut raw).unwrap();
+        const HTTP_DEADLINE: Duration = Duration::from_secs(5);
+        const MAX_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
+
+        let deadline = Instant::now() + HTTP_DEADLINE;
+        let address = self.address().parse().expect("parse daemon IPC address");
+        let mut stream = TcpStream::connect_timeout(&address, HTTP_DEADLINE)
+            .expect("connect to daemon IPC before deadline");
+        stream
+            .set_write_timeout(Some(deadline.saturating_duration_since(Instant::now())))
+            .expect("configure bounded daemon IPC request write");
+        stream
+            .write_all(request.as_bytes())
+            .expect("write daemon IPC request before deadline");
+        let mut bytes = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "daemon IPC response deadline elapsed");
+            stream
+                .set_read_timeout(Some(remaining))
+                .expect("configure bounded daemon IPC response read");
+            match stream.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => {
+                    assert!(
+                        bytes.len().saturating_add(read) <= MAX_HTTP_RESPONSE_BYTES,
+                        "daemon IPC response exceeded {MAX_HTTP_RESPONSE_BYTES} bytes"
+                    );
+                    bytes.extend_from_slice(&buffer[..read]);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => panic!("read daemon IPC response before deadline: {error}"),
+            }
+        }
+        let raw = String::from_utf8(bytes).expect("daemon IPC response is UTF-8");
         HttpResponse::parse(raw)
+    }
+
+    fn assert_running(&mut self, context: &str) {
+        assert!(
+            self.child
+                .as_mut()
+                .expect("daemon child is owned")
+                .try_wait()
+                .expect("poll daemon child")
+                .is_none(),
+            "daemon exited {context}"
+        );
     }
 
     fn address(&self) -> &str {

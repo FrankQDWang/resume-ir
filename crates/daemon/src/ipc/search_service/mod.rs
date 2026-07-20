@@ -7,19 +7,23 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 mod admission;
+mod artifact_fault;
 mod batch;
 mod cancellation;
 mod runtime;
 mod wire;
 
 pub(crate) use admission::{BatchAdmissionPermit, ClientClass};
+pub(crate) use artifact_fault::{
+    artifact_fault_latch, ArtifactFaultReceiver, ArtifactFaultReporter,
+};
 pub(crate) use batch::BatchWriter;
 pub(crate) use batch::{
     overload_body as batch_overload_body, parse_request as parse_batch_request,
 };
 pub(crate) use wire::{
-    error_body, overload_body, parse_cancel_request, parse_request, valid_opaque_id, CancelRequest,
-    RequestEnvelope,
+    error_body, overload_body, parse_cancel_request, parse_request, service_error_body,
+    valid_opaque_id, CancelRequest, RequestEnvelope,
 };
 
 use crate::search_command::daemon_search_cancelled_output;
@@ -45,7 +49,11 @@ pub(crate) struct SearchService {
 }
 
 impl SearchService {
-    pub(crate) fn start(data_dir: &Path, config: SearchRuntimeConfig) -> crate::Result<Self> {
+    pub(crate) fn start(
+        data_dir: &Path,
+        config: SearchRuntimeConfig,
+        artifact_fault_reporter: Option<ArtifactFaultReporter>,
+    ) -> crate::Result<Self> {
         let queue = Arc::new(SearchQueue::default());
         let admission = Arc::new(AdmissionState::new());
         let batch_active = Arc::new(AtomicBool::new(false));
@@ -58,6 +66,7 @@ impl SearchService {
             Arc::clone(&queue),
             Arc::clone(&cancellations),
             deadline_sender.clone(),
+            artifact_fault_reporter,
         );
         Ok(Self {
             queue,
@@ -232,16 +241,89 @@ impl SearchService {
             .map_err(crate::DaemonError::response_sink)
     }
 
-    pub(crate) fn finish(self) -> crate::Result<()> {
-        self.queue.shutdown();
-        let worker_result = self
-            .worker
-            .join()
-            .map_err(|_| crate::DaemonError::control_plane("query worker thread panicked"))?;
+    pub(crate) fn shutdown(self) -> crate::Result<()> {
+        let queued = self.queue.close_and_cancel();
+        for mut task in queued {
+            task.control.cancellation.request();
+            let status = if task
+                .control
+                .completed
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                let output = daemon_search_cancelled_output(
+                    &task.envelope.request_id,
+                    task.visible_epoch,
+                    task.args.mode,
+                    task.deadline.elapsed(),
+                    task.query_parse_duration,
+                );
+                let _ = task.reply.write_output(output);
+                CancelStatus::Cancelled
+            } else {
+                CancelStatus::Complete
+            };
+            self.cancellations
+                .complete(task.envelope.cancel_token.as_deref(), status);
+            task.admission_permit.release();
+        }
+        let _ = self.deadline_sender.send(DeadlineCommand::Wake);
         let _ = self.deadline_sender.send(DeadlineCommand::Shutdown);
-        self.deadline_worker
-            .join()
-            .map_err(|_| crate::DaemonError::control_plane("query deadline monitor panicked"))?;
-        worker_result
+
+        let worker_result = self.worker.join();
+        let deadline_result = self.deadline_worker.join();
+        match (worker_result, deadline_result) {
+            (Err(_), _) => Err(crate::DaemonError::control_plane(
+                "query worker thread panicked",
+            )),
+            (_, Err(_)) => Err(crate::DaemonError::control_plane(
+                "query deadline monitor panicked",
+            )),
+            (Ok(Err(error)), Ok(())) => Err(error),
+            (Ok(Ok(())), Ok(())) => Ok(()),
+        }
+    }
+
+    /// Stops accepting work and completes every request that the IPC listener
+    /// already admitted. This is used only for a bounded request-limit exit;
+    /// it must not turn a test/control-plane limit into request cancellation.
+    pub(crate) fn drain_admitted(self) -> crate::Result<()> {
+        self.queue.close_for_drain();
+        let worker_result = self.worker.join();
+        let _ = self.deadline_sender.send(DeadlineCommand::Shutdown);
+        let deadline_result = self.deadline_worker.join();
+        match (worker_result, deadline_result) {
+            (Err(_), _) => Err(crate::DaemonError::control_plane(
+                "query worker thread panicked",
+            )),
+            (_, Err(_)) => Err(crate::DaemonError::control_plane(
+                "query deadline monitor panicked",
+            )),
+            (Ok(Err(error)), Ok(())) => Err(error),
+            (Ok(Ok(())), Ok(())) => Ok(()),
+        }
+    }
+
+    /// Cancels all request work and deliberately detaches the data-plane
+    /// threads because the caller is returning a process-fatal control-plane
+    /// error. The process supervisor owns the bounded containment deadline;
+    /// this path must never wait on an uninterruptible artifact open.
+    pub(crate) fn abort_for_process_exit(self) {
+        let queued = self.queue.close_and_cancel();
+        for task in queued {
+            task.control.cancellation.request();
+            task.control.completed.store(true, Ordering::Release);
+            self.cancellations.complete(
+                task.envelope.cancel_token.as_deref(),
+                CancelStatus::Cancelled,
+            );
+            task.admission_permit.release();
+        }
+        let _ = self.deadline_sender.send(DeadlineCommand::Shutdown);
+        // JoinHandle::drop is intentional only in this process-fatal path.
+        // Returning the fatal event immediately lets process containment stop
+        // any non-cooperative external data-plane operation.
+        drop(self.worker);
+        drop(self.deadline_worker);
     }
 }

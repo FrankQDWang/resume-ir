@@ -418,6 +418,7 @@ fn daemon_requires_bearer_token_for_import_command_ipc() {
 #[test]
 fn daemon_authenticates_and_queues_import_command_over_ipc() {
     let data_dir = temp_dir("ipc-import-command-data");
+    seed_snapshot_state(&data_dir);
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
@@ -455,7 +456,10 @@ fn daemon_authenticates_and_queues_import_command_over_ipc() {
     assert!(!response.contains("PRIVATE"));
     assert!(status_response.contains("\"import_tasks_queued\":1"));
     assert!(status_response.contains("\"latest_import_scan\""));
-    assert!(status_response.contains("\"files_discovered\":0"));
+    assert!(
+        status_response.contains("\"files_discovered\":0"),
+        "{status_response}"
+    );
     assert!(status_response.contains("\"scan_profile\":\"explicit\""));
     assert!(!status_response.contains(path_str(&data_dir)));
     assert!(!status_response.contains(path_str(&fixture_root)));
@@ -931,9 +935,14 @@ fn daemon_rejects_malformed_ipc_request_without_stopping() {
     assert!(malformed.contains("HTTP/1.1 400 Bad Request"));
     assert!(status_response.contains("HTTP/1.1 200 OK"));
     assert!(status_response.contains("\"process_state\":\"ready\""));
-    assert!(status_response.contains("\"status\":\"ok\""));
-    assert!(status_response.contains("\"service_state\":\"ready\""));
-    assert!(status_response.contains("\"repair_reason\":null"));
+    assert!(
+        status_response.contains("\"status\":\"repairing\""),
+        "{status_response}"
+    );
+    assert!(status_response.contains("\"service_state\":\"repairing\""));
+    assert!(status_response.contains("\"metadata\":\"ready\""));
+    assert!(status_response.contains("\"query\":\"repairing\""));
+    assert!(status_response.contains("\"repair_reason\":\"migration_rebuild\""));
 
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
@@ -1653,6 +1662,87 @@ fn daemon_does_not_start_import_worker_when_ipc_bind_fails() {
 }
 
 #[test]
+fn daemon_binds_control_plane_before_starting_search_artifact_recovery() {
+    let data_dir = temp_dir("ipc-bind-before-artifact-recovery-data");
+    seed_snapshot_state(&data_dir);
+    let state_before = ReadMetaStore::open_data_dir(&data_dir)
+        .unwrap()
+        .search_projection_state()
+        .unwrap();
+    fs::remove_dir_all(data_dir.join("search-index")).unwrap();
+    let blocker = TcpListener::bind("127.0.0.1:0").expect("bind blocker listener");
+    let blocked_addr = blocker.local_addr().unwrap().to_string();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--work-index",
+            "--ipc-listen",
+            &blocked_addr,
+        ])
+        .output()
+        .expect("run resume-daemon with occupied ipc port");
+
+    assert!(!output.status.success());
+    assert_fatal_event(
+        &String::from_utf8_lossy(&output.stderr),
+        "control_plane_failure",
+        "restartable",
+    );
+    let state_after = ReadMetaStore::open_data_dir(&data_dir)
+        .unwrap()
+        .search_projection_state()
+        .unwrap();
+    assert_eq!(state_after, state_before);
+    assert!(!data_dir.join("search-index").exists());
+
+    remove_dir(&data_dir);
+}
+
+#[test]
+fn ipc_only_mode_serves_status_without_implicitly_repairing_search_artifacts() {
+    let data_dir = temp_dir("ipc-only-does-not-repair-artifacts-data");
+    seed_snapshot_state(&data_dir);
+    let state_before = ReadMetaStore::open_data_dir(&data_dir)
+        .unwrap()
+        .search_projection_state()
+        .unwrap();
+    fs::remove_dir_all(data_dir.join("search-index")).unwrap();
+    let vector_root_before = fs::read_dir(data_dir.join("vector-index"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    let mut child = start_ipc_daemon(&data_dir, 1);
+
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
+    let response = http_get(&endpoint);
+    assert!(response.contains("HTTP/1.1 200 OK"));
+    assert!(response.contains(r#""process_state":"ready""#));
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty());
+
+    let state_after = ReadMetaStore::open_data_dir(&data_dir)
+        .unwrap()
+        .search_projection_state()
+        .unwrap();
+    assert_eq!(state_after, state_before);
+    assert!(!data_dir.join("search-index").exists());
+    assert_eq!(
+        fs::read_dir(data_dir.join("vector-index"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>(),
+        vector_root_before
+    );
+
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn daemon_rejects_worker_tick_limit_in_combined_ipc_worker_mode() {
     let data_dir = temp_dir("ipc-worker-tick-limit-data");
     let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
@@ -2329,7 +2419,13 @@ fn seed_snapshot_state(data_dir: &Path) {
     )
     .unwrap();
     let store = open_owned_store(data_dir);
-    let now = UnixTimestamp::from_unix_seconds(1_800_000_000);
+    let now = UnixTimestamp::from_unix_seconds(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .saturating_sub(1) as i64,
+    );
     let task = ImportTask {
         id: ImportTaskId::from_non_secret_parts(&["s20", "status-publication"]),
         root_path: path_str(&root).to_string(),

@@ -432,6 +432,61 @@ async function finishUpgradeCommit(options, tx, state, dependencies, paths) {
     await tx.phase("upgrade_receipt_committed");
   } else if (!sameReceipt(receipt, options.journal.new_receipt)) {
     throw transactionError("lifecycle receipt does not match journal");
+  } else if (
+    new Set([
+      "upgrade_prepared",
+      "upgrade_before_stage_publish",
+      "upgrade_stage_ready",
+      "upgrade_before_backup",
+      "upgrade_backup_ready",
+      "upgrade_before_promotion",
+      "upgrade_target_promoted",
+      "upgrade_before_receipt_commit",
+    ]).has(tx.journal.phase)
+  ) {
+    await tx.phase("upgrade_receipt_committed");
+  }
+  if (options.readReceiptSet || options.removeLegacyReceipt) {
+    if (
+      typeof options.readReceiptSet !== "function" ||
+      typeof options.removeLegacyReceipt !== "function"
+    ) {
+      throw transactionError("legacy receipt migration contract is incomplete");
+    }
+    let receiptSet = await options.readReceiptSet();
+    if (
+      !sameReceipt(receiptSet.current_receipt, options.journal.new_receipt) ||
+      !["both_valid", "current_only"].includes(receiptSet.state)
+    ) {
+      throw transactionError("lifecycle receipt does not match journal");
+    }
+    if (receiptSet.state === "both_valid") {
+      if (!sameReceipt(receiptSet.legacy_receipt, options.journal.old_receipt)) {
+        throw transactionError("lifecycle receipt does not match journal");
+      }
+      await tx.phase("upgrade_before_legacy_receipt_removal");
+      await options.removeLegacyReceipt({
+        applicationSupportRoot: options.applicationSupportRoot,
+        expectedReceipt: options.journal.old_receipt,
+      });
+      receiptSet = await options.readReceiptSet();
+      if (
+        receiptSet.state !== "current_only" ||
+        !sameReceipt(receiptSet.current_receipt, options.journal.new_receipt)
+      ) {
+        throw transactionError("legacy receipt removal is incomplete");
+      }
+      await tx.phase("upgrade_legacy_receipt_removed");
+    } else if (
+      !new Set([
+        "upgrade_legacy_receipt_removed",
+        "upgrade_before_backup_cleanup",
+        "upgrade_backup_tombstoned",
+        "upgrade_complete",
+      ]).has(tx.journal.phase)
+    ) {
+      await tx.phase("upgrade_legacy_receipt_removed");
+    }
   }
   if (state.backupPresent) {
     await quarantineAndGc({

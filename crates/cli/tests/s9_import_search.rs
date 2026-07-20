@@ -12,9 +12,10 @@ use import_pipeline::{
     DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, ImportTaskOwnerLock,
 };
 use meta_store::{
-    metadata_store_path, DocumentId, EntityType, ImportRootKind, ImportRootPreset,
-    ImportScanBudgetKind, ImportScanProfile, ImportTask, ImportTaskId, ImportTaskStatus,
-    ReadMetaStore, UnixTimestamp,
+    metadata_store_path, ArtifactRepairAttemptAcquire, ArtifactRepairAttemptErrorKind,
+    ArtifactRepairAttemptFailure, ArtifactRepairKey, DocumentId, EntityType, ImportRootKind,
+    ImportRootPreset, ImportScanBudgetKind, ImportScanProfile, ImportTask, ImportTaskId,
+    ImportTaskStatus, ReadMetaStore, SearchProjectionTransitionOutcome, UnixTimestamp,
 };
 #[cfg(unix)]
 use meta_store::{ImportScanErrorKind, ImportScanErrorOperation};
@@ -1095,6 +1096,219 @@ fn import_rebuilds_from_metadata_when_ready_generation_is_unreadable() {
 }
 
 #[test]
+fn import_rebuilds_from_metadata_when_ready_vector_payload_is_unreadable() {
+    serialize_windows_s9_import_test!();
+    let data_dir = temp_dir("incremental-corrupt-vector-data");
+    let private_root = temp_dir("incremental-corrupt-vector-root");
+    fs::write(
+        private_root.join("synthetic-first.txt"),
+        "Synthetic First\nSUMMARY\nRust firsttoken search\nEXPERIENCE\nBuilt local search services.\nSKILLS\nRust\n",
+    )
+    .unwrap();
+
+    let first_import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&private_root),
+        ])
+        .output()
+        .expect("run first import before corrupting Ready vector generation");
+    assert!(
+        first_import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&first_import.stdout),
+        String::from_utf8_lossy(&first_import.stderr)
+    );
+
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+    let first_generation = store.search_projection_state().unwrap().generation.unwrap();
+    write_snapshot_test_file_with_retry(
+        &data_dir
+            .join("vector-index")
+            .join("snapshots")
+            .join(&first_generation)
+            .join("vector.snapshot.enc"),
+        b"corrupted Ready vector generation envelope",
+    )
+    .unwrap();
+    fs::write(
+        private_root.join("synthetic-second.txt"),
+        "Synthetic Second\nSUMMARY\nPython secondtoken ranking\nEXPERIENCE\nDeveloped local ranking services.\nSKILLS\nPython\n",
+    )
+    .unwrap();
+
+    let second_import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&private_root),
+        ])
+        .output()
+        .expect("run import after corrupting Ready vector generation");
+    assert!(
+        second_import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&second_import.stdout),
+        String::from_utf8_lossy(&second_import.stderr)
+    );
+    assert!(second_import.stderr.is_empty());
+
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+    let ready = store.search_projection_state().unwrap();
+    let recovered_generation = ready.generation.as_deref().unwrap();
+    assert_ne!(recovered_generation, first_generation);
+    let vector = ready.publication.as_ref().unwrap().vector.as_ref().unwrap();
+    assert_eq!(vector.generation(), recovered_generation);
+    assert_eq!(vector.projection_count(), 2);
+
+    for query in ["firsttoken", "secondtoken"] {
+        let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+            .args(["--data-dir", path_str(&data_dir), "search", query])
+            .output()
+            .expect("search after vector payload recovery");
+        assert!(search.status.success());
+        assert!(search.stderr.is_empty());
+        assert!(String::from_utf8_lossy(&search.stdout).contains("results: 1"));
+    }
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+}
+
+#[test]
+fn direct_import_fails_closed_without_replacing_task_head_when_artifact_repair_is_not_due() {
+    serialize_windows_s9_import_test!();
+    let data_dir = temp_dir("artifact-repair-not-due-data");
+    let private_root = temp_dir("artifact-repair-not-due-root");
+    let canonical_private_root = fs::canonicalize(&private_root).unwrap();
+    fs::write(
+        private_root.join("synthetic-first.txt"),
+        "Synthetic First\nSUMMARY\nRust firsttoken search\nEXPERIENCE\nBuilt local search services.\nSKILLS\nRust\n",
+    )
+    .unwrap();
+
+    let first_import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&private_root),
+        ])
+        .output()
+        .expect("run first import before deferring artifact repair");
+    assert!(
+        first_import.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&first_import.stdout),
+        String::from_utf8_lossy(&first_import.stderr)
+    );
+
+    let owner = match DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("synthetic data dir is owned"),
+    };
+    let store = owner.open_store().unwrap();
+    let ready = store.search_projection_state().unwrap();
+    let original_head = store
+        .latest_import_task_by_root(path_str(&canonical_private_root))
+        .unwrap()
+        .unwrap();
+    let original_scope_count = store.status_summary().unwrap().import_scan_scopes;
+    let now_seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let repair_started_at = UnixTimestamp::from_unix_seconds(now_seconds);
+    // A future finish timestamp deterministically drives the next process
+    // through the clock-rollback rebase, which must preserve a NotDue retry.
+    let repair_finished_at = UnixTimestamp::from_unix_seconds(now_seconds + 3_600);
+    assert_eq!(
+        store
+            .begin_artifact_repair(
+                ready.generation.as_deref().unwrap(),
+                ready.visible_epoch,
+                repair_started_at,
+            )
+            .unwrap(),
+        SearchProjectionTransitionOutcome::Applied
+    );
+    let context = store.artifact_repair_context().unwrap().unwrap();
+    let key = ArtifactRepairKey::new(
+        context.generation,
+        context.publication_fingerprint,
+        context.visible_epoch,
+    );
+    let mut publication_session = store.wait_for_search_publication_session().unwrap();
+    let attempt = match publication_session
+        .acquire_artifact_repair_attempt(&key, repair_started_at)
+        .unwrap()
+    {
+        ArtifactRepairAttemptAcquire::Started(attempt) => attempt,
+        other => panic!("expected first artifact repair attempt, got {other:?}"),
+    };
+    publication_session
+        .finish_artifact_repair_attempt_failure(
+            &attempt,
+            ArtifactRepairAttemptFailure::Retryable(
+                ArtifactRepairAttemptErrorKind::FullTextFailure,
+            ),
+            repair_finished_at,
+        )
+        .unwrap();
+    drop(publication_session);
+    drop(store);
+    drop(owner);
+
+    fs::write(
+        private_root.join("synthetic-second.txt"),
+        "Synthetic Second\nSUMMARY\nPython secondtoken ranking\nEXPERIENCE\nDeveloped local ranking services.\nSKILLS\nPython\n",
+    )
+    .unwrap();
+    let second_import = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--root",
+            path_str(&private_root),
+        ])
+        .output()
+        .expect("run import while exact artifact repair is not due");
+    assert!(!second_import.status.success());
+    assert!(second_import.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&second_import.stderr);
+    assert!(
+        stderr.contains("search publication is repairing"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains(path_str(&private_root)));
+    assert!(!stderr.contains(path_str(&canonical_private_root)));
+
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+    assert_eq!(
+        store
+            .latest_import_task_by_root(path_str(&canonical_private_root))
+            .unwrap()
+            .unwrap()
+            .id,
+        original_head.id
+    );
+    assert_eq!(
+        store.status_summary().unwrap().import_scan_scopes,
+        original_scope_count
+    );
+
+    remove_dir(&data_dir);
+    remove_dir(&private_root);
+}
+
+#[test]
 fn import_blank_txt_resume_fails_without_queueing_ocr() {
     serialize_windows_s9_import_test!();
     let data_dir = temp_dir("blank-txt-import-data");
@@ -1869,10 +2083,16 @@ fn import_reuses_stale_running_task_after_cli_process_kill() {
     assert!(!String::from_utf8_lossy(&killed.stderr).contains(path_str(&fixture_root)));
     assert!(!String::from_utf8_lossy(&killed.stderr).contains(path_str(&canonical_fixture_root)));
 
-    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+    // A forced writer death can leave a hot rollback journal. Recovery is a
+    // data-directory owner responsibility; a read-only connection must never
+    // mutate the store to recover it.
+    let recovery_owner = acquire_test_processing_owner(&data_dir);
+    let store = recovery_owner.open_store().unwrap();
     let running_task = store.import_task_by_id(&task_id).unwrap().unwrap();
     assert_eq!(running_task.status, ImportTaskStatus::Running);
     assert_eq!(store.status_summary().unwrap().import_tasks_recoverable, 1);
+    drop(store);
+    drop(recovery_owner);
 
     let resumed = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([

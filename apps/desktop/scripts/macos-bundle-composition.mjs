@@ -7,8 +7,8 @@ import {
   sha256,
 } from "./verify-bundled-sidecar.mjs";
 
-export const BUNDLE_COMPOSITION_FILE = "resume-ir.bundle-composition.v1.json";
-export const BUNDLE_COMPOSITION_SCHEMA = "resume-ir.macos-bundle-composition.v1";
+export const BUNDLE_COMPOSITION_FILE = "resume-ir.bundle-composition.v2.json";
+export const BUNDLE_COMPOSITION_SCHEMA = "resume-ir.macos-bundle-composition.v2";
 
 const EXPECTED_BUNDLE_ID = "local.resume-ir.desktop";
 const EXPECTED_DISPLAY_NAME = "resume-ir";
@@ -16,13 +16,15 @@ const EXPECTED_ICON_FILE = "icon.icns";
 const EXPECTED_MAIN_EXECUTABLE = "resume-desktop";
 const SUPPORTED_TARGET = "aarch64-apple-darwin";
 const MAX_INFO_PLIST_BYTES = 64 * 1024;
-const MAX_EVIDENCE_BYTES = 16 * 1024;
+const MAX_EVIDENCE_BYTES = 2 * 1024 * 1024;
 const MAX_RUNTIME_MANIFEST_BYTES = 1024 * 1024;
 const MAX_BOUND_FILE_BYTES = 512 * 1024 * 1024;
 const MAX_RUNTIME_FILES = 128;
+const MAX_APP_FILES = 4096;
 const DIGEST = /^[a-f0-9]{64}$/;
+const SOURCE_COMMIT = /^[a-f0-9]{40}$/;
 const VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
-const MIN_VERSION = [0, 1, 1];
+const MIN_VERSION = [0, 1, 2];
 
 const EXECUTABLES = Object.freeze([
   Object.freeze({ role: "desktop", file: "resume-desktop" }),
@@ -44,6 +46,11 @@ const RUNTIME_MANIFESTS = Object.freeze([
     file: "ocr/runtime-pack/runtime-pack.json",
   }),
 ]);
+const EXECUTABLE_PATHS = new Set(
+  EXECUTABLES.map(({ file }) => `Contents/MacOS/${file}`),
+);
+const CODE_SIGNATURE_DIRECTORY = "Contents/_CodeSignature";
+const COMPOSITION_EVIDENCE_PATH = `Contents/Resources/${BUNDLE_COMPOSITION_FILE}`;
 
 function evidenceError(message = "bundle composition evidence is invalid") {
   return new Error(message);
@@ -80,22 +87,28 @@ function baseComposition(composition) {
     bundle_id,
     version,
     target_triple,
+    source_commit,
     mach_o_digest,
     file_digest,
     executables,
     runtime_manifests,
     icon,
+    app_files,
+    app_tree_digest,
   } = composition;
   return {
     schema_version,
     bundle_id,
     version,
     target_triple,
+    source_commit,
     mach_o_digest,
     file_digest,
     executables,
     runtime_manifests,
     icon,
+    app_files,
+    app_tree_digest,
   };
 }
 
@@ -115,17 +128,21 @@ function validateCompositionShape(value) {
       "bundle_id",
       "version",
       "target_triple",
+      "source_commit",
       "mach_o_digest",
       "file_digest",
       "executables",
       "runtime_manifests",
       "icon",
+      "app_files",
+      "app_tree_digest",
       "composition_digest",
     ]) ||
     value.schema_version !== BUNDLE_COMPOSITION_SCHEMA ||
     value.bundle_id !== EXPECTED_BUNDLE_ID ||
     !supportedVersion(value.version) ||
     value.target_triple !== SUPPORTED_TARGET ||
+    !SOURCE_COMMIT.test(value.source_commit) ||
     value.mach_o_digest !== "sha256_without_code_signature_v1" ||
     value.file_digest !== "sha256" ||
     !Array.isArray(value.executables) ||
@@ -141,6 +158,27 @@ function validateCompositionShape(value) {
     !exactKeys(value.icon, ["file", "sha256"]) ||
     value.icon.file !== EXPECTED_ICON_FILE ||
     !DIGEST.test(value.icon.sha256) ||
+    !Array.isArray(value.app_files) ||
+    value.app_files.length === 0 ||
+    value.app_files.length > MAX_APP_FILES ||
+    !value.app_files.every((entry, index) => {
+      const expectedDigest = EXECUTABLE_PATHS.has(entry?.file)
+        ? "sha256_without_code_signature_v1"
+        : "sha256";
+      return (
+        exactKeys(entry, ["file", "digest", "sha256"]) &&
+        safeRelativePath(entry.file) &&
+        entry.file !== COMPOSITION_EVIDENCE_PATH &&
+        entry.file !== CODE_SIGNATURE_DIRECTORY &&
+        !entry.file.startsWith(`${CODE_SIGNATURE_DIRECTORY}/`) &&
+        entry.digest === expectedDigest &&
+        DIGEST.test(entry.sha256) &&
+        (index === 0 ||
+          compareNames(value.app_files[index - 1].file, entry.file) < 0)
+      );
+    }) ||
+    !DIGEST.test(value.app_tree_digest) ||
+    digestBody(value.app_files) !== value.app_tree_digest ||
     !DIGEST.test(value.composition_digest) ||
     digestBody(baseComposition(value)) !== value.composition_digest
   ) {
@@ -201,6 +239,103 @@ async function recursiveFiles(root, relative = "") {
     }
   }
   return files.sort();
+}
+
+function compareNames(left, right) {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+}
+
+async function validateExcludedTree(root, relative) {
+  let entries;
+  try {
+    entries = await readdir(path.join(root, relative), { withFileTypes: true });
+  } catch {
+    throw evidenceError("bundle composition App file tree is invalid");
+  }
+  for (const entry of entries.sort((left, right) =>
+    compareNames(left.name, right.name),
+  )) {
+    const child = path.posix.join(relative, entry.name);
+    if (entry.isSymbolicLink()) {
+      throw evidenceError("bundle composition App file tree is invalid");
+    }
+    if (entry.isDirectory()) {
+      await validateExcludedTree(root, child);
+    } else if (entry.isFile()) {
+      await requireBoundFile(
+        path.join(root, child),
+        "bundle composition App file tree is invalid",
+      );
+    } else {
+      throw evidenceError("bundle composition App file tree is invalid");
+    }
+  }
+}
+
+async function completeAppFiles(
+  appBundle,
+  relative = "",
+  state = { fileCount: 0 },
+) {
+  let entries;
+  try {
+    entries = await readdir(path.join(appBundle, relative), {
+      withFileTypes: true,
+    });
+  } catch {
+    throw evidenceError("bundle composition App file tree is invalid");
+  }
+  const files = [];
+  for (const entry of entries.sort((left, right) =>
+    compareNames(left.name, right.name),
+  )) {
+    const child = path.posix.join(relative, entry.name);
+    if (entry.isSymbolicLink()) {
+      throw evidenceError("bundle composition App file tree is invalid");
+    }
+    if (child === CODE_SIGNATURE_DIRECTORY) {
+      if (!entry.isDirectory()) {
+        throw evidenceError("bundle composition App file tree is invalid");
+      }
+      await validateExcludedTree(appBundle, child);
+      continue;
+    }
+    if (child === COMPOSITION_EVIDENCE_PATH) {
+      if (!entry.isFile()) {
+        throw evidenceError("bundle composition App file tree is invalid");
+      }
+      continue;
+    }
+    if (entry.isDirectory()) {
+      files.push(...(await completeAppFiles(appBundle, child, state)));
+    } else if (entry.isFile()) {
+      state.fileCount += 1;
+      if (state.fileCount > MAX_APP_FILES) {
+        throw evidenceError("bundle composition App file cap exceeded");
+      }
+      const file = path.join(appBundle, child);
+      await requireBoundFile(
+        file,
+        "bundle composition App file tree is invalid",
+      );
+      const digest = EXECUTABLE_PATHS.has(child)
+        ? "sha256_without_code_signature_v1"
+        : "sha256";
+      let fileSha256;
+      try {
+        fileSha256 =
+          digest === "sha256_without_code_signature_v1"
+            ? await executablePayloadSha256(file)
+            : await sha256(file);
+      } catch {
+        throw evidenceError("bundle composition App file tree is invalid");
+      }
+      files.push({ file: child, digest, sha256: fileSha256 });
+    } else {
+      throw evidenceError("bundle composition App file tree is invalid");
+    }
+  }
+  return files.sort((left, right) => compareNames(left.file, right.file));
 }
 
 async function verifyRuntimePack(manifestFile) {
@@ -326,17 +461,22 @@ async function readIdentity(appBundle) {
   return identity;
 }
 
-function validateArguments(appBundle, targetTriple) {
+function validateArguments(appBundle, targetTriple, sourceCommit) {
   if (
     !path.isAbsolute(appBundle) ||
-    targetTriple !== SUPPORTED_TARGET
+    targetTriple !== SUPPORTED_TARGET ||
+    !SOURCE_COMMIT.test(sourceCommit ?? "")
   ) {
     throw evidenceError("bundle composition arguments are invalid");
   }
 }
 
-export async function createBundleComposition({ appBundle, targetTriple }) {
-  validateArguments(appBundle, targetTriple);
+export async function createBundleComposition({
+  appBundle,
+  targetTriple,
+  sourceCommit,
+}) {
+  validateArguments(appBundle, targetTriple, sourceCommit);
   const resolvedAppBundle = await resolveAppBundle(appBundle);
   const identity = await readIdentity(resolvedAppBundle);
   const macos = path.join(resolvedAppBundle, "Contents", "MacOS");
@@ -371,22 +511,34 @@ export async function createBundleComposition({ appBundle, targetTriple }) {
   }
   const iconPath = path.join(resources, EXPECTED_ICON_FILE);
   await requireBoundFile(iconPath, "bundle composition icon is invalid");
+  const appFiles = await completeAppFiles(resolvedAppBundle);
   const base = {
     schema_version: BUNDLE_COMPOSITION_SCHEMA,
     bundle_id: identity.bundleId,
     version: identity.version,
     target_triple: targetTriple,
+    source_commit: sourceCommit,
     mach_o_digest: "sha256_without_code_signature_v1",
     file_digest: "sha256",
     executables,
     runtime_manifests: runtimeManifests,
     icon: { file: EXPECTED_ICON_FILE, sha256: await sha256(iconPath) },
+    app_files: appFiles,
+    app_tree_digest: digestBody(appFiles),
   };
   return { ...base, composition_digest: digestBody(base) };
 }
 
-export async function writeBundleComposition({ appBundle, targetTriple }) {
-  const composition = await createBundleComposition({ appBundle, targetTriple });
+export async function writeBundleComposition({
+  appBundle,
+  targetTriple,
+  sourceCommit,
+}) {
+  const composition = await createBundleComposition({
+    appBundle,
+    targetTriple,
+    sourceCommit,
+  });
   const resolvedAppBundle = await resolveAppBundle(appBundle);
   const file = path.join(
     resolvedAppBundle,
@@ -394,10 +546,14 @@ export async function writeBundleComposition({ appBundle, targetTriple }) {
     "Resources",
     BUNDLE_COMPOSITION_FILE,
   );
+  const body = `${JSON.stringify(composition)}\n`;
+  if (Buffer.byteLength(body, "utf8") > MAX_EVIDENCE_BYTES) {
+    throw evidenceError("bundle composition evidence could not be created");
+  }
   let handle;
   try {
     handle = await open(file, "wx", 0o444);
-    await handle.writeFile(`${JSON.stringify(composition)}\n`, "utf8");
+    await handle.writeFile(body, "utf8");
     await handle.sync();
   } catch {
     throw evidenceError("bundle composition evidence could not be created");
@@ -411,8 +567,13 @@ export async function verifyBundleComposition({
   appBundle,
   targetTriple,
   expectedVersion,
+  expectedSourceCommit,
+  verifySignaturePolicy,
 }) {
-  validateArguments(appBundle, targetTriple);
+  validateArguments(appBundle, targetTriple, expectedSourceCommit);
+  if (typeof verifySignaturePolicy !== "function") {
+    throw evidenceError("bundle signature policy is unavailable");
+  }
   const resolvedAppBundle = await resolveAppBundle(appBundle);
   const file = path.join(
     resolvedAppBundle,
@@ -446,13 +607,39 @@ export async function verifyBundleComposition({
   if (`${JSON.stringify(stored)}\n` !== source) throw evidenceError();
   if (
     stored.target_triple !== targetTriple ||
-    (expectedVersion !== undefined && stored.version !== expectedVersion)
+    (expectedVersion !== undefined && stored.version !== expectedVersion) ||
+    stored.source_commit !== expectedSourceCommit
   ) {
     throw evidenceError("bundle composition identity does not match");
   }
-  const actual = await createBundleComposition({ appBundle, targetTriple });
+  const actual = await createBundleComposition({
+    appBundle,
+    targetTriple,
+    sourceCommit: expectedSourceCommit,
+  });
   if (JSON.stringify(stored) !== JSON.stringify(actual)) {
     throw evidenceError("bundle composition payload does not match");
+  }
+  let signaturePolicy;
+  try {
+    signaturePolicy = await verifySignaturePolicy({
+      appBundle: resolvedAppBundle,
+    });
+  } catch {
+    throw evidenceError("bundle signature policy does not match");
+  }
+  if (
+    !exactKeys(signaturePolicy, [
+      "code_signature",
+      "hardened_runtime",
+      "library_validation_entitlement_scope",
+    ]) ||
+    signaturePolicy.code_signature !== "ad_hoc_valid" ||
+    signaturePolicy.hardened_runtime !== true ||
+    signaturePolicy.library_validation_entitlement_scope !==
+      "embedding_runtime_only"
+  ) {
+    throw evidenceError("bundle signature policy does not match");
   }
   return stored;
 }

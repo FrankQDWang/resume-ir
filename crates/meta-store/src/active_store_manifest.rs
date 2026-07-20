@@ -1,15 +1,25 @@
 use std::{fs, io::Write, path::Path};
 
+#[cfg(windows)]
+use std::fs::OpenOptions;
+
 use tempfile::Builder;
 
 use crate::{
-    encode_hex, restrict_private_file_permissions, schema_v27, schema_v28, MetaStoreError, Result,
-    METADATA_STORE_FILE,
+    encode_hex, restrict_private_file_permissions, schema_v27, schema_v28, schema_v29,
+    MetaStoreError, Result, METADATA_STORE_FILE,
 };
 
 pub(crate) const MANIFEST_FILE: &str = "metadata-active.v1";
 const MANIFEST_SCHEMA: &str = "resume-ir.metadata-active.v1";
 pub(crate) const MANIFEST_MAX_BYTES: u64 = 512;
+
+#[cfg(windows)]
+const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+#[cfg(windows)]
+const FILE_FLAG_WRITE_THROUGH: u32 = 0x8000_0000;
+#[cfg(windows)]
+const FILE_SHARE_READ_WRITE_DELETE: u32 = 0x0000_0007;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ActiveStoreManifest {
@@ -82,9 +92,13 @@ pub(crate) fn read_manifest(path: &Path) -> Result<ActiveStoreManifest> {
 }
 
 pub(crate) fn validate_store_file_name(file_name: &str) -> Result<()> {
-    let versioned = [schema_v27::VERSION, schema_v28::VERSION]
-        .into_iter()
-        .any(|version| versioned_store_token(file_name, version).is_some());
+    let versioned = [
+        schema_v27::VERSION,
+        schema_v28::VERSION,
+        schema_v29::VERSION,
+    ]
+    .into_iter()
+    .any(|version| versioned_store_token(file_name, version).is_some());
     if file_name != METADATA_STORE_FILE && !versioned {
         return Err(MetaStoreError::invalid_value("metadata.active_store_file"));
     }
@@ -154,15 +168,31 @@ pub(crate) fn sync_parent_directory(data_dir: &Path) -> Result<()> {
     directory.sync_all().map_err(MetaStoreError::io_storage)
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub(crate) fn sync_parent_directory(data_dir: &Path) -> Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let directory = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .share_mode(FILE_SHARE_READ_WRITE_DELETE)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_WRITE_THROUGH)
+        .open(data_dir)
+        .map_err(MetaStoreError::io_storage)?;
+    directory.sync_all().map_err(MetaStoreError::io_storage)
+}
+
+#[cfg(not(any(unix, windows)))]
 pub(crate) fn sync_parent_directory(_data_dir: &Path) -> Result<()> {
-    Ok(())
+    Err(MetaStoreError::io_storage(std::io::Error::other(
+        "metadata manifest durability is unsupported on this platform",
+    )))
 }
 
 fn validate_manifest(manifest: &ActiveStoreManifest) -> Result<()> {
     if !matches!(
         manifest.schema_version,
-        schema_v27::VERSION | schema_v28::VERSION
+        schema_v27::VERSION | schema_v28::VERSION | schema_v29::VERSION
     ) {
         return Err(MetaStoreError::invalid_value("metadata.active_manifest"));
     }

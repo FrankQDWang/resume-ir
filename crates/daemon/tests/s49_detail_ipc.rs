@@ -3,20 +3,21 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use index_fulltext::{publish_snapshot, IndexDocument};
 use index_vector::{VectorModelContract, VectorSnapshotStore};
 use meta_store::{
     ActiveSearchProjection, ClassificationStatus, ContentDigest, DataDirectoryOwnerAcquisition,
     DataDirectoryOwnerLease, Document, DocumentId, DocumentStatus, EntityMention, EntityMentionId,
-    EntityType, FileExtension, FullTextSnapshotDescriptor, IdentityInsertOutcome, OwnedMetaStore,
-    ProjectedDocumentSnapshot, ReasonCode, ResumeVersion, ResumeVersionClassification,
-    ResumeVersionId, ReviewDisposition, SearchProjectionDigest, SearchPublicationCommit,
-    SearchPublicationDraft, SearchPublicationOutcome, SearchPublicationValidation, SearchSelection,
-    SourceRevision, TerminalDocumentUpdate, UnixTimestamp, VectorSnapshotDescriptor,
-    CLASSIFIER_EPOCH,
+    EntityType, FileExtension, FullTextSnapshotDescriptor, IdentityInsertOutcome,
+    MigrationRebuildPublicationAttemptAcquire, OwnedMetaStore, ProjectedDocumentSnapshot,
+    ReasonCode, ResumeVersion, ResumeVersionClassification, ResumeVersionId, ReviewDisposition,
+    SearchProjectionDigest, SearchPublicationCommit, SearchPublicationDraft,
+    SearchPublicationOutcome, SearchPublicationValidation, SearchSelection, SourceRevision,
+    TerminalDocumentUpdate, UnixTimestamp, VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
 };
+use tempfile::TempDir;
 
 mod support;
 
@@ -96,7 +97,6 @@ fn detail_and_hydrate_read_one_exact_selection_across_unrelated_publications() {
     }
     assert_eq!(hydrated, expected_body);
     daemon.wait_success();
-    fixture.remove();
 }
 
 #[test]
@@ -140,7 +140,6 @@ fn hydrate_never_mixes_pages_after_the_selected_document_is_republished() {
     assert!(!interrupted.contains("REPLACEMENT_BODY_MUST_NOT_MIX_WITH_OLD_PAGE"));
 
     daemon.wait_success();
-    fixture.remove();
 }
 
 #[test]
@@ -199,7 +198,6 @@ fn detail_distinguishes_stale_from_unpublished_or_invalid_selections() {
     assert_not_found_without_selection(&missing_response, "hydrate-missing", &missing);
 
     daemon.wait_success();
-    fixture.remove();
 }
 
 #[test]
@@ -273,7 +271,6 @@ fn detail_contract_rejects_legacy_shape_unbounded_ids_and_oversized_pages() {
     );
 
     daemon.wait_success();
-    fixture.remove();
 }
 
 fn detail_request(request_id: &str, selection: &SearchSelection) -> serde_json::Value {
@@ -356,6 +353,7 @@ fn response_json(response: &str) -> serde_json::Value {
 }
 
 struct Fixture {
+    _data_dir_guard: TempDir,
     data_dir: PathBuf,
     current_selection: SearchSelection,
     stale_selection: SearchSelection,
@@ -368,7 +366,11 @@ struct Fixture {
 
 impl Fixture {
     fn create(label: &str) -> Self {
-        let data_dir = temp_dir(label);
+        let data_dir_guard = tempfile::Builder::new()
+            .prefix(&format!("resume-ir-s49-{label}-"))
+            .tempdir()
+            .unwrap();
+        let data_dir = data_dir_guard.path().to_path_buf();
         let owner = acquire_data_directory_owner(&data_dir);
         let store = owner.open_store().unwrap();
 
@@ -470,6 +472,7 @@ impl Fixture {
 
         drop(store);
         Self {
+            _data_dir_guard: data_dir_guard,
             data_dir,
             current_selection,
             stale_selection,
@@ -479,10 +482,6 @@ impl Fixture {
             visible_epoch: 4,
             active_projections,
         }
-    }
-
-    fn remove(self) {
-        let _ = fs::remove_dir_all(self.data_dir);
     }
 
     fn replace_current_version(&self) {
@@ -702,7 +701,15 @@ fn publish(
             .unwrap()
             .expect("initial publication requires a closed migration rebuild barrier")
     });
-    let publication_session = store.wait_for_search_publication_session().unwrap();
+    let mut publication_session = store.wait_for_search_publication_session().unwrap();
+    if let Some(barrier) = migration_barrier.as_ref() {
+        assert!(matches!(
+            publication_session
+                .acquire_migration_rebuild_publication_attempt(barrier, now)
+                .unwrap(),
+            MigrationRebuildPublicationAttemptAcquire::Started(_)
+        ));
+    }
     assert_eq!(
         publication_session
             .begin_search_publication(&publication)
@@ -957,16 +964,6 @@ fn read_ipc_auth_token(data_dir: &Path) -> String {
     let auth: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(auth["schema_version"], "resume-ir.daemon-auth.v2");
     auth["token"].as_str().unwrap().to_string()
-}
-
-fn temp_dir(label: &str) -> PathBuf {
-    let unique = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("resume-ir-s49-{label}-{unique}"));
-    fs::create_dir_all(&path).unwrap();
-    path
 }
 
 fn path_str(path: &Path) -> &str {

@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -35,9 +34,7 @@ use cleanup::{
     write_migration_attempt, MigrationAttempt, PreviousStore,
 };
 use predecessor_fence::{install_predecessor_write_fence, read_predecessor_write_fence};
-use validation::{
-    validate_active_v28_connection, validate_active_v28_store, validate_staging_v28_store,
-};
+use validation::{validate_active_v28_store, validate_staging_v28_store};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MigrationFailpoint {
@@ -59,38 +56,12 @@ struct UpgradeSource {
     current_manifest: Option<ActiveStoreManifest>,
 }
 
-pub(super) fn active_store_path(data_dir: &Path) -> Result<PathBuf> {
-    let manifest_path = data_dir.join(MANIFEST_FILE);
-    if !owner_regular_file_exists(&manifest_path)? {
-        return Ok(data_dir.join(METADATA_STORE_FILE));
-    }
-    Ok(data_dir.join(read_manifest(&manifest_path)?.file_name))
-}
-
-pub(super) fn open_current_v28_store(
-    data_dir: &Path,
-) -> Result<(PathBuf, [u8; METADATA_ENCRYPTION_KEY_LEN], String)> {
-    let data_dir = fs::canonicalize(data_dir).map_err(MetaStoreError::io_storage)?;
-    let manifest_path = data_dir.join(MANIFEST_FILE);
-    if !owner_regular_file_exists(&manifest_path)? {
-        return Err(MetaStoreError::migration_ownership_required());
-    }
-    let manifest = read_manifest(&manifest_path)?;
-    if manifest.schema_version != schema_v28::VERSION {
-        return Err(MetaStoreError::migration_ownership_required());
-    }
-    let key = crate::read_metadata_encryption_key_without_repair(
-        &crate::metadata_encryption_key_path(&data_dir),
-    )?;
-    let path = data_dir.join(&manifest.file_name);
-    Ok((path, key, manifest.store_id_digest))
-}
-
-pub(super) fn validate_current_v28_connection(
-    connection: &Connection,
+pub(super) fn validate_current_v28_store(
+    path: &Path,
+    key: &[u8],
     store_id_digest: &str,
 ) -> Result<()> {
-    validate_active_v28_connection(connection, store_id_digest)
+    validate_active_v28_store(path, key, store_id_digest)
 }
 
 pub(super) fn prepare_active_v28_store(

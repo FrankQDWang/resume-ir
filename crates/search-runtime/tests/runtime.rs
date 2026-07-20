@@ -47,6 +47,7 @@ fn composite_scope_reads_one_exact_disabled_generation() {
             Ok(())
         })
         .unwrap();
+    assert_eq!(coordinator.take_artifact_fault(), None);
 }
 
 #[test]
@@ -63,6 +64,7 @@ fn bounded_filter_rejects_oversized_selection() {
         })
         .unwrap_err();
     assert_eq!(error.code(), SearchRuntimeErrorCode::SelectionTooLarge);
+    assert_eq!(coordinator.take_artifact_fault(), None);
 }
 
 #[test]
@@ -80,7 +82,7 @@ fn disabled_vector_never_degrades_semantic_to_fulltext() {
 }
 
 #[test]
-fn invalid_new_generation_is_not_served_from_the_old_cache() {
+fn tampered_new_generation_reports_one_exact_fault_and_is_not_served_from_cache() {
     let mut fixture = Fixture::new("invalid-new-generation", 1);
     let mut coordinator = QueryCoordinator::open(&fixture.data_dir).unwrap();
     coordinator
@@ -97,16 +99,70 @@ fn invalid_new_generation_is_not_served_from_the_old_cache() {
 
     fixture.replace_first_resume("Go");
     let generation = fixture.publish_next();
-    fs::remove_file(
-        fixture
-            .data_dir
-            .join("search-index/snapshots")
-            .join(generation)
-            .join("snapshot-manifest.json"),
+    let state = fixture.store.search_projection_state().unwrap();
+    assert_eq!(state.generation.as_deref(), Some(generation.as_str()));
+    let publication_fingerprint = state
+        .publication
+        .as_ref()
+        .unwrap()
+        .publication_fingerprint
+        .as_ref()
+        .unwrap();
+    let snapshot_dir = fixture
+        .data_dir
+        .join("search-index/snapshots")
+        .join(&generation);
+    let manifest_path = snapshot_dir.join("snapshot-manifest.json");
+    let manifest = fs::read(&manifest_path).unwrap();
+    fs::write(
+        snapshot_dir.join("fulltext.snapshot.enc"),
+        b"not a valid encrypted full-text snapshot",
     )
     .unwrap();
+    assert_eq!(fs::read(manifest_path).unwrap(), manifest);
+
     let error = coordinator.with_query(|_| Ok(())).unwrap_err();
     assert_eq!(error.code(), SearchRuntimeErrorCode::Integrity);
+    let repeated_error = coordinator.with_query(|_| Ok(())).unwrap_err();
+    assert_eq!(repeated_error.code(), SearchRuntimeErrorCode::Integrity);
+    fixture
+        .store
+        .begin_artifact_repair(
+            &generation,
+            state.visible_epoch,
+            UnixTimestamp::from_unix_seconds(1_900_000_100),
+        )
+        .unwrap();
+    let metadata_error = coordinator.with_query(|_| Ok(())).unwrap_err();
+    assert_eq!(metadata_error.code(), SearchRuntimeErrorCode::Unavailable);
+
+    let fault = coordinator
+        .take_artifact_fault()
+        .expect("corrupt exact generation should report its publication key");
+    assert_eq!(fault.generation(), generation);
+    assert_eq!(fault.publication_fingerprint(), publication_fingerprint);
+    assert_eq!(coordinator.take_artifact_fault(), None);
+}
+
+#[test]
+fn metadata_head_unavailable_does_not_report_an_artifact_fault() {
+    let fixture = Fixture::new("metadata-head-unavailable", 1);
+    let state = fixture.store.search_projection_state().unwrap();
+    let generation = state.generation.unwrap();
+    let mut coordinator = QueryCoordinator::open(&fixture.data_dir).unwrap();
+    fixture
+        .store
+        .begin_artifact_repair(
+            &generation,
+            state.visible_epoch,
+            UnixTimestamp::from_unix_seconds(1_900_000_100),
+        )
+        .unwrap();
+
+    let error = coordinator.with_query(|_| Ok(())).unwrap_err();
+
+    assert_eq!(error.code(), SearchRuntimeErrorCode::Unavailable);
+    assert_eq!(coordinator.take_artifact_fault(), None);
 }
 
 struct Fixture {

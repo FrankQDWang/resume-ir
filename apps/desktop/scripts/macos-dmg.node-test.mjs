@@ -8,6 +8,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -23,6 +24,7 @@ import {
   validateMountedDmgLayout,
   verifyMacosInternalTestEntitlements,
   verifyMacosDmg,
+  withVerifiedMacosDmg,
 } from "./verify-macos-dmg.mjs";
 import {
   applyMacosInternalTestEntitlements,
@@ -34,6 +36,9 @@ import {
 } from "./macos-test-release.mjs";
 import { writeBundleComposition } from "./macos-bundle-composition.mjs";
 
+const SOURCE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
+const verifySyntheticSource = async () => SOURCE_COMMIT;
+
 function syntheticMachO(payload) {
   const suffix = Buffer.from(payload);
   const header = Buffer.alloc(32);
@@ -44,6 +49,10 @@ function syntheticMachO(payload) {
 
 function sha256(body) {
   return createHash("sha256").update(body).digest("hex");
+}
+
+function isTool(command, name) {
+  return path.basename(command) === name;
 }
 
 async function createMountedLayout(root, { withComposition = false } = {}) {
@@ -64,7 +73,7 @@ async function createMountedLayout(root, { withComposition = false } = {}) {
       '<?xml version="1.0" encoding="UTF-8"?>',
       '<plist version="1.0"><dict>',
       "<key>CFBundleIdentifier</key><string>local.resume-ir.desktop</string>",
-      "<key>CFBundleShortVersionString</key><string>0.1.1</string>",
+      "<key>CFBundleShortVersionString</key><string>0.1.2</string>",
       "<key>CFBundleDisplayName</key><string>resume-ir</string>",
       "<key>CFBundleIconFile</key><string>icon.icns</string>",
       "<key>CFBundleExecutable</key><string>resume-desktop</string>",
@@ -105,6 +114,7 @@ async function createMountedLayout(root, { withComposition = false } = {}) {
     await writeBundleComposition({
       appBundle,
       targetTriple: "aarch64-apple-darwin",
+      sourceCommit: SOURCE_COMMIT,
     });
   }
   await symlink("/Applications", path.join(root, "Applications"));
@@ -121,9 +131,13 @@ const LIBRARY_VALIDATION_ENTITLEMENT = [
 const SHIPPED_VOLUME_ICON_BYTES = 2_482_309;
 const EXPECTED_MAX_VOLUME_ICON_BYTES = 8 * 1024 * 1024;
 
-function entitlementRunner({ leakTo = new Set(), omitFromEmbedding = false } = {}) {
+function entitlementRunner({
+  leakTo = new Set(),
+  omitFromEmbedding = false,
+  extraEmbeddingEntitlement = false,
+} = {}) {
   return async (command, args) => {
-    if (command !== "codesign" || !args.includes("--entitlements")) {
+    if (path.basename(command) !== "codesign" || !args.includes("--entitlements")) {
       return { status: 0, stdout: "", stderr: "" };
     }
     const target = args.at(-1);
@@ -132,9 +146,17 @@ function entitlementRunner({ leakTo = new Set(), omitFromEmbedding = false } = {
       (!omitFromEmbedding && basename === "resume-embedding-runtime") ||
       leakTo.has(basename) ||
       (target.endsWith(".app") && leakTo.has("resume-ir.app"));
+    const entitlementSource = hasEntitlement
+      ? extraEmbeddingEntitlement && basename === "resume-embedding-runtime"
+        ? LIBRARY_VALIDATION_ENTITLEMENT.replace(
+            "</dict>",
+            "<key>com.apple.security.network.client</key><true/></dict>",
+          )
+        : LIBRARY_VALIDATION_ENTITLEMENT
+      : "";
     return {
       status: 0,
-      stdout: hasEntitlement ? LIBRARY_VALIDATION_ENTITLEMENT : "",
+      stdout: entitlementSource,
       stderr: `Executable=${target}`,
     };
   };
@@ -176,9 +198,18 @@ async function createTestReleaseFixture(context) {
   };
 }
 
+function testReleaseCandidatePath(dmg) {
+  const parsed = path.parse(dmg);
+  return path.join(
+    parsed.dir,
+    `.${parsed.name}.internal-test-candidate${parsed.ext}`,
+  );
+}
+
 function verifiedDmgReceipt() {
   return {
-    schema_version: "resume-ir.macos-dmg-composition.v1",
+    schema_version: "resume-ir.macos-dmg-composition.v2",
+    source_commit: SOURCE_COMMIT,
     distribution_signature: "accepted",
     distribution_profile: "internal_test",
     code_signature: "ad_hoc_valid",
@@ -283,6 +314,7 @@ test("accepts library-validation bypass only on the embedding runtime", async (c
     entitlementRunner({ leakTo: new Set(["resume-ir.app"]) }),
     entitlementRunner({ leakTo: new Set(["resume-pdf-render-runtime"]) }),
     entitlementRunner({ omitFromEmbedding: true }),
+    entitlementRunner({ extraEmbeddingEntitlement: true }),
   ]) {
     await assert.rejects(
       verifyMacosInternalTestEntitlements({
@@ -293,6 +325,22 @@ test("accepts library-validation bypass only on the embedding runtime", async (c
       /internal-test entitlement scope is invalid/,
     );
   }
+});
+
+test("invokes the entitlement trust tool by its absolute system path", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "resume-ir-entitlement-tool-"));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await createMountedLayout(root);
+  const commands = [];
+  await verifyMacosInternalTestEntitlements({
+    appBundle: path.join(root, "resume-ir.app"),
+    platform: "darwin",
+    runner: async (command, args) => {
+      commands.push(command);
+      return entitlementRunner()(command, args);
+    },
+  });
+  assert.deepEqual(new Set(commands), new Set(["/usr/bin/codesign"]));
 });
 
 test("rebuilds the Tauri DMG from a clean staging root and signs only the embedding runtime with the entitlement", async (context) => {
@@ -307,25 +355,25 @@ test("rebuilds the Tauri DMG from a clean staging root and signs only the embedd
   const calls = [];
   const runner = async (command, args) => {
     calls.push([command, ...args]);
-    if (command === "hdiutil" && args[0] === "attach") {
+    if (isTool(command, "hdiutil") && args[0] === "attach") {
       await createMountedLayout(args[args.indexOf("-mountpoint") + 1]);
       await mkdir(
         path.join(args[args.indexOf("-mountpoint") + 1], ".fseventsd"),
       );
       return { status: 0, stdout: "", stderr: "" };
     }
-    if (command === "hdiutil" && args[0] === "detach") {
+    if (isTool(command, "hdiutil") && args[0] === "detach") {
       await rm(args[1], { recursive: true, force: true });
       await mkdir(args[1]);
       return { status: 0, stdout: "", stderr: "" };
     }
-    if (command === "hdiutil" && args[0] === "create") {
+    if (isTool(command, "hdiutil") && args[0] === "create") {
       const stagingDirectory = args[args.indexOf("-srcfolder") + 1];
       assert.equal((await readdir(stagingDirectory)).includes(".fseventsd"), false);
       await writeFile(args.at(-1), "rewritten-dmg");
       return { status: 0, stdout: "", stderr: "" };
     }
-    if (command === "codesign" && args.includes("--entitlements")) {
+    if (isTool(command, "codesign") && args.includes("--entitlements")) {
       const target = args.at(-1);
       return {
         status: 0,
@@ -335,12 +383,25 @@ test("rebuilds the Tauri DMG from a clean staging root and signs only the embedd
         stderr: `Executable=${target}`,
       };
     }
+    if (isTool(command, "codesign") && args.includes("--display")) {
+      return {
+        status: 0,
+        stdout: "",
+        stderr: [
+          "CodeDirectory v=20400 size=120 flags=0x10002(adhoc,runtime)",
+          "Signature=adhoc",
+          "TeamIdentifier=not set",
+          "Sealed Resources version=2 rules=13 files=42",
+        ].join("\n"),
+      };
+    }
     return { status: 0, stdout: "", stderr: "" };
   };
 
   const entitlementReceipt = await applyMacosInternalTestEntitlements({
     dmg,
     entitlements: fileURLToPath(entitlements),
+    sourceCommit: SOURCE_COMMIT,
     platform: "darwin",
     runner,
   });
@@ -352,7 +413,8 @@ test("rebuilds the Tauri DMG from a clean staging root and signs only the embedd
   assert.equal(await readFile(dmg, "utf8"), "rewritten-dmg");
 
   const signingCalls = calls.filter(
-    ([command, ...args]) => command === "codesign" && args.includes("--force"),
+    ([command, ...args]) =>
+      isTool(command, "codesign") && args.includes("--force"),
   );
   assert.equal(signingCalls.length, 2);
   assert.equal(signingCalls[0].at(-1).endsWith("/resume-embedding-runtime"), true);
@@ -362,10 +424,10 @@ test("rebuilds the Tauri DMG from a clean staging root and signs only the embedd
   assert.equal(signingCalls.some((call) => call.includes("--deep")), false);
 
   const attach = calls.find(
-    ([command, action]) => command === "hdiutil" && action === "attach",
+    ([command, action]) => isTool(command, "hdiutil") && action === "attach",
   );
   const create = calls.find(
-    ([command, action]) => command === "hdiutil" && action === "create",
+    ([command, action]) => isTool(command, "hdiutil") && action === "create",
   );
   assert.equal(attach.includes("-readonly"), true);
   assert.equal(attach.includes("-shadow"), false);
@@ -416,17 +478,17 @@ test("keeps the original DMG and cleans the staging workspace when re-signing fa
   );
   await writeFile(dmg, "original-dmg");
   const runner = async (command, args) => {
-    if (command === "hdiutil" && args[0] === "attach") {
+    if (isTool(command, "hdiutil") && args[0] === "attach") {
       await createMountedLayout(args[args.indexOf("-mountpoint") + 1]);
       return { status: 0, stdout: "", stderr: "" };
     }
-    if (command === "hdiutil" && args[0] === "detach") {
+    if (isTool(command, "hdiutil") && args[0] === "detach") {
       await rm(args[1], { recursive: true, force: true });
       await mkdir(args[1]);
       return { status: 0, stdout: "", stderr: "" };
     }
     if (
-      command === "codesign" &&
+      isTool(command, "codesign") &&
       args.includes("--force") &&
       args.at(-1).endsWith("/resume-embedding-runtime")
     ) {
@@ -439,6 +501,7 @@ test("keeps the original DMG and cleans the staging workspace when re-signing fa
     applyMacosInternalTestEntitlements({
       dmg,
       entitlements,
+      sourceCommit: SOURCE_COMMIT,
       platform: "darwin",
       runner,
     }),
@@ -465,7 +528,7 @@ test("rejects a symlinked embedding signing path before codesign", async (contex
   await chmod(externalExecutable, 0o755);
   let signingCalls = 0;
   const runner = async (command, args) => {
-    if (command === "hdiutil" && args[0] === "attach") {
+    if (isTool(command, "hdiutil") && args[0] === "attach") {
       const mountDirectory = args[args.indexOf("-mountpoint") + 1];
       await createMountedLayout(mountDirectory);
       const runtime = path.join(
@@ -479,12 +542,12 @@ test("rejects a symlinked embedding signing path before codesign", async (contex
       await symlink(externalExecutable, runtime);
       return { status: 0, stdout: "", stderr: "" };
     }
-    if (command === "hdiutil" && args[0] === "detach") {
+    if (isTool(command, "hdiutil") && args[0] === "detach") {
       await rm(args[1], { recursive: true, force: true });
       await mkdir(args[1]);
       return { status: 0, stdout: "", stderr: "" };
     }
-    if (command === "codesign") signingCalls += 1;
+    if (isTool(command, "codesign")) signingCalls += 1;
     return { status: 0, stdout: "", stderr: "" };
   };
 
@@ -492,6 +555,7 @@ test("rejects a symlinked embedding signing path before codesign", async (contex
     applyMacosInternalTestEntitlements({
       dmg,
       entitlements,
+      sourceCommit: SOURCE_COMMIT,
       platform: "darwin",
       runner,
     }),
@@ -514,7 +578,7 @@ test("rejects a symlinked daemon before the outer App codesign", async (context)
   await chmod(externalExecutable, 0o755);
   let signingCalls = 0;
   const runner = async (command, args) => {
-    if (command === "hdiutil" && args[0] === "attach") {
+    if (isTool(command, "hdiutil") && args[0] === "attach") {
       const mountDirectory = args[args.indexOf("-mountpoint") + 1];
       await createMountedLayout(mountDirectory);
       const daemon = path.join(
@@ -528,12 +592,12 @@ test("rejects a symlinked daemon before the outer App codesign", async (context)
       await symlink(externalExecutable, daemon);
       return { status: 0, stdout: "", stderr: "" };
     }
-    if (command === "hdiutil" && args[0] === "detach") {
+    if (isTool(command, "hdiutil") && args[0] === "detach") {
       await rm(args[1], { recursive: true, force: true });
       await mkdir(args[1]);
       return { status: 0, stdout: "", stderr: "" };
     }
-    if (command === "codesign") signingCalls += 1;
+    if (isTool(command, "codesign")) signingCalls += 1;
     return { status: 0, stdout: "", stderr: "" };
   };
 
@@ -541,6 +605,7 @@ test("rejects a symlinked daemon before the outer App codesign", async (context)
     applyMacosInternalTestEntitlements({
       dmg,
       entitlements,
+      sourceCommit: SOURCE_COMMIT,
       platform: "darwin",
       runner,
     }),
@@ -559,13 +624,13 @@ test("rejects a symlinked .fseventsd entry instead of deleting through it", asyn
   );
   await writeFile(dmg, "original-dmg");
   const runner = async (command, args) => {
-    if (command === "hdiutil" && args[0] === "attach") {
+    if (isTool(command, "hdiutil") && args[0] === "attach") {
       const mountDirectory = args[args.indexOf("-mountpoint") + 1];
       await createMountedLayout(mountDirectory);
       await symlink(root, path.join(mountDirectory, ".fseventsd"));
       return { status: 0, stdout: "", stderr: "" };
     }
-    if (command === "hdiutil" && args[0] === "detach") {
+    if (isTool(command, "hdiutil") && args[0] === "detach") {
       await rm(args[1], { recursive: true, force: true });
       await mkdir(args[1]);
       return { status: 0, stdout: "", stderr: "" };
@@ -577,6 +642,7 @@ test("rejects a symlinked .fseventsd entry instead of deleting through it", asyn
     applyMacosInternalTestEntitlements({
       dmg,
       entitlements,
+      sourceCommit: SOURCE_COMMIT,
       platform: "darwin",
       runner,
     }),
@@ -597,11 +663,11 @@ test("fails closed after bounded detach recovery during DMG rewriting", async (c
   const detachCalls = [];
   let mounted = true;
   const runner = async (command, args) => {
-    if (command === "hdiutil" && args[0] === "attach") {
+    if (isTool(command, "hdiutil") && args[0] === "attach") {
       await createMountedLayout(args[args.indexOf("-mountpoint") + 1]);
       return { status: 0, stdout: "", stderr: "" };
     }
-    if (command === "hdiutil" && args[0] === "detach") {
+    if (isTool(command, "hdiutil") && args[0] === "detach") {
       detachCalls.push(args);
       if (args.includes("-force")) {
         mounted = false;
@@ -614,7 +680,7 @@ test("fails closed after bounded detach recovery during DMG rewriting", async (c
         stderr: args.includes("-force") ? "" : "/private/mount/path",
       };
     }
-    if (command === "codesign" && args.includes("--entitlements")) {
+    if (isTool(command, "codesign") && args.includes("--entitlements")) {
       const target = args.at(-1);
       return {
         status: 0,
@@ -631,6 +697,7 @@ test("fails closed after bounded detach recovery during DMG rewriting", async (c
     applyMacosInternalTestEntitlements({
       dmg,
       entitlements,
+      sourceCommit: SOURCE_COMMIT,
       platform: "darwin",
       runner,
       mountProbe: async () => mounted,
@@ -652,8 +719,9 @@ test("detaches a partial mount after attach times out and preserves the attach e
   );
   await writeFile(dmg, "original-dmg");
   let detachCalls = 0;
+  const detachArguments = [];
   const runner = async (command, args) => {
-    if (command === "hdiutil" && args[0] === "attach") {
+    if (isTool(command, "hdiutil") && args[0] === "attach") {
       await createMountedLayout(args[args.indexOf("-mountpoint") + 1]);
       return {
         status: null,
@@ -662,8 +730,9 @@ test("detaches a partial mount after attach times out and preserves the attach e
         stderr: "/private/mount/path",
       };
     }
-    if (command === "hdiutil" && args[0] === "detach") {
+    if (isTool(command, "hdiutil") && args[0] === "detach") {
       detachCalls += 1;
+      detachArguments.push(args);
       await rm(args[1], { recursive: true, force: true });
       await mkdir(args[1]);
       return { status: 0, stdout: "", stderr: "" };
@@ -675,6 +744,7 @@ test("detaches a partial mount after attach times out and preserves the attach e
     applyMacosInternalTestEntitlements({
       dmg,
       entitlements,
+      sourceCommit: SOURCE_COMMIT,
       platform: "darwin",
       runner,
       mountProbe: async () => true,
@@ -686,6 +756,7 @@ test("detaches a partial mount after attach times out and preserves the attach e
     },
   );
   assert.equal(detachCalls, 1);
+  assert.equal(detachArguments[0].includes("-force"), true);
   assert.equal(await readFile(dmg, "utf8"), "original-dmg");
   assert.deepEqual((await readdir(root)).sort(), ["resume-ir.dmg"]);
 });
@@ -700,17 +771,18 @@ test("verifies one DMG, delegates exact App verification, and always detaches", 
   const calls = [];
   const runner = async (command, args) => {
     calls.push([command, ...args]);
-    if (command === "hdiutil" && args[0] === "attach") {
+    const tool = path.basename(command);
+    if (tool === "hdiutil" && args[0] === "attach") {
       const mountDirectory = args.at(-1);
       await createMountedLayout(mountDirectory, { withComposition: true });
       return { status: 0, stdout: "", stderr: "" };
     }
-    if (command === "hdiutil" && args[0] === "detach") {
+    if (tool === "hdiutil" && args[0] === "detach") {
       await rm(args[1], { recursive: true, force: true });
       await mkdir(args[1]);
       return { status: 0, stdout: "", stderr: "" };
     }
-    if (command === "codesign" && args.includes("--entitlements")) {
+    if (tool === "codesign" && args.includes("--entitlements")) {
       const target = args.at(-1);
       return {
         status: 0,
@@ -720,31 +792,33 @@ test("verifies one DMG, delegates exact App verification, and always detaches", 
         stderr: `Executable=${target}`,
       };
     }
-    if (command === "codesign" && args.includes("--display")) {
+    if (tool === "codesign" && args.includes("--display")) {
       return {
         status: 0,
         stdout: "",
         stderr: [
-          "CodeDirectory v=20400 size=120 flags=0x10000(runtime)",
+          "CodeDirectory v=20400 size=120 flags=0x10002(adhoc,runtime)",
           "Signature=adhoc",
           "TeamIdentifier=not set",
           "Sealed Resources version=2 rules=13 files=42",
         ].join("\n"),
       };
     }
-    if (command === "codesign") {
+    if (tool === "codesign") {
       return { status: 0, stdout: "", stderr: "" };
     }
     return { status: 1, stdout: "", stderr: "not accepted" };
   };
   const verifiedApps = [];
-  const receipt = await verifyMacosDmg({
+  let leaseConsumed = false;
+  const receipt = await withVerifiedMacosDmg({
     repoRoot: root,
     targetTriple: "aarch64-apple-darwin",
     dmg,
     temporaryRoot,
     platform: "darwin",
-    runner,
+    systemRunner: runner,
+    verifySource: verifySyntheticSource,
     verifyApp: async ({ appBundle }) => {
       verifiedApps.push(appBundle);
       return {
@@ -763,11 +837,25 @@ test("verifies one DMG, delegates exact App verification, and always detaches", 
         build_machine_identity_path_markers: 0,
       };
     },
+    consumeVerifiedImage: async ({
+      appBundle,
+      appComposition,
+      receipt: verifiedReceipt,
+    }) => {
+      leaseConsumed = true;
+      assert.equal(await lstat(appBundle).then((metadata) => metadata.isDirectory()), true);
+      assert.equal(
+        appComposition.composition_digest,
+        verifiedReceipt.app_composition_digest,
+      );
+      return verifiedReceipt;
+    },
   });
 
   assert.equal(verifiedApps.length, 1);
+  assert.equal(leaseConsumed, true);
   assert.deepEqual(calls[0].slice(0, 6), [
-    "hdiutil",
+    "/usr/bin/hdiutil",
     "attach",
     dmg,
     "-readonly",
@@ -778,8 +866,9 @@ test("verifies one DMG, delegates exact App verification, and always detaches", 
   assert.deepEqual(await readdir(temporaryRoot), []);
   assert.match(receipt.app_composition_digest, /^[a-f0-9]{64}$/);
   assert.deepEqual(receipt, {
-    schema_version: "resume-ir.macos-dmg-composition.v1",
+    schema_version: "resume-ir.macos-dmg-composition.v2",
     target_triple: "aarch64-apple-darwin",
+    source_commit: SOURCE_COMMIT,
     dmg_count: 1,
     dmg_bytes: 13,
     dmg_sha256: "bf55618abcf4f76365c1784a970a08f5c650c6fc3ad8a613a042601c9a688b61",
@@ -814,6 +903,80 @@ test("verifies one DMG, delegates exact App verification, and always detaches", 
   });
 });
 
+test("rejects a DMG pathname replacement between digest and attach", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "resume-ir-dmg-swap-"));
+  const temporaryRoot = path.join(root, "mounts");
+  const dmg = path.join(root, "resume-ir.dmg");
+  const replacement = path.join(root, "replacement.dmg");
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(temporaryRoot);
+  await writeFile(dmg, "verified-dmg-bytes");
+  await writeFile(replacement, "replacement-dmg-bytes");
+  let replaced = false;
+  const runner = async (command, args) => {
+    if (isTool(command, "hdiutil") && args[0] === "attach") {
+      await rename(replacement, dmg);
+      replaced = true;
+      await createMountedLayout(args.at(-1), { withComposition: true });
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (isTool(command, "hdiutil") && args[0] === "detach") {
+      await rm(args[1], { recursive: true, force: true });
+      await mkdir(args[1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (isTool(command, "codesign") && args.includes("--entitlements")) {
+      return entitlementRunner()(command, args);
+    }
+    if (isTool(command, "codesign") && args.includes("--display")) {
+      return {
+        status: 0,
+        stdout: "",
+        stderr: [
+          "CodeDirectory v=20400 size=120 flags=0x10002(adhoc,runtime)",
+          "Signature=adhoc",
+          "TeamIdentifier=not set",
+          "Sealed Resources version=2 rules=13 files=42",
+        ].join("\n"),
+      };
+    }
+    if (isTool(command, "codesign")) {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "expected Gatekeeper rejection" };
+  };
+
+  await assert.rejects(
+    verifyMacosDmg({
+      repoRoot: root,
+      targetTriple: "aarch64-apple-darwin",
+      dmg,
+      temporaryRoot,
+      platform: "darwin",
+      runner,
+      verifySource: verifySyntheticSource,
+      verifyApp: async () => ({
+        daemon_sidecar_count: 1,
+        embedding_sidecar_count: 1,
+        pdf_renderer_sidecar_count: 1,
+        embedding_resource_file_count: 1,
+        embedding_resource_bytes: 1,
+        classifier_resource_file_count: 1,
+        classifier_resource_bytes: 1,
+        ocr_resource_file_count: 1,
+        ocr_resource_bytes: 1,
+        digest_match: true,
+        executable: true,
+        architecture: "arm64",
+        build_machine_identity_path_markers: 0,
+      }),
+    }),
+    /DMG file changed during verification/,
+  );
+  assert.equal(replaced, true);
+  assert.deepEqual(await readdir(temporaryRoot), []);
+});
+
 test("rejects an unsealed or non-ad-hoc App instead of issuing a test receipt", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "resume-ir-dmg-signature-"));
   const temporaryRoot = path.join(root, "mounts");
@@ -824,19 +987,19 @@ test("rejects an unsealed or non-ad-hoc App instead of issuing a test receipt", 
 
   for (const signatureCase of ["verify_failed", "developer_identity"]) {
     const runner = async (command, args) => {
-      if (command === "hdiutil" && args[0] === "attach") {
+      if (isTool(command, "hdiutil") && args[0] === "attach") {
         await createMountedLayout(args.at(-1), { withComposition: true });
         return { status: 0, stdout: "", stderr: "" };
       }
-      if (command === "hdiutil" && args[0] === "detach") {
+      if (isTool(command, "hdiutil") && args[0] === "detach") {
         await rm(args[1], { recursive: true, force: true });
         await mkdir(args[1]);
         return { status: 0, stdout: "", stderr: "" };
       }
-      if (command === "codesign" && args.includes("--verify")) {
+      if (isTool(command, "codesign") && args.includes("--verify")) {
         return { status: signatureCase === "verify_failed" ? 1 : 0, stdout: "", stderr: "" };
       }
-      if (command === "codesign" && args.includes("--display")) {
+      if (isTool(command, "codesign") && args.includes("--display")) {
         return {
           status: 0,
           stdout: "",
@@ -853,6 +1016,7 @@ test("rejects an unsealed or non-ad-hoc App instead of issuing a test receipt", 
     await assert.rejects(
       verifyMacosDmg({
         repoRoot: root,
+        verifySource: verifySyntheticSource,
         targetTriple: "aarch64-apple-darwin",
         dmg,
         temporaryRoot,
@@ -874,9 +1038,89 @@ test("rejects an unsealed or non-ad-hoc App instead of issuing a test receipt", 
           build_machine_identity_path_markers: 0,
         }),
       }),
-      /ad-hoc signature is invalid/,
+      /bundle signature policy does not match/,
     );
   }
+});
+
+test("rejects a nested executable whose signature policy differs from the App", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "resume-ir-dmg-nested-signature-"));
+  const temporaryRoot = path.join(root, "mounts");
+  const dmg = path.join(root, "resume-ir.dmg");
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(temporaryRoot);
+  await writeFile(dmg, "synthetic-dmg");
+  const validMetadata = [
+    "CodeDirectory v=20400 size=120 flags=0x10002(adhoc,runtime)",
+    "Signature=adhoc",
+    "TeamIdentifier=not set",
+    "Sealed Resources version=2 rules=13 files=42",
+  ].join("\n");
+  const invalidNestedMetadata = [
+    "CodeDirectory v=20400 size=120 flags=0x10000(runtime)",
+    "Authority=Developer ID Application: Synthetic Test",
+    "TeamIdentifier=ABCDEFGHIJ",
+  ].join("\n");
+  const runner = async (command, args) => {
+    const tool = path.basename(command);
+    if (tool === "hdiutil" && args[0] === "attach") {
+      await createMountedLayout(args.at(-1), { withComposition: true });
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (tool === "hdiutil" && args[0] === "detach") {
+      await rm(args[1], { recursive: true, force: true });
+      await mkdir(args[1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (tool === "codesign" && args.includes("--entitlements")) {
+      const target = args.at(-1);
+      return {
+        status: 0,
+        stdout: path.basename(target) === "resume-embedding-runtime"
+          ? LIBRARY_VALIDATION_ENTITLEMENT
+          : "",
+        stderr: `Executable=${target}`,
+      };
+    }
+    if (tool === "codesign" && args.includes("--display")) {
+      return {
+        status: 0,
+        stdout: "",
+        stderr: path.basename(args.at(-1)) === "resume-daemon"
+          ? invalidNestedMetadata
+          : validMetadata,
+      };
+    }
+    if (tool === "codesign") return { status: 0, stdout: "", stderr: "" };
+    return { status: 1, stdout: "", stderr: "expected Gatekeeper rejection" };
+  };
+  await assert.rejects(
+    verifyMacosDmg({
+      repoRoot: root,
+      verifySource: verifySyntheticSource,
+      targetTriple: "aarch64-apple-darwin",
+      dmg,
+      temporaryRoot,
+      platform: "darwin",
+      runner,
+      verifyApp: async () => ({
+        daemon_sidecar_count: 1,
+        embedding_sidecar_count: 1,
+        pdf_renderer_sidecar_count: 1,
+        embedding_resource_file_count: 7,
+        embedding_resource_bytes: 10,
+        classifier_resource_file_count: 2,
+        classifier_resource_bytes: 15,
+        ocr_resource_file_count: 31,
+        ocr_resource_bytes: 20,
+        digest_match: true,
+        executable: true,
+        architecture: "arm64",
+        build_machine_identity_path_markers: 0,
+      }),
+    }),
+    /bundle signature policy does not match/,
+  );
 });
 
 test("rejects irregular, empty, or oversized images and cleans an attach failure", async (context) => {
@@ -889,6 +1133,7 @@ test("rejects irregular, empty, or oversized images and cleans an attach failure
   await assert.rejects(
     verifyMacosDmg({
       repoRoot: root,
+      verifySource: verifySyntheticSource,
       targetTriple: "aarch64-apple-darwin",
       dmg: directory,
       temporaryRoot,
@@ -901,6 +1146,7 @@ test("rejects irregular, empty, or oversized images and cleans an attach failure
   await assert.rejects(
     verifyMacosDmg({
       repoRoot: root,
+      verifySource: verifySyntheticSource,
       targetTriple: "aarch64-apple-darwin",
       dmg: empty,
       temporaryRoot,
@@ -914,6 +1160,7 @@ test("rejects irregular, empty, or oversized images and cleans an attach failure
   await assert.rejects(
     verifyMacosDmg({
       repoRoot: root,
+      verifySource: verifySyntheticSource,
       targetTriple: "aarch64-apple-darwin",
       dmg: oversized,
       temporaryRoot,
@@ -929,6 +1176,7 @@ test("rejects irregular, empty, or oversized images and cleans an attach failure
   await assert.rejects(
     verifyMacosDmg({
       repoRoot: root,
+      verifySource: verifySyntheticSource,
       targetTriple: "aarch64-apple-darwin",
       dmg: image,
       temporaryRoot,
@@ -948,8 +1196,9 @@ test("the verifier detaches a partial mount after attach times out", async (cont
   await mkdir(temporaryRoot);
   await writeFile(dmg, "synthetic-dmg");
   let detachCalls = 0;
+  const detachArguments = [];
   const runner = async (command, args) => {
-    if (command === "hdiutil" && args[0] === "attach") {
+    if (isTool(command, "hdiutil") && args[0] === "attach") {
       await createMountedLayout(args.at(-1), { withComposition: true });
       return {
         status: null,
@@ -958,8 +1207,9 @@ test("the verifier detaches a partial mount after attach times out", async (cont
         stderr: "/private/mount/path",
       };
     }
-    if (command === "hdiutil" && args[0] === "detach") {
+    if (isTool(command, "hdiutil") && args[0] === "detach") {
       detachCalls += 1;
+      detachArguments.push(args);
       await rm(args[1], { recursive: true, force: true });
       await mkdir(args[1]);
       return { status: 0, stdout: "", stderr: "" };
@@ -970,6 +1220,7 @@ test("the verifier detaches a partial mount after attach times out", async (cont
   await assert.rejects(
     verifyMacosDmg({
       repoRoot: root,
+      verifySource: verifySyntheticSource,
       targetTriple: "aarch64-apple-darwin",
       dmg,
       temporaryRoot,
@@ -980,7 +1231,50 @@ test("the verifier detaches a partial mount after attach times out", async (cont
     /DMG attach failed/,
   );
   assert.equal(detachCalls, 1);
+  assert.equal(detachArguments[0].includes("-force"), true);
   assert.deepEqual(await readdir(temporaryRoot), []);
+});
+
+test("a stuck partial verifier mount gets one forced detach attempt", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "resume-ir-dmg-partial-stuck-"));
+  const temporaryRoot = path.join(root, "mounts");
+  const dmg = path.join(root, "resume-ir.dmg");
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(temporaryRoot);
+  await writeFile(dmg, "synthetic-dmg");
+  const detachArguments = [];
+  const runner = async (command, args) => {
+    if (isTool(command, "hdiutil") && args[0] === "attach") {
+      await writeFile(path.join(args.at(-1), "partial-mount"), "mounted");
+      return {
+        status: null,
+        error: { code: "ETIMEDOUT" },
+        stdout: "",
+        stderr: "bounded",
+      };
+    }
+    if (isTool(command, "hdiutil") && args[0] === "detach") {
+      detachArguments.push(args);
+      return { status: 1, stdout: "", stderr: "bounded" };
+    }
+    return { status: 1, stdout: "", stderr: "" };
+  };
+
+  await assert.rejects(
+    verifyMacosDmg({
+      repoRoot: root,
+      verifySource: verifySyntheticSource,
+      targetTriple: "aarch64-apple-darwin",
+      dmg,
+      temporaryRoot,
+      platform: "darwin",
+      runner,
+      mountProbe: async () => true,
+    }),
+    /DMG detach or cleanup failed/,
+  );
+  assert.equal(detachArguments.length, 1);
+  assert.equal(detachArguments[0].includes("-force"), true);
 });
 
 test("preserves the verification error when detach reports failure after unmounting", async (context) => {
@@ -991,11 +1285,11 @@ test("preserves the verification error when detach reports failure after unmount
   await mkdir(temporaryRoot);
   await writeFile(dmg, "synthetic-dmg");
   const runner = async (command, args) => {
-    if (command === "hdiutil" && args[0] === "attach") {
+    if (isTool(command, "hdiutil") && args[0] === "attach") {
       await createMountedLayout(args.at(-1), { withComposition: true });
       return { status: 0, stdout: "", stderr: "" };
     }
-    if (command === "hdiutil" && args[0] === "detach") {
+    if (isTool(command, "hdiutil") && args[0] === "detach") {
       if (args.includes("-force")) {
         await rm(args[1], { recursive: true, force: true });
         await mkdir(args[1]);
@@ -1010,6 +1304,7 @@ test("preserves the verification error when detach reports failure after unmount
   await assert.rejects(
     verifyMacosDmg({
       repoRoot: root,
+      verifySource: verifySyntheticSource,
       targetTriple: "aarch64-apple-darwin",
       dmg,
       temporaryRoot,
@@ -1017,7 +1312,7 @@ test("preserves the verification error when detach reports failure after unmount
       runner,
       verifyApp: async () => ({}),
     }),
-    /ad-hoc signature is invalid/,
+    /bundle signature policy does not match/,
   );
   assert.deepEqual(await readdir(temporaryRoot), []);
 });
@@ -1030,11 +1325,11 @@ test("reports cleanup failure when a verifier mount remains after detach recover
   await mkdir(temporaryRoot);
   await writeFile(dmg, "synthetic-dmg");
   const runner = async (command, args) => {
-    if (command === "hdiutil" && args[0] === "attach") {
+    if (isTool(command, "hdiutil") && args[0] === "attach") {
       await createMountedLayout(args.at(-1));
       return { status: 0, stdout: "", stderr: "" };
     }
-    if (command === "hdiutil" && args[0] === "detach") {
+    if (isTool(command, "hdiutil") && args[0] === "detach") {
       return { status: 1, stdout: "", stderr: "" };
     }
     return { status: 1, stdout: "", stderr: "" };
@@ -1043,6 +1338,7 @@ test("reports cleanup failure when a verifier mount remains after detach recover
   await assert.rejects(
     verifyMacosDmg({
       repoRoot: root,
+      verifySource: verifySyntheticSource,
       targetTriple: "aarch64-apple-darwin",
       dmg,
       temporaryRoot,
@@ -1091,7 +1387,7 @@ test("locks one credential-free arm64 internal-test build", async () => {
     "dmg",
     "--ci",
   ]);
-  assert.equal(path.basename(plan.dmg), "resume-ir_0.1.1_aarch64.dmg");
+  assert.equal(path.basename(plan.dmg), "resume-ir_0.1.2_aarch64.dmg");
   assert.equal(
     plan.entitlements,
     path.join(paths.frontendRoot, "src-tauri", "entitlements.internal-test.plist"),
@@ -1136,6 +1432,7 @@ test("removes a stale canonical DMG when the Tauri build fails", async (context)
   await assert.rejects(
     buildMacosInternalTestRelease({
       ...fixture,
+      verifySource: verifySyntheticSource,
       platform: "darwin",
       runner: () => ({ status: 1, stderr: "/private/build/path" }),
     }),
@@ -1144,12 +1441,69 @@ test("removes a stale canonical DMG when the Tauri build fails", async (context)
   await assert.rejects(lstat(fixture.plan.dmg), { code: "ENOENT" });
 });
 
+test("removes a stale candidate when prebuild source provenance fails", async (context) => {
+  const fixture = await createTestReleaseFixture(context);
+  const candidate = testReleaseCandidatePath(fixture.plan.dmg);
+  await writeFile(candidate, "stale-candidate");
+  await writeFile(fixture.plan.dmg, "previous-verified-dmg");
+  let buildCalled = false;
+
+  await assert.rejects(
+    buildMacosInternalTestRelease({
+      ...fixture,
+      verifySource: async () => {
+        throw new Error("macOS build source provenance is invalid");
+      },
+      platform: "darwin",
+      runner: () => {
+        buildCalled = true;
+        return { status: 0 };
+      },
+    }),
+    /source provenance is invalid/,
+  );
+  assert.equal(buildCalled, false);
+  await assert.rejects(lstat(candidate), { code: "ENOENT" });
+  assert.equal(await readFile(fixture.plan.dmg, "utf8"), "previous-verified-dmg");
+});
+
+test("deletes the candidate when source provenance drifts before promotion", async (context) => {
+  const fixture = await createTestReleaseFixture(context);
+  let provenanceChecks = 0;
+
+  await assert.rejects(
+    buildMacosInternalTestRelease({
+      ...fixture,
+      verifySource: async () => {
+        provenanceChecks += 1;
+        return provenanceChecks === 1 ? SOURCE_COMMIT : "f".repeat(40);
+      },
+      platform: "darwin",
+      runner: () => {
+        writeFileSync(fixture.plan.dmg, "fresh-tauri-dmg");
+        return { status: 0 };
+      },
+      applyEntitlements: async () => ({
+        library_validation_entitlement_scope: "embedding_runtime_only",
+      }),
+      verifyDmg: async () => verifiedDmgReceipt(),
+    }),
+    /source provenance is invalid/,
+  );
+  assert.equal(provenanceChecks, 2);
+  await assert.rejects(lstat(fixture.plan.dmg), { code: "ENOENT" });
+  await assert.rejects(lstat(testReleaseCandidatePath(fixture.plan.dmg)), {
+    code: "ENOENT",
+  });
+});
+
 test("does not leave a canonical DMG when full verification fails", async (context) => {
   const fixture = await createTestReleaseFixture(context);
 
   await assert.rejects(
     buildMacosInternalTestRelease({
       ...fixture,
+      verifySource: verifySyntheticSource,
       platform: "darwin",
       runner: () => {
         writeFileSync(fixture.plan.dmg, "fresh-tauri-dmg");
@@ -1176,6 +1530,7 @@ test("promotes only the fully verified candidate to the canonical DMG path", asy
   assert.deepEqual(
     await buildMacosInternalTestRelease({
       ...fixture,
+      verifySource: verifySyntheticSource,
       platform: "darwin",
       runner: () => {
         mkdirSync(path.dirname(fixture.plan.dmg), { recursive: true });
@@ -1208,9 +1563,11 @@ test("test-release wrapper returns only a verified bounded receipt", async (cont
   const receipt = verifiedDmgReceipt();
   const calls = [];
   const entitlementCalls = [];
+  const verificationCalls = [];
   assert.deepEqual(
     await buildMacosInternalTestRelease({
       ...fixture,
+      verifySource: verifySyntheticSource,
       platform: "darwin",
       environment: { APPLE_PASSWORD: "removed", KEEP_ME: "yes" },
       runner: (command, args, options) => {
@@ -1224,7 +1581,10 @@ test("test-release wrapper returns only a verified bounded receipt", async (cont
           library_validation_entitlement_scope: "embedding_runtime_only",
         };
       },
-      verifyDmg: async () => receipt,
+      verifyDmg: async (request) => {
+        verificationCalls.push(request);
+        return receipt;
+      },
     }),
     receipt,
   );
@@ -1234,10 +1594,14 @@ test("test-release wrapper returns only a verified bounded receipt", async (cont
   assert.equal(calls[0].options.env.APPLE_SIGNING_IDENTITY, "-");
   assert.equal(entitlementCalls.length, 1);
   assert.notEqual(entitlementCalls[0].dmg, fixture.plan.dmg);
+  assert.equal(verificationCalls.length, 1);
+  assert.equal(Object.hasOwn(verificationCalls[0], "runner"), false);
+  assert.equal(Object.hasOwn(verificationCalls[0], "systemRunner"), false);
 
   await assert.rejects(
     buildMacosInternalTestRelease({
       ...fixture,
+      verifySource: verifySyntheticSource,
       platform: "darwin",
       runner: () => ({ status: 1, stderr: "/private/build/path" }),
     }),

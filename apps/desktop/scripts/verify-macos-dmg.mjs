@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import {
@@ -16,6 +15,11 @@ import { fileURLToPath } from "node:url";
 
 import { verifyBundledSidecar } from "./verify-bundled-sidecar.mjs";
 import { verifyBundleComposition } from "./macos-bundle-composition.mjs";
+import { verifyMainSourceProvenance } from "./macos-source-provenance.mjs";
+import {
+  MACOS_SYSTEM_TOOLS,
+  runClosedSystemTool,
+} from "./macos-system-tools.mjs";
 
 export const MAX_DMG_BYTES = 1024 * 1024 * 1024;
 export const APPLE_TOOL_TIMEOUT_MS = 120 * 1000;
@@ -29,12 +33,10 @@ const LIBRARY_VALIDATION_ENTITLEMENT =
 const MAX_INFO_PLIST_BYTES = 64 * 1024;
 
 async function defaultRunner(command, args) {
-  return spawnSync(command, args, {
+  return runClosedSystemTool(command, args, {
     encoding: "utf8",
     maxBuffer: MAX_TOOL_OUTPUT_BYTES,
     timeout: APPLE_TOOL_TIMEOUT_MS,
-    shell: false,
-    windowsHide: true,
   });
 }
 
@@ -64,6 +66,39 @@ async function digestFile(file) {
   return digest.digest("hex");
 }
 
+function validDmgMetadata(metadata, maxDmgBytes) {
+  return (
+    metadata?.isFile() &&
+    !metadata.isSymbolicLink() &&
+    metadata.size > 0 &&
+    metadata.size <= maxDmgBytes
+  );
+}
+
+function sameDmgIdentity(left, right) {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.mode === right.mode &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  );
+}
+
+async function metadataForDmg(dmg, maxDmgBytes, changed = false) {
+  let metadata;
+  try {
+    metadata = await lstat(dmg);
+  } catch {
+    throw new Error(changed ? "DMG file changed during verification" : "DMG file is invalid");
+  }
+  if (!validDmgMetadata(metadata, maxDmgBytes)) {
+    throw new Error(changed ? "DMG file changed during verification" : "DMG file is invalid");
+  }
+  return metadata;
+}
+
 function boundedToolOutput(result) {
   const output = `${result?.stdout ?? ""}\n${result?.stderr ?? ""}`;
   if (Buffer.byteLength(output, "utf8") > MAX_TOOL_OUTPUT_BYTES) {
@@ -80,28 +115,60 @@ export async function verifyAdHocSignedApp({
   if (platform !== "darwin" || !path.isAbsolute(appBundle)) {
     throw new Error("ad-hoc signature arguments are invalid");
   }
-  const verification = await runner("codesign", [
-    "--verify",
-    "--deep",
-    "--strict",
-    "--verbose=2",
-    appBundle,
-  ]);
-  if (!succeeded(verification)) throw new Error("ad-hoc signature is invalid");
-  const description = await runner("codesign", [
-    "--display",
-    "--verbose=4",
-    appBundle,
-  ]);
-  if (!succeeded(description)) throw new Error("ad-hoc signature is invalid");
-  const metadata = boundedToolOutput(description);
-  if (
-    !/^Signature=adhoc$/m.test(metadata) ||
-    !/^TeamIdentifier=not set$/m.test(metadata) ||
-    !/^Sealed Resources version=\d+ rules=\d+ files=\d+$/m.test(metadata) ||
-    !/^CodeDirectory .*flags=.*\([^)]*\bruntime\b[^)]*\)/m.test(metadata) ||
-    /^Authority=/m.test(metadata)
-  ) {
+  try {
+    const mainExecutable = await resolveMacosAppExecutable(appBundle);
+    const macosDirectory = path.join(appBundle, "Contents", "MacOS");
+    const targets = [
+      { target: appBundle, bundle: true },
+      { target: path.join(macosDirectory, mainExecutable), bundle: false },
+      { target: path.join(macosDirectory, "resume-daemon"), bundle: false },
+      {
+        target: path.join(macosDirectory, "resume-embedding-runtime"),
+        bundle: false,
+      },
+      {
+        target: path.join(macosDirectory, "resume-pdf-render-runtime"),
+        bundle: false,
+      },
+    ];
+    for (const { target, bundle } of targets) {
+      await validateSignedTarget(target);
+      const verification = await runner(MACOS_SYSTEM_TOOLS.codesign, [
+        "--verify",
+        ...(bundle ? ["--deep"] : []),
+        "--strict",
+        "--verbose=2",
+        target,
+      ]);
+      if (!succeeded(verification)) {
+        throw new Error("ad-hoc signature is invalid");
+      }
+      const description = await runner(MACOS_SYSTEM_TOOLS.codesign, [
+        "--display",
+        "--verbose=4",
+        target,
+      ]);
+      if (!succeeded(description)) {
+        throw new Error("ad-hoc signature is invalid");
+      }
+      const metadata = boundedToolOutput(description);
+      const flags = metadata.match(
+        /^CodeDirectory .*flags=0x[0-9a-f]+\(([^)]+)\)/m,
+      )?.[1].split(",");
+      if (
+        !/^Signature=adhoc$/m.test(metadata) ||
+        !/^TeamIdentifier=not set$/m.test(metadata) ||
+        (bundle &&
+          !/^Sealed Resources version=\d+ rules=\d+ files=\d+$/m.test(
+            metadata,
+          )) ||
+        JSON.stringify(flags) !== JSON.stringify(["adhoc", "runtime"]) ||
+        /^Authority=/m.test(metadata)
+      ) {
+        throw new Error("ad-hoc signature is invalid");
+      }
+    }
+  } catch {
     throw new Error("ad-hoc signature is invalid");
   }
   return Object.freeze({
@@ -303,13 +370,19 @@ function entitlementState(result) {
   } catch {
     throw new Error("macOS internal-test entitlement scope is invalid");
   }
+  const allKeys = [
+    ...output.matchAll(/<key>\s*([^<]+?)\s*<\/key>/g),
+  ].map((match) => match[1]);
+  if ((output.match(/<key\b/g) ?? []).length !== allKeys.length) {
+    throw new Error("macOS internal-test entitlement scope is invalid");
+  }
   const escaped = LIBRARY_VALIDATION_ENTITLEMENT.replaceAll(".", "\\.");
   const key = new RegExp(`<key>\\s*${escaped}\\s*<\\/key>`, "g");
   const enabled = new RegExp(
     `<key>\\s*${escaped}\\s*<\\/key>\\s*<true\\s*\\/>`,
   );
   const keys = output.match(key) ?? [];
-  return { keyCount: keys.length, enabled: enabled.test(output) };
+  return { allKeys, keyCount: keys.length, enabled: enabled.test(output) };
 }
 
 export async function verifyMacosInternalTestEntitlements({
@@ -339,7 +412,7 @@ export async function verifyMacosInternalTestEntitlements({
     await validateSignedTarget(target);
     let result;
     try {
-      result = await runner("codesign", [
+      result = await runner(MACOS_SYSTEM_TOOLS.codesign, [
         "--display",
         "--entitlements",
         "-",
@@ -351,8 +424,12 @@ export async function verifyMacosInternalTestEntitlements({
     }
     const state = entitlementState(result);
     if (
-      (expected && (state.keyCount !== 1 || !state.enabled)) ||
-      (!expected && state.keyCount !== 0)
+      (expected &&
+        (state.keyCount !== 1 ||
+          !state.enabled ||
+          JSON.stringify(state.allKeys) !==
+            JSON.stringify([LIBRARY_VALIDATION_ENTITLEMENT]))) ||
+      (!expected && state.allKeys.length !== 0)
     ) {
       throw new Error("macOS internal-test entitlement scope is invalid");
     }
@@ -360,6 +437,12 @@ export async function verifyMacosInternalTestEntitlements({
   return Object.freeze({
     library_validation_entitlement_scope: "embedding_runtime_only",
   });
+}
+
+export async function verifyMacosInternalTestSignaturePolicy(options) {
+  const signature = await verifyAdHocSignedApp(options);
+  const entitlementScope = await verifyMacosInternalTestEntitlements(options);
+  return Object.freeze({ ...signature, ...entitlementScope });
 }
 
 async function cleanupMount({
@@ -370,22 +453,39 @@ async function cleanupMount({
   mountProbe,
 }) {
   let cleanupFailed = false;
-  if (
-    attached ||
-    (attachAttempted && (await mountProbe(mountDirectory)))
-  ) {
+  if (attached) {
     let result;
     try {
-      result = await runner("hdiutil", ["detach", mountDirectory]);
+      result = await runner(MACOS_SYSTEM_TOOLS.hdiutil, [
+        "detach",
+        mountDirectory,
+      ]);
     } catch {
       result = undefined;
     }
     if (!succeeded(result) && (await mountProbe(mountDirectory))) {
       try {
-        result = await runner("hdiutil", ["detach", mountDirectory, "-force"]);
+        result = await runner(MACOS_SYSTEM_TOOLS.hdiutil, [
+          "detach",
+          mountDirectory,
+          "-force",
+        ]);
       } catch {
         result = undefined;
       }
+    }
+    cleanupFailed =
+      !succeeded(result) && (await mountProbe(mountDirectory));
+  } else if (attachAttempted && (await mountProbe(mountDirectory))) {
+    let result;
+    try {
+      result = await runner(MACOS_SYSTEM_TOOLS.hdiutil, [
+        "detach",
+        mountDirectory,
+        "-force",
+      ]);
+    } catch {
+      result = undefined;
     }
     cleanupFailed =
       !succeeded(result) && (await mountProbe(mountDirectory));
@@ -398,7 +498,7 @@ async function cleanupMount({
   return cleanupFailed ? new Error("DMG detach or cleanup failed") : undefined;
 }
 
-export async function verifyMacosDmg({
+async function consumeVerifiedMacosDmg({
   repoRoot,
   targetTriple,
   dmg,
@@ -407,31 +507,29 @@ export async function verifyMacosDmg({
   platform = process.platform,
   runner = defaultRunner,
   verifyApp = verifyBundledSidecar,
+  verifySource = verifyMainSourceProvenance,
   mountProbe = mountedFilesystemAt,
+  consumeVerifiedImage,
 }) {
   if (
     platform !== "darwin" ||
     targetTriple !== "aarch64-apple-darwin" ||
     !path.isAbsolute(repoRoot) ||
     !path.isAbsolute(dmg) ||
-    !path.isAbsolute(temporaryRoot)
+    !path.isAbsolute(temporaryRoot) ||
+    typeof consumeVerifiedImage !== "function"
   ) {
     throw new Error("macOS DMG verification arguments are invalid");
   }
-  let dmgMetadata;
-  try {
-    dmgMetadata = await lstat(dmg);
-  } catch {
-    throw new Error("DMG file is invalid");
+  const sourceCommit = await verifySource({ repoRoot });
+  if (!/^[a-f0-9]{40}$/.test(sourceCommit ?? "")) {
+    throw new Error("macOS build source provenance is invalid");
   }
+  const initialDmgMetadata = await metadataForDmg(dmg, maxDmgBytes);
   const dmgSha256 = await digestFile(dmg);
-  if (
-    !dmgMetadata.isFile() ||
-    dmgMetadata.isSymbolicLink() ||
-    dmgMetadata.size === 0 ||
-    dmgMetadata.size > maxDmgBytes
-  ) {
-    throw new Error("DMG file is invalid");
+  const hashedDmgMetadata = await metadataForDmg(dmg, maxDmgBytes, true);
+  if (!sameDmgIdentity(initialDmgMetadata, hashedDmgMetadata)) {
+    throw new Error("DMG file changed during verification");
   }
 
   let mountDirectory;
@@ -442,11 +540,11 @@ export async function verifyMacosDmg({
   }
   let attached = false;
   let attachAttempted = false;
-  let receipt;
+  let consumerResult;
   let verificationError;
   try {
     attachAttempted = true;
-    const attach = await runner("hdiutil", [
+    const attach = await runner(MACOS_SYSTEM_TOOLS.hdiutil, [
       "attach",
       dmg,
       "-readonly",
@@ -457,36 +555,50 @@ export async function verifyMacosDmg({
     if (!succeeded(attach)) throw new Error("DMG attach failed");
     attached = true;
 
+    const attachedDmgMetadata = await metadataForDmg(dmg, maxDmgBytes, true);
+    if (!sameDmgIdentity(hashedDmgMetadata, attachedDmgMetadata)) {
+      throw new Error("DMG file changed during verification");
+    }
+    const attachedDmgSha256 = await digestFile(dmg);
+    const finalDmgMetadata = await metadataForDmg(dmg, maxDmgBytes, true);
+    if (
+      !sameDmgIdentity(attachedDmgMetadata, finalDmgMetadata) ||
+      attachedDmgSha256 !== dmgSha256
+    ) {
+      throw new Error("DMG file changed during verification");
+    }
+
     const appBundle = await validateMountedDmgLayout({ mountDirectory });
     const volumeIcon = await lstat(path.join(mountDirectory, VOLUME_ICON));
     const appReceipt = await verifyApp({ repoRoot, targetTriple, appBundle });
+    let signaturePolicy;
     const appComposition = await verifyBundleComposition({
       appBundle,
       targetTriple,
+      expectedSourceCommit: sourceCommit,
+      verifySignaturePolicy: async ({ appBundle: boundAppBundle }) => {
+        signaturePolicy = await verifyMacosInternalTestSignaturePolicy({
+          appBundle: boundAppBundle,
+          platform,
+          runner,
+        });
+        return signaturePolicy;
+      },
     });
-    const signature = await verifyAdHocSignedApp({
-      appBundle,
-      platform,
-      runner,
-    });
-    const entitlementScope = await verifyMacosInternalTestEntitlements({
-      appBundle,
-      platform,
-      runner,
-    });
-    const gatekeeper = await runner("spctl", [
+    const gatekeeper = await runner(MACOS_SYSTEM_TOOLS.spctl, [
       "-a",
       "-vv",
       "--type",
       "execute",
       appBundle,
     ]);
-    receipt = {
-      schema_version: "resume-ir.macos-dmg-composition.v1",
+    const receipt = Object.freeze({
+      schema_version: "resume-ir.macos-dmg-composition.v2",
       target_triple: targetTriple,
+      source_commit: sourceCommit,
       dmg_count: 1,
-      dmg_bytes: dmgMetadata.size,
-      dmg_sha256: dmgSha256,
+      dmg_bytes: finalDmgMetadata.size,
+      dmg_sha256: attachedDmgSha256,
       app_composition_digest: appComposition.composition_digest,
       mounted_read_only: true,
       app_bundle_count: 1,
@@ -507,17 +619,24 @@ export async function verifyMacosDmg({
       architecture: appReceipt.architecture,
       build_machine_identity_path_markers:
         appReceipt.build_machine_identity_path_markers,
-      code_signature: signature.code_signature,
-      hardened_runtime: signature.hardened_runtime,
+      code_signature: signaturePolicy.code_signature,
+      hardened_runtime: signaturePolicy.hardened_runtime,
       library_validation_entitlement_scope:
-        entitlementScope.library_validation_entitlement_scope,
+        signaturePolicy.library_validation_entitlement_scope,
       notarization: "not_requested",
       distribution_signature: "accepted",
       gatekeeper: succeeded(gatekeeper) ? "accepted" : "rejected",
       distribution_profile: "internal_test",
       tester_allow_list_required: true,
       release_claim: "composition_only",
-    };
+    });
+    consumerResult = await consumeVerifiedImage(
+      Object.freeze({
+        appBundle,
+        appComposition: Object.freeze({ ...appComposition }),
+        receipt,
+      }),
+    );
   } catch (error) {
     verificationError = error;
   }
@@ -531,7 +650,25 @@ export async function verifyMacosDmg({
   });
   if (cleanupError) throw cleanupError;
   if (verificationError) throw verificationError;
-  return receipt;
+  return consumerResult;
+}
+
+export async function withVerifiedMacosDmg({
+  systemRunner = defaultRunner,
+  ...options
+}) {
+  return consumeVerifiedMacosDmg({
+    ...options,
+    runner: systemRunner,
+  });
+}
+
+export async function verifyMacosDmg({ runner = defaultRunner, ...options }) {
+  return withVerifiedMacosDmg({
+    ...options,
+    systemRunner: runner,
+    consumeVerifiedImage: ({ receipt }) => receipt,
+  });
 }
 
 function parseArguments(args) {

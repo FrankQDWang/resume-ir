@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::net::SocketAddr;
@@ -19,17 +18,16 @@ use embedder::{
 };
 use import_pipeline::{
     detect_ocr_page_count, finalize_migration_rebuild, import_root_with_options_and_control,
-    index_claimed_ocr_text_with_policy, ocr_preclaim_decision, prepare_migration_rebuild_artifacts,
-    reconcile_search_artifacts, ImportOptions, ImportPipelineErrorClass, ImportResourcePolicy,
-    ImportRunControl, ImportTaskOwnerLock, LinearPromotionPolicy, OcrPreclaimDecision, ScanProfile,
+    index_claimed_ocr_text_with_policy, ocr_preclaim_decision, reconcile_search_artifacts,
+    ImportOptions, ImportPipelineErrorClass, ImportResourcePolicy, ImportTaskOwnerLock,
+    LinearPromotionPolicy, OcrPreclaimDecision, PipelineRunControl, ScanProfile,
     SearchArtifactRecoverySummary, SearchPublicationEmbeddingFailure,
     SearchPublicationEmbeddingInput, SearchPublicationEmbeddingOutput,
     SearchPublicationVectorization, SearchPublicationVectorizer,
 };
 use meta_store::{
-    ImportProcessingContract, ImportRootTaskHeadOutcome, ImportRootTaskHeadRequest,
-    ImportScanBudgetKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskFailure,
-    ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJobFailureKind, MetaStoreErrorClass,
+    ImportProcessingContract, ImportScanBudgetKind, ImportScanProfile, ImportScanScope,
+    ImportTaskFailure, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJobFailureKind,
     OcrAttemptFailure, OcrPageCacheEntry, OcrPageCacheKey, OcrPageCacheStatus, OwnedMetaStore,
     ReadMetaStore, SearchProjectionServiceState, SearchRepairReason, UnixTimestamp, WorkerTaskKind,
 };
@@ -47,6 +45,7 @@ use ocr_client::{
 use process_containment::CurrentProcessGroupLeader;
 
 mod command_failure;
+mod daemon_error;
 mod delete_command;
 mod detail_hydrate;
 mod detail_ipc;
@@ -56,9 +55,17 @@ mod ipc;
 mod migration_repair;
 mod query_runtime;
 mod query_timing;
+mod rescan_schedule;
 mod search_command;
 mod search_contract;
 mod search_runtime_config;
+mod worker_runtime;
+
+use daemon_error::{DaemonError, Result};
+use worker_runtime::{
+    prepare_migration_artifacts_for_worker, run_worker_loop, MigrationArtifactPreparation,
+    WorkerLoopRuntime, WorkerSummaryOutput,
+};
 
 const IMPORT_RETRY_BACKOFF_SECONDS: i64 = 60;
 const DEFAULT_IMPORT_RESCAN_MIN_AGE_SECONDS: i64 = 300;
@@ -245,7 +252,7 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
         ));
     }
     let data_directory_owner = import_processing::acquire_owner(data_dir)?;
-    let daemon_owner = if options.once {
+    let mut daemon_owner = if options.once {
         None
     } else {
         let owner_mode = match options.parent_lifecycle {
@@ -267,6 +274,10 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
         )
     };
     let parent_shutdown = start_parent_lifecycle_watch(options.parent_lifecycle)?;
+    let startup_control = parent_shutdown
+        .as_ref()
+        .map(|shutdown| PipelineRunControl::from_shutdown_signal(Arc::clone(shutdown)))
+        .unwrap_or_default();
     let _resident_embedding_owner = start_resident_embedding(&mut options)?;
 
     let store = open_owned_store(&data_directory_owner)?;
@@ -275,17 +286,21 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let startup_orphaned_recovered =
         import_processing::normalize_orphaned_running_tasks(&store, startup_now)?;
     import_processing::activate_contract(&store, &processing_contract, startup_now)?;
-    // A v27 metadata migration deliberately invalidates every pre-v27 derived
-    // index. A deterministic retirement failure is persisted as RepairBlocked;
-    // do not touch the same invalid publication seam again during startup.
-    let artifacts_ready = match prepare_migration_rebuild_artifacts(&store, current_timestamp()?) {
-        Ok(_) => true,
-        Err(error) if error.class() == ImportPipelineErrorClass::ArtifactRetirement => false,
-        Err(error) => return Err(DaemonError::import(error)),
-    };
-    if artifacts_ready {
-        run_search_artifact_worker_once(&store, &options, &processing_contract)?;
-    }
+    let standalone_startup_artifacts =
+        if !options.once && !options.has_worker_loop() && options.ipc_listen.is_none() {
+            let preparation = prepare_migration_artifacts_for_worker(&store, &startup_control)?;
+            if preparation == MigrationArtifactPreparation::Ready {
+                run_search_artifact_worker_once(
+                    &store,
+                    &options,
+                    &processing_contract,
+                    &startup_control,
+                )?;
+            }
+            Some(preparation)
+        } else {
+            None
+        };
     let summary = store.status_summary().map_err(DaemonError::store)?;
 
     println!("resume-daemon foreground ready");
@@ -297,7 +312,15 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
         .flush()
         .map_err(|_| DaemonError::control_plane("unable to write daemon status"))?;
 
-    if options.work_imports_once {
+    let migration_artifacts = match standalone_startup_artifacts {
+        Some(preparation) => preparation,
+        None if options.work_imports_once || options.work_index_once => {
+            prepare_migration_artifacts_for_worker(&store, &startup_control)?
+        }
+        None => MigrationArtifactPreparation::Ready,
+    };
+
+    if options.work_imports_once && migration_artifacts == MigrationArtifactPreparation::Ready {
         let mut import_summary =
             run_import_worker_once(data_dir, &store, &options, &processing_contract)?;
         import_summary.orphaned_recovered += startup_orphaned_recovered;
@@ -307,8 +330,13 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
         let ocr_summary = run_ocr_worker_once(data_dir, &store, &options)?;
         print_ocr_worker_summary(&ocr_summary)?;
     }
-    if options.work_index_once {
-        let recovery = run_search_artifact_worker_once(&store, &options, &processing_contract)?;
+    if options.work_index_once && migration_artifacts == MigrationArtifactPreparation::Ready {
+        let recovery = run_search_artifact_worker_once(
+            &store,
+            &options,
+            &processing_contract,
+            &startup_control,
+        )?;
         print_search_artifact_worker_summary(&recovery)?;
     }
 
@@ -324,7 +352,7 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
             startup_orphaned_recovered,
             parent_shutdown.as_ref(),
             daemon_owner
-                .as_ref()
+                .take()
                 .expect("persistent daemon owns its data directory"),
         )?;
         return Ok(());
@@ -335,27 +363,34 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
             &store,
             &options,
             &processing_contract,
-            startup_orphaned_recovered,
-            parent_shutdown,
+            WorkerLoopRuntime {
+                startup_orphaned_recovered,
+                stop_signal: parent_shutdown,
+                artifact_fault_receiver: None,
+                summary_output: WorkerSummaryOutput::Stdout,
+            },
         )?;
         return Ok(());
     }
     if let Some(ipc_addr) = options.ipc_listen {
         let ipc_store = open_store(data_dir)?;
         let ipc_owned_store = store.open_sibling().map_err(DaemonError::store)?;
-        ipc::server::serve(ipc::server::Context {
+        ipc::server::BoundServer::bind(
+            ipc_addr,
+            daemon_owner
+                .take()
+                .expect("persistent daemon owns its data directory"),
+        )?
+        .serve(ipc::server::Context {
             data_dir,
             store: &ipc_store,
             owned_store: &ipc_owned_store,
-            addr: ipc_addr,
             max_requests: options.max_requests,
             search_runtime_config: search_runtime_config(&options),
             processing_contract: &processing_contract,
             shutdown: parent_shutdown.as_ref(),
             worker_result_receiver: None,
-            daemon_owner: daemon_owner
-                .as_ref()
-                .expect("persistent daemon owns its data directory"),
+            artifact_fault_reporter: None,
         })
         .map_err(DaemonError::from)?;
         if options.max_requests.is_some() || parent_shutdown.is_some() {
@@ -846,11 +881,12 @@ fn run_worker_with_ipc(
     processing_contract: &ImportProcessingContract,
     startup_orphaned_recovered: usize,
     parent_shutdown: Option<&Arc<AtomicBool>>,
-    daemon_owner: &ipc::DaemonGenerationOwner<'_>,
+    daemon_owner: ipc::DaemonGenerationOwner<'_>,
 ) -> Result<()> {
     let ipc_addr = options
         .ipc_listen
         .expect("validated combined worker/ipc mode has ipc address");
+    let bound_server = ipc::server::BoundServer::bind(ipc_addr, daemon_owner)?;
     let ipc_store = open_store(data_dir)?;
     let ipc_owned_store = owned_store.open_sibling().map_err(DaemonError::store)?;
     let worker_store = owned_store.open_sibling().map_err(DaemonError::store)?;
@@ -861,6 +897,12 @@ fn run_worker_with_ipc(
     let worker_data_dir = data_dir.to_path_buf();
     let worker_options = options.clone();
     let worker_processing_contract = processing_contract.clone();
+    let (artifact_fault_reporter, artifact_fault_receiver) = if options.work_index {
+        let (reporter, receiver) = ipc::search_service::artifact_fault_latch();
+        (Some(reporter), Some(receiver))
+    } else {
+        (None, None)
+    };
     let (worker_result_sender, worker_result_receiver) =
         mpsc::channel::<std::result::Result<(), ipc::DaemonFatalError>>();
     let worker_handle = thread::spawn(move || {
@@ -869,156 +911,44 @@ fn run_worker_with_ipc(
             &worker_store,
             &worker_options,
             &worker_processing_contract,
-            startup_orphaned_recovered,
-            Some(worker_stop),
+            WorkerLoopRuntime {
+                startup_orphaned_recovered,
+                stop_signal: Some(worker_stop),
+                artifact_fault_receiver,
+                summary_output: WorkerSummaryOutput::Suppressed,
+            },
         );
-        let _ = worker_result_sender.send(result.map_err(ipc::DaemonFatalError::from));
+        let _ = worker_result_sender.send(result.map(|_| ()));
     });
 
-    let ipc_result = ipc::server::serve(ipc::server::Context {
+    let ipc_result = bound_server.serve(ipc::server::Context {
         data_dir,
         store: &ipc_store,
         owned_store: &ipc_owned_store,
-        addr: ipc_addr,
         max_requests: options.max_requests,
         search_runtime_config: search_runtime_config(options),
         processing_contract,
         shutdown: Some(&stop_worker),
         worker_result_receiver: Some(&worker_result_receiver),
-        daemon_owner,
+        artifact_fault_reporter,
     });
-    stop_worker.store(true, Ordering::Relaxed);
+    stop_worker.store(true, Ordering::Release);
+    if let Err(fatal) = ipc_result {
+        abort_worker_for_process_exit(worker_handle);
+        return Err(DaemonError::from(fatal));
+    }
     worker_handle
         .join()
         .map_err(|_| DaemonError::control_plane("worker thread panicked"))?;
-    ipc_result.map_err(DaemonError::from)
+    Ok(())
 }
 
-fn run_worker_loop(
-    data_dir: &Path,
-    store: &OwnedMetaStore,
-    options: &RunOptions,
-    processing_contract: &ImportProcessingContract,
-    startup_orphaned_recovered: usize,
-    stop_signal: Option<Arc<AtomicBool>>,
-) -> Result<()> {
-    let interval = Duration::from_millis(options.worker_interval_ms.unwrap_or(1_000));
-    let mut ticks = 0_usize;
-    let mut import_watcher = if options.watch_import_roots {
-        Some(ImportWatcher::new()?)
-    } else {
-        None
-    };
-
-    loop {
-        if stop_signal
-            .as_ref()
-            .is_some_and(|stop| stop.load(Ordering::Relaxed))
-        {
-            return Ok(());
-        }
-        ticks += 1;
-        let now = current_timestamp()?;
-        import_processing::activate_contract(store, processing_contract, now)?;
-        if options.work_imports {
-            let mut import_summary = ImportWorkerSummary {
-                orphaned_recovered: usize::from(ticks == 1) * startup_orphaned_recovered,
-                stale_recovered: recover_stale_import_tasks(
-                    data_dir,
-                    store,
-                    processing_contract,
-                    now,
-                    options
-                        .stale_import_task_seconds
-                        .unwrap_or(STALE_IMPORT_TASK_SECONDS),
-                )?,
-                ..ImportWorkerSummary::default()
-            };
-            import_summary.repair_requeued = if ticks == 1 {
-                migration_repair::enqueue_authorized_roots(store, processing_contract, now)?
-            } else {
-                migration_repair::reconcile_authorized_roots(store, processing_contract, now)?
-            };
-            if options.rescan_completed_imports {
-                let min_age_seconds = if ticks == 1 {
-                    0
-                } else {
-                    options
-                        .import_rescan_min_age_seconds
-                        .unwrap_or(DEFAULT_IMPORT_RESCAN_MIN_AGE_SECONDS)
-                };
-                import_summary.completed_requeued =
-                    requeue_completed_imports(store, processing_contract, now, min_age_seconds)?;
-            }
-            if let Some(watcher) = import_watcher.as_mut() {
-                import_summary.extend_watcher(watcher.sync_and_requeue(
-                    store,
-                    processing_contract,
-                    now,
-                )?);
-            }
-            import_summary.extend(run_import_worker_once_with_retry_due(
-                data_dir,
-                store,
-                options,
-                processing_contract,
-                timestamp_minus_seconds(
-                    now,
-                    options
-                        .import_retry_backoff_seconds
-                        .unwrap_or(IMPORT_RETRY_BACKOFF_SECONDS),
-                ),
-                stop_signal
-                    .as_ref()
-                    .map(|stop| ImportRunControl::from_shutdown_signal(Arc::clone(stop)))
-                    .unwrap_or_default(),
-            )?);
-            if import_summary.has_activity() {
-                print_import_worker_summary(&import_summary)?;
-            }
-        }
-        if options.work_ocr {
-            let ocr_summary = run_ocr_worker_batch(
-                data_dir,
-                store,
-                options,
-                options
-                    .ocr_jobs_per_tick
-                    .unwrap_or(DEFAULT_OCR_JOBS_PER_TICK),
-            )?;
-            if ocr_summary.has_activity() {
-                print_ocr_worker_summary(&ocr_summary)?;
-            }
-        }
-        if options.work_index {
-            let recovery = run_search_artifact_worker_once(store, options, processing_contract)?;
-            if search_artifact_recovery_has_activity(&recovery) {
-                print_search_artifact_worker_summary(&recovery)?;
-            }
-        }
-        if options
-            .max_worker_ticks
-            .is_some_and(|max_ticks| ticks >= max_ticks)
-        {
-            return Ok(());
-        }
-        sleep_worker_interval(interval, stop_signal.as_ref());
-    }
-}
-
-fn sleep_worker_interval(interval: Duration, stop_signal: Option<&Arc<AtomicBool>>) {
-    let Some(stop_signal) = stop_signal else {
-        thread::sleep(interval);
-        return;
-    };
-    let deadline = std::time::Instant::now() + interval;
-    while std::time::Instant::now() < deadline {
-        if stop_signal.load(Ordering::Relaxed) {
-            return;
-        }
-        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-        thread::sleep(Duration::from_millis(25).min(remaining));
-    }
+fn abort_worker_for_process_exit(worker_handle: thread::JoinHandle<()>) {
+    // This is the explicit control-plane-fatal path. The stop signal has
+    // already been raised; dropping the handle avoids waiting on a data-plane
+    // call that cannot cooperate, and the process supervisor containment
+    // deadline owns final tree termination.
+    drop(worker_handle);
 }
 
 fn run_import_worker_once(
@@ -1042,7 +972,7 @@ fn run_import_worker_once(
         options,
         processing_contract,
         retryable_due_at,
-        ImportRunControl::default(),
+        PipelineRunControl::default(),
     )?);
     Ok(summary)
 }
@@ -1051,25 +981,33 @@ fn run_search_artifact_worker_once(
     store: &OwnedMetaStore,
     options: &RunOptions,
     processing_contract: &ImportProcessingContract,
+    control: &PipelineRunControl,
 ) -> Result<SearchArtifactRecoverySummary> {
-    let migration = try_finalize_migration_rebuild(store, options, processing_contract)?;
+    let migration = try_finalize_migration_rebuild(store, options, processing_contract, control)?;
     if migration.active_generation_rebuilt {
         return Ok(migration);
     }
-    reconcile_search_artifacts(store, current_timestamp()?, &options.search_vectorization)
-        .map_err(DaemonError::import)
+    reconcile_search_artifacts(
+        store,
+        current_timestamp()?,
+        &options.search_vectorization,
+        control,
+    )
+    .map_err(DaemonError::import)
 }
 
 fn try_finalize_migration_rebuild(
     store: &OwnedMetaStore,
     options: &RunOptions,
     processing_contract: &ImportProcessingContract,
+    control: &PipelineRunControl,
 ) -> Result<SearchArtifactRecoverySummary> {
     match finalize_migration_rebuild(
         store,
         current_timestamp()?,
         processing_contract,
         &options.search_vectorization,
+        control,
     ) {
         Ok(summary) => Ok(summary),
         Err(error) => {
@@ -1091,7 +1029,7 @@ fn run_import_worker_once_with_retry_due(
     options: &RunOptions,
     processing_contract: &ImportProcessingContract,
     retryable_due_at: UnixTimestamp,
-    run_control: ImportRunControl,
+    run_control: PipelineRunControl,
 ) -> Result<ImportWorkerSummary> {
     let mut worker_summary = ImportWorkerSummary::default();
     let mut attempted = Vec::<ImportTaskId>::new();
@@ -1189,9 +1127,14 @@ fn run_import_worker_once_with_retry_due(
             Err(error) => {
                 worker_summary.failure_class = Some(error.class());
                 worker_summary.metadata_failure_class = error.metadata_class_label();
-                if error.class() == ImportPipelineErrorClass::Interrupted
-                    && run_control.shutdown_requested()
-                {
+                let user_cancelled = store
+                    .is_import_task_cancelled(&task.id)
+                    .map_err(DaemonError::store)?;
+                if should_requeue_interrupted_import(
+                    error.class(),
+                    run_control.shutdown_requested(),
+                    user_cancelled,
+                ) {
                     let interrupted = store
                         .import_task_by_id(&task.id)
                         .map_err(DaemonError::store)?
@@ -1206,10 +1149,7 @@ fn run_import_worker_once_with_retry_due(
                             .map_err(DaemonError::store)?;
                     }
                 }
-                if store
-                    .is_import_task_cancelled(&task.id)
-                    .map_err(DaemonError::store)?
-                {
+                if user_cancelled {
                     worker_summary.cancelled += 1;
                 } else {
                     worker_summary.failed += 1;
@@ -1223,8 +1163,21 @@ fn run_import_worker_once_with_retry_due(
         worker_summary.ocr_jobs_queued += import_summary.ocr_jobs_queued;
     }
 
-    let _ = try_finalize_migration_rebuild(store, options, processing_contract)?;
+    let _ = try_finalize_migration_rebuild(store, options, processing_contract, &run_control)?;
     Ok(worker_summary)
+}
+
+fn should_requeue_interrupted_import(
+    error_class: ImportPipelineErrorClass,
+    shutdown_requested: bool,
+    durable_user_cancelled: bool,
+) -> bool {
+    shutdown_requested
+        && !durable_user_cancelled
+        && matches!(
+            error_class,
+            ImportPipelineErrorClass::Cancelled | ImportPipelineErrorClass::Interrupted
+        )
 }
 
 fn search_repair_is_blocked(store: &OwnedMetaStore) -> Result<bool> {
@@ -1722,84 +1675,6 @@ fn recover_stale_import_tasks(
     Ok(recovered)
 }
 
-fn requeue_completed_imports(
-    store: &OwnedMetaStore,
-    processing_contract: &ImportProcessingContract,
-    now: UnixTimestamp,
-    min_age_seconds: i64,
-) -> Result<usize> {
-    let due_before = timestamp_minus_seconds(now, min_age_seconds);
-    let scopes = store
-        .completed_import_scan_scopes_due_for_requeue(due_before)
-        .map_err(DaemonError::store)?;
-    let mut requeued = 0_usize;
-
-    for (index, scope) in scopes.into_iter().enumerate() {
-        let task_id = import_command::new_task_id(index)
-            .map_err(|_| DaemonError::user("system clock is before unix epoch"))?;
-        requeued += usize::from(enqueue_import_from_completed_scope(
-            store,
-            processing_contract,
-            scope,
-            task_id,
-            now,
-        )?);
-    }
-
-    Ok(requeued)
-}
-
-fn enqueue_import_from_completed_scope(
-    store: &OwnedMetaStore,
-    processing_contract: &ImportProcessingContract,
-    scope: ImportScanScope,
-    task_id: ImportTaskId,
-    now: UnixTimestamp,
-) -> Result<bool> {
-    let task = ImportTask {
-        id: task_id.clone(),
-        root_path: scope.canonical_root_path.clone(),
-        status: ImportTaskStatus::Queued,
-        queued_at: now,
-        started_at: None,
-        finished_at: None,
-        updated_at: now,
-    };
-    let next_scope = ImportScanScope {
-        import_task_id: task_id,
-        root_kind: scope.root_kind,
-        root_preset: scope.root_preset,
-        scan_profile: scope.scan_profile,
-        requested_root_path: scope.requested_root_path,
-        canonical_root_path: scope.canonical_root_path,
-        files_discovered: 0,
-        ignored_entries: 0,
-        scan_errors: 0,
-        searchable_documents: 0,
-        ocr_required_documents: 0,
-        ocr_jobs_queued: 0,
-        failed_documents: 0,
-        deleted_documents: 0,
-        scan_budget_kind: scope.scan_budget_kind,
-        scan_budget_limit: scope.scan_budget_limit,
-        scan_budget_observed: scope.scan_budget_limit.map(|_| 0),
-        scan_budget_exhausted: false,
-        updated_at: now,
-    };
-
-    let outcome = store
-        .coordinate_import_root_task_head(ImportRootTaskHeadRequest::Configured {
-            task: &task,
-            scope: &next_scope,
-            processing_contract,
-        })
-        .map_err(DaemonError::store)?;
-    Ok(matches!(
-        outcome,
-        ImportRootTaskHeadOutcome::HeadInserted { .. }
-    ))
-}
-
 struct ImportWatcher {
     watcher: RecommendedWatcher,
     receiver: Receiver<notify::Result<NotifyEvent>>,
@@ -1853,7 +1728,7 @@ impl ImportWatcher {
             let Some(scope) = scopes_by_root.get(&root).cloned() else {
                 continue;
             };
-            if enqueue_import_from_completed_scope(
+            if rescan_schedule::enqueue_import_from_completed_scope(
                 store,
                 processing_contract,
                 scope,
@@ -2331,6 +2206,7 @@ fn search_artifact_recovery_has_activity(summary: &SearchArtifactRecoverySummary
         || summary.active_generation_rebuilt
         || summary.gc_deferred
         || summary.gc_partial
+        || summary.gc_failed
 }
 
 fn print_search_artifact_worker_summary(summary: &SearchArtifactRecoverySummary) -> Result<()> {
@@ -2367,6 +2243,7 @@ fn print_search_artifact_worker_summary(summary: &SearchArtifactRecoverySummary)
         summary.gc_deferred
     );
     println!("search artifact worker gc partial: {}", summary.gc_partial);
+    println!("search artifact worker gc failed: {}", summary.gc_failed);
     io::stdout()
         .flush()
         .map_err(|_| DaemonError::control_plane("unable to write daemon status"))
@@ -2429,308 +2306,19 @@ fn index_health_label(status: IndexStateStatus) -> &'static str {
     }
 }
 
-type Result<T> = std::result::Result<T, DaemonError>;
-
-#[derive(Debug)]
-struct DaemonError {
-    message: String,
-    exit_code: i32,
-    kind: DaemonErrorKind,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum DaemonErrorKind {
-    ConfigurationInvalid,
-    RuntimeIntegrity,
-    RecoverableDependency,
-    Store(MetaStoreErrorClass),
-    OwnershipConflict,
-    ProtocolMismatch,
-    ControlPlane,
-    ResponseSink(ipc::ResponseSinkError),
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DaemonFatalClass {
-    OwnershipConflict,
-    ConfigurationInvalid,
-    RuntimeIntegrity,
-    ProtocolMismatch,
-    ControlPlaneFailure,
-}
-
-impl DaemonFatalClass {
-    fn label(self) -> &'static str {
-        match self {
-            Self::OwnershipConflict => "ownership_conflict",
-            Self::ConfigurationInvalid => "configuration_invalid",
-            Self::RuntimeIntegrity => "runtime_integrity",
-            Self::ProtocolMismatch => "protocol_mismatch",
-            Self::ControlPlaneFailure => "control_plane_failure",
-        }
-    }
-
-    fn disposition(self) -> &'static str {
-        match self {
-            Self::ControlPlaneFailure => "restartable",
-            Self::OwnershipConflict
-            | Self::ConfigurationInvalid
-            | Self::RuntimeIntegrity
-            | Self::ProtocolMismatch => "blocked",
-        }
-    }
-}
-
-impl DaemonError {
-    fn usage(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            exit_code: 2,
-            kind: DaemonErrorKind::ConfigurationInvalid,
-        }
-    }
-
-    fn user(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            exit_code: 1,
-            kind: DaemonErrorKind::RuntimeIntegrity,
-        }
-    }
-
-    fn store(error: meta_store::MetaStoreError) -> Self {
-        Self {
-            message: "metadata store operation failed".to_string(),
-            exit_code: 1,
-            kind: DaemonErrorKind::Store(error.class()),
-        }
-    }
-
-    fn import(_error: import_pipeline::ImportPipelineError) -> Self {
-        Self {
-            message: "import pipeline operation failed".to_string(),
-            exit_code: 1,
-            kind: DaemonErrorKind::RecoverableDependency,
-        }
-    }
-
-    fn ocr(error: ocr_client::OcrError) -> Self {
-        Self {
-            message: "ocr service operation failed".to_string(),
-            exit_code: 1,
-            kind: match error.kind() {
-                ocr_client::OcrErrorKind::InvalidRequest => DaemonErrorKind::ConfigurationInvalid,
-                ocr_client::OcrErrorKind::Disabled
-                | ocr_client::OcrErrorKind::Cancelled
-                | ocr_client::OcrErrorKind::Timeout
-                | ocr_client::OcrErrorKind::WorkerUnavailable
-                | ocr_client::OcrErrorKind::LanguageUnavailable
-                | ocr_client::OcrErrorKind::EngineFailed => DaemonErrorKind::RecoverableDependency,
-            },
-        }
-    }
-
-    fn embedding(error: embedder::EmbeddingError) -> Self {
-        let kind = match error {
-            embedder::EmbeddingError::InvalidDimension
-            | embedder::EmbeddingError::InvalidRequest
-            | embedder::EmbeddingError::BudgetExceeded { .. }
-            | embedder::EmbeddingError::TextBudgetExceeded { .. } => {
-                DaemonErrorKind::ConfigurationInvalid
-            }
-            embedder::EmbeddingError::WorkerUnavailable
-            | embedder::EmbeddingError::EngineFailed
-            | embedder::EmbeddingError::Overloaded
-            | embedder::EmbeddingError::Cancelled
-            | embedder::EmbeddingError::Timeout => DaemonErrorKind::RecoverableDependency,
-        };
-        Self {
-            message: "embedding service operation failed".to_string(),
-            exit_code: 1,
-            kind,
-        }
-    }
-
-    fn response_sink(error: ipc::ResponseSinkError) -> Self {
-        Self {
-            message: error.to_string(),
-            exit_code: 1,
-            kind: DaemonErrorKind::ResponseSink(error),
-        }
-    }
-
-    fn control_plane(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            exit_code: 1,
-            kind: DaemonErrorKind::ControlPlane,
-        }
-    }
-
-    fn ownership_conflict() -> Self {
-        Self {
-            message: "daemon ownership conflict".to_string(),
-            exit_code: 1,
-            kind: DaemonErrorKind::OwnershipConflict,
-        }
-    }
-
-    fn runtime_integrity() -> Self {
-        Self {
-            message: "daemon runtime integrity failure".to_string(),
-            exit_code: 1,
-            kind: DaemonErrorKind::RuntimeIntegrity,
-        }
-    }
-
-    fn configuration_invalid(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            exit_code: 1,
-            kind: DaemonErrorKind::ConfigurationInvalid,
-        }
-    }
-
-    fn recoverable_dependency(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            exit_code: 1,
-            kind: DaemonErrorKind::RecoverableDependency,
-        }
-    }
-
-    fn protocol_mismatch() -> Self {
-        Self {
-            message: "daemon ipc protocol mismatch".to_string(),
-            exit_code: 1,
-            kind: DaemonErrorKind::ProtocolMismatch,
-        }
-    }
-
-    fn exit_code(&self) -> i32 {
-        self.exit_code
-    }
-
-    #[cfg(test)]
-    fn retryable_metadata_error(&self) -> bool {
-        matches!(
-            self.kind,
-            DaemonErrorKind::Store(MetaStoreErrorClass::Storage)
-        )
-    }
-
-    fn fatal_class(&self) -> DaemonFatalClass {
-        match self.kind {
-            DaemonErrorKind::OwnershipConflict => DaemonFatalClass::OwnershipConflict,
-            DaemonErrorKind::ConfigurationInvalid => DaemonFatalClass::ConfigurationInvalid,
-            DaemonErrorKind::RuntimeIntegrity => DaemonFatalClass::RuntimeIntegrity,
-            DaemonErrorKind::RecoverableDependency => DaemonFatalClass::ControlPlaneFailure,
-            DaemonErrorKind::ProtocolMismatch => DaemonFatalClass::ProtocolMismatch,
-            DaemonErrorKind::Store(MetaStoreErrorClass::Storage)
-            | DaemonErrorKind::ControlPlane
-            | DaemonErrorKind::ResponseSink(_) => DaemonFatalClass::ControlPlaneFailure,
-            DaemonErrorKind::Store(MetaStoreErrorClass::MigrationOwnershipRequired) => {
-                DaemonFatalClass::OwnershipConflict
-            }
-            DaemonErrorKind::Store(
-                MetaStoreErrorClass::WeakPassphrase
-                | MetaStoreErrorClass::InvalidBackup
-                | MetaStoreErrorClass::Crypto
-                | MetaStoreErrorClass::KeyAlreadyExists,
-            ) => DaemonFatalClass::ConfigurationInvalid,
-            DaemonErrorKind::Store(
-                MetaStoreErrorClass::Migration
-                | MetaStoreErrorClass::InvalidValue
-                | MetaStoreErrorClass::NotFound
-                | MetaStoreErrorClass::InvalidTransition
-                | MetaStoreErrorClass::ImmutableIdentityConflict
-                | MetaStoreErrorClass::StorageInvariant,
-            ) => DaemonFatalClass::RuntimeIntegrity,
-        }
-    }
-
-    fn fatal_event_json(&self) -> String {
-        fatal_event_json_for_class(self.fatal_class())
-    }
-}
-
-impl From<&DaemonError> for ipc::RequestFailure {
-    fn from(error: &DaemonError) -> Self {
-        match error.kind {
-            DaemonErrorKind::ResponseSink(error) => Self::ResponseSink(error),
-            DaemonErrorKind::ConfigurationInvalid
-            | DaemonErrorKind::RuntimeIntegrity
-            | DaemonErrorKind::RecoverableDependency
-            | DaemonErrorKind::Store(_)
-            | DaemonErrorKind::OwnershipConflict
-            | DaemonErrorKind::ProtocolMismatch
-            | DaemonErrorKind::ControlPlane => Self::Handler,
-        }
-    }
-}
-
-impl From<DaemonError> for ipc::RequestFailure {
-    fn from(error: DaemonError) -> Self {
-        Self::from(&error)
-    }
-}
-
-impl From<DaemonError> for ipc::DaemonFatalError {
-    fn from(error: DaemonError) -> Self {
-        match error.fatal_class() {
-            DaemonFatalClass::OwnershipConflict => Self::OwnershipConflict,
-            DaemonFatalClass::ConfigurationInvalid => Self::ConfigurationInvalid,
-            DaemonFatalClass::RuntimeIntegrity => Self::RuntimeIntegrity,
-            DaemonFatalClass::ProtocolMismatch => Self::ProtocolMismatch,
-            DaemonFatalClass::ControlPlaneFailure => Self::ControlPlaneFailure,
-        }
-    }
-}
-
-impl From<ipc::DaemonFatalError> for DaemonError {
-    fn from(error: ipc::DaemonFatalError) -> Self {
-        match error {
-            ipc::DaemonFatalError::OwnershipConflict => Self::ownership_conflict(),
-            ipc::DaemonFatalError::ConfigurationInvalid => {
-                Self::configuration_invalid("daemon configuration is invalid")
-            }
-            ipc::DaemonFatalError::RuntimeIntegrity => Self::runtime_integrity(),
-            ipc::DaemonFatalError::ProtocolMismatch => Self::protocol_mismatch(),
-            ipc::DaemonFatalError::ControlPlaneFailure => {
-                Self::control_plane("daemon control plane failed")
-            }
-        }
-    }
-}
-
-fn fatal_event_json_for_class(class: DaemonFatalClass) -> String {
-    serde_json::json!({
-        "schema_version": "resume-ir.daemon-fatal.v1",
-        "event": "fatal",
-        "class": class.label(),
-        "disposition": class.disposition(),
-    })
-    .to_string()
-}
-
-impl fmt::Display for DaemonError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
 #[cfg(test)]
 mod daemon_contract_tests {
     use super::{
-        fatal_event_json_for_class, import_processing, open_owned_store,
-        prepare_migration_rebuild_artifacts, run_import_worker_once_with_retry_due,
-        run_ocr_worker_once, DaemonError, DaemonErrorKind, DaemonFatalClass, ImportRunControl,
-        RunOptions, IPC_METADATA_READ_ATTEMPTS,
+        import_processing, open_owned_store, run_import_worker_once_with_retry_due,
+        run_ocr_worker_once, should_requeue_interrupted_import, ImportPipelineErrorClass,
+        PipelineRunControl, RunOptions, IPC_METADATA_READ_ATTEMPTS,
     };
     use crate::ipc::projection_service_health;
     use crate::ipc::routes::status::{
         projection_query_error, status_json_with, unavailable_status_json,
     };
+    use crate::worker_runtime::run_fault_priority_gate;
+    use import_pipeline::prepare_migration_rebuild_artifacts;
     use meta_store::{
         ClassificationStatus, ContentDigest, CurrentClassifierEpoch, Document, DocumentId,
         DocumentStatus, FileExtension, ImportProcessingContract, ImportRootKind, ImportScanProfile,
@@ -2739,6 +2327,8 @@ mod daemon_contract_tests {
         SearchRepairReason, SourceRevision, SourceRevisionTriage, UnixTimestamp, CLASSIFIER_EPOCH,
     };
     use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn open_test_store(data_dir: &std::path::Path) -> OwnedMetaStore {
@@ -2747,56 +2337,60 @@ mod daemon_contract_tests {
     }
 
     #[test]
-    fn fatal_wire_is_closed_bounded_and_contains_no_raw_message() {
-        let classes = [
-            DaemonFatalClass::OwnershipConflict,
-            DaemonFatalClass::ConfigurationInvalid,
-            DaemonFatalClass::RuntimeIntegrity,
-            DaemonFatalClass::ProtocolMismatch,
-            DaemonFatalClass::ControlPlaneFailure,
-        ];
-        for class in classes {
-            let body = fatal_event_json_for_class(class);
-            assert!(body.len() <= 1024);
-            let value: serde_json::Value = serde_json::from_str(&body).unwrap();
-            assert_eq!(value.as_object().unwrap().len(), 4);
-            assert_eq!(value["schema_version"], "resume-ir.daemon-fatal.v1");
-            assert_eq!(value["event"], "fatal");
-            assert_eq!(value["class"], class.label());
-            assert_eq!(value["disposition"], class.disposition());
-        }
+    fn reported_artifact_fault_completes_before_lower_priority_work_enters() {
+        let phase = AtomicUsize::new(0);
+        let (lower_entered_sender, lower_entered_receiver) = mpsc::sync_channel(1);
+        let (lower_release_sender, lower_release_receiver) = mpsc::sync_channel(1);
 
-        let secret = "PRIVATE_PATH_TOKEN_QUERY";
-        let event = DaemonError::control_plane(secret).fatal_event_json();
-        assert!(!event.contains(secret));
+        std::thread::scope(|scope| {
+            let worker_phase = &phase;
+            let worker = scope.spawn(move || {
+                run_fault_priority_gate(
+                    || {
+                        assert_eq!(worker_phase.swap(1, Ordering::SeqCst), 0);
+                        Ok(true)
+                    },
+                    |repaired_reported_fault| {
+                        assert!(repaired_reported_fault);
+                        assert_eq!(worker_phase.load(Ordering::SeqCst), 1);
+                        lower_entered_sender.send(()).unwrap();
+                        lower_release_receiver.recv().unwrap();
+                        worker_phase.store(2, Ordering::SeqCst);
+                        Ok(())
+                    },
+                )
+            });
+
+            lower_entered_receiver.recv().unwrap();
+            assert_eq!(phase.load(Ordering::SeqCst), 1);
+            lower_release_sender.send(()).unwrap();
+            worker.join().unwrap().unwrap();
+        });
+        assert_eq!(phase.load(Ordering::SeqCst), 2);
     }
 
     #[test]
-    fn fatal_mapping_separates_restartable_dependencies_from_blocked_failures() {
-        let restartable = DaemonError::recoverable_dependency("transient dependency");
-        let storage = DaemonError {
-            message: String::new(),
-            exit_code: 1,
-            kind: DaemonErrorKind::Store(MetaStoreErrorClass::Storage),
-        };
-        let invariant = DaemonError {
-            message: String::new(),
-            exit_code: 1,
-            kind: DaemonErrorKind::Store(MetaStoreErrorClass::StorageInvariant),
-        };
-        let ownership = DaemonError {
-            message: String::new(),
-            exit_code: 1,
-            kind: DaemonErrorKind::Store(MetaStoreErrorClass::MigrationOwnershipRequired),
-        };
-
-        assert_eq!(
-            restartable.fatal_class(),
-            DaemonFatalClass::ControlPlaneFailure
-        );
-        assert_eq!(storage.fatal_class(), DaemonFatalClass::ControlPlaneFailure);
-        assert_eq!(invariant.fatal_class(), DaemonFatalClass::RuntimeIntegrity);
-        assert_eq!(ownership.fatal_class(), DaemonFatalClass::OwnershipConflict);
+    fn durable_user_cancellation_is_never_requeued_as_lifecycle_interruption() {
+        assert!(!should_requeue_interrupted_import(
+            ImportPipelineErrorClass::Cancelled,
+            true,
+            true,
+        ));
+        assert!(should_requeue_interrupted_import(
+            ImportPipelineErrorClass::Cancelled,
+            true,
+            false,
+        ));
+        assert!(should_requeue_interrupted_import(
+            ImportPipelineErrorClass::Interrupted,
+            true,
+            false,
+        ));
+        assert!(!should_requeue_interrupted_import(
+            ImportPipelineErrorClass::Cancelled,
+            false,
+            false,
+        ));
     }
 
     #[test]
@@ -2810,22 +2404,6 @@ mod daemon_contract_tests {
         assert_eq!(value["error"]["code"], "METADATA_UNAVAILABLE");
         assert!(value["ipc"].is_object());
         assert!(value["indexed_documents"].is_null());
-    }
-
-    #[test]
-    fn metadata_retry_is_limited_to_storage_class() {
-        let storage = DaemonError {
-            message: String::new(),
-            exit_code: 1,
-            kind: DaemonErrorKind::Store(MetaStoreErrorClass::Storage),
-        };
-        let invariant = DaemonError {
-            message: String::new(),
-            exit_code: 1,
-            kind: DaemonErrorKind::Store(MetaStoreErrorClass::StorageInvariant),
-        };
-        assert!(storage.retryable_metadata_error());
-        assert!(!invariant.retryable_metadata_error());
     }
 
     #[test]
@@ -2844,9 +2422,15 @@ mod daemon_contract_tests {
         let contract = import_processing::current_contract(&options).unwrap();
         let now = UnixTimestamp::from_unix_seconds(1_800_280_000);
         import_processing::activate_contract(&store, &contract, now).unwrap();
-        prepare_migration_rebuild_artifacts(&store, now).unwrap();
-        super::finalize_migration_rebuild(&store, now, &contract, &options.search_vectorization)
-            .unwrap();
+        prepare_migration_rebuild_artifacts(&store, now, &PipelineRunControl::default()).unwrap();
+        super::finalize_migration_rebuild(
+            &store,
+            now,
+            &contract,
+            &options.search_vectorization,
+            &PipelineRunControl::default(),
+        )
+        .unwrap();
 
         let wrong_contract = ImportProcessingContract::new(
             "synthetic-wrong-primary-v28",
@@ -2895,7 +2479,7 @@ mod daemon_contract_tests {
             &options,
             &contract,
             now,
-            ImportRunControl::default(),
+            PipelineRunControl::default(),
         )
         .unwrap();
         assert_eq!(summary.failed, 1);
@@ -2950,7 +2534,7 @@ mod daemon_contract_tests {
         );
         assert_eq!(
             projection_query_error(Some(SearchProjectionServiceState::RepairBlocked)),
-            Some(crate::ipc::ServiceErrorCode::QueryServiceUnavailable)
+            Some(crate::ipc::ServiceErrorCode::QueryServiceRepairRequired)
         );
         assert_eq!(
             projection_query_error(None),
@@ -2986,9 +2570,15 @@ mod daemon_contract_tests {
 
         let contract = import_processing::current_contract(&options).unwrap();
         import_processing::activate_contract(&store, &contract, now).unwrap();
-        prepare_migration_rebuild_artifacts(&store, now).unwrap();
-        super::finalize_migration_rebuild(&store, now, &contract, &options.search_vectorization)
-            .unwrap();
+        prepare_migration_rebuild_artifacts(&store, now, &PipelineRunControl::default()).unwrap();
+        super::finalize_migration_rebuild(
+            &store,
+            now,
+            &contract,
+            &options.search_vectorization,
+            &PipelineRunControl::default(),
+        )
+        .unwrap();
         assert_eq!(
             store.search_projection_state().unwrap().service_state,
             SearchProjectionServiceState::Ready

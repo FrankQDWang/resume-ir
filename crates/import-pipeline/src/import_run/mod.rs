@@ -1,8 +1,4 @@
 use std::path::Path;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
 use std::time::Instant;
 
 mod orchestrator;
@@ -17,7 +13,7 @@ use meta_store::{
 
 use crate::{
     current_import_processing_contract, index_recovery, ImportOptions, ImportPipelineError,
-    ImportPipelineErrorClass, ImportPipelineErrorKind, ImportSummary, Result,
+    ImportPipelineErrorClass, ImportPipelineErrorKind, ImportSummary, PipelineRunControl, Result,
 };
 
 use orchestrator::{import_scan_scope_from_summary, run_import};
@@ -31,37 +27,6 @@ pub(crate) use orchestrator::{CancelCheckMetrics, ImportCancelPoller};
 pub(crate) use scan::document_path_is_deletion_candidate;
 #[cfg(test)]
 pub(crate) use scheduler::{finish_import_file, should_flush_searchable_documents};
-
-/// Shared lifecycle control for one import run.
-///
-/// A daemon supervisor can clone this value or construct it from its existing
-/// shutdown signal. Requesting shutdown cooperatively interrupts scanning,
-/// parsing, and publication at their existing cancellation boundaries without
-/// recording a user cancellation.
-#[derive(Clone, Debug)]
-pub struct ImportRunControl {
-    shutdown_requested: Arc<AtomicBool>,
-}
-
-impl ImportRunControl {
-    pub fn from_shutdown_signal(shutdown_requested: Arc<AtomicBool>) -> Self {
-        Self { shutdown_requested }
-    }
-
-    pub fn request_shutdown(&self) {
-        self.shutdown_requested.store(true, Ordering::Release);
-    }
-
-    pub fn shutdown_requested(&self) -> bool {
-        self.shutdown_requested.load(Ordering::Acquire)
-    }
-}
-
-impl Default for ImportRunControl {
-    fn default() -> Self {
-        Self::from_shutdown_signal(Arc::new(AtomicBool::new(false)))
-    }
-}
 
 pub fn import_root(
     data_dir: &Path,
@@ -88,7 +53,7 @@ pub fn import_root_with_options(
         root,
         now,
         options,
-        ImportRunControl::default(),
+        PipelineRunControl::default(),
     )
 }
 
@@ -99,7 +64,7 @@ pub fn import_root_with_options_and_control(
     root: &Path,
     now: UnixTimestamp,
     options: ImportOptions,
-    control: ImportRunControl,
+    control: PipelineRunControl,
 ) -> Result<ImportSummary> {
     let import_started = Instant::now();
     let processing_contract = current_import_processing_contract(&options)?;
@@ -161,6 +126,7 @@ pub fn import_root_with_options_and_control(
                 finished_at,
                 &processing_contract,
                 &search_vectorization,
+                &control,
             )?;
             if migration.active_generation_rebuilt {
                 let ready_elapsed = import_started.elapsed();
@@ -205,7 +171,7 @@ pub fn import_root_with_options_and_control(
 fn normalize_shutdown_interruption(
     store: &OwnedMetaStore,
     task_id: &ImportTaskId,
-    control: &ImportRunControl,
+    control: &PipelineRunControl,
     error: ImportPipelineError,
 ) -> ImportPipelineError {
     if error.kind != ImportPipelineErrorKind::Cancelled || !control.shutdown_requested() {

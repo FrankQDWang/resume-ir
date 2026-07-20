@@ -20,11 +20,17 @@ import {
   validateMountedDmgLayout,
   verifyMacosDmg,
   verifyMacosInternalTestEntitlements,
+  verifyMacosInternalTestSignaturePolicy,
 } from "./verify-macos-dmg.mjs";
 import {
   verifyBundleComposition,
   writeBundleComposition,
 } from "./macos-bundle-composition.mjs";
+import { verifyMainSourceProvenance } from "./macos-source-provenance.mjs";
+import {
+  MACOS_SYSTEM_TOOLS,
+  runClosedSystemTool,
+} from "./macos-system-tools.mjs";
 
 const TARGET_TRIPLE = "aarch64-apple-darwin";
 const PRODUCT_NAME = "resume-ir";
@@ -53,12 +59,10 @@ function defaultRunner(command, args, options) {
 }
 
 function defaultToolRunner(command, args) {
-  return spawnSync(command, args, {
+  return runClosedSystemTool(command, args, {
     encoding: "utf8",
     maxBuffer: MAX_TOOL_OUTPUT_BYTES,
     timeout: APPLE_TOOL_TIMEOUT_MS,
-    shell: false,
-    windowsHide: true,
   });
 }
 
@@ -138,19 +142,42 @@ async function detachOverlay({
   runner,
   mountProbe,
 }) {
-  if (!attached && (!attachAttempted || !(await mountProbe(mountDirectory)))) {
-    return undefined;
+  if (!attached) {
+    if (!attachAttempted || !(await mountProbe(mountDirectory))) {
+      return undefined;
+    }
+    let result;
+    try {
+      result = await runner(MACOS_SYSTEM_TOOLS.hdiutil, [
+        "detach",
+        mountDirectory,
+        "-force",
+      ]);
+    } catch {
+      result = undefined;
+    }
+    if (succeeded(result) || !(await mountProbe(mountDirectory))) {
+      return undefined;
+    }
+    return new Error("macOS internal-test DMG detach or cleanup failed");
   }
   let result;
   try {
-    result = await runner("hdiutil", ["detach", mountDirectory]);
+    result = await runner(MACOS_SYSTEM_TOOLS.hdiutil, [
+      "detach",
+      mountDirectory,
+    ]);
   } catch {
     result = undefined;
   }
   if (succeeded(result)) return undefined;
   if (!(await mountProbe(mountDirectory))) return undefined;
   try {
-    await runner("hdiutil", ["detach", mountDirectory, "-force"]);
+    await runner(MACOS_SYSTEM_TOOLS.hdiutil, [
+      "detach",
+      mountDirectory,
+      "-force",
+    ]);
   } catch {
     // The bounded recovery attempt is cleanup-only. A source mount that
     // needed forced detachment is never promoted.
@@ -328,6 +355,7 @@ async function resolveNativeSigningTargets(appBundle) {
 export async function applyMacosInternalTestEntitlements({
   dmg,
   entitlements,
+  sourceCommit,
   platform = process.platform,
   runner = defaultToolRunner,
   mountProbe = mountedFilesystemAt,
@@ -335,7 +363,8 @@ export async function applyMacosInternalTestEntitlements({
   if (
     platform !== "darwin" ||
     !path.isAbsolute(dmg) ||
-    !path.isAbsolute(entitlements)
+    !path.isAbsolute(entitlements) ||
+    !/^[a-f0-9]{40}$/.test(sourceCommit ?? "")
   ) {
     throw new Error("macOS internal-test entitlement arguments are invalid");
   }
@@ -362,7 +391,7 @@ export async function applyMacosInternalTestEntitlements({
   try {
     await mkdir(mountDirectory);
     attachAttempted = true;
-    const attach = await runner("hdiutil", [
+    const attach = await runner(MACOS_SYSTEM_TOOLS.hdiutil, [
       "attach",
       dmg,
       "-readonly",
@@ -394,7 +423,7 @@ export async function applyMacosInternalTestEntitlements({
       stagingDirectory,
     });
     const { embeddingRuntime } = await resolveNativeSigningTargets(appBundle);
-    const signRuntime = await runner("codesign", [
+    const signRuntime = await runner(MACOS_SYSTEM_TOOLS.codesign, [
       "--force",
       "--sign",
       "-",
@@ -411,8 +440,9 @@ export async function applyMacosInternalTestEntitlements({
     await writeBundleComposition({
       appBundle,
       targetTriple: TARGET_TRIPLE,
+      sourceCommit,
     });
-    const signApp = await runner("codesign", [
+    const signApp = await runner(MACOS_SYSTEM_TOOLS.codesign, [
       "--force",
       "--sign",
       "-",
@@ -424,7 +454,7 @@ export async function applyMacosInternalTestEntitlements({
     if (!succeeded(signApp)) {
       throw new Error("macOS internal-test entitlement signing failed");
     }
-    const signature = await runner("codesign", [
+    const signature = await runner(MACOS_SYSTEM_TOOLS.codesign, [
       "--verify",
       "--deep",
       "--strict",
@@ -442,6 +472,13 @@ export async function applyMacosInternalTestEntitlements({
     const composition = await verifyBundleComposition({
       appBundle,
       targetTriple: TARGET_TRIPLE,
+      expectedSourceCommit: sourceCommit,
+      verifySignaturePolicy: ({ appBundle: boundAppBundle }) =>
+        verifyMacosInternalTestSignaturePolicy({
+          appBundle: boundAppBundle,
+          platform,
+          runner,
+        }),
     });
     entitlementReceipt = {
       ...entitlementScope,
@@ -469,7 +506,7 @@ export async function applyMacosInternalTestEntitlements({
 
   let rebuildError;
   try {
-    const create = await runner("hdiutil", [
+    const create = await runner(MACOS_SYSTEM_TOOLS.hdiutil, [
       "create",
       "-quiet",
       "-volname",
@@ -630,6 +667,7 @@ export async function buildMacosInternalTestRelease({
   runner = defaultRunner,
   applyEntitlements = applyMacosInternalTestEntitlements,
   verifyDmg = verifyMacosDmg,
+  verifySource = verifyMainSourceProvenance,
 }) {
   if (!path.isAbsolute(repoRoot) || !path.isAbsolute(runTauri)) {
     throw new Error("macOS test release paths are invalid");
@@ -641,6 +679,16 @@ export async function buildMacosInternalTestRelease({
     platformConfig,
   });
   const candidateDmg = internalTestCandidatePath(plan.dmg);
+  let sourceCommit;
+  try {
+    sourceCommit = await verifySource({ repoRoot });
+    if (!/^[a-f0-9]{40}$/.test(sourceCommit ?? "")) {
+      throw new Error("macOS build source provenance is invalid");
+    }
+  } catch (error) {
+    await removeReleaseArtifacts([candidateDmg]);
+    throw error;
+  }
   await removeReleaseArtifacts([plan.dmg, candidateDmg]);
   let build;
   try {
@@ -667,6 +715,7 @@ export async function buildMacosInternalTestRelease({
     const entitlementReceipt = await applyEntitlements({
       dmg: candidateDmg,
       entitlements: plan.entitlements,
+      sourceCommit,
       platform,
     });
     if (
@@ -680,9 +729,11 @@ export async function buildMacosInternalTestRelease({
       targetTriple: plan.targetTriple,
       dmg: candidateDmg,
       platform,
+      verifySource,
     });
     if (
-      receipt?.schema_version !== "resume-ir.macos-dmg-composition.v1" ||
+      receipt?.schema_version !== "resume-ir.macos-dmg-composition.v2" ||
+      receipt?.source_commit !== sourceCommit ||
       receipt?.distribution_signature !== "accepted" ||
       receipt?.distribution_profile !== "internal_test" ||
       receipt?.code_signature !== "ad_hoc_valid" ||
@@ -704,6 +755,17 @@ export async function buildMacosInternalTestRelease({
   if (verificationError) {
     await removeReleaseArtifacts([plan.dmg, candidateDmg]);
     throw verificationError;
+  }
+  let finalSourceCommit;
+  try {
+    finalSourceCommit = await verifySource({ repoRoot });
+  } catch (error) {
+    await removeReleaseArtifacts([plan.dmg, candidateDmg]);
+    throw error;
+  }
+  if (finalSourceCommit !== sourceCommit) {
+    await removeReleaseArtifacts([plan.dmg, candidateDmg]);
+    throw new Error("macOS build source provenance is invalid");
   }
   try {
     await rename(candidateDmg, plan.dmg);

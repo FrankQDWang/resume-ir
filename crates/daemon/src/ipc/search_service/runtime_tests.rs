@@ -1,6 +1,6 @@
 use std::io::Read;
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -41,16 +41,160 @@ fn fulltext_args() -> DaemonSearchArgs {
     }
 }
 
+fn queued_search_task(
+    request_id: &str,
+    admission: &Arc<AdmissionState>,
+) -> (TcpStream, SearchTask) {
+    let (client, server) = connected_streams();
+    let control = Arc::new(RequestControl::new());
+    let admission_permit = admission
+        .acquire(ClientClass::InteractiveGui)
+        .expect("synthetic request admission");
+    (
+        client,
+        SearchTask {
+            reply: SearchReply::Single {
+                stream: server,
+                completion: crate::ipc::ConnectionCompletion::accepted(),
+            },
+            envelope: interactive_envelope(request_id.to_string()),
+            args: fulltext_args(),
+            visible_epoch: 0,
+            query_parse_duration: Duration::ZERO,
+            deadline: crate::search_contract::SearchDeadline::new(Instant::now(), DEADLINE_MS_MAX),
+            control,
+            admission_permit,
+        },
+    )
+}
+
+#[test]
+fn no_request_shutdown_never_opens_query_artifacts() {
+    let queue = Arc::new(SearchQueue::default());
+    let _ = queue.close_and_cancel();
+    let cancellations = Arc::new(CancellationRegistry::default());
+    let (deadline_sender, _deadline_receiver) = mpsc::channel();
+    let open_count = AtomicUsize::new(0);
+
+    run_search_worker(
+        crate::search_runtime_config::SearchRuntimeConfig::new(None, None, None, 100),
+        queue,
+        cancellations,
+        deadline_sender,
+        None,
+        || {
+            open_count.fetch_add(1, AtomicOrdering::SeqCst);
+            None
+        },
+    )
+    .unwrap();
+
+    assert_eq!(open_count.load(AtomicOrdering::SeqCst), 0);
+}
+
+#[test]
+fn shutdown_cancels_active_task_and_never_executes_queued_task() {
+    let queue = Arc::new(SearchQueue::default());
+    let admission = Arc::new(AdmissionState::new());
+    let (_active_client, active) = queued_search_task("active", &admission);
+    let active_control = Arc::clone(&active.control);
+    let (_queued_client, queued) = queued_search_task("queued", &admission);
+    assert!(queue.push(active));
+    assert!(queue.push(queued));
+    let worker_queue = Arc::clone(&queue);
+    let executed = Arc::new(AtomicUsize::new(0));
+    let worker_executed = Arc::clone(&executed);
+    let (active_entered_sender, active_entered_receiver) = mpsc::sync_channel(1);
+    let worker = thread::spawn(move || {
+        while let Some(task) = worker_queue.pop() {
+            worker_executed.fetch_add(1, AtomicOrdering::SeqCst);
+            active_entered_sender.send(()).unwrap();
+            while !task.control.cancellation.is_cancelled() {
+                thread::yield_now();
+            }
+            task.control.completed.store(true, AtomicOrdering::Release);
+            task.admission_permit.release();
+            worker_queue.complete_active(&task.control);
+        }
+    });
+
+    active_entered_receiver.recv().unwrap();
+    let queued = queue.close_and_cancel();
+    assert!(active_control.cancellation.is_cancelled());
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].envelope.request_id, "queued");
+    for task in queued {
+        task.control.cancellation.request();
+        task.control.completed.store(true, AtomicOrdering::Release);
+        task.admission_permit.release();
+    }
+    worker.join().unwrap();
+
+    assert_eq!(executed.load(AtomicOrdering::SeqCst), 1);
+    let state = queue.state.lock().expect("query queue");
+    assert!(state.tasks.is_empty());
+    assert!(state.active.is_none());
+    drop(state);
+    assert_eq!(admission.in_flight(), 0);
+}
+
+#[test]
+fn request_limit_drain_completes_active_and_queued_tasks_without_cancellation() {
+    let queue = Arc::new(SearchQueue::default());
+    let admission = Arc::new(AdmissionState::new());
+    let (_active_client, active) = queued_search_task("active", &admission);
+    let active_control = Arc::clone(&active.control);
+    let (_queued_client, queued) = queued_search_task("queued", &admission);
+    let queued_control = Arc::clone(&queued.control);
+    assert!(queue.push(active));
+    assert!(queue.push(queued));
+
+    let worker_queue = Arc::clone(&queue);
+    let executed = Arc::new(AtomicUsize::new(0));
+    let worker_executed = Arc::clone(&executed);
+    let (active_entered_sender, active_entered_receiver) = mpsc::sync_channel(1);
+    let (active_release_sender, active_release_receiver) = mpsc::sync_channel(1);
+    let worker = thread::spawn(move || {
+        while let Some(task) = worker_queue.pop() {
+            let execution_index = worker_executed.fetch_add(1, AtomicOrdering::SeqCst);
+            if execution_index == 0 {
+                active_entered_sender.send(()).unwrap();
+                active_release_receiver.recv().unwrap();
+            }
+            assert!(!task.control.cancellation.is_cancelled());
+            task.control.completed.store(true, AtomicOrdering::Release);
+            task.admission_permit.release();
+            worker_queue.complete_active(&task.control);
+        }
+    });
+
+    active_entered_receiver.recv().unwrap();
+    queue.close_for_drain();
+    assert!(!active_control.cancellation.is_cancelled());
+    assert!(!queued_control.cancellation.is_cancelled());
+    active_release_sender.send(()).unwrap();
+    worker.join().unwrap();
+
+    assert_eq!(executed.load(AtomicOrdering::SeqCst), 2);
+    let state = queue.state.lock().expect("query queue");
+    assert!(state.tasks.is_empty());
+    assert!(state.active.is_none());
+    assert!(state.closed);
+    drop(state);
+    assert_eq!(admission.in_flight(), 0);
+}
+
 #[test]
 fn overload_rejects_only_one_request_and_recovers_after_capacity_is_released() {
     let queue = Arc::new(SearchQueue::default());
     let (deadline_sender, deadline_receiver) = mpsc::channel::<DeadlineCommand>();
+    let admission = Arc::new(AdmissionState::new());
     let service = SearchService {
         queue: Arc::clone(&queue),
         worker: thread::spawn(|| Ok(())),
         deadline_sender: deadline_sender.clone(),
         deadline_worker: thread::spawn(move || run_deadline_scheduler(deadline_receiver)),
-        admission: Arc::new(AdmissionState::new()),
+        admission: Arc::clone(&admission),
         batch_active: Arc::new(AtomicBool::new(false)),
         cancellations: Arc::new(CancellationRegistry::default()),
     };
@@ -128,6 +272,12 @@ fn overload_rejects_only_one_request_and_recovers_after_capacity_is_released() {
     );
 
     service
-        .finish()
+        .shutdown()
         .expect("stop isolated search service fixture");
+    let queue_state = queue.state.lock().expect("query queue");
+    assert!(queue_state.tasks.is_empty());
+    assert!(queue_state.active.is_none());
+    assert!(queue_state.closed);
+    drop(queue_state);
+    assert_eq!(admission.in_flight(), 0);
 }

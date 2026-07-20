@@ -15,6 +15,7 @@ use tempfile::NamedTempFile;
 
 use super::supervisor::{
     DaemonBlockedReason, DaemonExitClass, DaemonLifecycleKind, DaemonLifecycleSnapshot,
+    RestartLedgerReason,
 };
 use crate::daemon_response::DiagnosticsBody;
 use crate::native_import::MAX_DIAGNOSTICS_EXPORT_BYTES;
@@ -47,6 +48,8 @@ struct LifecycleReceiptEvent {
     consecutive_heartbeat_failures: u8,
     blocked_reason: Option<DaemonBlockedReason>,
     last_exit: Option<DaemonExitClass>,
+    #[serde(default)]
+    restart_ledger_reason: Option<RestartLedgerReason>,
 }
 
 impl LifecycleReceiptEvent {
@@ -63,6 +66,7 @@ impl LifecycleReceiptEvent {
             consecutive_heartbeat_failures: snapshot.consecutive_heartbeat_failures,
             blocked_reason: snapshot.blocked_reason,
             last_exit: snapshot.last_exit,
+            restart_ledger_reason: snapshot.restart_ledger_reason,
         }
     }
 }
@@ -165,6 +169,7 @@ enum ReceiptCommand {
 }
 
 pub(super) struct LifecycleReceiptRecorder {
+    data_dir: Option<PathBuf>,
     sender: Option<mpsc::SyncSender<ReceiptCommand>>,
     pending_dropped_events: Arc<AtomicU64>,
     cache: Arc<Mutex<PersistedLifecycleReceipt>>,
@@ -187,6 +192,7 @@ impl LifecycleReceiptRecorder {
             });
         match thread {
             Ok(thread) => Self {
+                data_dir: Some(data_dir.to_path_buf()),
                 sender: Some(sender),
                 pending_dropped_events,
                 cache,
@@ -197,6 +203,7 @@ impl LifecycleReceiptRecorder {
                     receipt.persistence_state = ReceiptPersistenceState::Unavailable;
                 }
                 Self {
+                    data_dir: Some(data_dir.to_path_buf()),
                     sender: None,
                     pending_dropped_events,
                     cache,
@@ -209,6 +216,7 @@ impl LifecycleReceiptRecorder {
     #[cfg(test)]
     pub(super) fn disabled() -> Self {
         Self {
+            data_dir: None,
             sender: None,
             pending_dropped_events: Arc::new(AtomicU64::new(0)),
             cache: Arc::new(Mutex::new(PersistedLifecycleReceipt::empty(
@@ -216,6 +224,10 @@ impl LifecycleReceiptRecorder {
             ))),
             thread: Mutex::new(None),
         }
+    }
+
+    pub(super) fn data_dir(&self) -> Option<&Path> {
+        self.data_dir.as_deref()
     }
 
     pub(super) fn record(&self, snapshot: &DaemonLifecycleSnapshot) {
@@ -465,6 +477,7 @@ mod tests {
             consecutive_heartbeat_failures: 0,
             blocked_reason: None,
             last_exit: Some(DaemonExitClass::ChildExited),
+            restart_ledger_reason: None,
         }
     }
 
@@ -547,6 +560,7 @@ mod tests {
     fn a_full_receipt_queue_never_blocks_the_supervisor_and_counts_the_drop() {
         let (sender, receiver) = mpsc::sync_channel(1);
         let recorder = LifecycleReceiptRecorder {
+            data_dir: None,
             sender: Some(sender),
             pending_dropped_events: Arc::new(AtomicU64::new(0)),
             cache: Arc::new(Mutex::new(PersistedLifecycleReceipt::empty(

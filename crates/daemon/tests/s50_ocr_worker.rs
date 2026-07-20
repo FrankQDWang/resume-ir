@@ -1,8 +1,10 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{ChildStdout, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use import_pipeline::{import_root_with_options, ImportOptions};
@@ -11,6 +13,7 @@ use meta_store::{
     ImportTaskId, ImportTaskStatus, IngestJobFailureKind, IngestJobStatus, OcrPageCacheKey,
     OcrPageCacheStatus, OwnedMetaStore, ReadMetaStore, UnixTimestamp, WorkerTaskKind,
 };
+use process_containment::ContainedChild;
 use search_runtime::{HitLimit, QueryCoordinator};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -964,10 +967,17 @@ fn daemon_ocr_worker_once_respects_pause_without_claiming_or_invoking_command() 
 #[test]
 fn daemon_ocr_worker_loop_serves_status_ipc_while_indexing_scanned_pdf() {
     let data_dir = temp_dir("ocr-worker-loop-data");
+    let gate_dir = temp_dir("ocr-worker-loop-gate");
+    let started = gate_dir.join("started");
+    let release = gate_dir.join("release");
     let private_document_path = seed_scanned_document(&data_dir);
     let command = write_fixture_executable(
         "fixture-daemon-ocr-worker-loop",
         r#"#!/bin/sh
+: > "$RESUME_IR_TEST_OCR_STARTED"
+while [ ! -f "$RESUME_IR_TEST_OCR_RELEASE" ]; do
+  sleep 0.01
+done
 printf 'resume-ir-ocr-v1\n'
 printf 'confidence=0.74\n'
 printf 'text:\n'
@@ -980,12 +990,14 @@ printf 'Rust worker systems.\n'
 "#,
     );
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let mut daemon_command = Command::new(env!("CARGO_BIN_EXE_resume-daemon"));
+    daemon_command
         .args([
             "--data-dir",
             path_str(&data_dir),
             "run",
             "--foreground",
+            "--parent-lifecycle-stdin",
             "--work-ocr",
             "--ocr-command",
             path_str(&command),
@@ -993,28 +1005,42 @@ printf 'Rust worker systems.\n'
             "25",
             "--ipc-listen",
             "127.0.0.1:0",
-            "--max-requests",
-            "40",
         ])
+        .env("RESUME_IR_TEST_OCR_STARTED", &started)
+        .env("RESUME_IR_TEST_OCR_RELEASE", &release)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("start daemon OCR worker loop with IPC");
+        .stderr(Stdio::piped());
+    let mut child = ContainedChild::spawn(&mut daemon_command)
+        .expect("start contained daemon OCR worker loop with IPC");
 
-    let stdout = child.stdout.take().expect("daemon stdout");
-    let mut stdout = BufReader::new(stdout);
-    let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
-    let (used_requests, completed_response) = wait_for_searchable_documents(&endpoint, 1, 40);
-    drain_status_requests(&endpoint, 40 - used_requests);
-    let mut daemon_stdout = String::new();
-    stdout
-        .read_to_string(&mut daemon_stdout)
-        .expect("read daemon stdout tail");
-
-    let output = wait_child(child);
-    assert!(output.success, "stderr:\n{}", output.stderr);
-    assert!(output.stderr.is_empty());
-    assert!(daemon_stdout.contains("ocr worker processed: 1"));
+    let lifecycle_stdin = child.take_stdin().expect("daemon lifecycle stdin");
+    let stdout = child.take_stdout().expect("daemon stdout");
+    let mut stderr = child.take_stderr().expect("daemon stderr");
+    let stderr_reader = std::thread::spawn(move || {
+        let mut output = String::new();
+        stderr
+            .read_to_string(&mut output)
+            .expect("read daemon stderr");
+        output
+    });
+    let mut stdout = spawn_daemon_stdout_collector(stdout);
+    let endpoint = read_ipc_endpoint(&mut child, &stdout.endpoint);
+    wait_for_gate(&mut child, &started);
+    let blocked_response = wait_for_searchable_documents(&endpoint, 0);
+    assert!(
+        blocked_response.starts_with("HTTP/1.1 200"),
+        "status while OCR is blocked must succeed:\n{blocked_response}"
+    );
+    fs::write(&release, b"release\n").expect("release blocked OCR fixture");
+    let completed_response = wait_for_searchable_documents(&endpoint, 1);
+    drop(lifecycle_stdin);
+    let status = child.wait().expect("wait contained daemon");
+    let daemon_stdout = stdout.finish();
+    let daemon_stderr = stderr_reader.join().expect("join daemon stderr reader");
+    assert!(status.success(), "stderr:\n{daemon_stderr}");
+    assert!(daemon_stderr.is_empty());
+    assert!(!daemon_stdout.contains("ocr worker processed:"));
     assert!(!daemon_stdout.contains("OCRS50DaemonLoopToken"));
     assert!(!daemon_stdout.contains(path_str(&data_dir)));
     assert!(!daemon_stdout.contains(path_str(&private_document_path)));
@@ -1026,6 +1052,7 @@ printf 'Rust worker systems.\n'
     assert_eq!(hits.len(), 1);
 
     remove_dir(&data_dir);
+    remove_dir(&gate_dir);
 }
 
 #[cfg(unix)]
@@ -1302,85 +1329,173 @@ fn search_fulltext(data_dir: &Path, query: &str) -> Vec<search_runtime::FullText
         .expect("generation-pinned full-text query")
 }
 
-fn http_get(endpoint: &str) -> String {
+fn http_get(endpoint: &str, deadline: Instant) -> std::io::Result<String> {
     let rest = endpoint
         .strip_prefix("http://")
         .expect("endpoint has http scheme");
     let (addr, path) = rest.split_once('/').expect("endpoint has path");
+    let socket_addr = addr.parse::<SocketAddr>().map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("invalid daemon IPC address: {error}"),
+        )
+    })?;
+    let remaining = deadline_remaining(deadline)?;
     let request = format!("GET /{path} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
-    let mut stream = TcpStream::connect(addr).expect("connect daemon ipc");
-    stream
-        .write_all(request.as_bytes())
-        .expect("write status request");
-    let mut response = String::new();
-    stream
-        .read_to_string(&mut response)
-        .expect("read status response");
-    response
+    let mut stream = TcpStream::connect_timeout(&socket_addr, remaining)?;
+    let mut request_bytes = request.as_bytes();
+    while !request_bytes.is_empty() {
+        stream.set_write_timeout(Some(deadline_remaining(deadline)?))?;
+        match stream.write(request_bytes) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "daemon IPC request write made no progress",
+                ));
+            }
+            Ok(written) => request_bytes = &request_bytes[written..],
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+
+    const MAX_STATUS_RESPONSE_BYTES: usize = 1024 * 1024;
+    let mut response = Vec::new();
+    let mut chunk = [0_u8; 8192];
+    loop {
+        stream.set_read_timeout(Some(deadline_remaining(deadline)?))?;
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => {
+                if response.len().saturating_add(read) > MAX_STATUS_RESPONSE_BYTES {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "daemon IPC status response exceeded test bound",
+                    ));
+                }
+                response.extend_from_slice(&chunk[..read]);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    deadline_remaining(deadline)?;
+    String::from_utf8(response).map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("daemon IPC status response was not UTF-8: {error}"),
+        )
+    })
 }
 
-fn wait_for_searchable_documents(
-    endpoint: &str,
-    expected_searchable: usize,
-    max_requests: usize,
-) -> (usize, String) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut requests = 0_usize;
+fn deadline_remaining(deadline: Instant) -> std::io::Result<Duration> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "daemon IPC request deadline elapsed",
+        ))
+    } else {
+        Ok(remaining)
+    }
+}
+
+fn wait_for_searchable_documents(endpoint: &str, expected_searchable: usize) -> String {
+    let deadline = Instant::now() + Duration::from_secs(10);
     let needle = format!("\"searchable_documents\":{expected_searchable}");
     loop {
-        requests += 1;
-        let response = http_get(endpoint);
-        if response.contains(&needle) {
-            return (requests, response);
-        }
-        assert!(
-            requests < max_requests,
-            "daemon OCR worker did not reach searchable count; last response:\n{response}"
-        );
+        let last_outcome = match http_get(endpoint, deadline) {
+            Ok(response) => {
+                if response.contains(&needle) {
+                    return response;
+                }
+                response
+            }
+            Err(error) => error.to_string(),
+        };
         assert!(
             Instant::now() < deadline,
-            "daemon OCR worker timed out; last response:\n{response}"
+            "daemon OCR worker timed out; last outcome:\n{last_outcome}"
         );
         std::thread::sleep(Duration::from_millis(50));
     }
 }
 
-fn drain_status_requests(endpoint: &str, count: usize) {
-    for _ in 0..count {
-        let _ = http_get(endpoint);
+fn wait_for_gate(child: &mut ContainedChild, gate: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if gate.is_file() {
+            return;
+        }
+        if let Some(status) = child.try_wait().expect("poll daemon child") {
+            panic!("daemon exited before OCR fixture reached its gate: {status}");
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    panic!("OCR fixture did not reach its gate before timeout");
+}
+
+struct DaemonStdoutCollector {
+    endpoint: Receiver<String>,
+    join: Option<JoinHandle<String>>,
+}
+
+impl DaemonStdoutCollector {
+    fn finish(&mut self) -> String {
+        self.join
+            .take()
+            .expect("daemon stdout collector join handle")
+            .join()
+            .expect("join daemon stdout collector")
     }
 }
 
-fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> String {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut line = String::new();
-    while Instant::now() < deadline {
-        line.clear();
-        let bytes = stdout.read_line(&mut line).expect("read daemon stdout");
-        if bytes == 0 {
-            if let Ok(Some(status)) = child.try_wait() {
-                panic!("daemon exited before endpoint: {status}");
+fn spawn_daemon_stdout_collector(stdout: ChildStdout) -> DaemonStdoutCollector {
+    let (endpoint_sender, endpoint) = mpsc::channel();
+    let join = std::thread::spawn(move || {
+        let mut stdout = BufReader::new(stdout);
+        let mut output = String::new();
+        let mut line = String::new();
+        let mut endpoint_sent = false;
+        loop {
+            line.clear();
+            match stdout.read_line(&mut line) {
+                Ok(0) => return output,
+                Ok(_) => {
+                    output.push_str(&line);
+                    if !endpoint_sent {
+                        if let Some(endpoint) = line.trim().strip_prefix("ipc status endpoint: ") {
+                            let _ = endpoint_sender.send(endpoint.to_string());
+                            endpoint_sent = true;
+                        }
+                    }
+                }
+                Err(error) => panic!("read daemon stdout: {error}"),
             }
-            continue;
         }
-        if let Some(endpoint) = line.trim().strip_prefix("ipc status endpoint: ") {
-            return endpoint.to_string();
+    });
+    DaemonStdoutCollector {
+        endpoint,
+        join: Some(join),
+    }
+}
+
+fn read_ipc_endpoint(child: &mut ContainedChild, endpoint: &Receiver<String>) -> String {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match endpoint.recv_timeout(remaining.min(Duration::from_millis(25))) {
+            Ok(endpoint) => return endpoint,
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => {
+                panic!("daemon stdout closed before endpoint")
+            }
+        }
+        if let Ok(Some(status)) = child.try_wait() {
+            panic!("daemon exited before endpoint: {status}");
         }
     }
     panic!("daemon did not print ipc status endpoint");
-}
-
-fn wait_child(child: Child) -> ChildOutput {
-    let output = child.wait_with_output().expect("wait daemon");
-    ChildOutput {
-        success: output.status.success(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    }
-}
-
-struct ChildOutput {
-    success: bool,
-    stderr: String,
 }
 
 fn temp_dir(label: &str) -> PathBuf {

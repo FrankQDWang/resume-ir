@@ -1,9 +1,9 @@
 use core_domain::{ContentDigest, SearchProjectionDigest};
 use serde::{Deserialize, Serialize};
 
-pub(crate) const SNAPSHOT_MANIFEST_SCHEMA_VERSION: &str = "fulltext.snapshot.v2";
-pub(crate) const FULLTEXT_INDEX_SCHEMA_VERSION: &str = "tantivy.fulltext.v2";
-pub(crate) const SNAPSHOT_HEADER_ENCRYPTED_V2: &str = "resume-ir-fulltext-snapshot-encrypted-v2";
+pub(crate) const SNAPSHOT_MANIFEST_SCHEMA_VERSION: &str = "fulltext.snapshot.v3";
+pub(crate) const FULLTEXT_INDEX_SCHEMA_VERSION: &str = "tantivy.fulltext.v3";
+pub(crate) const SNAPSHOT_HEADER_ENCRYPTED_V3: &str = "resume-ir-fulltext-snapshot-encrypted-v3";
 pub(crate) const MAX_MANIFEST_BYTES: usize = 4 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,7 +22,7 @@ impl FullTextSnapshotSchema {
     }
 }
 
-pub const FULLTEXT_SNAPSHOT_SCHEMA_V2: FullTextSnapshotSchema = FullTextSnapshotSchema {
+pub const FULLTEXT_SNAPSHOT_SCHEMA_V3: FullTextSnapshotSchema = FullTextSnapshotSchema {
     manifest_schema: SNAPSHOT_MANIFEST_SCHEMA_VERSION,
     index_schema: FULLTEXT_INDEX_SCHEMA_VERSION,
 };
@@ -43,7 +43,7 @@ impl PublishedSnapshotMetadata {
     }
 
     pub const fn schema(&self) -> FullTextSnapshotSchema {
-        FULLTEXT_SNAPSHOT_SCHEMA_V2
+        FULLTEXT_SNAPSHOT_SCHEMA_V3
     }
 
     pub fn document_count(&self) -> usize {
@@ -92,7 +92,7 @@ pub(crate) fn encode_manifest(
     let manifest = SnapshotManifest {
         schema_version: SNAPSHOT_MANIFEST_SCHEMA_VERSION.to_string(),
         index_schema: FULLTEXT_INDEX_SCHEMA_VERSION.to_string(),
-        encrypted_snapshot: SNAPSHOT_HEADER_ENCRYPTED_V2.to_string(),
+        encrypted_snapshot: SNAPSHOT_HEADER_ENCRYPTED_V3.to_string(),
         generation: generation.to_string(),
         document_count: u64::try_from(document_count).map_err(|_| ManifestError::Corrupt)?,
         projection_digest: projection_digest.as_str().to_string(),
@@ -118,7 +118,7 @@ pub(crate) fn decode_manifest(
         serde_json::from_slice(bytes).map_err(|_| ManifestError::Corrupt)?;
     if manifest.schema_version != SNAPSHOT_MANIFEST_SCHEMA_VERSION
         || manifest.index_schema != FULLTEXT_INDEX_SCHEMA_VERSION
-        || manifest.encrypted_snapshot != SNAPSHOT_HEADER_ENCRYPTED_V2
+        || manifest.encrypted_snapshot != SNAPSHOT_HEADER_ENCRYPTED_V3
         || manifest.generation != expected_generation
     {
         return Err(ManifestError::SchemaMismatch);
