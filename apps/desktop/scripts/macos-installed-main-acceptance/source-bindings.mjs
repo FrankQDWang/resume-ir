@@ -210,21 +210,34 @@ export async function deriveCommitProductBinding(repoRoot, gitHead, runTool) {
   if (!GIT_HEAD.test(gitHead ?? "") || typeof runTool !== "function") {
     fail("source_manifest_invalid");
   }
-  const show = (relative, stdoutMode = "text") =>
+  const show = (relative) =>
     runTool(
       MACOS_SYSTEM_TOOLS.git,
       ["-C", repoRoot, "show", `${gitHead}:${relative}`],
       {
         env: GIT_ENVIRONMENT,
         timeoutMs: TOOL_TIMEOUT_MS,
-        stdoutMode,
       },
     );
   const packageManifest = parseCommitJson(await show("apps/desktop/package.json"));
   const tauriManifest = parseCommitJson(
     await show("apps/desktop/src-tauri/tauri.conf.json"),
   );
-  const icon = await show("apps/desktop/src-tauri/icons/icon.icns", "buffer");
+  const icon = await runTool(
+    MACOS_SYSTEM_TOOLS.git,
+    [
+      "-C",
+      repoRoot,
+      "show",
+      `${gitHead}:apps/desktop/src-tauri/icons/icon.icns`,
+    ],
+    {
+      env: GIT_ENVIRONMENT,
+      maxStdoutBytes: MAX_ICON_BYTES,
+      stdoutMode: "buffer",
+      timeoutMs: TOOL_TIMEOUT_MS,
+    },
+  );
   if (
     !toolSucceeded(icon) ||
     icon.stderr !== "" ||

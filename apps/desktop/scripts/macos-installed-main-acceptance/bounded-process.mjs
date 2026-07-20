@@ -12,6 +12,8 @@ import {
   waitBounded,
 } from "./core.mjs";
 
+const MAX_CALLER_STDOUT_BYTES = 8 * 1024 * 1024;
+
 export async function runBoundedTool(
   command,
   args,
@@ -20,6 +22,7 @@ export async function runBoundedTool(
     env = {},
     cwd = "/",
     killProcess = process.kill.bind(process),
+    maxStdoutBytes = MAX_TOOL_OUTPUT_BYTES,
     onSettled,
     onSpawn,
     signal,
@@ -34,6 +37,9 @@ export async function runBoundedTool(
     !Number.isSafeInteger(timeoutMs) ||
     timeoutMs < 25 ||
     timeoutMs > CLONE_TIMEOUT_MS ||
+    !Number.isSafeInteger(maxStdoutBytes) ||
+    maxStdoutBytes < 1 ||
+    maxStdoutBytes > MAX_CALLER_STDOUT_BYTES ||
     (onSpawn !== undefined && typeof onSpawn !== "function") ||
     (onSettled !== undefined && typeof onSettled !== "function") ||
     !["text", "buffer"].includes(stdoutMode)
@@ -58,8 +64,8 @@ export async function runBoundedTool(
   let stdout = Buffer.alloc(0);
   let stderr = Buffer.alloc(0);
   let overflow = false;
-  const collect = (current, chunk) => {
-    if (current.length + chunk.length > MAX_TOOL_OUTPUT_BYTES) {
+  const collect = (current, chunk, limit) => {
+    if (current.length + chunk.length > limit) {
       overflow = true;
       signalProcessGroup(child, "SIGKILL", killProcess);
       return current;
@@ -67,10 +73,10 @@ export async function runBoundedTool(
     return Buffer.concat([current, chunk], current.length + chunk.length);
   };
   child.stdout?.on("data", (chunk) => {
-    stdout = collect(stdout, chunk);
+    stdout = collect(stdout, chunk, maxStdoutBytes);
   });
   child.stderr?.on("data", (chunk) => {
-    stderr = collect(stderr, chunk);
+    stderr = collect(stderr, chunk, MAX_TOOL_OUTPUT_BYTES);
   });
   child.stdout?.on("error", () => {});
   child.stderr?.on("error", () => {});

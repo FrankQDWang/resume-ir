@@ -3617,6 +3617,16 @@ guards, local runtime discovery, and PR #9 CI state.
   into `verify-local`; all pass together with the positive contract, autonomous-
   goal, loop-state and workflow checks. These are governance gates only; none of
   the post-merge native states is claimed yet.
+- The first exact merged-main installed acceptance stopped before build or
+  system mutation with `source_manifest_invalid`. The deployed-gate regression
+  proved the reviewed `icon.icns` is about 2.48 MiB while the generic bounded
+  process collector allowed only 64 KiB, so exact-commit icon provenance could
+  never be derived from the real artifact. `runBoundedTool` now keeps its 64 KiB
+  default while accepting an explicit per-call budget capped globally at 8 MiB;
+  only the icon blob read requests that cap. Focused RED/GREEN and the complete
+  desktop suite pass, including a 96 KiB binary-output witness and rejection of
+  any caller budget above the cap. No installation, COW acceptance or soak is
+  claimed until this regression merges and the exact new `main` is rerun.
 
 ### S808
 
