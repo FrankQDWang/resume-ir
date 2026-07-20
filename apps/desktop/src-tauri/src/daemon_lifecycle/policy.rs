@@ -44,10 +44,24 @@ pub(super) struct RestartPolicy {
 }
 
 impl RestartPolicy {
+    #[cfg(test)]
     pub(super) fn new(config: RestartPolicyConfig) -> Self {
+        Self::with_restart_attempt_ages(config, VecDeque::new())
+    }
+
+    pub(super) fn with_restart_attempt_ages(
+        config: RestartPolicyConfig,
+        ages: VecDeque<Duration>,
+    ) -> Self {
+        let automatic_restarts = ages
+            .into_iter()
+            .filter(|age| *age < config.window)
+            .take(MAX_AUTOMATIC_RESTARTS)
+            .map(|age| config.window.saturating_sub(age))
+            .collect();
         Self {
             config,
-            automatic_restarts: VecDeque::with_capacity(MAX_AUTOMATIC_RESTARTS),
+            automatic_restarts,
             stable_since: None,
             half_open_attempt: false,
             manual_half_open_available: false,
@@ -55,6 +69,7 @@ impl RestartPolicy {
     }
 
     pub(super) fn on_failure(&mut self, now: Duration) -> RecoveryDecision {
+        let now = self.policy_time(now);
         self.stable_since = None;
         if self.half_open_attempt {
             self.half_open_attempt = false;
@@ -77,6 +92,12 @@ impl RestartPolicy {
         self.stable_since = None;
     }
 
+    pub(super) fn restore_circuit_open(&mut self) {
+        self.half_open_attempt = false;
+        self.manual_half_open_available = true;
+        self.stable_since = None;
+    }
+
     pub(super) fn begin_manual_half_open(&mut self) -> bool {
         if !self.manual_half_open_available {
             return false;
@@ -86,25 +107,30 @@ impl RestartPolicy {
     }
 
     pub(super) fn on_ready(&mut self, now: Duration) {
-        self.stable_since = Some(now);
+        self.stable_since = Some(self.policy_time(now));
     }
 
-    pub(super) fn observe_ready(&mut self, now: Duration) -> bool {
-        let stable = self
-            .stable_since
-            .is_some_and(|since| now.saturating_sub(since) >= self.config.stable_reset);
-        if stable {
-            self.automatic_restarts.clear();
-            self.half_open_attempt = false;
-            self.manual_half_open_available = false;
-            self.stable_since = Some(now);
-        }
-        stable
+    pub(super) fn stable_reset_due(&self, now: Duration) -> bool {
+        let now = self.policy_time(now);
+        self.stable_since
+            .is_some_and(|since| now.saturating_sub(since) >= self.config.stable_reset)
+    }
+
+    pub(super) fn complete_stable_reset(&mut self, now: Duration) {
+        self.automatic_restarts.clear();
+        self.half_open_attempt = false;
+        self.manual_half_open_available = false;
+        self.stable_since = Some(self.policy_time(now));
     }
 
     pub(super) fn restart_attempts(&mut self, now: Duration) -> u8 {
+        let now = self.policy_time(now);
         self.prune(now);
         self.automatic_restarts.len() as u8
+    }
+
+    fn policy_time(&self, elapsed: Duration) -> Duration {
+        self.config.window.saturating_add(elapsed)
     }
 
     fn prune(&mut self, now: Duration) {
@@ -198,9 +224,10 @@ mod tests {
             RecoveryDecision::RetryAfter(_)
         ));
         policy.on_ready(Duration::from_secs(1));
-        assert!(!policy.observe_ready(Duration::from_secs(300)));
+        assert!(!policy.stable_reset_due(Duration::from_secs(300)));
         assert_eq!(policy.restart_attempts(Duration::from_secs(300)), 1);
-        assert!(policy.observe_ready(Duration::from_secs(301)));
+        assert!(policy.stable_reset_due(Duration::from_secs(301)));
+        policy.complete_stable_reset(Duration::from_secs(301));
         assert_eq!(policy.restart_attempts(Duration::from_secs(301)), 0);
     }
 
@@ -212,6 +239,25 @@ mod tests {
             RecoveryDecision::RetryAfter(_)
         ));
         assert_eq!(policy.restart_attempts(Duration::from_secs(599)), 1);
+        assert_eq!(policy.restart_attempts(Duration::from_secs(600)), 0);
+    }
+
+    #[test]
+    fn hydrated_wall_clock_ages_preserve_backoff_and_expire_in_the_current_actor() {
+        let mut policy = RestartPolicy::with_restart_attempt_ages(
+            test_config(),
+            VecDeque::from([
+                Duration::from_secs(599),
+                Duration::from_secs(300),
+                Duration::from_secs(1),
+            ]),
+        );
+        assert_eq!(policy.restart_attempts(Duration::ZERO), 3);
+        assert_eq!(
+            policy.on_failure(Duration::ZERO),
+            RecoveryDecision::RetryAfter(Duration::from_secs(15))
+        );
+        assert_eq!(policy.restart_attempts(Duration::from_secs(1)), 3);
         assert_eq!(policy.restart_attempts(Duration::from_secs(600)), 0);
     }
 }

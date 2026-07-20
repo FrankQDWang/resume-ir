@@ -18,15 +18,19 @@ import {
   compareThreePartVersions,
   upgradeMacosDmg,
 } from "./macos-upgrade-lifecycle.mjs";
+import { withVerifiedMacosDmg } from "./verify-macos-dmg.mjs";
 
 const OLD_VERSION = "0.1.1";
 const NEW_VERSION = "0.1.2";
 const OLD_COMPOSITION_DIGEST =
-  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  "18a2d41769f6e2fcc6cc504085b40f25ec185a27109eac525e551513ec5801c6";
 const NEW_COMPOSITION_DIGEST =
   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const OLD_DMG_SHA256 =
+  "363ce8d5db7c120a05fc7c282a9f9b6a8e1173f3175c308839dfb1440867c780";
 const DMG_SHA256 =
   "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+const SOURCE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
 
 function appReceipt() {
   return {
@@ -38,8 +42,9 @@ function appReceipt() {
 
 function dmgReceipt() {
   return {
-    schema_version: "resume-ir.macos-dmg-composition.v1",
+    schema_version: "resume-ir.macos-dmg-composition.v2",
     target_triple: "aarch64-apple-darwin",
+    source_commit: SOURCE_COMMIT,
     dmg_count: 1,
     app_bundle_count: 1,
     digest_match: true,
@@ -59,31 +64,55 @@ function dmgReceipt() {
 }
 
 function compositionReceipt(version) {
-  return {
+  const composition = {
     bundle_id: "local.resume-ir.desktop",
     version,
     target_triple: "aarch64-apple-darwin",
     composition_digest:
       version === OLD_VERSION ? OLD_COMPOSITION_DIGEST : NEW_COMPOSITION_DIGEST,
   };
+  return version === OLD_VERSION
+    ? composition
+    : { ...composition, source_commit: SOURCE_COMMIT };
 }
 
 function installReceipt(version) {
   const composition = compositionReceipt(version);
-  return {
+  return version === OLD_VERSION ? {
     schema_version: "resume-ir.macos-install-receipt.v1",
     bundle_id: composition.bundle_id,
     version,
     target_triple: composition.target_triple,
     composition_digest: composition.composition_digest,
-    dmg_sha256: version === OLD_VERSION ? OLD_COMPOSITION_DIGEST : DMG_SHA256,
+    dmg_sha256: OLD_DMG_SHA256,
+  } : {
+    schema_version: "resume-ir.macos-install-receipt.v2",
+    bundle_id: composition.bundle_id,
+    version,
+    target_triple: composition.target_triple,
+    source_commit: SOURCE_COMMIT,
+    composition_digest: composition.composition_digest,
+    dmg_sha256: DMG_SHA256,
   };
 }
 
 const signatureReceipt = async () => ({
   code_signature: "ad_hoc_valid",
   hardened_runtime: true,
+  library_validation_entitlement_scope: "embedding_runtime_only",
 });
+
+function verifiedDmgLease(sourceApp, { cleanupFails = false } = {}) {
+  return async ({ consumeVerifiedImage }) => {
+    const result = await consumeVerifiedImage({
+      appBundle: sourceApp,
+      appComposition: compositionReceipt(NEW_VERSION),
+      receipt: dmgReceipt(),
+    });
+    if (cleanupFails) throw new Error("DMG detach or cleanup failed");
+    return result;
+  };
+}
 
 async function fixture(context) {
   const root = await realpath(
@@ -142,21 +171,20 @@ async function verifyCompositionFixture({ appBundle, expectedVersion }) {
 function verifyReceiptFixture({ receipt, composition }) {
   assert.equal(receipt.version, composition.version);
   assert.equal(receipt.composition_digest, composition.composition_digest);
+  assert.equal(receipt.source_commit, composition.source_commit);
 }
 
-function createRunner(sourceApp, calls, { failCopy = false, failDetach = false, failRegistrations = 0 } = {}) {
+function createRunner(sourceApp, calls, { failCopy = false, failRegistrations = 0 } = {}) {
   let registrationCount = 0;
   return async (command, args) => {
     calls.push([command, ...args]);
-    if (command === "ditto") {
+    const tool = path.basename(command);
+    if (tool === "ditto") {
       if (failCopy) return { status: 1, stdout: "", stderr: "bounded" };
       await writeFile(
         path.join(args[1], "version"),
         await readFile(path.join(sourceApp, "version"), "utf8"),
       );
-    }
-    if (command === "hdiutil" && args[0] === "detach" && failDetach) {
-      return { status: 1, stdout: "", stderr: "bounded" };
     }
     if (command.endsWith("lsregister") && args[0] === "-f") {
       registrationCount += 1;
@@ -172,11 +200,37 @@ function upgradeArguments(values, overrides = {}) {
   const calls = [];
   const verifiedCandidateApps = [];
   const persistedReceipts = [];
-  let storedReceipt = installReceipt(OLD_VERSION);
+  let legacyStoredReceipt = installReceipt(OLD_VERSION);
+  let currentStoredReceipt;
+  const inspectReceiptSet = async () => {
+    if (legacyStoredReceipt && currentStoredReceipt) {
+      return {
+        state: "both_valid",
+        legacy_receipt: legacyStoredReceipt,
+        current_receipt: currentStoredReceipt,
+      };
+    }
+    if (legacyStoredReceipt) {
+      return {
+        state: "legacy_only",
+        legacy_receipt: legacyStoredReceipt,
+        current_receipt: null,
+      };
+    }
+    if (currentStoredReceipt) {
+      return {
+        state: "current_only",
+        legacy_receipt: null,
+        current_receipt: currentStoredReceipt,
+      };
+    }
+    throw new Error("install receipt set is invalid");
+  };
   return {
     calls,
     verifiedCandidateApps,
     persistedReceipts,
+    inspectReceiptSet,
     args: {
       repoRoot: values.root,
       targetTriple: "aarch64-apple-darwin",
@@ -186,27 +240,40 @@ function upgradeArguments(values, overrides = {}) {
       candidateVersion: NEW_VERSION,
       temporaryRoot: values.temporaryRoot,
       platform: "darwin",
-      runner: createRunner(values.sourceApp, calls, overrides.runnerOptions),
-      verifyDmg: async () => dmgReceipt(),
-      validateLayout: async () => values.sourceApp,
+      systemRunner: createRunner(values.sourceApp, calls, overrides.runnerOptions),
+      withVerifiedDmg: verifiedDmgLease(values.sourceApp, {
+        cleanupFails: overrides.leaseCleanupFails,
+      }),
       inspectApp,
       verifyApp: async ({ appBundle }) => {
-        assert.notEqual(
-          await readFile(path.join(appBundle, "version"), "utf8"),
-          OLD_VERSION,
-        );
-        verifiedCandidateApps.push(appBundle);
+        if (
+          (await readFile(path.join(appBundle, "version"), "utf8")) !==
+          OLD_VERSION
+        ) {
+          verifiedCandidateApps.push(appBundle);
+        }
         return appReceipt();
       },
       verifyComposition: verifyCompositionFixture,
-      verifySignature: signatureReceipt,
+      verifyLegacyComposition: verifyCompositionFixture,
+      verifySignaturePolicy: signatureReceipt,
       applicationSupportRoot: values.applicationSupportRoot,
-      readReceipt: async () => storedReceipt,
+      inspectReceiptSet,
+      readLegacyReceipt: async () => legacyStoredReceipt,
+      readCurrentReceipt: async () => currentStoredReceipt,
       verifyReceipt: verifyReceiptFixture,
-      persistReceipt: async ({ receipt }) => {
+      createCurrentReceipt: async ({ receipt }) => {
         persistedReceipts.push(receipt);
-        storedReceipt = receipt;
+        if (currentStoredReceipt) throw new Error("current receipt already exists");
+        currentStoredReceipt = receipt;
+        if (overrides.failCurrentCreateAfterCommit) {
+          throw new Error("synthetic post-rename fsync failure");
+        }
         return receipt;
+      },
+      removeLegacyReceipt: async ({ expectedReceipt }) => {
+        assert.deepEqual(legacyStoredReceipt, expectedReceipt);
+        legacyStoredReceipt = undefined;
       },
       ...overrides,
     },
@@ -221,17 +288,28 @@ async function assertOldState(values) {
 
 test("upgrades a verified App through an exclusive sibling stage", async (context) => {
   const values = await fixture(context);
-  const { args, calls, persistedReceipts, verifiedCandidateApps } =
+  const {
+    args,
+    calls,
+    persistedReceipts,
+    verifiedCandidateApps,
+    inspectReceiptSet,
+  } =
     upgradeArguments(values);
   const receipt = await upgradeMacosDmg(args);
 
   assert.equal(await readFile(path.join(values.target, "version"), "utf8"), NEW_VERSION);
   assert.equal(await readFile(path.join(values.userData, "sentinel"), "utf8"), "preserve");
   assert.deepEqual((await readdir(values.applicationsDirectory)).sort(), ["resume-ir.app"]);
-  assert.equal(calls.filter(([command]) => command === "ditto").length, 1);
+  assert.equal(
+    calls.filter(([command]) => path.basename(command) === "ditto").length,
+    1,
+  );
+  assert.ok(calls.every(([command]) => path.isAbsolute(command)));
   assert.equal(calls.filter(([command]) => command.endsWith("lsregister")).length, 1);
-  assert.equal(verifiedCandidateApps.length, 7);
+  assert.equal(verifiedCandidateApps.length, 6);
   assert.deepEqual(persistedReceipts, [installReceipt(NEW_VERSION)]);
+  assert.equal((await inspectReceiptSet()).state, "current_only");
   assert.deepEqual(receipt, {
     schema_version: "resume-ir.macos-app-upgrade.v1",
     target_triple: "aarch64-apple-darwin",
@@ -249,6 +327,113 @@ test("upgrades a verified App through an exclusive sibling stage", async (contex
   });
 });
 
+test("upgrade copies from the verified mounted image without a second mount", async (context) => {
+  const values = await fixture(context);
+  const swappedApp = path.join(values.root, "swapped", "resume-ir.app");
+  await mkdir(swappedApp, { recursive: true });
+  await writeFile(path.join(swappedApp, "version"), NEW_VERSION);
+  await writeFile(path.join(values.sourceApp, "payload"), "verified");
+  await writeFile(path.join(swappedApp, "payload"), "swapped");
+  let verifiedConsumerInvoked = false;
+  const calls = [];
+  const runner = async (command, args) => {
+    calls.push([command, ...args]);
+    const tool = path.basename(command);
+    if (tool === "hdiutil" && args[0] === "attach") {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (tool === "hdiutil" && args[0] === "detach") {
+      await rm(args[1], { recursive: true, force: true });
+      await mkdir(args[1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (tool === "ditto") {
+      await writeFile(
+        path.join(args[1], "version"),
+        await readFile(path.join(args[0], "version"), "utf8"),
+      );
+      await writeFile(
+        path.join(args[1], "payload"),
+        await readFile(path.join(args[0], "payload"), "utf8"),
+      );
+    }
+    return { status: 0, stdout: "", stderr: "" };
+  };
+  const { args } = upgradeArguments(values, {
+    systemRunner: runner,
+    withVerifiedDmg: async (request) => {
+      await writeFile(values.dmg, "replacement-dmg");
+      if (typeof request.consumeVerifiedImage === "function") {
+        verifiedConsumerInvoked = true;
+        return request.consumeVerifiedImage({
+          appBundle: values.sourceApp,
+          appComposition: compositionReceipt(NEW_VERSION),
+          receipt: dmgReceipt(),
+        });
+      }
+      throw new Error("verified DMG lease is unavailable");
+    },
+  });
+  await upgradeMacosDmg(args);
+
+  assert.equal(verifiedConsumerInvoked, true);
+  assert.equal(
+    calls.filter(
+      ([command, action]) =>
+        path.basename(command) === "hdiutil" && action === "attach",
+    ).length,
+    0,
+  );
+  assert.equal(await readFile(path.join(values.target, "payload"), "utf8"), "verified");
+});
+
+test("upgrade recovers a partial verifier mount after attach failure", async (context) => {
+  const values = await fixture(context);
+  let detachCalls = 0;
+  const detachArguments = [];
+  const runner = async (command, args) => {
+    if (path.basename(command) === "hdiutil" && args[0] === "attach") {
+      await writeFile(path.join(args.at(-1), "partial-mount"), "mounted");
+      return { status: 1, stdout: "", stderr: "bounded" };
+    }
+    if (path.basename(command) === "hdiutil" && args[0] === "detach") {
+      detachCalls += 1;
+      detachArguments.push(args);
+      await rm(args[1], { recursive: true, force: true });
+      await mkdir(args[1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 0, stdout: "", stderr: "" };
+  };
+  const { args } = upgradeArguments(values, {
+    systemRunner: runner,
+    withVerifiedDmg: (request) =>
+      withVerifiedMacosDmg({
+        ...request,
+        verifySource: async () => SOURCE_COMMIT,
+        mountProbe: async () => true,
+      }),
+  });
+
+  await assert.rejects(upgradeMacosDmg(args), /DMG attach failed/);
+  assert.equal(detachCalls, 1);
+  assert.equal(detachArguments[0].includes("-force"), true);
+  assert.deepEqual(await readdir(values.temporaryRoot), []);
+  await assertOldState(values);
+});
+
+test("rejects a candidate without the exact installed signature policy", async (context) => {
+  const values = await fixture(context);
+  const { args } = upgradeArguments(values, {
+    verifySignaturePolicy: async () => ({
+      code_signature: "ad_hoc_valid",
+      hardened_runtime: true,
+    }),
+  });
+  await assert.rejects(upgradeMacosDmg(args), /App signature is invalid/);
+  await assertOldState(values);
+});
+
 test("rejects same-version, downgrade, invalid versions, and reserved-name collisions", async (context) => {
   assert.equal(compareThreePartVersions("0.1.2", "0.1.1"), 1);
   assert.equal(compareThreePartVersions("0.1.1", "0.1.1"), 0);
@@ -259,7 +444,10 @@ test("rejects same-version, downgrade, invalid versions, and reserved-name colli
   for (const candidateVersion of [OLD_VERSION, "0.1.0"]) {
     const values = await fixture(context);
     const { args } = upgradeArguments(values, { candidateVersion });
-    await assert.rejects(upgradeMacosDmg(args), /candidate version is not newer/);
+    await assert.rejects(
+      upgradeMacosDmg(args),
+      /only the exact 0\.1\.1 to 0\.1\.2 upgrade is supported/,
+    );
     await assertOldState(values);
   }
 
@@ -287,7 +475,7 @@ test("fails closed for 0.1.0 and for missing installed evidence", async (context
   });
   await assert.rejects(
     upgradeMacosDmg(legacyArgs),
-    /installed App predates upgrade evidence/,
+    /only the exact 0\.1\.1 to 0\.1\.2 upgrade is supported/,
   );
   await assertOldState(legacy);
 
@@ -296,12 +484,12 @@ test("fails closed for 0.1.0 and for missing installed evidence", async (context
     const overrides =
       missing === "receipt"
         ? {
-            readReceipt: async () => {
+            inspectReceiptSet: async () => {
               throw new Error("install receipt is unavailable");
             },
           }
         : {
-            verifyComposition: async () => {
+            verifyLegacyComposition: async () => {
               throw new Error("bundle composition evidence is unavailable");
             },
           };
@@ -312,13 +500,36 @@ test("fails closed for 0.1.0 and for missing installed evidence", async (context
   }
 });
 
+test("rejects both receipt generations when no upgrade journal exists", async (context) => {
+  const values = await fixture(context);
+  const { args, verifiedCandidateApps } = upgradeArguments(values, {
+    inspectReceiptSet: async () => ({
+      state: "both_valid",
+      legacy_receipt: installReceipt(OLD_VERSION),
+      current_receipt: installReceipt(NEW_VERSION),
+    }),
+  });
+
+  await assert.rejects(
+    upgradeMacosDmg(args),
+    /legacy upgrade receipt set is invalid/,
+  );
+  assert.equal(verifiedCandidateApps.length, 0);
+  await assertOldState(values);
+});
+
 test("removes transaction-owned partial copy and rolls back a verified staged App", async (context) => {
-  for (const runnerOptions of [{ failCopy: true }, { failDetach: true }]) {
+  for (const failure of ["copy", "lease_cleanup"]) {
     const values = await fixture(context);
-    const { args } = upgradeArguments(values, { runnerOptions });
+    const { args } = upgradeArguments(values, {
+      runnerOptions: failure === "copy" ? { failCopy: true } : undefined,
+      leaseCleanupFails: failure === "lease_cleanup",
+    });
     await assert.rejects(
       upgradeMacosDmg(args),
-      runnerOptions.failCopy ? /candidate App copy failed/ : undefined,
+      failure === "copy"
+        ? /candidate App copy failed/
+        : /DMG detach or cleanup failed/,
     );
     assert.equal(
       await readFile(path.join(values.target, "version"), "utf8"),
@@ -422,25 +633,13 @@ test("retries partial tombstone GC without deleting the committed new App", asyn
 
 test("preserves committed new App when receipt persistence reports after commit", async (context) => {
   const values = await fixture(context);
-  const persistedReceipts = [];
-  let storedReceipt = installReceipt(OLD_VERSION);
-  let failedAfterCommit = false;
-  const { args } = upgradeArguments(values, {
-    readReceipt: async () => storedReceipt,
-    persistReceipt: async ({ receipt }) => {
-      persistedReceipts.push(receipt);
-      storedReceipt = receipt;
-      if (receipt.version === NEW_VERSION && !failedAfterCommit) {
-        failedAfterCommit = true;
-        throw new Error("synthetic post-rename fsync failure");
-      }
-      return receipt;
-    },
+  const { args, persistedReceipts, inspectReceiptSet } = upgradeArguments(values, {
+    failCurrentCreateAfterCommit: true,
   });
 
   await assert.rejects(upgradeMacosDmg(args), /macOS upgrade post-commit failure/);
   assert.deepEqual(persistedReceipts, [installReceipt(NEW_VERSION)]);
-  assert.deepEqual(storedReceipt, installReceipt(NEW_VERSION));
+  assert.equal((await inspectReceiptSet()).state, "current_only");
   assert.equal(
     await readFile(path.join(values.target, "version"), "utf8"),
     NEW_VERSION,

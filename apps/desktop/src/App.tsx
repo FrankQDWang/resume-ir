@@ -103,6 +103,7 @@ const STARTING_LIFECYCLE: DaemonLifecycleSnapshot = {
   consecutive_heartbeat_failures: 0,
   blocked_reason: null,
   last_exit: null,
+  restart_ledger_reason: null,
 }
 const PREVIEW_LIFECYCLE: DaemonLifecycleSnapshot = { ...STARTING_LIFECYCLE, state: "ready", generation: 1 }
 
@@ -185,9 +186,26 @@ function countLabel(value: number | null | undefined): string {
 export function indexServicePresentation(
   service: DaemonService,
   repairReason: StatusBody["repair_reason"],
+  repairProgress?: StatusBody["repair_progress"],
 ): { title: string; message: string } {
   if (service === "ready") return { title: "索引可用", message: "daemon 可用" }
   if (service === "repairing") {
+    if (repairProgress?.phase === "retry_wait") {
+      const retrySeconds = Math.ceil((repairProgress.retry_after_ms ?? 0) / 1000)
+      return {
+        title: "索引修复等待重试",
+        message: `第 ${repairProgress.attempt ?? "—"}/${repairProgress.max_attempts ?? "—"} 次修复未完成，${retrySeconds} 秒后继续`,
+      }
+    }
+    if (repairProgress?.phase === "rebuilding") {
+      return {
+        title: "索引修复中",
+        message: `正在执行第 ${repairProgress.attempt ?? "—"}/${repairProgress.max_attempts ?? "—"} 次修复`,
+      }
+    }
+    if (repairProgress?.phase === "migration_rebuild") {
+      return { title: "索引升级中", message: "正在从本地元数据重建当前索引" }
+    }
     return { title: "索引修复中", message: "daemon 已连接，索引正在修复" }
   }
   if (repairReason === "runtime_invariant") {
@@ -214,11 +232,15 @@ export function IndexServiceSummary({
 }: {
   lifecycle: DaemonLifecycleSnapshot
   service: DaemonService
-  status: Pick<StatusBody, "repair_reason" | "searchable_documents" | "ocr_queue_depth"> | null
+  status: Pick<StatusBody, "repair_reason" | "repair_progress" | "searchable_documents" | "ocr_queue_depth"> | null
   searchablePercent: number
   connectionMessage: string
 }) {
-  const presentation = indexServicePresentation(service, status?.repair_reason ?? null)
+  const presentation = indexServicePresentation(
+    service,
+    status?.repair_reason ?? null,
+    status?.repair_progress ?? null,
+  )
   const healthy = lifecycle.state === "ready" && service === "ready"
   const title = lifecycle.state === "ready"
     ? presentation.title
@@ -261,7 +283,7 @@ export function App() {
   const [service, setService] = useState<DaemonService>(preview ? "ready" : "degraded")
   const [resultFreshness, setResultFreshness] = useState<ResultFreshness>("current")
   const [connectionMessage, setConnectionMessage] = useState(preview ? "daemon 可用" : lifecycleMessage(STARTING_LIFECYCLE))
-  const [status, setStatus] = useState<StatusBody | null>(preview ? { schema_version: "daemon.status.v2", status: "ok", process_state: "ready", service_state: "ready", services: { metadata: "ready", query: "ready" }, repair_reason: null, error: null, indexed_documents: 1284, searchable_documents: 1098, partial_documents: 84, visible_epoch: 1, failed_retryable: 2, failed_permanent: 1, recovery_queue_depth: 0, ocr_queue_depth: 102, embedding_queue_depth: 186, entity_mentions: 0, import_tasks_queued: 0, index_health: "ready", latest_import_scan: { files_discovered: 1284, searchable_documents: 1098, ocr_required_documents: 102, failed_documents: 1 }, ipc: { accepted: 8, completed: 8, client_disconnect: 0, request_failure: 0, response_failure: 0 } } : null)
+  const [status, setStatus] = useState<StatusBody | null>(preview ? { schema_version: "daemon.status.v2", status: "ok", process_state: "ready", service_state: "ready", services: { metadata: "ready", query: "ready" }, repair_reason: null, repair_progress: null, error: null, indexed_documents: 1284, searchable_documents: 1098, partial_documents: 84, visible_epoch: 1, failed_retryable: 2, failed_permanent: 1, recovery_queue_depth: 0, ocr_queue_depth: 102, embedding_queue_depth: 186, entity_mentions: 0, import_tasks_queued: 0, index_health: "ready", latest_import_scan: { files_discovered: 1284, searchable_documents: 1098, ocr_required_documents: 102, failed_documents: 1 }, ipc: { accepted: 8, completed: 8, client_disconnect: 0, request_failure: 0, response_failure: 0 } } : null)
   const [query, setQuery] = useState(preview ? "Java Kafka 支付" : "")
   const [mode, setMode] = useState<Mode>(preview ? "hybrid" : "keyword")
   const [showFilters, setShowFilters] = useState(false)

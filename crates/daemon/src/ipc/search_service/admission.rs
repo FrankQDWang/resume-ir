@@ -79,6 +79,11 @@ impl AdmissionState {
             }),
         })
     }
+
+    #[cfg(test)]
+    pub(super) fn in_flight(&self) -> usize {
+        self.total.load(Ordering::Acquire)
+    }
 }
 
 #[derive(Clone)]

@@ -1,0 +1,28 @@
+ObjC.import("AppKit");
+ObjC.import("Foundation");
+
+function run(argv) {
+  if (argv.length !== 2 || !/^[1-9][0-9]{0,9}$/.test(argv[0])) {
+    throw new Error("target arguments are invalid");
+  }
+  const pid = Number(argv[0]);
+  const expectedExecutable = String(argv[1]);
+  const application =
+    $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
+  if (!application || Number(application.processIdentifier) !== pid) {
+    throw new Error("target process is unavailable");
+  }
+  const executableUrl = application.executableURL;
+  const executable = executableUrl ? ObjC.unwrap(executableUrl.path) : null;
+  if (executable !== expectedExecutable || application.terminated) {
+    throw new Error("target process identity changed");
+  }
+
+  // NSRunningApplication pins this instance through the operating system audit
+  // token; the executable check is intentionally performed on that same object
+  // immediately before the targeted terminate request.
+  if (!application.terminate) {
+    throw new Error("target process refused termination");
+  }
+  return "resume-ir.targeted-terminate.accepted.v1";
+}

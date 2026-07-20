@@ -8,19 +8,22 @@ use core_domain::{
 };
 use meta_store::migration_test_support::{begin_owned_store_write_race, OwnedStoreWriteRace};
 use meta_store::{
-    BoundedFilterSelection, ClassificationStatus, ClassifierEpochSource, CurrentClassifierEpoch,
-    DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, EnabledVectorSnapshotDescriptor,
-    ExactHitHydration, ExactHitHydrationFailureKind, FullTextSnapshotDescriptor,
-    IdentityInsertOutcome, ImmutableIngestStage, MetaStoreErrorClass, OcrAttemptFailure,
-    OcrAttemptFailureOutcome, OcrJobDiscardReason, OwnedMetaStore, ProjectedDocumentSnapshot,
-    ReasonCode, ResumeVersionClassification, ReviewDisposition, SearchFilterCase,
-    SearchMetadataTransactionError, SearchMetadataUnavailable, SearchProjectionFilter,
-    SearchProjectionPredicate, SearchProjectionServiceState, SearchPublicationCommit,
-    SearchPublicationDraft, SearchPublicationFailure, SearchPublicationOutcome,
-    SearchPublicationPrunePolicy, SearchPublicationSession, SearchPublicationState,
-    SearchPublicationValidation, SearchSelectionDetailsResolution, SearchSelectionResolution,
-    SearchTextBytePageRequest, SearchTextBytePageResolution, SearchTextPageCursor,
-    SearchTextPageRequest, SearchTextPageResolution, SourceRevisionTriage, TerminalDocumentUpdate,
+    ArtifactRepairAttemptAcquire, ArtifactRepairKey, BoundedFilterSelection, ClassificationStatus,
+    ClassifierEpochSource, CurrentClassifierEpoch, DataDirectoryOwnerAcquisition,
+    DataDirectoryOwnerLease, EnabledVectorSnapshotDescriptor, ExactHitHydration,
+    ExactHitHydrationFailureKind, FullTextSnapshotDescriptor, IdentityInsertOutcome,
+    ImmutableIngestStage, MetaStoreErrorClass, MigrationRebuildPublicationAttemptAcquire,
+    OcrAttemptFailure, OcrAttemptFailureOutcome, OcrJobDiscardReason, OwnedMetaStore,
+    ProjectedDocumentSnapshot, ReasonCode, ResumeVersionClassification, ReviewDisposition,
+    SearchArtifactExpectation, SearchFilterCase, SearchMetadataTransactionError,
+    SearchMetadataUnavailable, SearchProjectionFilter, SearchProjectionPredicate,
+    SearchProjectionServiceState, SearchPublicationCommit, SearchPublicationDraft,
+    SearchPublicationFailure, SearchPublicationOutcome, SearchPublicationPrunePolicy,
+    SearchPublicationRetirementFailureOutcome, SearchPublicationRetirementPlan,
+    SearchPublicationSession, SearchPublicationState, SearchPublicationValidation,
+    SearchSelectionDetailsResolution, SearchSelectionResolution, SearchTextBytePageRequest,
+    SearchTextBytePageResolution, SearchTextPageCursor, SearchTextPageRequest,
+    SearchTextPageResolution, SourceRevisionTriage, TerminalDocumentUpdate,
     VectorSnapshotDescriptor, MAX_BOUNDED_FILTER_SELECTION, MAX_SEARCH_TEXT_PAGE_CODE_POINTS,
 };
 use tempfile::TempDir;
@@ -148,7 +151,19 @@ fn publish(
         projection_digest: projection_digest.clone(),
         now: now(1_800_000_010 + expected_epoch as i64),
     };
-    let session = store.wait_for_search_publication_session().unwrap();
+    let mut session = store.wait_for_search_publication_session().unwrap();
+    if let Some(barrier) = migration_barrier.as_ref() {
+        assert!(matches!(
+            session
+                .acquire_migration_rebuild_publication_attempt(
+                    barrier,
+                    now(1_800_000_000 + expected_epoch as i64),
+                )
+                .unwrap(),
+            MigrationRebuildPublicationAttemptAcquire::Started(_)
+                | MigrationRebuildPublicationAttemptAcquire::InProgress
+        ));
+    }
     assert_eq!(
         session.begin_search_publication(&draft).unwrap(),
         SearchPublicationOutcome::Applied
@@ -232,7 +247,41 @@ fn prepare_publication(
     classifier_epoch: &str,
     projections: &[ActiveSearchProjection],
 ) -> SearchPublicationSession {
-    let session = store.wait_for_search_publication_session().unwrap();
+    let migration_barrier = expected_generation
+        .is_none()
+        .then(|| support::acquire_migration_rebuild_barrier_owned(store, now(1_800_009_999)));
+    let artifact_key = if expected_generation.is_some()
+        && store.search_projection_state().unwrap().service_state
+            == SearchProjectionServiceState::Repairing
+    {
+        store.artifact_repair_context().unwrap().map(|context| {
+            ArtifactRepairKey::new(
+                context.generation,
+                context.publication_fingerprint,
+                context.visible_epoch,
+            )
+        })
+    } else {
+        None
+    };
+    let mut session = store.wait_for_search_publication_session().unwrap();
+    if let Some(barrier) = migration_barrier.as_ref() {
+        assert!(matches!(
+            session
+                .acquire_migration_rebuild_publication_attempt(barrier, now(1_800_009_999))
+                .unwrap(),
+            MigrationRebuildPublicationAttemptAcquire::Started(_)
+                | MigrationRebuildPublicationAttemptAcquire::InProgress
+        ));
+    }
+    if let Some(key) = artifact_key.as_ref() {
+        assert!(matches!(
+            session
+                .acquire_artifact_repair_attempt(key, now(1_800_009_999))
+                .unwrap(),
+            ArtifactRepairAttemptAcquire::Started(_) | ArtifactRepairAttemptAcquire::InProgress
+        ));
+    }
     prepare_publication_in_session(
         &session,
         generation,
@@ -432,6 +481,17 @@ fn ready_head_journal_and_active_projection_are_database_guarded() {
         SearchPublicationOutcome::Applied
     );
 
+    store
+        .begin_artifact_repair("ready-head-guards-v1", 1, now(1_800_020_000))
+        .unwrap();
+    let unavailable: SearchMetadataTransactionError<()> =
+        store.with_search_metadata_snapshot(|_| Ok(())).unwrap_err();
+    assert_eq!(
+        unavailable.unavailable(),
+        Some(SearchMetadataUnavailable::Repairing(
+            meta_store::SearchRepairReason::ArtifactUnavailable
+        ))
+    );
     let session = prepare_publication(
         &store,
         "ready-head-guards-v2",
@@ -475,18 +535,6 @@ fn ready_head_journal_and_active_projection_are_database_guarded() {
             .unwrap_err()
             .search_publication_failure(),
         Some(SearchPublicationFailure::ProjectionMismatch)
-    );
-
-    store
-        .begin_artifact_repair("ready-head-guards-v1", 1, now(1_800_020_000))
-        .unwrap();
-    let unavailable: SearchMetadataTransactionError<()> =
-        store.with_search_metadata_snapshot(|_| Ok(())).unwrap_err();
-    assert_eq!(
-        unavailable.unavailable(),
-        Some(SearchMetadataUnavailable::Repairing(
-            meta_store::SearchRepairReason::ArtifactUnavailable
-        ))
     );
     let terminal_updates = terminal_updates_for(&store, std::slice::from_ref(&projection));
     assert_eq!(
@@ -822,7 +870,14 @@ fn request_snapshot_opens_without_a_projection_scan_and_explicit_audit_accepts_c
 #[test]
 fn descriptor_mismatch_never_validates_publication() {
     let (_directory, store) = owned_store();
-    let session = store.wait_for_search_publication_session().unwrap();
+    let barrier = support::acquire_migration_rebuild_barrier_owned(&store, now(1_800_019_999));
+    let mut session = store.wait_for_search_publication_session().unwrap();
+    assert!(matches!(
+        session
+            .acquire_migration_rebuild_publication_attempt(&barrier, now(1_800_019_999))
+            .unwrap(),
+        MigrationRebuildPublicationAttemptAcquire::Started(_)
+    ));
     let projection_digest = SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap();
     let wrong_projection_digest = SearchProjectionDigest::from_pairs([(
         DocumentId::from_non_secret_parts(&["s807", "descriptor-doc"]),
@@ -876,7 +931,14 @@ fn descriptor_mismatch_never_validates_publication() {
 #[test]
 fn enabled_vector_dimension_matches_the_artifact_contract_boundary() {
     let (_directory, store) = owned_store();
-    let session = store.wait_for_search_publication_session().unwrap();
+    let barrier = support::acquire_migration_rebuild_barrier_owned(&store, now(1_800_020_009));
+    let mut session = store.wait_for_search_publication_session().unwrap();
+    assert!(matches!(
+        session
+            .acquire_migration_rebuild_publication_attempt(&barrier, now(1_800_020_009))
+            .unwrap(),
+        MigrationRebuildPublicationAttemptAcquire::Started(_)
+    ));
     let projection_digest = SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap();
     for (generation, dimension, expected_failure) in [
         ("vector-dimension-max", 65_536, None),
@@ -937,9 +999,15 @@ fn enabled_vector_dimension_matches_the_artifact_contract_boundary() {
 #[test]
 fn enabled_vector_coverage_is_an_exact_projection_subset() {
     let (_directory, store) = owned_store();
-    let session = store.wait_for_search_publication_session().unwrap();
     let migration_barrier =
         support::acquire_migration_rebuild_barrier_owned(&store, now(1_799_999_999));
+    let mut session = store.wait_for_search_publication_session().unwrap();
+    assert!(matches!(
+        session
+            .acquire_migration_rebuild_publication_attempt(&migration_barrier, now(1_799_999_999),)
+            .unwrap(),
+        MigrationRebuildPublicationAttemptAcquire::Started(_)
+    ));
     let document_a = document("vector-coverage-a");
     let revision_a = revision(&document_a, b"vector coverage source A");
     let version_a = version(&document_a, &revision_a, "vector coverage normalized A");
@@ -2190,9 +2258,9 @@ fn same_version_metadata_change_requires_exact_snapshot_and_advances_head_atomic
 }
 
 #[test]
-fn v28_identity_and_derived_rows_are_insert_once() {
+fn v29_identity_and_derived_rows_are_insert_once() {
     let (_directory, store) = owned_store();
-    assert_eq!(store.schema_version().unwrap(), 28);
+    assert_eq!(store.schema_version().unwrap(), 29);
     assert_eq!(
         store.search_projection_state().unwrap().service_state,
         SearchProjectionServiceState::Repairing
@@ -2939,7 +3007,14 @@ fn projection_failure_and_wrong_expected_head_preserve_old_snapshot() {
 #[test]
 fn publications_are_abandoned_exactly_idempotently_and_pruned_with_a_bound() {
     let (_directory, store) = owned_store();
-    let session = store.wait_for_search_publication_session().unwrap();
+    let barrier = support::acquire_migration_rebuild_barrier_owned(&store, now(1_800_000_209));
+    let mut session = store.wait_for_search_publication_session().unwrap();
+    let MigrationRebuildPublicationAttemptAcquire::Started(attempt) = session
+        .acquire_migration_rebuild_publication_attempt(&barrier, now(1_800_000_209))
+        .unwrap()
+    else {
+        panic!("expected the synthetic migration attempt to start");
+    };
     let empty_digest = SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap();
     let preparing = SearchPublicationDraft {
         generation: "interrupted-preparing".to_string(),
@@ -2981,6 +3056,9 @@ fn publications_are_abandoned_exactly_idempotently_and_pruned_with_a_bound() {
             .search_publication_failure(),
         Some(SearchPublicationFailure::InvalidState)
     );
+    session
+        .abandon_migration_rebuild_publication_attempt(&attempt)
+        .unwrap();
     drop(session);
     publish(&store, "ready-cannot-abandon", None, 0, &[], &[]);
     let session = store.wait_for_search_publication_session().unwrap();
@@ -3011,6 +3089,222 @@ fn publications_are_abandoned_exactly_idempotently_and_pruned_with_a_bound() {
             .unwrap(),
         1
     );
+}
+
+#[test]
+fn failed_publication_retirement_blocks_the_exact_initial_migration_head() {
+    let (_directory, store) = owned_store();
+    let before = store.search_projection_state().unwrap();
+    assert_eq!(
+        before.service_state,
+        SearchProjectionServiceState::Repairing
+    );
+    assert_eq!(
+        before.repair_reason,
+        Some(meta_store::SearchRepairReason::MigrationRebuild)
+    );
+    assert_eq!(before.generation, None);
+
+    let session = prepare_publication(
+        &store,
+        "retirement-failure-initial",
+        None,
+        before.visible_epoch,
+        resume_classifier::CLASSIFIER_EPOCH,
+        &[],
+    );
+    session
+        .begin_search_publication_retirement(
+            "retirement-failure-initial",
+            now(1_800_000_224),
+            SearchPublicationRetirementPlan {
+                fulltext: SearchArtifactExpectation::MayExist,
+                vector: SearchArtifactExpectation::MayExist,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        session
+            .block_search_head_after_publication_retirement_failure(
+                "retirement-failure-initial",
+                now(1_800_000_225),
+            )
+            .unwrap(),
+        SearchPublicationRetirementFailureOutcome::HeadBlocked
+    );
+    let blocked = store.search_projection_state().unwrap();
+    assert_eq!(
+        blocked.service_state,
+        SearchProjectionServiceState::RepairBlocked
+    );
+    assert_eq!(
+        blocked.repair_reason,
+        Some(meta_store::SearchRepairReason::RuntimeInvariant)
+    );
+    assert_eq!(blocked.generation, before.generation);
+    assert_eq!(blocked.visible_epoch, before.visible_epoch);
+}
+
+#[test]
+fn failed_publication_retirement_blocks_the_exact_ready_head() {
+    let (_directory, store) = owned_store();
+    publish(&store, "retirement-ready-base", None, 0, &[], &[]);
+    let before = store.search_projection_state().unwrap();
+    let session = prepare_publication(
+        &store,
+        "retirement-failure-ready",
+        before.generation.as_deref(),
+        before.visible_epoch,
+        resume_classifier::CLASSIFIER_EPOCH,
+        &[],
+    );
+    session
+        .begin_search_publication_retirement(
+            "retirement-failure-ready",
+            now(1_800_000_226),
+            SearchPublicationRetirementPlan {
+                fulltext: SearchArtifactExpectation::MayExist,
+                vector: SearchArtifactExpectation::MayExist,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        session
+            .block_search_head_after_publication_retirement_failure(
+                "retirement-failure-ready",
+                now(1_800_000_227),
+            )
+            .unwrap(),
+        SearchPublicationRetirementFailureOutcome::HeadBlocked
+    );
+    let blocked = store.search_projection_state().unwrap();
+    assert_eq!(
+        blocked.service_state,
+        SearchProjectionServiceState::RepairBlocked
+    );
+    assert_eq!(
+        blocked.repair_reason,
+        Some(meta_store::SearchRepairReason::RuntimeInvariant)
+    );
+    assert_eq!(blocked.generation, before.generation);
+    assert_eq!(blocked.visible_epoch, before.visible_epoch);
+    assert_eq!(
+        session
+            .block_search_head_after_publication_retirement_failure(
+                "retirement-failure-ready",
+                now(1_800_000_228),
+            )
+            .unwrap(),
+        SearchPublicationRetirementFailureOutcome::ExactHeadAlreadyBlocked
+    );
+    assert_eq!(store.search_projection_state().unwrap(), blocked);
+}
+
+#[test]
+fn failed_publication_retirement_blocks_the_exact_artifact_repair_head() {
+    let (_directory, store) = owned_store();
+    publish(&store, "retirement-repair-base", None, 0, &[], &[]);
+    let ready = store.search_projection_state().unwrap();
+    assert_eq!(
+        store
+            .begin_artifact_repair(
+                ready.generation.as_deref().unwrap(),
+                ready.visible_epoch,
+                now(1_800_000_228),
+            )
+            .unwrap(),
+        meta_store::SearchProjectionTransitionOutcome::Applied
+    );
+    let before = store.search_projection_state().unwrap();
+    let session = prepare_publication(
+        &store,
+        "retirement-failure-repair",
+        before.generation.as_deref(),
+        before.visible_epoch,
+        resume_classifier::CLASSIFIER_EPOCH,
+        &[],
+    );
+    session
+        .begin_search_publication_retirement(
+            "retirement-failure-repair",
+            now(1_800_000_229),
+            SearchPublicationRetirementPlan {
+                fulltext: SearchArtifactExpectation::MayExist,
+                vector: SearchArtifactExpectation::MayExist,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        session
+            .block_search_head_after_publication_retirement_failure(
+                "retirement-failure-repair",
+                now(1_800_000_230),
+            )
+            .unwrap(),
+        SearchPublicationRetirementFailureOutcome::HeadBlocked
+    );
+    let blocked = store.search_projection_state().unwrap();
+    assert_eq!(
+        blocked.service_state,
+        SearchProjectionServiceState::RepairBlocked
+    );
+    assert_eq!(
+        blocked.repair_reason,
+        Some(meta_store::SearchRepairReason::RuntimeInvariant)
+    );
+    assert_eq!(blocked.generation, before.generation);
+    assert_eq!(blocked.visible_epoch, before.visible_epoch);
+    assert!(store.artifact_repair_context().unwrap().is_some());
+}
+
+#[test]
+fn failed_publication_retirement_cannot_block_a_superseding_head() {
+    let (_directory, store) = owned_store();
+    publish(&store, "retirement-superseded-base", None, 0, &[], &[]);
+    let base = store.search_projection_state().unwrap();
+    let session = prepare_publication(
+        &store,
+        "retirement-failure-stale",
+        base.generation.as_deref(),
+        base.visible_epoch,
+        resume_classifier::CLASSIFIER_EPOCH,
+        &[],
+    );
+    drop(session);
+    publish(
+        &store,
+        "retirement-newer-head",
+        base.generation.as_deref(),
+        base.visible_epoch,
+        &[],
+        &[],
+    );
+    let newer = store.search_projection_state().unwrap();
+    let session = store.wait_for_search_publication_session().unwrap();
+    session
+        .begin_search_publication_retirement(
+            "retirement-failure-stale",
+            now(1_800_000_231),
+            SearchPublicationRetirementPlan {
+                fulltext: SearchArtifactExpectation::MayExist,
+                vector: SearchArtifactExpectation::MayExist,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        session
+            .block_search_head_after_publication_retirement_failure(
+                "retirement-failure-stale",
+                now(1_800_000_232),
+            )
+            .unwrap(),
+        SearchPublicationRetirementFailureOutcome::HeadSuperseded
+    );
+    assert_eq!(store.search_projection_state().unwrap(), newer);
 }
 
 #[test]

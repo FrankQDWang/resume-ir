@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks"
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, expectTypeOf, it } from "vitest"
 
 import {
   bridgeError,
@@ -26,6 +26,7 @@ import {
   searchResumes,
   sameSearchSelection,
   selectImportRoot,
+  type RepairProgress,
   type DiagnosticsBody,
   type StatusBody,
 } from "./daemon"
@@ -103,7 +104,7 @@ describe("search product states", () => {
 })
 
 describe("daemon health product states", () => {
-  const status = (serviceState: "ready" | "repairing" | "degraded") => ({
+  const status = (serviceState: "ready" | "repairing" | "degraded"): StatusBody => ({
     schema_version: "daemon.status.v2" as const,
     status: serviceState === "ready" ? "ok" as const : serviceState === "repairing" ? "repairing" as const : "degraded" as const,
     process_state: "ready" as const,
@@ -113,9 +114,12 @@ describe("daemon health product states", () => {
       query: serviceState === "ready" ? "ready" as const : serviceState === "repairing" ? "repairing" as const : "unavailable" as const,
     },
     repair_reason: serviceState === "ready" ? null : serviceState === "repairing" ? "migration_rebuild" as const : "runtime_invariant" as const,
+    repair_progress: serviceState === "ready" ? null : serviceState === "repairing"
+      ? { phase: "migration_rebuild", attempt: null, max_attempts: null, retry_after_ms: null, last_error_kind: null }
+      : { phase: "blocked", attempt: 5, max_attempts: 5, retry_after_ms: null, last_error_kind: "fulltext_failure" },
     error: serviceState === "ready" ? null : serviceState === "repairing"
       ? { code: "REPAIRING" as const, action: "wait_for_repair" as const }
-      : { code: "QUERY_SERVICE_UNAVAILABLE" as const, action: "retry" as const },
+      : { code: "QUERY_SERVICE_UNAVAILABLE" as const, action: "repair_required" as const },
     indexed_documents: 0,
     searchable_documents: 0,
     partial_documents: 0,
@@ -141,6 +145,27 @@ describe("daemon health product states", () => {
     expect(daemonHealth({ http_status: 200, body: status("degraded") })).toBe("degraded")
   })
 
+  it("hard-cuts repair progress to the required closed error-kind contract", () => {
+    type LegacyRepairProgress = Omit<RepairProgress, "last_error_kind"> & {
+      last_error_class: "fulltext"
+    }
+    type BroadRepairProgress = Omit<RepairProgress, "last_error_kind"> & {
+      last_error_kind: "fulltext"
+    }
+    expectTypeOf<LegacyRepairProgress>().not.toMatchTypeOf<RepairProgress>()
+    expectTypeOf<BroadRepairProgress>().not.toMatchTypeOf<RepairProgress>()
+
+    const progress = {
+      phase: "retry_wait",
+      attempt: 2,
+      max_attempts: 5,
+      retry_after_ms: 3_100,
+      last_error_kind: "fulltext_publication_busy",
+    } satisfies RepairProgress
+    expect(Object.hasOwn(progress, "last_error_kind")).toBe(true)
+    expect(Object.hasOwn(progress, "last_error_class")).toBe(false)
+  })
+
   it("keeps an unhealthy HTTP reply degraded even if its payload says ready", () => {
     expect(daemonHealth({ http_status: 503, body: status("ready") })).toBe("degraded")
   })
@@ -161,7 +186,8 @@ describe("daemon health product states", () => {
       service_state: "degraded",
       services: { metadata: "ready", query: "unavailable" },
       repair_reason: "runtime_invariant",
-      error: { code: "QUERY_SERVICE_UNAVAILABLE", action: "retry" },
+      repair_progress: { phase: "blocked", attempt: 5, max_attempts: 5, retry_after_ms: null, last_error_kind: "fulltext_failure" },
+      error: { code: "QUERY_SERVICE_UNAVAILABLE", action: "repair_required" },
       metrics: {
         ipc: { accepted: 1, completed: 1, client_disconnect: 0, request_failure: 0, response_failure: 0 },
         indexed_documents: 0,
@@ -188,6 +214,7 @@ describe("daemon health product states", () => {
 
     await expect(readDiagnostics()).resolves.toEqual({ http_status: 200, body: diagnostics })
     expect(Object.hasOwn(diagnostics, "repair_reason")).toBe(true)
+    expect(Object.hasOwn(diagnostics, "repair_progress")).toBe(true)
   })
 })
 
@@ -203,6 +230,7 @@ describe("native import commands", () => {
       consecutive_heartbeat_failures: 0,
       blocked_reason: null,
       last_exit: "child_exited",
+      restart_ledger_reason: null,
     }
     mockReply(snapshot)
 

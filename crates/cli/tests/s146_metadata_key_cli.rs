@@ -103,7 +103,7 @@ fn privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks
         restored.metadata_encryption_state(),
         MetadataEncryptionState::SqlCipher
     );
-    assert_eq!(restored.schema_version().unwrap(), 28);
+    assert_eq!(restored.schema_version().unwrap(), 29);
 
     copy_active_store_without_key(&source_dir, &source_db, &wrong_restore_dir);
     let wrong_passphrase_restore = Command::new(env!("CARGO_BIN_EXE_resume-cli"))

@@ -2,6 +2,10 @@ import { createHash, randomBytes } from "node:crypto";
 
 import { validateInstallReceipt } from "./macos-install-receipt.mjs";
 import {
+  LEGACY_EXACT_VERSION,
+  validateLegacyExactInstallReceipt,
+} from "./macos-legacy-exact-artifact.mjs";
+import {
   createOwnerEvidence,
   ownerEvidencePath,
   persistOwnerEvidence,
@@ -46,6 +50,8 @@ const PHASES = Object.freeze({
     "upgrade_target_promoted",
     "upgrade_before_receipt_commit",
     "upgrade_receipt_committed",
+    "upgrade_before_legacy_receipt_removal",
+    "upgrade_legacy_receipt_removed",
     "upgrade_before_backup_cleanup",
     "upgrade_backup_tombstoned",
     "upgrade_before_recovery_target_cleanup",
@@ -119,6 +125,7 @@ function validateEvidenceSide({
   receipt,
   receiptDigest,
   required,
+  legacyAllowed = false,
 }) {
   if (!required) {
     if (
@@ -133,7 +140,10 @@ function validateEvidenceSide({
   }
   let validatedReceipt;
   try {
-    validatedReceipt = validateInstallReceipt(receipt);
+    validatedReceipt =
+      legacyAllowed && version === LEGACY_EXACT_VERSION
+        ? validateLegacyExactInstallReceipt(receipt)
+        : validateInstallReceipt(receipt);
   } catch {
     throw journalError();
   }
@@ -169,6 +179,7 @@ export function validateLifecycleJournal(journal) {
     receipt: journal.old_receipt,
     receiptDigest: journal.old_receipt_digest,
     required: hasOld,
+    legacyAllowed: journal.operation === "upgrade",
   });
   validateEvidenceSide({
     version: journal.new_version,
@@ -179,7 +190,9 @@ export function validateLifecycleJournal(journal) {
   });
   if (
     journal.operation === "upgrade" &&
-    !isNewerVersion(journal.new_version, journal.old_version)
+    (journal.old_version !== LEGACY_EXACT_VERSION ||
+      journal.new_version !== "0.1.2" ||
+      !isNewerVersion(journal.new_version, journal.old_version))
   ) {
     throw journalError();
   }

@@ -1,6 +1,6 @@
 use std::net::TcpStream;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use meta_store::{
     ImportScanProfile, ImportScanScope, MetaStoreErrorClass, ReadMetaStore,
@@ -10,8 +10,8 @@ use meta_store::{
 use super::super::diagnostics;
 use super::super::protocol::Request;
 use super::super::{
-    projection_service_health, search_repair_reason_label, service_error_json, IpcMetricsSnapshot,
-    ServiceErrorCode, ServiceHealth, ServiceState,
+    projection_service_health, repair_progress_json, search_repair_reason_label,
+    service_error_json, IpcMetricsSnapshot, ServiceErrorCode, ServiceHealth, ServiceState,
 };
 use super::{authorized, unauthorized_body, write, RouteResult};
 
@@ -49,7 +49,7 @@ pub(crate) fn projection_query_error(
         Some(SearchProjectionServiceState::Ready) => None,
         Some(SearchProjectionServiceState::Repairing) => Some(ServiceErrorCode::Repairing),
         Some(SearchProjectionServiceState::RepairBlocked) => {
-            Some(ServiceErrorCode::QueryServiceUnavailable)
+            Some(ServiceErrorCode::QueryServiceRepairRequired)
         }
         None => Some(ServiceErrorCode::MetadataUnavailable),
     }
@@ -79,6 +79,7 @@ pub(crate) fn unavailable_status_json() -> String {
             "query": services.query.label(),
         },
         "repair_reason": serde_json::Value::Null,
+        "repair_progress": serde_json::Value::Null,
         "error": {
             "code": "METADATA_UNAVAILABLE",
             "action": "retry",
@@ -103,6 +104,9 @@ fn status_json_once(store: &ReadMetaStore) -> MetadataReadResult<String> {
         .map(|scope| latest_import_scan_json(&scope))
         .unwrap_or(serde_json::Value::Null);
     let services = projection_service_health(projection.service_state);
+    let repair_attempt = store
+        .artifact_repair_attempt_state()
+        .map_err(|error| error.class())?;
     let metrics = super::super::process_metrics().snapshot();
     let body = serde_json::json!({
         "schema_version": "daemon.status.v2",
@@ -118,6 +122,11 @@ fn status_json_once(store: &ReadMetaStore) -> MetadataReadResult<String> {
             "query": services.query.label(),
         },
         "repair_reason": projection.repair_reason.map(search_repair_reason_label),
+        "repair_progress": repair_progress_json(
+            &projection,
+            repair_attempt.as_ref(),
+            unix_now_seconds(),
+        ),
         "error": service_error_json(services),
         "ipc": metrics_json(metrics),
         "visible_epoch": projection.visible_epoch,
@@ -162,6 +171,14 @@ fn status_json_once(store: &ReadMetaStore) -> MetadataReadResult<String> {
         "snapshot_present": summary.last_snapshot_id.is_some(),
     });
     Ok(body.to_string())
+}
+
+fn unix_now_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+        .unwrap_or(0)
 }
 
 fn metrics_json(metrics: IpcMetricsSnapshot) -> serde_json::Value {

@@ -18,9 +18,13 @@ use super::search_artifact_cache::{
     CurrentImportDocumentCache,
 };
 use super::search_publication::{
-    load_migration_rebuild_publication_base, load_search_publication_base,
-    prepare_search_publication, projections_after_delta, PreparedSearchPublication,
-    SearchPublicationBase,
+    load_migration_rebuild_publication_base, load_search_publication_base, projections_after_delta,
+    run_search_publication_transaction, SearchPublicationBase, SearchPublicationDecision,
+    SearchPublicationTransactionOutcome, SearchPublicationView,
+};
+#[cfg(test)]
+use super::search_publication::{
+    prepare_search_publication_for_test, PreparedSearchPublicationForTest,
 };
 use super::search_publication_vector::staged_search_version_texts;
 use super::{
@@ -28,8 +32,9 @@ use super::{
     SearchPublicationVectorization,
 };
 
-pub(super) fn write_incremental_search_artifacts<'session>(
-    publication_session: &'session SearchPublicationSession,
+#[allow(clippy::too_many_arguments)]
+pub(super) fn publish_incremental_search_artifacts(
+    publication_session: &SearchPublicationSession,
     now: UnixTimestamp,
     classifier_epoch: &str,
     replacement_documents: Vec<IndexDocument>,
@@ -43,12 +48,14 @@ pub(super) fn write_incremental_search_artifacts<'session>(
     record_phase_timing: Option<&dyn Fn(SnapshotPublishPhase, Duration)>,
     index_writer_heap_bytes: usize,
     vectorization: &SearchPublicationVectorization,
-) -> Result<PreparedSearchPublication<'session>> {
+    decide: impl FnOnce(&SearchPublicationView<'_>) -> Result<SearchPublicationDecision>,
+) -> Result<SearchPublicationTransactionOutcome> {
     let data_dir = publication_session.canonical_data_dir();
     let store = publication_session.owned_store();
     let base = load_search_publication_base(store)?;
     let index_root = data_dir.join("search-index");
-    let staged_version_texts = staged_search_version_texts(&replacement_documents)?;
+    let staged_version_texts =
+        staged_search_version_texts(&replacement_documents, ensure_not_cancelled)?;
     let next_projections = projections_after_delta(
         &base.projections,
         &replacement_documents,
@@ -73,7 +80,138 @@ pub(super) fn write_incremental_search_artifacts<'session>(
             deleted_documents,
         );
         let sectionizer = Sectionizer::default();
-        let publication = prepare_search_publication(
+        let publication = run_search_publication_transaction(
+            publication_session,
+            now,
+            classifier_epoch,
+            base,
+            &generation,
+            next_projections,
+            &staged_version_texts,
+            vectorization,
+            ensure_not_cancelled,
+            || match current_import_cache_mode {
+                CurrentImportCacheMode::Retain => write_cached_fulltext_snapshot(
+                    data_dir,
+                    &generation,
+                    &current_import_cache.documents,
+                    &sectionizer,
+                    ensure_not_cancelled,
+                    set_cancel_phase,
+                    record_phase_timing,
+                    index_writer_heap_bytes,
+                ),
+                CurrentImportCacheMode::Consume => write_cached_fulltext_snapshot_consuming(
+                    data_dir,
+                    &generation,
+                    &mut current_import_cache.documents,
+                    &sectionizer,
+                    ensure_not_cancelled,
+                    set_cancel_phase,
+                    record_phase_timing,
+                    index_writer_heap_bytes,
+                ),
+            },
+            decide,
+        )?;
+        if let Some(committed) = publication.committed() {
+            current_import_cache.base_generation =
+                Some(committed.fulltext.generation().to_string());
+        }
+        return Ok(publication);
+    }
+
+    let index_documents = incremental_snapshot_documents(
+        &index_root,
+        base.generation.as_deref(),
+        replacement_documents,
+        removed_document_ids,
+    )
+    .map_err(ImportPipelineError::index)?;
+    let indexed_documents = index_documents.len();
+    let generation = search_generation_token(
+        now,
+        indexed_documents,
+        ocr_required_documents,
+        deleted_documents,
+    );
+    run_search_publication_transaction(
+        publication_session,
+        now,
+        classifier_epoch,
+        base,
+        &generation,
+        next_projections,
+        &staged_version_texts,
+        vectorization,
+        ensure_not_cancelled,
+        || {
+            write_fulltext_snapshot(
+                data_dir,
+                &generation,
+                index_documents,
+                FullTextSnapshotInput::NeedsRedaction,
+                None,
+                None,
+                None,
+                index_writer_heap_bytes,
+            )
+        },
+        decide,
+    )
+}
+
+/// Creates an intentionally unterminated publication for restart/recovery
+/// tests. Production callers must use `publish_incremental_search_artifacts`.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn write_incremental_search_artifacts_for_test<'session>(
+    publication_session: &'session SearchPublicationSession,
+    now: UnixTimestamp,
+    classifier_epoch: &str,
+    replacement_documents: Vec<IndexDocument>,
+    removed_document_ids: &BTreeSet<String>,
+    ocr_required_documents: usize,
+    deleted_documents: usize,
+    current_import_cache: Option<&mut CurrentImportDocumentCache>,
+    current_import_cache_mode: CurrentImportCacheMode,
+    ensure_not_cancelled: Option<&dyn Fn() -> Result<()>>,
+    set_cancel_phase: Option<&dyn Fn(ImportCancelCheckPhase)>,
+    record_phase_timing: Option<&dyn Fn(SnapshotPublishPhase, Duration)>,
+    index_writer_heap_bytes: usize,
+    vectorization: &SearchPublicationVectorization,
+) -> Result<PreparedSearchPublicationForTest<'session>> {
+    let data_dir = publication_session.canonical_data_dir();
+    let store = publication_session.owned_store();
+    let base = load_search_publication_base(store)?;
+    let index_root = data_dir.join("search-index");
+    let staged_version_texts =
+        staged_search_version_texts(&replacement_documents, ensure_not_cancelled)?;
+    let next_projections = projections_after_delta(
+        &base.projections,
+        &replacement_documents,
+        removed_document_ids,
+    )?;
+    if let Some(current_import_cache) = current_import_cache {
+        ensure_cache_matches_generation(
+            &index_root,
+            base.generation.as_deref(),
+            current_import_cache,
+        )?;
+        apply_document_delta(
+            &mut current_import_cache.documents,
+            replacement_documents,
+            removed_document_ids,
+        );
+        let indexed_documents = current_import_cache.documents.len();
+        let generation = search_generation_token(
+            now,
+            indexed_documents,
+            ocr_required_documents,
+            deleted_documents,
+        );
+        let sectionizer = Sectionizer::default();
+        let publication = prepare_search_publication_for_test(
             publication_session,
             now,
             classifier_epoch,
@@ -106,10 +244,7 @@ pub(super) fn write_incremental_search_artifacts<'session>(
                 ),
             },
         )?;
-        current_import_cache.base_generation = Some(publication.fulltext.generation().to_string());
-        if publication.fulltext.document_count() != indexed_documents {
-            return Err(ImportPipelineError::store_invariant());
-        }
+        current_import_cache.base_generation = Some(publication.generation().to_string());
         return Ok(publication);
     }
 
@@ -127,7 +262,7 @@ pub(super) fn write_incremental_search_artifacts<'session>(
         ocr_required_documents,
         deleted_documents,
     );
-    let publication = prepare_search_publication(
+    prepare_search_publication_for_test(
         publication_session,
         now,
         classifier_epoch,
@@ -149,24 +284,21 @@ pub(super) fn write_incremental_search_artifacts<'session>(
                 index_writer_heap_bytes,
             )
         },
-    )?;
-    if publication.fulltext.document_count() != indexed_documents {
-        return Err(ImportPipelineError::store_invariant());
-    }
-    Ok(publication)
+    )
 }
 
-pub(super) fn write_rebuilt_search_artifacts<'session>(
-    publication_session: &'session SearchPublicationSession,
+pub(super) fn publish_rebuilt_search_artifacts(
+    publication_session: &SearchPublicationSession,
     now: UnixTimestamp,
     classifier_epoch: &str,
     pending_document_ids: &BTreeSet<String>,
     pending_index_documents: Vec<IndexDocument>,
     vectorization: &SearchPublicationVectorization,
-) -> Result<PreparedSearchPublication<'session>> {
+    decide: impl FnOnce(&SearchPublicationView<'_>) -> Result<SearchPublicationDecision>,
+) -> Result<SearchPublicationTransactionOutcome> {
     let store = publication_session.owned_store();
     let base = load_search_publication_base(store)?;
-    write_rebuilt_search_artifacts_from_base(
+    publish_rebuilt_search_artifacts_from_base(
         publication_session,
         now,
         classifier_epoch,
@@ -174,20 +306,24 @@ pub(super) fn write_rebuilt_search_artifacts<'session>(
         pending_index_documents,
         base,
         vectorization,
+        None,
+        decide,
     )
 }
 
-pub(super) fn write_migration_rebuild_search_artifacts<'session>(
-    publication_session: &'session SearchPublicationSession,
+pub(super) fn publish_migration_rebuild_search_artifacts(
+    publication_session: &SearchPublicationSession,
     now: UnixTimestamp,
     classifier_epoch: &str,
     pending_document_ids: &BTreeSet<String>,
     pending_index_documents: Vec<IndexDocument>,
     vectorization: &SearchPublicationVectorization,
-) -> Result<PreparedSearchPublication<'session>> {
+    ensure_not_cancelled: Option<&dyn Fn() -> Result<()>>,
+    decide: impl FnOnce(&SearchPublicationView<'_>) -> Result<SearchPublicationDecision>,
+) -> Result<SearchPublicationTransactionOutcome> {
     let store = publication_session.owned_store();
     let base = load_migration_rebuild_publication_base(store)?;
-    write_rebuilt_search_artifacts_from_base(
+    publish_rebuilt_search_artifacts_from_base(
         publication_session,
         now,
         classifier_epoch,
@@ -195,26 +331,48 @@ pub(super) fn write_migration_rebuild_search_artifacts<'session>(
         pending_index_documents,
         base,
         vectorization,
+        ensure_not_cancelled,
+        decide,
     )
 }
 
-pub(super) fn write_rebuilt_search_artifacts_from_base<'session>(
-    publication_session: &'session SearchPublicationSession,
+pub(super) fn publish_rebuilt_search_artifacts_from_base(
+    publication_session: &SearchPublicationSession,
     now: UnixTimestamp,
     classifier_epoch: &str,
     pending_document_ids: &BTreeSet<String>,
     pending_index_documents: Vec<IndexDocument>,
     base: SearchPublicationBase,
     vectorization: &SearchPublicationVectorization,
-) -> Result<PreparedSearchPublication<'session>> {
+    ensure_not_cancelled: Option<&dyn Fn() -> Result<()>>,
+    decide: impl FnOnce(&SearchPublicationView<'_>) -> Result<SearchPublicationDecision>,
+) -> Result<SearchPublicationTransactionOutcome> {
+    if let Some(check) = ensure_not_cancelled {
+        check()?;
+    }
     let data_dir = publication_session.canonical_data_dir();
     let store = publication_session.owned_store();
     let sectionizer = Sectionizer::default();
-    let staged_version_texts = staged_search_version_texts(&pending_index_documents)?;
-    let mut index_documents =
-        persisted_index_documents(store, &base.projections, &sectionizer, pending_document_ids)?;
+    let staged_version_texts =
+        staged_search_version_texts(&pending_index_documents, ensure_not_cancelled)?;
+    let mut index_documents = persisted_index_documents(
+        store,
+        &base.projections,
+        &sectionizer,
+        pending_document_ids,
+        ensure_not_cancelled,
+    )?;
+    if let Some(check) = ensure_not_cancelled {
+        check()?;
+    }
     index_documents.extend(pending_index_documents);
+    if let Some(check) = ensure_not_cancelled {
+        check()?;
+    }
     sort_index_documents(&mut index_documents);
+    if let Some(check) = ensure_not_cancelled {
+        check()?;
+    }
     let projections = index_documents
         .iter()
         .map(|document| {
@@ -232,7 +390,7 @@ pub(super) fn write_rebuilt_search_artifacts_from_base<'session>(
         .collect::<Result<Vec<_>>>()?;
     let indexed_documents = index_documents.len();
     let generation = search_generation_token(now, indexed_documents, 0, 0);
-    let publication = prepare_search_publication(
+    run_search_publication_transaction(
         publication_session,
         now,
         classifier_epoch,
@@ -241,24 +399,21 @@ pub(super) fn write_rebuilt_search_artifacts_from_base<'session>(
         projections,
         &staged_version_texts,
         vectorization,
-        None,
+        ensure_not_cancelled,
         || {
             write_fulltext_snapshot(
                 data_dir,
                 &generation,
                 index_documents,
                 FullTextSnapshotInput::NeedsRedaction,
-                None,
+                ensure_not_cancelled,
                 None,
                 None,
                 ImportResourcePolicy::detect().index_writer_heap_bytes,
             )
         },
-    )?;
-    if publication.fulltext.document_count() != indexed_documents {
-        return Err(ImportPipelineError::store_invariant());
-    }
-    Ok(publication)
+        decide,
+    )
 }
 
 fn write_fulltext_snapshot<I>(
@@ -368,9 +523,13 @@ fn persisted_index_documents(
     projections: &[ActiveSearchProjection],
     sectionizer: &Sectionizer,
     pending_document_ids: &BTreeSet<String>,
+    ensure_not_cancelled: Option<&dyn Fn() -> Result<()>>,
 ) -> Result<Vec<IndexDocument>> {
     let mut index_documents = Vec::with_capacity(projections.len());
     for projection in projections {
+        if let Some(check) = ensure_not_cancelled {
+            check()?;
+        }
         if pending_document_ids.contains(projection.document_id.as_str()) {
             continue;
         }
@@ -391,6 +550,9 @@ fn persisted_index_documents(
         {
             index_documents.push(index_document);
         }
+    }
+    if let Some(check) = ensure_not_cancelled {
+        check()?;
     }
     Ok(index_documents)
 }
@@ -415,26 +577,31 @@ pub(crate) fn index_document_from_resume_version(
 
 pub(super) fn migration_index_documents_from_exact_projection(
     projection_rows: Vec<MigrationRebuildProjectionRow>,
+    ensure_not_cancelled: Option<&dyn Fn() -> Result<()>>,
 ) -> Result<Vec<(Document, IndexDocument)>> {
     let sectionizer = Sectionizer::default();
-    let mut staged = projection_rows
-        .into_iter()
-        .map(|row| {
-            let index_document = index_document_from_resume_version(
-                &row.document,
-                &row.resume_version,
-                &sectionizer,
-            )
-            .ok_or_else(ImportPipelineError::store_invariant)?;
-            Ok((row.document, index_document))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let mut staged = Vec::with_capacity(projection_rows.len());
+    for row in projection_rows {
+        if let Some(check) = ensure_not_cancelled {
+            check()?;
+        }
+        let index_document =
+            index_document_from_resume_version(&row.document, &row.resume_version, &sectionizer)
+                .ok_or_else(ImportPipelineError::store_invariant)?;
+        staged.push((row.document, index_document));
+    }
+    if let Some(check) = ensure_not_cancelled {
+        check()?;
+    }
     staged.sort_by(|left, right| {
         left.1
             .doc_id
             .cmp(&right.1.doc_id)
             .then_with(|| left.1.resume_version_id.cmp(&right.1.resume_version_id))
     });
+    if let Some(check) = ensure_not_cancelled {
+        check()?;
+    }
     Ok(staged)
 }
 

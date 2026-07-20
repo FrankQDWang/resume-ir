@@ -17,7 +17,7 @@ fn now(seconds: i64) -> UnixTimestamp {
 }
 
 #[test]
-fn failed_ocr_commit_rolls_back_inserted_facts_and_abandons_validated_publication() {
+fn failed_ocr_commit_rolls_back_inserted_facts_and_leaves_durable_cleanup_to_the_caller() {
     let (_directory, store) = support::owned_store();
     support::ensure_ready_empty_search_owned(&store, now(1_910_000_000));
     let head_before = store.search_projection_state().unwrap();
@@ -212,6 +212,6 @@ fn failed_ocr_commit_rolls_back_inserted_facts_and_abandons_validated_publicatio
     assert_eq!(head_after.visible_epoch, head_before.visible_epoch);
     assert_eq!(
         store.search_publication(generation).unwrap().unwrap().state,
-        SearchPublicationState::Abandoned
+        SearchPublicationState::Validated
     );
 }

@@ -87,6 +87,14 @@ impl ContainedChild {
         self.child.stderr.take()
     }
 
+    /// Returns the operating-system identifier of the directly owned child.
+    ///
+    /// The identifier is observational only; lifecycle operations must still
+    /// go through this containment owner so descendants remain covered.
+    pub fn id(&self) -> u32 {
+        self.child.id()
+    }
+
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         let status = self.child.try_wait()?;
         if status.is_some() {

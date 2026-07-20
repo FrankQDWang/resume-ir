@@ -7,7 +7,7 @@ use import_pipeline::{
     current_import_processing_contract, import_root_with_options, ImportOptions,
 };
 use index_fulltext::{FullTextIndex, SearchQuery, SnapshotReadLease};
-use index_vector::{VectorModelContract, VectorSnapshotRoot, VECTOR_SNAPSHOT_SCHEMA_V3};
+use index_vector::{VectorModelContract, VectorSnapshotRoot, VECTOR_SNAPSHOT_SCHEMA_V4};
 use meta_store::{
     ClassificationStatus, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, Document,
     ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus,
@@ -240,7 +240,7 @@ fn frozen_public_synthetic_fixture_matches_production_admission() {
                 )
                 .unwrap();
             assert_eq!(vector.summary().generation(), head.generation);
-            assert_eq!(vector.summary().schema(), VECTOR_SNAPSHOT_SCHEMA_V3);
+            assert_eq!(vector.summary().schema(), VECTOR_SNAPSHOT_SCHEMA_V4);
             assert_eq!(
                 vector.summary().projection_digest(),
                 &head.publication.projection_digest

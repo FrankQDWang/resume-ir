@@ -183,12 +183,35 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
             )
             .map_err(MetaStoreError::storage)?;
         let service_state = projection_service_state_from_storage(&state)?;
-        let publication = generation
+        let artifact_context_bound = generation
             .as_deref()
-            .map(|generation| search_publication_in_connection(&connection, generation))
+            .map(|generation| {
+                connection
+                    .query_row(
+                        "SELECT EXISTS (
+                             SELECT 1 FROM artifact_repair_context
+                             WHERE state_key = 'default' AND generation = ?1
+                               AND visible_epoch = ?2
+                         )",
+                        params![generation, epoch],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map(|exists| exists == 1)
+                    .map_err(MetaStoreError::storage)
+            })
             .transpose()?
-            .flatten()
-            .map(Box::new);
+            .unwrap_or(false);
+        let publication =
+            if service_state != SearchProjectionServiceState::Ready && artifact_context_bound {
+                None
+            } else {
+                generation
+                    .as_deref()
+                    .map(|generation| search_publication_in_connection(&connection, generation))
+                    .transpose()?
+                    .flatten()
+                    .map(Box::new)
+            };
         if service_state == SearchProjectionServiceState::Ready
             && publication
                 .as_ref()
@@ -208,50 +231,6 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                 .transpose()?,
             publication,
             updated_at: UnixTimestamp::from_unix_seconds(updated_at),
-        })
-    }
-
-    /// Starts or resumes artifact repair only while the exact published head
-    /// observed by the caller is still current. Repair-blocked and migration
-    /// states are sticky and cannot be reopened through this transition.
-    pub fn begin_artifact_repair(
-        &self,
-        expected_generation: &str,
-        expected_visible_epoch: u64,
-        now: UnixTimestamp,
-    ) -> Result<SearchProjectionTransitionOutcome>
-    where
-        Access: MetadataStoreWriteAccess,
-    {
-        let changed = self
-            .connection
-            .borrow()
-            .execute(
-                "UPDATE search_projection_state
-                 SET service_state = 'repairing', repair_reason = 'artifact_unavailable',
-                     updated_at_seconds = MAX(updated_at_seconds, ?1)
-                 WHERE state_key = 'default'
-                   AND generation = ?2
-                   AND visible_epoch = ?3
-                   AND (
-                       (service_state = 'ready' AND repair_reason IS NULL)
-                       OR (service_state = 'repairing'
-                           AND repair_reason = 'artifact_unavailable')
-                   )",
-                params![
-                    now.as_unix_seconds(),
-                    expected_generation,
-                    u64_to_i64(
-                        expected_visible_epoch,
-                        "search_projection_state.visible_epoch"
-                    )?,
-                ],
-            )
-            .map_err(MetaStoreError::storage)?;
-        Ok(if changed == 1 {
-            SearchProjectionTransitionOutcome::Applied
-        } else {
-            SearchProjectionTransitionOutcome::Superseded
         })
     }
 

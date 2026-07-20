@@ -500,20 +500,20 @@ fn read_only_open_of_v27_requires_migration_without_mutating_the_manifest() {
 }
 
 #[test]
-fn read_only_open_and_queries_leave_the_published_v28_tree_byte_for_byte_unchanged() {
+fn read_only_open_and_queries_leave_the_published_current_tree_byte_for_byte_unchanged() {
     let directory = TempDir::new().unwrap();
     let owner = match DataDirectoryOwnerLease::try_acquire(directory.path()).unwrap() {
         DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
         DataDirectoryOwnerAcquisition::Contended => panic!("test data directory was contended"),
     };
     let store = owner.open_store().unwrap();
-    assert_eq!(store.schema_version().unwrap(), schema_v28::VERSION);
+    assert_eq!(store.schema_version().unwrap(), crate::schema_v29::VERSION);
     drop(store);
     drop(owner);
     let before = directory_tree_snapshot(directory.path());
 
     let reader = ReadMetaStore::open_data_dir(directory.path()).unwrap();
-    assert_eq!(reader.schema_version().unwrap(), schema_v28::VERSION);
+    assert_eq!(reader.schema_version().unwrap(), crate::schema_v29::VERSION);
     let state = reader.search_projection_state().unwrap();
     assert_eq!(
         state.service_state,
@@ -575,7 +575,14 @@ fn rollback_snapshot_is_all_old_until_release_then_a_new_reader_sees_the_commit(
         .acquire_migration_rebuild_barrier_token(contract.id())
         .unwrap()
         .unwrap();
-    let initial_session = store.wait_for_search_publication_session().unwrap();
+    let mut initial_session = store.wait_for_search_publication_session().unwrap();
+    let _attempt = match initial_session
+        .acquire_migration_rebuild_publication_attempt(&barrier, timestamp(2))
+        .unwrap()
+    {
+        crate::MigrationRebuildPublicationAttemptAcquire::Started(attempt) => attempt,
+        other => panic!("expected migration attempt, got {other:?}"),
+    };
     publish_empty_generation(
         &initial_session,
         "rollback-generation-1",
@@ -632,7 +639,7 @@ fn rollback_snapshot_is_all_old_until_release_then_a_new_reader_sees_the_commit(
 
 #[cfg(unix)]
 #[test]
-fn current_open_rejects_an_unsafe_key_without_repairing_permissions() {
+fn read_only_v28_open_requires_migration_without_repairing_unsafe_key_permissions() {
     use std::os::unix::fs::PermissionsExt;
 
     let directory = TempDir::new().unwrap();
@@ -644,7 +651,10 @@ fn current_open_rejects_an_unsafe_key_without_repairing_permissions() {
 
     let error = ReadMetaStore::open_data_dir(directory.path()).unwrap_err();
 
-    assert_eq!(error.class(), crate::MetaStoreErrorClass::InvalidValue);
+    assert_eq!(
+        error.class(),
+        crate::MetaStoreErrorClass::MigrationOwnershipRequired
+    );
     assert_eq!(fs::read(&key_path).unwrap(), key_bytes);
     assert_eq!(
         fs::metadata(&key_path).unwrap().modified().unwrap(),

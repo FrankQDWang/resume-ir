@@ -26,6 +26,71 @@ pub(crate) struct PinnedPrivateDirectory {
     identity: same_file::Handle,
 }
 
+pub(crate) struct PinnedPrivateFile {
+    path: std::path::PathBuf,
+    file: File,
+    max_bytes: Option<usize>,
+}
+
+impl PinnedPrivateFile {
+    pub(crate) fn acquire(path: &Path, max_bytes: Option<usize>) -> Result<Self, VectorIndexError> {
+        let before = fs::symlink_metadata(path).map_err(map_open_snapshot_error)?;
+        validate_private_regular_file(&before)?;
+        validate_file_size(&before, max_bytes)?;
+        let file = File::open(path).map_err(map_open_snapshot_error)?;
+        let pinned = Self {
+            path: path.to_path_buf(),
+            file,
+            max_bytes,
+        };
+        pinned.validate_current()?;
+        Ok(pinned)
+    }
+
+    pub(crate) fn validate_current(&self) -> Result<(), VectorIndexError> {
+        let opened = self
+            .file
+            .metadata()
+            .map_err(|_| VectorIndexError::Storage)?;
+        validate_private_regular_file(&opened)?;
+        validate_file_size(&opened, self.max_bytes)?;
+        let current = fs::symlink_metadata(&self.path).map_err(map_open_snapshot_error)?;
+        validate_private_regular_file(&current)?;
+        validate_file_size(&current, self.max_bytes)?;
+        if same_open_file_identity(&self.file, &self.path, &opened, &current)? {
+            Ok(())
+        } else {
+            Err(VectorIndexError::StorageLayoutInvalid)
+        }
+    }
+
+    pub(crate) fn read_bounded(&mut self) -> Result<Vec<u8>, VectorIndexError> {
+        let max_bytes = self
+            .max_bytes
+            .ok_or(VectorIndexError::StorageLayoutInvalid)?;
+        self.validate_current()?;
+        let mut bytes = Vec::with_capacity(
+            usize::try_from(
+                self.file
+                    .metadata()
+                    .map_err(|_| VectorIndexError::Storage)?
+                    .len(),
+            )
+            .unwrap_or(usize::MAX)
+            .min(max_bytes),
+        );
+        (&mut self.file)
+            .take(max_bytes.saturating_add(1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|_| VectorIndexError::Storage)?;
+        if bytes.len() > max_bytes {
+            return Err(VectorIndexError::CorruptSnapshot);
+        }
+        self.validate_current()?;
+        Ok(bytes)
+    }
+}
+
 impl PinnedPrivateDirectory {
     pub(crate) fn acquire(path: &Path) -> Result<Self, VectorIndexError> {
         validate_private_directory_path(path)?;

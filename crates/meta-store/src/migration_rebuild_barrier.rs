@@ -105,7 +105,11 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Deferred)
             .map_err(MetaStoreError::storage)?;
-        let token = migration_rebuild_barrier_token_in_connection(&transaction, contract_id)?;
+        let token = migration_rebuild_barrier_token_in_connection(
+            &transaction,
+            contract_id,
+            MigrationRebuildHeadAuthority::Repairing,
+        )?;
         transaction.commit().map_err(MetaStoreError::storage)?;
         Ok(token)
     }
@@ -135,19 +139,64 @@ pub(super) fn migration_rebuild_barrier_token_matches(
     connection: &Connection,
     expected: &MigrationRebuildBarrierToken,
 ) -> Result<bool> {
-    Ok(
-        migration_rebuild_barrier_token_in_connection(
-            connection,
-            &expected.processing_contract_id,
-        )?
-        .as_ref()
-            == Some(expected),
-    )
+    Ok(migration_rebuild_barrier_token_in_connection(
+        connection,
+        &expected.processing_contract_id,
+        MigrationRebuildHeadAuthority::Repairing,
+    )?
+    .as_ref()
+        == Some(expected))
+}
+
+pub(super) fn migration_rebuild_barrier_digest_matches(
+    connection: &Connection,
+    contract_id: &ImportProcessingContractId,
+    expected_digest: &ContentDigest,
+) -> Result<bool> {
+    Ok(migration_rebuild_barrier_token_in_connection(
+        connection,
+        contract_id,
+        MigrationRebuildHeadAuthority::Repairing,
+    )?
+    .is_some_and(|token| token.identity_digest() == *expected_digest))
+}
+
+pub(super) fn migration_rebuild_terminal_block_token_matches(
+    connection: &Connection,
+    expected: &MigrationRebuildBarrierToken,
+) -> Result<bool> {
+    Ok(migration_rebuild_barrier_token_in_connection(
+        connection,
+        &expected.processing_contract_id,
+        MigrationRebuildHeadAuthority::TerminalBlocked,
+    )?
+    .as_ref()
+        == Some(expected))
+}
+
+pub(super) fn migration_rebuild_terminal_block_digest_matches(
+    connection: &Connection,
+    expected_contract_id: &ImportProcessingContractId,
+    expected_digest: &ContentDigest,
+) -> Result<bool> {
+    Ok(migration_rebuild_barrier_token_in_connection(
+        connection,
+        expected_contract_id,
+        MigrationRebuildHeadAuthority::TerminalBlocked,
+    )?
+    .is_some_and(|token| token.identity_digest() == *expected_digest))
+}
+
+#[derive(Clone, Copy)]
+enum MigrationRebuildHeadAuthority {
+    Repairing,
+    TerminalBlocked,
 }
 
 fn migration_rebuild_barrier_token_in_connection(
     connection: &Connection,
     expected_contract_id: &ImportProcessingContractId,
+    authority: MigrationRebuildHeadAuthority,
 ) -> Result<Option<MigrationRebuildBarrierToken>> {
     let (service_state, generation, visible_epoch, repair_reason, active_contract_id) = connection
         .query_row(
@@ -170,8 +219,16 @@ fn migration_rebuild_barrier_token_in_connection(
             },
         )
         .map_err(MetaStoreError::storage)?;
-    if service_state != "repairing"
-        || repair_reason.as_deref() != Some("migration_rebuild")
+    let exact_authority = match authority {
+        MigrationRebuildHeadAuthority::Repairing => {
+            service_state == "repairing" && repair_reason.as_deref() == Some("migration_rebuild")
+        }
+        MigrationRebuildHeadAuthority::TerminalBlocked => {
+            service_state == "repair_blocked"
+                && repair_reason.as_deref() == Some("runtime_invariant")
+        }
+    };
+    if !exact_authority
         || generation.is_some()
         || active_contract_id.as_deref() != Some(expected_contract_id.as_str())
     {

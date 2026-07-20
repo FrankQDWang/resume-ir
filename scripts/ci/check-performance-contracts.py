@@ -149,6 +149,149 @@ SYNTHETIC_SMOKE_KEYS = {
     "resource_observations",
     "quality",
 }
+
+CORRECTNESS_RECOVERY_V29_IDENTITY = {
+    "contract": "resume-ir.correctness-recovery.v29",
+    "schema_migration": "additive_copy_on_write_v28_to_v29",
+    "metadata_schema": 29,
+}
+
+CORRECTNESS_RECOVERY_V29_PUBLICATION_RETIREMENT = {
+    "failed_publication_artifact_retirement": "exact_generation_or_terminal_block",
+    "failed_publication_artifact_accumulation_allowed": False,
+    "artifact_retirement_failure_action": "repair_required_without_next_attempt",
+    "publication_authority": (
+        "typed_current_head_or_exact_migration_attempt_or_exact_artifact_attempt"
+    ),
+    "publication_non_applied_cleanup": (
+        "durable_retirement_intent_and_abandoned_then_exact_generation_retired"
+    ),
+    "publication_non_applied_outcomes": ["cancelled", "error", "superseded"],
+    "publication_cleanup_order": [
+        "typed_authority_retirement_intent_and_abandoned_committed",
+        "exact_artifacts_retired_with_durable_completion_markers",
+        "retirement_failure_atomically_settles_attempt_and_blocks_exact_head",
+    ],
+    "publication_retirement_artifacts": [
+        "fulltext_snapshot",
+        "fulltext_generation_pin",
+        "fulltext_staging",
+        "vector_snapshot",
+        "vector_generation_pin",
+        "vector_staging",
+    ],
+    "publication_non_applied_cas_preserves_prior_generation": True,
+    "publication_committed_fence_outcome": "applied_only",
+    "publication_cleanup_must_finish_before_next_attempt": True,
+    "publication_cleanup_block_identity": (
+        "persisted_typed_authority_not_base_generation_epoch_only"
+    ),
+    "publication_interrupted_restart_cleanup": (
+        "bounded_pending_intent_replay_before_new_attempt_and_obsolete_gc"
+    ),
+    "publication_attempt_terminal_settlement_with_head_block_atomic": True,
+    "publication_retirement_replay_limit": 64,
+    "publication_retirement_overflow_action": (
+        "reopen_and_new_publication_attempts_fail_closed"
+    ),
+    "publication_pending_replay_precedes_repair_blocked_return": True,
+    "publication_pending_retirement_prunable": False,
+    "publication_retirement_completion": (
+        "transaction_authorized_exact_artifact_cas_only"
+    ),
+    "publication_retirement_row_direct_delete_or_replace_allowed": False,
+    "publication_absent_artifact_replay": (
+        "exact_pending_intent_and_not_retained_only"
+    ),
+    "publication_terminal_cleanup_attempt_preserved": True,
+    "v28_interrupted_publication_migration": (
+        "abandoned_pending_may_exist_not_complete"
+    ),
+    "publication_supersession_may_accumulate_artifacts": False,
+    "publication_prepared_owner_boundary": "internal_transaction_closure_only",
+    "publication_prepared_plain_drop_allowed": False,
+}
+
+CORRECTNESS_RECOVERY_V29_INSTALLED_ACCEPTANCE = {
+    "macos_source_commit_provenance_required": True,
+    "macos_v2_trust_lane_system_tools": "absolute_path_closed_env_shell_false",
+    "macos_dmg_verified_consumption": "single_mount_lease",
+    "macos_dmg_path_binding": "pre_post_identity_size_sha256",
+    "macos_bundle_app_tree": (
+        "all_regular_files_except_code_signature_and_self_evidence"
+    ),
+    "macos_partial_attach_cleanup": "mount_probe_then_single_detach",
+    "macos_installed_acceptance_runwide_lifecycle_lock": True,
+    "macos_installed_acceptance_exact_version": "0.1.2",
+    "macos_installed_acceptance_source_head": "clean_head_equals_fresh_origin_main",
+    "macos_installed_acceptance_source_observation": (
+        "serial_bracketed_head_branch_status_origin_remote"
+    ),
+    "macos_installed_acceptance_pre_mutation_source_gate": (
+        "readonly_before_recovery_then_revalidated_under_lease"
+    ),
+    "macos_installed_acceptance_build_source": "isolated_local_clone_of_exact_commit",
+    "macos_installed_acceptance_mutation_authority": (
+        "live_lease_and_exact_source_revalidated_before_each_mutation"
+    ),
+    "macos_installed_acceptance_branch_cleanup_main_sync_required": True,
+    "macos_installed_acceptance_commit_binding": (
+        "bundle_dmg_receipt_installed_acceptance_and_soak_equal"
+    ),
+    "macos_installed_acceptance_authorized_source_schema": 28,
+    "macos_installed_acceptance_cow_mode": (
+        "apfs_clonefile_no_fallback_source_unchanged"
+    ),
+    "macos_installed_acceptance_cold_gate": (
+        "v28_to_v29_ready_metadata_fulltext_vector_epoch_and_search"
+    ),
+    "macos_installed_acceptance_search_witness": (
+        "owner_only_public_canary_daemon_import_nonzero_exact_epoch"
+    ),
+    "macos_installed_acceptance_artifact_digest": (
+        "streaming_ciphertext_sha256_owner_mode_inode_stable"
+    ),
+    "macos_installed_acceptance_strong_kill_evidence": (
+        "current_receipt_boundary_next_ready_generation"
+    ),
+    "macos_installed_acceptance_busy_attempts_per_index": 2,
+    "macos_installed_acceptance_attempt_5_required": True,
+    "macos_installed_acceptance_exact_pid_quit": True,
+    "macos_installed_acceptance_native_executable_residue_count": 4,
+    "macos_installed_acceptance_final_sequence": (
+        "locks_released_then_quit_relaunch_ready_search_and_diagnostics"
+    ),
+    "macos_installed_acceptance_native_save_dialog_diagnostics_required": True,
+    "macos_installed_acceptance_launch_authority": (
+        "durable_intent_pending_running_guardian_process_group"
+    ),
+    "macos_installed_acceptance_process_identity": (
+        "pid_pgid_start_executable_session_authority"
+    ),
+    "macos_installed_acceptance_interruption_cleanup": (
+        "trusted_marker_exact_process_group_reaper_and_inode_quarantine"
+    ),
+    "macos_installed_acceptance_cow_cleanup": (
+        "verified_parent_inode_random_quarantine_revalidate_before_delete"
+    ),
+}
+
+CORRECTNESS_RECOVERY_V29_SOAK = {
+    "synthetic_soak_minutes": 120,
+    "merged_main_installed_acceptance_precedes_soak": True,
+    "soak_commit_equals_installed_acceptance_commit": True,
+    "all_deployed_failures_regressionized_before_non_soak": True,
+    "deployed_regression_restarts_soak_from_zero": True,
+}
+
+CORRECTNESS_RECOVERY_V29_REQUIRED_FIELDS = {
+    **CORRECTNESS_RECOVERY_V29_IDENTITY,
+    **CORRECTNESS_RECOVERY_V29_PUBLICATION_RETIREMENT,
+    **CORRECTNESS_RECOVERY_V29_INSTALLED_ACCEPTANCE,
+    **CORRECTNESS_RECOVERY_V29_SOAK,
+}
+
+
 def load_json(path: pathlib.Path) -> object:
     with path.open("rb") as fh:
         return json.load(fh)
@@ -514,9 +657,24 @@ def validate_synthetic_smoke_manifest_schema(schema: Mapping[str, object]) -> No
         fail("perf/synthetic-smoke-artifact-manifest.schema.json contract_pins.git_head_sha must reject working-tree")
 
 
+def validate_correctness_recovery_v29(matrix: Mapping[str, object]) -> None:
+    correctness = require_mapping(
+        matrix.get("correctness_recovery_v29"),
+        "matrix.correctness_recovery_v29",
+    )
+    for key, expected in CORRECTNESS_RECOVERY_V29_REQUIRED_FIELDS.items():
+        observed = correctness.get(key)
+        if observed != expected:
+            fail(
+                f"matrix.correctness_recovery_v29.{key}: "
+                f"expected {expected!r}, got {observed!r}"
+            )
+
+
 def validate_matrix(matrix: Mapping[str, object]) -> None:
     if matrix.get("schema_version") != "resume-ir.perf.acceptance-matrix.v2":
         fail("perf/acceptance-matrix.toml: expected v2 schema")
+    validate_correctness_recovery_v29(matrix)
     smoke_lane = require_mapping(matrix.get("evidence_lanes", {}).get("smoke"), "matrix.evidence_lanes.smoke")
     if smoke_lane.get("report_schema") != "resume-ir.synthetic-smoke-baseline.v1":
         fail("matrix.evidence_lanes.smoke.report_schema mismatch")

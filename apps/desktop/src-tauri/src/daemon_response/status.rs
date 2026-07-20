@@ -65,12 +65,49 @@ enum ServiceErrorCode {
 enum ServiceErrorAction {
     WaitForRepair,
     Retry,
+    RepairRequired,
 }
 
 #[derive(Deserialize, Serialize)]
 struct ServiceError {
     code: ServiceErrorCode,
     action: ServiceErrorAction,
+}
+
+#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RepairProgressPhase {
+    Queued,
+    MigrationRebuild,
+    SourceUnavailable,
+    Rebuilding,
+    RetryWait,
+    Blocked,
+}
+
+#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum RepairErrorKind {
+    FulltextPublicationBusy,
+    FulltextFailure,
+    VectorPublicationBusy,
+    VectorFailure,
+    MetadataFailure,
+    Interrupted,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RepairProgress {
+    phase: RepairProgressPhase,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    attempt: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    max_attempts: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    retry_after_ms: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    last_error_kind: Option<RepairErrorKind>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -91,6 +128,8 @@ pub(super) struct StatusBody {
     services: Services,
     #[serde(deserialize_with = "deserialize_required_nullable")]
     repair_reason: Option<SearchRepairReason>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    repair_progress: Option<RepairProgress>,
     error: Option<ServiceError>,
     indexed_documents: Option<SafeCount>,
     searchable_documents: Option<SafeCount>,
@@ -133,6 +172,8 @@ pub(crate) struct DiagnosticsBody {
     services: Services,
     #[serde(deserialize_with = "deserialize_required_nullable")]
     repair_reason: Option<SearchRepairReason>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    repair_progress: Option<RepairProgress>,
     error: Option<ServiceError>,
     metrics: DiagnosticsMetrics,
     error_counts: DiagnosticsErrorCounts,
@@ -186,6 +227,11 @@ pub(super) fn project_status(body: &[u8]) -> Result<StatusBody, DesktopError> {
     ensure_schema(&value.schema_version, "daemon.status.v2")?;
     validate_service_contract(value.service_state, &value.services, value.error.as_ref())?;
     validate_repair_reason(&value.services, value.repair_reason)?;
+    validate_repair_progress(
+        &value.services,
+        value.repair_reason,
+        value.repair_progress.as_ref(),
+    )?;
     ensure(
         value.status
             == match value.service_state {
@@ -220,6 +266,11 @@ pub(super) fn project_diagnostics(body: &[u8]) -> Result<DiagnosticsBody, Deskto
     ensure_schema(&value.schema_version, "resume-ir.diagnostics.v3")?;
     validate_service_contract(value.service_state, &value.services, value.error.as_ref())?;
     validate_repair_reason(&value.services, value.repair_reason)?;
+    validate_repair_progress(
+        &value.services,
+        value.repair_reason,
+        value.repair_progress.as_ref(),
+    )?;
     validate_metadata_counts(
         value.services.metadata,
         value.visible_epoch.is_some(),
@@ -292,9 +343,67 @@ fn validate_service_contract(
             ServiceState::Unavailable,
             Some(ServiceError {
                 code: ServiceErrorCode::QueryServiceUnavailable,
-                action: ServiceErrorAction::Retry,
+                action: ServiceErrorAction::RepairRequired,
             }),
         ) => Ok(()),
+        _ => ensure(false),
+    }
+}
+
+fn validate_repair_progress(
+    services: &Services,
+    repair_reason: Option<SearchRepairReason>,
+    progress: Option<&RepairProgress>,
+) -> Result<(), DesktopError> {
+    let Some(progress) = progress else {
+        return ensure(
+            services.metadata == ServiceState::Unavailable
+                || (services.metadata == ServiceState::Ready
+                    && services.query == ServiceState::Ready),
+        );
+    };
+    ensure(services.metadata == ServiceState::Ready && services.query != ServiceState::Ready)?;
+    ensure(progress.attempt.is_none_or(|attempt| attempt.value() <= 5))?;
+    ensure(
+        progress
+            .max_attempts
+            .is_none_or(|max_attempts| max_attempts.value() == 5),
+    )?;
+    ensure(
+        progress
+            .retry_after_ms
+            .is_none_or(|retry_after| retry_after.value() <= 60_000),
+    )?;
+    match (repair_reason, progress.phase) {
+        (Some(SearchRepairReason::MigrationRebuild), RepairProgressPhase::MigrationRebuild)
+        | (Some(SearchRepairReason::SourceUnavailable), RepairProgressPhase::SourceUnavailable) => {
+            ensure(
+                progress.attempt.is_none()
+                    && progress.max_attempts.is_none()
+                    && progress.retry_after_ms.is_none()
+                    && progress.last_error_kind.is_none(),
+            )
+        }
+        (
+            Some(SearchRepairReason::ArtifactUnavailable),
+            RepairProgressPhase::Queued | RepairProgressPhase::Rebuilding,
+        ) => ensure(
+            progress.max_attempts.is_some()
+                && progress.retry_after_ms.is_none()
+                && progress.last_error_kind.is_none()
+                && (progress.phase != RepairProgressPhase::Queued || progress.attempt.is_none()),
+        ),
+        (Some(SearchRepairReason::ArtifactUnavailable), RepairProgressPhase::RetryWait) => ensure(
+            progress.attempt.is_some()
+                && progress.max_attempts.is_some()
+                && progress.retry_after_ms.is_some()
+                && progress.last_error_kind.is_some(),
+        ),
+        (Some(SearchRepairReason::RuntimeInvariant), RepairProgressPhase::Blocked) => ensure(
+            progress.max_attempts.is_some()
+                && progress.retry_after_ms.is_none()
+                && (progress.attempt.is_some() == progress.last_error_kind.is_some()),
+        ),
         _ => ensure(false),
     }
 }
@@ -365,6 +474,7 @@ mod tests {
             "service_state": "ready",
             "services": {"metadata": "ready", "query": "ready"},
             "repair_reason": null,
+            "repair_progress": null,
             "error": null,
             "metrics": {
                 "ipc": {"accepted": 4, "completed": 3, "client_disconnect": 1, "request_failure": 0, "response_failure": 0},
@@ -394,6 +504,7 @@ mod tests {
             "service_state": "ready",
             "services": {"metadata": "ready", "query": "ready"},
             "repair_reason": null,
+            "repair_progress": null,
             "error": null,
             "indexed_documents": 4,
             "searchable_documents": 3,
@@ -418,6 +529,12 @@ mod tests {
             .unwrap()
             .remove("repair_reason");
         assert!(project_status(&serde_json::to_vec(&missing_reason).unwrap()).is_err());
+        let mut missing_progress = ready.clone();
+        missing_progress
+            .as_object_mut()
+            .unwrap()
+            .remove("repair_progress");
+        assert!(project_status(&serde_json::to_vec(&missing_progress).unwrap()).is_err());
 
         let mut ready_with_reason = ready.clone();
         ready_with_reason["repair_reason"] = serde_json::json!("migration_rebuild");
@@ -428,10 +545,39 @@ mod tests {
         repairing["service_state"] = serde_json::json!("repairing");
         repairing["services"]["query"] = serde_json::json!("repairing");
         repairing["repair_reason"] = serde_json::json!("migration_rebuild");
+        repairing["repair_progress"] = serde_json::json!({
+            "phase": "migration_rebuild",
+            "attempt": null,
+            "max_attempts": null,
+            "retry_after_ms": null,
+            "last_error_kind": null,
+        });
         repairing["error"] = serde_json::json!({"code": "REPAIRING", "action": "wait_for_repair"});
         assert!(project_status(&serde_json::to_vec(&repairing).unwrap()).is_ok());
         repairing["repair_reason"] = serde_json::json!("artifact_unavailable");
+        repairing["repair_progress"] = serde_json::json!({
+            "phase": "retry_wait",
+            "attempt": 1,
+            "max_attempts": 5,
+            "retry_after_ms": 1000,
+            "last_error_kind": "fulltext_publication_busy",
+        });
         assert!(project_status(&serde_json::to_vec(&repairing).unwrap()).is_ok());
+        let mut missing_error_kind = repairing.clone();
+        missing_error_kind["repair_progress"]
+            .as_object_mut()
+            .unwrap()
+            .remove("last_error_kind");
+        assert!(project_status(&serde_json::to_vec(&missing_error_kind).unwrap()).is_err());
+        let mut legacy_error_class = repairing.clone();
+        legacy_error_class["repair_progress"]["last_error_class"] = serde_json::json!("fulltext");
+        assert!(project_status(&serde_json::to_vec(&legacy_error_class).unwrap()).is_err());
+        let mut collapsed_error_kind = repairing.clone();
+        collapsed_error_kind["repair_progress"]["last_error_kind"] = serde_json::json!("fulltext");
+        assert!(project_status(&serde_json::to_vec(&collapsed_error_kind).unwrap()).is_err());
+        let mut missing_retry_error_kind = repairing.clone();
+        missing_retry_error_kind["repair_progress"]["last_error_kind"] = serde_json::Value::Null;
+        assert!(project_status(&serde_json::to_vec(&missing_retry_error_kind).unwrap()).is_err());
         repairing["repair_reason"] = serde_json::json!("source_unavailable");
         assert!(project_status(&serde_json::to_vec(&repairing).unwrap()).is_err());
         repairing["repair_reason"] = serde_json::Value::Null;
@@ -444,10 +590,30 @@ mod tests {
         blocked["service_state"] = serde_json::json!("degraded");
         blocked["services"]["query"] = serde_json::json!("unavailable");
         blocked["repair_reason"] = serde_json::json!("runtime_invariant");
+        blocked["repair_progress"] = serde_json::json!({
+            "phase": "blocked",
+            "attempt": 5,
+            "max_attempts": 5,
+            "retry_after_ms": null,
+            "last_error_kind": "fulltext_failure",
+        });
         blocked["error"] =
-            serde_json::json!({"code": "QUERY_SERVICE_UNAVAILABLE", "action": "retry"});
+            serde_json::json!({"code": "QUERY_SERVICE_UNAVAILABLE", "action": "repair_required"});
         assert!(project_status(&serde_json::to_vec(&blocked).unwrap()).is_ok());
+        let mut blocked_with_stale_retry = blocked.clone();
+        blocked_with_stale_retry["repair_progress"]["retry_after_ms"] = serde_json::json!(60_000);
+        assert!(project_status(&serde_json::to_vec(&blocked_with_stale_retry).unwrap()).is_err());
+        let mut legacy_source_shape = blocked.clone();
+        legacy_source_shape["repair_reason"] = serde_json::json!("source_unavailable");
+        assert!(project_status(&serde_json::to_vec(&legacy_source_shape).unwrap()).is_err());
         blocked["repair_reason"] = serde_json::json!("source_unavailable");
+        blocked["repair_progress"] = serde_json::json!({
+            "phase": "source_unavailable",
+            "attempt": null,
+            "max_attempts": null,
+            "retry_after_ms": null,
+            "last_error_kind": null,
+        });
         assert!(project_status(&serde_json::to_vec(&blocked).unwrap()).is_ok());
         blocked["repair_reason"] = serde_json::json!("artifact_unavailable");
         assert!(project_status(&serde_json::to_vec(&blocked).unwrap()).is_err());
@@ -461,6 +627,7 @@ mod tests {
             "service_state": "degraded",
             "services": {"metadata": "unavailable", "query": "unavailable"},
             "repair_reason": null,
+            "repair_progress": null,
             "error": {"code": "METADATA_UNAVAILABLE", "action": "retry"},
             "indexed_documents": null,
             "searchable_documents": null,
@@ -499,21 +666,40 @@ mod tests {
             .unwrap()
             .remove("repair_reason");
         assert!(project_diagnostics(&serde_json::to_vec(&missing_reason).unwrap()).is_err());
+        let mut missing_progress = payload.clone();
+        missing_progress
+            .as_object_mut()
+            .unwrap()
+            .remove("repair_progress");
+        assert!(project_diagnostics(&serde_json::to_vec(&missing_progress).unwrap()).is_err());
 
         let mut repairing = payload.clone();
         repairing["service_state"] = serde_json::json!("repairing");
         repairing["services"]["query"] = serde_json::json!("repairing");
         repairing["repair_reason"] = serde_json::json!("migration_rebuild");
-        repairing["error"] =
-            serde_json::json!({"code": "REPAIRING", "action": "wait_for_repair"});
+        repairing["repair_progress"] = serde_json::json!({
+            "phase": "migration_rebuild",
+            "attempt": null,
+            "max_attempts": null,
+            "retry_after_ms": null,
+            "last_error_kind": null,
+        });
+        repairing["error"] = serde_json::json!({"code": "REPAIRING", "action": "wait_for_repair"});
         assert!(project_diagnostics(&serde_json::to_vec(&repairing).unwrap()).is_ok());
 
         let mut blocked = payload.clone();
         blocked["service_state"] = serde_json::json!("degraded");
         blocked["services"]["query"] = serde_json::json!("unavailable");
         blocked["repair_reason"] = serde_json::json!("runtime_invariant");
+        blocked["repair_progress"] = serde_json::json!({
+            "phase": "blocked",
+            "attempt": 5,
+            "max_attempts": 5,
+            "retry_after_ms": null,
+            "last_error_kind": "fulltext_failure",
+        });
         blocked["error"] =
-            serde_json::json!({"code": "QUERY_SERVICE_UNAVAILABLE", "action": "retry"});
+            serde_json::json!({"code": "QUERY_SERVICE_UNAVAILABLE", "action": "repair_required"});
         assert!(project_diagnostics(&serde_json::to_vec(&blocked).unwrap()).is_ok());
 
         payload["contains_queries"] = serde_json::Value::Bool(true);
@@ -540,6 +726,7 @@ mod tests {
             "service_state": "degraded",
             "services": {"metadata": "unavailable", "query": "unavailable"},
             "repair_reason": null,
+            "repair_progress": null,
             "error": {"code": "METADATA_UNAVAILABLE", "action": "retry"},
             "metrics": {"ipc": {"accepted": 1, "completed": 1, "client_disconnect": 0, "request_failure": 0, "response_failure": 0}, "indexed_documents": null, "searchable_documents": null, "partial_documents": null},
             "error_counts": {"scan_error_buckets": []},

@@ -24,6 +24,7 @@ const lifecycle = (
   consecutive_heartbeat_failures: 0,
   blocked_reason: null,
   last_exit: null,
+  restart_ledger_reason: null,
 })
 
 describe("desktop runtime axes", () => {
@@ -47,6 +48,7 @@ describe("desktop runtime axes", () => {
       blockedReasonMessage("protocol_mismatch"),
       blockedReasonMessage("ownership_conflict"),
       blockedReasonMessage("supervisor_unavailable"),
+      blockedReasonMessage("restart_ledger_invalid"),
     ]
     expect(new Set(messages).size).toBe(messages.length)
     expect(messages.join(" ")).not.toContain("undefined")
@@ -93,6 +95,9 @@ describe("desktop runtime axes", () => {
     expect(isDaemonLifecycleSnapshot({ ...lifecycle("blocked"), blocked_reason: null })).toBe(false)
     expect(isDaemonLifecycleSnapshot({ ...lifecycle("ready"), restart_attempt: 6 })).toBe(false)
     expect(isDaemonLifecycleSnapshot({ ...lifecycle("recovering"), retry_delay_ms: 300_001 })).toBe(false)
+    expect(isDaemonLifecycleSnapshot({ ...lifecycle("ready"), restart_ledger_reason: "raw-stderr" })).toBe(false)
+    expect(isDaemonLifecycleSnapshot({ ...lifecycle("blocked"), blocked_reason: "restart_ledger_invalid", restart_ledger_reason: null })).toBe(false)
+    expect(isDaemonLifecycleSnapshot({ ...lifecycle("blocked"), blocked_reason: "restart_ledger_invalid", restart_ledger_reason: "invalid_format" })).toBe(true)
   })
 
   it("serializes focus refreshes and schedules from the completed lifecycle state", async () => {

@@ -1,8 +1,8 @@
 use meta_store::ReadMetaStore;
 
 use super::{
-    process_metrics, projection_service_health, search_repair_reason_label, service_error_json,
-    IpcMetricsSnapshot, ServiceHealth, ServiceState,
+    process_metrics, projection_service_health, repair_progress_json, search_repair_reason_label,
+    service_error_json, IpcMetricsSnapshot, ServiceHealth, ServiceState,
 };
 
 const MAX_ERROR_BUCKETS: usize = 16;
@@ -32,6 +32,7 @@ fn render_available(store: &ReadMetaStore) -> meta_store::Result<String> {
         })
         .collect::<Vec<_>>();
     let services = projection_service_health(projection.service_state);
+    let repair_attempt = store.artifact_repair_attempt_state()?;
     let ipc = process_metrics().snapshot();
     let body = serde_json::json!({
         "schema_version": "resume-ir.diagnostics.v3",
@@ -51,6 +52,11 @@ fn render_available(store: &ReadMetaStore) -> meta_store::Result<String> {
             "query": services.query.label(),
         },
         "repair_reason": projection.repair_reason.map(search_repair_reason_label),
+        "repair_progress": repair_progress_json(
+            &projection,
+            repair_attempt.as_ref(),
+            current_unix_seconds(),
+        ),
         "error": service_error_json(services),
         "metrics": {
             "ipc": ipc_json(ipc),
@@ -107,6 +113,7 @@ fn render_unavailable() -> String {
             "query": services.query.label(),
         },
         "repair_reason": serde_json::Value::Null,
+        "repair_progress": serde_json::Value::Null,
         "metrics": {
             "ipc": ipc_json(process_metrics().snapshot()),
             "indexed_documents": serde_json::Value::Null,
@@ -123,6 +130,14 @@ fn render_unavailable() -> String {
         "benchmark_refs": [],
     })
     .to_string()
+}
+
+fn current_unix_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_secs()).ok())
+        .unwrap_or(0)
 }
 
 fn ipc_json(metrics: IpcMetricsSnapshot) -> serde_json::Value {

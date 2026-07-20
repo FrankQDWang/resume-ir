@@ -96,7 +96,14 @@ pub(super) fn ensure_local_import_ready(
     now: UnixTimestamp,
     vectorization: &SearchPublicationVectorization,
 ) -> Result<()> {
-    finalize_migration_rebuild(store, now, contract, vectorization).map_err(CliError::import)?;
+    finalize_migration_rebuild(
+        store,
+        now,
+        contract,
+        vectorization,
+        &import_pipeline::PipelineRunControl::default(),
+    )
+    .map_err(CliError::import)?;
     let state = store.search_projection_state().map_err(CliError::store)?;
     if state.service_state == SearchProjectionServiceState::Repairing
         && state.repair_reason == Some(SearchRepairReason::MigrationRebuild)

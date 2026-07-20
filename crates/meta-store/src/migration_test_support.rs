@@ -6,6 +6,14 @@
 
 #![cfg(feature = "migration-test-support")]
 
+#[path = "migration_test_support_v28_artifact.rs"]
+mod v28_artifact;
+
+pub use v28_artifact::{
+    seed_v28_legacy_artifact_repair_fixture, V28ArtifactRepairHead,
+    V28LegacyArtifactRepairFixtureFacts,
+};
+
 use std::{
     fmt, fs,
     path::{Component, Path},
@@ -374,7 +382,7 @@ pub fn seed_v28_blocked_processing_contract_fixture(
             return Err(MetaStoreError::migration_ownership_required());
         }
     };
-    let store = owner.open_store()?;
+    let store = v28_artifact::open_v28_fixture_store(&owner)?;
     if store.schema_version()? != 28
         || store.activate_migration_rebuild_contract(
             contract,

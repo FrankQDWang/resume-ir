@@ -177,9 +177,14 @@ spawn_per_query = false
 persistent_connection_required = true
 raw_query_stream_local_only = true
 
-[correctness_recovery_v27]
-contract = "resume-ir.correctness-recovery.v27"
-schema_migration = "copy_on_write_v26_to_v27"
+[correctness_recovery_v29]
+contract = "resume-ir.correctness-recovery.v29"
+schema_migration = "additive_copy_on_write_v28_to_v29"
+metadata_schema = 29
+fulltext_snapshot_schema = "fulltext.snapshot.v3"
+fulltext_index_schema = "tantivy.fulltext.v3"
+vector_snapshot_schema = "vector.snapshot.v4"
+vector_index_schema = "hnsw-vector.v4"
 search_selection = "doc_id_version_id_visible_epoch"
 immutable_resume_version_required = true
 active_search_projection_required = true
@@ -190,6 +195,8 @@ automatic_business_request_replay_allowed = false
 request_local_socket_failure_may_exit_daemon = false
 desktop_supervisor_is_unique_process_owner = true
 startup_deadline_ms = 10000
+control_plane_publish_precedes_artifact_recovery = true
+restart_bypasses_completed_root_rescan_interval = false
 child_poll_ms = 100
 heartbeat_interval_ms = 5000
 heartbeat_timeout_ms = 2000
@@ -199,9 +206,116 @@ unexpected_exit_budget_window_seconds = 600
 circuit_open_seconds = 300
 ready_reset_seconds = 300
 restart_backoff_ms = [250, 1000, 4000, 15000, 30000]
+restart_budget_persists_across_app_restart = true
+normal_app_shutdown_consumes_failure_budget = false
+publication_lock_may_block_indefinitely = false
+publication_lock_contention = "typed_busy_single_attempt"
+resident_fulltext_lock_contention_required = true
+resident_vector_lock_contention_required = true
+artifact_repair_attempt_budget = 5
+artifact_repair_backoff_seconds = [1, 4, 15, 30, 60]
+retry_deadline_relative_to_failure_completion = true
+artifact_repair_clock_rollback = "transactional_rebase_without_attempt_consumption"
+resident_attempt_exhaustion_action = "repair_required"
+failed_publication_artifact_retirement = "exact_generation_or_terminal_block"
+failed_publication_artifact_accumulation_allowed = false
+artifact_retirement_failure_action = "repair_required_without_next_attempt"
+publication_authority = "typed_current_head_or_exact_migration_attempt_or_exact_artifact_attempt"
+publication_non_applied_cleanup = "durable_retirement_intent_and_abandoned_then_exact_generation_retired"
+publication_non_applied_outcomes = ["cancelled", "error", "superseded"]
+publication_cleanup_order = [
+  "typed_authority_retirement_intent_and_abandoned_committed",
+  "exact_artifacts_retired_with_durable_completion_markers",
+  "retirement_failure_atomically_settles_attempt_and_blocks_exact_head",
+]
+publication_retirement_artifacts = [
+  "fulltext_snapshot",
+  "fulltext_generation_pin",
+  "fulltext_staging",
+  "vector_snapshot",
+  "vector_generation_pin",
+  "vector_staging",
+]
+publication_non_applied_cas_preserves_prior_generation = true
+publication_committed_fence_outcome = "applied_only"
+publication_cleanup_must_finish_before_next_attempt = true
+publication_cleanup_block_identity = "persisted_typed_authority_not_base_generation_epoch_only"
+publication_interrupted_restart_cleanup = "bounded_pending_intent_replay_before_new_attempt_and_obsolete_gc"
+publication_attempt_terminal_settlement_with_head_block_atomic = true
+publication_retirement_replay_limit = 64
+publication_retirement_overflow_action = "reopen_and_new_publication_attempts_fail_closed"
+publication_pending_replay_precedes_repair_blocked_return = true
+publication_pending_retirement_prunable = false
+publication_retirement_completion = "transaction_authorized_exact_artifact_cas_only"
+publication_retirement_row_direct_delete_or_replace_allowed = false
+publication_absent_artifact_replay = "exact_pending_intent_and_not_retained_only"
+publication_terminal_cleanup_attempt_preserved = true
+v28_interrupted_publication_migration = "abandoned_pending_may_exist_not_complete"
+publication_supersession_may_accumulate_artifacts = false
+publication_prepared_owner_boundary = "internal_transaction_closure_only"
+publication_prepared_plain_drop_allowed = false
+manual_retry_scope = "circuit_open_half_open_only"
+pre_manifest_v29_staging_reusable = false
+permanent_repair_authority_accepts_legacy_descriptors = false
+offline_mutation_artifact_validation = "open_exact_current_payloads_before_consuming_base"
+repair_progress_required = true
+repair_required_action_on_blocked = true
+artifact_repair_error_kind_field = "last_error_kind"
+artifact_repair_error_kinds = [
+  "fulltext_publication_busy",
+  "fulltext_failure",
+  "vector_publication_busy",
+  "vector_failure",
+  "metadata_failure",
+  "interrupted",
+]
+macos_bundle_composition_schema = "resume-ir.macos-bundle-composition.v2"
+macos_dmg_composition_schema = "resume-ir.macos-dmg-composition.v2"
+macos_install_receipt_schema = "resume-ir.macos-install-receipt.v2"
+macos_source_commit_provenance_required = true
+macos_source_origin = "https://github.com/FrankQDWang/resume-ir.git"
+macos_active_store_manifest_canonical_trailing_lf = true
+macos_internal_test_signature_targets = 5
+macos_internal_test_signature_policy = "exact_ad_hoc_hardened_embedding_entitlement_only"
+macos_v2_trust_lane_system_tools = "absolute_path_closed_env_shell_false"
+macos_dmg_verified_consumption = "single_mount_lease"
+macos_dmg_path_binding = "pre_post_identity_size_sha256"
+macos_bundle_app_tree = "all_regular_files_except_code_signature_and_self_evidence"
+macos_partial_attach_cleanup = "mount_probe_then_single_detach"
+macos_diagnostics_nested_contract = "closed_shape_enum_and_bounds"
+macos_installed_acceptance_runwide_lifecycle_lock = true
+macos_installed_acceptance_exact_version = "0.1.2"
+macos_installed_acceptance_source_head = "clean_head_equals_fresh_origin_main"
+macos_installed_acceptance_source_observation = "serial_bracketed_head_branch_status_origin_remote"
+macos_installed_acceptance_pre_mutation_source_gate = "readonly_before_recovery_then_revalidated_under_lease"
+macos_installed_acceptance_build_source = "isolated_local_clone_of_exact_commit"
+macos_installed_acceptance_mutation_authority = "live_lease_and_exact_source_revalidated_before_each_mutation"
+macos_installed_acceptance_branch_cleanup_main_sync_required = true
+macos_installed_acceptance_commit_binding = "bundle_dmg_receipt_installed_acceptance_and_soak_equal"
+macos_installed_acceptance_authorized_source_schema = 28
+macos_installed_acceptance_cow_mode = "apfs_clonefile_no_fallback_source_unchanged"
+macos_installed_acceptance_cold_gate = "v28_to_v29_ready_metadata_fulltext_vector_epoch_and_search"
+macos_installed_acceptance_search_witness = "owner_only_public_canary_daemon_import_nonzero_exact_epoch"
+macos_installed_acceptance_artifact_digest = "streaming_ciphertext_sha256_owner_mode_inode_stable"
+macos_installed_acceptance_strong_kill_evidence = "current_receipt_boundary_next_ready_generation"
+macos_installed_acceptance_busy_attempts_per_index = 2
+macos_installed_acceptance_attempt_5_required = true
+macos_installed_acceptance_exact_pid_quit = true
+macos_installed_acceptance_native_executable_residue_count = 4
+macos_installed_acceptance_final_sequence = "locks_released_then_quit_relaunch_ready_search_and_diagnostics"
+macos_installed_acceptance_native_save_dialog_diagnostics_required = true
+macos_installed_acceptance_launch_authority = "durable_intent_pending_running_guardian_process_group"
+macos_installed_acceptance_process_identity = "pid_pgid_start_executable_session_authority"
+macos_installed_acceptance_interruption_cleanup = "trusted_marker_exact_process_group_reaper_and_inode_quarantine"
+macos_installed_acceptance_cow_cleanup = "verified_parent_inode_random_quarantine_revalidate_before_delete"
+windows_manifest_parent_sync_required = true
 rst_routes = ["status", "search", "batch", "detail", "hydrate", "progress"]
 mixed_connection_fault_count = 100
 synthetic_soak_minutes = 120
+merged_main_installed_acceptance_precedes_soak = true
+soak_commit_equals_installed_acceptance_commit = true
+all_deployed_failures_regressionized_before_non_soak = true
+deployed_regression_restarts_soak_from_zero = true
 macos_native_recovery_required = true
 windows_native_recovery_required = true
 windows_compile_only_cannot_close_native_gate = true

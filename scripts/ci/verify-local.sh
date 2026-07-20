@@ -14,6 +14,7 @@ if ! "$CARGO_BIN" --version >/dev/null 2>&1; then
 fi
 
 "$CARGO_BIN" metadata --no-deps --locked
+python3 scripts/ci/test-governance-contract-mutations.py
 python3 scripts/ci/check-search-runtime-boundary.py --cargo "$CARGO_BIN"
 "$CARGO_BIN" fmt --check
 "$CARGO_BIN" clippy --workspace --all-targets --all-features --locked -- -D warnings

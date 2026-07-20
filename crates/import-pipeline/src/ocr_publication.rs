@@ -10,9 +10,10 @@ use text_normalizer::TextNormalizer;
 use super::immutable_ingest::resume_version;
 use super::migration_rebuild::ensure_ocr_publication_ready;
 use super::search_artifact_cache::CurrentImportCacheMode;
-use super::search_artifacts::write_incremental_search_artifacts;
+use super::search_artifacts::publish_incremental_search_artifacts;
+use super::search_publication::SearchPublicationTransactionOutcome;
 use super::search_publication_ocr::{
-    commit_prepared_ocr_search_publication, OcrPublicationCommitOutcome, OcrPublicationFacts,
+    decide_ocr_search_publication, OcrPublicationDecisionOutcome, OcrPublicationFacts,
 };
 use super::{
     contact_hashes_from_mentions, entity_mentions_from_rules, language_set, sections_to_index,
@@ -118,7 +119,8 @@ pub fn index_claimed_ocr_text_with_policy(
     let publication_session = store
         .try_acquire_search_publication_session()
         .map_err(ImportPipelineError::store)?;
-    let search_publication = write_incremental_search_artifacts(
+    let mut non_applied_outcome = None;
+    let search_publication = publish_incremental_search_artifacts(
         &publication_session,
         now,
         &classification.classifier_epoch,
@@ -133,30 +135,41 @@ pub fn index_claimed_ocr_text_with_policy(
         None,
         ImportResourcePolicy::detect().index_writer_heap_bytes,
         vectorization,
-    )?;
-    match commit_prepared_ocr_search_publication(
-        now,
-        search_publication,
-        OcrPublicationFacts {
-            document: &document,
-            claimed,
-            source_revision: &source_revision,
-            version: &version,
-            classification: &classification,
-            mentions: &mentions,
-            email_hash: email_hash.as_ref(),
-            phone_hash: phone_hash.as_ref(),
+        |publication| {
+            let (decision, outcome) = decide_ocr_search_publication(
+                now,
+                publication,
+                OcrPublicationFacts {
+                    document: &document,
+                    claimed,
+                    source_revision: &source_revision,
+                    version: &version,
+                    classification: &classification,
+                    mentions: &mentions,
+                    email_hash: email_hash.as_ref(),
+                    phone_hash: phone_hash.as_ref(),
+                },
+            )?;
+            non_applied_outcome = outcome;
+            Ok(decision)
         },
-    )? {
-        OcrPublicationCommitOutcome::Applied(search_publication) => {
+    )?;
+    match search_publication {
+        SearchPublicationTransactionOutcome::Committed(search_publication) => {
             let search_publication = search_publication.release();
             Ok(OcrTextIndexOutcome::Committed(OcrTextIndexSummary {
                 searchable: admitted,
                 indexed_documents: search_publication.fulltext.document_count(),
             }))
         }
-        OcrPublicationCommitOutcome::ClaimSuperseded => Ok(OcrTextIndexOutcome::Superseded),
-        OcrPublicationCommitOutcome::PublicationSuperseded => Err(ImportPipelineError::index_io()),
+        SearchPublicationTransactionOutcome::NotApplied => match non_applied_outcome
+            .ok_or_else(ImportPipelineError::store_invariant)?
+        {
+            OcrPublicationDecisionOutcome::ClaimSuperseded => Ok(OcrTextIndexOutcome::Superseded),
+            OcrPublicationDecisionOutcome::PublicationSuperseded => {
+                Err(ImportPipelineError::index_io())
+            }
+        },
     }
 }
 

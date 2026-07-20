@@ -1,30 +1,172 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use index_fulltext::{IndexDocument, PublishedSnapshotMetadata};
 use index_vector::{VectorModelContract, VectorSnapshotSummary};
 use meta_store::{
-    ActiveSearchProjection, ContentDigest, Document, DocumentId, MigrationRebuildBarrierToken,
-    OwnedMetaStore, ProjectedDocumentSnapshot, ResumeVersionId, SearchProjectionDigest,
-    SearchProjectionServiceState, SearchPublicationCommit, SearchPublicationDraft,
+    ActiveSearchProjection, ArtifactRepairVectorContext, DocumentId, OwnedMetaStore,
+    ResumeVersionId, SearchProjectionDigest, SearchProjectionServiceState, SearchPublicationDraft,
     SearchPublicationLease, SearchPublicationOutcome, SearchPublicationSession,
-    SearchPublicationState, SearchPublicationValidation, SearchRepairReason,
-    TerminalDocumentUpdate, UnixTimestamp,
+    SearchPublicationValidation, SearchRepairReason, UnixTimestamp,
 };
 
+use super::search_publication_failure::{
+    abandon_and_retire_search_publication, FailedGenerationArtifacts,
+};
 use super::search_publication_vector::{
     meta_vector_descriptor, publish_vector_generation, validate_vector_publication,
     vector_model_contract, StagedSearchVersionTexts,
 };
 use super::{ImportPipelineError, Result, SearchPublicationVectorization};
 
-pub(super) struct PreparedSearchPublication<'session> {
-    pub(super) publication_session: &'session SearchPublicationSession,
-    pub(super) _publication_lease: SearchPublicationLease,
+#[must_use = "a prepared search publication must be explicitly terminated"]
+struct PreparedSearchPublication<'session> {
+    publication_session: &'session SearchPublicationSession,
+    _publication_lease: SearchPublicationLease,
     pub(super) fulltext: PublishedSnapshotMetadata,
-    pub(super) vector: VectorSnapshotSummary,
-    pub(super) projections: Vec<ActiveSearchProjection>,
-    pub(super) projected_documents: Vec<ProjectedDocumentPlan>,
-    pub(super) vector_coverage: Vec<ActiveSearchProjection>,
+    vector: VectorSnapshotSummary,
+    projections: Vec<ActiveSearchProjection>,
+    projected_documents: Vec<ProjectedDocumentPlan>,
+    vector_coverage: Vec<ActiveSearchProjection>,
+}
+
+impl PreparedSearchPublication<'_> {
+    fn publication_session(&self) -> &SearchPublicationSession {
+        self.publication_session
+    }
+
+    fn generation(&self) -> &str {
+        self.fulltext.generation()
+    }
+
+    fn into_committed(self) -> CommittedSearchPublication {
+        let Self {
+            _publication_lease,
+            fulltext,
+            projections,
+            ..
+        } = self;
+        CommittedSearchPublication {
+            _publication_lease,
+            fulltext,
+            projections,
+        }
+    }
+}
+
+/// Borrowed decision surface for one validated publication transaction.
+///
+/// Callers may inspect the exact prepared artifacts and execute one metadata
+/// decision, but cannot own or outlive the publication transaction.
+pub(super) struct SearchPublicationView<'publication> {
+    publication_session: &'publication SearchPublicationSession,
+    fulltext: &'publication PublishedSnapshotMetadata,
+    vector: &'publication VectorSnapshotSummary,
+    projections: &'publication [ActiveSearchProjection],
+    projected_documents: &'publication [ProjectedDocumentPlan],
+    vector_coverage: &'publication [ActiveSearchProjection],
+}
+
+impl SearchPublicationView<'_> {
+    pub(super) fn publication_session(&self) -> &SearchPublicationSession {
+        self.publication_session
+    }
+
+    #[cfg(test)]
+    pub(super) fn generation(&self) -> &str {
+        self.fulltext.generation()
+    }
+
+    pub(super) fn fulltext(&self) -> &PublishedSnapshotMetadata {
+        self.fulltext
+    }
+
+    pub(super) fn vector(&self) -> &VectorSnapshotSummary {
+        self.vector
+    }
+
+    pub(super) fn projections(&self) -> &[ActiveSearchProjection] {
+        self.projections
+    }
+
+    pub(super) fn projected_documents(&self) -> &[ProjectedDocumentPlan] {
+        self.projected_documents
+    }
+
+    pub(super) fn vector_coverage(&self) -> &[ActiveSearchProjection] {
+        self.vector_coverage
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SearchPublicationDecision {
+    Applied,
+    NotApplied,
+}
+
+pub(super) enum SearchPublicationTransactionOutcome {
+    Committed(CommittedSearchPublication),
+    NotApplied,
+}
+
+impl SearchPublicationTransactionOutcome {
+    pub(super) fn committed(&self) -> Option<&CommittedSearchPublication> {
+        match self {
+            Self::Committed(publication) => Some(publication),
+            Self::NotApplied => None,
+        }
+    }
+
+    pub(super) fn into_committed(self) -> Result<CommittedSearchPublication> {
+        match self {
+            Self::Committed(publication) => Ok(publication),
+            Self::NotApplied => Err(ImportPipelineError::index_io()),
+        }
+    }
+}
+
+impl PreparedSearchPublication<'_> {
+    fn view(&self) -> SearchPublicationView<'_> {
+        SearchPublicationView {
+            publication_session: self.publication_session,
+            fulltext: &self.fulltext,
+            vector: &self.vector,
+            projections: &self.projections,
+            projected_documents: &self.projected_documents,
+            vector_coverage: &self.vector_coverage,
+        }
+    }
+
+    fn terminate(
+        self,
+        now: UnixTimestamp,
+        decision: Result<SearchPublicationDecision>,
+    ) -> Result<SearchPublicationTransactionOutcome> {
+        match decision {
+            Ok(SearchPublicationDecision::Applied) => Ok(
+                SearchPublicationTransactionOutcome::Committed(self.into_committed()),
+            ),
+            Ok(SearchPublicationDecision::NotApplied) => {
+                let generation = self.generation().to_string();
+                abandon_and_retire_search_publication(
+                    self.publication_session(),
+                    &generation,
+                    now,
+                    FailedGenerationArtifacts::both_published(),
+                )?;
+                Ok(SearchPublicationTransactionOutcome::NotApplied)
+            }
+            Err(primary) => {
+                let generation = self.generation().to_string();
+                abandon_and_retire_search_publication(
+                    self.publication_session(),
+                    &generation,
+                    now,
+                    FailedGenerationArtifacts::both_published(),
+                )?;
+                Err(primary)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,7 +177,7 @@ pub(super) enum ProjectedDocumentPlan {
 }
 
 impl ProjectedDocumentPlan {
-    fn projection(&self) -> &ActiveSearchProjection {
+    pub(super) fn projection(&self) -> &ActiveSearchProjection {
         match self {
             Self::RetainedUnchanged(projection)
             | Self::MetadataChanged(projection)
@@ -172,23 +314,14 @@ fn load_artifact_recovery_publication_base(
     let generation = state
         .generation
         .ok_or_else(ImportPipelineError::store_invariant)?;
-    let publication = state
-        .publication
+    if state.publication.is_some() {
+        return Err(ImportPipelineError::store_invariant());
+    }
+    let context = store
+        .artifact_repair_context()
+        .map_err(ImportPipelineError::store)?
         .ok_or_else(ImportPipelineError::store_invariant)?;
-    let fulltext = publication
-        .fulltext
-        .as_ref()
-        .ok_or_else(ImportPipelineError::store_invariant)?;
-    let vector = publication
-        .vector
-        .as_ref()
-        .ok_or_else(ImportPipelineError::store_invariant)?;
-    if publication.state != SearchPublicationState::Ready
-        || publication.generation != generation
-        || publication.expected_visible_epoch.checked_add(1) != Some(state.visible_epoch)
-        || fulltext.generation() != generation
-        || vector.generation() != generation
-    {
+    if context.generation != generation || context.visible_epoch != state.visible_epoch {
         return Err(ImportPipelineError::store_invariant());
     }
 
@@ -211,25 +344,117 @@ fn load_artifact_recovery_publication_base(
             )
         }))
         .map_err(|_| ImportPipelineError::store_invariant())?;
-    if fulltext.document_count() != projections.len() as u64
-        || vector.projection_count() != projections.len() as u64
-        || fulltext.projection_digest() != &projection_digest
-        || vector.projection_digest() != &projection_digest
-        || publication.projection_digest != projection_digest
+    if context.projection_count != projections.len() as u64
+        || context.projection_digest != projection_digest
     {
         return Err(ImportPipelineError::store_invariant());
     }
+    let vector_contract = match context.vector {
+        ArtifactRepairVectorContext::Disabled => VectorModelContract::Disabled,
+        ArtifactRepairVectorContext::Enabled {
+            model_id,
+            dimension,
+        } => VectorModelContract::enabled(model_id, dimension as usize)
+            .map_err(ImportPipelineError::vector)?,
+    };
 
     Ok(SearchPublicationBase {
         generation: Some(generation),
         visible_epoch: state.visible_epoch,
-        classifier_epoch: publication.classifier_epoch.clone(),
+        classifier_epoch: context.classifier_epoch,
         projections,
-        vector_contract: vector_model_contract(vector)?,
+        vector_contract,
     })
 }
 
-pub(super) fn prepare_search_publication<'session>(
+#[allow(clippy::too_many_arguments)]
+pub(super) fn run_search_publication_transaction(
+    publication_session: &SearchPublicationSession,
+    now: UnixTimestamp,
+    classifier_epoch: &str,
+    base: SearchPublicationBase,
+    generation: &str,
+    projections: Vec<ActiveSearchProjection>,
+    staged_version_texts: &StagedSearchVersionTexts,
+    vectorization: &SearchPublicationVectorization,
+    ensure_not_cancelled: Option<&dyn Fn() -> Result<()>>,
+    write_fulltext: impl FnOnce() -> Result<PublishedSnapshotMetadata>,
+    decide: impl FnOnce(&SearchPublicationView<'_>) -> Result<SearchPublicationDecision>,
+) -> Result<SearchPublicationTransactionOutcome> {
+    let publication = prepare_search_publication(
+        publication_session,
+        now,
+        classifier_epoch,
+        base,
+        generation,
+        projections,
+        staged_version_texts,
+        vectorization,
+        ensure_not_cancelled,
+        write_fulltext,
+    )?;
+    let decision = decide(&publication.view());
+    publication.terminate(now, decision)
+}
+
+#[cfg(test)]
+pub(super) struct PreparedSearchPublicationForTest<'session>(PreparedSearchPublication<'session>);
+
+#[cfg(test)]
+impl PreparedSearchPublicationForTest<'_> {
+    pub(super) fn generation(&self) -> &str {
+        self.0.generation()
+    }
+
+    pub(super) fn fulltext(&self) -> &PublishedSnapshotMetadata {
+        &self.0.fulltext
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prepare_search_publication_for_test<'session>(
+    publication_session: &'session SearchPublicationSession,
+    now: UnixTimestamp,
+    classifier_epoch: &str,
+    base: SearchPublicationBase,
+    generation: &str,
+    projections: Vec<ActiveSearchProjection>,
+    staged_version_texts: &StagedSearchVersionTexts,
+    vectorization: &SearchPublicationVectorization,
+    ensure_not_cancelled: Option<&dyn Fn() -> Result<()>>,
+    write_fulltext: impl FnOnce() -> Result<PublishedSnapshotMetadata>,
+) -> Result<PreparedSearchPublicationForTest<'session>> {
+    prepare_search_publication(
+        publication_session,
+        now,
+        classifier_epoch,
+        base,
+        generation,
+        projections,
+        staged_version_texts,
+        vectorization,
+        ensure_not_cancelled,
+        write_fulltext,
+    )
+    .map(PreparedSearchPublicationForTest)
+}
+
+#[cfg(test)]
+pub(super) fn commit_prepared_search_publication_for_test(
+    now: UnixTimestamp,
+    publication: PreparedSearchPublicationForTest<'_>,
+    documents: &[meta_store::Document],
+) -> Result<CommittedSearchPublication> {
+    let decision = super::search_publication_commit::decide_search_publication(
+        &publication.0.view(),
+        now,
+        documents,
+    );
+    publication.0.terminate(now, decision)?.into_committed()
+}
+
+fn prepare_search_publication<'session>(
     publication_session: &'session SearchPublicationSession,
     now: UnixTimestamp,
     classifier_epoch: &str,
@@ -243,6 +468,9 @@ pub(super) fn prepare_search_publication<'session>(
 ) -> Result<PreparedSearchPublication<'session>> {
     let data_dir = publication_session.canonical_data_dir();
     let store = publication_session.owned_store();
+    if let Some(check) = ensure_not_cancelled {
+        check()?;
+    }
     validate_classifier_epoch(&base, classifier_epoch)?;
     let projected_documents =
         projected_document_plan(&base.projections, &projections, staged_version_texts)?;
@@ -270,15 +498,28 @@ pub(super) fn prepare_search_publication<'session>(
         return Err(ImportPipelineError::index_io());
     }
 
+    let mut failed_artifacts = FailedGenerationArtifacts::default();
     let result = (|| {
-        let fulltext = write_fulltext()?;
+        let fulltext = match write_fulltext() {
+            Ok(fulltext) => {
+                failed_artifacts.record_fulltext_published();
+                fulltext
+            }
+            Err(error) => {
+                failed_artifacts.record_fulltext_failure(&error);
+                return Err(error);
+            }
+        };
+        if let Some(check) = ensure_not_cancelled {
+            check()?;
+        }
         if fulltext.generation() != generation
             || fulltext.document_count() != projections.len()
             || fulltext.projection_digest() != &projection_digest
         {
             return Err(ImportPipelineError::store_invariant());
         }
-        let vector = publish_vector_generation(
+        let vector = match publish_vector_generation(
             data_dir,
             store,
             generation,
@@ -287,11 +528,26 @@ pub(super) fn prepare_search_publication<'session>(
             staged_version_texts,
             vectorization,
             ensure_not_cancelled,
-        )?;
+        ) {
+            Ok(vector) => {
+                failed_artifacts.record_vector_published();
+                vector
+            }
+            Err(error) => {
+                failed_artifacts.record_vector_failure(&error);
+                return Err(error);
+            }
+        };
+        if let Some(check) = ensure_not_cancelled {
+            check()?;
+        }
         let vector_coverage =
             validate_vector_publication(&vector, generation, &projections, &projection_digest)?;
         let fulltext_descriptor = meta_fulltext_descriptor(&fulltext)?;
         let vector_descriptor = meta_vector_descriptor(&vector)?;
+        if let Some(check) = ensure_not_cancelled {
+            check()?;
+        }
         publication_session
             .validate_search_publication(&SearchPublicationValidation {
                 generation,
@@ -310,12 +566,18 @@ pub(super) fn prepare_search_publication<'session>(
             vector_coverage,
         })
     })();
-    if result.is_err() {
-        publication_session
-            .abandon_search_publication(generation, now)
-            .map_err(ImportPipelineError::store)?;
+    match result {
+        Ok(publication) => Ok(publication),
+        Err(primary) => {
+            abandon_and_retire_search_publication(
+                publication_session,
+                generation,
+                now,
+                failed_artifacts,
+            )?;
+            Err(primary)
+        }
     }
-    result
 }
 
 fn projected_document_plan(
@@ -405,145 +667,6 @@ pub(super) fn projections_after_delta(
     Ok(projections)
 }
 
-pub(super) fn commit_prepared_search_publication(
-    now: UnixTimestamp,
-    publication: PreparedSearchPublication<'_>,
-    documents: &[Document],
-) -> Result<CommittedSearchPublication> {
-    commit_prepared_search_publication_with(now, publication, documents, |session, commit| {
-        session.commit_search_publication(commit)
-    })
-    .and_then(|committed| committed.ok_or_else(ImportPipelineError::index_io))
-}
-
-pub(super) fn commit_migration_rebuild_search_publication(
-    now: UnixTimestamp,
-    publication: PreparedSearchPublication<'_>,
-    documents: &[Document],
-    barrier: &MigrationRebuildBarrierToken,
-) -> Result<Option<CommittedSearchPublication>> {
-    commit_prepared_search_publication_with(now, publication, documents, |session, commit| {
-        session.commit_migration_rebuild_search_publication(commit, barrier)
-    })
-}
-
-fn commit_prepared_search_publication_with(
-    now: UnixTimestamp,
-    publication: PreparedSearchPublication<'_>,
-    documents: &[Document],
-    commit_publication: impl FnOnce(
-        &SearchPublicationSession,
-        &SearchPublicationCommit<'_>,
-    ) -> meta_store::Result<SearchPublicationOutcome>,
-) -> Result<Option<CommittedSearchPublication>> {
-    let PreparedSearchPublication {
-        publication_session,
-        _publication_lease,
-        fulltext,
-        vector,
-        projections,
-        projected_documents,
-        vector_coverage,
-    } = publication;
-    let store = publication_session.owned_store();
-    if fulltext.document_count() != projections.len()
-        || vector.projection_count() != projections.len()
-        || fulltext.generation() != vector.generation()
-        || fulltext.generation().is_empty()
-    {
-        return Err(ImportPipelineError::store_invariant());
-    }
-    let publication_documents = publication_document_map(documents)?;
-    let projected_documents =
-        bind_projected_document_snapshots(&projected_documents, &publication_documents)?;
-    let metadata_changed_ids = projected_documents
-        .iter()
-        .filter_map(|snapshot| match snapshot {
-            ProjectedDocumentSnapshot::MetadataChanged { projection, .. } => {
-                Some(&projection.document_id)
-            }
-            ProjectedDocumentSnapshot::RetainedUnchanged { .. }
-            | ProjectedDocumentSnapshot::Replacement { .. } => None,
-        })
-        .collect::<BTreeSet<_>>();
-    let terminal_targets = documents
-        .iter()
-        .filter(|document| !metadata_changed_ids.contains(&document.id))
-        .cloned()
-        .collect::<Vec<_>>();
-    let terminal_documents = terminal_document_updates(store, &terminal_targets)?;
-    let commit = SearchPublicationCommit {
-        generation: fulltext.generation(),
-        terminal_documents: &terminal_documents,
-        projections: &projections,
-        projected_documents: &projected_documents,
-        vector_coverage: &vector_coverage,
-        now,
-    };
-    match commit_publication(publication_session, &commit).map_err(ImportPipelineError::store)? {
-        SearchPublicationOutcome::Applied => Ok(Some(CommittedSearchPublication {
-            _publication_lease,
-            fulltext,
-            projections,
-        })),
-        SearchPublicationOutcome::Superseded => Ok(None),
-    }
-}
-
-pub(super) fn publication_document_map(
-    documents: &[Document],
-) -> Result<BTreeMap<&DocumentId, &Document>> {
-    let mut mapped = BTreeMap::new();
-    for document in documents {
-        if mapped.insert(&document.id, document).is_some() {
-            return Err(ImportPipelineError::store_invariant());
-        }
-    }
-    Ok(mapped)
-}
-
-pub(super) fn bind_projected_document_snapshots(
-    plans: &[ProjectedDocumentPlan],
-    documents: &BTreeMap<&DocumentId, &Document>,
-) -> Result<Vec<ProjectedDocumentSnapshot>> {
-    plans
-        .iter()
-        .map(|plan| {
-            let projection = plan.projection().clone();
-            match plan {
-                ProjectedDocumentPlan::RetainedUnchanged(_) => {
-                    if documents.contains_key(&projection.document_id) {
-                        return Err(ImportPipelineError::store_invariant());
-                    }
-                    Ok(ProjectedDocumentSnapshot::RetainedUnchanged { projection })
-                }
-                ProjectedDocumentPlan::MetadataChanged(_) => {
-                    let document = documents
-                        .get(&projection.document_id)
-                        .copied()
-                        .ok_or_else(ImportPipelineError::store_invariant)?
-                        .clone();
-                    Ok(ProjectedDocumentSnapshot::MetadataChanged {
-                        projection,
-                        document,
-                    })
-                }
-                ProjectedDocumentPlan::Replacement(_) => {
-                    let document = documents
-                        .get(&projection.document_id)
-                        .copied()
-                        .ok_or_else(ImportPipelineError::store_invariant)?
-                        .clone();
-                    Ok(ProjectedDocumentSnapshot::Replacement {
-                        projection,
-                        document,
-                    })
-                }
-            }
-        })
-        .collect()
-}
-
 fn meta_fulltext_descriptor(
     metadata: &PublishedSnapshotMetadata,
 ) -> Result<meta_store::FullTextSnapshotDescriptor> {
@@ -555,38 +678,6 @@ fn meta_fulltext_descriptor(
         metadata.projection_digest().clone(),
         metadata.logical_content_digest().clone(),
     ))
-}
-
-fn terminal_document_updates(
-    store: &OwnedMetaStore,
-    documents: &[Document],
-) -> Result<Vec<TerminalDocumentUpdate>> {
-    let mut updates = Vec::with_capacity(documents.len());
-    let mut seen = BTreeSet::new();
-    for target in documents {
-        if !seen.insert(target.id.clone()) {
-            return Err(ImportPipelineError::store_invariant());
-        }
-        let current = store
-            .document_by_id(&target.id)
-            .map_err(ImportPipelineError::store)?
-            .ok_or_else(ImportPipelineError::store_invariant)?;
-        let expected_content_hash = current
-            .content_hash
-            .as_deref()
-            .ok_or_else(ImportPipelineError::store_invariant)?
-            .parse::<ContentDigest>()
-            .map_err(|_| ImportPipelineError::store_invariant())?;
-        updates.push(TerminalDocumentUpdate {
-            document_id: target.id.clone(),
-            expected_status: current.status,
-            expected_is_deleted: current.is_deleted,
-            expected_content_hash,
-            terminal_status: target.status,
-            terminal_is_deleted: target.is_deleted,
-        });
-    }
-    Ok(updates)
 }
 
 #[cfg(test)]

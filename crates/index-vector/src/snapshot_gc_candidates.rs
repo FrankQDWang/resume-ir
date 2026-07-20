@@ -103,6 +103,10 @@ pub(super) fn collect_staging_candidates(
 }
 
 fn validate_staging_name(name: &str) -> Result<(), VectorIndexError> {
+    staging_generation(name).map(|_| ())
+}
+
+pub(super) fn staging_generation(name: &str) -> Result<&str, VectorIndexError> {
     let (generation, suffix) = name
         .rsplit_once(".tmp-")
         .ok_or(VectorIndexError::StorageLayoutInvalid)?;
@@ -112,7 +116,7 @@ fn validate_staging_name(name: &str) -> Result<(), VectorIndexError> {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
     {
-        Ok(())
+        Ok(generation)
     } else {
         Err(VectorIndexError::StorageLayoutInvalid)
     }

@@ -12,6 +12,165 @@ import tomllib
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
+CORRECTNESS_DELIVERY_TRANSITIONS = {
+    "select_merge_method": {
+        "from": ["privacy_gate_green"],
+        "to": "merge_method_selected",
+        "required_permissions": ["github_pr_write_allowed"],
+        "required_evidence": [
+            "merge_method",
+            "branch_protection_satisfied",
+            "admin_bypass_absent",
+        ],
+        "allowed_actions": ["update_pr_body", "record_merge_method"],
+    },
+    "merge_scope_exception_pr": {
+        "from": ["merge_method_selected"],
+        "to": "pr_merged",
+        "required_permissions": ["protected_merge_allowed"],
+        "required_evidence": [
+            "ci_green",
+            "local_gate_green",
+            "privacy_gate_green",
+            "branch_protection_satisfied",
+            "scope_exception_normal_merge",
+            "admin_bypass_absent",
+        ],
+        "allowed_actions": ["squash_merge"],
+    },
+    "cleanup_branch_and_sync_main": {
+        "from": ["pr_merged"],
+        "to": "branch_cleaned_main_synced",
+        "required_permissions": ["branch_cleanup_allowed"],
+        "required_evidence": [
+            "merged_commit",
+            "local_main_equals_remote_main",
+            "feature_branch_removed",
+            "unrelated_worktree_changes_preserved",
+        ],
+        "allowed_actions": [
+            "fetch_base",
+            "sync_main",
+            "remove_worktree",
+            "delete_branch",
+        ],
+    },
+    "build_and_install_exact_merged_main": {
+        "from": ["branch_cleaned_main_synced"],
+        "to": "merged_main_0_1_2_installed",
+        "required_permissions": ["local_install_allowed"],
+        "required_evidence": [
+            "fresh_remote_main",
+            "clean_merged_main",
+            "stable_serial_source_authority",
+            "exact_commit_isolated_build_source",
+            "exact_version_0_1_2",
+            "verified_bundle_dmg_receipt_commit_equality",
+            "installed_app_commit_equality",
+        ],
+        "allowed_actions": ["build_release", "verify_release", "install_local"],
+    },
+    "accept_installed_v28_cow": {
+        "from": ["merged_main_0_1_2_installed"],
+        "to": "installed_v28_cow_acceptance_green",
+        "required_permissions": ["private_resume_root_read_allowed"],
+        "required_evidence": [
+            "authorized_v28_source",
+            "apfs_cow_no_fallback",
+            "source_unchanged",
+            "mutation_authority_revalidated",
+            "cold_v29_ready",
+            "artifact_identity_consistent",
+            "ciphertext_digest_verified",
+            "nonzero_exact_epoch_synthetic_canary",
+            "durable_process_group_cleanup",
+            "strong_kill_recovered",
+            "fulltext_vector_contention_bounded",
+            "final_quit_relaunch_ready",
+            "redacted_diagnostics",
+        ],
+        "allowed_actions": ["run_installed_acceptance", "write_redacted_evidence"],
+    },
+    "freeze_installed_acceptance_commit": {
+        "from": ["installed_v28_cow_acceptance_green"],
+        "to": "exact_commit_frozen",
+        "required_permissions": [],
+        "required_evidence": [
+            "installed_acceptance_commit",
+            "local_main_equals_remote_main",
+            "worktree_clean",
+        ],
+        "allowed_actions": ["record_frozen_commit"],
+    },
+    "run_final_frozen_soak": {
+        "from": ["exact_commit_frozen"],
+        "to": "soak_120m_green",
+        "required_permissions": [],
+        "required_evidence": [
+            "soak_commit_equals_installed_acceptance_commit",
+            "uninterrupted_120_minute_soak",
+            "soak_result_green",
+        ],
+        "allowed_actions": ["run_tests", "write_redacted_evidence"],
+    },
+    "regress_deployed_failure": {
+        "from": [
+            "pr_merged",
+            "branch_cleaned_main_synced",
+            "merged_main_0_1_2_installed",
+            "installed_v28_cow_acceptance_green",
+            "exact_commit_frozen",
+            "soak_120m_green",
+        ],
+        "to": "slice_selected",
+        "required_permissions": ["github_issue_write_allowed"],
+        "required_evidence": [
+            "deployed_failure",
+            "repeatable_regression",
+            "soak_invalidated",
+            "linked_issue",
+            "privacy_boundary",
+        ],
+        "allowed_actions": ["comment_issue", "update_issue"],
+    },
+    "reconcile_issue_lifecycle": {
+        "from": ["soak_120m_green"],
+        "to": "issue_reconciled_with_evidence",
+        "required_permissions": ["github_issue_write_allowed"],
+        "required_evidence": [
+            "main_reachable_commit",
+            "installed_acceptance_commit",
+            "soak_commit",
+            "issue_lifecycle_outcome",
+            "before_after_metrics",
+            "privacy_boundary",
+        ],
+        "allowed_actions": ["comment_issue", "close_issue", "open_follow_up_issue"],
+    },
+}
+
+
+CORRECTNESS_DELIVERY_OUTGOING = {
+    "privacy_gate_green": {"select_merge_method"},
+    "merge_method_selected": {"merge_scope_exception_pr"},
+    "pr_merged": {"cleanup_branch_and_sync_main", "regress_deployed_failure"},
+    "branch_cleaned_main_synced": {
+        "build_and_install_exact_merged_main",
+        "regress_deployed_failure",
+    },
+    "merged_main_0_1_2_installed": {
+        "accept_installed_v28_cow",
+        "regress_deployed_failure",
+    },
+    "installed_v28_cow_acceptance_green": {
+        "freeze_installed_acceptance_commit",
+        "regress_deployed_failure",
+    },
+    "exact_commit_frozen": {"run_final_frozen_soak", "regress_deployed_failure"},
+    "soak_120m_green": {"reconcile_issue_lifecycle", "regress_deployed_failure"},
+}
+
+
 def fail(message: str) -> None:
     raise ValueError(message)
 
@@ -122,6 +281,111 @@ def require_transition_contains(
                 f"missing {missing}"
             )
     return transition
+
+
+def require_transition_exact(transitions: list, name: str, expected: dict) -> None:
+    transition = require_transition(transitions, name)
+    expected_keys = {
+        "name",
+        "from",
+        "to",
+        "required_permissions",
+        "required_evidence",
+        "allowed_actions",
+    }
+    observed_keys = set(transition)
+    if observed_keys != expected_keys:
+        fail(
+            f"autonomous_delivery.transitions.{name}: key mismatch "
+            f"missing={sorted(expected_keys - observed_keys)} "
+            f"extra={sorted(observed_keys - expected_keys)}"
+        )
+    for key in [
+        "from",
+        "to",
+        "required_permissions",
+        "required_evidence",
+        "allowed_actions",
+    ]:
+        if transition.get(key) != expected[key]:
+            fail(
+                f"autonomous_delivery.transitions.{name}.{key}: "
+                f"expected {expected[key]!r}"
+            )
+
+
+def validate_correctness_delivery_sequence(
+    autonomous: dict,
+    active_slice: dict,
+    transitions: list,
+) -> None:
+    permissions = autonomous.get("permissions")
+    if not isinstance(permissions, dict):
+        fail("ACTIVE_GOAL.toml: missing [autonomous_delivery.permissions]")
+    for permission in [
+        "protected_merge_allowed",
+        "branch_cleanup_allowed",
+        "local_install_allowed",
+        "private_resume_root_read_allowed",
+    ]:
+        require_bool(
+            permissions.get(permission),
+            True,
+            f"autonomous_delivery.permissions.{permission}",
+        )
+    require_bool(
+        permissions.get("direct_main_push_allowed"),
+        False,
+        "autonomous_delivery.permissions.direct_main_push_allowed",
+    )
+    require_bool(
+        permissions.get("admin_bypass_allowed"),
+        False,
+        "autonomous_delivery.permissions.admin_bypass_allowed",
+    )
+    require_bool(
+        active_slice.get("scope_exception"),
+        True,
+        "scope.active_slice.scope_exception",
+    )
+
+    pr_budget = autonomous.get("pr_budget")
+    if not isinstance(pr_budget, dict):
+        fail("ACTIVE_GOAL.toml: missing [autonomous_delivery.pr_budget]")
+    require_bool(
+        pr_budget.get("allow_scope_exception_auto_merge"),
+        False,
+        "autonomous_delivery.pr_budget.allow_scope_exception_auto_merge",
+    )
+
+    merge_policy = autonomous.get("merge_policy")
+    if not isinstance(merge_policy, dict):
+        fail("ACTIVE_GOAL.toml: missing [autonomous_delivery.merge_policy]")
+    expected_merge_policy = {
+        "default_merge_method": "squash",
+        "require_base_synced": True,
+        "require_merge_method_selected": True,
+        "require_no_admin_bypass": True,
+        "require_no_direct_main_push": True,
+    }
+    for key, expected in expected_merge_policy.items():
+        if merge_policy.get(key) != expected:
+            fail(f"autonomous_delivery.merge_policy.{key}: expected {expected!r}")
+
+    for name, expected in CORRECTNESS_DELIVERY_TRANSITIONS.items():
+        require_transition_exact(transitions, name, expected)
+
+    for state, expected_names in CORRECTNESS_DELIVERY_OUTGOING.items():
+        observed_names = {
+            transition["name"]
+            for transition in transitions
+            if state in transition.get("from", [])
+        }
+        if observed_names != expected_names:
+            fail(
+                f"autonomous_delivery.transitions from {state}: expected "
+                f"{sorted(expected_names)!r}, got {sorted(observed_names)!r}"
+            )
 
 
 def main() -> int:
@@ -426,6 +690,8 @@ def main() -> int:
             values = require_list(transition.get(key), f"autonomous_delivery.transitions[{index}].{key}")
             if key in {"from", "allowed_actions"} and not values:
                 fail(f"autonomous_delivery.transitions[{index}].{key}: expected non-empty list")
+
+    validate_correctness_delivery_sequence(autonomous, active_slice, transitions)
 
     require_transition_shape(
         transitions,

@@ -19,6 +19,6 @@ pub(crate) use generation::IPC_PROTOCOL_VERSION;
 pub(crate) use generation::{DaemonGenerationOwner, GenerationError, OwnerMode};
 pub(crate) use metrics::{process_metrics, IpcMetricsSnapshot};
 pub(crate) use service::{
-    projection_service_health, search_repair_reason_label, service_error_json, ServiceErrorCode,
-    ServiceHealth, ServiceState,
+    projection_service_health, repair_progress_json, search_repair_reason_label,
+    service_error_json, ServiceErrorCode, ServiceHealth, ServiceState,
 };

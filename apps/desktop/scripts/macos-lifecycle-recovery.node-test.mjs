@@ -26,31 +26,57 @@ import {
   rollbackUpgradeTransaction,
 } from "./macos-lifecycle-transaction.mjs";
 import {
+  createInstallReceiptEvidence,
   persistInstallReceipt,
   readInstallReceipt,
   removeInstallReceipt,
 } from "./macos-install-receipt.mjs";
 import {
+  LEGACY_EXACT_COMPOSITION_DIGEST,
+  LEGACY_EXACT_DMG_SHA256,
+  LEGACY_INSTALL_RECEIPT_FILE,
+  legacyExactInstallReceiptPath,
+  readInstallReceiptSet,
+  readLegacyExactInstallReceipt,
+  removeLegacyExactInstallReceipt,
+  validateLegacyExactInstallReceipt,
+} from "./macos-legacy-exact-artifact.mjs";
+import {
   acquireLifecycleLock,
   prepareLifecycleLockFile,
   releaseLifecycleLock,
 } from "./macos-lifecycle-lock.mjs";
-import { prepareOwnerEvidenceDirectory } from "./macos-owner-evidence-store.mjs";
+import {
+  persistOwnerEvidence,
+  prepareOwnerEvidenceDirectory,
+} from "./macos-owner-evidence-store.mjs";
 import { lifecycleWorkspacePaths } from "./macos-lifecycle-workspace.mjs";
 
 const OLD_VERSION = "0.1.1";
 const NEW_VERSION = "0.1.2";
-const OLD_DIGEST = "a".repeat(64);
+const OLD_DIGEST = LEGACY_EXACT_COMPOSITION_DIGEST;
 const NEW_DIGEST = "b".repeat(64);
+const SOURCE_COMMIT = "e".repeat(40);
 
 function receipt(version) {
+  if (version === OLD_VERSION) {
+    return {
+      schema_version: "resume-ir.macos-install-receipt.v1",
+      bundle_id: "local.resume-ir.desktop",
+      version,
+      target_triple: "aarch64-apple-darwin",
+      composition_digest: OLD_DIGEST,
+      dmg_sha256: LEGACY_EXACT_DMG_SHA256,
+    };
+  }
   return {
-    schema_version: "resume-ir.macos-install-receipt.v1",
+    schema_version: "resume-ir.macos-install-receipt.v2",
     bundle_id: "local.resume-ir.desktop",
     version,
     target_triple: "aarch64-apple-darwin",
-    composition_digest: version === OLD_VERSION ? OLD_DIGEST : NEW_DIGEST,
-    dmg_sha256: version === OLD_VERSION ? "c".repeat(64) : "d".repeat(64),
+    source_commit: SOURCE_COMMIT,
+    composition_digest: NEW_DIGEST,
+    dmg_sha256: "d".repeat(64),
   };
 }
 
@@ -68,9 +94,9 @@ function journal(operation, phase) {
     return createLifecycleJournal({
       operation,
       phase,
-      oldVersion: OLD_VERSION,
-      oldCompositionDigest: OLD_DIGEST,
-      oldReceipt: receipt(OLD_VERSION),
+      oldVersion: NEW_VERSION,
+      oldCompositionDigest: NEW_DIGEST,
+      oldReceipt: receipt(NEW_VERSION),
     });
   }
   return createLifecycleJournal({
@@ -123,10 +149,21 @@ async function requireVersion(target, expected) {
   assert.equal(await readFile(path.join(target, "version"), "utf8"), expected);
 }
 
+async function persistLegacyReceipt({ applicationSupportRoot, receipt: value }) {
+  return persistOwnerEvidence({
+    applicationSupportRoot,
+    fileName: LEGACY_INSTALL_RECEIPT_FILE,
+    value,
+    maxBytes: 4 * 1024,
+    validate: validateLegacyExactInstallReceipt,
+    label: "legacy exact install receipt",
+  });
+}
+
 function callbacks(values) {
   const calls = { old: [], current: [], register: [], unregister: [] };
   const verifyOld = async (target) => {
-    await requireVersion(target, OLD_VERSION);
+    await requireVersion(target, NEW_VERSION);
     calls.old.push(target);
   };
   const verifyNew = async (target) => {
@@ -139,10 +176,6 @@ function callbacks(values) {
     verifyNew,
     classifyTarget: async (target) => {
       const version = await readFile(path.join(target, "version"), "utf8");
-      if (version === OLD_VERSION) {
-        await verifyOld(target);
-        return "old";
-      }
       if (version === NEW_VERSION) {
         await verifyNew(target);
         return "new";
@@ -152,11 +185,59 @@ function callbacks(values) {
     register: async (target) => calls.register.push(target),
     unregister: async (target) => calls.unregister.push(target),
     readReceipt: readInstallReceipt,
-    persistReceipt: persistInstallReceipt,
+    persistReceipt: createInstallReceiptEvidence,
     removeReceipt: removeInstallReceipt,
     applicationSupportRoot: values.applicationSupportRoot,
     applicationsRoot: values.applicationsRoot,
     lifecycleLockCapability: values.lifecycleLockCapability,
+  };
+}
+
+function upgradeCallbacks(values) {
+  const base = callbacks(values);
+  const verifyOld = async (target) => {
+    await requireVersion(target, OLD_VERSION);
+    base.calls.old.push(target);
+  };
+  const verifyNew = async (target) => {
+    await requireVersion(target, NEW_VERSION);
+    base.calls.current.push(target);
+  };
+  const inspectReceiptSet = () =>
+    readInstallReceiptSet({
+      applicationSupportRoot: values.applicationSupportRoot,
+    });
+  return {
+    ...base,
+    verifyOld,
+    verifyNew,
+    classifyTarget: async (target) => {
+      const [version, receiptSet] = await Promise.all([
+        readFile(path.join(target, "version"), "utf8"),
+        inspectReceiptSet(),
+      ]);
+      if (version === OLD_VERSION) {
+        if (receiptSet.state !== "legacy_only") {
+          throw new Error("upgrade transaction state is ambiguous");
+        }
+        await verifyOld(target);
+        return "old";
+      }
+      if (version === NEW_VERSION) {
+        await verifyNew(target);
+        return "new";
+      }
+      throw new Error("target version is invalid");
+    },
+    readReceipt: async () => {
+      const receiptSet = await inspectReceiptSet();
+      return receiptSet.state === "legacy_only"
+        ? receiptSet.legacy_receipt
+        : receiptSet.current_receipt;
+    },
+    persistReceipt: createInstallReceiptEvidence,
+    readReceiptSet: inspectReceiptSet,
+    removeLegacyReceipt: removeLegacyExactInstallReceipt,
   };
 }
 
@@ -217,7 +298,7 @@ test("resumes upgrade after target-to-backup crash", async (context) => {
   const paths = pathsFor(values, prepared);
   await writeApp(values.target, OLD_VERSION);
   await writeApp(paths.ready, NEW_VERSION);
-  await persistInstallReceipt({
+  await persistLegacyReceipt({
     applicationSupportRoot: values.applicationSupportRoot,
     receipt: receipt(OLD_VERSION),
   });
@@ -226,7 +307,7 @@ test("resumes upgrade after target-to-backup crash", async (context) => {
     journal: prepared,
   });
   const base = {
-    ...callbacks(values),
+    ...upgradeCallbacks(values),
     journal: prepared,
     target: values.target,
   };
@@ -247,17 +328,23 @@ test("resumes upgrade after target-to-backup crash", async (context) => {
   assert.deepEqual(await readInstallReceipt({
     applicationSupportRoot: values.applicationSupportRoot,
   }), receipt(NEW_VERSION));
+  assert.equal(
+    (await readInstallReceiptSet({
+      applicationSupportRoot: values.applicationSupportRoot,
+    })).state,
+    "current_only",
+  );
   assert.deepEqual(await readdir(values.applicationsRoot), ["resume-ir.app"]);
   await assertJournalRemoved(values);
 });
 
-test("repeated upgrade crashes resume after promotion, receipt commit, and backup cleanup", async (context) => {
+test("repeated upgrade crashes preserve receipt commit ordering and resume safely", async (context) => {
   const values = await fixture(context);
   let current = journal("upgrade", "upgrade_stage_ready");
   const paths = pathsFor(values, current);
   await writeApp(values.target, OLD_VERSION);
   await writeApp(paths.ready, NEW_VERSION);
-  await persistInstallReceipt({
+  await persistLegacyReceipt({
     applicationSupportRoot: values.applicationSupportRoot,
     receipt: receipt(OLD_VERSION),
   });
@@ -266,29 +353,65 @@ test("repeated upgrade crashes resume after promotion, receipt commit, and backu
     journal: current,
   });
   const base = {
-    ...callbacks(values),
+    ...upgradeCallbacks(values),
     target: values.target,
   };
-  for (const phase of [
-    "upgrade_target_promoted",
-    "upgrade_receipt_committed",
-    "upgrade_complete",
-  ]) {
+  const crashCases = [
+    {
+      phase: "upgrade_target_promoted",
+      journalPhase: "upgrade_before_promotion",
+      receiptState: "legacy_only",
+    },
+    {
+      phase: "upgrade_receipt_committed",
+      journalPhase: "upgrade_before_receipt_commit",
+      receiptState: "both_valid",
+    },
+    {
+      phase: "upgrade_before_legacy_receipt_removal",
+      journalPhase: "upgrade_receipt_committed",
+      receiptState: "both_valid",
+    },
+    {
+      phase: "upgrade_legacy_receipt_removed",
+      journalPhase: "upgrade_before_legacy_receipt_removal",
+      receiptState: "current_only",
+    },
+    {
+      phase: "upgrade_complete",
+      journalPhase: "upgrade_backup_tombstoned",
+      receiptState: "current_only",
+    },
+  ];
+  for (const crashCase of crashCases) {
     await assert.rejects(
       recoverUpgradeTransaction({
         ...base,
         journal: current,
-        persistJournal: failOnceAtPhase(phase),
+        persistJournal: failOnceAtPhase(crashCase.phase),
       }),
       /simulated crash/,
     );
     current = await readJournal(values);
+    assert.equal(current.phase, crashCase.journalPhase);
+    assert.equal(
+      (await readInstallReceiptSet({
+        applicationSupportRoot: values.applicationSupportRoot,
+      })).state,
+      crashCase.receiptState,
+    );
   }
   await recoverUpgradeTransaction({ ...base, journal: current });
   await requireVersion(values.target, NEW_VERSION);
   assert.deepEqual(await readInstallReceipt({
     applicationSupportRoot: values.applicationSupportRoot,
   }), receipt(NEW_VERSION));
+  assert.equal(
+    (await readInstallReceiptSet({
+      applicationSupportRoot: values.applicationSupportRoot,
+    })).state,
+    "current_only",
+  );
   assert.deepEqual(await readdir(values.applicationsRoot), ["resume-ir.app"]);
   await assertJournalRemoved(values);
 });
@@ -329,7 +452,7 @@ test("invalid transaction-owned partial stage is quarantined and rolled back", a
   await writeApp(values.target, OLD_VERSION);
   await mkdir(paths.partial);
   await writeFile(path.join(paths.partial, "incomplete"), "partial-copy");
-  await persistInstallReceipt({
+  await persistLegacyReceipt({
     applicationSupportRoot: values.applicationSupportRoot,
     receipt: receipt(OLD_VERSION),
   });
@@ -337,12 +460,27 @@ test("invalid transaction-owned partial stage is quarantined and rolled back", a
     applicationSupportRoot: values.applicationSupportRoot,
     journal: current,
   });
-  await recoverUpgradeTransaction({
-    ...callbacks(values),
+  const result = await rollbackUpgradeTransaction({
+    ...upgradeCallbacks(values),
     journal: current,
     target: values.target,
   });
+  assert.equal(result.outcome, "rolled_back");
   await requireVersion(values.target, OLD_VERSION);
+  assert.equal(
+    await readFile(
+      legacyExactInstallReceiptPath(values.applicationSupportRoot),
+      "utf8",
+    ),
+    `${JSON.stringify(receipt(OLD_VERSION))}\n`,
+  );
+  assert.deepEqual(await readLegacyExactInstallReceipt({
+    applicationSupportRoot: values.applicationSupportRoot,
+  }), receipt(OLD_VERSION));
+  assert.equal(await readInstallReceipt({
+    applicationSupportRoot: values.applicationSupportRoot,
+    allowMissing: true,
+  }), undefined);
   assert.deepEqual(await readdir(values.applicationsRoot), ["resume-ir.app"]);
   await assertJournalRemoved(values);
 });
@@ -361,7 +499,7 @@ test("partial tombstone GC resumes without re-verifying deleted backup bytes", a
     applicationSupportRoot: values.applicationSupportRoot,
     journal: current,
   });
-  const verification = callbacks(values);
+  const verification = upgradeCallbacks(values);
   let failed = false;
   await assert.rejects(
     recoverUpgradeTransaction({
@@ -397,10 +535,10 @@ test("partial tombstone GC resumes without re-verifying deleted backup bytes", a
 
 test("uninstall resumes after quarantine and receipt removal crashes", async (context) => {
   const values = await fixture(context);
-  await writeApp(values.target, OLD_VERSION);
+  await writeApp(values.target, NEW_VERSION);
   await persistInstallReceipt({
     applicationSupportRoot: values.applicationSupportRoot,
-    receipt: receipt(OLD_VERSION),
+    receipt: receipt(NEW_VERSION),
   });
   let current = journal("uninstall", "uninstall_prepared");
   await persistLifecycleJournal({
@@ -446,12 +584,109 @@ test("tampered backup fails closed without deleting either surviving version", a
     journal: current,
   });
   const base = {
-    ...callbacks(values),
+    ...upgradeCallbacks(values),
     journal: current,
     target: values.target,
   };
   await assert.rejects(recoverUpgradeTransaction(base));
   await requireVersion(values.target, NEW_VERSION);
   await requireVersion(paths.backup, "9.9.9");
+  assert.deepEqual(await readJournal(values), current);
+});
+
+test("old target with a v2 receipt fails closed and preserves both generations", async (context) => {
+  const values = await fixture(context);
+  const current = journal("upgrade", "upgrade_stage_ready");
+  const paths = pathsFor(values, current);
+  await writeApp(values.target, OLD_VERSION);
+  await writeApp(paths.ready, NEW_VERSION);
+  await persistLegacyReceipt({
+    applicationSupportRoot: values.applicationSupportRoot,
+    receipt: receipt(OLD_VERSION),
+  });
+  await persistInstallReceipt({
+    applicationSupportRoot: values.applicationSupportRoot,
+    receipt: receipt(NEW_VERSION),
+  });
+  await persistLifecycleJournal({
+    applicationSupportRoot: values.applicationSupportRoot,
+    journal: current,
+  });
+
+  await assert.rejects(
+    recoverUpgradeTransaction({
+      ...upgradeCallbacks(values),
+      journal: current,
+      target: values.target,
+    }),
+    /upgrade transaction state is ambiguous/,
+  );
+  await requireVersion(values.target, OLD_VERSION);
+  await requireVersion(paths.ready, NEW_VERSION);
+  assert.equal(
+    (await readInstallReceiptSet({
+      applicationSupportRoot: values.applicationSupportRoot,
+    })).state,
+    "both_valid",
+  );
+  assert.deepEqual(await readJournal(values), current);
+});
+
+test("new target without either receipt fails closed and preserves App evidence", async (context) => {
+  const values = await fixture(context);
+  const current = journal("upgrade", "upgrade_target_promoted");
+  const paths = pathsFor(values, current);
+  await writeApp(values.target, NEW_VERSION);
+  await writeApp(paths.backup, OLD_VERSION);
+  await persistLifecycleJournal({
+    applicationSupportRoot: values.applicationSupportRoot,
+    journal: current,
+  });
+
+  await assert.rejects(
+    recoverUpgradeTransaction({
+      ...upgradeCallbacks(values),
+      journal: current,
+      target: values.target,
+    }),
+    /install receipt set is invalid/,
+  );
+  await requireVersion(values.target, NEW_VERSION);
+  await requireVersion(paths.backup, OLD_VERSION);
+  assert.deepEqual(await readJournal(values), current);
+});
+
+test("mismatched v2 receipt fails closed without changing App or receipt bytes", async (context) => {
+  const values = await fixture(context);
+  const current = journal("upgrade", "upgrade_receipt_committed");
+  const paths = pathsFor(values, current);
+  const mismatched = {
+    ...receipt(NEW_VERSION),
+    composition_digest: "f".repeat(64),
+  };
+  await writeApp(values.target, NEW_VERSION);
+  await writeApp(paths.backup, OLD_VERSION);
+  await persistInstallReceipt({
+    applicationSupportRoot: values.applicationSupportRoot,
+    receipt: mismatched,
+  });
+  await persistLifecycleJournal({
+    applicationSupportRoot: values.applicationSupportRoot,
+    journal: current,
+  });
+
+  await assert.rejects(
+    recoverUpgradeTransaction({
+      ...upgradeCallbacks(values),
+      journal: current,
+      target: values.target,
+    }),
+    /lifecycle receipt does not match journal/,
+  );
+  await requireVersion(values.target, NEW_VERSION);
+  await requireVersion(paths.backup, OLD_VERSION);
+  assert.deepEqual(await readInstallReceipt({
+    applicationSupportRoot: values.applicationSupportRoot,
+  }), mismatched);
   assert.deepEqual(await readJournal(values), current);
 });

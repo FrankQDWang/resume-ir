@@ -8,8 +8,8 @@ use super::{
     model::{
         EnabledVectorSnapshotDescriptor, FullTextSnapshotDescriptor, SearchPublicationFailure,
         SearchPublicationRecord, SearchPublicationState, SearchPublicationValidation,
-        VectorSnapshotDescriptor, FULLTEXT_INDEX_SCHEMA_V2, FULLTEXT_MANIFEST_SCHEMA_V2,
-        VECTOR_INDEX_SCHEMA_V3, VECTOR_MANIFEST_SCHEMA_V3,
+        VectorSnapshotDescriptor, FULLTEXT_INDEX_SCHEMA_V3, FULLTEXT_MANIFEST_SCHEMA_V3,
+        VECTOR_INDEX_SCHEMA_V4, VECTOR_MANIFEST_SCHEMA_V4,
     },
     validation::{publication_error, search_publication_fingerprint, validate_descriptors},
 };
@@ -72,8 +72,8 @@ fn read_publication(row: &rusqlite::Row<'_>) -> Result<SearchPublicationRecord> 
         .map(|generation| {
             let manifest_schema = row.get::<_, String>(8).map_err(MetaStoreError::storage)?;
             let index_schema = row.get::<_, String>(9).map_err(MetaStoreError::storage)?;
-            if manifest_schema != FULLTEXT_MANIFEST_SCHEMA_V2
-                || index_schema != FULLTEXT_INDEX_SCHEMA_V2
+            if manifest_schema != FULLTEXT_MANIFEST_SCHEMA_V3
+                || index_schema != FULLTEXT_INDEX_SCHEMA_V3
             {
                 return Err(publication_error(
                     SearchPublicationFailure::InvalidPersistedState,
@@ -161,7 +161,7 @@ fn read_vector_descriptor(
 ) -> Result<VectorSnapshotDescriptor> {
     let manifest_schema = row.get::<_, String>(14).map_err(MetaStoreError::storage)?;
     let index_schema = row.get::<_, String>(15).map_err(MetaStoreError::storage)?;
-    if manifest_schema != VECTOR_MANIFEST_SCHEMA_V3 || index_schema != VECTOR_INDEX_SCHEMA_V3 {
+    if manifest_schema != VECTOR_MANIFEST_SCHEMA_V4 || index_schema != VECTOR_INDEX_SCHEMA_V4 {
         return Err(publication_error(
             SearchPublicationFailure::InvalidPersistedState,
         ));

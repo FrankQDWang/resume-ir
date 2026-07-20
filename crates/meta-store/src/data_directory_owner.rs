@@ -161,7 +161,7 @@ impl DataDirectoryOwnerLease {
         }
     }
 
-    /// Opens the current v28 store, creating or copy-on-write migrating it when
+    /// Opens the current v29 store, creating or copy-on-write migrating it when
     /// necessary. The bound canonical directory cannot be substituted by the
     /// caller.
     pub fn open_store(&self) -> StoreResult<OwnedMetaStore> {

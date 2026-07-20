@@ -45,6 +45,166 @@ impl FullTextSnapshotGcAcquisition {
     }
 }
 
+/// Outcome of one non-waiting retirement attempt for an exact unpublished
+/// generation. The caller must supply the metadata-retained generation set;
+/// a retained target is rejected before any filesystem mutation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FullTextGenerationRetirement {
+    /// No snapshot, generation-scoped staging directory, or generation pin was
+    /// present for the target.
+    Absent,
+    /// A publication/root-acquisition fence or exact generation reader is
+    /// currently held. No filesystem mutation occurred.
+    Deferred,
+    /// Every artifact belonging to the exact target was durably removed.
+    Retired(FullTextGenerationRetirementSummary),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FullTextGenerationRetirementSummary {
+    removed_snapshot: bool,
+    removed_staging: usize,
+    removed_generation_pin: bool,
+}
+
+impl FullTextGenerationRetirementSummary {
+    pub fn removed_snapshot(self) -> bool {
+        self.removed_snapshot
+    }
+
+    pub fn removed_staging(self) -> usize {
+        self.removed_staging
+    }
+
+    pub fn removed_generation_pin(self) -> bool {
+        self.removed_generation_pin
+    }
+}
+
+/// Retires only `generation` and its generation-scoped staging/pin artifacts.
+///
+/// Acquisition follows the normal GC lock order and never waits. All target
+/// identities and the generation pin are acquired before the root reader fence
+/// is released, so a racing exact reader either wins and defers this attempt or
+/// observes the generation as absent. Unrelated snapshots, staging directories,
+/// and pins are never selected for deletion.
+pub fn try_retire_unpublished_generation(
+    index_root: &Path,
+    generation: &str,
+    retained_generations: &BTreeSet<String>,
+) -> Result<FullTextGenerationRetirement> {
+    validate_snapshot_name(generation)?;
+    if retained_generations.contains(generation) {
+        return Err(FullTextError::internal(
+            "retained full-text generation cannot be retired",
+        ));
+    }
+    match fs::symlink_metadata(index_root) {
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(FullTextGenerationRetirement::Absent);
+        }
+        Err(error) => return Err(FullTextError::io(error)),
+    }
+    let Some(acquisition) = try_acquire_snapshot_gc(index_root)? else {
+        return Ok(FullTextGenerationRetirement::Deferred);
+    };
+    if !acquisition.protects(&acquisition.index_root)? {
+        return Err(FullTextError::internal(
+            "full-text retirement acquisition belongs to another index root",
+        ));
+    }
+
+    let snapshot = acquire_optional_snapshot_directory(
+        &acquisition.index_root.join(SNAPSHOTS_DIR).join(generation),
+    )?;
+    let encrypted_staging = collect_exact_staging_candidates(
+        &acquisition.index_root.join(SNAPSHOTS_DIR),
+        generation,
+        ".tmp-",
+    )?;
+    let staging = collect_exact_staging_candidates(
+        &acquisition.index_root.join(STAGING_DIR),
+        generation,
+        ".staging-",
+    )?;
+    let generation_pins = collect_generation_pins(&acquisition.index_root)?;
+    let generation_pin = generation_pins.get(generation).cloned();
+    if snapshot.is_some() && generation_pin.is_none() {
+        return Err(FullTextError::internal(
+            "full-text published snapshot generation pin missing",
+        ));
+    }
+    let generation_pin = match generation_pin {
+        Some(pin_path) => {
+            let Some(pin) = SnapshotGenerationGcPin::try_acquire(pin_path)? else {
+                return Ok(FullTextGenerationRetirement::Deferred);
+            };
+            Some(pin)
+        }
+        None => None,
+    };
+    if snapshot.is_none()
+        && encrypted_staging.is_empty()
+        && staging.is_empty()
+        && generation_pin.is_none()
+    {
+        return Ok(FullTextGenerationRetirement::Absent);
+    }
+
+    if !acquisition.protects(&acquisition.index_root)? {
+        return Err(FullTextError::internal(
+            "full-text retirement layout changed during preparation",
+        ));
+    }
+    if let Some(snapshot) = &snapshot {
+        snapshot.validate_current()?;
+    }
+    for candidate in encrypted_staging.iter().chain(&staging) {
+        candidate.validate_current()?;
+    }
+    if let Some(pin) = &generation_pin {
+        pin.validate_current()?;
+    }
+
+    let FullTextSnapshotGcAcquisition {
+        index_root,
+        root_acquisition,
+        publication,
+    } = acquisition;
+    drop(root_acquisition);
+    publication.validate_layout()?;
+
+    let mut summary = FullTextGenerationRetirementSummary::default();
+    if let Some(snapshot) = &snapshot {
+        snapshot.validate_current()?;
+        remove_pinned_snapshot_dir_all(snapshot)?;
+        summary.removed_snapshot = true;
+    }
+    for candidate in encrypted_staging.iter().chain(&staging) {
+        candidate.validate_current()?;
+        remove_pinned_snapshot_dir_all(candidate)?;
+        summary.removed_staging += 1;
+    }
+    if summary.removed_snapshot || !encrypted_staging.is_empty() {
+        sync_directory(&index_root.join(SNAPSHOTS_DIR))?;
+    }
+    if !staging.is_empty() {
+        sync_directory(&index_root.join(STAGING_DIR))?;
+    }
+
+    if let Some(pin) = generation_pin {
+        pin.validate_current()?;
+        let pin_path = pin.pin_path().to_path_buf();
+        drop(pin);
+        fs::remove_file(pin_path).map_err(FullTextError::io)?;
+        sync_directory(&index_root.join(GENERATION_PINS_DIR))?;
+        summary.removed_generation_pin = true;
+    }
+    publication.validate_layout()?;
+    Ok(FullTextGenerationRetirement::Retired(summary))
+}
+
 /// Result of preflighting every candidate under the acquisition fence.
 pub enum FullTextSnapshotGcPreparation {
     /// At least one candidate generation has a live reader. No deletion has
@@ -155,11 +315,29 @@ pub fn prepare_snapshot_gc(
 pub fn commit_snapshot_gc(
     prepared: Box<PreparedFullTextSnapshotGc>,
 ) -> FullTextSnapshotGcCommitReport {
-    commit_snapshot_gc_with_observer(prepared, |_| Ok(()))
+    commit_snapshot_gc_with_control_and_observer(prepared, || false, |_| Ok(()))
 }
 
+/// Commits a prepared plan while observing cancellation between crash-safe
+/// generation, staging-directory, durability, and pin-removal boundaries.
+pub fn commit_snapshot_gc_with_cancel_check(
+    prepared: Box<PreparedFullTextSnapshotGc>,
+    cancel_check: &dyn Fn() -> bool,
+) -> FullTextSnapshotGcCommitReport {
+    commit_snapshot_gc_with_control_and_observer(prepared, cancel_check, |_| Ok(()))
+}
+
+#[cfg(test)]
 fn commit_snapshot_gc_with_observer(
     prepared: Box<PreparedFullTextSnapshotGc>,
+    after_removal: impl FnMut(usize) -> Result<()>,
+) -> FullTextSnapshotGcCommitReport {
+    commit_snapshot_gc_with_control_and_observer(prepared, || false, after_removal)
+}
+
+fn commit_snapshot_gc_with_control_and_observer(
+    prepared: Box<PreparedFullTextSnapshotGc>,
+    mut cancel_check: impl FnMut() -> bool,
     mut after_removal: impl FnMut(usize) -> Result<()>,
 ) -> FullTextSnapshotGcCommitReport {
     let prepared = *prepared;
@@ -168,6 +346,10 @@ fn commit_snapshot_gc_with_observer(
     let total_pins = prepared.generation_pins.len();
     let mut progress = SnapshotPurgeSummary::default();
     let mut removed_entries = 0_usize;
+
+    if cancel_check() {
+        return FullTextSnapshotGcCommitReport::Interrupted(progress);
+    }
 
     let preflight = prepared
         .publication
@@ -185,6 +367,9 @@ fn commit_snapshot_gc_with_observer(
     }
 
     for (_, candidate) in &prepared.snapshots {
+        if cancel_check() {
+            return FullTextSnapshotGcCommitReport::Interrupted(progress);
+        }
         if let Err(error) = candidate
             .validate_current()
             .and_then(|_| remove_pinned_snapshot_dir_all(candidate))
@@ -212,6 +397,9 @@ fn commit_snapshot_gc_with_observer(
         }
     }
     for candidate in prepared.encrypted_staging.iter().chain(&prepared.staging) {
+        if cancel_check() {
+            return FullTextSnapshotGcCommitReport::Interrupted(progress);
+        }
         if let Err(error) = candidate
             .validate_current()
             .and_then(|_| remove_pinned_snapshot_dir_all(candidate))
@@ -239,6 +427,9 @@ fn commit_snapshot_gc_with_observer(
         }
     }
 
+    if cancel_check() {
+        return FullTextSnapshotGcCommitReport::Interrupted(progress);
+    }
     let snapshots_root = prepared.index_root.join(SNAPSHOTS_DIR);
     let staging_root = prepared.index_root.join(STAGING_DIR);
     if progress.removed_snapshots != 0 || !prepared.encrypted_staging.is_empty() {
@@ -254,6 +445,9 @@ fn commit_snapshot_gc_with_observer(
         }
     }
     if !prepared.staging.is_empty() {
+        if cancel_check() {
+            return FullTextSnapshotGcCommitReport::Interrupted(progress);
+        }
         if let Err(error) = sync_directory(&staging_root) {
             return partial_report(
                 progress,
@@ -273,6 +467,9 @@ fn commit_snapshot_gc_with_observer(
         .collect::<Vec<_>>();
     drop(prepared.generation_pins);
     for pin_path in pin_paths {
+        if cancel_check() {
+            return FullTextSnapshotGcCommitReport::Interrupted(progress);
+        }
         if let Err(error) = fs::remove_file(pin_path).map_err(FullTextError::io) {
             return partial_report(
                 progress,
@@ -286,6 +483,9 @@ fn commit_snapshot_gc_with_observer(
         progress.removed_generation_pins += 1;
     }
     if progress.removed_generation_pins != 0 {
+        if cancel_check() {
+            return FullTextSnapshotGcCommitReport::Interrupted(progress);
+        }
         if let Err(error) = sync_directory(&prepared.index_root.join(GENERATION_PINS_DIR)) {
             return partial_report(
                 progress,
@@ -296,6 +496,9 @@ fn commit_snapshot_gc_with_observer(
                 &error,
             );
         }
+    }
+    if cancel_check() {
+        return FullTextSnapshotGcCommitReport::Interrupted(progress);
     }
     if let Err(error) = prepared.publication.validate_layout() {
         return partial_report(
@@ -362,6 +565,7 @@ impl SnapshotPurgeSummary {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FullTextSnapshotGcCommitReport {
     Complete(SnapshotPurgeSummary),
+    Interrupted(SnapshotPurgeSummary),
     PartialFailure(SnapshotPurgePartialFailure),
 }
 
@@ -423,9 +627,10 @@ impl FullTextSnapshotGcFailureClass {
     fn from_error(error: &FullTextError) -> Self {
         match error {
             FullTextError::Internal { .. } => Self::LayoutChanged,
-            FullTextError::Cancelled | FullTextError::Io { .. } | FullTextError::Tantivy { .. } => {
-                Self::StorageUnavailable
-            }
+            FullTextError::Cancelled
+            | FullTextError::PublicationBusy
+            | FullTextError::Io { .. }
+            | FullTextError::Tantivy { .. } => Self::StorageUnavailable,
         }
     }
 }
@@ -434,6 +639,38 @@ struct SnapshotCandidates {
     published: BTreeSet<String>,
     snapshots: Vec<(String, PinnedSnapshotDirectory)>,
     encrypted_staging: Vec<PinnedSnapshotDirectory>,
+}
+
+fn acquire_optional_snapshot_directory(path: &Path) -> Result<Option<PinnedSnapshotDirectory>> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => PinnedSnapshotDirectory::acquire(path).map(Some),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(FullTextError::io(error)),
+    }
+}
+
+fn collect_exact_staging_candidates(
+    root: &Path,
+    generation: &str,
+    separator: &str,
+) -> Result<Vec<PinnedSnapshotDirectory>> {
+    validate_snapshot_directory(root)?;
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(root).map_err(FullTextError::io)? {
+        let entry = entry.map_err(FullTextError::io)?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| FullTextError::internal("full-text staging entry name invalid"))?;
+        if !name.starts_with('.') {
+            continue;
+        }
+        if controlled_staging_generation(&name, separator)? == generation {
+            candidates.push(PinnedSnapshotDirectory::acquire(&entry.path())?);
+        }
+    }
+    candidates.sort_by(|left, right| left.path().cmp(right.path()));
+    Ok(candidates)
 }
 
 fn collect_snapshot_candidates(
@@ -491,6 +728,10 @@ fn collect_staging_candidates(staging_root: &Path) -> Result<Vec<PinnedSnapshotD
 }
 
 fn validate_controlled_staging_name(name: &str, separator: &str) -> Result<()> {
+    controlled_staging_generation(name, separator).map(|_| ())
+}
+
+fn controlled_staging_generation<'name>(name: &'name str, separator: &str) -> Result<&'name str> {
     let name = name
         .strip_prefix('.')
         .ok_or_else(|| FullTextError::internal("full-text staging entry name invalid"))?;
@@ -503,7 +744,7 @@ fn validate_controlled_staging_name(name: &str, separator: &str) -> Result<()> {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
     {
-        Ok(())
+        Ok(snapshot_name)
     } else {
         Err(FullTextError::internal(
             "full-text staging entry name invalid",
@@ -516,6 +757,85 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn exact_retirement_defers_for_a_reader_and_never_collects_unrelated_artifacts() {
+        let index_root = temp_dir("exact-generation-retirement");
+        for generation in [
+            "generation-target",
+            "generation-retained",
+            "generation-unrelated",
+        ] {
+            publish_snapshot(&index_root, generation, [document()]).unwrap();
+        }
+        for path in [
+            index_root.join("snapshots/.generation-target.tmp-0123456789abcdef"),
+            index_root.join("staging/.generation-target.staging-0123456789abcdef"),
+            index_root.join("snapshots/.generation-unrelated.tmp-0123456789abcdef"),
+            index_root.join("staging/.generation-unrelated.staging-0123456789abcdef"),
+        ] {
+            ensure_private_snapshot_directory(&path).unwrap();
+        }
+        let retained = BTreeSet::from(["generation-retained".to_string()]);
+        let reader = FullTextIndex::open_snapshot(&index_root, "generation-target")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            try_retire_unpublished_generation(&index_root, "generation-target", &retained).unwrap(),
+            FullTextGenerationRetirement::Deferred
+        );
+        assert!(index_root.join("snapshots/generation-target").is_dir());
+        drop(reader);
+
+        let FullTextGenerationRetirement::Retired(summary) =
+            try_retire_unpublished_generation(&index_root, "generation-target", &retained).unwrap()
+        else {
+            panic!("exact target was not retired");
+        };
+        assert!(summary.removed_snapshot());
+        assert_eq!(summary.removed_staging(), 2);
+        assert!(summary.removed_generation_pin());
+        assert!(!index_root.join("snapshots/generation-target").exists());
+        assert!(!index_root
+            .join("generation-pins/generation-target.lock")
+            .exists());
+        for path in [
+            index_root.join("snapshots/generation-retained"),
+            index_root.join("snapshots/generation-unrelated"),
+            index_root.join("snapshots/.generation-unrelated.tmp-0123456789abcdef"),
+            index_root.join("staging/.generation-unrelated.staging-0123456789abcdef"),
+            index_root.join("generation-pins/generation-retained.lock"),
+            index_root.join("generation-pins/generation-unrelated.lock"),
+        ] {
+            assert!(
+                path.exists(),
+                "unrelated exact-generation artifact was removed"
+            );
+        }
+        assert_eq!(
+            try_retire_unpublished_generation(&index_root, "generation-target", &retained).unwrap(),
+            FullTextGenerationRetirement::Absent
+        );
+        let _ = fs::remove_dir_all(index_root);
+    }
+
+    #[test]
+    fn exact_retirement_rejects_a_metadata_retained_target() {
+        let index_root = temp_dir("exact-retained-rejected");
+        publish_snapshot(&index_root, "generation-retained", [document()]).unwrap();
+        let retained = BTreeSet::from(["generation-retained".to_string()]);
+
+        assert!(matches!(
+            try_retire_unpublished_generation(&index_root, "generation-retained", &retained),
+            Err(FullTextError::Internal { .. })
+        ));
+        assert!(index_root.join("snapshots/generation-retained").is_dir());
+        assert!(index_root
+            .join("generation-pins/generation-retained.lock")
+            .is_file());
+        let _ = fs::remove_dir_all(index_root);
+    }
 
     #[test]
     fn late_generation_identity_replacement_fails_before_any_gc_deletion() {
@@ -669,6 +989,47 @@ mod tests {
         assert!(!index_root
             .join("generation-pins/generation-z-free.lock")
             .exists());
+        let _ = fs::remove_dir_all(index_root);
+    }
+
+    #[test]
+    fn controlled_commit_interrupts_between_generation_removals() {
+        let index_root = temp_dir("controlled-commit-interrupts");
+        for generation in [
+            "generation-a-free",
+            "generation-b-retained",
+            "generation-z-free",
+        ] {
+            publish_snapshot(&index_root, generation, [document()]).unwrap();
+        }
+        let retained = BTreeSet::from(["generation-b-retained".to_string()]);
+        let acquisition = try_acquire_snapshot_gc(&index_root).unwrap().unwrap();
+        let FullTextSnapshotGcPreparation::Prepared(prepared) =
+            prepare_snapshot_gc(acquisition, &retained).unwrap()
+        else {
+            panic!("GC unexpectedly deferred");
+        };
+        let checks = std::cell::Cell::new(0_usize);
+        let cancel_check = || {
+            let next = checks.get() + 1;
+            checks.set(next);
+            next >= 3
+        };
+
+        let FullTextSnapshotGcCommitReport::Interrupted(progress) =
+            commit_snapshot_gc_with_cancel_check(prepared, &cancel_check)
+        else {
+            panic!("controlled GC did not interrupt");
+        };
+        assert_eq!(progress.removed_snapshots(), 1);
+        assert_eq!(checks.get(), 3);
+        assert_eq!(
+            ["generation-a-free", "generation-z-free"]
+                .into_iter()
+                .filter(|generation| index_root.join("snapshots").join(generation).exists())
+                .count(),
+            1
+        );
         let _ = fs::remove_dir_all(index_root);
     }
 

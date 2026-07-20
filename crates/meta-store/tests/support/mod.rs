@@ -5,10 +5,10 @@ use meta_store::{
     ActiveSearchProjection, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease,
     EphemeralMetaStore, FullTextSnapshotDescriptor, ImportProcessingContract, ImportRootKind,
     ImportScanProfile, ImportScanScope, ImportTask, ImportTaskStatus, MigrationRebuildBarrierToken,
-    OwnedMetaStore, ProjectedDocumentSnapshot, SearchProjectionServiceState,
-    SearchPublicationCommit, SearchPublicationDraft, SearchPublicationOutcome,
-    SearchPublicationValidation, TerminalDocumentUpdate, UnixTimestamp, VectorSnapshotDescriptor,
-    CLASSIFIER_EPOCH,
+    MigrationRebuildPublicationAttemptAcquire, OwnedMetaStore, ProjectedDocumentSnapshot,
+    SearchProjectionServiceState, SearchPublicationCommit, SearchPublicationDraft,
+    SearchPublicationOutcome, SearchPublicationValidation, TerminalDocumentUpdate, UnixTimestamp,
+    VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
 };
 use tempfile::TempDir;
 
@@ -430,7 +430,14 @@ pub fn ensure_ready_empty_search_owned(store: &OwnedMetaStore, now: UnixTimestam
         projection_digest: projection_digest.clone(),
         now,
     };
-    let session = store.wait_for_search_publication_session().unwrap();
+    let mut session = store.wait_for_search_publication_session().unwrap();
+    assert!(matches!(
+        session
+            .acquire_migration_rebuild_publication_attempt(&barrier, now)
+            .unwrap(),
+        MigrationRebuildPublicationAttemptAcquire::Started(_)
+            | MigrationRebuildPublicationAttemptAcquire::InProgress
+    ));
     assert_eq!(
         session.begin_search_publication(&draft).unwrap(),
         SearchPublicationOutcome::Applied

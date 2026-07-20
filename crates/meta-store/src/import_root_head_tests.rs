@@ -476,7 +476,14 @@ fn configured_source_change_supersedes_running_and_completed_migration_heads() {
         .unwrap();
     let generation = "source-change-superseded-publication".to_string();
     let projection_digest = SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap();
-    let session = store.wait_for_search_publication_session().unwrap();
+    let mut session = store.wait_for_search_publication_session().unwrap();
+    let _attempt = match session
+        .acquire_migration_rebuild_publication_attempt(&barrier, timestamp(6))
+        .unwrap()
+    {
+        crate::MigrationRebuildPublicationAttemptAcquire::Started(attempt) => attempt,
+        other => panic!("expected migration attempt, got {other:?}"),
+    };
     assert_eq!(
         session
             .begin_search_publication(&SearchPublicationDraft {
@@ -749,7 +756,14 @@ fn ready_store() -> OwnedTestStore {
         projection_digest: projection_digest.clone(),
         now: timestamp(1),
     };
-    let session = store.wait_for_search_publication_session().unwrap();
+    let mut session = store.wait_for_search_publication_session().unwrap();
+    let _attempt = match session
+        .acquire_migration_rebuild_publication_attempt(&barrier, timestamp(1))
+        .unwrap()
+    {
+        crate::MigrationRebuildPublicationAttemptAcquire::Started(attempt) => attempt,
+        other => panic!("expected migration attempt, got {other:?}"),
+    };
     assert_eq!(
         session.begin_search_publication(&draft).unwrap(),
         SearchPublicationOutcome::Applied

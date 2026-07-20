@@ -5,14 +5,14 @@
   "experiment_state": "contract_locked",
   "evidence_lane": "soak_fault",
   "contract_pins": {
-    "active_goal_sha256": "950168b89dde9ef6c02076e77c936cd902316f101398b93cebc4f6f39fec0277",
-    "acceptance_matrix_sha256": "d59a157554790ae432d1006953322f17ae056bd0a70665851acd777404f21311",
+    "active_goal_sha256": "4aafe0072a5e7904ef399dbc457faa2cc76c6f7f368f58f32dec9cc546c9fdb1",
+    "acceptance_matrix_sha256": "eeef7234d48a8fbfc92a46ef30ceb5ce6398aedac0a1dd9dd87d92dd092d3fc9",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "88519486545803bf698046d7f7e8bcd24a4308ca"
+    "git_head_sha": "c1428bd24bd55e3de98796db1a8056db66788880"
   },
-  "current_slice": "#217 S807 daemon reliability and detail snapshot correctness v28 corrective train",
+  "current_slice": "#217 S809 bounded artifact repair and durable restart correction",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -661,7 +661,17 @@
     {"from":"slice_active","to":"branch_active","evidence_ref":"PROGRESS.md#s807"},
     {"from":"branch_active","to":"implementation_active","evidence_ref":"PROGRESS.md#s807"},
     {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s807"},
-    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s807"}
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s807"},
+    {"from":"evidence_review","to":"slice_active","evidence_ref":"PROGRESS.md#s808"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s808"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s808"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s808"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s808"},
+    {"from":"evidence_review","to":"slice_active","evidence_ref":"PROGRESS.md#s809"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s809"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s809"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s809"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s809"}
   ],
   "verification": {
     "commands": [
@@ -2787,7 +2797,23 @@
       {"command":"cargo fmt --all -- --check and workspace all-target all-feature clippy -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s807"},
       {"command":"./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s807"},
       {"command":"final performance contract, autonomous goal, loop state and public boundary gates","exit_code":0,"evidence_ref":"PROGRESS.md#s807"},
-      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s807-expected-product-blocked"}
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s807-expected-product-blocked"},
+      {"command":"focused S48 search, S49 detail, S50 OCR and S84 v28-to-v29 artifact-repair regressions","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
+      {"command":"cargo test -p resume-cli --test s9_import_search --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
+      {"command":"ten exact direct-CLI strong-kill recovery repetitions and five exact vector-publication contention repetitions","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
+      {"command":"complete meta-store and import-pipeline suites","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
+      {"command":"cargo test --workspace --locked","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
+      {"command":"cargo clippy --workspace --all-targets --all-features --locked -- -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
+      {"command":"desktop 83-test suite and strict all-target Clippy","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
+      {"command":"npm test --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
+      {"command":"npm run build --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
+      {"command":"installed-main acceptance Node contract suite","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
+      {"command":"npm run tauri --prefix apps/desktop -- build --bundles app","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
+      {"command":"cargo fmt --all -- --check and git diff --check","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
+      {"command":"governance mutation suite plus performance, autonomous-goal and loop-state contract checks","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
+      {"command":"./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
+      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s809-expected-product-blocked"}
     ],
     "all_required_commands_ran": false,
     "claim": "partial"

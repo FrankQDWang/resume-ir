@@ -34,10 +34,25 @@ export interface SearchHit {
 
 export type DaemonServiceState = "ready" | "degraded" | "repairing" | "unavailable"
 export type SearchRepairReason = "migration_rebuild" | "artifact_unavailable" | "source_unavailable" | "runtime_invariant"
+export type ArtifactRepairAttemptErrorKind =
+  | "fulltext_publication_busy"
+  | "fulltext_failure"
+  | "vector_publication_busy"
+  | "vector_failure"
+  | "metadata_failure"
+  | "interrupted"
+
+export interface RepairProgress {
+  phase: "queued" | "migration_rebuild" | "source_unavailable" | "rebuilding" | "retry_wait" | "blocked"
+  attempt: number | null
+  max_attempts: number | null
+  retry_after_ms: number | null
+  last_error_kind: ArtifactRepairAttemptErrorKind | null
+}
 
 export interface DaemonServiceError {
   code: "UNAUTHORIZED" | "BAD_REQUEST" | "CONFLICT" | "NOT_FOUND" | "STALE_SELECTION" | "RESPONSE_TOO_LARGE" | "LIMIT_EXCEEDED" | "SEMANTIC_DISABLED" | "REPAIRING" | "METADATA_UNAVAILABLE" | "QUERY_SERVICE_UNAVAILABLE" | "OVERLOADED" | "INTERNAL"
-  action: "authenticate" | "correct_request" | "refresh_search" | "reduce_page_size" | "select_supported_mode" | "wait_for_repair" | "retry"
+  action: "authenticate" | "correct_request" | "refresh_search" | "reduce_page_size" | "select_supported_mode" | "wait_for_repair" | "retry" | "repair_required"
   retry_after_ms?: number
 }
 
@@ -68,6 +83,7 @@ export interface StatusBody {
     query: "ready" | "repairing" | "unavailable"
   }
   repair_reason: SearchRepairReason | null
+  repair_progress: RepairProgress | null
   error: DaemonServiceError | null
   indexed_documents: number | null
   searchable_documents: number | null
@@ -268,6 +284,7 @@ export interface DiagnosticsBody {
     query: "ready" | "repairing" | "unavailable"
   }
   repair_reason: SearchRepairReason | null
+  repair_progress: RepairProgress | null
   error: DaemonServiceError | null
   metrics: {
     ipc: IpcMetrics

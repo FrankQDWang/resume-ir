@@ -14,17 +14,33 @@ import {
 } from "./macos-lifecycle-journal.mjs";
 
 const TARGET = "aarch64-apple-darwin";
-const OLD_DIGEST = "a".repeat(64);
+const OLD_DIGEST =
+  "18a2d41769f6e2fcc6cc504085b40f25ec185a27109eac525e551513ec5801c6";
 const NEW_DIGEST = "b".repeat(64);
+const OLD_DMG =
+  "363ce8d5db7c120a05fc7c282a9f9b6a8e1173f3175c308839dfb1440867c780";
+const SOURCE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
 
-function receipt(version, compositionDigest, dmg = "c".repeat(64)) {
+function currentReceipt(version = "0.1.2", compositionDigest = NEW_DIGEST) {
   return {
-    schema_version: "resume-ir.macos-install-receipt.v1",
+    schema_version: "resume-ir.macos-install-receipt.v2",
     bundle_id: "local.resume-ir.desktop",
     version,
     target_triple: TARGET,
+    source_commit: SOURCE_COMMIT,
     composition_digest: compositionDigest,
-    dmg_sha256: dmg,
+    dmg_sha256: "c".repeat(64),
+  };
+}
+
+function legacyReceipt() {
+  return {
+    schema_version: "resume-ir.macos-install-receipt.v1",
+    bundle_id: "local.resume-ir.desktop",
+    version: "0.1.1",
+    target_triple: TARGET,
+    composition_digest: OLD_DIGEST,
+    dmg_sha256: OLD_DMG,
   };
 }
 
@@ -46,8 +62,8 @@ function upgradeJournal() {
     newVersion: "0.1.2",
     oldCompositionDigest: OLD_DIGEST,
     newCompositionDigest: NEW_DIGEST,
-    oldReceipt: receipt("0.1.1", OLD_DIGEST, "d".repeat(64)),
-    newReceipt: receipt("0.1.2", NEW_DIGEST),
+    oldReceipt: legacyReceipt(),
+    newReceipt: currentReceipt(),
   });
 }
 
@@ -100,8 +116,8 @@ test("rejects unknown, non-canonical, corrupt, or transaction-drifted journals",
         newVersion: "0.1.1",
         oldCompositionDigest: OLD_DIGEST,
         newCompositionDigest: NEW_DIGEST,
-        oldReceipt: receipt("0.1.2", OLD_DIGEST),
-        newReceipt: receipt("0.1.1", NEW_DIGEST),
+        oldReceipt: currentReceipt("0.1.2", OLD_DIGEST),
+        newReceipt: legacyReceipt(),
       }),
     /lifecycle journal is invalid/,
   );
@@ -213,8 +229,8 @@ test("creates exactly one transaction under a concurrent journal race", async (c
     newVersion: "0.1.2",
     oldCompositionDigest: OLD_DIGEST,
     newCompositionDigest: NEW_DIGEST,
-    oldReceipt: receipt("0.1.1", OLD_DIGEST, "d".repeat(64)),
-    newReceipt: receipt("0.1.2", NEW_DIGEST),
+    oldReceipt: legacyReceipt(),
+    newReceipt: currentReceipt(),
   });
   const outcomes = await Promise.allSettled(
     [first, second].map((journal) =>

@@ -12,6 +12,84 @@ use crate::private_storage::create_private_directory;
 use crate::{VectorDocument, VectorModelContract, VectorSnapshotStore};
 
 #[test]
+fn exact_retirement_defers_for_a_reader_and_never_collects_unrelated_artifacts() {
+    let root = temp_dir("exact-generation-retirement");
+    let store = VectorSnapshotStore::new(&root, VectorModelContract::Disabled).unwrap();
+    for generation in [
+        "generation-target",
+        "generation-retained",
+        "generation-unrelated",
+    ] {
+        publish_disabled(&store, generation);
+    }
+    for path in [
+        root.join("staging/generation-target.tmp-0123456789abcdef01234567"),
+        root.join("staging/generation-unrelated.tmp-0123456789abcdef01234567"),
+    ] {
+        create_private_directory(&path).unwrap();
+    }
+    let retained = BTreeSet::from(["generation-retained".to_string()]);
+    let snapshot_root = VectorSnapshotRoot::new(&root).unwrap();
+    let lease = snapshot_root.acquire_read_lease().unwrap();
+    let reader = snapshot_root
+        .open_generation_with_lease("generation-target", &VectorModelContract::Disabled, lease)
+        .unwrap();
+
+    assert_eq!(
+        try_retire_unpublished_generation(&root, "generation-target", &retained).unwrap(),
+        VectorGenerationRetirement::Deferred
+    );
+    assert!(root.join("snapshots/generation-target").is_dir());
+    drop(reader);
+
+    let VectorGenerationRetirement::Retired(summary) =
+        try_retire_unpublished_generation(&root, "generation-target", &retained).unwrap()
+    else {
+        panic!("exact target was not retired");
+    };
+    assert!(summary.removed_generation());
+    assert_eq!(summary.removed_staging(), 1);
+    assert!(summary.removed_generation_pin());
+    assert!(!root.join("snapshots/generation-target").exists());
+    assert!(!root.join("generation-pins/generation-target.lock").exists());
+    for path in [
+        root.join("snapshots/generation-retained"),
+        root.join("snapshots/generation-unrelated"),
+        root.join("staging/generation-unrelated.tmp-0123456789abcdef01234567"),
+        root.join("generation-pins/generation-retained.lock"),
+        root.join("generation-pins/generation-unrelated.lock"),
+    ] {
+        assert!(
+            path.exists(),
+            "unrelated exact-generation artifact was removed"
+        );
+    }
+    assert_eq!(
+        try_retire_unpublished_generation(&root, "generation-target", &retained).unwrap(),
+        VectorGenerationRetirement::Absent
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn exact_retirement_rejects_a_metadata_retained_target() {
+    let root = temp_dir("exact-retained-rejected");
+    let store = VectorSnapshotStore::new(&root, VectorModelContract::Disabled).unwrap();
+    publish_disabled(&store, "generation-retained");
+    let retained = BTreeSet::from(["generation-retained".to_string()]);
+
+    assert_eq!(
+        try_retire_unpublished_generation(&root, "generation-retained", &retained).unwrap_err(),
+        VectorIndexError::StorageLayoutInvalid
+    );
+    assert!(root.join("snapshots/generation-retained").is_dir());
+    assert!(root
+        .join("generation-pins/generation-retained.lock")
+        .is_file());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn prepared_gc_releases_root_fence_before_commit() {
     let root = temp_dir("prepared-reader-entry");
     let store = VectorSnapshotStore::new(&root, VectorModelContract::Disabled).unwrap();
@@ -205,6 +283,50 @@ fn partial_commit_is_reported_and_the_next_attempt_converges() {
             .join(format!("{generation}.lock"))
             .exists());
     }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn controlled_commit_interrupts_between_generation_removals() {
+    let root = temp_dir("controlled-commit-interrupts");
+    let store = VectorSnapshotStore::new(&root, VectorModelContract::Disabled).unwrap();
+    for generation in [
+        "generation-a-free",
+        "generation-b-retained",
+        "generation-z-free",
+    ] {
+        publish_disabled(&store, generation);
+    }
+    let snapshot_root = VectorSnapshotRoot::new(&root).unwrap();
+    let retained = BTreeSet::from(["generation-b-retained".to_string()]);
+    let acquisition = snapshot_root.try_acquire_snapshot_gc().unwrap().unwrap();
+    let VectorSnapshotGcPreparation::Prepared(prepared) = snapshot_root
+        .prepare_snapshot_gc(acquisition, &retained)
+        .unwrap()
+    else {
+        panic!("GC unexpectedly deferred");
+    };
+    let checks = std::cell::Cell::new(0_usize);
+    let cancel_check = || {
+        let next = checks.get() + 1;
+        checks.set(next);
+        next >= 3
+    };
+
+    let VectorSnapshotGcCommitReport::Interrupted(progress) =
+        commit_snapshot_gc_with_cancel_check(prepared, &cancel_check)
+    else {
+        panic!("controlled GC did not interrupt");
+    };
+    assert_eq!(progress.removed_generations(), 1);
+    assert_eq!(checks.get(), 3);
+    assert_eq!(
+        ["generation-a-free", "generation-z-free"]
+            .into_iter()
+            .filter(|generation| root.join("snapshots").join(generation).exists())
+            .count(),
+        1
+    );
     let _ = fs::remove_dir_all(root);
 }
 

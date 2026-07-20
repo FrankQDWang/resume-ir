@@ -15,7 +15,6 @@ use sectionizer::Sectionizer;
 use super::parallel::process_files_with_parse_workers;
 use super::scan::{import_scan_errors_from_crawl, mark_missing_documents_deleted};
 use super::scheduler::process_files_sequential;
-use super::ImportRunControl;
 use crate::migration_rebuild::ensure_migration_rebuild_scan_is_complete;
 use crate::publication_coordinator::{
     flush_pending_searchable_documents, PendingProjectionRemovals,
@@ -23,6 +22,7 @@ use crate::publication_coordinator::{
 use crate::search_artifact_cache::{CurrentImportCacheMode, CurrentImportDocumentCache};
 use crate::source_dispositions::{ImportDispositionBatches, SearchableStagingState};
 use crate::timing::measure_result_stage;
+use crate::PipelineRunControl;
 use crate::{
     ImportCancelCheckPhase, ImportFailureCounts, ImportMilestoneTimings, ImportOptions,
     ImportPipelineError, ImportScanBudget, ImportScanBudgetKind, ImportStageTimings, ImportSummary,
@@ -37,7 +37,7 @@ pub(super) fn run_import(
     now: UnixTimestamp,
     options: ImportOptions,
     processing_contract: &ImportProcessingContract,
-    control: &ImportRunControl,
+    control: &PipelineRunControl,
 ) -> Result<ImportSummary> {
     ensure_import_can_continue(store, &task.id, control)?;
     let cancel_metrics = RefCell::new(CancelCheckMetrics::default());
@@ -315,7 +315,7 @@ fn ensure_import_not_cancelled(store: &OwnedMetaStore, task_id: &ImportTaskId) -
 fn ensure_import_can_continue(
     store: &OwnedMetaStore,
     task_id: &ImportTaskId,
-    control: &ImportRunControl,
+    control: &PipelineRunControl,
 ) -> Result<()> {
     ensure_import_not_cancelled(store, task_id)?;
     if control.shutdown_requested() {

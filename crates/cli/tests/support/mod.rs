@@ -69,12 +69,18 @@ pub fn insert_import_task_with_scope(
 ) -> ImportProcessingContract {
     assert_ne!(task.status, ImportTaskStatus::Completed);
     let contract = activate_default_processing_contract(store, task.queued_at);
-    prepare_migration_rebuild_artifacts(store, task.queued_at).unwrap();
+    prepare_migration_rebuild_artifacts(
+        store,
+        task.queued_at,
+        &import_pipeline::PipelineRunControl::default(),
+    )
+    .unwrap();
     finalize_migration_rebuild(
         store,
         task.queued_at,
         &contract,
         &SearchPublicationVectorization::default(),
+        &import_pipeline::PipelineRunControl::default(),
     )
     .unwrap();
     assert_eq!(

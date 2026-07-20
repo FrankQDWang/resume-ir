@@ -1,10 +1,12 @@
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
+#[cfg(any(test, feature = "migration-test-support"))]
+use crate::migration_rebuild_barrier::migration_rebuild_barrier_token_matches;
+
 use crate::{
     discard_superseded_ocr_claim_in_connection, document_status_to_storage,
     file_extension_to_storage,
     immutable_search::seal_resume_version,
-    migration_rebuild_barrier::migration_rebuild_barrier_token_matches,
     ocr_claim_is_current_in_connection,
     ocr_publication::{
         complete_ocr_search_publication_claim_in_connection,
@@ -17,6 +19,7 @@ use crate::{
 };
 
 use super::{
+    authority::{authority_for_begin, authority_matches_commit, PublicationAuthority},
     model::{
         ProjectedDocumentSnapshot, SearchPublicationCommit, SearchPublicationDraft,
         SearchPublicationFailure, SearchPublicationOutcome, SearchPublicationPrunePolicy,
@@ -24,6 +27,10 @@ use super::{
         TerminalDocumentUpdate,
     },
     persistence::{query_publications, search_publication_in_connection},
+    retirement::{
+        begin_retirement_in_connection, ensure_no_pending_retirement,
+        SearchPublicationRetirementPlan,
+    },
     validation::{
         publication_error, search_publication_fingerprint, u64_to_i64,
         validate_commit_against_publication, validate_commit_shape, validate_descriptors,
@@ -41,38 +48,99 @@ impl SearchPublicationSession {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(MetaStoreError::storage)?;
-        let (head, visible_epoch) = ready_head_and_epoch(&transaction)?;
-        let outcome = if head.as_deref() == draft.base_generation.as_deref()
-            && visible_epoch == draft.expected_visible_epoch
-        {
+        ensure_no_pending_retirement(&transaction)?;
+        let authority = authority_for_begin(&transaction, self.active_attempt_id(), draft)?;
+        let outcome = if authority.is_some() {
             SearchPublicationOutcome::Applied
         } else {
             SearchPublicationOutcome::Superseded
         };
+        let authority = authority.unwrap_or(PublicationAuthority::CurrentHead);
+        let authority_storage = authority.storage()?;
         transaction
             .execute(
                 "INSERT INTO search_publication_journal (
                     generation, base_generation, expected_visible_epoch,
                     classifier_epoch, projection_digest, state,
-                    created_at_seconds, updated_at_seconds
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                    created_at_seconds, updated_at_seconds,
+                    authority_kind, authority_contract_id, authority_barrier_digest,
+                    authority_repair_generation, authority_repair_fingerprint,
+                    authority_repair_visible_epoch, authority_attempt_id,
+                    authority_attempt_count
+                 ) VALUES (
+                    ?1, ?2, ?3, ?4, ?5, 'preparing', ?6, ?6,
+                    ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+                 )",
                 params![
                     draft.generation,
                     draft.base_generation,
                     u64_to_i64(draft.expected_visible_epoch)?,
                     draft.classifier_epoch,
                     draft.projection_digest.as_str(),
-                    if outcome == SearchPublicationOutcome::Applied {
-                        SearchPublicationState::Preparing.as_str()
-                    } else {
-                        SearchPublicationState::Abandoned.as_str()
-                    },
+                    draft.now.as_unix_seconds(),
+                    authority_storage.kind,
+                    authority_storage.contract_id,
+                    authority_storage.barrier_digest,
+                    authority_storage.repair_generation,
+                    authority_storage.repair_fingerprint,
+                    authority_storage.repair_visible_epoch,
+                    authority_storage.attempt_id,
+                    authority_storage.attempt_count,
+                ],
+            )
+            .map_err(MetaStoreError::storage)?;
+        if outcome == SearchPublicationOutcome::Superseded {
+            begin_retirement_in_connection(
+                &transaction,
+                &draft.generation,
+                draft.now,
+                SearchPublicationRetirementPlan::none(),
+            )?;
+        }
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(outcome)
+    }
+
+    /// Synthetic v28 fixture seam used only to exercise the v28-to-v29 COW
+    /// migration. Runtime v29 publication never enters this contract.
+    #[cfg(any(test, feature = "migration-test-support"))]
+    pub(crate) fn begin_legacy_v28_search_publication_for_test(
+        &self,
+        draft: &SearchPublicationDraft,
+    ) -> Result<SearchPublicationOutcome> {
+        validate_draft(draft)?;
+        if crate::schema_version_in_connection(&self.owned_store().connection.borrow())?
+            != crate::schema_v28::VERSION
+        {
+            return Err(publication_error(SearchPublicationFailure::InvalidState));
+        }
+        let mut connection = self.owned_store().connection.borrow_mut();
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(MetaStoreError::storage)?;
+        let (head, visible_epoch) = ready_head_and_epoch(&transaction)?;
+        if head != draft.base_generation || visible_epoch != draft.expected_visible_epoch {
+            return Ok(SearchPublicationOutcome::Superseded);
+        }
+        transaction
+            .execute(
+                "INSERT INTO search_publication_journal (
+                    generation, base_generation, expected_visible_epoch,
+                    classifier_epoch, projection_digest, state,
+                    created_at_seconds, updated_at_seconds
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'preparing', ?6, ?6)",
+                params![
+                    draft.generation,
+                    draft.base_generation,
+                    u64_to_i64(draft.expected_visible_epoch)?,
+                    draft.classifier_epoch,
+                    draft.projection_digest.as_str(),
                     draft.now.as_unix_seconds(),
                 ],
             )
             .map_err(MetaStoreError::storage)?;
         transaction.commit().map_err(MetaStoreError::storage)?;
-        Ok(outcome)
+        Ok(SearchPublicationOutcome::Applied)
     }
 
     pub fn validate_search_publication(
@@ -214,11 +282,6 @@ impl SearchPublicationSession {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(MetaStoreError::storage)?;
         if !ocr_claim_is_current_in_connection(&transaction, publication.claimed)? {
-            abandon_validated(
-                &transaction,
-                publication.search.generation,
-                publication.search.now,
-            )?;
             discard_superseded_ocr_claim_in_connection(
                 &transaction,
                 publication.claimed,
@@ -253,19 +316,9 @@ impl SearchPublicationSession {
         })();
         if let Err(error) = commit_result {
             transaction.rollback().map_err(MetaStoreError::storage)?;
-            abandon_failed_ocr_publication(
-                &mut connection,
-                publication.search.generation,
-                publication.search.now,
-            )?;
             return Err(error);
         }
         if let Err(error) = transaction.commit() {
-            abandon_failed_ocr_publication(
-                &mut connection,
-                publication.search.generation,
-                publication.search.now,
-            )?;
             return Err(MetaStoreError::storage(error));
         }
         Ok(OcrSearchPublicationOutcome::Applied)
@@ -275,42 +328,6 @@ impl SearchPublicationSession {
 impl<Access: MetadataStoreAccess> MetadataStore<Access> {
     pub fn search_publication(&self, generation: &str) -> Result<Option<SearchPublicationRecord>> {
         search_publication_in_connection(&self.connection.borrow(), generation)
-    }
-}
-
-impl SearchPublicationSession {
-    pub fn abandon_search_publication(&self, generation: &str, now: UnixTimestamp) -> Result<()> {
-        let mut connection = self.owned_store().connection.borrow_mut();
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(MetaStoreError::storage)?;
-        let publication = search_publication_in_connection(&transaction, generation)?
-            .ok_or_else(|| publication_error(SearchPublicationFailure::InvalidState))?;
-        match publication.state {
-            SearchPublicationState::Preparing | SearchPublicationState::Validated => {
-                let changed = transaction
-                    .execute(
-                        "UPDATE search_publication_journal
-                         SET state = 'abandoned', updated_at_seconds = ?1
-                         WHERE generation = ?2 AND state = ?3",
-                        params![
-                            now.as_unix_seconds(),
-                            generation,
-                            publication.state.as_str(),
-                        ],
-                    )
-                    .map_err(MetaStoreError::storage)?;
-                if changed != 1 {
-                    return Err(publication_error(SearchPublicationFailure::InvalidState));
-                }
-            }
-            SearchPublicationState::Abandoned => {}
-            SearchPublicationState::Ready => {
-                return Err(publication_error(SearchPublicationFailure::InvalidState));
-            }
-        }
-        transaction.commit().map_err(MetaStoreError::storage)?;
-        Ok(())
     }
 }
 
@@ -379,6 +396,11 @@ impl SearchPublicationSession {
                         SELECT 1 FROM active_search_projection AS projection
                         WHERE projection.generation = candidate.generation
                     )
+                      AND NOT EXISTS (
+                        SELECT 1 FROM search_publication_retirement AS retirement
+                        WHERE retirement.generation = candidate.generation
+                          AND retirement.phase = 'pending'
+                    )
                       AND (
                         (candidate.state = 'abandoned'
                          AND candidate.updated_at_seconds <= ?1)
@@ -420,20 +442,28 @@ fn validated_publication_for_commit(
         return Err(publication_error(SearchPublicationFailure::InvalidState));
     }
     let service_precondition = publication_service_precondition(connection)?;
-    let precondition_matches = match precondition {
-        PublicationCommitPrecondition::CurrentHead => {
-            service_precondition.accepts_current_head_publication()
-        }
-        PublicationCommitPrecondition::MigrationRebuild(barrier) => {
-            migration_rebuild_barrier_token_matches(connection, barrier)?
-        }
+    let migration_barrier = match precondition {
+        PublicationCommitPrecondition::CurrentHead => None,
+        PublicationCommitPrecondition::MigrationRebuild(barrier) => Some(barrier),
     };
+    #[cfg(any(test, feature = "migration-test-support"))]
+    let precondition_matches =
+        if crate::schema_version_in_connection(connection)? == crate::schema_v28::VERSION {
+            migration_barrier
+                .map(|barrier| migration_rebuild_barrier_token_matches(connection, barrier))
+                .transpose()?
+                .unwrap_or(false)
+        } else {
+            authority_matches_commit(connection, commit.generation, migration_barrier)?
+        };
+    #[cfg(not(any(test, feature = "migration-test-support")))]
+    let precondition_matches =
+        authority_matches_commit(connection, commit.generation, migration_barrier)?;
     let (head, visible_epoch) = ready_head_and_epoch(connection)?;
     if !precondition_matches
         || head != publication.base_generation
         || visible_epoch != publication.expected_visible_epoch
     {
-        abandon_validated(connection, commit.generation, commit.now)?;
         return Ok(None);
     }
     Ok(Some((publication, service_precondition)))
@@ -674,18 +704,7 @@ enum PublicationCommitPrecondition<'a> {
 
 struct PublicationServicePrecondition {
     service_state: String,
-    generation: Option<String>,
     repair_reason: Option<String>,
-}
-
-impl PublicationServicePrecondition {
-    fn accepts_current_head_publication(&self) -> bool {
-        self.generation.is_some()
-            && matches!(
-                (self.service_state.as_str(), self.repair_reason.as_deref()),
-                ("ready", None) | ("repairing", Some("artifact_unavailable"))
-            )
-    }
 }
 
 fn publication_service_precondition(
@@ -693,15 +712,14 @@ fn publication_service_precondition(
 ) -> Result<PublicationServicePrecondition> {
     connection
         .query_row(
-            "SELECT service_state, generation, repair_reason
+            "SELECT service_state, repair_reason
              FROM search_projection_state
              WHERE state_key = 'default'",
             [],
             |row| {
                 Ok(PublicationServicePrecondition {
                     service_state: row.get(0)?,
-                    generation: row.get(1)?,
-                    repair_reason: row.get(2)?,
+                    repair_reason: row.get(1)?,
                 })
             },
         )
@@ -738,34 +756,6 @@ fn apply_terminal_document_updates(
         }
     }
     Ok(())
-}
-
-fn abandon_validated(connection: &Connection, generation: &str, now: UnixTimestamp) -> Result<()> {
-    let changed = connection
-        .execute(
-            "UPDATE search_publication_journal
-             SET state = 'abandoned', updated_at_seconds = ?1
-             WHERE generation = ?2 AND state = 'validated'",
-            params![now.as_unix_seconds(), generation],
-        )
-        .map_err(MetaStoreError::storage)?;
-    if changed == 1 {
-        Ok(())
-    } else {
-        Err(publication_error(SearchPublicationFailure::InvalidState))
-    }
-}
-
-fn abandon_failed_ocr_publication(
-    connection: &mut Connection,
-    generation: &str,
-    now: UnixTimestamp,
-) -> Result<()> {
-    let transaction = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(MetaStoreError::storage)?;
-    abandon_validated(&transaction, generation, now)?;
-    transaction.commit().map_err(MetaStoreError::storage)
 }
 
 fn ready_head_and_epoch(connection: &Connection) -> Result<(Option<String>, u64)> {

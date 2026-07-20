@@ -61,7 +61,8 @@ pub(super) fn read(
         Err(detail_ipc::DetailError::QueryServiceUnavailable) => write_detail_service_unavailable(
             stream,
             request_id.as_deref(),
-            super::super::ServiceErrorCode::QueryServiceUnavailable,
+            super::status::query_service_error(store)
+                .unwrap_or(super::super::ServiceErrorCode::QueryServiceUnavailable),
         ),
         Err(detail_ipc::DetailError::MetadataUnavailable) => write_detail_service_unavailable(
             stream,
@@ -127,7 +128,8 @@ pub(super) fn hydrate(
             write_detail_service_unavailable(
                 stream,
                 request_id.as_deref(),
-                super::super::ServiceErrorCode::QueryServiceUnavailable,
+                super::status::query_service_error(store)
+                    .unwrap_or(super::super::ServiceErrorCode::QueryServiceUnavailable),
             )
         }
         Err(detail_hydrate::DetailHydrateError::MetadataUnavailable) => {

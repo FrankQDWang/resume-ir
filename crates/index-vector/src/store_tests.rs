@@ -3,8 +3,8 @@ use crate::codec::{write_snapshot, KEY_FILE, MANIFEST_FILE};
 use crate::private_storage::create_private_directory;
 use crate::{
     commit_snapshot_gc, VectorDocumentIdentity, VectorIndexError, VectorModelContract,
-    VectorSnapshotGcCommitReport, VectorSnapshotGcPreparation, VectorSnapshotRoot,
-    VectorSnapshotUpdate,
+    VectorSnapshotGcCommitReport, VectorSnapshotGcPreparation, VectorSnapshotPublishControl,
+    VectorSnapshotRoot, VectorSnapshotUpdate,
 };
 use core_domain::{ActiveSearchProjection, DocumentId, ResumeVersionId};
 use std::cell::Cell;
@@ -38,7 +38,7 @@ fn corrupted_staging_never_becomes_a_published_generation() {
     let next = document("next", "next", "next");
     let expected = write_snapshot(
         staging.path(),
-        &root.join(KEY_FILE),
+        &staging.path().join(KEY_FILE),
         "generation-next",
         &contract,
         &[projection(&next)],
@@ -69,6 +69,166 @@ fn corrupted_staging_never_becomes_a_published_generation() {
     assert!(snapshot_root
         .open_generation_with_lease("generation-stable", &contract, lease)
         .is_ok());
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn pre_requested_publication_cancellation_consumes_no_records() {
+    let root = temp_dir("publish-pre-cancelled");
+    let contract = VectorModelContract::enabled("model", 4).unwrap();
+    let store = VectorSnapshotStore::new(&root, contract.clone()).unwrap();
+    let stable = document("stable", "stable", "stable");
+    store
+        .publish_generation("generation-stable", [projection(&stable)], [stable.clone()])
+        .unwrap();
+    let projection_consumed = Cell::new(0_usize);
+    let documents_consumed = Cell::new(0_usize);
+    let next = document("next", "next", "next");
+    let cancel_check = || true;
+
+    let error = store
+        .publish_generation_with_control(
+            "generation-cancelled",
+            [projection(&next)].into_iter().inspect(|_| {
+                projection_consumed.set(projection_consumed.get() + 1);
+            }),
+            [next].into_iter().inspect(|_| {
+                documents_consumed.set(documents_consumed.get() + 1);
+            }),
+            VectorSnapshotPublishControl::from_cancel_check(&cancel_check),
+        )
+        .unwrap_err();
+
+    assert_eq!(error, VectorIndexError::Cancelled);
+    assert_eq!(projection_consumed.get(), 0);
+    assert_eq!(documents_consumed.get(), 0);
+    assert_cancelled_generation_absent_and_stable_readable(&root, &contract);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn counter_triggered_publication_cancellation_stops_large_materialization() {
+    const RECORD_COUNT: usize = 512;
+
+    let root = temp_dir("publish-counter-cancelled");
+    let contract = VectorModelContract::enabled("model", 4).unwrap();
+    let store = VectorSnapshotStore::new(&root, contract.clone()).unwrap();
+    let stable = document("stable", "stable", "stable");
+    store
+        .publish_generation("generation-stable", [projection(&stable)], [stable.clone()])
+        .unwrap();
+    let documents = (0..RECORD_COUNT)
+        .map(|index| {
+            let identity = format!("large-{index}");
+            document(&identity, &identity, &identity)
+        })
+        .collect::<Vec<_>>();
+    let projections = documents.iter().map(projection).collect::<Vec<_>>();
+    let projection_consumed = Cell::new(0_usize);
+    let documents_consumed = Cell::new(0_usize);
+    let checks = Cell::new(0_usize);
+    let cancel_check = || {
+        let next = checks.get() + 1;
+        checks.set(next);
+        next >= 13
+    };
+
+    let error = store
+        .publish_generation_with_control(
+            "generation-cancelled",
+            projections.into_iter().inspect(|_| {
+                projection_consumed.set(projection_consumed.get() + 1);
+            }),
+            documents.into_iter().inspect(|_| {
+                documents_consumed.set(documents_consumed.get() + 1);
+            }),
+            VectorSnapshotPublishControl::from_cancel_check(&cancel_check),
+        )
+        .unwrap_err();
+
+    assert_eq!(error, VectorIndexError::Cancelled);
+    assert_eq!(projection_consumed.get(), RECORD_COUNT);
+    assert!(documents_consumed.get() > 0);
+    assert!(documents_consumed.get() < RECORD_COUNT);
+    assert_cancelled_generation_absent_and_stable_readable(&root, &contract);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn publication_lock_contention_is_typed_non_blocking_and_retryable() {
+    let root = temp_dir("publication-busy");
+    let contract = VectorModelContract::enabled("model", 4).unwrap();
+    let store = VectorSnapshotStore::new(&root, contract.clone()).unwrap();
+    let stable = document("stable", "stable", "stable");
+    store
+        .publish_generation("generation-stable", [projection(&stable)], [stable])
+        .unwrap();
+
+    let publication_lock = open_lock_file(&root.join(PUBLICATION_LOCK_FILE), false).unwrap();
+    publication_lock.lock_exclusive().unwrap();
+
+    let cancelled = document("cancelled", "cancelled", "cancelled");
+    let cancel_check = || true;
+    assert_eq!(
+        store
+            .publish_generation_with_control(
+                "generation-cancelled-before-busy",
+                [projection(&cancelled)],
+                [cancelled],
+                VectorSnapshotPublishControl::from_cancel_check(&cancel_check),
+            )
+            .unwrap_err(),
+        VectorIndexError::Cancelled
+    );
+
+    let contested = document("contested", "contested", "contested");
+    let contested_projection = projection(&contested);
+    let retry_document = contested.clone();
+    let retry_projection = contested_projection.clone();
+    let publisher_store = store.clone();
+    let (result_tx, result_rx) = mpsc::channel();
+    let publisher = thread::spawn(move || {
+        let result = publisher_store.publish_generation(
+            "generation-contested",
+            [contested_projection],
+            [contested],
+        );
+        result_tx.send(result).unwrap();
+    });
+
+    let result_while_locked = result_rx.recv_timeout(Duration::from_secs(1));
+    let returned_while_locked = result_while_locked.is_ok();
+    publication_lock.unlock().unwrap();
+    let result = result_while_locked.unwrap_or_else(|_| {
+        result_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("publisher did not finish after the external lock was released")
+    });
+    publisher.join().unwrap();
+
+    assert!(
+        returned_while_locked,
+        "publication waited for an externally held publication lock"
+    );
+    assert_eq!(result.unwrap_err(), VectorIndexError::PublicationBusy);
+    assert!(!root.join("snapshots/generation-contested").exists());
+    let snapshot_root = VectorSnapshotRoot::new(&root).unwrap();
+    let lease = snapshot_root.acquire_read_lease().unwrap();
+    assert!(snapshot_root
+        .open_generation_with_lease("generation-stable", &contract, lease)
+        .is_ok());
+
+    store
+        .publish_generation("generation-contested", [retry_projection], [retry_document])
+        .unwrap();
+    let lease = snapshot_root.acquire_read_lease().unwrap();
+    assert!(snapshot_root
+        .open_generation_with_lease("generation-contested", &contract, lease)
+        .is_ok());
+
+    let busy = VectorIndexError::PublicationBusy;
+    assert_eq!(busy.to_string(), "vector snapshot publication is busy");
+    assert!(std::error::Error::source(&busy).is_none());
     let _ = fs::remove_dir_all(root);
 }
 
@@ -137,7 +297,7 @@ fn published_generation_must_keep_the_original_staging_identity() {
     let next = document("next", "next", "next");
     let expected = write_snapshot(
         staging.path(),
-        &root.join(KEY_FILE),
+        &staging.path().join(KEY_FILE),
         "generation-next",
         &contract,
         &[projection(&next)],
@@ -211,7 +371,7 @@ fn publication_lease_protects_live_staging_from_gc_until_exact_open() {
 }
 
 #[test]
-fn publish_from_releases_base_pin_before_waiting_for_publication() {
+fn publish_from_releases_base_pin_before_returning_publication_busy() {
     let root = temp_dir("publish-from-lock-order");
     let contract = VectorModelContract::enabled("model", 4).unwrap();
     let store = VectorSnapshotStore::new(&root, contract.clone()).unwrap();
@@ -257,9 +417,13 @@ fn publish_from_releases_base_pin_before_waiting_for_publication() {
     if !base_pin_released {
         drop(gc_acquisition);
         let _ = publisher.join();
-        panic!("publisher waited for publication while retaining the base generation pin");
+        panic!("publisher returned from publication while retaining the base generation pin");
     }
     generation_pin.unlock().unwrap();
+    assert_eq!(
+        publisher.join().unwrap().unwrap_err(),
+        VectorIndexError::PublicationBusy
+    );
 
     let VectorSnapshotGcPreparation::Prepared(prepared) = snapshot_root
         .prepare_snapshot_gc(gc_acquisition, &BTreeSet::new())
@@ -271,7 +435,13 @@ fn publish_from_releases_base_pin_before_waiting_for_publication() {
         panic!("GC unexpectedly failed");
     };
     assert_eq!(removed.removed_generations(), 1);
-    let published = publisher.join().unwrap().unwrap();
+    let published = store
+        .publish_generation(
+            "generation-next",
+            [projection(&base_document)],
+            [base_document],
+        )
+        .unwrap();
     assert_eq!(published.generation(), "generation-next");
     assert!(!root.join("snapshots/generation-base").exists());
     let lease = snapshot_root.acquire_read_lease().unwrap();
@@ -297,6 +467,21 @@ fn document(vector: &str, document: &str, version: &str) -> VectorDocument {
     )
     .unwrap();
     VectorDocument::new(identity, vec![1.0, 0.0, 0.0, 0.0]).unwrap()
+}
+
+fn assert_cancelled_generation_absent_and_stable_readable(
+    root: &Path,
+    contract: &VectorModelContract,
+) {
+    assert!(!root.join("snapshots/generation-cancelled").exists());
+    assert!(!root.join(KEY_FILE).exists());
+    assert!(fs::read_dir(root.join("staging")).unwrap().next().is_none());
+    let snapshot_root = VectorSnapshotRoot::new(root).unwrap();
+    let lease = snapshot_root.acquire_read_lease().unwrap();
+    let stable = snapshot_root
+        .open_generation_with_lease("generation-stable", contract, lease)
+        .unwrap();
+    assert_eq!(stable.summary().generation(), "generation-stable");
 }
 
 fn stable_id(prefix: &str, part: &str) -> String {

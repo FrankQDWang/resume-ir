@@ -29,6 +29,7 @@ use tantivy::schema::{
 use tantivy::{Index, IndexReader, IndexWriter, Term};
 
 mod manifest;
+mod manifest_inspection;
 mod purge_artifact;
 mod snapshot_gc;
 mod snapshot_generation;
@@ -37,17 +38,19 @@ mod snapshot_path_identity;
 
 use manifest::{
     decode_manifest, encode_manifest, ManifestError, FULLTEXT_INDEX_SCHEMA_VERSION,
-    MAX_MANIFEST_BYTES, SNAPSHOT_HEADER_ENCRYPTED_V2,
+    MAX_MANIFEST_BYTES, SNAPSHOT_HEADER_ENCRYPTED_V3,
 };
 pub use manifest::{
-    FullTextSnapshotSchema, PublishedSnapshotMetadata, FULLTEXT_SNAPSHOT_SCHEMA_V2,
+    FullTextSnapshotSchema, PublishedSnapshotMetadata, FULLTEXT_SNAPSHOT_SCHEMA_V3,
 };
 pub use purge_artifact::{classify_purge_artifact, FullTextPurgeArtifactClass};
 pub use snapshot_gc::{
-    commit_snapshot_gc, prepare_snapshot_gc, try_acquire_snapshot_gc,
-    FullTextSnapshotGcAcquisition, FullTextSnapshotGcCommitReport, FullTextSnapshotGcFailureClass,
-    FullTextSnapshotGcFailurePhase, FullTextSnapshotGcPreparation, PreparedFullTextSnapshotGc,
-    SnapshotPurgePartialFailure, SnapshotPurgeSummary,
+    commit_snapshot_gc, commit_snapshot_gc_with_cancel_check, prepare_snapshot_gc,
+    try_acquire_snapshot_gc, try_retire_unpublished_generation, FullTextGenerationRetirement,
+    FullTextGenerationRetirementSummary, FullTextSnapshotGcAcquisition,
+    FullTextSnapshotGcCommitReport, FullTextSnapshotGcFailureClass, FullTextSnapshotGcFailurePhase,
+    FullTextSnapshotGcPreparation, PreparedFullTextSnapshotGc, SnapshotPurgePartialFailure,
+    SnapshotPurgeSummary,
 };
 use snapshot_generation::{
     create_generation_pin, remove_generation_pin, SnapshotGenerationReadLease, GENERATION_PINS_DIR,
@@ -69,8 +72,8 @@ const SNAPSHOT_READER_LOCK_FILE: &str = "snapshot-readers.lock";
 const SNAPSHOT_PUBLICATION_LOCK_FILE: &str = "snapshot-publication.lock";
 const ENCRYPTED_SNAPSHOT_FILE: &str = "fulltext.snapshot.enc";
 const SNAPSHOT_MANIFEST_FILE: &str = "snapshot-manifest.json";
-const SNAPSHOT_KEY_FILE: &str = "fulltext.snapshot.key-v2";
-const SNAPSHOT_ARCHIVE_HEADER_V2: &[u8] = b"resume-ir-fulltext-snapshot-archive-v2\n";
+const SNAPSHOT_KEY_FILE: &str = "fulltext.snapshot.key-v3";
+const SNAPSHOT_ARCHIVE_HEADER_V3: &[u8] = b"resume-ir-fulltext-snapshot-archive-v3\n";
 #[cfg(windows)]
 const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
 #[cfg(windows)]
@@ -396,7 +399,9 @@ impl SnapshotPublicationLease {
         let index_root = ensure_canonical_index_root(index_root)?;
         let root_identity = PinnedSnapshotDirectory::acquire(&index_root)?;
         let file = open_or_create_private_lock(&index_root.join(SNAPSHOT_PUBLICATION_LOCK_FILE))?;
-        file.lock().map_err(FullTextError::io)?;
+        if !try_exclusive_file_lock(&file)? {
+            return Err(FullTextError::PublicationBusy);
+        }
         let lease = Self {
             file,
             index_root,
@@ -756,7 +761,7 @@ impl FullTextIndex {
         let generation_lease = SnapshotGenerationReadLease::acquire(&pinned_root, snapshot_name)?;
         lease.validate_layout()?;
         generation_identity.validate_current()?;
-        let mut index = open_published_snapshot(&pinned_root, &snapshot_dir, snapshot_name)?;
+        let mut index = open_published_snapshot(&snapshot_dir, snapshot_name)?;
         lease.validate_layout()?;
         generation_identity.validate_current()?;
         drop(lease);
@@ -1024,7 +1029,7 @@ fn is_transient_index_operation_error(error: &FullTextError) -> bool {
         FullTextError::Io { diagnostic } | FullTextError::Tantivy { diagnostic } => {
             is_windows_file_lock_diagnostic(diagnostic)
         }
-        FullTextError::Cancelled => false,
+        FullTextError::Cancelled | FullTextError::PublicationBusy => false,
         FullTextError::Internal { .. } => false,
     }
 }
@@ -1257,22 +1262,38 @@ where
             ))
         })?;
 
-    let indexed_documents =
-        measure_snapshot_publish_phase(control, SnapshotPublishPhase::DocumentIndexing, || {
+    let indexed_documents = match measure_snapshot_publish_phase(
+        control,
+        SnapshotPublishPhase::DocumentIndexing,
+        || {
             publication_lease.validate_layout()?;
             staging_dir.validate_current()?;
             let indexed = index.replace_documents_with_redaction(documents, control, redaction)?;
             staging_dir.validate_current()?;
             Ok(indexed)
-        })?;
-    measure_snapshot_publish_phase(control, SnapshotPublishPhase::TantivyCommit, || {
-        publication_lease.validate_layout()?;
-        staging_dir.validate_current()?;
-        control.check()?;
-        index.commit()?;
-        staging_dir.validate_current()
-    })?;
-    let (projection_digest, logical_content_digest) =
+        },
+    ) {
+        Ok(indexed_documents) => indexed_documents,
+        Err(error) => {
+            drop(index);
+            let _ = remove_pinned_snapshot_dir_all(&staging_dir);
+            return Err(error);
+        }
+    };
+    if let Err(error) =
+        measure_snapshot_publish_phase(control, SnapshotPublishPhase::TantivyCommit, || {
+            publication_lease.validate_layout()?;
+            staging_dir.validate_current()?;
+            control.check()?;
+            index.commit()?;
+            staging_dir.validate_current()
+        })
+    {
+        drop(index);
+        let _ = remove_pinned_snapshot_dir_all(&staging_dir);
+        return Err(error);
+    }
+    let plaintext_validation =
         measure_snapshot_publish_phase(control, SnapshotPublishPhase::PlaintextValidation, || {
             publication_lease.validate_layout()?;
             staging_dir.validate_current()?;
@@ -1282,7 +1303,14 @@ where
                 validate_plaintext_snapshot_contents(staging_dir.path(), indexed_documents)?;
             staging_dir.validate_current()?;
             Ok(digests)
-        })?;
+        });
+    let (projection_digest, logical_content_digest) = match plaintext_validation {
+        Ok(digests) => digests,
+        Err(error) => {
+            let _ = remove_pinned_snapshot_dir_all(&staging_dir);
+            return Err(error);
+        }
+    };
     let encrypted_staging = measure_snapshot_publish_phase(
         control,
         SnapshotPublishPhase::EncryptedPublication,
@@ -1290,7 +1318,6 @@ where
             publication_lease.validate_layout()?;
             control.check()?;
             prepare_encrypted_staging_snapshot(
-                &index_root,
                 snapshot_name,
                 indexed_documents,
                 &projection_digest,
@@ -1306,7 +1333,6 @@ where
             encrypted_staging.validate_current()?;
             control.check()?;
             let metadata = validate_snapshot_contents(
-                &index_root,
                 encrypted_staging.path(),
                 snapshot_name,
                 indexed_documents,
@@ -1445,7 +1471,6 @@ impl SnapshotPublishSummary {
 }
 
 fn prepare_encrypted_staging_snapshot(
-    index_root: &Path,
     snapshot_name: &str,
     document_count: usize,
     projection_digest: &SearchProjectionDigest,
@@ -1453,41 +1478,52 @@ fn prepare_encrypted_staging_snapshot(
     staging_dir: PinnedSnapshotDirectory,
     published_dir: &Path,
 ) -> Result<PinnedSnapshotDirectory> {
-    staging_dir.validate_current()?;
-    let temp_published_dir = private_snapshot_dir_path(published_dir)?;
-    if path_entry_exists(&temp_published_dir)? {
-        return Err(FullTextError::internal(
-            "full-text encrypted staging path collision",
-        ));
+    let result = (|| {
+        staging_dir.validate_current()?;
+        let temp_published_dir = private_snapshot_dir_path(published_dir)?;
+        if path_entry_exists(&temp_published_dir)? {
+            return Err(FullTextError::internal(
+                "full-text encrypted staging path collision",
+            ));
+        }
+        if !ensure_private_snapshot_directory(&temp_published_dir)? {
+            return Err(FullTextError::internal(
+                "full-text encrypted staging path collision",
+            ));
+        }
+        let encrypted_staging = PinnedSnapshotDirectory::acquire(&temp_published_dir)?;
+        let preparation = (|| {
+            let archive = snapshot_archive_bytes(staging_dir.path())?;
+            staging_dir.validate_current()?;
+            let artifact_digest = write_encrypted_snapshot(
+                &encrypted_staging.path().join(ENCRYPTED_SNAPSHOT_FILE),
+                &encrypted_staging.path().join(SNAPSHOT_KEY_FILE),
+                snapshot_name,
+                &archive,
+            )?;
+            write_snapshot_manifest(
+                encrypted_staging.path(),
+                snapshot_name,
+                document_count,
+                projection_digest,
+                logical_content_digest,
+                &artifact_digest,
+            )?;
+            encrypted_staging.validate_current()?;
+            staging_dir.validate_current()?;
+            remove_pinned_snapshot_dir_all(&staging_dir)?;
+            encrypted_staging.validate_current()
+        })();
+        if let Err(error) = preparation {
+            let _ = remove_pinned_snapshot_dir_all(&encrypted_staging);
+            return Err(error);
+        }
+        Ok(encrypted_staging)
+    })();
+    if result.is_err() {
+        let _ = remove_pinned_snapshot_dir_all(&staging_dir);
     }
-    if !ensure_private_snapshot_directory(&temp_published_dir)? {
-        return Err(FullTextError::internal(
-            "full-text encrypted staging path collision",
-        ));
-    }
-    let encrypted_staging = PinnedSnapshotDirectory::acquire(&temp_published_dir)?;
-
-    let archive = snapshot_archive_bytes(staging_dir.path())?;
-    staging_dir.validate_current()?;
-    let artifact_digest = write_encrypted_snapshot(
-        &encrypted_staging.path().join(ENCRYPTED_SNAPSHOT_FILE),
-        &index_root.join(SNAPSHOT_KEY_FILE),
-        snapshot_name,
-        &archive,
-    )?;
-    write_snapshot_manifest(
-        encrypted_staging.path(),
-        snapshot_name,
-        document_count,
-        projection_digest,
-        logical_content_digest,
-        &artifact_digest,
-    )?;
-    encrypted_staging.validate_current()?;
-    staging_dir.validate_current()?;
-    remove_pinned_snapshot_dir_all(&staging_dir)?;
-    encrypted_staging.validate_current()?;
-    Ok(encrypted_staging)
+    result
 }
 
 fn remove_snapshot_dir_all(path: &Path) -> Result<()> {
@@ -1543,6 +1579,7 @@ enum FailedSnapshotCleanupClass {
     Io,
     Contract,
     Cancelled,
+    PublicationBusy,
     Index,
 }
 
@@ -1552,6 +1589,7 @@ impl FailedSnapshotCleanupClass {
             FullTextError::Io { .. } => Self::Io,
             FullTextError::Internal { .. } => Self::Contract,
             FullTextError::Cancelled => Self::Cancelled,
+            FullTextError::PublicationBusy => Self::PublicationBusy,
             FullTextError::Tantivy { .. } => Self::Index,
         }
     }
@@ -1815,12 +1853,11 @@ fn validate_plaintext_snapshot_contents(
 }
 
 fn validate_snapshot_contents(
-    index_root: &Path,
     snapshot_dir: &Path,
     expected_generation: &str,
     expected_document_count: usize,
 ) -> Result<PublishedSnapshotMetadata> {
-    let validation = open_published_snapshot(index_root, snapshot_dir, expected_generation)?;
+    let validation = open_published_snapshot(snapshot_dir, expected_generation)?;
     let metadata = validation
         .snapshot_metadata()
         .ok_or_else(|| FullTextError::internal("full-text snapshot metadata missing"))?;
@@ -1833,7 +1870,6 @@ fn validate_snapshot_contents(
 }
 
 fn open_published_snapshot(
-    index_root: &Path,
     snapshot_dir: &Path,
     expected_generation: &str,
 ) -> Result<FullTextIndex> {
@@ -1842,7 +1878,7 @@ fn open_published_snapshot(
     let encrypted_path = snapshot_dir.join(ENCRYPTED_SNAPSHOT_FILE);
     let archive = read_encrypted_snapshot(
         &encrypted_path,
-        &index_root.join(SNAPSHOT_KEY_FILE),
+        &snapshot_dir.join(SNAPSHOT_KEY_FILE),
         expected_generation,
         metadata.artifact_digest(),
     )?;
@@ -1928,7 +1964,7 @@ fn write_encrypted_snapshot(
         .map_err(|_| FullTextError::internal("full-text snapshot encryption failed"))?;
 
     let mut envelope =
-        format!("{SNAPSHOT_HEADER_ENCRYPTED_V2}\n{}\n", encode_hex(&nonce)).into_bytes();
+        format!("{SNAPSHOT_HEADER_ENCRYPTED_V3}\n{}\n", encode_hex(&nonce)).into_bytes();
     envelope.extend_from_slice(&ciphertext);
     let content_digest = ContentDigest::from_bytes(&envelope);
 
@@ -1961,7 +1997,7 @@ fn read_encrypted_snapshot(
         .ok_or_else(|| FullTextError::internal("full-text snapshot envelope corrupt"))?;
     let header = std::str::from_utf8(&envelope[..first_newline])
         .map_err(|_| FullTextError::internal("full-text snapshot envelope corrupt"))?;
-    if header != SNAPSHOT_HEADER_ENCRYPTED_V2 {
+    if header != SNAPSHOT_HEADER_ENCRYPTED_V3 {
         return Err(FullTextError::internal(
             "full-text snapshot encrypted header invalid",
         ));
@@ -1984,8 +2020,8 @@ fn read_encrypted_snapshot(
 }
 
 fn snapshot_encryption_aad(generation: &str) -> Vec<u8> {
-    let mut aad = Vec::with_capacity(SNAPSHOT_HEADER_ENCRYPTED_V2.len() + generation.len() + 8);
-    aad.extend_from_slice(SNAPSHOT_HEADER_ENCRYPTED_V2.as_bytes());
+    let mut aad = Vec::with_capacity(SNAPSHOT_HEADER_ENCRYPTED_V3.len() + generation.len() + 8);
+    aad.extend_from_slice(SNAPSHOT_HEADER_ENCRYPTED_V3.as_bytes());
     aad.extend_from_slice(&(generation.len() as u64).to_le_bytes());
     aad.extend_from_slice(generation.as_bytes());
     aad
@@ -1997,7 +2033,7 @@ fn snapshot_archive_bytes(root: &Path) -> Result<Vec<u8>> {
     entries.sort_by(|left, right| left.0.cmp(&right.0));
 
     let mut output = Vec::new();
-    output.extend_from_slice(SNAPSHOT_ARCHIVE_HEADER_V2);
+    output.extend_from_slice(SNAPSHOT_ARCHIVE_HEADER_V3);
     output.extend_from_slice(
         &u32::try_from(entries.len())
             .map_err(|_| FullTextError::internal("full-text snapshot archive too large"))?
@@ -2043,7 +2079,7 @@ fn collect_snapshot_archive_entries(
 
 fn extract_snapshot_archive(archive: &[u8], destination: &Path) -> Result<()> {
     let mut cursor = Cursor::new(archive);
-    cursor.expect_prefix(SNAPSHOT_ARCHIVE_HEADER_V2)?;
+    cursor.expect_prefix(SNAPSHOT_ARCHIVE_HEADER_V3)?;
     let entry_count = cursor.read_u32()?;
     for _ in 0..entry_count {
         let path_len = cursor.read_u32()? as usize;
@@ -2610,6 +2646,7 @@ pub type Result<T> = std::result::Result<T, FullTextError>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FullTextError {
     Cancelled,
+    PublicationBusy,
     Io { diagnostic: String },
     Tantivy { diagnostic: String },
     Internal { diagnostic: String },
@@ -2643,6 +2680,9 @@ impl fmt::Display for FullTextError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             FullTextError::Cancelled => formatter.write_str("full-text index operation cancelled"),
+            FullTextError::PublicationBusy => {
+                formatter.write_str("full-text snapshot publication is busy")
+            }
             FullTextError::Io { .. } => formatter.write_str("full-text index IO error"),
             FullTextError::Tantivy { .. } => {
                 formatter.write_str("full-text index operation failed")
@@ -2658,7 +2698,7 @@ impl std::error::Error for FullTextError {}
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
-    use std::sync::Mutex;
+    use std::sync::{mpsc, Mutex};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -2733,6 +2773,97 @@ mod tests {
     }
 
     #[test]
+    fn publication_lock_contention_is_typed_non_blocking_and_retryable() {
+        let index_root = temp_dir("publication-busy");
+        let stable = IndexDocument {
+            doc_id: "doc_00000000000000000000000000000010".to_string(),
+            resume_version_id: "ver_00000000000000000000000000000010".to_string(),
+            file_name: "stable.pdf".to_string(),
+            clean_text: "Stable Rust search".to_string(),
+            sections: Vec::new(),
+        };
+        publish_snapshot(&index_root, "fulltext-stable-1-0-0", [stable]).unwrap();
+
+        let publication_lock =
+            open_existing_private_lock(&index_root.join(SNAPSHOT_PUBLICATION_LOCK_FILE))
+                .unwrap()
+                .unwrap();
+        publication_lock.lock().unwrap();
+
+        let cancelled = IndexDocument {
+            doc_id: "doc_00000000000000000000000000000011".to_string(),
+            resume_version_id: "ver_00000000000000000000000000000011".to_string(),
+            file_name: "cancelled.pdf".to_string(),
+            clean_text: "Cancelled Rust search".to_string(),
+            sections: Vec::new(),
+        };
+        let cancel_check = || true;
+        assert_eq!(
+            publish_snapshot_with_control(
+                &index_root,
+                "fulltext-cancelled-before-busy-1-0-0",
+                [cancelled],
+                SnapshotPublishControl::from_cancel_check(&cancel_check),
+            )
+            .unwrap_err(),
+            FullTextError::Cancelled
+        );
+
+        let contested = IndexDocument {
+            doc_id: "doc_00000000000000000000000000000012".to_string(),
+            resume_version_id: "ver_00000000000000000000000000000012".to_string(),
+            file_name: "contested.pdf".to_string(),
+            clean_text: "Contested Rust search".to_string(),
+            sections: Vec::new(),
+        };
+        let retry_document = contested.clone();
+        let publish_root = index_root.clone();
+        let (result_tx, result_rx) = mpsc::channel();
+        let publisher = thread::spawn(move || {
+            let result = publish_snapshot(&publish_root, "fulltext-contested-1-0-0", [contested]);
+            result_tx.send(result).unwrap();
+        });
+
+        let result_while_locked = result_rx.recv_timeout(Duration::from_secs(1));
+        let returned_while_locked = result_while_locked.is_ok();
+        publication_lock.unlock().unwrap();
+        let result = result_while_locked.unwrap_or_else(|_| {
+            result_rx
+                .recv_timeout(Duration::from_secs(10))
+                .expect("publisher did not finish after the external lock was released")
+        });
+        publisher.join().unwrap();
+
+        assert!(
+            returned_while_locked,
+            "publication waited for an externally held publication lock"
+        );
+        assert_eq!(result.unwrap_err(), FullTextError::PublicationBusy);
+        assert!(
+            FullTextIndex::open_snapshot(&index_root, "fulltext-contested-1-0-0")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            FullTextIndex::open_snapshot(&index_root, "fulltext-stable-1-0-0")
+                .unwrap()
+                .is_some()
+        );
+
+        publish_snapshot(&index_root, "fulltext-contested-1-0-0", [retry_document]).unwrap();
+        assert!(
+            FullTextIndex::open_snapshot(&index_root, "fulltext-contested-1-0-0")
+                .unwrap()
+                .is_some()
+        );
+
+        let busy = FullTextError::PublicationBusy;
+        assert_eq!(busy.to_string(), "full-text snapshot publication is busy");
+        assert!(std::error::Error::source(&busy).is_none());
+        remove_dir(&index_root);
+    }
+
+    #[test]
     fn snapshot_publish_control_cancels_between_documents() {
         let index_root = temp_dir("snapshot-publish-control-cancel");
         let documents = (0..32)
@@ -2766,6 +2897,11 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        assert!(!index_root.join(SNAPSHOT_KEY_FILE).exists());
+        assert!(fs::read_dir(index_root.join(STAGING_DIR))
+            .unwrap()
+            .next()
+            .is_none());
 
         remove_dir(&index_root);
     }

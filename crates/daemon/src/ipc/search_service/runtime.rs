@@ -17,6 +17,7 @@ use crate::search_contract::{DaemonSearchArgs, DaemonSearchMode, SearchDeadline}
 use crate::search_runtime_config::SearchRuntimeConfig;
 
 use super::admission::AdmissionPermit;
+use super::artifact_fault::ArtifactFaultReporter;
 use super::cancellation::{CancelStatus, CancellationRegistry, RequestControl};
 use super::wire::{RequestEnvelope, SearchReply};
 
@@ -42,13 +43,14 @@ pub(super) struct SearchQueue {
 #[derive(Default)]
 struct SearchQueueState {
     tasks: VecDeque<SearchTask>,
-    shutdown: bool,
+    active: Option<Arc<RequestControl>>,
+    closed: bool,
 }
 
 impl SearchQueue {
     pub(super) fn push(&self, task: SearchTask) -> bool {
         let mut state = self.state.lock().expect("query queue");
-        if state.shutdown {
+        if state.closed {
             return false;
         }
         state.tasks.push_back(task);
@@ -60,9 +62,10 @@ impl SearchQueue {
         let mut state = self.state.lock().expect("query queue");
         loop {
             if let Some(task) = state.tasks.pop_front() {
+                state.active = Some(Arc::clone(&task.control));
                 return Some(task);
             }
-            if state.shutdown {
+            if state.closed {
                 return None;
             }
             state = self.ready.wait(state).expect("query queue");
@@ -78,10 +81,32 @@ impl SearchQueue {
         state.tasks.remove(index)
     }
 
-    pub(super) fn shutdown(&self) {
+    fn complete_active(&self, control: &Arc<RequestControl>) {
         let mut state = self.state.lock().expect("query queue");
-        state.shutdown = true;
+        if state
+            .active
+            .as_ref()
+            .is_some_and(|active| Arc::ptr_eq(active, control))
+        {
+            state.active = None;
+        }
+    }
+
+    pub(super) fn close_for_drain(&self) {
+        let mut state = self.state.lock().expect("query queue");
+        state.closed = true;
         self.ready.notify_all();
+    }
+
+    pub(super) fn close_and_cancel(&self) -> Vec<SearchTask> {
+        let mut state = self.state.lock().expect("query queue");
+        state.closed = true;
+        if let Some(active) = state.active.as_ref() {
+            active.cancellation.request();
+        }
+        let queued = state.tasks.drain(..).collect();
+        self.ready.notify_all();
+        queued
     }
 }
 
@@ -133,91 +158,122 @@ pub(super) fn start_search_worker(
     queue: Arc<SearchQueue>,
     cancellations: Arc<CancellationRegistry>,
     deadline_waker: Sender<DeadlineCommand>,
+    artifact_fault_reporter: Option<ArtifactFaultReporter>,
 ) -> JoinHandle<crate::Result<()>> {
     thread::spawn(move || {
-        let mut query_runtime = crate::query_runtime::DaemonQueryRuntime::open(&data_dir).ok();
-        while let Some(mut task) = queue.pop() {
-            if task.control.completed.load(AtomicOrdering::Acquire) {
-                cancellations.complete(
-                    task.envelope.cancel_token.as_deref(),
-                    CancelStatus::Complete,
-                );
-                continue;
-            }
-            let execution = DaemonSearchExecution {
-                request_id: &task.envelope.request_id,
-                args: &task.args,
-                query_parse_duration: task.query_parse_duration,
-                deadline: &task.deadline,
-                cancellation: &task.control.cancellation,
-            };
-            if query_runtime.is_none() {
-                query_runtime = crate::query_runtime::DaemonQueryRuntime::open(&data_dir).ok();
-            }
-            let result = match query_runtime.as_mut() {
-                Some(query_runtime) => execute_search_command(&execution, &config, query_runtime),
-                None => Err(CommandFailure::ServiceUnavailable(
-                    "QUERY_SERVICE_UNAVAILABLE",
-                )),
-            };
-            if task
-                .control
-                .completed
-                .compare_exchange(false, true, AtomicOrdering::AcqRel, AtomicOrdering::Acquire)
-                .is_err()
-            {
-                cancellations.complete(
-                    task.envelope.cancel_token.as_deref(),
-                    CancelStatus::Complete,
-                );
-                continue;
-            }
-            let terminal_status = match &result {
-                Ok(output) if output.completion == SearchCommandCompletion::Cancelled => {
-                    CancelStatus::Cancelled
-                }
-                _ => CancelStatus::Complete,
-            };
-            let write_result = match result {
-                Ok(output) => task.reply.write_output(output),
-                Err(CommandFailure::BadRequest(message)) => {
-                    task.reply
-                        .write_error(&task.envelope.request_id, 400, "BAD_REQUEST", message)
-                }
-                Err(CommandFailure::Conflict(message)) => {
-                    task.reply
-                        .write_error(&task.envelope.request_id, 409, "CONFLICT", message)
-                }
-                Err(CommandFailure::NotFound(message)) => {
-                    task.reply
-                        .write_error(&task.envelope.request_id, 404, "NOT_FOUND", message)
-                }
-                Err(CommandFailure::TooLarge(message)) => task.reply.write_error(
-                    &task.envelope.request_id,
-                    413,
-                    "LIMIT_EXCEEDED",
-                    message,
-                ),
-                Err(CommandFailure::ServiceUnavailable(code)) => task.reply.write_error(
-                    &task.envelope.request_id,
-                    503,
-                    code,
-                    "query service is unavailable",
-                ),
-                Err(CommandFailure::Internal) => task.reply.write_error(
-                    &task.envelope.request_id,
-                    503,
-                    "QUERY_SERVICE_UNAVAILABLE",
-                    "query service is unavailable",
-                ),
-            };
-            let _ = write_result;
-            cancellations.complete(task.envelope.cancel_token.as_deref(), terminal_status);
-            task.admission_permit.release();
-            let _ = deadline_waker.send(DeadlineCommand::Wake);
-        }
-        Ok(())
+        run_search_worker(
+            config,
+            queue,
+            cancellations,
+            deadline_waker,
+            artifact_fault_reporter,
+            || crate::query_runtime::DaemonQueryRuntime::open(&data_dir).ok(),
+        )
     })
+}
+
+fn run_search_worker(
+    config: SearchRuntimeConfig,
+    queue: Arc<SearchQueue>,
+    cancellations: Arc<CancellationRegistry>,
+    deadline_waker: Sender<DeadlineCommand>,
+    artifact_fault_reporter: Option<ArtifactFaultReporter>,
+    mut open_runtime: impl FnMut() -> Option<crate::query_runtime::DaemonQueryRuntime>,
+) -> crate::Result<()> {
+    // Keep control-plane startup and no-request shutdown independent from
+    // artifact opening. The first admitted search owns lazy data-plane
+    // initialization and retains the existing service-unavailable result.
+    let mut query_runtime = None;
+    while let Some(mut task) = queue.pop() {
+        if task.control.completed.load(AtomicOrdering::Acquire) {
+            cancellations.complete(
+                task.envelope.cancel_token.as_deref(),
+                CancelStatus::Complete,
+            );
+            queue.complete_active(&task.control);
+            continue;
+        }
+        let execution = DaemonSearchExecution {
+            request_id: &task.envelope.request_id,
+            args: &task.args,
+            query_parse_duration: task.query_parse_duration,
+            deadline: &task.deadline,
+            cancellation: &task.control.cancellation,
+        };
+        if query_runtime.is_none() {
+            query_runtime = open_runtime();
+        }
+        let result = match query_runtime.as_mut() {
+            Some(query_runtime) => execute_search_command(&execution, &config, query_runtime),
+            None => Err(CommandFailure::ServiceUnavailable(
+                "QUERY_SERVICE_UNAVAILABLE",
+            )),
+        };
+        if let Some(fault) = query_runtime
+            .as_mut()
+            .and_then(crate::query_runtime::DaemonQueryRuntime::take_artifact_fault)
+        {
+            if let Some(reporter) = artifact_fault_reporter.as_ref() {
+                reporter.report(fault);
+            }
+        }
+        if task
+            .control
+            .completed
+            .compare_exchange(false, true, AtomicOrdering::AcqRel, AtomicOrdering::Acquire)
+            .is_err()
+        {
+            cancellations.complete(
+                task.envelope.cancel_token.as_deref(),
+                CancelStatus::Complete,
+            );
+            queue.complete_active(&task.control);
+            continue;
+        }
+        let terminal_status = match &result {
+            Ok(output) if output.completion == SearchCommandCompletion::Cancelled => {
+                CancelStatus::Cancelled
+            }
+            _ => CancelStatus::Complete,
+        };
+        let write_result = match result {
+            Ok(output) => task.reply.write_output(output),
+            Err(CommandFailure::BadRequest(message)) => {
+                task.reply
+                    .write_error(&task.envelope.request_id, 400, "BAD_REQUEST", message)
+            }
+            Err(CommandFailure::Conflict(message)) => {
+                task.reply
+                    .write_error(&task.envelope.request_id, 409, "CONFLICT", message)
+            }
+            Err(CommandFailure::NotFound(message)) => {
+                task.reply
+                    .write_error(&task.envelope.request_id, 404, "NOT_FOUND", message)
+            }
+            Err(CommandFailure::TooLarge(message)) => {
+                task.reply
+                    .write_error(&task.envelope.request_id, 413, "LIMIT_EXCEEDED", message)
+            }
+            Err(CommandFailure::ServiceUnavailable(code)) => task.reply.write_error(
+                &task.envelope.request_id,
+                503,
+                code,
+                "query service is unavailable",
+            ),
+            Err(CommandFailure::Internal) => task.reply.write_error(
+                &task.envelope.request_id,
+                503,
+                "QUERY_SERVICE_UNAVAILABLE",
+                "query service is unavailable",
+            ),
+        };
+        let _ = write_result;
+        cancellations.complete(task.envelope.cancel_token.as_deref(), terminal_status);
+        task.admission_permit.release();
+        queue.complete_active(&task.control);
+        let _ = deadline_waker.send(DeadlineCommand::Wake);
+    }
+    Ok(())
 }
 
 pub(super) fn run_deadline_scheduler(receiver: Receiver<DeadlineCommand>) {

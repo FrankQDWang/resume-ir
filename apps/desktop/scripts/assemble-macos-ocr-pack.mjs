@@ -13,9 +13,13 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+
+import {
+  MACOS_SYSTEM_TOOLS,
+  runClosedSystemTool,
+} from "./macos-system-tools.mjs";
 
 const TARGET_TRIPLE = "aarch64-apple-darwin";
 const LICENSE_IDS = [
@@ -75,12 +79,16 @@ function parseArguments(args) {
   return result;
 }
 
-function run(program, args) {
-  const result = spawnSync(program, args, {
+function defaultRunner(program, args) {
+  return runClosedSystemTool(program, args, {
     encoding: "utf8",
     maxBuffer: 4 * 1024 * 1024,
-    shell: false,
+    timeout: 30_000,
   });
+}
+
+function run(program, args, runner = defaultRunner) {
+  const result = runner(program, args);
   if (result.error || result.status !== 0) fail("native tool failed");
   return result.stdout;
 }
@@ -143,16 +151,16 @@ function validateReviewedManifest(manifest) {
   return { engine, languageById };
 }
 
-function machoDependencies(file) {
-  return run("otool", ["-L", file])
+export function machoDependencies(file, runner = defaultRunner) {
+  return run(MACOS_SYSTEM_TOOLS.otool, ["-L", file], runner)
     .split("\n")
     .slice(1)
     .map((line) => line.trim().match(/^(.*?) \(compatibility/)?.[1])
     .filter(Boolean);
 }
 
-function machoId(file) {
-  const lines = run("otool", ["-D", file])
+function machoId(file, runner = defaultRunner) {
+  const lines = run(MACOS_SYSTEM_TOOLS.otool, ["-D", file], runner)
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
@@ -163,7 +171,7 @@ function isSystemDependency(dependency) {
   return SYSTEM_PREFIXES.some((prefix) => dependency.startsWith(prefix));
 }
 
-async function collectEngineClosure(engine) {
+async function collectEngineClosure(engine, runner = defaultRunner) {
   const queue = [engine];
   const sources = new Set();
   const dependencies = new Map();
@@ -171,9 +179,9 @@ async function collectEngineClosure(engine) {
     const source = await realpath(queue.pop());
     if (sources.has(source)) continue;
     sources.add(source);
-    const id = machoId(source);
+    const id = machoId(source, runner);
     const edges = [];
-    for (const edge of machoDependencies(source)) {
+    for (const edge of machoDependencies(source, runner)) {
       if (isSystemDependency(edge) || edge === id) {
         edges.push({ original: edge });
         continue;
@@ -213,7 +221,13 @@ async function fetchLicenseText(source) {
   return bytes;
 }
 
-async function stageEngine({ dependencies, engine, root, sources }) {
+export async function stageEngine({
+  dependencies,
+  engine,
+  root,
+  runner = defaultRunner,
+  sources,
+}) {
   const libDirectory = path.join(root, "lib");
   await mkdir(libDirectory, { recursive: true });
   const destinations = new Map();
@@ -241,16 +255,24 @@ async function stageEngine({ dependencies, engine, root, sources }) {
         source === engine
           ? `@loader_path/lib/${path.basename(dependencyDestination)}`
           : `@loader_path/${path.basename(dependencyDestination)}`;
-      run("install_name_tool", ["-change", edge.original, replacement, destination]);
+      run(
+        MACOS_SYSTEM_TOOLS.installNameTool,
+        ["-change", edge.original, replacement, destination],
+        runner,
+      );
     }
     if (source !== engine) {
-      run("install_name_tool", [
-        "-id",
-        `@loader_path/${path.basename(destination)}`,
-        destination,
-      ]);
+      run(
+        MACOS_SYSTEM_TOOLS.installNameTool,
+        ["-id", `@loader_path/${path.basename(destination)}`, destination],
+        runner,
+      );
     }
-    run("codesign", ["--force", "--sign", "-", destination]);
+    run(
+      MACOS_SYSTEM_TOOLS.codesign,
+      ["--force", "--sign", "-", destination],
+      runner,
+    );
   }
 }
 
@@ -279,12 +301,12 @@ function roleFor(file) {
   fail("assembled pack contains an undeclared file");
 }
 
-async function assemble({ expectedManifest, manifest, out }) {
+async function assemble({ expectedManifest, manifest, out, runner = defaultRunner }) {
   const sourceManifest = validateReviewedManifest(
     JSON.parse(await readFile(manifest, "utf8")),
   );
   const engine = await checkedSourceFile(sourceManifest.engine.artifact.path);
-  const closure = await collectEngineClosure(engine);
+  const closure = await collectEngineClosure(engine, runner);
   const parent = path.dirname(out);
   const temporary = path.join(parent, `${path.basename(out)}.tmp-${process.pid}-${Date.now()}`);
   const backup = path.join(parent, `${path.basename(out)}.old-${process.pid}-${Date.now()}`);
@@ -297,7 +319,7 @@ async function assemble({ expectedManifest, manifest, out }) {
   await rm(temporary, { recursive: true, force: true });
   await mkdir(temporary, { mode: 0o700 });
   try {
-    await stageEngine({ ...closure, engine, root: temporary });
+    await stageEngine({ ...closure, engine, root: temporary, runner });
     const tessdata = path.join(temporary, "tessdata");
     await mkdir(tessdata);
     const tessdataSources = [];
@@ -379,16 +401,21 @@ async function assemble({ expectedManifest, manifest, out }) {
   }
 }
 
-const options = parseArguments(process.argv.slice(2));
-assemble(options)
-  .then(({ fileCount, libraryCount }) => {
-    console.log("macOS OCR pack: assembled");
-    console.log(`target: ${TARGET_TRIPLE}`);
-    console.log(`files: ${fileCount}`);
-    console.log(`engine libraries: ${libraryCount}`);
-    console.log("paths: <redacted>");
-  })
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : "OCR pack assembly blocked");
-    process.exitCode = 1;
-  });
+const moduleFile = fileURLToPath(import.meta.url);
+if (process.argv[1] && path.resolve(process.argv[1]) === moduleFile) {
+  const options = parseArguments(process.argv.slice(2));
+  assemble(options)
+    .then(({ fileCount, libraryCount }) => {
+      console.log("macOS OCR pack: assembled");
+      console.log(`target: ${TARGET_TRIPLE}`);
+      console.log(`files: ${fileCount}`);
+      console.log(`engine libraries: ${libraryCount}`);
+      console.log("paths: <redacted>");
+    })
+    .catch((error) => {
+      console.error(
+        error instanceof Error ? error.message : "OCR pack assembly blocked",
+      );
+      process.exitCode = 1;
+    });
+}

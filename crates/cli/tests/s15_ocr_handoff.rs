@@ -1503,12 +1503,18 @@ fn seed_ocr_pdf_document_with_bytes(
         store
             .activate_migration_rebuild_contract(&contract, now)
             .unwrap();
-        prepare_migration_rebuild_artifacts(&store, now).unwrap();
+        prepare_migration_rebuild_artifacts(
+            &store,
+            now,
+            &import_pipeline::PipelineRunControl::default(),
+        )
+        .unwrap();
         finalize_migration_rebuild(
             &store,
             now,
             &contract,
             &SearchPublicationVectorization::default(),
+            &import_pipeline::PipelineRunControl::default(),
         )
         .unwrap();
     }

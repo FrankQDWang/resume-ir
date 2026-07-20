@@ -4,7 +4,7 @@ use index_vector::{
     VectorIndexError, VectorModelContract, VectorSnapshotGcCommitReport,
     VectorSnapshotGcPreparation, VectorSnapshotReadLease, VectorSnapshotReader, VectorSnapshotRoot,
     VectorSnapshotStore as ProductionVectorSnapshotStore, VectorSnapshotSummary,
-    VectorSnapshotUpdate, MAX_VECTOR_DIMENSION, VECTOR_SNAPSHOT_SCHEMA_V3,
+    VectorSnapshotUpdate, MAX_VECTOR_DIMENSION, VECTOR_SNAPSHOT_SCHEMA_V4,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -92,6 +92,9 @@ impl VectorSnapshotStore {
         };
         Ok(match commit_snapshot_gc(prepared) {
             VectorSnapshotGcCommitReport::Complete(summary) => TestGcSummary::Completed(summary),
+            VectorSnapshotGcCommitReport::Interrupted(_) => {
+                panic!("vector GC unexpectedly interrupted")
+            }
             VectorSnapshotGcCommitReport::PartialFailure(failure) => {
                 TestGcSummary::Partial(failure)
             }
@@ -142,9 +145,9 @@ fn publishes_and_opens_only_an_explicit_generation_with_exact_version_hits() {
         .publish_generation("generation-a", [java.clone(), data])
         .unwrap();
     assert_eq!(published.generation(), "generation-a");
-    assert_eq!(published.schema(), VECTOR_SNAPSHOT_SCHEMA_V3);
-    assert_eq!(published.schema().manifest_schema(), "vector.snapshot.v3");
-    assert_eq!(published.schema().index_schema(), "hnsw-vector.v3");
+    assert_eq!(published.schema(), VECTOR_SNAPSHOT_SCHEMA_V4);
+    assert_eq!(published.schema().manifest_schema(), "vector.snapshot.v4");
+    assert_eq!(published.schema().index_schema(), "hnsw-vector.v4");
     assert_eq!(published.vector_count(), 2);
     assert_eq!(published.projection_count(), 2);
     assert_eq!(published.vector_document_count(), 2);
@@ -298,8 +301,8 @@ fn exact_open_rejects_generation_and_artifact_symlinks() {
         fs::rename(&backup, &path).unwrap();
     }
 
-    let key = root.join("vector.snapshot.key-v3");
-    let key_backup = root.join("vector.snapshot.key-v3.synthetic-backup");
+    let key = root.join("snapshots/generation-real/vector.snapshot.key-v4");
+    let key_backup = root.join("snapshots/generation-real/vector.snapshot.key-v4.synthetic-backup");
     fs::rename(&key, &key_backup).unwrap();
     symlink(&key_backup, &key).unwrap();
     assert_eq!(
@@ -315,7 +318,7 @@ fn exact_open_rejects_permissive_private_artifacts_without_chmod() {
     for relative in [
         "snapshots/generation-private/snapshot-manifest.json",
         "snapshots/generation-private/vector.snapshot.enc",
-        "vector.snapshot.key-v3",
+        "snapshots/generation-private/vector.snapshot.key-v4",
     ] {
         let root = temp_dir("artifact-permissions");
         let store = VectorSnapshotStore::new(&root, 4).unwrap();
@@ -345,8 +348,61 @@ fn exact_open_rejects_permissive_private_artifacts_without_chmod() {
     }
 }
 
+#[cfg(unix)]
 #[test]
-fn encrypted_v3_artifact_does_not_expose_identity_or_vector_values() {
+fn damaged_generation_key_does_not_poison_later_publications() {
+    let root = temp_dir("generation-local-vector-keys");
+    let store = VectorSnapshotStore::new(&root, 4).unwrap();
+    let publish = |generation: &str| {
+        store
+            .publish_generation(
+                generation,
+                [document(
+                    generation,
+                    generation,
+                    generation,
+                    "model",
+                    [1.0, 0.0, 0.0, 0.0],
+                )],
+            )
+            .unwrap();
+    };
+    publish("generation-a");
+    let first_key = root.join("snapshots/generation-a/vector.snapshot.key-v4");
+    let first_key_bytes = fs::read(&first_key).unwrap();
+    fs::remove_file(&first_key).unwrap();
+
+    publish("generation-b");
+    let second_key = root.join("snapshots/generation-b/vector.snapshot.key-v4");
+    let second_key_bytes = fs::read(&second_key).unwrap();
+    assert_ne!(second_key_bytes, first_key_bytes);
+    fs::write(&second_key, b"corrupt generation key").unwrap();
+
+    publish("generation-c");
+    let third_key = root.join("snapshots/generation-c/vector.snapshot.key-v4");
+    let third_key_bytes = fs::read(&third_key).unwrap();
+    assert_ne!(third_key_bytes, second_key_bytes);
+    fs::set_permissions(&third_key, fs::Permissions::from_mode(0o644)).unwrap();
+
+    publish("generation-d");
+    let fourth_key = root.join("snapshots/generation-d/vector.snapshot.key-v4");
+    let fourth_key_bytes = fs::read(&fourth_key).unwrap();
+    assert_ne!(fourth_key_bytes, third_key_bytes);
+    let fourth_backup = fourth_key.with_extension("backup");
+    fs::rename(&fourth_key, &fourth_backup).unwrap();
+    symlink(&fourth_backup, &fourth_key).unwrap();
+
+    publish("generation-e");
+    assert!(store.open_generation("generation-a").is_err());
+    assert!(store.open_generation("generation-b").is_err());
+    assert!(store.open_generation("generation-c").is_err());
+    assert!(store.open_generation("generation-d").is_err());
+    store.open_generation("generation-e").unwrap();
+    remove_dir(&root);
+}
+
+#[test]
+fn encrypted_v4_artifact_does_not_expose_identity_or_vector_values() {
     let root = temp_dir("encrypted");
     let store = VectorSnapshotStore::new(&root, 4).unwrap();
     let document = document(
@@ -368,7 +424,7 @@ fn encrypted_v3_artifact_does_not_expose_identity_or_vector_values() {
 
     let encrypted =
         fs::read_to_string(root.join("snapshots/generation-private/vector.snapshot.enc")).unwrap();
-    assert!(encrypted.starts_with("resume-ir-vector-index-encrypted-v3\n"));
+    assert!(encrypted.starts_with("resume-ir-vector-index-encrypted-v4\n"));
     for private_id in private_ids {
         assert!(!encrypted.contains(&private_id));
     }
@@ -485,7 +541,7 @@ fn corrupt_generation_fails_closed_without_last_good_fallback() {
         .unwrap();
     fs::write(
         root.join("snapshots/generation-bad/vector.snapshot.enc"),
-        "resume-ir-vector-index-encrypted-v3\ninvalid\ninvalid\n",
+        "resume-ir-vector-index-encrypted-v4\ninvalid\ninvalid\n",
     )
     .unwrap();
 
@@ -502,8 +558,8 @@ fn corrupt_generation_fails_closed_without_last_good_fallback() {
 }
 
 #[test]
-fn v2_manifest_is_incompatible_and_never_dual_read() {
-    let root = temp_dir("v2-fail-closed");
+fn v3_manifest_is_incompatible_and_never_dual_read() {
+    let root = temp_dir("v3-fail-closed");
     let store = VectorSnapshotStore::new(&root, 4).unwrap();
     store
         .publish_generation(
@@ -514,7 +570,7 @@ fn v2_manifest_is_incompatible_and_never_dual_read() {
     let manifest_path = root.join("snapshots/generation-v3/snapshot-manifest.json");
     let mut manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
-    manifest["schema_version"] = serde_json::json!("vector.snapshot.v2");
+    manifest["schema_version"] = serde_json::json!("vector.snapshot.v3");
     fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
 
     assert_eq!(

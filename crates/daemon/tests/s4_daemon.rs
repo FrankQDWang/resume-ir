@@ -66,7 +66,7 @@ fn retired_embedding_writer_flags_are_rejected_before_daemon_startup() {
 }
 
 #[test]
-fn foreground_once_opens_store_reports_ready_and_exits() {
+fn foreground_once_opens_store_reports_unpublished_repair_state_and_exits() {
     serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-data");
 
@@ -86,8 +86,17 @@ fn foreground_once_opens_store_reports_ready_and_exits() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("resume-daemon foreground ready"));
     assert!(stdout.contains("mode: once"));
-    assert!(stdout.contains("index health: ready"));
+    assert!(stdout.contains("index health: empty"));
     assert!(!stdout.contains(path_str(&data_dir)));
+    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+    let state = store.search_projection_state().unwrap();
+    assert_eq!(state.service_state, SearchProjectionServiceState::Repairing);
+    assert_eq!(
+        state.repair_reason,
+        Some(SearchRepairReason::MigrationRebuild)
+    );
+    assert!(state.generation.is_none());
+    drop(store);
 
     remove_dir(&data_dir);
 }
@@ -363,6 +372,7 @@ fn foreground_startup_rebuilds_missing_ready_snapshot_without_manual_worker() {
             "run",
             "--foreground",
             "--once",
+            "--work-index-once",
         ])
         .output()
         .expect("run resume-daemon startup recovery once");
@@ -377,7 +387,7 @@ fn foreground_startup_rebuilds_missing_ready_snapshot_without_manual_worker() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("resume-daemon foreground ready"));
     assert!(stdout.contains("index health: ready"));
-    assert!(!stdout.contains("search artifact worker active generation rebuilt:"));
+    assert!(stdout.contains("search artifact worker active generation rebuilt: yes"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));
     assert!(!stdout.contains(path_str(&canonical_fixture_root)));
@@ -407,7 +417,7 @@ fn foreground_startup_rebuilds_corrupt_ready_snapshot_without_manual_worker() {
         .join(&ready_generation)
         .join("snapshot-manifest.json");
     let manifest = fs::read_to_string(&manifest_path).unwrap();
-    assert!(manifest.contains("\"schema_version\":\"fulltext.snapshot.v2\""));
+    assert!(manifest.contains("\"schema_version\":\"fulltext.snapshot.v3\""));
     fs::write(
         &manifest_path,
         "{\"schema_version\":\"fulltext.snapshot.v999\",\"index_schema\":\"future-fulltext-schema\",\"payload\":\"PRIVATE schema mismatch path\"}\n",
@@ -421,6 +431,7 @@ fn foreground_startup_rebuilds_corrupt_ready_snapshot_without_manual_worker() {
             "run",
             "--foreground",
             "--once",
+            "--work-index-once",
         ])
         .output()
         .expect("run resume-daemon startup recovery after schema mismatch");
@@ -434,7 +445,7 @@ fn foreground_startup_rebuilds_corrupt_ready_snapshot_without_manual_worker() {
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("index health: ready"));
-    assert!(!stdout.contains("search artifact worker active generation rebuilt:"));
+    assert!(stdout.contains("search artifact worker active generation rebuilt: yes"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));
     assert!(!stdout.contains(path_str(&canonical_fixture_root)));
@@ -487,7 +498,7 @@ fn foreground_index_worker_loop_observes_startup_repaired_snapshot() {
         stdout
             .matches("search artifact worker active generation rebuilt: yes")
             .count(),
-        0
+        1
     );
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));
@@ -721,21 +732,14 @@ fn foreground_import_scheduler_processes_task_enqueued_after_startup() {
 
     let task_id = request_daemon_import(&data_dir, &canonical_fixture_root);
     wait_until_import_task_completed(&mut child, &data_dir, &task_id);
+    wait_until_search_projection_ready(&mut child, &data_dir);
     request_daemon_status(&data_dir);
     drop(lifecycle_stdin);
 
     let output = wait_contained_daemon(child, stdout, stderr);
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
-    assert!(
-        output.stdout.contains("import worker processed: 1"),
-        "stdout:\n{}\nstderr:\n{}",
-        output.stdout,
-        output.stderr
-    );
-    assert!(output
-        .stdout
-        .contains("import worker searchable documents: 2"));
+    assert!(!output.stdout.contains("import worker processed:"));
     assert!(!output.stdout.contains(path_str(&data_dir)));
     assert!(!output.stdout.contains(path_str(&fixture_root)));
     assert!(!output.stdout.contains(path_str(&canonical_fixture_root)));
@@ -814,7 +818,7 @@ fn foreground_import_scheduler_rescans_completed_root_without_path_leak() {
 }
 
 #[test]
-fn foreground_import_scheduler_catches_up_recent_completed_root_on_startup() {
+fn foreground_import_scheduler_preserves_rescan_interval_across_restart() {
     serialize_windows_s4_daemon_test!();
     let data_dir = temp_dir("daemon-import-startup-catchup-data");
     let fixture_root = temp_dir("daemon-import-startup-catchup-root");
@@ -853,7 +857,7 @@ fn foreground_import_scheduler_catches_up_recent_completed_root_on_startup() {
             "2",
         ])
         .output()
-        .expect("run resume-daemon startup catch-up");
+        .expect("run resume-daemon restart inside rescan interval");
 
     assert!(
         output.status.success(),
@@ -863,17 +867,12 @@ fn foreground_import_scheduler_catches_up_recent_completed_root_on_startup() {
     );
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(
-        stdout
-            .matches("import worker requeued completed imports: 1")
-            .count(),
-        1
-    );
-    assert_eq!(stdout.matches("import worker processed: 1").count(), 1);
+    assert!(!stdout.contains("import worker requeued completed imports:"));
+    assert!(!stdout.contains("import worker processed:"));
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains(path_str(&fixture_root)));
     assert!(!stdout.contains(path_str(&canonical_fixture_root)));
-    assert!(!search_fulltext(&data_dir, "StartupCatchupToken").is_empty());
+    assert!(search_fulltext(&data_dir, "StartupCatchupToken").is_empty());
 
     remove_dir(&data_dir);
     remove_dir(&fixture_root);
@@ -1159,14 +1158,10 @@ fn migration_rebuild_reconciles_a_root_cancelled_after_the_first_worker_tick() {
         output.stdout, output.stderr
     );
     assert!(output.stderr.is_empty());
-    assert!(output.stdout.contains("import worker cancelled: 1"));
-    assert_eq!(
-        output
-            .stdout
-            .matches("import worker queued migration repairs: 1")
-            .count(),
-        1
-    );
+    assert!(!output.stdout.contains("import worker cancelled:"));
+    assert!(!output
+        .stdout
+        .contains("import worker queued migration repairs:"));
     assert!(!output.stdout.contains(path_str(&data_dir)));
     assert!(!output.stdout.contains(path_str(&fixture_root)));
     assert!(!output.stdout.contains(path_str(&canonical_fixture_root)));
@@ -1392,23 +1387,16 @@ fn seed_queued_import_task(
 }
 
 fn initialize_empty_ready_store(data_dir: &Path) {
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
-        .args([
-            "--data-dir",
-            path_str(data_dir),
-            "run",
-            "--foreground",
-            "--once",
-        ])
-        .output()
-        .expect("initialize an empty ready search publication");
-    assert!(
-        output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+    let empty_root = data_dir.join("synthetic-empty-corpus");
+    fs::create_dir_all(&empty_root).unwrap();
+    let canonical_empty_root = fs::canonicalize(&empty_root).unwrap();
+    seed_queued_import_task(
+        data_dir,
+        "initialize-empty-ready-store",
+        &canonical_empty_root,
+        1_700_000_000,
     );
-    assert!(output.stderr.is_empty());
+    run_import_worker_once(data_dir);
     let store = ReadMetaStore::open_data_dir(data_dir).unwrap();
     assert_eq!(
         store.search_projection_state().unwrap().service_state,
@@ -1897,7 +1885,13 @@ fn wait_until_replacement_import_completed(
             .filter(|task| task.id != *cancelled_task_id)
         {
             match task.status {
-                ImportTaskStatus::Completed => return task.id,
+                ImportTaskStatus::Completed
+                    if store.search_projection_state().unwrap().service_state
+                        == SearchProjectionServiceState::Ready =>
+                {
+                    return task.id;
+                }
+                ImportTaskStatus::Completed => {}
                 ImportTaskStatus::FailedRetryable | ImportTaskStatus::FailedPermanent => {
                     panic!("replacement import failed: {:?}", task.status)
                 }
@@ -1909,6 +1903,28 @@ fn wait_until_replacement_import_completed(
 
     child.terminate();
     panic!("replacement import did not complete before timeout");
+}
+
+fn wait_until_search_projection_ready(child: &mut impl TestDaemonProcess, data_dir: &Path) {
+    let store = ReadMetaStore::open_data_dir(data_dir).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while Instant::now() < deadline {
+        if let Some(status) = child.try_wait().expect("poll daemon child") {
+            panic!("daemon exited before search projection became ready: {status}");
+        }
+        let state = store.search_projection_state().unwrap();
+        match state.service_state {
+            SearchProjectionServiceState::Ready => return,
+            SearchProjectionServiceState::RepairBlocked => {
+                panic!("search projection became repair-blocked")
+            }
+            SearchProjectionServiceState::Repairing => {}
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    child.terminate();
+    panic!("search projection did not become ready before timeout");
 }
 
 struct DaemonOutput {
