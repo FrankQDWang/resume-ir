@@ -199,7 +199,12 @@ fn accept_with_timeout(listener: &TcpListener) -> (TcpStream, std::net::SocketAd
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         match listener.accept() {
-            Ok(pair) => return pair,
+            Ok((stream, address)) => {
+                stream
+                    .set_nonblocking(false)
+                    .expect("restore blocking fake daemon stream");
+                return (stream, address);
+            }
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 assert!(
                     Instant::now() < deadline,
