@@ -32,6 +32,7 @@ import {
   createMacosInternalTestEnvironment,
   createMacosInternalTestPlan,
   resolveMacosTestReleasePaths,
+  runSilentReleaseBuild,
   stageMountedDmg,
 } from "./macos-test-release.mjs";
 import { writeBundleComposition } from "./macos-bundle-composition.mjs";
@@ -1427,6 +1428,21 @@ test("locks one credential-free arm64 internal-test build", async () => {
       /config is invalid/,
     );
   }
+});
+
+test("isolates child build output from the machine-readable release receipt", () => {
+  const result = runSilentReleaseBuild(
+    process.execPath,
+    [
+      "-e",
+      'process.stdout.write("build stdout\\n"); process.stderr.write("build stderr\\n")',
+    ],
+    { cwd: os.tmpdir(), env: process.env },
+  );
+
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout, null);
+  assert.equal(result.stderr, null);
 });
 
 test("removes a stale canonical DMG when the Tauri build fails", async (context) => {

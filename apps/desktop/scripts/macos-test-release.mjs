@@ -50,12 +50,16 @@ const CREDENTIAL_VARIABLES = [
   "KEYCHAIN_PASSWORD",
 ];
 
-function defaultRunner(command, args, options) {
+export function runSilentReleaseBuild(command, args, options) {
   return spawnSync(command, args, {
     ...options,
     shell: false,
-    stdio: "inherit",
+    stdio: "ignore",
   });
+}
+
+function defaultRunner(command, args, options) {
+  return runSilentReleaseBuild(command, args, options);
 }
 
 function defaultToolRunner(command, args) {

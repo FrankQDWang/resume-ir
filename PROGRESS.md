@@ -3646,6 +3646,15 @@ guards, local runtime discovery, and PR #9 CI state.
   simulates the attach metadata side effect and remains paired with the existing
   pathname-replacement rejection. Installation, COW acceptance and soak are
   still unclaimed until this correction merges and exact merged `main` passes.
+- After the `ctime` correction merged, the exact-main release itself completed
+  with a valid v2 composition receipt, but the installed acceptance still
+  classified it as `release_build_failed`. The release entry inherited Tauri's
+  build stdout/stderr even though its caller requires stdout to contain exactly
+  one JSON receipt and stderr to be empty. The Tauri child process is now output-
+  isolated; the release entry remains the sole receipt writer. A subprocess
+  regression proves fixed child stdout/stderr cannot contaminate the machine
+  contract. Installation, COW acceptance and soak remain unclaimed pending a
+  merged-main rerun.
 
 ### S808
 
