@@ -7,10 +7,15 @@ import { spawn } from "node:child_process";
 import test from "node:test";
 
 import {
+  acquireInstalledMainAcceptanceLock,
   acquireLifecycleLock,
+  INSTALLED_MAIN_ACCEPTANCE_LOCK_FILE,
   LIFECYCLE_LOCK_FILE,
+  prepareInstalledMainAcceptanceLockFile,
   prepareLifecycleLockFile,
+  releaseInstalledMainAcceptanceLock,
   releaseLifecycleLock,
+  requireInstalledMainAcceptanceLockCapability,
   requireLifecycleLockCapability,
 } from "./macos-lifecycle-lock.mjs";
 
@@ -140,6 +145,45 @@ darwinTest("contends fail closed, releases idempotently, and cannot forge a leas
 
   const second = await acquireLifecycleLock({ lockFile });
   await releaseLifecycleLock(second);
+});
+
+darwinTest("acceptance ownership never self-contends with a production lifecycle child", async (context) => {
+  const values = await fixture(context);
+  const acceptanceFile = await prepareInstalledMainAcceptanceLockFile(values);
+  const lifecycleFile = await prepareLock(values);
+  assert.equal(
+    path.basename(acceptanceFile),
+    INSTALLED_MAIN_ACCEPTANCE_LOCK_FILE,
+  );
+  assert.notEqual(acceptanceFile, lifecycleFile);
+
+  const acceptance = await acquireInstalledMainAcceptanceLock({
+    lockFile: acceptanceFile,
+  });
+  assert.equal(
+    requireInstalledMainAcceptanceLockCapability(acceptance),
+    acceptance,
+  );
+  assert.throws(
+    () => requireLifecycleLockCapability(acceptance),
+    /lifecycle lock capability is invalid/,
+  );
+  await assert.rejects(
+    acquireInstalledMainAcceptanceLock({
+      lockFile: acceptanceFile,
+      startupTimeoutMs: 500,
+    }),
+    /lifecycle lock is unavailable/,
+  );
+
+  const lifecycle = await acquireLifecycleLock({ lockFile: lifecycleFile });
+  assert.equal(requireLifecycleLockCapability(lifecycle), lifecycle);
+  assert.throws(
+    () => requireInstalledMainAcceptanceLockCapability(lifecycle),
+    /lifecycle lock capability is invalid/,
+  );
+  await releaseLifecycleLock(lifecycle);
+  await releaseInstalledMainAcceptanceLock(acceptance);
 });
 
 darwinTest("parent SIGKILL closes the holder pipe and releases the kernel lock", async (context) => {

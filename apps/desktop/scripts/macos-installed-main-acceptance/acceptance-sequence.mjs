@@ -75,7 +75,7 @@ export async function executeAcceptance(runtime, signal) {
   throwIfAborted(signal);
   await runtime.validatePreLockInputs();
   const sourceExpectation = await runtime.precheckSourceAuthority();
-  await runtime.acquireLifecycleLease();
+  await runtime.acquireAcceptanceLease();
   await runtime.bindSourceAuthorityAfterLease(sourceExpectation);
   await runtime.recoverInterruptedRuns();
   const deployment = await runtime.prepareInstalledRelease();
@@ -203,7 +203,8 @@ export async function executeAcceptance(runtime, signal) {
       source_authorization: "explicit_cli_argument",
       source_schema: bindings.sourceSchema,
       clone: "apfs_copy_on_write",
-      lifecycle_lock: "held_for_entire_acceptance",
+      acceptance_lock: "held_for_entire_acceptance",
+      lifecycle_lock: "owned_by_install_children",
       source_mutated: false,
       release_data_dir_override: false,
     },

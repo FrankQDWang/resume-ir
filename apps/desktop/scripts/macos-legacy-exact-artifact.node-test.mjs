@@ -235,6 +235,18 @@ test("rejects executable mutation in an exact installed v1 App clone", async (co
     context.skip("exact-v1 installed App evidence is unavailable");
     return;
   }
+  const installedInfo = await readFile(
+    path.join(installed, "Contents", "Info.plist"),
+    "utf8",
+  );
+  if (
+    !/<key>\s*CFBundleShortVersionString\s*<\/key>\s*<string>\s*0\.1\.1\s*<\/string>/.test(
+      installedInfo,
+    )
+  ) {
+    context.skip("installed App is not the exact-v1 predecessor");
+    return;
+  }
   const root = await realpath(
     await mkdtemp(path.join(os.tmpdir(), "resume-ir-exact-v1-clone-")),
   );

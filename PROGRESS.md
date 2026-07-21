@@ -3522,8 +3522,10 @@ guards, local runtime discovery, and PR #9 CI state.
   `acceptance:macos:installed-main`. It derives the exact commit, version and
   icon from a clean worktree whose HEAD equals fresh remote `main`, then requires
   bundle/DMG/install evidence v2 to bind that commit; caller assertions cannot
-  substitute for provenance. It holds the real lifecycle lock across the full
-  run, uses an explicitly authorized v28 source and an APFS no-fallback COW
+  substitute for provenance. It holds a distinct purpose-bound installed-main
+  acceptance lock across the full run, while install, upgrade and uninstall
+  children exclusively own the production lifecycle lock. It uses an explicitly
+  authorized v28 source and an APFS no-fallback COW
   clone, binds strong-kill evidence to the current receipt boundary, targets
   normal quit by exact PID, and checks all four native executables for residue.
   Fulltext and vector locks must each produce exact `publication_busy` across
@@ -3531,6 +3533,18 @@ guards, local runtime discovery, and PR #9 CI state.
   `repair_required` outcome is mandatory before the gate can pass. The native
   combined diagnostics save dialog remains an explicit post-install check
   rather than a fabricated automated export claim.
+- The first exact-main installed runs deterministically failed with
+  `release_promotion_failed` while leaving valid 0.1.2 release evidence and no
+  torn journal or staging residue. Running the same verified DMG directly
+  proved upgrade, uninstall and install all succeed. The failure was therefore
+  in the acceptance harness: its run-wide owner held the production lifecycle
+  lock while its deployment child correctly tried to acquire that same lock.
+  The lock boundary is now hard-separated into non-interchangeable acceptance
+  and production lifecycle capabilities, with a real Darwin regression proving
+  that one acceptance run excludes another while its lifecycle child remains
+  able to acquire the production lock. No corrected merged-main installation or
+  soak claim is made until the complete local gates and a fresh exact-main run
+  pass.
 - A read-only preflight against the authorized installed v28 store exposed a
   real acceptance-harness RED: the canonical `metadata-active.v1` producer has
   four records followed by exactly one LF, while the first parser counted the

@@ -332,7 +332,8 @@ reader or promoted into a fabricated receipt.
   current blocked contract remains sticky across restart;
 - target replacement yields typed stale selection and can never mix body pages;
 - focused tests, workspace verification, privacy gates, 120-minute synthetic
-  soak, and native macOS/Windows evidence remain separate claims.
+  soak, and native macOS evidence remain separate claims. Per the current
+  Mac-only delivery decision, Windows evidence is not a gate for this train.
 - every macOS lifecycle phase supports crash/re-entry convergence; invalid
   journal permissions, unknown fields, digest drift or ambiguous filesystem
   state fail closed without losing an installed App or Application Support.
@@ -345,9 +346,10 @@ reader or promoted into a fabricated receipt.
   and bounded counts/latencies; unknown nested text or fields fail closed.
 - the installed-main gate itself observes a fresh remote `main`, requires a
   serially stable clean equal local commit before any recovery mutation,
-  revalidates it under the lifecycle lease, and builds the verified DMG from an
-  isolated local clone of that exact commit. Lease and live source authority
-  are rechecked before every install, upgrade, uninstall, import, signal, lock,
+  revalidates it under a purpose-bound installed-main acceptance lease, and
+  builds the verified DMG from an isolated local clone of that exact commit.
+  Lease and live source authority are rechecked before every install, upgrade,
+  uninstall, import, signal, lock,
   clone and quit mutation. A pre-existing App, caller assertion, mutable
   checkout or later version cannot substitute for that build-to-install
   transition.
@@ -364,12 +366,15 @@ reader or promoted into a fabricated receipt.
   perform its final normal quit/relaunch, Ready/search witness, strict redacted
   diagnostics check, final quit and native-process residue check.
 - SIGINT/SIGTERM and the next run recover only marker-bound COW workspaces and
-  exact owned process identities under the lifecycle lock. Durable launch
-  intent/pending/running state binds PID, PGID, process start, executable and
-  session authority; guardian and stale recovery reap the whole exact process
-  group even if the leader and App are already gone. Workspace deletion first
-  validates its parent inode, atomically quarantines the exact inode and
-  revalidates it, preserving any pathname replacement. No bundle-id-wide kill,
+  exact owned process identities under the acceptance lock. Install, upgrade
+  and uninstall children alone acquire the distinct production lifecycle lock;
+  the two capabilities are purpose-bound and cannot be substituted. Durable
+  launch intent/pending/running state binds PID, PGID, process start,
+  executable and session authority; guardian and stale recovery reap the whole
+  exact process group even if the leader and App are already gone. Workspace
+  deletion first validates its parent inode, atomically quarantines the exact
+  inode and revalidates it, preserving any pathname replacement. No
+  bundle-id-wide kill,
   unverified recursive deletion or private clone residue is accepted.
 - merged-main installation acceptance precedes the soak; bundle, DMG, receipt,
   installed acceptance and the uninterrupted 120-minute soak bind one commit.
