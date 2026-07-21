@@ -334,7 +334,9 @@ reader or promoted into a fabricated receipt.
 - focused tests, workspace verification, privacy gates, 120-minute synthetic
   soak, and native macOS evidence remain separate claims. Per the current
   Mac-only delivery decision, Windows evidence is not a gate for this train.
-- every macOS lifecycle phase supports crash/re-entry convergence; invalid
+- every macOS lifecycle phase, including same-version reinstall, supports
+  crash/re-entry convergence; reinstall is one atomic replacement and never an
+  uninstall/install pair. Invalid
   journal permissions, unknown fields, digest drift or ambiguous filesystem
   state fail closed without losing an installed App or Application Support.
 - v2 macOS evidence uses only absolute Apple system tools in a closed
@@ -349,7 +351,7 @@ reader or promoted into a fabricated receipt.
   revalidates it under a purpose-bound installed-main acceptance lease, and
   builds the verified DMG from an isolated local clone of that exact commit.
   Lease and live source authority are rechecked before every install, upgrade,
-  uninstall, import, signal, lock,
+  reinstall, uninstall, import, signal, lock,
   clone and quit mutation. A pre-existing App, caller assertion, mutable
   checkout or later version cannot substitute for that build-to-install
   transition.

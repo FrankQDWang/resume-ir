@@ -16,6 +16,7 @@ import test from "node:test";
 
 import {
   compareThreePartVersions,
+  reinstallMacosDmg,
   upgradeMacosDmg,
 } from "./macos-upgrade-lifecycle.mjs";
 import { withVerifiedMacosDmg } from "./verify-macos-dmg.mjs";
@@ -197,11 +198,16 @@ function createRunner(sourceApp, calls, { failCopy = false, failRegistrations = 
 }
 
 function upgradeArguments(values, overrides = {}) {
+  const operation = overrides.operation ?? "upgrade";
   const calls = [];
   const verifiedCandidateApps = [];
   const persistedReceipts = [];
-  let legacyStoredReceipt = installReceipt(OLD_VERSION);
-  let currentStoredReceipt;
+  let legacyStoredReceipt =
+    operation === "upgrade" ? installReceipt(OLD_VERSION) : undefined;
+  let currentStoredReceipt =
+    operation === "reinstall"
+      ? { ...installReceipt(NEW_VERSION), dmg_sha256: OLD_DMG_SHA256 }
+      : undefined;
   const inspectReceiptSet = async () => {
     if (legacyStoredReceipt && currentStoredReceipt) {
       return {
@@ -236,7 +242,8 @@ function upgradeArguments(values, overrides = {}) {
       targetTriple: "aarch64-apple-darwin",
       dmg: values.dmg,
       applicationsDirectory: values.applicationsDirectory,
-      installedVersion: OLD_VERSION,
+      installedVersion:
+        operation === "upgrade" ? OLD_VERSION : NEW_VERSION,
       candidateVersion: NEW_VERSION,
       temporaryRoot: values.temporaryRoot,
       platform: "darwin",
@@ -264,7 +271,9 @@ function upgradeArguments(values, overrides = {}) {
       verifyReceipt: verifyReceiptFixture,
       createCurrentReceipt: async ({ receipt }) => {
         persistedReceipts.push(receipt);
-        if (currentStoredReceipt) throw new Error("current receipt already exists");
+        if (currentStoredReceipt && operation !== "reinstall") {
+          throw new Error("current receipt already exists");
+        }
         currentStoredReceipt = receipt;
         if (overrides.failCurrentCreateAfterCommit) {
           throw new Error("synthetic post-rename fsync failure");
@@ -325,6 +334,80 @@ test("upgrades a verified App through an exclusive sibling stage", async (contex
     distribution_signature: "accepted",
     release_claim: "local_upgrade_only",
   });
+});
+
+test("reinstalls the current App through one atomic replacement", async (context) => {
+  const values = await fixture(context);
+  await writeFile(path.join(values.target, "version"), NEW_VERSION);
+  const { args, inspectReceiptSet, persistedReceipts } = upgradeArguments(
+    values,
+    { operation: "reinstall" },
+  );
+
+  const receipt = await reinstallMacosDmg(args);
+
+  assert.deepEqual(receipt, {
+    schema_version: "resume-ir.macos-app-reinstall.v1",
+    target_triple: "aarch64-apple-darwin",
+    from_version: NEW_VERSION,
+    to_version: NEW_VERSION,
+    app_bundle_count: 1,
+    runtime_composition_verified: true,
+    composition_digest_match: true,
+    install_receipt: "owner_only",
+    launch_services_registered: true,
+    rollback_required: false,
+    user_data_removed: false,
+    distribution_signature: "accepted",
+    release_claim: "local_reinstall_only",
+  });
+  assert.deepEqual(persistedReceipts, [installReceipt(NEW_VERSION)]);
+  assert.deepEqual((await inspectReceiptSet()).current_receipt, installReceipt(NEW_VERSION));
+  assert.equal(await readFile(path.join(values.target, "version"), "utf8"), NEW_VERSION);
+  assert.equal(await readFile(path.join(values.userData, "sentinel"), "utf8"), "preserve");
+  assert.deepEqual(await readdir(values.applicationsDirectory), ["resume-ir.app"]);
+});
+
+test("reinstall failures never leave Applications without a verified App", async (context) => {
+  for (const failure of ["copy", "promotion", "registration"]) {
+    const values = await fixture(context);
+    await writeFile(path.join(values.target, "version"), NEW_VERSION);
+    let renameCount = 0;
+    const filesystem = {
+      rename: async (...arguments_) => {
+        renameCount += 1;
+        if (failure === "promotion" && renameCount === 3) {
+          throw new Error("synthetic promotion failure");
+        }
+        await rename(...arguments_);
+      },
+    };
+    const { args, inspectReceiptSet } = upgradeArguments(values, {
+      operation: "reinstall",
+      filesystem,
+      runnerOptions:
+        failure === "copy"
+          ? { failCopy: true }
+          : failure === "registration"
+            ? { failRegistrations: 1 }
+            : undefined,
+    });
+
+    await assert.rejects(reinstallMacosDmg(args));
+
+    assert.equal(
+      await readFile(path.join(values.target, "version"), "utf8"),
+      NEW_VERSION,
+    );
+    assert.equal((await inspectReceiptSet()).state, "current_only");
+    assert.equal(
+      await readFile(path.join(values.userData, "sentinel"), "utf8"),
+      "preserve",
+    );
+    assert.deepEqual(await readdir(values.applicationsDirectory), [
+      "resume-ir.app",
+    ]);
+  }
 });
 
 test("upgrade copies from the verified mounted image without a second mount", async (context) => {

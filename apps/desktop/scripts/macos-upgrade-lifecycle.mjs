@@ -35,7 +35,9 @@ import {
   readLifecycleJournal,
 } from "./macos-lifecycle-journal.mjs";
 import {
+  recoverReinstallTransaction,
   recoverUpgradeTransaction,
+  rollbackReinstallTransaction,
   rollbackUpgradeTransaction,
 } from "./macos-lifecycle-transaction.mjs";
 import {
@@ -196,6 +198,7 @@ function requireAppReceipt(receipt) {
 }
 
 function validateArguments({
+  operation,
   repoRoot,
   targetTriple,
   dmg,
@@ -215,10 +218,15 @@ function validateArguments({
   ) {
     throw new Error("macOS upgrade arguments are invalid");
   }
-  if (
-    installedVersion !== LEGACY_EXACT_VERSION ||
-    candidateVersion !== CURRENT_VERSION
-  ) {
+  const supportedUpgrade =
+    operation === "upgrade" &&
+    installedVersion === LEGACY_EXACT_VERSION &&
+    candidateVersion === CURRENT_VERSION;
+  const supportedReinstall =
+    operation === "reinstall" &&
+    installedVersion === CURRENT_VERSION &&
+    candidateVersion === CURRENT_VERSION;
+  if (!supportedUpgrade && !supportedReinstall) {
     throw new Error("only the exact 0.1.1 to 0.1.2 upgrade is supported");
   }
 }
@@ -276,6 +284,7 @@ async function verifyCandidateApp({
 
 export async function upgradeMacosDmg(options) {
   validateArguments({
+    operation: "upgrade",
     repoRoot: options.repoRoot,
     targetTriple: options.targetTriple,
     dmg: options.dmg,
@@ -292,13 +301,39 @@ export async function upgradeMacosDmg(options) {
     lifecycleLockTestRuntime: options.lifecycleLockTestRuntime,
     execute: ({ applicationSupportRoot, lifecycleLockCapability }) =>
       upgradeMacosDmgLocked(
-        { ...options, applicationSupportRoot },
+        { ...options, applicationSupportRoot, operation: "upgrade" },
+        lifecycleLockCapability,
+      ),
+  });
+}
+
+export async function reinstallMacosDmg(options) {
+  validateArguments({
+    operation: "reinstall",
+    repoRoot: options.repoRoot,
+    targetTriple: options.targetTriple,
+    dmg: options.dmg,
+    applicationsDirectory: options.applicationsDirectory,
+    installedVersion: options.installedVersion,
+    candidateVersion: options.candidateVersion,
+    temporaryRoot: options.temporaryRoot ?? os.tmpdir(),
+    platform: options.platform ?? process.platform,
+  });
+  return runWithMacosLifecycleLock({
+    applicationSupportRoot: options.applicationSupportRoot,
+    resolveApplicationSupportRoot:
+      options.resolveApplicationSupportRoot ?? defaultApplicationSupportRoot,
+    lifecycleLockTestRuntime: options.lifecycleLockTestRuntime,
+    execute: ({ applicationSupportRoot, lifecycleLockCapability }) =>
+      upgradeMacosDmgLocked(
+        { ...options, applicationSupportRoot, operation: "reinstall" },
         lifecycleLockCapability,
       ),
   });
 }
 
 async function upgradeMacosDmgLocked({
+  operation,
   repoRoot,
   targetTriple,
   dmg,
@@ -330,6 +365,7 @@ async function upgradeMacosDmgLocked({
 }, lifecycleLockCapability) {
   requireLifecycleLockCapability(lifecycleLockCapability);
   validateArguments({
+    operation,
     repoRoot,
     targetTriple,
     dmg,
@@ -344,6 +380,20 @@ async function upgradeMacosDmgLocked({
   const makeDirectory = filesystem.mkdir ?? mkdir;
   const resolvedApplicationSupport =
     applicationSupportRoot ?? (await resolveApplicationSupportRoot());
+  const legacyUpgrade = operation === "upgrade";
+  const transactionPrefix = operation;
+  const recoverTransaction = legacyUpgrade
+    ? recoverUpgradeTransaction
+    : recoverReinstallTransaction;
+  const rollbackTransaction = legacyUpgrade
+    ? rollbackUpgradeTransaction
+    : rollbackReinstallTransaction;
+  const postCommitFailure = legacyUpgrade
+    ? "macOS upgrade post-commit failure"
+    : "macOS reinstall post-commit failure";
+  const rollbackFailure = legacyUpgrade
+    ? "macOS upgrade rollback failed"
+    : "macOS reinstall rollback failed";
   const getReceiptSet = () =>
     inspectReceiptSet({
       applicationSupportRoot: resolvedApplicationSupport,
@@ -352,9 +402,14 @@ async function upgradeMacosDmgLocked({
     });
   const readTransactionReceipt = async () => {
     const receiptSet = await getReceiptSet();
-    return receiptSet.state === "legacy_only"
-      ? receiptSet.legacy_receipt
-      : receiptSet.current_receipt;
+    if (legacyUpgrade) {
+      return receiptSet.state === "legacy_only"
+        ? receiptSet.legacy_receipt
+        : receiptSet.current_receipt;
+    }
+    return receiptSet.state === "current_only"
+      ? receiptSet.current_receipt
+      : undefined;
   };
   const createTransactionReceipt = ({ applicationSupportRoot, receipt }) =>
     createCurrentReceipt({ applicationSupportRoot, receipt });
@@ -369,15 +424,33 @@ async function upgradeMacosDmgLocked({
     ) {
       throw new Error("upgrade journal does not match installed release");
     }
-    const composition = await verifyLegacyComposition({
-      appBundle,
-      targetTriple,
-      expectedVersion: LEGACY_EXACT_VERSION,
-      platform,
-      runner: systemRunner,
-      verifySignaturePolicy,
-    });
-    const receipt = validateLegacyExactInstallReceipt(journal.old_receipt);
+    const composition = legacyUpgrade
+      ? await verifyLegacyComposition({
+          appBundle,
+          targetTriple,
+          expectedVersion: LEGACY_EXACT_VERSION,
+          platform,
+          runner: systemRunner,
+          verifySignaturePolicy,
+        })
+      : await verifyCandidateApp({
+          appBundle,
+          expectedVersion: installedVersion,
+          expectedCompositionDigest: journal.old_composition_digest,
+          expectedSourceCommit: journal.old_receipt.source_commit,
+          repoRoot,
+          targetTriple,
+          platform,
+          systemRunner,
+          inspectApp,
+          verifyApp,
+          verifyComposition,
+          verifySignaturePolicy,
+        });
+    const receipt = legacyUpgrade
+      ? validateLegacyExactInstallReceipt(journal.old_receipt)
+      : journal.old_receipt;
+    if (!legacyUpgrade) verifyReceipt({ receipt, composition });
     if (receipt.composition_digest !== composition.composition_digest) {
       throw new Error("legacy exact artifact is invalid");
     }
@@ -407,7 +480,26 @@ async function upgradeMacosDmgLocked({
     verifyReceipt({ receipt: journal.new_receipt, composition });
     return composition;
   };
-  const classifyTarget = async (appBundle, journal) => {
+  const classifyTarget = async (appBundle, journal, workspaceState) => {
+    if (!legacyUpgrade) {
+      const newTargetPhases = new Set([
+        "reinstall_target_promoted",
+        "reinstall_before_receipt_commit",
+        "reinstall_receipt_committed",
+        "reinstall_before_backup_cleanup",
+        "reinstall_backup_tombstoned",
+        "reinstall_complete",
+      ]);
+      const targetIsNew =
+        workspaceState?.backupPresent === true ||
+        newTargetPhases.has(journal.phase);
+      if (targetIsNew) {
+        await verifyNew(appBundle, journal);
+        return "new";
+      }
+      await verifyOld(appBundle, journal);
+      return "old";
+    }
     const metadata = await inspectApp({
       appBundle,
       platform,
@@ -443,8 +535,12 @@ async function upgradeMacosDmgLocked({
     applicationSupportRoot: resolvedApplicationSupport,
     readReceipt: readTransactionReceipt,
     persistReceipt: createTransactionReceipt,
-    readReceiptSet: getReceiptSet,
-    removeLegacyReceipt: removeTransactionLegacyReceipt,
+    ...(legacyUpgrade
+      ? {
+          readReceiptSet: getReceiptSet,
+          removeLegacyReceipt: removeTransactionLegacyReceipt,
+        }
+      : {}),
     persistJournal,
     verifyOld,
     verifyNew,
@@ -455,7 +551,9 @@ async function upgradeMacosDmgLocked({
     lifecycleLockCapability,
   });
   const result = {
-    schema_version: "resume-ir.macos-app-upgrade.v1",
+    schema_version: legacyUpgrade
+      ? "resume-ir.macos-app-upgrade.v1"
+      : "resume-ir.macos-app-reinstall.v1",
     target_triple: targetTriple,
     from_version: installedVersion,
     to_version: candidateVersion,
@@ -467,7 +565,9 @@ async function upgradeMacosDmgLocked({
     rollback_required: false,
     user_data_removed: false,
     distribution_signature: "accepted",
-    release_claim: "local_upgrade_only",
+    release_claim: legacyUpgrade
+      ? "local_upgrade_only"
+      : "local_reinstall_only",
   };
 
   const interrupted = await readJournal({
@@ -475,21 +575,27 @@ async function upgradeMacosDmgLocked({
     allowMissing: true,
   });
   if (interrupted) {
-    const recovery = await recoverUpgradeTransaction(
-      transactionOptions(interrupted),
-    );
+    const recovery = await recoverTransaction(transactionOptions(interrupted));
     if (recovery.outcome === "committed") return result;
   }
   if (!(await targetExists(target))) throw new Error("installed App is missing");
   await assertNoLifecycleArtifacts(applicationsRoot);
   const initialReceiptSet = await getReceiptSet();
-  if (initialReceiptSet.state !== "legacy_only") {
-    throw new Error("legacy upgrade receipt set is invalid");
+  const expectedReceiptState = legacyUpgrade ? "legacy_only" : "current_only";
+  if (initialReceiptSet.state !== expectedReceiptState) {
+    throw new Error(
+      legacyUpgrade
+        ? "legacy upgrade receipt set is invalid"
+        : "reinstall receipt set is invalid",
+    );
   }
-  const oldReceipt = initialReceiptSet.legacy_receipt;
+  const oldReceipt = legacyUpgrade
+    ? initialReceiptSet.legacy_receipt
+    : initialReceiptSet.current_receipt;
   await verifyOld(target, {
     old_version: installedVersion,
     target_triple: targetTriple,
+    old_composition_digest: oldReceipt.composition_digest,
     old_receipt: oldReceipt,
   });
 
@@ -523,8 +629,8 @@ async function upgradeMacosDmgLocked({
           dmgSha256: dmgReceipt.dmg_sha256,
         });
         journal = createLifecycleJournal({
-          operation: "upgrade",
-          phase: "upgrade_prepared",
+          operation,
+          phase: `${transactionPrefix}_prepared`,
           oldVersion: installedVersion,
           newVersion: candidateVersion,
           oldCompositionDigest: oldReceipt.composition_digest,
@@ -538,7 +644,7 @@ async function upgradeMacosDmgLocked({
         });
         const paths = lifecycleWorkspacePaths({
           applicationsRoot,
-          operation: "upgrade",
+          operation,
           transactionId: journal.transaction_id,
         });
         await createExclusiveDirectory(paths.partial, makeDirectory);
@@ -558,7 +664,7 @@ async function upgradeMacosDmgLocked({
     await verifyNew(paths.partial, journal);
     journal = advanceLifecycleJournal({
       journal,
-      phase: "upgrade_before_stage_publish",
+      phase: `${transactionPrefix}_before_stage_publish`,
     });
     await persistJournal({
       applicationSupportRoot: resolvedApplicationSupport,
@@ -572,13 +678,13 @@ async function upgradeMacosDmgLocked({
     });
     journal = advanceLifecycleJournal({
       journal,
-      phase: "upgrade_stage_ready",
+      phase: `${transactionPrefix}_stage_ready`,
     });
     await persistJournal({
       applicationSupportRoot: resolvedApplicationSupport,
       journal,
     });
-    await recoverUpgradeTransaction(transactionOptions(journal));
+    await recoverTransaction(transactionOptions(journal));
     return result;
   } catch (error) {
     if (journal) {
@@ -586,24 +692,26 @@ async function upgradeMacosDmgLocked({
         const current = await readJournal({
           applicationSupportRoot: resolvedApplicationSupport,
         });
-        const recovery = await rollbackUpgradeTransaction(
-          transactionOptions(current),
-        );
+        const recovery = await rollbackTransaction(transactionOptions(current));
         if (recovery.outcome === "committed") {
-          throw new Error("macOS upgrade post-commit failure");
+          throw new Error(postCommitFailure);
         }
       } catch (rollbackError) {
-        if (rollbackError.message === "macOS upgrade post-commit failure") {
+        if (rollbackError.message === postCommitFailure) {
           throw rollbackError;
         }
-        throw new Error("macOS upgrade rollback failed");
+        throw new Error(rollbackFailure);
       }
     }
     throw error;
   }
 }
 
-function parseArguments(args) {
+export function parseReplacementArguments(args, operation) {
+  if (!["reinstall", "upgrade"].includes(operation)) {
+    throw new Error("invalid macOS replacement arguments");
+  }
+  const invalid = `invalid macOS ${operation} arguments`;
   const values = new Map();
   const allowed = new Set([
     "--target",
@@ -616,12 +724,12 @@ function parseArguments(args) {
     const key = args[index];
     const value = args[index + 1];
     if (!allowed.has(key) || !value || values.has(key)) {
-      throw new Error("invalid macOS upgrade arguments");
+      throw new Error(invalid);
     }
     values.set(key, value);
   }
   if (values.size !== allowed.size) {
-    throw new Error("invalid macOS upgrade arguments");
+    throw new Error(invalid);
   }
   return {
     targetTriple: values.get("--target"),
@@ -636,7 +744,7 @@ async function main() {
   const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
   const receipt = await upgradeMacosDmg({
     repoRoot,
-    ...parseArguments(process.argv.slice(2)),
+    ...parseReplacementArguments(process.argv.slice(2), "upgrade"),
   });
   console.log(JSON.stringify(receipt));
 }

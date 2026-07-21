@@ -178,14 +178,21 @@ function tombstoneContracts(operation) {
       target: ["install_before_target_cleanup", "install_target_tombstoned"],
     };
   }
-  if (operation === "upgrade") {
+  if (["reinstall", "upgrade"].includes(operation)) {
+    const prefix = operation;
     return {
-      stage: ["upgrade_before_stage_cleanup", "upgrade_stage_tombstoned"],
-      target: [
-        "upgrade_before_recovery_target_cleanup",
-        "upgrade_target_tombstoned",
+      stage: [
+        `${prefix}_before_stage_cleanup`,
+        `${prefix}_stage_tombstoned`,
       ],
-      backup: ["upgrade_before_backup_cleanup", "upgrade_backup_tombstoned"],
+      target: [
+        `${prefix}_before_recovery_target_cleanup`,
+        `${prefix}_target_tombstoned`,
+      ],
+      backup: [
+        `${prefix}_before_backup_cleanup`,
+        `${prefix}_backup_tombstoned`,
+      ],
     };
   }
   return {
@@ -365,27 +372,37 @@ export async function rollbackInstallTransaction(options) {
   return { outcome: "rolled_back", journal: tx.journal };
 }
 
-async function classifyUpgradeState(options, paths) {
+async function classifyReplacementState(options, paths) {
   const [targetPresent, stagePresent, backupPresent] = await Promise.all([
     pathExists(options.target),
     pathExists(paths.stage),
     pathExists(paths.backup),
   ]);
   const targetKind = targetPresent
-    ? await options.classifyTarget(options.target, options.journal)
+    ? await options.classifyTarget(options.target, options.journal, {
+        backupPresent,
+        stagePresent,
+      })
     : undefined;
   if (stagePresent) await options.verifyNew(paths.stage, options.journal);
   if (backupPresent) await options.verifyOld(paths.backup, options.journal);
   return { targetPresent, stagePresent, backupPresent, targetKind };
 }
 
-async function finishUpgradeCommit(options, tx, state, dependencies, paths) {
+async function finishReplacementCommit(
+  options,
+  tx,
+  state,
+  dependencies,
+  paths,
+) {
+  const prefix = options.journal.operation;
   if (state.targetKind === "old") {
     if (state.backupPresent || !state.stagePresent) {
       throw transactionError("upgrade transaction state is ambiguous");
     }
     await options.verifyOld(options.target, options.journal);
-    await tx.phase("upgrade_before_backup");
+    await tx.phase(`${prefix}_before_backup`);
     await options.verifyOld(options.target, options.journal);
     await moveDurably({
       source: options.target,
@@ -398,14 +415,14 @@ async function finishUpgradeCommit(options, tx, state, dependencies, paths) {
     state.targetPresent = false;
     state.backupPresent = true;
     state.targetKind = undefined;
-    await tx.phase("upgrade_backup_ready");
+    await tx.phase(`${prefix}_backup_ready`);
   }
   if (!state.targetPresent) {
     if (!state.backupPresent || !state.stagePresent) {
       throw transactionError("upgrade transaction state is ambiguous");
     }
     await options.verifyNew(paths.stage, options.journal);
-    await tx.phase("upgrade_before_promotion");
+    await tx.phase(`${prefix}_before_promotion`);
     await options.verifyNew(paths.stage, options.journal);
     await moveDurably({
       source: paths.stage,
@@ -418,7 +435,7 @@ async function finishUpgradeCommit(options, tx, state, dependencies, paths) {
     state.targetPresent = true;
     state.stagePresent = false;
     state.targetKind = "new";
-    await tx.phase("upgrade_target_promoted");
+    await tx.phase(`${prefix}_target_promoted`);
   }
   if (state.targetKind !== "new" || state.stagePresent) {
     throw transactionError("upgrade transaction state is ambiguous");
@@ -426,25 +443,29 @@ async function finishUpgradeCommit(options, tx, state, dependencies, paths) {
   await options.verifyNew(options.target, options.journal);
   await options.register(options.target);
   const receipt = await readOptionalReceipt(options);
-  if (sameReceipt(receipt, options.journal.old_receipt)) {
-    await tx.phase("upgrade_before_receipt_commit");
+  const receiptIsBoth = sameReceipt(
+    options.journal.old_receipt,
+    options.journal.new_receipt,
+  );
+  if (!receiptIsBoth && sameReceipt(receipt, options.journal.old_receipt)) {
+    await tx.phase(`${prefix}_before_receipt_commit`);
     await persistExpectedReceipt(options, options.journal.new_receipt);
-    await tx.phase("upgrade_receipt_committed");
+    await tx.phase(`${prefix}_receipt_committed`);
   } else if (!sameReceipt(receipt, options.journal.new_receipt)) {
     throw transactionError("lifecycle receipt does not match journal");
   } else if (
     new Set([
-      "upgrade_prepared",
-      "upgrade_before_stage_publish",
-      "upgrade_stage_ready",
-      "upgrade_before_backup",
-      "upgrade_backup_ready",
-      "upgrade_before_promotion",
-      "upgrade_target_promoted",
-      "upgrade_before_receipt_commit",
+      `${prefix}_prepared`,
+      `${prefix}_before_stage_publish`,
+      `${prefix}_stage_ready`,
+      `${prefix}_before_backup`,
+      `${prefix}_backup_ready`,
+      `${prefix}_before_promotion`,
+      `${prefix}_target_promoted`,
+      `${prefix}_before_receipt_commit`,
     ]).has(tx.journal.phase)
   ) {
-    await tx.phase("upgrade_receipt_committed");
+    await tx.phase(`${prefix}_receipt_committed`);
   }
   if (options.readReceiptSet || options.removeLegacyReceipt) {
     if (
@@ -493,21 +514,23 @@ async function finishUpgradeCommit(options, tx, state, dependencies, paths) {
       source: paths.backup,
       tombstone: paths.tombstones.backup,
       verify: options.verifyOld,
-      beforePhase: "upgrade_before_backup_cleanup",
-      tombstonedPhase: "upgrade_backup_tombstoned",
+      beforePhase: `${prefix}_before_backup_cleanup`,
+      tombstonedPhase: `${prefix}_backup_tombstoned`,
       options,
       tx,
       dependencies,
     });
   }
-  await tx.finish("upgrade_complete");
+  await tx.finish(`${prefix}_complete`);
   return { outcome: "committed", journal: tx.journal };
 }
 
-export async function recoverUpgradeTransaction(options) {
+async function recoverReplacementTransaction(options, operation) {
   requireLifecycleLockCapability(options.lifecycleLockCapability);
-  if (options.journal.operation !== "upgrade") {
-    throw transactionError("pending lifecycle operation does not match upgrade");
+  if (options.journal.operation !== operation) {
+    throw transactionError(
+      `pending lifecycle operation does not match ${operation}`,
+    );
   }
   const dependencies = transactionDependencies(options);
   const tx = controller({ ...options, ...dependencies });
@@ -521,13 +544,13 @@ export async function recoverUpgradeTransaction(options) {
   ) {
     throw transactionError("lifecycle receipt does not match journal");
   }
-  const state = await classifyUpgradeState(options, paths);
+  const state = await classifyReplacementState(options, paths);
   if (state.targetKind === "old") {
     if (state.backupPresent || !sameReceipt(receipt, options.journal.old_receipt)) {
       throw transactionError("upgrade transaction state is ambiguous");
     }
     if (!state.stagePresent) {
-      await tx.finish("upgrade_complete");
+      await tx.finish(`${operation}_complete`);
       return { outcome: "rolled_back", journal: tx.journal };
     }
   } else if (!state.targetPresent) {
@@ -538,7 +561,7 @@ export async function recoverUpgradeTransaction(options) {
       if (!sameReceipt(receipt, options.journal.old_receipt)) {
         throw transactionError("upgrade transaction state is ambiguous");
       }
-      await tx.phase("upgrade_before_restore");
+      await tx.phase(`${operation}_before_restore`);
       await options.verifyOld(paths.backup, options.journal);
       await moveDurably({
         source: paths.backup,
@@ -549,7 +572,7 @@ export async function recoverUpgradeTransaction(options) {
         message: "old App restoration failed",
       });
       await options.register(options.target);
-      await tx.finish("upgrade_complete");
+      await tx.finish(`${operation}_complete`);
       return { outcome: "rolled_back", journal: tx.journal };
     }
   } else if (state.targetKind === "new") {
@@ -559,10 +582,18 @@ export async function recoverUpgradeTransaction(options) {
   } else {
     throw transactionError("upgrade transaction state is ambiguous");
   }
-  return finishUpgradeCommit(options, tx, state, dependencies, paths);
+  return finishReplacementCommit(options, tx, state, dependencies, paths);
 }
 
-export async function rollbackUpgradeTransaction(options) {
+export function recoverUpgradeTransaction(options) {
+  return recoverReplacementTransaction(options, "upgrade");
+}
+
+export function recoverReinstallTransaction(options) {
+  return recoverReplacementTransaction(options, "reinstall");
+}
+
+async function rollbackReplacementTransaction(options, operation) {
   requireLifecycleLockCapability(options.lifecycleLockCapability);
   const dependencies = transactionDependencies(options);
   const tx = controller({ ...options, ...dependencies });
@@ -571,14 +602,20 @@ export async function rollbackUpgradeTransaction(options) {
   await cleanupPartialStage(options, tx, dependencies, paths);
   const receipt = await readOptionalReceipt(options);
   if (sameReceipt(receipt, options.journal.new_receipt)) {
-    return recoverUpgradeTransaction({ ...options, journal: tx.journal });
+    return recoverReplacementTransaction(
+      { ...options, journal: tx.journal },
+      operation,
+    );
   }
   if (!sameReceipt(receipt, options.journal.old_receipt)) {
     throw transactionError("lifecycle receipt does not match journal");
   }
-  const state = await classifyUpgradeState(options, paths);
+  const state = await classifyReplacementState(options, paths);
   if (state.targetKind === "new" && !state.backupPresent) {
-    return recoverUpgradeTransaction({ ...options, journal: tx.journal });
+    return recoverReplacementTransaction(
+      { ...options, journal: tx.journal },
+      operation,
+    );
   }
   if (state.targetKind === "old") {
     if (state.backupPresent) {
@@ -594,8 +631,8 @@ export async function rollbackUpgradeTransaction(options) {
       source: options.target,
       tombstone: paths.tombstones.target,
       verify: options.verifyNew,
-      beforePhase: "upgrade_before_recovery_target_cleanup",
-      tombstonedPhase: "upgrade_target_tombstoned",
+      beforePhase: `${operation}_before_recovery_target_cleanup`,
+      tombstonedPhase: `${operation}_target_tombstoned`,
       options,
       tx,
       dependencies,
@@ -610,8 +647,8 @@ export async function rollbackUpgradeTransaction(options) {
       source: paths.stage,
       tombstone: paths.tombstones.stage,
       verify: options.verifyNew,
-      beforePhase: "upgrade_before_stage_cleanup",
-      tombstonedPhase: "upgrade_stage_tombstoned",
+      beforePhase: `${operation}_before_stage_cleanup`,
+      tombstonedPhase: `${operation}_stage_tombstoned`,
       options,
       tx,
       dependencies,
@@ -620,7 +657,7 @@ export async function rollbackUpgradeTransaction(options) {
   }
   if (!state.targetPresent && state.backupPresent) {
     await options.verifyOld(paths.backup, options.journal);
-    await tx.phase("upgrade_before_restore");
+    await tx.phase(`${operation}_before_restore`);
     await options.verifyOld(paths.backup, options.journal);
     await moveDurably({
       source: paths.backup,
@@ -632,8 +669,16 @@ export async function rollbackUpgradeTransaction(options) {
     });
     await options.register(options.target);
   }
-  await tx.finish("upgrade_complete");
+  await tx.finish(`${operation}_complete`);
   return { outcome: "rolled_back", journal: tx.journal };
+}
+
+export function rollbackUpgradeTransaction(options) {
+  return rollbackReplacementTransaction(options, "upgrade");
+}
+
+export function rollbackReinstallTransaction(options) {
+  return rollbackReplacementTransaction(options, "reinstall");
 }
 
 export async function recoverUninstallTransaction(options) {

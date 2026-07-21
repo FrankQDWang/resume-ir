@@ -149,7 +149,7 @@ function dependencies(installedVersion) {
         return installedVersion;
       },
       installCurrent: async () => calls.push("install"),
-      uninstallCurrent: async () => calls.push("uninstall"),
+      reinstallCurrent: async () => calls.push("reinstall"),
       upgradeLegacy: async () => calls.push("upgrade"),
       verifyInstalledSourceBindings: async () => {
         calls.push("verify-installed");
@@ -172,7 +172,7 @@ test("always builds and promotes the exact release instead of accepting a pre-ex
     [
       "0.1.2",
       "reinstall",
-      ["git", "source", "guard", "immutable-clone", "guard", "build", "guard", "inspect", "guard", "uninstall", "guard", "install", "verify-installed", "immutable-cleanup"],
+      ["git", "source", "guard", "immutable-clone", "guard", "build", "guard", "inspect", "guard", "reinstall", "verify-installed", "immutable-cleanup"],
     ],
   ]) {
     const fixture = dependencies(installedVersion);
@@ -298,7 +298,7 @@ test("builds only from an immutable commit-derived root and rechecks authority a
       sourceCommit: HEAD,
     };
   };
-  for (const operation of ["installCurrent", "uninstallCurrent", "upgradeLegacy"]) {
+  for (const operation of ["installCurrent", "reinstallCurrent", "upgradeLegacy"]) {
     fixture.values[operation] = async () => systemMutations.push(operation);
   }
 
@@ -313,22 +313,23 @@ test("builds only from an immutable commit-derived root and rechecks authority a
   assert.equal(fixture.calls.includes("immutable-cleanup"), true);
 });
 
-test("reinstall rechecks live authority before both uninstall and install", async () => {
+test("reinstall rechecks live authority before the atomic replacement", async () => {
   const fixture = dependencies("0.1.2");
   let guardCalls = 0;
   const mutations = [];
-  fixture.values.assertMutationAuthority = async () => {
+  fixture.values.assertMutationAuthority = async (operation) => {
     guardCalls += 1;
     fixture.calls.push(`guard-${guardCalls}`);
-    if (mutations.length === 1) throw new Error("lifecycle_lock_lost");
+    if (operation === "reinstall_current") {
+      throw new Error("lifecycle_lock_lost");
+    }
   };
   fixture.values.createImmutableBuildSource = async () => ({
     buildEnvironment: BUILD_ENVIRONMENT,
     repoRoot: "/synthetic/tmp/immutable-commit-root",
     async cleanup() {},
   });
-  fixture.values.uninstallCurrent = async () => mutations.push("uninstall");
-  fixture.values.installCurrent = async () => mutations.push("install");
+  fixture.values.reinstallCurrent = async () => mutations.push("reinstall");
 
   await assert.rejects(
     deployExactInstalledRelease(
@@ -337,7 +338,7 @@ test("reinstall rechecks live authority before both uninstall and install", asyn
     ),
     /lifecycle_lock_lost/,
   );
-  assert.deepEqual(mutations, ["uninstall"]);
+  assert.deepEqual(mutations, []);
 });
 
 test("a drift-and-restore during build cannot alter the commit-derived build root", async () => {

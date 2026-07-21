@@ -38,6 +38,25 @@ const PHASES = Object.freeze({
     "install_receipt_committed",
     "install_complete",
   ]),
+  reinstall: new Set([
+    "reinstall_prepared",
+    "reinstall_before_stage_publish",
+    "reinstall_stage_ready",
+    "reinstall_before_stage_cleanup",
+    "reinstall_stage_tombstoned",
+    "reinstall_before_backup",
+    "reinstall_backup_ready",
+    "reinstall_before_promotion",
+    "reinstall_target_promoted",
+    "reinstall_before_receipt_commit",
+    "reinstall_receipt_committed",
+    "reinstall_before_backup_cleanup",
+    "reinstall_backup_tombstoned",
+    "reinstall_before_recovery_target_cleanup",
+    "reinstall_target_tombstoned",
+    "reinstall_before_restore",
+    "reinstall_complete",
+  ]),
   upgrade: new Set([
     "upgrade_prepared",
     "upgrade_before_stage_publish",
@@ -193,6 +212,12 @@ export function validateLifecycleJournal(journal) {
     (journal.old_version !== LEGACY_EXACT_VERSION ||
       journal.new_version !== "0.1.2" ||
       !isNewerVersion(journal.new_version, journal.old_version))
+  ) {
+    throw journalError();
+  }
+  if (
+    journal.operation === "reinstall" &&
+    (journal.old_version !== "0.1.2" || journal.new_version !== "0.1.2")
   ) {
     throw journalError();
   }

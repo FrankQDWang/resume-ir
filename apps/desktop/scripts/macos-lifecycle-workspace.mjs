@@ -3,7 +3,7 @@ import path from "node:path";
 
 const TRANSACTION_ID = /^[a-f0-9]{32}$/;
 const RESERVED_ARTIFACT =
-  /^\.resume-ir\.app\.(?:(?:install|upgrade|uninstall)(?:\.|-)|lifecycle-trash\.)/;
+  /^\.resume-ir\.app\.(?:(?:install|reinstall|upgrade|uninstall)(?:\.|-)|lifecycle-trash\.)/;
 
 function workspaceError(message) {
   return new Error(message);
@@ -29,7 +29,11 @@ export function lifecycleWorkspacePaths({
   transactionId,
 }) {
   const id = requireTransactionId(transactionId);
-  if (!new Set(["install", "upgrade", "uninstall"]).has(operation)) {
+  if (
+    !new Set(["install", "reinstall", "upgrade", "uninstall"]).has(
+      operation,
+    )
+  ) {
     throw workspaceError("lifecycle operation is invalid");
   }
   const prefix = `.resume-ir.app.${operation}.${id}`;
