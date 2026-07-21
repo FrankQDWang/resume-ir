@@ -83,7 +83,12 @@ readers, aliases or fallbacks.
     lease it revalidates the same authority, builds from an isolated local clone
     of the exact commit, and rechecks lease plus live source authority before
     every system mutation. Bundle-composition, DMG and owner receipt v2 all bind
-    that commit. The outer command itself runs the canonical
+    that commit. The canonical release entry emits the unchanged v2 success
+    receipt or one exact `resume-ir.macos-test-release-failure.v1` line with a
+    closed stage code and no stderr, path, command or exception text. The outer
+    gate propagates only recognized completed-child failure codes and rejects
+    malformed, unknown, timed-out, overflowed or stderr-bearing envelopes.
+    The outer command itself runs the canonical
     release build and install/upgrade/reinstall transaction for exact version
     0.1.2; neither a pre-existing App nor a later source version can satisfy the
     gate. The gate holds the real macOS lifecycle

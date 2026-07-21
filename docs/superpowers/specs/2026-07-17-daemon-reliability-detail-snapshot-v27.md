@@ -154,6 +154,18 @@ transition must not fabricate one or expose a generic v1/v2 compatibility
 reader. Once the v2 receipt is durable, recovery converges forward and removes
 the legacy receipt.
 
+The release entry has a separate failure-only contract,
+`resume-ir.macos-test-release-failure.v1`. It is exactly one JSON line with
+only `schema_version`, fixed `outcome=failed`, and one closed `error_code` for
+contract, source provenance, build tool, build artifact, entitlement, DMG
+verification, post-build source, source drift, artifact promotion, cleanup, or
+internal failure. It never carries stderr, command text, paths, exception text
+or an open-ended detail field. Installed acceptance accepts this envelope only
+from a completed nonzero child and propagates the exact closed class; malformed,
+unknown, timed-out, overflowed or stderr-bearing failures remain the generic
+`release_build_failed` fail-closed outcome. The successful v2 DMG-composition
+receipt is unchanged.
+
 The v2 composition also binds the complete regular-file tree under the App,
 excluding only `Contents/_CodeSignature/**` and its own composition evidence;
 links, irregular entries, extra files, content drift and over-cap trees fail

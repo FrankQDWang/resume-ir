@@ -3655,6 +3655,23 @@ guards, local runtime discovery, and PR #9 CI state.
   regression proves fixed child stdout/stderr cannot contaminate the machine
   contract. Installation, COW acceptance and soak remain unclaimed pending a
   merged-main rerun.
+- The next exact-main installed gate again stopped before installation with
+  `release_build_failed`, while two independent fresh immutable cold builds of
+  the same commit subsequently completed with valid single-line v2 receipts.
+  The available contract had erased the failed sub-stage and raw evidence, so
+  a deterministic cause could not be reconstructed without weakening the
+  privacy boundary. The release entry now has a failure-only v1 envelope with
+  closed stage classes for contract, provenance, build, artifact, entitlement,
+  DMG verification, post-build authority, promotion, cleanup and internal
+  failures. It contains exactly three fields and no stderr, path, command,
+  exception text or detail. Installed acceptance propagates only a recognized
+  envelope from a completed nonzero child; malformed, unknown, timed-out,
+  overflowed or stderr-bearing results remain fail-closed. Focused RED proved
+  both the missing release envelope and missing outer parser; GREEN covers all
+  closed codes, real subprocess stdout/stderr isolation, unknown-error
+  redaction and existing build/DMG cleanup behavior. No App installation, COW
+  acceptance or soak is claimed until this regression merges and a fresh exact
+  merged-main run reports its real outcome.
 
 ### S808
 

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import {
@@ -31,7 +32,11 @@ import {
   buildMacosInternalTestRelease,
   createMacosInternalTestEnvironment,
   createMacosInternalTestPlan,
+  MacosTestReleaseError,
+  MACOS_TEST_RELEASE_ERROR_CODES,
+  MACOS_TEST_RELEASE_FAILURE_SCHEMA,
   resolveMacosTestReleasePaths,
+  runMacosTestReleaseCli,
   runSilentReleaseBuild,
   stageMountedDmg,
 } from "./macos-test-release.mjs";
@@ -1445,6 +1450,84 @@ test("isolates child build output from the machine-readable release receipt", ()
   assert.equal(result.stderr, null);
 });
 
+test("writes one bounded typed failure receipt without exception text", async () => {
+  const writes = [];
+  const exitCode = await runMacosTestReleaseCli({
+    runRelease: async () => {
+      throw new MacosTestReleaseError(
+        "release_build_tool_failed",
+        "raw failure at /private/build/path",
+      );
+    },
+    write: (value) => writes.push(value),
+  });
+
+  assert.equal(exitCode, 1);
+  assert.equal(
+    writes.join(""),
+    `${JSON.stringify({
+      schema_version: MACOS_TEST_RELEASE_FAILURE_SCHEMA,
+      outcome: "failed",
+      error_code: "release_build_tool_failed",
+    })}\n`,
+  );
+  assert.equal(writes.join("").includes("private"), false);
+  assert.equal(writes.join("").includes("raw failure"), false);
+});
+
+test("release subprocess writes only its failure receipt", () => {
+  const script = fileURLToPath(
+    new URL("./macos-test-release.mjs", import.meta.url),
+  );
+  const result = spawnSync(process.execPath, [script, "unexpected"], {
+    encoding: "utf8",
+    shell: false,
+  });
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stderr, "");
+  assert.deepEqual(JSON.parse(result.stdout), {
+    schema_version: MACOS_TEST_RELEASE_FAILURE_SCHEMA,
+    outcome: "failed",
+    error_code: "release_contract_invalid",
+  });
+});
+
+test("maps unknown release exceptions to a closed internal failure code", async () => {
+  const writes = [];
+  const exitCode = await runMacosTestReleaseCli({
+    runRelease: async () => {
+      throw new Error("unbounded external tool output");
+    },
+    write: (value) => writes.push(value),
+  });
+
+  assert.equal(exitCode, 1);
+  assert.deepEqual(JSON.parse(writes.join("")), {
+    schema_version: MACOS_TEST_RELEASE_FAILURE_SCHEMA,
+    outcome: "failed",
+    error_code: "release_internal_failure",
+  });
+});
+
+test("emits every closed release failure class without widening the receipt", async () => {
+  for (const errorCode of MACOS_TEST_RELEASE_ERROR_CODES) {
+    const writes = [];
+    const exitCode = await runMacosTestReleaseCli({
+      runRelease: async () => {
+        throw new MacosTestReleaseError(errorCode, "private diagnostic");
+      },
+      write: (value) => writes.push(value),
+    });
+    assert.equal(exitCode, 1);
+    assert.deepEqual(JSON.parse(writes.join("")), {
+      schema_version: MACOS_TEST_RELEASE_FAILURE_SCHEMA,
+      outcome: "failed",
+      error_code: errorCode,
+    });
+  }
+});
+
 test("removes a stale canonical DMG when the Tauri build fails", async (context) => {
   const fixture = await createTestReleaseFixture(context);
   await writeFile(fixture.plan.dmg, "stale-unverified-dmg");
@@ -1456,7 +1539,9 @@ test("removes a stale canonical DMG when the Tauri build fails", async (context)
       platform: "darwin",
       runner: () => ({ status: 1, stderr: "/private/build/path" }),
     }),
-    /internal-test build failed/,
+    (error) =>
+      error.code === "release_build_tool_failed" &&
+      /internal-test build failed/.test(error.message),
   );
   await assert.rejects(lstat(fixture.plan.dmg), { code: "ENOENT" });
 });
@@ -1480,7 +1565,9 @@ test("removes a stale candidate when prebuild source provenance fails", async (c
         return { status: 0 };
       },
     }),
-    /source provenance is invalid/,
+    (error) =>
+      error.code === "release_source_provenance_failed" &&
+      /source provenance is invalid/.test(error.message),
   );
   assert.equal(buildCalled, false);
   await assert.rejects(lstat(candidate), { code: "ENOENT" });
@@ -1508,7 +1595,9 @@ test("deletes the candidate when source provenance drifts before promotion", asy
       }),
       verifyDmg: async () => verifiedDmgReceipt(),
     }),
-    /source provenance is invalid/,
+    (error) =>
+      error.code === "release_source_changed" &&
+      /source provenance is invalid/.test(error.message),
   );
   assert.equal(provenanceChecks, 2);
   await assert.rejects(lstat(fixture.plan.dmg), { code: "ENOENT" });
@@ -1536,9 +1625,40 @@ test("does not leave a canonical DMG when full verification fails", async (conte
         throw new Error("synthetic verification failure");
       },
     }),
-    /synthetic verification failure/,
+    (error) =>
+      error.code === "release_dmg_verification_failed" &&
+      /synthetic verification failure/.test(error.message),
   );
   await assert.rejects(lstat(fixture.plan.dmg), { code: "ENOENT" });
+});
+
+test("classifies entitlement failure before DMG verification", async (context) => {
+  const fixture = await createTestReleaseFixture(context);
+  let verificationCalled = false;
+
+  await assert.rejects(
+    buildMacosInternalTestRelease({
+      ...fixture,
+      verifySource: verifySyntheticSource,
+      platform: "darwin",
+      runner: () => {
+        writeFileSync(fixture.plan.dmg, "fresh-tauri-dmg");
+        return { status: 0 };
+      },
+      applyEntitlements: async () => {
+        throw new Error("private signing output");
+      },
+      verifyDmg: async () => {
+        verificationCalled = true;
+      },
+    }),
+    (error) => error.code === "release_entitlement_failed",
+  );
+  assert.equal(verificationCalled, false);
+  await assert.rejects(lstat(fixture.plan.dmg), { code: "ENOENT" });
+  await assert.rejects(lstat(testReleaseCandidatePath(fixture.plan.dmg)), {
+    code: "ENOENT",
+  });
 });
 
 test("promotes only the fully verified candidate to the canonical DMG path", async (context) => {
