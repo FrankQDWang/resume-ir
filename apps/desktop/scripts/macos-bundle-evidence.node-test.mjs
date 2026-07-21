@@ -568,6 +568,23 @@ test("receipt replacement is atomic and rejects drift or unsafe roots", async (c
   await persistInstallReceipt({ applicationSupportRoot, receipt: second });
   assert.deepEqual(await readInstallReceipt({ applicationSupportRoot }), second);
 
+  await assert.rejects(
+    persistInstallReceipt({
+      applicationSupportRoot,
+      receipt: first,
+      expectedReceipt: first,
+    }),
+    /install receipt does not match expected transaction/,
+  );
+  assert.deepEqual(await readInstallReceipt({ applicationSupportRoot }), second);
+
+  await persistInstallReceipt({
+    applicationSupportRoot,
+    receipt: first,
+    expectedReceipt: second,
+  });
+  assert.deepEqual(await readInstallReceipt({ applicationSupportRoot }), first);
+
   let removeSyncCalls = 0;
   await assert.rejects(
     removeInstallReceipt({
@@ -581,7 +598,7 @@ test("receipt replacement is atomic and rejects drift or unsafe roots", async (c
     }),
     /install receipt could not be removed/,
   );
-  assert.deepEqual(await readInstallReceipt({ applicationSupportRoot }), second);
+  assert.deepEqual(await readInstallReceipt({ applicationSupportRoot }), first);
 
   const body = JSON.parse(await readFile(installReceiptPath(applicationSupportRoot), "utf8"));
   await writeFile(

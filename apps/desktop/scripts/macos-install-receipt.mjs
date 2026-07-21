@@ -113,12 +113,14 @@ export function verifyInstallReceipt({ receipt, composition }) {
 export async function persistInstallReceipt({
   applicationSupportRoot,
   receipt,
+  expectedReceipt,
   operations = {},
 }) {
   return persistOwnerEvidence({
     applicationSupportRoot,
     fileName: INSTALL_RECEIPT_FILE,
     value: receipt,
+    expectedValue: expectedReceipt,
     maxBytes: MAX_RECEIPT_BYTES,
     validate: validateInstallReceipt,
     label: "install receipt",
