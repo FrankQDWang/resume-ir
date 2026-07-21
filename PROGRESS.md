@@ -3561,6 +3561,36 @@ guards, local runtime discovery, and PR #9 CI state.
   `resume-ir.macos-app-reinstall.v1` receipt. This is local diagnostic evidence,
   not merged-main installed acceptance; push remains gated on complete local
   build and verification.
+- The first merged-main run after atomic reinstall still returned
+  `release_promotion_failed`, while the old App and its v2 receipt remained
+  intact. The exact-main DMG independently built and verified successfully;
+  direct reinstall then exposed the remaining verifier error. The rollback
+  generation was incorrectly passed through the candidate verifier, which
+  compares executable and icon bytes against the current repository build. A
+  valid installed App from source commit A therefore could not be replaced by
+  source commit B. Old-generation verification is now explicitly bound to its
+  own identity, signature, immutable bundle composition and v2 install receipt;
+  only the staged/promoted candidate is compared with current build bytes. The
+  deterministic regression fails if the candidate verifier is invoked for the
+  old target and passes for the staged candidate. No second corrected
+  merged-main acceptance or soak claim is made until the local gates, protected
+  merge and fresh exact-main run complete.
+- The first real A-to-B reinstall probe after separating old-generation
+  verification reached receipt commit and exposed a fourth deployment defect:
+  reinstall still used the create-only v2 receipt writer, so an existing valid
+  receipt caused `install receipt already exists`. The transaction rolled back
+  completely to the old App and old receipt with no journal or sibling residue.
+  Reinstall now replaces the receipt through an atomic compare-and-swap bound
+  to the journal's exact old receipt; first install and legacy upgrade retain
+  their create-only boundary. Synthetic coverage rejects receipt drift, proves
+  rollback after persistence failure, and proves reinstall does not call the
+  create-only writer. After the complete local gate passed, the repeated real
+  A-to-B probe atomically replaced installed source commit `0017192c` with
+  `c220f153`, emitted the bounded reinstall receipt, preserved the user-data
+  boundary, left a valid ad-hoc signed 0.1.2 App, and left no lifecycle journal
+  or sibling stage/backup. This proves the local deployment correction only;
+  no corrected merged-main acceptance or soak claim is made before protected
+  merge and a fresh exact-main run.
 - A read-only preflight against the authorized installed v28 store exposed a
   real acceptance-harness RED: the canonical `metadata-active.v1` producer has
   four records followed by exactly one LF, while the first parser counted the

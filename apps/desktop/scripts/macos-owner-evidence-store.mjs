@@ -259,6 +259,7 @@ export async function persistOwnerEvidence({
   applicationSupportRoot,
   fileName,
   value,
+  expectedValue,
   maxBytes,
   validate,
   label,
@@ -280,6 +281,12 @@ export async function persistOwnerEvidence({
     label,
     allowMissing: true,
   });
+  if (
+    expectedValue !== undefined &&
+    JSON.stringify(previous?.value) !== JSON.stringify(validate(expectedValue))
+  ) {
+    throw storeError(`${label} does not match expected transaction`);
+  }
   const renameEntry = operations.rename ?? rename;
   const removeEntry = operations.rm ?? rm;
   const syncDirectory = operations.syncDirectory ?? defaultSyncDirectory;

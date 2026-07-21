@@ -17,6 +17,7 @@ import {
   createInstallReceiptEvidence,
   createInstallReceipt,
   defaultApplicationSupportRoot,
+  persistInstallReceipt,
   readInstallReceipt,
   verifyInstallReceipt,
 } from "./macos-install-receipt.mjs";
@@ -239,29 +240,17 @@ async function createExclusiveDirectory(target, makeDirectory) {
   }
 }
 
-async function verifyCandidateApp({
+async function verifySignedComposition({
   appBundle,
   expectedVersion,
   expectedCompositionDigest,
   expectedSourceCommit,
-  repoRoot,
   targetTriple,
   platform,
   systemRunner,
-  inspectApp,
-  verifyApp,
   verifyComposition,
   verifySignaturePolicy,
 }) {
-  requireIdentity(
-    await inspectApp({
-      appBundle,
-      platform,
-      runner: systemRunner,
-    }),
-    expectedVersion,
-  );
-  requireAppReceipt(await verifyApp({ repoRoot, targetTriple, appBundle }));
   const signaturePolicy = requireSignature(
     await verifySignaturePolicy({
       appBundle,
@@ -280,6 +269,37 @@ async function verifyCandidateApp({
     throw new Error("candidate App composition is invalid");
   }
   return composition;
+}
+
+async function verifyInstalledApp(options) {
+  requireIdentity(
+    await options.inspectApp({
+      appBundle: options.appBundle,
+      platform: options.platform,
+      runner: options.systemRunner,
+    }),
+    options.expectedVersion,
+  );
+  return verifySignedComposition(options);
+}
+
+async function verifyCandidateApp(options) {
+  requireIdentity(
+    await options.inspectApp({
+      appBundle: options.appBundle,
+      platform: options.platform,
+      runner: options.systemRunner,
+    }),
+    options.expectedVersion,
+  );
+  requireAppReceipt(
+    await options.verifyApp({
+      repoRoot: options.repoRoot,
+      targetTriple: options.targetTriple,
+      appBundle: options.appBundle,
+    }),
+  );
+  return verifySignedComposition(options);
 }
 
 export async function upgradeMacosDmg(options) {
@@ -357,6 +377,7 @@ async function upgradeMacosDmgLocked({
   verifyReceipt = verifyInstallReceipt,
   createReceipt = createInstallReceipt,
   createCurrentReceipt = createInstallReceiptEvidence,
+  replaceCurrentReceipt = persistInstallReceipt,
   removeLegacyReceipt = removeLegacyExactInstallReceipt,
   readJournal = readLifecycleJournal,
   persistJournal = persistLifecycleJournal,
@@ -433,17 +454,15 @@ async function upgradeMacosDmgLocked({
           runner: systemRunner,
           verifySignaturePolicy,
         })
-      : await verifyCandidateApp({
+      : await verifyInstalledApp({
           appBundle,
           expectedVersion: installedVersion,
           expectedCompositionDigest: journal.old_composition_digest,
           expectedSourceCommit: journal.old_receipt.source_commit,
-          repoRoot,
           targetTriple,
           platform,
           systemRunner,
           inspectApp,
-          verifyApp,
           verifyComposition,
           verifySignaturePolicy,
         });
@@ -534,7 +553,14 @@ async function upgradeMacosDmgLocked({
     applicationsRoot,
     applicationSupportRoot: resolvedApplicationSupport,
     readReceipt: readTransactionReceipt,
-    persistReceipt: createTransactionReceipt,
+    persistReceipt: legacyUpgrade
+      ? createTransactionReceipt
+      : ({ applicationSupportRoot, receipt }) =>
+          replaceCurrentReceipt({
+            applicationSupportRoot,
+            receipt,
+            expectedReceipt: journal.old_receipt,
+          }),
     ...(legacyUpgrade
       ? {
           readReceiptSet: getReceiptSet,

@@ -271,13 +271,19 @@ function upgradeArguments(values, overrides = {}) {
       verifyReceipt: verifyReceiptFixture,
       createCurrentReceipt: async ({ receipt }) => {
         persistedReceipts.push(receipt);
-        if (currentStoredReceipt && operation !== "reinstall") {
+        if (currentStoredReceipt) {
           throw new Error("current receipt already exists");
         }
         currentStoredReceipt = receipt;
         if (overrides.failCurrentCreateAfterCommit) {
           throw new Error("synthetic post-rename fsync failure");
         }
+        return receipt;
+      },
+      replaceCurrentReceipt: async ({ receipt, expectedReceipt }) => {
+        assert.deepEqual(currentStoredReceipt, expectedReceipt);
+        persistedReceipts.push(receipt);
+        currentStoredReceipt = receipt;
         return receipt;
       },
       removeLegacyReceipt: async ({ expectedReceipt }) => {
@@ -366,6 +372,31 @@ test("reinstalls the current App through one atomic replacement", async (context
   assert.equal(await readFile(path.join(values.target, "version"), "utf8"), NEW_VERSION);
   assert.equal(await readFile(path.join(values.userData, "sentinel"), "utf8"), "preserve");
   assert.deepEqual(await readdir(values.applicationsDirectory), ["resume-ir.app"]);
+});
+
+test("reinstall validates the old generation from its receipt instead of current build bytes", async (context) => {
+  const values = await fixture(context);
+  await writeFile(path.join(values.target, "version"), NEW_VERSION);
+  let firstCandidateVerification = true;
+  const { args } = upgradeArguments(values, {
+    operation: "reinstall",
+    verifyApp: async ({ appBundle }) => {
+      if (firstCandidateVerification && appBundle === values.target) {
+        throw new Error("old App does not match current repo build bytes");
+      }
+      firstCandidateVerification = false;
+      return appReceipt();
+    },
+  });
+
+  const receipt = await reinstallMacosDmg(args);
+
+  assert.equal(receipt.schema_version, "resume-ir.macos-app-reinstall.v1");
+  assert.equal(firstCandidateVerification, false);
+  assert.equal(
+    await readFile(path.join(values.target, "version"), "utf8"),
+    NEW_VERSION,
+  );
 });
 
 test("reinstall failures never leave Applications without a verified App", async (context) => {
