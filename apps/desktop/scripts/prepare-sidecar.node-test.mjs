@@ -38,7 +38,10 @@ import {
   selectTauriEnvironment,
   withDesktopComposition,
 } from "./run-tauri.mjs";
-import { verifyBundledSidecar } from "./verify-bundled-sidecar.mjs";
+import {
+  defaultBuildMachineIdentityPrefixes,
+  verifyBundledSidecar,
+} from "./verify-bundled-sidecar.mjs";
 
 function syntheticMachO(payload) {
   const suffix = Buffer.from(payload);
@@ -372,6 +375,40 @@ test("release build paths are remapped without inheriting shell Rust flags", () 
         homeDirectory,
       }),
     /RUSTFLAGS must be unset/,
+  );
+  const closedEnvironment = createTauriBuildEnvironment({
+    environment: {
+      CARGO_HOME: "/synthetic/cargo-home",
+      RUSTUP_HOME: "/builder/identity/.rustup",
+      TMPDIR: "/synthetic/build-tmp",
+    },
+    repoRoot,
+    homeDirectory,
+  });
+  assert.deepEqual(closedEnvironment.CARGO_ENCODED_RUSTFLAGS.split("\u001f"), [
+    `--remap-path-prefix=${repoRoot}=/source/resume-ir`,
+    "--remap-path-prefix=/synthetic/cargo-home=/cargo-home",
+    "--remap-path-prefix=/builder/identity/.rustup=/rustup-home",
+    "--remap-path-prefix=/synthetic/build-tmp=/build-tmp",
+    `--remap-path-prefix=${homeDirectory}=/build-home`,
+  ]);
+  assert.deepEqual(
+    defaultBuildMachineIdentityPrefixes({
+      repoRoot,
+      environment: {
+        CARGO_HOME: "/synthetic/cargo-home",
+        RUSTUP_HOME: "/builder/identity/.rustup",
+        TMPDIR: "/synthetic/build-tmp",
+      },
+      homeDirectory,
+    }),
+    [
+      repoRoot,
+      homeDirectory,
+      "/synthetic/cargo-home",
+      "/builder/identity/.rustup",
+      "/synthetic/build-tmp",
+    ],
   );
   assert.ok(path.isAbsolute(defaultSidecarBuildTargetDir()));
   if (process.platform !== "win32") {
@@ -1093,5 +1130,49 @@ test("rejects a bundled daemon containing a build-machine identity path", async 
       expectedClassifierManifest: composition.expectedClassifierManifest,
     }),
     /build-machine identity path marker/,
+  );
+});
+
+test("rejects a desktop executable containing an explicit Rust toolchain root", async (context) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "resume-ir-desktop-path-"));
+  context.after(() => rm(repoRoot, { recursive: true, force: true }));
+  const targetTriple = "aarch64-apple-darwin";
+  const appBundle = path.join(repoRoot, "synthetic.app");
+  const composition = await prepareSyntheticBundleComposition(repoRoot, appBundle);
+  const rustupHome = "/builder/identity/.rustup";
+  const body = syntheticMachO(`synthetic-prefix:${rustupHome}`);
+  await writeExecutable(
+    path.join(
+      repoRoot,
+      "apps",
+      "desktop",
+      "src-tauri",
+      "target",
+      targetTriple,
+      "release",
+      "resume-desktop",
+    ),
+    body,
+  );
+  await writeExecutable(
+    path.join(appBundle, "Contents", "MacOS", "resume-desktop"),
+    body,
+  );
+
+  await assert.rejects(
+    verifyBundledSidecar({
+      repoRoot,
+      targetTriple,
+      appBundle,
+      expectedManifest: composition.expectedManifest,
+      expectedOcrManifest: composition.expectedOcrManifest,
+      expectedClassifierManifest: composition.expectedClassifierManifest,
+      buildMachineIdentityPrefixes: defaultBuildMachineIdentityPrefixes({
+        repoRoot,
+        environment: { RUSTUP_HOME: rustupHome },
+        homeDirectory: "/synthetic/build-home",
+      }),
+    }),
+    /desktop executable is invalid/,
   );
 });

@@ -29,10 +29,19 @@ export function createTauriBuildEnvironment({
     );
   }
 
-  const remapFlags = [
-    `--remap-path-prefix=${repoRoot}=/source/resume-ir`,
-    `--remap-path-prefix=${homeDirectory}=/build-home`,
+  const remapRoots = [
+    [repoRoot, "/source/resume-ir"],
+    [environment.CARGO_HOME, "/cargo-home"],
+    [environment.RUSTUP_HOME, "/rustup-home"],
+    [environment.TMPDIR, "/build-tmp"],
+    [homeDirectory, "/build-home"],
   ];
+  const seen = new Set();
+  const remapFlags = remapRoots.flatMap(([source, destination]) => {
+    if (!path.isAbsolute(source ?? "") || seen.has(source)) return [];
+    seen.add(source);
+    return [`--remap-path-prefix=${source}=${destination}`];
+  });
   const inherited = environment.CARGO_ENCODED_RUSTFLAGS;
   return {
     ...environment,

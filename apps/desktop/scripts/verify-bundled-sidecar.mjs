@@ -20,6 +20,20 @@ const LC_SEGMENT_64 = 0x19;
 const MAX_SIDECAR_BYTES = 256 * 1024 * 1024;
 const MAX_LOAD_COMMANDS = 4096;
 
+export function defaultBuildMachineIdentityPrefixes({
+  repoRoot,
+  environment = process.env,
+  homeDirectory = os.homedir(),
+}) {
+  return [
+    repoRoot,
+    homeDirectory,
+    environment.CARGO_HOME,
+    environment.RUSTUP_HOME,
+    environment.TMPDIR,
+  ];
+}
+
 export async function sha256(file) {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(file)) hash.update(chunk);
@@ -182,7 +196,9 @@ export async function verifyBundledSidecar({
     "icons",
     "icon.icns",
   ),
-  buildMachineIdentityPrefixes = [repoRoot, os.homedir()],
+  buildMachineIdentityPrefixes = defaultBuildMachineIdentityPrefixes({
+    repoRoot,
+  }),
 }) {
   if (!APPLE_TARGETS.has(targetTriple)) {
     throw new Error("bundle verification target is not supported");

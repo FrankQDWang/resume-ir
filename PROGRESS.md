@@ -3591,6 +3591,19 @@ guards, local runtime discovery, and PR #9 CI state.
   or sibling stage/backup. This proves the local deployment correction only;
   no corrected merged-main acceptance or soak claim is made before protected
   merge and a fresh exact-main run.
+- The first exact merged-main acceptance after that merge still failed during
+  release promotion. Replaying its immutable clone, closed build environment
+  and bounded lifecycle child exposed the exact child failure: the desktop
+  executable contained the real `RUSTUP_HOME` prefix. The build-time verifier
+  checked only the synthetic closed `HOME`, while the later install verifier
+  checked the real user home, so the two trust boundaries disagreed. Release
+  Tauri builds now remap repository, `HOME`, `CARGO_HOME`, `RUSTUP_HOME` and
+  `TMPDIR` independently, and bundle verification rejects every one of those
+  explicit build roots. A real immutable closed-environment arm64 App build
+  then passed strict digest, architecture and zero path-marker verification.
+  This is local root-cause and build evidence only; no corrected merged-main
+  acceptance or soak claim is made until the correction is merged and rerun
+  from fresh exact main.
 - A read-only preflight against the authorized installed v28 store exposed a
   real acceptance-harness RED: the canonical `metadata-active.v1` producer has
   four records followed by exactly one LF, while the first parser counted the
