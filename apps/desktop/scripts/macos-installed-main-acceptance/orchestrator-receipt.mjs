@@ -4,12 +4,16 @@ import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 
-import { ownerEvidencePath } from "../macos-owner-evidence-store.mjs";
 import {
-  LIFECYCLE_LOCK_FILE,
-  acquireLifecycleLock,
-  releaseLifecycleLock,
-  requireLifecycleLockCapability,
+  ownerEvidencePath,
+  prepareOwnerEvidenceDirectory,
+} from "../macos-owner-evidence-store.mjs";
+import {
+  INSTALLED_MAIN_ACCEPTANCE_LOCK_FILE,
+  acquireInstalledMainAcceptanceLock,
+  prepareInstalledMainAcceptanceLockFile,
+  releaseInstalledMainAcceptanceLock,
+  requireInstalledMainAcceptanceLockCapability,
 } from "../macos-lifecycle-lock.mjs";
 import { runBoundedTool } from "./bounded-process.mjs";
 import {
@@ -253,12 +257,17 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
     dependencies.requireDefaultApplicationSupportRoot ??
     requireDefaultApplicationSupportRoot;
   const acquireAcceptanceLock =
-    dependencies.acquireLifecycleLock ?? acquireLifecycleLock;
+    dependencies.acquireInstalledMainAcceptanceLock ??
+    acquireInstalledMainAcceptanceLock;
+  const prepareAcceptanceLock =
+    dependencies.prepareInstalledMainAcceptanceLockFile ??
+    prepareInstalledMainAcceptanceLockFile;
   const releaseAcceptanceLock =
-    dependencies.releaseLifecycleLock ?? releaseLifecycleLock;
+    dependencies.releaseInstalledMainAcceptanceLock ??
+    releaseInstalledMainAcceptanceLock;
   const requireAcceptanceLock =
-    dependencies.requireLifecycleLockCapability ??
-    requireLifecycleLockCapability;
+    dependencies.requireInstalledMainAcceptanceLockCapability ??
+    requireInstalledMainAcceptanceLockCapability;
   const validateInputs =
     dependencies.validatePreLockInputs ?? validatePreLockInputs;
   const verifyInstalledBindings =
@@ -277,7 +286,7 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
   let cleanupPromise;
   let deployment;
   let sourceExpectation;
-  let lifecycleLockCapability;
+  let acceptanceLockCapability;
   let preflight;
 
   async function resolveSupportRoot() {
@@ -289,11 +298,11 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
   }
 
   function requireLease() {
-    if (!lifecycleLockCapability) fail("lifecycle_lock_required");
+    if (!acceptanceLockCapability) fail("acceptance_lock_required");
     try {
-      requireAcceptanceLock(lifecycleLockCapability);
+      requireAcceptanceLock(acceptanceLockCapability);
     } catch {
-      fail("lifecycle_lock_lost");
+      fail("acceptance_lock_lost");
     }
   }
 
@@ -369,7 +378,7 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
       }
     },
     async precheckSourceAuthority() {
-      if (!preflight || lifecycleLockCapability || sourceExpectation) {
+      if (!preflight || acceptanceLockCapability || sourceExpectation) {
         fail("preflight_required");
       }
       throwIfAborted(signal);
@@ -405,15 +414,24 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
       );
       return deployment;
     },
-    async acquireLifecycleLease() {
-      if (!preflight || lifecycleLockCapability) fail("preflight_required");
+    async acquireAcceptanceLease() {
+      if (!preflight || acceptanceLockCapability) fail("preflight_required");
       throwIfAborted(signal);
-      lifecycleLockCapability = await acquireAcceptanceLock({
-        lockFile: ownerEvidencePath(
-          await resolveSupportRoot(),
-          LIFECYCLE_LOCK_FILE,
-        ),
+      const applicationSupportRoot = await resolveSupportRoot();
+      const lockFile = await prepareAcceptanceLock({
+        applicationSupportRoot,
+        prepareEvidenceDirectory: prepareOwnerEvidenceDirectory,
       });
+      if (
+        lockFile !==
+        ownerEvidencePath(
+          applicationSupportRoot,
+          INSTALLED_MAIN_ACCEPTANCE_LOCK_FILE,
+        )
+      ) {
+        fail("acceptance_lock_required");
+      }
+      acceptanceLockCapability = await acquireAcceptanceLock({ lockFile });
     },
     async verifyBindings() {
       requireLease();
@@ -776,14 +794,14 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
             }
           }
         }
-        if (lifecycleLockCapability) {
+        if (acceptanceLockCapability) {
           try {
-            requireAcceptanceLock(lifecycleLockCapability);
+            requireAcceptanceLock(acceptanceLockCapability);
           } catch {
             failed = true;
           }
           try {
-            await releaseAcceptanceLock(lifecycleLockCapability);
+            await releaseAcceptanceLock(acceptanceLockCapability);
           } catch {
             failed = true;
           }

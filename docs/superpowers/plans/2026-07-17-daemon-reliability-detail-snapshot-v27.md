@@ -91,9 +91,12 @@ readers, aliases or fallbacks.
     The outer command itself runs the canonical
     release build and install/upgrade/reinstall transaction for exact version
     0.1.2; neither a pre-existing App nor a later source version can satisfy the
-    gate. The gate holds the real macOS lifecycle
-    lock for its full duration, uses an explicitly authorized v28 source and
-    APFS `clonefile(2)` without a copy fallback, validates exact fulltext/vector
+    gate. The gate holds a purpose-bound installed-main acceptance lock for its
+    full duration; install, upgrade and uninstall children exclusively own the
+    distinct production macOS lifecycle lock, so orchestration cannot
+    self-contend with its deployment transaction. It uses an explicitly
+    authorized v28 source and APFS `clonefile(2)` without a copy fallback,
+    validates exact fulltext/vector
     `publication_busy` causes across two timed resident attempts, and requires
     one real fifth-attempt terminal block. Any non-applied publication must
     first have its typed-authority retirement intent durably recorded; a
@@ -131,7 +134,8 @@ readers, aliases or fallbacks.
     stability. The two contention lanes run before a
     final normal quit/relaunch, Ready/search check, strict redacted diagnostics
     check, final quit and residue inspection. SIGINT/SIGTERM and next-run stale
-    recovery operate under the lifecycle lock. A durable
+    recovery operate under the acceptance lock; every production installation
+    mutation remains serialized by the child-owned lifecycle lock. A durable
     intent/pending/running marker binds PID, PGID, process start, executable and
     session authority; the guardian and stale recovery reap the entire exact
     authority group even if its leader and App have disappeared. COW cleanup

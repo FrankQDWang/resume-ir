@@ -21,6 +21,13 @@ const MIN_TIMEOUT_MS = 25;
 const FORCED_EXIT_TIMEOUT_MS = 250;
 
 export const LIFECYCLE_LOCK_FILE = "macos-lifecycle.lock";
+export const INSTALLED_MAIN_ACCEPTANCE_LOCK_FILE =
+  "macos-installed-main-acceptance.lock";
+
+const LOCK_PURPOSE = Object.freeze({
+  acceptance: INSTALLED_MAIN_ACCEPTANCE_LOCK_FILE,
+  lifecycle: LIFECYCLE_LOCK_FILE,
+});
 
 const knownCapabilities = new WeakSet();
 const activeCapabilities = new WeakSet();
@@ -108,11 +115,11 @@ async function syncDirectory(directory) {
   }
 }
 
-function isExpectedLockPath(lockFile, directory) {
+function isExpectedLockPath(lockFile, directory, purpose) {
   return (
     path.isAbsolute(lockFile) &&
     path.dirname(lockFile) === directory &&
-    path.basename(lockFile) === LIFECYCLE_LOCK_FILE
+    path.basename(lockFile) === LOCK_PURPOSE[purpose]
   );
 }
 
@@ -133,12 +140,15 @@ function requireSecureLockMetadata(metadata) {
   }
 }
 
-async function validateLockFile(lockFile) {
+async function validateLockFile(lockFile, purpose) {
   if (typeof lockFile !== "string" || !path.isAbsolute(lockFile)) {
     throw lifecycleLockError("file");
   }
   const directory = await requireSecureEvidenceDirectory(path.dirname(lockFile));
-  if (!isExpectedLockPath(lockFile, directory)) {
+  if (
+    !LOCK_PURPOSE[purpose] ||
+    !isExpectedLockPath(lockFile, directory, purpose)
+  ) {
     throw lifecycleLockError("file");
   }
   let metadata;
@@ -190,10 +200,10 @@ async function createLockFile(lockFile) {
   if (created) await syncDirectory(path.dirname(lockFile));
 }
 
-export async function prepareLifecycleLockFile({
+async function prepareLockFile({
   applicationSupportRoot,
   prepareEvidenceDirectory,
-}) {
+}, purpose) {
   if (typeof prepareEvidenceDirectory !== "function") {
     throw lifecycleLockError("file");
   }
@@ -204,10 +214,18 @@ export async function prepareLifecycleLockFile({
     throw lifecycleLockError("file");
   }
   directory = await requireSecureEvidenceDirectory(directory);
-  const lockFile = path.join(directory, LIFECYCLE_LOCK_FILE);
+  const lockFile = path.join(directory, LOCK_PURPOSE[purpose]);
   await createLockFile(lockFile);
-  await validateLockFile(lockFile);
+  await validateLockFile(lockFile, purpose);
   return lockFile;
+}
+
+export function prepareLifecycleLockFile(options) {
+  return prepareLockFile(options, "lifecycle");
+}
+
+export function prepareInstalledMainAcceptanceLockFile(options) {
+  return prepareLockFile(options, "acceptance");
 }
 
 function resolveRuntime(testRuntime) {
@@ -313,12 +331,12 @@ async function terminateFailedAcquisition(child, monitor) {
   await waitBounded(monitor.promise, FORCED_EXIT_TIMEOUT_MS);
 }
 
-export async function acquireLifecycleLock({
+async function acquireLock({
   lockFile,
   startupTimeoutMs,
   releaseTimeoutMs,
   testRuntime,
-}) {
+}, purpose) {
   const startupTimeout = boundedTimeout(
     startupTimeoutMs,
     DEFAULT_STARTUP_TIMEOUT_MS,
@@ -327,7 +345,7 @@ export async function acquireLifecycleLock({
     releaseTimeoutMs,
     DEFAULT_RELEASE_TIMEOUT_MS,
   );
-  const initialIdentity = await validateLockFile(lockFile);
+  const initialIdentity = await validateLockFile(lockFile, purpose);
   const runtime = resolveRuntime(testRuntime);
   let child;
   try {
@@ -412,7 +430,7 @@ export async function acquireLifecycleLock({
   );
   try {
     await startup;
-    const finalIdentity = await validateLockFile(lockFile);
+    const finalIdentity = await validateLockFile(lockFile, purpose);
     if (!sameIdentity(initialIdentity, finalIdentity) || monitor.settled) {
       throw lifecycleLockError("unavailable");
     }
@@ -429,6 +447,7 @@ export async function acquireLifecycleLock({
     capability,
     child,
     monitor,
+    purpose,
     releasePromise: undefined,
     releaseTimeout,
   };
@@ -440,17 +459,34 @@ export async function acquireLifecycleLock({
   return capability;
 }
 
-export function requireLifecycleLockCapability(capability) {
+export function acquireLifecycleLock(options) {
+  return acquireLock(options, "lifecycle");
+}
+
+export function acquireInstalledMainAcceptanceLock(options) {
+  return acquireLock(options, "acceptance");
+}
+
+function requireLockCapability(capability, purpose) {
   const state = capabilityStates.get(capability);
   if (
     !knownCapabilities.has(capability) ||
     !activeCapabilities.has(capability) ||
     !state ||
+    state.purpose !== purpose ||
     state.monitor.settled
   ) {
     throw lifecycleLockError("capability");
   }
   return capability;
+}
+
+export function requireLifecycleLockCapability(capability) {
+  return requireLockCapability(capability, "lifecycle");
+}
+
+export function requireInstalledMainAcceptanceLockCapability(capability) {
+  return requireLockCapability(capability, "acceptance");
 }
 
 async function releaseCapability(state) {
@@ -467,11 +503,19 @@ async function releaseCapability(state) {
   }
 }
 
-export function releaseLifecycleLock(capability) {
-  if (!knownCapabilities.has(capability)) {
+function releaseLock(capability, purpose) {
+  const state = capabilityStates.get(capability);
+  if (!knownCapabilities.has(capability) || state?.purpose !== purpose) {
     return Promise.reject(lifecycleLockError("capability"));
   }
-  const state = capabilityStates.get(capability);
   state.releasePromise ??= releaseCapability(state);
   return state.releasePromise;
+}
+
+export function releaseLifecycleLock(capability) {
+  return releaseLock(capability, "lifecycle");
+}
+
+export function releaseInstalledMainAcceptanceLock(capability) {
+  return releaseLock(capability, "acceptance");
 }

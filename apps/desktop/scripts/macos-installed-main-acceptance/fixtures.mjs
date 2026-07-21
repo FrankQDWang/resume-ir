@@ -119,8 +119,8 @@ export function fakeRuntime({
         ...deploymentOverrides,
       };
     },
-    async acquireLifecycleLease() {
-      calls.push(["lifecycle-lock"]);
+    async acquireAcceptanceLease() {
+      calls.push(["acceptance-lock"]);
     },
     async verifyBindings() {
       calls.push(["verify"]);

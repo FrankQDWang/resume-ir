@@ -83,8 +83,12 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
   assert.equal(report.data_boundary.clone, "apfs_copy_on_write");
   assert.equal(report.data_boundary.source_mutated, false);
   assert.equal(
-    report.data_boundary.lifecycle_lock,
+    report.data_boundary.acceptance_lock,
     "held_for_entire_acceptance",
+  );
+  assert.equal(
+    report.data_boundary.lifecycle_lock,
+    "owned_by_install_children",
   );
   assert.equal(report.data_boundary.release_data_dir_override, false);
   assert.equal(report.supervised_strong_kill.targeting, "exact_owned_child");
@@ -125,7 +129,7 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
   assert.deepEqual(runtime.calls.slice(0, 6), [
     ["preflight"],
     ["precheck-source-authority"],
-    ["lifecycle-lock"],
+    ["acceptance-lock"],
     ["bind-source-authority-after-lease"],
     ["recover-interrupted"],
     ["prepare-release"],
@@ -162,7 +166,7 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
     [
       ["preflight"],
       ["precheck-source-authority"],
-      ["lifecycle-lock"],
+      ["acceptance-lock"],
       ["bind-source-authority-after-lease"],
       ["recover-interrupted"],
       ["prepare-release"],
@@ -228,7 +232,7 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
   assert.equal(publicBody.includes("47111"), false);
 });
 
-test("source provenance is rechecked under the lifecycle lease before recovery", async () => {
+test("source provenance is rechecked under the acceptance lease before recovery", async () => {
   const runtime = fakeRuntime({ failAt: "source-recheck" });
   await assert.rejects(
     runInstalledMainAcceptance(options(), { runtime }),
@@ -237,7 +241,7 @@ test("source provenance is rechecked under the lifecycle lease before recovery",
   assert.deepEqual(runtime.calls, [
     ["preflight"],
     ["precheck-source-authority"],
-    ["lifecycle-lock"],
+    ["acceptance-lock"],
     ["bind-source-authority-after-lease"],
     ["cleanup"],
   ]);
@@ -247,7 +251,7 @@ test("source provenance is rechecked under the lifecycle lease before recovery",
   );
 });
 
-test("read-only provenance fails before lifecycle acquisition or stale recovery", async () => {
+test("read-only provenance fails before acceptance acquisition or stale recovery", async () => {
   const runtime = fakeRuntime({ failAt: "source-provenance" });
   await assert.rejects(
     runInstalledMainAcceptance(options(), { runtime }),
@@ -260,7 +264,7 @@ test("read-only provenance fails before lifecycle acquisition or stale recovery"
   ]);
   assert.equal(
     runtime.calls.some(([operation]) =>
-      ["lifecycle-lock", "recover-interrupted", "prepare-release"].includes(
+      ["acceptance-lock", "recover-interrupted", "prepare-release"].includes(
         operation,
       ),
     ),
@@ -268,14 +272,14 @@ test("read-only provenance fails before lifecycle acquisition or stale recovery"
   );
 });
 
-test("a concurrent run that cannot acquire the lifecycle lease never enters build", async () => {
+test("a concurrent run that cannot acquire the acceptance lease never enters build", async () => {
   let rejectLease;
   const leaseBlocked = new Promise((_resolve, reject) => {
     rejectLease = reject;
   });
   const runtime = fakeRuntime();
-  runtime.acquireLifecycleLease = async () => {
-    runtime.calls.push(["lifecycle-lock"]);
+  runtime.acquireAcceptanceLease = async () => {
+    runtime.calls.push(["acceptance-lock"]);
     await leaseBlocked;
   };
   const running = runInstalledMainAcceptance(options(), { runtime });
@@ -283,18 +287,18 @@ test("a concurrent run that cannot acquire the lifecycle lease never enters buil
   assert.deepEqual(runtime.calls, [
     ["preflight"],
     ["precheck-source-authority"],
-    ["lifecycle-lock"],
+    ["acceptance-lock"],
   ]);
   assert.equal(
     runtime.calls.some(([operation]) => operation === "prepare-release"),
     false,
   );
-  rejectLease(new Error("synthetic lifecycle contention"));
+  rejectLease(new Error("synthetic acceptance contention"));
   await assert.rejects(running, /acceptance_internal_failure/);
   assert.deepEqual(runtime.calls, [
     ["preflight"],
     ["precheck-source-authority"],
-    ["lifecycle-lock"],
+    ["acceptance-lock"],
     ["cleanup"],
   ]);
 });
@@ -307,9 +311,11 @@ test("every runtime mutation entrypoint revalidates the live lease and source au
     gitHead: observedHead,
   });
   const runtime = createNativeAcceptanceRuntime(options(), {
-    acquireLifecycleLock: async () => ({ synthetic: true }),
+    acquireInstalledMainAcceptanceLock: async () => ({ synthetic: true }),
+    prepareInstalledMainAcceptanceLockFile: async () =>
+      "/synthetic/support/local.resume-ir.desktop/macos-installed-main-acceptance.lock",
     requireDefaultApplicationSupportRoot: async (value) => value,
-    requireLifecycleLockCapability: () => {
+    requireInstalledMainAcceptanceLockCapability: () => {
       if (!leaseValid) throw new Error("lease lost");
     },
     resolveApplicationSupportRoot: async () => "/synthetic/support",
@@ -328,7 +334,7 @@ test("every runtime mutation entrypoint revalidates the live lease and source au
   });
   await runtime.validatePreLockInputs();
   const expected = await runtime.precheckSourceAuthority();
-  await runtime.acquireLifecycleLease();
+  await runtime.acquireAcceptanceLease();
   await runtime.bindSourceAuthorityAfterLease(expected);
 
   const mutationAttempts = [
@@ -350,7 +356,7 @@ test("every runtime mutation entrypoint revalidates the live lease and source au
   ];
   leaseValid = false;
   for (const mutate of mutationAttempts) {
-    await assert.rejects(mutate(), /lifecycle_lock_lost/);
+    await assert.rejects(mutate(), /acceptance_lock_lost/);
   }
 
   leaseValid = true;
