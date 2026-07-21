@@ -3545,6 +3545,22 @@ guards, local runtime discovery, and PR #9 CI state.
   able to acquire the production lock. No corrected merged-main installation or
   soak claim is made until the complete local gates and a fresh exact-main run
   pass.
+- Retesting after that lock correction exposed a second independent deployment
+  defect: the installed-main harness modeled same-version reinstall as two
+  lifecycle transactions, uninstall followed by install. A failure between
+  them could leave `/Applications` without the App and obscure the original
+  typed promotion failure. Reinstall now has its own closed journal phases and
+  one atomic replacement transaction: it verifies a staged App, keeps the old
+  App as a rollback generation until receipt commit, handles an identical
+  old/new current receipt without ambiguity, and recovers only its own pending
+  operation. Focused Node coverage passes 42/42, including injected copy,
+  promotion and registration failures, crash/re-entry, and the invariant that
+  every failed reinstall retains a verified App plus current receipt and user
+  data. A real local recovery resumed the interrupted before-receipt-commit
+  transaction and completed with the bounded
+  `resume-ir.macos-app-reinstall.v1` receipt. This is local diagnostic evidence,
+  not merged-main installed acceptance; push remains gated on complete local
+  build and verification.
 - A read-only preflight against the authorized installed v28 store exposed a
   real acceptance-harness RED: the canonical `metadata-active.v1` producer has
   four records followed by exactly one LF, while the first parser counted the

@@ -67,6 +67,35 @@ function upgradeJournal() {
   });
 }
 
+test("reinstall journal binds two current receipts without pretending to upgrade", () => {
+  const oldReceipt = {
+    ...currentReceipt(),
+    dmg_sha256: "d".repeat(64),
+  };
+  const journal = createLifecycleJournal({
+    operation: "reinstall",
+    phase: "reinstall_prepared",
+    oldVersion: "0.1.2",
+    newVersion: "0.1.2",
+    oldCompositionDigest: NEW_DIGEST,
+    newCompositionDigest: NEW_DIGEST,
+    oldReceipt,
+    newReceipt: currentReceipt(),
+  });
+  assert.equal(journal.operation, "reinstall");
+  assert.equal(
+    advanceLifecycleJournal({
+      journal,
+      phase: "reinstall_before_backup",
+    }).phase,
+    "reinstall_before_backup",
+  );
+  assert.throws(
+    () => createLifecycleJournal({ ...journal, newVersion: "0.1.3" }),
+    /lifecycle journal is invalid/,
+  );
+});
+
 test("persists one canonical owner-only journal and advances only its phase", async (context) => {
   const values = await fixture(context);
   const prepared = upgradeJournal();

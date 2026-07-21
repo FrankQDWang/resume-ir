@@ -90,9 +90,12 @@ readers, aliases or fallbacks.
     malformed, unknown, timed-out, overflowed or stderr-bearing envelopes.
     The outer command itself runs the canonical
     release build and install/upgrade/reinstall transaction for exact version
-    0.1.2; neither a pre-existing App nor a later source version can satisfy the
-    gate. The gate holds a purpose-bound installed-main acceptance lock for its
-    full duration; install, upgrade and uninstall children exclusively own the
+    0.1.2. Same-version reinstall is one crash-recoverable replacement
+    transaction with a durable journal, verified stage and rollback App; it is
+    never decomposed into uninstall followed by install. Neither a pre-existing
+    App nor a later source version can satisfy the gate. The gate holds a
+    purpose-bound installed-main acceptance lock for its full duration;
+    install, upgrade, reinstall and uninstall children exclusively own the
     distinct production macOS lifecycle lock, so orchestration cannot
     self-contend with its deployment transaction. It uses an explicitly
     authorized v28 source and APFS `clonefile(2)` without a copy fallback,

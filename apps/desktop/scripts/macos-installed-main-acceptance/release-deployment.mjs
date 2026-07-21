@@ -212,6 +212,7 @@ async function runLifecycleCommand({
 function defaultPromotionOperations({ repoRoot, runTool, signal }) {
   const scriptsRoot = path.join(repoRoot, "apps", "desktop", "scripts");
   const lifecycle = path.join(scriptsRoot, "macos-install-lifecycle.mjs");
+  const reinstall = path.join(scriptsRoot, "macos-reinstall-lifecycle.mjs");
   const upgrade = path.join(scriptsRoot, "macos-upgrade-lifecycle.mjs");
   const common = [
     "--target",
@@ -244,17 +245,22 @@ function defaultPromotionOperations({ repoRoot, runTool, signal }) {
           receipt?.schema_version === "resume-ir.macos-installed-app.v1" &&
           receipt.version === REQUIRED_INSTALLED_VERSION,
       ),
-    uninstallCurrent: () =>
+    reinstallCurrent: ({ dmg }) =>
       invoke(
-        lifecycle,
+        reinstall,
         [
-          "uninstall",
           ...common,
-          "--version",
+          "--dmg",
+          dmg,
+          "--installed-version",
+          REQUIRED_INSTALLED_VERSION,
+          "--candidate-version",
           REQUIRED_INSTALLED_VERSION,
         ],
         (receipt) =>
-          receipt?.schema_version === "resume-ir.macos-uninstall.v1",
+          receipt?.schema_version === "resume-ir.macos-app-reinstall.v1" &&
+          receipt.from_version === REQUIRED_INSTALLED_VERSION &&
+          receipt.to_version === REQUIRED_INSTALLED_VERSION,
       ),
     upgradeLegacy: ({ dmg }) =>
       invoke(
@@ -402,7 +408,8 @@ export async function deployExactInstalledRelease(options, overrides = {}) {
     });
     const operations = {
       installCurrent: overrides.installCurrent ?? defaults.installCurrent,
-      uninstallCurrent: overrides.uninstallCurrent ?? defaults.uninstallCurrent,
+      reinstallCurrent:
+        overrides.reinstallCurrent ?? defaults.reinstallCurrent,
       upgradeLegacy: overrides.upgradeLegacy ?? defaults.upgradeLegacy,
     };
     let deploymentAction;
@@ -415,10 +422,8 @@ export async function deployExactInstalledRelease(options, overrides = {}) {
       await operations.upgradeLegacy({ dmg: built.dmg });
       deploymentAction = "upgrade";
     } else if (installedVersion === REQUIRED_INSTALLED_VERSION) {
-      await guard("uninstall_current");
-      await operations.uninstallCurrent();
-      await guard("install_current");
-      await operations.installCurrent({ dmg: built.dmg });
+      await guard("reinstall_current");
+      await operations.reinstallCurrent({ dmg: built.dmg });
       deploymentAction = "reinstall";
     } else {
       fail("installed_version_invalid");
