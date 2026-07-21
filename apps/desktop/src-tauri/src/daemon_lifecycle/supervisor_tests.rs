@@ -13,6 +13,7 @@ use crate::native_import::MAX_DIAGNOSTICS_EXPORT_BYTES;
 struct FakeState {
     alive: AtomicBool,
     spawn_count: AtomicUsize,
+    stop_delay_ms: AtomicUsize,
     transient_spawn_failure: AtomicBool,
     protocol_mismatch: AtomicBool,
     unavailable_probes: AtomicUsize,
@@ -43,6 +44,10 @@ impl SupervisedChild for FakeChild {
     }
 
     fn stop(self) {
+        let delay_ms = self.state.stop_delay_ms.load(Ordering::Acquire);
+        if delay_ms > 0 {
+            thread::sleep(Duration::from_millis(delay_ms as u64));
+        }
         self.state.alive.store(false, Ordering::Release);
     }
 }
@@ -235,6 +240,35 @@ fn third_consecutive_heartbeat_failure_restarts_the_child() {
         state.snapshot().unwrap().last_exit,
         Some(DaemonExitClass::HeartbeatTimeout)
     );
+    state.shutdown();
+}
+
+#[test]
+fn blocking_child_stop_cannot_consume_durable_restart_authority_early() {
+    let directory = tempfile::tempdir().unwrap();
+    let fake = Arc::new(FakeState::default());
+    fake.stop_delay_ms.store(200, Ordering::Release);
+    let mut timing = durable_test_timing();
+    timing.policy.backoff[0] = Duration::from_millis(100);
+    let state = DaemonLifecycleState::launch_with_timing_and_data_dir(
+        FakeRuntime {
+            state: Arc::clone(&fake),
+        },
+        timing,
+        directory.path(),
+    )
+    .unwrap();
+    wait_until(|| state.snapshot().unwrap().state == DaemonLifecycleKind::Ready);
+
+    fake.unavailable_probes.store(3, Ordering::Release);
+    wait_until(|| {
+        state.snapshot().is_ok_and(|snapshot| {
+            snapshot.generation >= 2 && snapshot.state == DaemonLifecycleKind::Ready
+        })
+    });
+
+    assert_eq!(fake.spawn_count.load(Ordering::Acquire), 2);
+    assert_eq!(state.snapshot().unwrap().restart_ledger_reason, None);
     state.shutdown();
 }
 

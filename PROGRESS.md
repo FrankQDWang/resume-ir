@@ -3604,6 +3604,19 @@ guards, local runtime discovery, and PR #9 CI state.
   This is local root-cause and build evidence only; no corrected merged-main
   acceptance or soak claim is made until the correction is merged and rerun
   from fresh exact main.
+- The next exact-main installed acceptance reached the real COW cold-ready and
+  synthetic canary boundary, then exposed a durable supervisor clock bug after
+  the owned daemon was strongly killed. Child teardown could block longer than
+  the first retry delay, but recovery scheduled its in-memory `Instant` from
+  before teardown while persisting the restart deadline from after teardown.
+  The actor could therefore consume its own restart authority early, classify
+  the valid ledger as `clock_invalid`, and remain blocked after the UI had
+  shown repair activity. Recovery scheduling now starts only after durable
+  ledger persistence, and a deterministic delayed-child-stop regression
+  proves a second generation reaches ready without a ledger error. The failed
+  installed run was interrupted and its COW workspace removed; this is local
+  root-cause evidence only, not a corrected exact-main acceptance or soak
+  claim.
 - A read-only preflight against the authorized installed v28 store exposed a
   real acceptance-harness RED: the canonical `metadata-active.v1` producer has
   four records followed by exactly one LF, while the first parser counted the

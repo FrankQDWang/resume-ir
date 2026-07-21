@@ -451,12 +451,12 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
                 self.publish_state(state, None, None, 0);
             }
             Err(RuntimeFailure::Blocked(reason)) => self.block(reason),
-            Err(RuntimeFailure::Transient) => self.recover(now, DaemonExitClass::StartFailed),
+            Err(RuntimeFailure::Transient) => self.recover(DaemonExitClass::StartFailed),
         }
     }
 
     fn observe_starting(&mut self, now: Instant, deadline: Instant) {
-        if self.handle_child_exit(now) {
+        if self.handle_child_exit() {
             return;
         }
         match self.runtime.probe(self.timing.heartbeat_timeout) {
@@ -491,7 +491,7 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
             }
             DaemonProbe::Unavailable if now >= deadline => {
                 self.stop_child();
-                self.recover(now, DaemonExitClass::StartupTimeout);
+                self.recover(DaemonExitClass::StartupTimeout);
             }
             DaemonProbe::Unavailable => {}
         }
@@ -504,7 +504,7 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
         heartbeat_at: Instant,
         heartbeat_failures: u8,
     ) {
-        if self.handle_child_exit(now) {
+        if self.handle_child_exit() {
             return;
         }
         if now < heartbeat_at {
@@ -528,7 +528,7 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
                 let failures = heartbeat_failures.saturating_add(1);
                 if failures >= self.timing.heartbeat_failure_limit {
                     self.stop_child();
-                    self.recover(now, DaemonExitClass::HeartbeatTimeout);
+                    self.recover(DaemonExitClass::HeartbeatTimeout);
                 } else {
                     self.phase = ActorPhase::Ready {
                         stable_since,
@@ -541,10 +541,11 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
         }
     }
 
-    fn recover(&mut self, now: Instant, exit: DaemonExitClass) {
+    fn recover(&mut self, exit: DaemonExitClass) {
         self.child = None;
         self.update_snapshot(|snapshot| snapshot.last_exit = Some(exit));
-        match self.policy.on_failure(self.elapsed(now)) {
+        let decision_at = Instant::now();
+        match self.policy.on_failure(self.elapsed(decision_at)) {
             RecoveryDecision::RetryAfter(delay) => {
                 if self
                     .restart_ledger
@@ -554,8 +555,9 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
                     self.block(DaemonBlockedReason::RestartLedgerInvalid);
                     return;
                 }
+                let scheduled_at = Instant::now();
                 self.phase = ActorPhase::Waiting {
-                    start_at: now + delay,
+                    start_at: scheduled_at + delay,
                 };
                 self.publish_state(DaemonLifecycleKind::Recovering, Some(delay), None, 0);
             }
@@ -568,8 +570,9 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
                     self.block(DaemonBlockedReason::RestartLedgerInvalid);
                     return;
                 }
+                let scheduled_at = Instant::now();
                 self.phase = ActorPhase::CircuitOpen {
-                    retry_at: now + delay,
+                    retry_at: scheduled_at + delay,
                 };
                 self.publish_state(DaemonLifecycleKind::CircuitOpen, Some(delay), None, 0);
             }
@@ -672,7 +675,7 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
         }
     }
 
-    fn handle_child_exit(&mut self, now: Instant) -> bool {
+    fn handle_child_exit(&mut self) -> bool {
         let outcome = self
             .child
             .as_mut()
@@ -680,11 +683,11 @@ impl<R: DaemonRuntime> SupervisorActor<R> {
         match outcome {
             ChildExitOutcome::Running => false,
             ChildExitOutcome::Exited => {
-                self.recover(now, DaemonExitClass::ChildExited);
+                self.recover(DaemonExitClass::ChildExited);
                 true
             }
             ChildExitOutcome::RestartableFatal => {
-                self.recover(now, DaemonExitClass::ControlPlaneFailure);
+                self.recover(DaemonExitClass::ControlPlaneFailure);
                 true
             }
             ChildExitOutcome::Blocked(reason) => {
