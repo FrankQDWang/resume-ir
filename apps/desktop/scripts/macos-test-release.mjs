@@ -50,6 +50,34 @@ const CREDENTIAL_VARIABLES = [
   "KEYCHAIN_PASSWORD",
 ];
 
+export const MACOS_TEST_RELEASE_FAILURE_SCHEMA =
+  "resume-ir.macos-test-release-failure.v1";
+export const MACOS_TEST_RELEASE_ERROR_CODES = Object.freeze([
+  "release_artifact_cleanup_failed",
+  "release_artifact_promotion_failed",
+  "release_build_artifact_invalid",
+  "release_build_tool_failed",
+  "release_contract_invalid",
+  "release_dmg_verification_failed",
+  "release_entitlement_failed",
+  "release_internal_failure",
+  "release_postbuild_source_failed",
+  "release_source_changed",
+  "release_source_provenance_failed",
+]);
+
+export class MacosTestReleaseError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = "MacosTestReleaseError";
+    this.code = code;
+  }
+}
+
+function releaseError(code, message) {
+  return new MacosTestReleaseError(code, message);
+}
+
 export function runSilentReleaseBuild(command, args, options) {
   return spawnSync(command, args, {
     ...options,
@@ -656,7 +684,10 @@ async function removeReleaseArtifacts(paths) {
   try {
     for (const target of paths) await rm(target, { force: true });
   } catch {
-    throw new Error("macOS internal-test artifact cleanup failed");
+    throw releaseError(
+      "release_artifact_cleanup_failed",
+      "macOS internal-test artifact cleanup failed",
+    );
   }
 }
 
@@ -674,14 +705,25 @@ export async function buildMacosInternalTestRelease({
   verifySource = verifyMainSourceProvenance,
 }) {
   if (!path.isAbsolute(repoRoot) || !path.isAbsolute(runTauri)) {
-    throw new Error("macOS test release paths are invalid");
+    throw releaseError(
+      "release_contract_invalid",
+      "macOS test release paths are invalid",
+    );
   }
-  const plan = createMacosInternalTestPlan({
-    frontendRoot,
-    platform,
-    baseConfig,
-    platformConfig,
-  });
+  let plan;
+  try {
+    plan = createMacosInternalTestPlan({
+      frontendRoot,
+      platform,
+      baseConfig,
+      platformConfig,
+    });
+  } catch {
+    throw releaseError(
+      "release_contract_invalid",
+      "macOS test release config is invalid",
+    );
+  }
   const candidateDmg = internalTestCandidatePath(plan.dmg);
   let sourceCommit;
   try {
@@ -689,9 +731,12 @@ export async function buildMacosInternalTestRelease({
     if (!/^[a-f0-9]{40}$/.test(sourceCommit ?? "")) {
       throw new Error("macOS build source provenance is invalid");
     }
-  } catch (error) {
+  } catch {
     await removeReleaseArtifacts([candidateDmg]);
-    throw error;
+    throw releaseError(
+      "release_source_provenance_failed",
+      "macOS build source provenance is invalid",
+    );
   }
   await removeReleaseArtifacts([plan.dmg, candidateDmg]);
   let build;
@@ -705,16 +750,21 @@ export async function buildMacosInternalTestRelease({
   }
   if (build?.error || build?.status !== 0) {
     await removeReleaseArtifacts([plan.dmg, candidateDmg]);
-    throw new Error("macOS internal-test build failed");
+    throw releaseError(
+      "release_build_tool_failed",
+      "macOS internal-test build failed",
+    );
   }
   try {
     await rename(plan.dmg, candidateDmg);
   } catch {
     await removeReleaseArtifacts([plan.dmg, candidateDmg]);
-    throw new Error("macOS internal-test build artifact is invalid");
+    throw releaseError(
+      "release_build_artifact_invalid",
+      "macOS internal-test build artifact is invalid",
+    );
   }
   let receipt;
-  let verificationError;
   try {
     const entitlementReceipt = await applyEntitlements({
       dmg: candidateDmg,
@@ -728,6 +778,14 @@ export async function buildMacosInternalTestRelease({
     ) {
       throw new Error("macOS internal-test entitlement verification failed");
     }
+  } catch {
+    await removeReleaseArtifacts([plan.dmg, candidateDmg]);
+    throw releaseError(
+      "release_entitlement_failed",
+      "macOS internal-test entitlement verification failed",
+    );
+  }
+  try {
     receipt = await verifyDmg({
       repoRoot,
       targetTriple: plan.targetTriple,
@@ -754,55 +812,99 @@ export async function buildMacosInternalTestRelease({
       throw new Error("macOS internal-test verification failed");
     }
   } catch (error) {
-    verificationError = error;
-  }
-  if (verificationError) {
     await removeReleaseArtifacts([plan.dmg, candidateDmg]);
-    throw verificationError;
+    throw releaseError(
+      "release_dmg_verification_failed",
+      error instanceof Error
+        ? error.message
+        : "macOS internal-test verification failed",
+    );
   }
   let finalSourceCommit;
   try {
     finalSourceCommit = await verifySource({ repoRoot });
-  } catch (error) {
+  } catch {
     await removeReleaseArtifacts([plan.dmg, candidateDmg]);
-    throw error;
+    throw releaseError(
+      "release_postbuild_source_failed",
+      "macOS build source provenance is invalid",
+    );
   }
   if (finalSourceCommit !== sourceCommit) {
     await removeReleaseArtifacts([plan.dmg, candidateDmg]);
-    throw new Error("macOS build source provenance is invalid");
+    throw releaseError(
+      "release_source_changed",
+      "macOS build source provenance is invalid",
+    );
   }
   try {
     await rename(candidateDmg, plan.dmg);
   } catch {
     await removeReleaseArtifacts([plan.dmg, candidateDmg]);
-    throw new Error("macOS internal-test artifact promotion failed");
+    throw releaseError(
+      "release_artifact_promotion_failed",
+      "macOS internal-test artifact promotion failed",
+    );
   }
   return receipt;
 }
 
-async function main() {
+async function runDefaultRelease() {
   if (process.argv.length !== 2) {
-    throw new Error("macOS test release does not accept arguments");
+    throw releaseError(
+      "release_contract_invalid",
+      "macOS test release does not accept arguments",
+    );
   }
   const paths = resolveMacosTestReleasePaths();
-  const [baseConfig, platformConfig] = await Promise.all([
-    readBoundedJson(paths.baseConfig),
-    readBoundedJson(paths.platformConfig),
-  ]);
-  const receipt = await buildMacosInternalTestRelease({
+  let baseConfig;
+  let platformConfig;
+  try {
+    [baseConfig, platformConfig] = await Promise.all([
+      readBoundedJson(paths.baseConfig),
+      readBoundedJson(paths.platformConfig),
+    ]);
+  } catch {
+    throw releaseError(
+      "release_contract_invalid",
+      "macOS test release config is invalid",
+    );
+  }
+  return buildMacosInternalTestRelease({
     ...paths,
     baseConfig,
     platformConfig,
   });
-  console.log(JSON.stringify(receipt));
+}
+
+export async function runMacosTestReleaseCli({
+  runRelease = runDefaultRelease,
+  write = (value) => process.stdout.write(value),
+} = {}) {
+  try {
+    const receipt = await runRelease();
+    write(`${JSON.stringify(receipt)}\n`);
+    return 0;
+  } catch (error) {
+    const errorCode =
+      error instanceof MacosTestReleaseError &&
+      MACOS_TEST_RELEASE_ERROR_CODES.includes(error.code)
+        ? error.code
+        : "release_internal_failure";
+    write(
+      `${JSON.stringify({
+        schema_version: MACOS_TEST_RELEASE_FAILURE_SCHEMA,
+        outcome: "failed",
+        error_code: errorCode,
+      })}\n`,
+    );
+    return 1;
+  }
 }
 
 if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
-  main().catch((error) => {
-    console.error(`macos-test-release: ${error.message}`);
-    process.exitCode = 1;
-  });
+  process.exitCode = await runMacosTestReleaseCli();
 }

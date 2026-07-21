@@ -3,12 +3,17 @@ import path from "node:path";
 
 import { inspectMacosAppBundle } from "../macos-install-lifecycle.mjs";
 import { defaultApplicationSupportRoot } from "../macos-install-receipt.mjs";
-import { createMacosInternalTestPlan } from "../macos-test-release.mjs";
+import {
+  createMacosInternalTestPlan,
+  MACOS_TEST_RELEASE_ERROR_CODES,
+  MACOS_TEST_RELEASE_FAILURE_SCHEMA,
+} from "../macos-test-release.mjs";
 import { runBoundedTool, toolSucceeded } from "./bounded-process.mjs";
 import {
   CLONE_TIMEOUT_MS,
   INSTALLED_APP_BUNDLE,
   TARGET_TRIPLE,
+  exactKeys,
   fail,
 } from "./core.mjs";
 import {
@@ -49,9 +54,8 @@ async function readBoundedConfig(file) {
   }
 }
 
-function parseSingleJsonLine(result, failureCode) {
+function parseJsonLine(result, failureCode) {
   if (
-    !toolSucceeded(result) ||
     result.stderr !== "" ||
     typeof result.stdout !== "string" ||
     !result.stdout.endsWith("\n") ||
@@ -64,6 +68,29 @@ function parseSingleJsonLine(result, failureCode) {
   } catch {
     fail(failureCode);
   }
+}
+
+function parseSingleJsonLine(result, failureCode) {
+  if (!toolSucceeded(result)) fail(failureCode);
+  return parseJsonLine(result, failureCode);
+}
+
+export function parseReleaseBuildReceipt(result) {
+  const receipt = parseJsonLine(result, "release_build_failed");
+  if (toolSucceeded(result)) return receipt;
+  if (
+    result.timedOut === false &&
+    result.overflow === false &&
+    Number.isSafeInteger(result.status) &&
+    result.status !== 0 &&
+    exactKeys(receipt, ["schema_version", "outcome", "error_code"]) &&
+    receipt.schema_version === MACOS_TEST_RELEASE_FAILURE_SCHEMA &&
+    receipt.outcome === "failed" &&
+    MACOS_TEST_RELEASE_ERROR_CODES.includes(receipt.error_code)
+  ) {
+    fail(receipt.error_code);
+  }
+  fail("release_build_failed");
 }
 
 async function defaultBuildVerifiedDmg({
@@ -108,14 +135,13 @@ async function defaultBuildVerifiedDmg({
     fail("required_release_invalid");
   }
   const script = path.join(frontendRoot, "scripts", "macos-test-release.mjs");
-  const receipt = parseSingleJsonLine(
+  const receipt = parseReleaseBuildReceipt(
     await runTool(process.execPath, [script], {
       cwd: repoRoot,
       env: environment,
       signal,
       timeoutMs: CLONE_TIMEOUT_MS,
     }),
-    "release_build_failed",
   );
   if (
     receipt?.schema_version !== "resume-ir.macos-dmg-composition.v2" ||

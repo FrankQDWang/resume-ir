@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { deployExactInstalledRelease } from "./release-deployment.mjs";
+import {
+  deployExactInstalledRelease,
+  parseReleaseBuildReceipt,
+} from "./release-deployment.mjs";
+import { MACOS_TEST_RELEASE_ERROR_CODES } from "../macos-test-release.mjs";
 import { COMPOSITION, DMG, HEAD, ICON } from "./fixtures.mjs";
 
 const baseOptions = Object.freeze({
@@ -22,6 +26,86 @@ const BUILD_ENVIRONMENT = Object.freeze({
   PATH: "/synthetic/tmp/tool-bin:/usr/bin:/bin:/usr/sbin:/sbin",
   RUSTUP_HOME: "/synthetic/rustup",
   TMPDIR: "/synthetic/tmp/runtime",
+});
+
+test("preserves a typed release-stage failure from the isolated build entry", async () => {
+  const runTool = async () => ({
+    status: 1,
+    timedOut: false,
+    overflow: false,
+    stderr: "",
+    stdout:
+      '{"schema_version":"resume-ir.macos-test-release-failure.v1","outcome":"failed","error_code":"release_dmg_verification_failed"}\n',
+  });
+
+  await assert.rejects(
+    async () => parseReleaseBuildReceipt(await runTool()),
+    /release_dmg_verification_failed/,
+  );
+});
+
+test("rejects malformed or unknown release failure receipts", async () => {
+  for (const stdout of [
+    '{"schema_version":"resume-ir.macos-test-release-failure.v1","outcome":"failed","error_code":"release_unknown"}\n',
+    '{"schema_version":"resume-ir.macos-test-release-failure.v1","outcome":"failed","error_code":"release_build_tool_failed","detail":"private"}\n',
+    "not-json\n",
+  ]) {
+    await assert.rejects(
+      async () =>
+        parseReleaseBuildReceipt({
+          status: 1,
+          timedOut: false,
+          overflow: false,
+          stderr: "",
+          stdout,
+        }),
+      /release_build_failed/,
+    );
+  }
+});
+
+test("forwards every closed release failure class without accepting extra fields", async () => {
+  for (const errorCode of MACOS_TEST_RELEASE_ERROR_CODES) {
+    assert.throws(
+      () =>
+        parseReleaseBuildReceipt({
+          status: 1,
+          timedOut: false,
+          overflow: false,
+          stderr: "",
+          stdout: `${JSON.stringify({
+            schema_version: "resume-ir.macos-test-release-failure.v1",
+            outcome: "failed",
+            error_code: errorCode,
+          })}\n`,
+        }),
+      new RegExp(errorCode),
+    );
+  }
+});
+
+test("does not trust a typed failure receipt from an unhealthy child result", () => {
+  const stdout = `${JSON.stringify({
+    schema_version: "resume-ir.macos-test-release-failure.v1",
+    outcome: "failed",
+    error_code: "release_build_tool_failed",
+  })}\n`;
+
+  for (const unhealthy of [
+    { timedOut: true, overflow: false, stderr: "" },
+    { timedOut: false, overflow: true, stderr: "" },
+    { timedOut: false, overflow: false, stderr: "unexpected" },
+  ]) {
+    assert.throws(
+      () =>
+        parseReleaseBuildReceipt({
+          status: 1,
+          stdout,
+          ...unhealthy,
+        }),
+      /release_build_failed/,
+    );
+  }
 });
 
 function dependencies(installedVersion) {
