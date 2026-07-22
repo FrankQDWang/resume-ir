@@ -33,7 +33,7 @@ sha2 = "0.10"
 tempfile = "3"
 
 [target.'cfg(unix)'.dev-dependencies]
-nix = { version = "=0.30.1", default-features = false, features = ["socket"] }
+nix = { version = "=0.31.3", default-features = false, features = ["socket"] }
 
 [lints]
 workspace = true
