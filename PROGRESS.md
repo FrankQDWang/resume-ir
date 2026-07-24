@@ -30921,6 +30921,19 @@ Output summary:
   all 6 s49 cases passed, both affected s48 cases passed individually, and
   combined focused Clippy passed. The invalidated Windows run was cancelled;
   hosted Linux/Windows remain the platform receipts.
+- Two-phase PR run `30097965483` passed s48 but reset two s49 final responses.
+  The request watchdog remained active while the server waited for the client
+  delivery receipt, so a response completing within the five-second request
+  budget received only the remainder of that budget for delivery; expiry used
+  `Shutdown::Both` and reset the otherwise complete socket. A deterministic
+  300 ms lifecycle regression failed before the repair and passed after the
+  request watchdog was stopped and joined at response completion. The separate
+  one-second delivery window then starts; the request budget is unchanged.
+  The prior lifecycle regression and the two exact hosted-failed s49 cases
+  passed, the latter in parallel with five unrelated cases filtered from each
+  process. Focused daemon-bin/s49 Clippy, rustfmt and diff checks passed. The
+  invalidated Platform run `30097965482` was cancelled after macOS passed while
+  Windows was still testing; a new hosted Linux/Windows replay is required.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

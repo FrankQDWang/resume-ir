@@ -14,6 +14,19 @@ const CONNECTION_HARD_DEADLINE: Duration = Duration::from_secs(5);
 const RESPONSE_DELIVERY_RECEIPT_TIMEOUT: Duration = Duration::from_secs(1);
 pub(super) const LISTENER_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
+#[derive(Clone, Copy)]
+struct BusinessConnectionTiming {
+    hard_deadline: Duration,
+    delivery_receipt_timeout: Duration,
+    poll_interval: Duration,
+}
+
+const BUSINESS_CONNECTION_TIMING: BusinessConnectionTiming = BusinessConnectionTiming {
+    hard_deadline: CONNECTION_HARD_DEADLINE,
+    delivery_receipt_timeout: RESPONSE_DELIVERY_RECEIPT_TIMEOUT,
+    poll_interval: LISTENER_POLL_INTERVAL,
+};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ControlLoopStop {
     Handoff,
@@ -151,6 +164,24 @@ pub(super) fn handle_business_with_watchdog(
     finish: BusinessConnectionFinish,
     handle: impl FnOnce(TcpStream) -> crate::ipc::ConnectionCompletion,
 ) -> Result<(), DaemonFatalError> {
+    handle_business_with_timing(
+        stream,
+        shutdown,
+        publication_revoker,
+        finish,
+        BUSINESS_CONNECTION_TIMING,
+        handle,
+    )
+}
+
+fn handle_business_with_timing(
+    stream: TcpStream,
+    shutdown: Option<Arc<AtomicBool>>,
+    publication_revoker: GenerationPublicationRevoker,
+    finish: BusinessConnectionFinish,
+    timing: BusinessConnectionTiming,
+    handle: impl FnOnce(TcpStream) -> crate::ipc::ConnectionCompletion,
+) -> Result<(), DaemonFatalError> {
     let cancellation = match stream.try_clone() {
         Ok(cancellation) => cancellation,
         Err(_) => return Ok(()),
@@ -164,7 +195,7 @@ pub(super) fn handle_business_with_watchdog(
     let watcher_cancelled = Arc::clone(&cancelled);
     let watchdog = thread::spawn(move || {
         let deadline = Instant::now()
-            .checked_add(CONNECTION_HARD_DEADLINE)
+            .checked_add(timing.hard_deadline)
             .unwrap_or_else(Instant::now);
         loop {
             if watcher_finished.load(Ordering::Acquire) {
@@ -184,22 +215,26 @@ pub(super) fn handle_business_with_watchdog(
                 let _ = cancellation.shutdown(Shutdown::Both);
                 return;
             }
-            thread::sleep(LISTENER_POLL_INTERVAL);
+            thread::sleep(timing.poll_interval);
         }
     });
 
     let completion = handle(stream);
     if matches!(finish, BusinessConnectionFinish::AwaitResponseDelivery) {
         while !completion.is_finished() && !cancelled.load(Ordering::Acquire) {
-            thread::sleep(LISTENER_POLL_INTERVAL);
+            thread::sleep(timing.poll_interval);
         }
     }
+    finished.store(true, Ordering::Release);
+    watchdog
+        .join()
+        .map_err(|_| DaemonFatalError::ControlPlaneFailure)?;
     if let (true, false, Some(mut delivery_receipt)) = (
         completion.is_finished(),
         cancelled.load(Ordering::Acquire),
         delivery_receipt,
     ) {
-        let _ = delivery_receipt.set_read_timeout(Some(RESPONSE_DELIVERY_RECEIPT_TIMEOUT));
+        let _ = delivery_receipt.set_read_timeout(Some(timing.delivery_receipt_timeout));
         loop {
             match delivery_receipt.read(&mut [0_u8; 1]) {
                 Ok(0) | Err(_) => break,
@@ -207,10 +242,7 @@ pub(super) fn handle_business_with_watchdog(
             }
         }
     }
-    finished.store(true, Ordering::Release);
-    watchdog
-        .join()
-        .map_err(|_| DaemonFatalError::ControlPlaneFailure)
+    Ok(())
 }
 
 fn reap_finished(
@@ -245,7 +277,10 @@ mod tests {
 
     use meta_store::{DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease};
 
-    use super::{handle_business_with_watchdog, BusinessConnectionFinish};
+    use super::{
+        handle_business_with_timing, handle_business_with_watchdog, BusinessConnectionFinish,
+        BusinessConnectionTiming,
+    };
     use crate::ipc::generation::{DaemonGenerationOwner, OwnerMode};
     use crate::ipc::{ConnectionCompletion, ConnectionOutcome};
 
@@ -299,6 +334,68 @@ mod tests {
         assert!(
             matches!(finished_receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
             "final connection skipped its response delivery receipt"
+        );
+        client.shutdown(Shutdown::Both).unwrap();
+        assert_eq!(
+            finished_receiver
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap(),
+            Ok(())
+        );
+        join.join().unwrap();
+    }
+
+    #[test]
+    fn completed_response_gets_an_independent_delivery_window() {
+        let directory = tempfile::tempdir().unwrap();
+        let data_directory_owner = Arc::new(
+            match DataDirectoryOwnerLease::try_acquire(directory.path()).unwrap() {
+                DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+                DataDirectoryOwnerAcquisition::Contended => panic!("synthetic owner contended"),
+            },
+        );
+        let generation = DaemonGenerationOwner::acquire(
+            data_directory_owner,
+            OwnerMode::Standalone,
+            "f".repeat(64),
+        )
+        .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        let (handler_returned_sender, handler_returned_receiver) = mpsc::sync_channel(1);
+        let (finished_sender, finished_receiver) = mpsc::sync_channel(1);
+        let revoker = generation.publication_revoker();
+        let timing = BusinessConnectionTiming {
+            hard_deadline: Duration::from_millis(300),
+            delivery_receipt_timeout: Duration::from_secs(1),
+            poll_interval: Duration::from_millis(5),
+        };
+
+        let join = thread::spawn(move || {
+            let result = handle_business_with_timing(
+                server,
+                None,
+                revoker,
+                BusinessConnectionFinish::AwaitResponseDelivery,
+                timing,
+                |stream| {
+                    thread::sleep(Duration::from_millis(50));
+                    let completion = ConnectionCompletion::accepted();
+                    completion.finish(ConnectionOutcome::Completed);
+                    drop(stream);
+                    handler_returned_sender.send(()).unwrap();
+                    completion
+                },
+            );
+            finished_sender.send(result).unwrap();
+        });
+
+        handler_returned_receiver.recv().unwrap();
+        thread::sleep(Duration::from_millis(350));
+        assert!(
+            matches!(finished_receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
+            "request watchdog consumed the response delivery window"
         );
         client.shutdown(Shutdown::Both).unwrap();
         assert_eq!(
