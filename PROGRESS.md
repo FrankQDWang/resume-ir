@@ -30788,6 +30788,12 @@ Output summary:
   while the local reviewed-pack lane runs the same cases with the feature.
   One exact case passed in both modes: explicitly ignored without the feature
   and executed successfully with it.
+- The dedicated daemon incremental-import check is also native-runtime
+  evidence. It now enables the feature explicitly and stays in local/full
+  delivery verification; the public PR workflow is machine-checked to exclude
+  it. Its exact watcher regression passed locally with 21 unrelated tests
+  filtered out, while the hosted portable Clippy/workspace/closed-loop stages
+  had already passed.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

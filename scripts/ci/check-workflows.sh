@@ -63,8 +63,8 @@ require_text "$pr_workflow" "CLI closed-loop check"
 require_text "$pr_workflow" "./scripts/ci/check-cli-closed-loop.sh"
 require_text "$pr_workflow" "Daemon closed-loop check"
 require_text "$pr_workflow" "./scripts/ci/check-daemon-closed-loop.sh"
-require_text "$pr_workflow" "Daemon incremental import check"
-require_text "$pr_workflow" "./scripts/ci/check-daemon-incremental-import.sh"
+reject_text "$pr_workflow" "Daemon incremental import check"
+reject_text "$pr_workflow" "./scripts/ci/check-daemon-incremental-import.sh"
 require_text "$pr_workflow" "Benchmark smoke"
 require_text "$pr_workflow" "./scripts/ci/check-benchmark-smoke.sh"
 require_text "$pr_workflow" "Current-stage handoff check"
@@ -176,6 +176,7 @@ reject_text "$daemon_closed_loop_script" 'require_text "$search_out" "synthetic-
 
 require_text "$daemon_incremental_script" '"$CARGO_BIN" test -p resume-daemon'
 require_text "$daemon_incremental_script" '--test s4_daemon'
+require_text "$daemon_incremental_script" '--features native-runtime-tests'
 require_text "$daemon_incremental_script" 'foreground_import_watcher_requeues_completed_root_after_word_and_pdf_change_without_path_leak'
 require_text "$daemon_incremental_script" '--exact'
 require_text "$daemon_incremental_script" '--test-threads=1'

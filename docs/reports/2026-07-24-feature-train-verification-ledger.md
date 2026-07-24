@@ -33,7 +33,7 @@ Each execution row must record:
 | P0-03 | Feature-train machine contract and mutation guards are exact | `bcb97b8b4d950ca6b1d054661e980d12e12cd30d6df3646d658b6b14029cd832` | passed | active goal, matrix, loop state, fixture pin or checker changes |
 | P0-04 | Public boundary and changed-file whitespace are clean | `d2ca4f1c8ccc9ea236421aeeaf9818c0d0d1375c23e2c4e01846c1dfa504b29b` | passed | any later public-input change |
 | P0-05 | OCR runtime pack exposes macOS-only identities only on the supported macOS target | `be176872b22588183ff239c3f1b00e5eb35c3b0c7897f1fe2d74d4ce78bfbbb7` | passed: local focused test and hosted Linux Clippy | OCR runtime-pack target ownership changes |
-| P0-06 | Portable workspace tests and reviewed native-runtime tests are separate explicit lanes | `690882eeb0ffe23af9e4915220b527ebd350256a7a285cea60d2132f7aa35689` | local focused pass; hosted workspace rerun pending | daemon test target, native runtime feature, or reviewed-pack harness changes |
+| P0-06 | Portable workspace tests and reviewed native-runtime tests are separate explicit lanes | `9ee78c55dbfc6fd060112a98abc9a817a82f377b7b33d0871fd84098992eba4f` | local focused pass; hosted portable-lane rerun pending | daemon test target, native runtime feature, reviewed-pack harness, or lane workflow changes |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -99,8 +99,15 @@ P0-06 focused verification on 2026-07-24:
   fixture.
 - Locked Cargo metadata exposes the feature and binds exactly the three wholly
   native integration targets to it.
-- Hosted Linux/macOS/Windows workspace reruns remain pending. They are the
-  decisive receipts for portable-lane compilation and execution.
+- Hosted Linux Clippy, workspace tests, CLI closed-loop and daemon closed-loop
+  all passed after the lane split. The only subsequent failure was the public
+  workflow still invoking the native-only incremental-import script.
+- The incremental-import script now explicitly enables
+  `native-runtime-tests`, remains in local/full delivery verification, and is
+  forbidden in the public PR workflow. Its exact watcher regression passed
+  locally: 1 passed, 21 unrelated tests filtered out.
+- `check-workflows.sh` passed with the public/native lane separation. The next
+  hosted Linux/macOS/Windows reruns remain the decisive final receipts.
 
 ## Version rounds
 
