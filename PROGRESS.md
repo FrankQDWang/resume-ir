@@ -31047,10 +31047,11 @@ Output summary:
   8,720 discovered and 7,607 searchable documents. The prior installed
   migration witness remains valid because later commits did not touch storage,
   migration, bootstrap or the migrating projection.
-- Remaining v0.1.3 delivery work is GitHub-only: publish the branch/PR, attach
-  the bounded evidence comment to #236, obtain the configured merge decision,
-  and close the issue only after that decision. No Linux or full-workspace
-  test is part of this version round.
+- Draft PR #237 is stacked on the S810 checkpoint PR #235 and contains only
+  the five v0.1.3 feature/evidence commits. The bounded evidence comment is on
+  #236. Remaining work is review/merge ordering (#235 before #237) and issue
+  closure after that decision. No Linux or full-workspace test is part of this
+  version round.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 
