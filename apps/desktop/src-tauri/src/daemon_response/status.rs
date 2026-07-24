@@ -137,7 +137,7 @@ enum Redacted {
 
 pub(super) fn project_status(body: &[u8]) -> Result<StatusBody, DesktopError> {
     let value: StatusBody = decode(body)?;
-    ensure_schema(&value.schema_version, "daemon.status.v3")?;
+    ensure_schema(&value.schema_version, "daemon.status.v4")?;
     validate_health_contract(
         value.status,
         &value.core,
@@ -230,13 +230,13 @@ mod tests {
 
     fn status_payload() -> serde_json::Value {
         serde_json::from_str(include_str!(
-            "../../tests/fixtures/daemon-status-v3-ready.json"
+            "../../tests/fixtures/daemon-status-v4-ready.json"
         ))
         .unwrap()
     }
 
     #[test]
-    fn status_v3_accepts_ready_and_initializing_but_rejects_v2_and_unknown_fields() {
+    fn status_v4_accepts_ready_migrating_and_initializing_but_rejects_old_and_unknown_fields() {
         let ready = status_payload();
         assert!(project_status(&serde_json::to_vec(&ready).unwrap()).is_ok());
 
@@ -282,8 +282,15 @@ mod tests {
         }
         assert!(project_status(&serde_json::to_vec(&initializing).unwrap()).is_ok());
 
+        let mut migrating = initializing.clone();
+        migrating["status"] = serde_json::json!("migrating");
+        migrating["core"] =
+            serde_json::json!({"state": "migrating", "reason": "metadata_migrating"});
+        migrating["error"]["reason"] = serde_json::json!("metadata_migrating");
+        assert!(project_status(&serde_json::to_vec(&migrating).unwrap()).is_ok());
+
         let mut legacy = ready.clone();
-        legacy["schema_version"] = serde_json::json!("daemon.status.v2");
+        legacy["schema_version"] = serde_json::json!("daemon.status.v3");
         assert!(project_status(&serde_json::to_vec(&legacy).unwrap()).is_err());
         let mut extra = ready;
         extra["private_debug"] = serde_json::json!(true);
@@ -330,7 +337,7 @@ mod tests {
 
     #[test]
     fn artifact_unavailable_blocked_snapshot_matches_the_daemon_contract() {
-        let payload = include_bytes!("../../tests/fixtures/daemon-status-v3-artifact-blocked.json");
+        let payload = include_bytes!("../../tests/fixtures/daemon-status-v4-artifact-blocked.json");
         let projected = project_status(payload).expect("artifact-blocked status must decode");
         assert!(matches!(projected.core.state, CoreState::Blocked));
         assert!(matches!(

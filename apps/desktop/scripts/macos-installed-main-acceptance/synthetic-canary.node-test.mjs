@@ -18,7 +18,7 @@ const epoch = 12;
 
 function readyStatus(overrides = {}) {
   return {
-    schema_version: "daemon.status.v3",
+    schema_version: "daemon.status.v4",
     status: "ok",
     visible_epoch: epoch,
     process_state: "ready",

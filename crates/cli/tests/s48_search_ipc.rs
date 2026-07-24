@@ -846,7 +846,7 @@ fn write_auth_file(path: &Path, token: &str) {
 
 fn discovery_manifest(addr: SocketAddr) -> String {
     serde_json::json!({
-        "schema_version": "resume-ir.daemon-ipc.v3",
+        "schema_version": "resume-ir.daemon-ipc.v4",
         "launch_id": TEST_LAUNCH_ID,
         "instance_id": TEST_INSTANCE_ID,
         "owner_mode": "standalone",

@@ -20,6 +20,7 @@ import { readPrivateJson } from "./filesystem-cow.mjs";
 
 const CORE_REASONS = [
   "metadata_initializing",
+  "metadata_migrating",
   "migration_rebuild",
   "artifact_unavailable",
   "source_unavailable",
@@ -90,7 +91,7 @@ export async function readDaemonConnection(dataDir) {
   if (
     before.source !== after.source || !exactKeys(before.value, endpointKeys) ||
     !exactKeys(auth.value, ["schema_version", "launch_id", "instance_id", "token"]) ||
-    before.value.schema_version !== "resume-ir.daemon-ipc.v3" ||
+    before.value.schema_version !== "resume-ir.daemon-ipc.v4" ||
     auth.value.schema_version !== "resume-ir.daemon-auth.v3" ||
     before.value.owner_mode !== "desktop_supervised" ||
     !DIGEST.test(before.value.launch_id ?? "") ||
@@ -241,6 +242,7 @@ function validCore(core) {
   if (!exactKeys(core, ["state", "reason"])) return false;
   if (core.state === "ready") return core.reason === null;
   if (core.state === "initializing") return core.reason === "metadata_initializing";
+  if (core.state === "migrating") return core.reason === "metadata_migrating";
   if (core.state === "repairing") {
     return ["migration_rebuild", "artifact_unavailable"].includes(core.reason);
   }
@@ -277,7 +279,7 @@ function capabilityIs(value, state, reason) {
 }
 
 function capabilityMatrixMatches(core, runtimes, capabilities) {
-  if (["initializing", "repairing"].includes(core.state)) {
+  if (["initializing", "migrating", "repairing"].includes(core.state)) {
     return CAPABILITY_NAMES.every((name) =>
       capabilityIs(capabilities[name], "initializing", "core_initializing"));
   }
@@ -330,13 +332,13 @@ function validRepairProgress(progress, coreState) {
 }
 
 function validStatusShape(value) {
-  if (!exactKeys(value, STATUS_KEYS) || value.schema_version !== "daemon.status.v3" ||
+  if (!exactKeys(value, STATUS_KEYS) || value.schema_version !== "daemon.status.v4" ||
       !validHealth(value) || !validServiceError(value.error, value.core) ||
       !validRepairProgress(value.repair_progress, value.core.state) || !validIpc(value.ipc)) {
     return false;
   }
   const expectedStatus = {
-    initializing: "initializing", ready: "ok", repairing: "repairing",
+    initializing: "initializing", migrating: "migrating", ready: "ok", repairing: "repairing",
     degraded: "degraded", blocked: "blocked",
   }[value.core.state];
   return value.status === expectedStatus;
@@ -469,7 +471,7 @@ export function validateDaemonDiagnostics(
       "contains_snippet_text", "visible_epoch", "evidence_lane", "evidence_status",
       "process_state", "core", "optional_runtimes", "capabilities",
       "repair_progress", "error", "metrics", "error_counts", "benchmark_refs",
-    ]) || value.schema_version !== "resume-ir.diagnostics.v4" ||
+    ]) || value.schema_version !== "resume-ir.diagnostics.v5" ||
     value.privacy_boundary !== "redacted_local_aggregate" ||
     [value.contains_raw_resume_text, value.contains_queries, value.contains_resume_paths,
       value.contains_candidate_results, value.contains_snippet_text].some(Boolean) ||

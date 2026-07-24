@@ -110,6 +110,14 @@ impl ControlPlanePublisher {
         self.publish(snapshot_without_store(self.current.core, runtimes))
     }
 
+    pub(crate) fn mark_migrating(&mut self) -> Result<(), DaemonFatalError> {
+        debug_assert_eq!(self.stage, RuntimeOwnerStage::Initializing);
+        self.publish(snapshot_without_store(
+            CoreHealth::migrating(),
+            self.current.runtimes,
+        ))
+    }
+
     pub(crate) fn mark_blocked(&mut self, reason: CoreReason) -> Result<(), DaemonFatalError> {
         self.mark_blocked_with_runtimes(reason, self.current.runtimes)
     }
@@ -187,7 +195,9 @@ impl ControlPlanePublisher {
 fn owner_stage(core: CoreHealth) -> RuntimeOwnerStage {
     match core.state {
         CoreState::Ready => RuntimeOwnerStage::Serving,
-        CoreState::Initializing | CoreState::Repairing => RuntimeOwnerStage::Initializing,
+        CoreState::Initializing | CoreState::Migrating | CoreState::Repairing => {
+            RuntimeOwnerStage::Initializing
+        }
         CoreState::Degraded | CoreState::Blocked => RuntimeOwnerStage::Blocked,
     }
 }
@@ -313,7 +323,7 @@ mod tests {
         let snapshot = state.snapshot();
         let status = snapshot.status;
 
-        assert_eq!(status["schema_version"], "daemon.status.v3");
+        assert_eq!(status["schema_version"], "daemon.status.v4");
         assert_eq!(snapshot.core.state, CoreState::Initializing);
         assert_eq!(
             status["optional_runtimes"]["embedding"]["reason"],

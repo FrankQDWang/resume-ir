@@ -105,7 +105,7 @@ struct ScanErrorBucket {
 
 pub(super) fn project_diagnostics(body: &[u8]) -> Result<DiagnosticsBody, DesktopError> {
     let value: DiagnosticsBody = decode(body)?;
-    ensure_schema(&value.schema_version, "resume-ir.diagnostics.v4")?;
+    ensure_schema(&value.schema_version, "resume-ir.diagnostics.v5")?;
     validate_health_contract(
         status_for_core(value.core.state),
         &value.core,
@@ -159,11 +159,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn diagnostics_v4_requires_the_full_daemon_shape_and_redacts_benchmark_refs() {
-        let raw = include_str!("../../tests/fixtures/daemon-diagnostics-v4-ready.json");
+    fn diagnostics_v5_requires_the_full_daemon_shape_and_redacts_benchmark_refs() {
+        let raw = include_str!("../../tests/fixtures/daemon-diagnostics-v5-ready.json");
         let projected = project_diagnostics(raw.as_bytes()).unwrap();
         let exposed = serde_json::to_value(projected).unwrap();
-        assert_eq!(exposed["schema_version"], "resume-ir.diagnostics.v4");
+        assert_eq!(exposed["schema_version"], "resume-ir.diagnostics.v5");
         assert!(exposed.get("benchmark_refs").is_none());
 
         let mut missing: serde_json::Value = serde_json::from_str(raw).unwrap();
@@ -172,5 +172,8 @@ mod tests {
         let mut extra: serde_json::Value = serde_json::from_str(raw).unwrap();
         extra["private_debug"] = serde_json::json!(true);
         assert!(project_diagnostics(&serde_json::to_vec(&extra).unwrap()).is_err());
+        let mut legacy: serde_json::Value = serde_json::from_str(raw).unwrap();
+        legacy["schema_version"] = serde_json::json!("resume-ir.diagnostics.v4");
+        assert!(project_diagnostics(&serde_json::to_vec(&legacy).unwrap()).is_err());
     }
 }

@@ -41,7 +41,7 @@ function allCapabilities(state, reason) {
 
 function status(overrides = {}) {
   return {
-    schema_version: "daemon.status.v3",
+    schema_version: "daemon.status.v4",
     status: "ok",
     process_state: "ready",
     core: { state: "ready", reason: null },
@@ -333,7 +333,7 @@ test("slow initialization and every missing optional runtime require exact matri
 });
 
 test("diagnostics v4 validates exact health and privacy matrices", () => {
-  assert.equal(validateDaemonDiagnostics(diagnostics()).schema_version, "resume-ir.diagnostics.v4");
+  assert.equal(validateDaemonDiagnostics(diagnostics()).schema_version, "resume-ir.diagnostics.v5");
   assert.throws(
     () => validateDaemonDiagnostics(diagnostics({ schema_version: "resume-ir.diagnostics.v3" })),
     /diagnostics_contract_invalid/,
@@ -439,7 +439,7 @@ test("discovery/auth v3 require one launch, instance, token, and loopback origin
   context.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(root, { recursive: true });
   const endpoints = {
-    schema_version: "resume-ir.daemon-ipc.v3",
+    schema_version: "resume-ir.daemon-ipc.v4",
     launch_id: LAUNCH,
     instance_id: INSTANCE,
     owner_mode: "desktop_supervised",

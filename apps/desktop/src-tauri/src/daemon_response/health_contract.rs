@@ -79,6 +79,7 @@ pub(super) fn validate_health_contract(
 pub(super) fn status_for_core(core: CoreState) -> StatusState {
     match core {
         CoreState::Initializing => StatusState::Initializing,
+        CoreState::Migrating => StatusState::Migrating,
         CoreState::Ready => StatusState::Ok,
         CoreState::Repairing => StatusState::Repairing,
         CoreState::Degraded => StatusState::Degraded,
@@ -96,7 +97,10 @@ pub(super) fn validate_repair_progress(
     let Some(progress) = progress else {
         return ensure(matches!(
             core,
-            CoreState::Initializing | CoreState::Degraded | CoreState::Blocked
+            CoreState::Initializing
+                | CoreState::Migrating
+                | CoreState::Degraded
+                | CoreState::Blocked
         ));
     };
     ensure(progress.attempt.is_none_or(|value| value.value() <= 5))?;

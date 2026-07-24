@@ -223,7 +223,7 @@ fn wait_for_generation(
             .ok()
             .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok());
         if let (Some(endpoints), Some(auth)) = (endpoints, auth) {
-            if endpoints["schema_version"] == "resume-ir.daemon-ipc.v3"
+            if endpoints["schema_version"] == "resume-ir.daemon-ipc.v4"
                 && auth["schema_version"] == "resume-ir.daemon-auth.v3"
                 && endpoints["launch_id"] == auth["launch_id"]
                 && endpoints["instance_id"] == auth["instance_id"]
@@ -258,7 +258,7 @@ fn wait_for_blocked_status(
         assert!(status.starts_with("HTTP/1.1 200"), "{status}");
         let payload: serde_json::Value =
             serde_json::from_str(status.split_once("\r\n\r\n").unwrap().1).unwrap();
-        assert_eq!(payload["schema_version"], "daemon.status.v3");
+        assert_eq!(payload["schema_version"], "daemon.status.v4");
         assert_eq!(payload["process_state"], "ready");
         if payload["core"]["state"] == "blocked" {
             return payload;

@@ -31046,6 +31046,37 @@ Output summary:
   `0a3c9514-d110-4eac-a585-1ae6f9387a1c`). Previously passed business and
   integration rows remain valid; hosted replay must continue the targets that
   Windows did not reach after the former hang.
+- v0.1.3 production implementation is now present on
+  `codex/v0.1.3-cow-migrations`. Metadata schema v30 introduces a contiguous
+  checksum registry and bounded migration receipt. Exact v29 authorities
+  migrate only under the data-directory owner through same-key encrypted COW
+  staging; v27/v28/future/corrupt authorities remain fail-closed. Preparing,
+  ready and post-publication recovery paths preserve the predecessor
+  ciphertext and retain one explicit v29 predecessor.
+- The daemon now publishes discovery v4 before store open and projects
+  `core=migrating`, status v4 and diagnostics v5 while the COW operation owns
+  no serving store. Business routes remain typed initializing. CLI, native
+  desktop, TypeScript validators, installed-acceptance contracts and visible
+  Chinese migration state were versioned in the same slice; aggregate IPC is
+  v5 and bootstrap machine authority is v2.
+- Focused v30 evidence is recorded as V13-01 through V13-09 in the
+  feature-train ledger. Seven migration/negative cases passed, including
+  source-ciphertext preservation, receipt recovery, missing-key zero-write and
+  tampered-history rejection. Four native desktop contract cases and the exact
+  WebView migrating projection passed. The affected Rust production packages,
+  frontend type contract, governance mutation and performance contract checker
+  passed. Focused root and desktop production Clippy also passed with warnings
+  denied; test targets were intentionally excluded.
+- Two root-workspace pure contract test binaries compiled but did not enter
+  their test output and remained at zero CPU; they are truthfully `not_run`,
+  not failures or passes. An over-broad Nextest discovery attempt was cancelled
+  before selected tests executed. One unrelated privacy receipt case was
+  accidentally selected by a broad filter and is explicitly excluded from
+  v0.1.3 evidence. No Linux run or full repository suite is part of this
+  version round.
+- v0.1.3 is not yet complete: exact-commit commit/PR, macOS DMG build,
+  installation, synthetic v29→v30 and clean-v30 Computer Use acceptance,
+  evidence comment and #236 closure still remain.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

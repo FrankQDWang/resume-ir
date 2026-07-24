@@ -305,13 +305,13 @@ FORWARD_MIGRATION_FEATURE_TRAIN_REQUIRED_FIELDS = {
     **FEATURE_TRAIN_FINAL_DELIVERY,
 }
 
-DAEMON_BOOTSTRAP_V1_REQUIRED_FIELDS = {
-    "contract": "resume-ir.daemon-bootstrap.v1",
-    "aggregate_ipc_contract": "resume-ir.ipc.v4",
-    "discovery_contract": "resume-ir.daemon-ipc.v3",
+DAEMON_BOOTSTRAP_V2_REQUIRED_FIELDS = {
+    "contract": "resume-ir.daemon-bootstrap.v2",
+    "aggregate_ipc_contract": "resume-ir.ipc.v5",
+    "discovery_contract": "resume-ir.daemon-ipc.v4",
     "auth_contract": "resume-ir.daemon-auth.v3",
-    "status_contract": "daemon.status.v3",
-    "diagnostics_contract": "resume-ir.diagnostics.v4",
+    "status_contract": "daemon.status.v4",
+    "diagnostics_contract": "resume-ir.diagnostics.v5",
     "error_contract": "resume-ir.error.v2",
     "launch_id_bytes": 32,
     "pre_spawn_discovery_probe_allowed": False,
@@ -323,6 +323,8 @@ DAEMON_BOOTSTRAP_V1_REQUIRED_FIELDS = {
     "status_reads_metadata_on_heartbeat": False,
     "initializing_business_route_status": 503,
     "initializing_business_route_code": "SERVICE_INITIALIZING",
+    "migration_core_state": "migrating",
+    "migration_core_reason": "metadata_migrating",
     "automatic_business_request_replay_allowed": False,
 }
 
@@ -769,7 +771,7 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
         fail("perf/acceptance-matrix.toml: expected v2 schema")
     validate_forward_migration_feature_train(matrix)
     validate_exact_contract_section(
-        matrix, "daemon_bootstrap_v1", DAEMON_BOOTSTRAP_V1_REQUIRED_FIELDS
+        matrix, "daemon_bootstrap_v2", DAEMON_BOOTSTRAP_V2_REQUIRED_FIELDS
     )
     validate_exact_contract_section(
         matrix, "desktop_supervisor_v2", DESKTOP_SUPERVISOR_V2_REQUIRED_FIELDS

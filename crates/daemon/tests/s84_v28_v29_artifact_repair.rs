@@ -472,7 +472,7 @@ fn wait_for_core_state(
     loop {
         let response = request(&generation.status_endpoint, &generation.token, "GET", None);
         assert_eq!(response.status_code, 200, "{}", response.raw);
-        assert_eq!(response.body["schema_version"], "daemon.status.v3");
+        assert_eq!(response.body["schema_version"], "daemon.status.v4");
         assert_eq!(response.body["process_state"], "ready");
         let state = response.body["core"]["state"].as_str().unwrap();
         if state == expected_state {
@@ -498,7 +498,7 @@ fn wait_for_core_state(
 fn assert_status_contract(body: &serde_json::Value) {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../apps/desktop/src-tauri/tests/fixtures/daemon-status-v3-ready.json"
+        "/../../apps/desktop/src-tauri/tests/fixtures/daemon-status-v4-ready.json"
     )))
     .unwrap();
     assert_eq!(object_keys(body), object_keys(&fixture));
@@ -551,7 +551,7 @@ fn read_generation(data_dir: &Path) -> Option<Generation> {
         serde_json::from_slice(&fs::read(data_dir.join("ipc.endpoints.json")).ok()?).ok()?;
     let auth: serde_json::Value =
         serde_json::from_slice(&fs::read(data_dir.join("ipc.auth")).ok()?).ok()?;
-    if endpoints["schema_version"] != "resume-ir.daemon-ipc.v3"
+    if endpoints["schema_version"] != "resume-ir.daemon-ipc.v4"
         || auth["schema_version"] != "resume-ir.daemon-auth.v3"
         || endpoints["launch_id"] != auth["launch_id"]
         || endpoints["instance_id"] != auth["instance_id"]
@@ -671,7 +671,7 @@ impl DesktopDaemon {
                 "--launch-id",
                 LAUNCH_ID,
                 "--expected-ipc-protocol",
-                "resume-ir.daemon-ipc.v3",
+                "resume-ir.daemon-ipc.v4",
                 "--ipc-listen",
                 "127.0.0.1:0",
             ])

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum StatusState {
     Initializing,
+    Migrating,
     Ok,
     Repairing,
     Degraded,
@@ -16,6 +17,7 @@ pub enum StatusState {
 #[serde(rename_all = "snake_case")]
 pub enum CoreState {
     Initializing,
+    Migrating,
     Ready,
     Repairing,
     Degraded,
@@ -27,6 +29,7 @@ pub enum CoreState {
 #[serde(rename_all = "snake_case")]
 pub enum CoreReason {
     MetadataInitializing,
+    MetadataMigrating,
     MigrationRebuild,
     ArtifactUnavailable,
     SourceUnavailable,
@@ -39,6 +42,7 @@ impl CoreReason {
     pub const fn label(self) -> &'static str {
         match self {
             Self::MetadataInitializing => "metadata_initializing",
+            Self::MetadataMigrating => "metadata_migrating",
             Self::MigrationRebuild => "migration_rebuild",
             Self::ArtifactUnavailable => "artifact_unavailable",
             Self::SourceUnavailable => "source_unavailable",
@@ -73,6 +77,13 @@ impl CoreHealth {
         }
     }
 
+    pub const fn migrating() -> Self {
+        Self {
+            state: CoreState::Migrating,
+            reason: Some(CoreReason::MetadataMigrating),
+        }
+    }
+
     pub const fn blocked(reason: CoreReason) -> Self {
         Self {
             state: CoreState::Blocked,
@@ -83,6 +94,7 @@ impl CoreHealth {
     pub const fn status(self) -> StatusState {
         match self.state {
             CoreState::Initializing => StatusState::Initializing,
+            CoreState::Migrating => StatusState::Migrating,
             CoreState::Ready => StatusState::Ok,
             CoreState::Repairing => StatusState::Repairing,
             CoreState::Degraded => StatusState::Degraded,
@@ -270,7 +282,7 @@ pub struct CapabilityMatrix {
 impl CapabilityMatrix {
     pub fn derive(core: CoreHealth, runtimes: OptionalRuntimeMatrix) -> Self {
         match core.state {
-            CoreState::Initializing | CoreState::Repairing => {
+            CoreState::Initializing | CoreState::Migrating | CoreState::Repairing => {
                 return Self::uniform(
                     CapabilityState::Initializing,
                     CapabilityReason::CoreInitializing,
@@ -382,7 +394,7 @@ impl CoreError {
     pub fn for_core(core: CoreHealth) -> Option<Self> {
         let reason = core.reason?;
         match core.state {
-            CoreState::Initializing | CoreState::Repairing => Some(Self {
+            CoreState::Initializing | CoreState::Migrating | CoreState::Repairing => Some(Self {
                 code: CoreErrorCode::ServiceInitializing,
                 action: CoreErrorAction::WaitForService,
                 capability: None,
@@ -431,6 +443,7 @@ pub fn validate_health_contract(
                 CoreState::Initializing,
                 Some(CoreReason::MetadataInitializing)
             )
+            | (CoreState::Migrating, Some(CoreReason::MetadataMigrating))
             | (
                 CoreState::Repairing,
                 Some(CoreReason::MigrationRebuild | CoreReason::ArtifactUnavailable)

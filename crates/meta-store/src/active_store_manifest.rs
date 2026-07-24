@@ -6,14 +6,15 @@ use std::fs::OpenOptions;
 use tempfile::Builder;
 
 use crate::{
-    encode_hex, restrict_private_file_permissions, schema_v29, MetaStoreError, Result,
+    encode_hex, restrict_private_file_permissions, schema_v29, schema_v30, MetaStoreError, Result,
     METADATA_STORE_FILE,
 };
 #[cfg(any(test, feature = "migration-test-support"))]
 use crate::{schema_v27, schema_v28};
 
 pub(crate) const MANIFEST_FILE: &str = "metadata-active.v1";
-const MANIFEST_SCHEMA: &str = "resume-ir.metadata-active.v1";
+const MANIFEST_SCHEMA_V1: &str = "resume-ir.metadata-active.v1";
+const MANIFEST_SCHEMA_V2: &str = "resume-ir.metadata-active.v2";
 pub(crate) const MANIFEST_MAX_BYTES: u64 = 512;
 
 #[cfg(windows)]
@@ -48,7 +49,6 @@ pub(crate) fn publish_new_active_store(
     finish_manifest_commit(data_dir, &path)
 }
 
-#[cfg(any(test, feature = "migration-test-support"))]
 pub(crate) fn replace_active_store(
     data_dir: &Path,
     expected: &ActiveStoreManifest,
@@ -79,15 +79,19 @@ pub(crate) fn read_manifest_schema_version(path: &Path) -> Result<u32> {
     Ok(parse_manifest(path)?.schema_version)
 }
 
-fn parse_manifest(path: &Path) -> Result<ActiveStoreManifest> {
-    let metadata = fs::symlink_metadata(path).map_err(MetaStoreError::io_storage)?;
-    validate_owner_regular_metadata(&metadata)?;
-    if metadata.len() > MANIFEST_MAX_BYTES {
-        return Err(MetaStoreError::invalid_value("metadata.active_manifest"));
+pub(crate) fn read_manifest_format_version(path: &Path) -> Result<u32> {
+    let value = read_manifest_text(path)?;
+    match value.lines().next() {
+        Some(MANIFEST_SCHEMA_V1) => Ok(1),
+        Some(MANIFEST_SCHEMA_V2) => Ok(2),
+        _ => Err(MetaStoreError::invalid_value("metadata.active_manifest")),
     }
-    let value = fs::read_to_string(path).map_err(MetaStoreError::io_storage)?;
+}
+
+fn parse_manifest(path: &Path) -> Result<ActiveStoreManifest> {
+    let value = read_manifest_text(path)?;
     let mut lines = value.lines();
-    if lines.next() != Some(MANIFEST_SCHEMA) {
+    if !matches!(lines.next(), Some(MANIFEST_SCHEMA_V1 | MANIFEST_SCHEMA_V2)) {
         return Err(MetaStoreError::invalid_value("metadata.active_manifest"));
     }
     let manifest = ActiveStoreManifest {
@@ -103,8 +107,19 @@ fn parse_manifest(path: &Path) -> Result<ActiveStoreManifest> {
     Ok(manifest)
 }
 
+fn read_manifest_text(path: &Path) -> Result<String> {
+    let metadata = fs::symlink_metadata(path).map_err(MetaStoreError::io_storage)?;
+    validate_owner_regular_metadata(&metadata)?;
+    if metadata.len() > MANIFEST_MAX_BYTES {
+        return Err(MetaStoreError::invalid_value("metadata.active_manifest"));
+    }
+    fs::read_to_string(path).map_err(MetaStoreError::io_storage)
+}
+
 pub(crate) fn validate_store_file_name(file_name: &str) -> Result<()> {
-    let versioned = versioned_store_token(file_name, schema_v29::VERSION).is_some();
+    let versioned = [schema_v29::VERSION, schema_v30::VERSION]
+        .into_iter()
+        .any(|version| versioned_store_token(file_name, version).is_some());
     #[cfg(any(test, feature = "migration-test-support"))]
     let versioned = versioned
         || [schema_v27::VERSION, schema_v28::VERSION]
@@ -222,7 +237,10 @@ pub(crate) fn sync_parent_directory(_data_dir: &Path) -> Result<()> {
 }
 
 fn validate_manifest(manifest: &ActiveStoreManifest) -> Result<()> {
-    let supported = manifest.schema_version == schema_v29::VERSION;
+    let supported = matches!(
+        manifest.schema_version,
+        schema_v29::VERSION | schema_v30::VERSION
+    );
     #[cfg(any(test, feature = "migration-test-support"))]
     let supported = supported
         || matches!(
@@ -270,7 +288,6 @@ fn required_value<'a>(line: Option<&'a str>, key: &str) -> Result<&'a str> {
 #[derive(Clone, Copy)]
 enum ManifestPersistMode {
     NoClobber,
-    #[cfg(any(test, feature = "migration-test-support"))]
     Replace,
 }
 
@@ -280,8 +297,13 @@ fn persist_manifest(
     manifest: &ActiveStoreManifest,
     mode: ManifestPersistMode,
 ) -> Result<()> {
+    let schema = if manifest.schema_version == schema_v30::VERSION {
+        MANIFEST_SCHEMA_V2
+    } else {
+        MANIFEST_SCHEMA_V1
+    };
     let bytes = format!(
-        "{MANIFEST_SCHEMA}\nfile={}\nschema={}\ndigest={}",
+        "{schema}\nfile={}\nschema={}\ndigest={}",
         manifest.file_name, manifest.schema_version, manifest.store_id_digest
     );
     let mut temporary = Builder::new()
@@ -299,7 +321,6 @@ fn persist_manifest(
     restrict_private_file_permissions(temporary.path())?;
     let result = match mode {
         ManifestPersistMode::NoClobber => temporary.persist_noclobber(path),
-        #[cfg(any(test, feature = "migration-test-support"))]
         ManifestPersistMode::Replace => temporary.persist(path),
     };
     result

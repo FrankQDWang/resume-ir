@@ -9,7 +9,7 @@ mod status;
 pub(crate) use error::{parse_http_status, parse_import_service_error};
 pub(crate) use status::valid_status;
 
-pub(crate) const DISCOVERY_SCHEMA: &str = "resume-ir.daemon-ipc.v3";
+pub(crate) const DISCOVERY_SCHEMA: &str = "resume-ir.daemon-ipc.v4";
 pub(crate) const AUTH_SCHEMA: &str = "resume-ir.daemon-auth.v3";
 
 const ROUTES: [(&str, &str); 10] = [

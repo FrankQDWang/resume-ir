@@ -1,8 +1,8 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks"
 import { beforeEach, describe, expect, it } from "vitest"
 
-import readyStatusFixture from "../src-tauri/tests/fixtures/daemon-status-v3-ready.json"
-import artifactBlockedStatusFixture from "../src-tauri/tests/fixtures/daemon-status-v3-artifact-blocked.json"
+import readyStatusFixture from "../src-tauri/tests/fixtures/daemon-status-v4-ready.json"
+import artifactBlockedStatusFixture from "../src-tauri/tests/fixtures/daemon-status-v4-artifact-blocked.json"
 import healthCombinationsFixture from "../../../crates/daemon-contract/tests/fixtures/health-combinations-v1.json"
 import {
   bridgeError,
@@ -53,6 +53,33 @@ function readyStatus(): StatusBody {
   return structuredClone(readyStatusFixture) as StatusBody
 }
 
+function migratingStatus(): StatusBody {
+  const status = readyStatus()
+  status.status = "migrating"
+  status.core = { state: "migrating", reason: "metadata_migrating" }
+  for (const capability of Object.keys(status.capabilities) as Array<keyof StatusBody["capabilities"]>) {
+    status.capabilities[capability] = { state: "initializing", reason: "core_initializing" }
+  }
+  status.error = {
+    code: "SERVICE_INITIALIZING",
+    action: "wait_for_service",
+    capability: null,
+    reason: "metadata_migrating",
+  }
+  for (const field of [
+    "indexed_documents", "searchable_documents", "partial_documents", "visible_epoch",
+    "failed_retryable", "failed_permanent", "recovery_queue_depth", "ocr_queue_depth",
+    "ocr_jobs_queued", "ocr_page_budget_blocked", "ocr_remediation",
+    "ocr_language_unavailable", "ocr_language_remediation", "embedding_queue_depth",
+    "entity_mentions", "import_tasks_queued", "import_tasks_recoverable",
+    "import_tasks_cancelled", "import_scan_scopes", "import_scan_errors", "query_latency",
+    "latest_import_scan", "active_profile", "index_health", "snapshot_present",
+  ] as const) {
+    status[field] = null
+  }
+  return status
+}
+
 function runningLifecycle(): DaemonLifecycleSnapshot {
   return {
     schema_version: "resume-ir.desktop-daemon-lifecycle.v2",
@@ -70,7 +97,7 @@ function runningLifecycle(): DaemonLifecycleSnapshot {
 function diagnostics(): DiagnosticsBody {
   const status = readyStatus()
   return {
-    schema_version: "resume-ir.diagnostics.v4",
+    schema_version: "resume-ir.diagnostics.v5",
     privacy_boundary: "redacted_local_aggregate",
     evidence_lane: "gui_manual",
     evidence_status: "unaccepted",
@@ -130,15 +157,22 @@ describe("desktop bridge errors", () => {
 })
 
 describe("strict control-plane contracts", () => {
-  it("consumes the shared status v3 fixture", async () => {
+  it("consumes the shared status v4 fixture", async () => {
     const status = readyStatus()
     mockReply({ http_status: 200, body: status })
     await expect(readStatus()).resolves.toEqual({ http_status: 200, body: status })
     expect(daemonHealth({ http_status: 200, body: status })).toBe("ok")
   })
 
+  it("accepts the bounded migrating control plane without store authority", async () => {
+    const status = migratingStatus()
+    mockReply({ http_status: 200, body: status })
+    await expect(readStatus()).resolves.toEqual({ http_status: 200, body: status })
+    expect(daemonHealth({ http_status: 200, body: status })).toBe("initializing")
+  })
+
   it("rejects old status, unknown fields, missing nullable fields, and impossible capabilities", async () => {
-    const old = { ...readyStatus(), schema_version: "daemon.status.v2" }
+    const old = { ...readyStatus(), schema_version: "daemon.status.v3" }
     mockReply({ http_status: 200, body: old })
     await expect(readStatus()).rejects.toMatchObject({ code: "daemon_contract" })
 
@@ -216,7 +250,7 @@ describe("strict control-plane contracts", () => {
     await expect(readStatus()).rejects.toMatchObject({ code: "daemon_contract" })
   })
 
-  it("accepts diagnostics v4 and rejects privacy or version drift", async () => {
+  it("accepts diagnostics v5 and rejects privacy or version drift", async () => {
     const body = diagnostics()
     mockReply({ http_status: 200, body })
     await expect(readDiagnostics()).resolves.toEqual({ http_status: 200, body })

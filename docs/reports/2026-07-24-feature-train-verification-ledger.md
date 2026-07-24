@@ -93,6 +93,31 @@ hosted-hanging case 2/2; run `0a3c9514-d110-4eac-a585-1ae6f9387a1c`
 passed the three affected control-loop shutdown, accept and blocked-routing
 cases. Previously passed business and integration rows remain reusable.
 
+## v0.1.3 schema-v30 implementation round
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| V13-01 | Fresh authority initializes exact v30; exact v29 migrates through encrypted COW; preparing/ready/published receipts recover; future authority fails closed | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9` | passed: 5 exact `migration_v30::tests` cases, 128 filtered out | manifest, registry, COW copy, receipt, source witness, publication or current-store validation changes |
+| V13-02 | Missing v29 key cannot create, repair or mutate migration authority | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9` | passed: 1 exact case, 134 filtered out | key read, predecessor validation or migration entry changes |
+| V13-03 | Tampered forward-migration checksum fails closed without repair | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9` | passed: 1 exact case, 134 filtered out | registry checksum, history schema or validation changes |
+| V13-04 | Native desktop accepts discovery v4/status v4/diagnostics v5 and the bounded migrating state | `ffd3085c7274fb33a0867d99a9ef4a46ee9088bb375dd9a166eec8e4a89eb378` | passed: Nextest `27dd6fdb-8f15-49a3-a052-2abc3587aae2`, 4 passed, 69 skipped | discovery/auth binding, status/diagnostics projection or migrating health contract changes |
+| V13-05 | WebView validator and runtime projection accept migrating without stale store authority | `eda866b1987b237da2ead756b8d201aa9b9842865428045afb870699512a4f18` | passed: exact Vitest case, 1 passed, 15 skipped | TS contract validator, daemon health projection or runtime-state mapping changes |
+| V13-06 | v30 storage plus daemon/CLI consumers compile as one affected production boundary | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9:ffd3085c7274fb33a0867d99a9ef4a46ee9088bb375dd9a166eec8e4a89eb378` | passed: locked `cargo check` for meta-store, daemon-contract, resume-daemon and resume-cli | any listed crate production source or dependency changes |
+| V13-07 | Machine contracts pin bootstrap v2 and the v0.1.3 feature-train versions exactly | `9d2eca4d1c5060c5eeea3c74fbe9d01a795d4b6d080e78b05bb105b4bf137ed2` | passed: exact bootstrap mutation test and performance contract checker | active goal, acceptance matrix, loop pins, checker or fixture pin changes |
+| V13-08 | Root-workspace pure status v4 health tests | `ffd3085c7274fb33a0867d99a9ef4a46ee9088bb375dd9a166eec8e4a89eb378` | not_run: two exact test binaries compiled, then remained at zero CPU before emitting test results and were terminated | run only after the local Rust test-process stall is understood or in a clean exact-commit worktree |
+| V13-09 | Frontend type contract, Rust formatting and changed-file whitespace | `eda866b1987b237da2ead756b8d201aa9b9842865428045afb870699512a4f18` | passed: TypeScript no-emit, rustfmt check and `git diff --check` | frontend types, Rust sources or changed text changes |
+| V13-10 | Affected Rust production targets are warning-free | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9:ffd3085c7274fb33a0867d99a9ef4a46ee9088bb375dd9a166eec8e4a89eb378` | passed: focused root and desktop Clippy with `-D warnings`; test targets were not built | affected production Rust source or dependency changes |
+| V13-X01 | Broad Nextest inventory discovery attempt | working tree before V13-08 | not_run: cancelled during integration-binary enumeration before selected root tests executed | never reuse; exact `--lib`/`--bin` targeting is required |
+| V13-X02 | Unrelated privacy-maintenance receipt test selected by an overly broad `receipt_` filter | working tree before V13-01 | incidental pass; excluded from v0.1.3 evidence and reuse decisions | never use as feature evidence |
+
+The first v29→v30 regression failed before schema application because the COW
+copy path reused a create-new-only writer to reopen the already-created staging
+database. The repair split `create_encrypted_writer` from
+`open_existing_encrypted_writer`; only the failed migration case was rerun at
+that point and passed. A later registry review corrected future-chain counting,
+which invalidated all five v30 migration cases; those five and only those five
+were then rerun together and passed.
+
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
 metadata and official Tauri `info` config resolution.

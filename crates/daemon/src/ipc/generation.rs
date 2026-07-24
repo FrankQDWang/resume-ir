@@ -9,7 +9,7 @@ use meta_store::DataDirectoryOwnerLease;
 const AUTH_FILE: &str = "ipc.auth";
 const ENDPOINT_FILE: &str = "ipc.endpoints.json";
 const AUTH_SCHEMA_VERSION: &str = "resume-ir.daemon-auth.v3";
-pub(crate) const IPC_PROTOCOL_VERSION: &str = "resume-ir.daemon-ipc.v3";
+pub(crate) const IPC_PROTOCOL_VERSION: &str = "resume-ir.daemon-ipc.v4";
 const GENERATION_ID_BYTES: usize = 32;
 const OWNER_FILE_MAX_BYTES: u64 = 16 * 1024;
 
@@ -303,7 +303,7 @@ mod tests {
         let manifest = read_json(data_dir.join("ipc.endpoints.json"));
         assert_eq!(auth["instance_id"], manifest["instance_id"]);
         assert_eq!(auth["schema_version"], "resume-ir.daemon-auth.v3");
-        assert_eq!(manifest["schema_version"], "resume-ir.daemon-ipc.v3");
+        assert_eq!(manifest["schema_version"], "resume-ir.daemon-ipc.v4");
         assert_eq!(auth["launch_id"], "a".repeat(64));
         assert_eq!(manifest["launch_id"], auth["launch_id"]);
         assert_eq!(manifest["owner_mode"], "desktop_supervised");

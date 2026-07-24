@@ -83,15 +83,17 @@ pub(crate) fn dispatch_control(
     let snapshot = state.snapshot();
     match snapshot.core.state {
         CoreState::Ready => None,
-        CoreState::Initializing | CoreState::Repairing => Some(write_control_error(
-            stream,
-            auth_token,
-            request,
-            "SERVICE_INITIALIZING",
-            "wait_for_service",
-            None,
-            snapshot.core.reason.map(|reason| reason.label()),
-        )),
+        CoreState::Initializing | CoreState::Migrating | CoreState::Repairing => {
+            Some(write_control_error(
+                stream,
+                auth_token,
+                request,
+                "SERVICE_INITIALIZING",
+                "wait_for_service",
+                None,
+                snapshot.core.reason.map(|reason| reason.label()),
+            ))
+        }
         CoreState::Degraded | CoreState::Blocked => Some(write_control_error(
             stream,
             auth_token,

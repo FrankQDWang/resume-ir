@@ -1,30 +1,37 @@
-//! Exact current-v29 active-store boundary.
+//! Validation boundary for the single supported v29 migration predecessor.
 //!
-//! Production opens validate an already-published v29 store without repair, or
-//! initialize v29 from an authority-free directory. Older schemas and partial
-//! authorities are rejected without entering the test-only migration code.
+//! Production never opens v29 as the active store. It only validates an exact
+//! v29 source while the v30 COW migrator owns the data directory. Historical
+//! store construction remains available solely to migration tests.
 
+#![cfg_attr(not(test), allow(dead_code))]
+
+use std::{fs, path::Path};
+#[cfg(any(test, feature = "migration-test-support"))]
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{File, OpenOptions},
     io::{self, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
 };
 
 use rusqlite::{Connection, Transaction};
 
+#[cfg(any(test, feature = "migration-test-support"))]
 use crate::data_directory_owner::DataDirectoryOwnerGuard;
+#[cfg(any(test, feature = "migration-test-support"))]
 use crate::{
     active_store_manifest::{
         owner_regular_file_exists, publish_new_active_store, random_store_id_digest, read_manifest,
         read_manifest_schema_version, sync_parent_directory, validate_owner_directory_metadata,
         validate_owner_regular_metadata, ActiveStoreManifest, MANIFEST_FILE,
     },
-    migration_v27::{
-        open_encrypted_read_connection, source_schema_version, store_identity, sync_validated_store,
-    },
-    schema_v29, schema_v29_publication_retirement, MetaStoreError, MetadataEncryptionState,
-    OwnedMetaStore, Result, METADATA_ENCRYPTION_KEY_LEN, METADATA_STORE_FILE,
+    migration_v27::{open_encrypted_read_connection, sync_validated_store},
+    MetadataEncryptionState, OwnedMetaStore, METADATA_ENCRYPTION_KEY_LEN,
+};
+use crate::{
+    migration_v27::{source_schema_version, store_identity},
+    schema_v29, schema_v29_publication_retirement, MetaStoreError, Result, METADATA_STORE_FILE,
 };
 
 #[path = "migration_v29_descriptor_validation.rs"]
@@ -47,6 +54,7 @@ const SQLITE_AUTHORITY_SUFFIXES: [&str; 4] = [
     ".sqlite3-shm",
 ];
 
+#[cfg(any(test, feature = "migration-test-support"))]
 pub(super) fn active_store_path(data_dir: &Path) -> Result<PathBuf> {
     let manifest_path = data_dir.join(MANIFEST_FILE);
     if !owner_regular_file_exists(&manifest_path)? {
@@ -56,39 +64,6 @@ pub(super) fn active_store_path(data_dir: &Path) -> Result<PathBuf> {
     Ok(data_dir.join(read_manifest(&manifest_path)?.file_name))
 }
 
-pub(super) fn open_current_v29_store(
-    data_dir: &Path,
-) -> Result<(PathBuf, [u8; METADATA_ENCRYPTION_KEY_LEN], String)> {
-    open_optional_current_v29_store(data_dir)?
-        .ok_or_else(MetaStoreError::migration_ownership_required)
-}
-
-pub(super) fn open_optional_current_v29_store(
-    data_dir: &Path,
-) -> Result<Option<(PathBuf, [u8; METADATA_ENCRYPTION_KEY_LEN], String)>> {
-    match fs::symlink_metadata(data_dir) {
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(MetaStoreError::io_storage(error)),
-    }
-    let data_dir = fs::canonicalize(data_dir).map_err(MetaStoreError::io_storage)?;
-    let manifest_path = data_dir.join(MANIFEST_FILE);
-    if !owner_regular_file_exists(&manifest_path)? {
-        reject_legacy_or_partial_authority(&data_dir)?;
-        return Ok(None);
-    }
-    require_current_manifest_version(&manifest_path)?;
-    let manifest = read_manifest(&manifest_path)?;
-    let key = crate::read_metadata_encryption_key_without_repair(
-        &crate::metadata_encryption_key_path(&data_dir),
-    )?;
-    Ok(Some((
-        data_dir.join(&manifest.file_name),
-        key,
-        manifest.store_id_digest,
-    )))
-}
-
 pub(super) fn validate_current_v29_connection(
     connection: &Connection,
     store_id_digest: &str,
@@ -96,6 +71,7 @@ pub(super) fn validate_current_v29_connection(
     validate_active_v29_connection(connection, store_id_digest)
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 pub(super) fn prepare_active_v29_store(
     owner: &Arc<DataDirectoryOwnerGuard>,
 ) -> Result<(PathBuf, [u8; METADATA_ENCRYPTION_KEY_LEN])> {
@@ -116,6 +92,7 @@ pub(super) fn prepare_active_v29_store(
     create_fresh_v29_store(owner)
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 fn create_fresh_v29_store(
     owner: &Arc<DataDirectoryOwnerGuard>,
 ) -> Result<(PathBuf, [u8; METADATA_ENCRYPTION_KEY_LEN])> {
@@ -164,6 +141,7 @@ fn create_fresh_v29_store(
     Ok((target_path, key))
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 fn initialize_current_v29_from_empty(store: &OwnedMetaStore) -> Result<String> {
     let report = store.initialize_current_v29_schema()?;
     if report
@@ -181,6 +159,7 @@ fn initialize_current_v29_from_empty(store: &OwnedMetaStore) -> Result<String> {
     store_identity(&connection)
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 fn publish_fresh_key(
     data_dir: &Path,
     key: &[u8; METADATA_ENCRYPTION_KEY_LEN],
@@ -198,6 +177,7 @@ fn publish_fresh_key(
     sync_parent_directory(key_directory)
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 fn require_current_manifest_version(manifest_path: &Path) -> Result<()> {
     if read_manifest_schema_version(manifest_path)? != schema_v29::VERSION {
         return Err(MetaStoreError::unsupported_store_schema());
@@ -205,7 +185,7 @@ fn require_current_manifest_version(manifest_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn reject_legacy_or_partial_authority(data_dir: &Path) -> Result<()> {
+pub(super) fn reject_legacy_or_partial_authority(data_dir: &Path) -> Result<()> {
     for entry in fs::read_dir(data_dir).map_err(MetaStoreError::io_storage)? {
         let entry = entry.map_err(MetaStoreError::io_storage)?;
         let name = entry.file_name().to_string_lossy().into_owned();
@@ -230,6 +210,8 @@ fn is_reserved_store_authority(name: &str) -> bool {
         || name.starts_with("metadata-active.")
         || name.starts_with(".metadata-active.")
         || name.starts_with(MANIFEST_TEMP_PREFIX)
+        || name == "metadata-forward-migration-receipt.v1"
+        || name.starts_with(".metadata-forward-migration-receipt-")
         || name.starts_with(FRESH_V29_TEMP_PREFIX)
         || ((name.starts_with("metadata-v") || name.starts_with(".metadata-v"))
             && SQLITE_AUTHORITY_SUFFIXES
@@ -238,6 +220,7 @@ fn is_reserved_store_authority(name: &str) -> bool {
 }
 
 #[cfg(unix)]
+#[cfg(any(test, feature = "migration-test-support"))]
 fn restrict_private_directory_permissions(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -245,10 +228,12 @@ fn restrict_private_directory_permissions(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
+#[cfg(any(test, feature = "migration-test-support"))]
 fn restrict_private_directory_permissions(_path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 struct FreshV29Publication {
     data_dir: PathBuf,
     key: Option<CreatedPath>,
@@ -258,6 +243,7 @@ struct FreshV29Publication {
     committed: bool,
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 impl FreshV29Publication {
     fn new(data_dir: &Path, staging: CreatedPath) -> Self {
         Self {
@@ -279,6 +265,7 @@ impl FreshV29Publication {
     }
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 impl Drop for FreshV29Publication {
     fn drop(&mut self) {
         if self.committed {
@@ -299,17 +286,20 @@ impl Drop for FreshV29Publication {
 }
 
 #[derive(Clone, Copy)]
+#[cfg(any(test, feature = "migration-test-support"))]
 enum CreatedPathKind {
     RegularFile,
     Directory,
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 struct CreatedPath {
     path: PathBuf,
     identity: Option<same_file::Handle>,
     kind: CreatedPathKind,
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 impl CreatedPath {
     fn capture_open_regular_file(path: &Path, file: &File) -> Result<Self> {
         let opened = file.metadata().map_err(MetaStoreError::io_storage)?;
@@ -400,12 +390,14 @@ impl CreatedPath {
     }
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 impl Drop for CreatedPath {
     fn drop(&mut self) {
         self.delete_best_effort();
     }
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 fn validate_current_path(path: &Path, kind: CreatedPathKind) -> Result<()> {
     let metadata = fs::symlink_metadata(path).map_err(MetaStoreError::io_storage)?;
     match kind {
@@ -414,6 +406,7 @@ fn validate_current_path(path: &Path, kind: CreatedPathKind) -> Result<()> {
     }
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 fn create_owned_private_empty_file(path: &Path) -> Result<CreatedPath> {
     let mut options = OpenOptions::new();
     options.create_new(true).read(true).write(true);
@@ -430,6 +423,7 @@ fn create_owned_private_empty_file(path: &Path) -> Result<CreatedPath> {
     Ok(owned)
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 fn create_owned_private_file(path: &Path, bytes: &[u8]) -> Result<CreatedPath> {
     let mut options = OpenOptions::new();
     options.create_new(true).read(true).write(true);
@@ -449,6 +443,7 @@ fn create_owned_private_file(path: &Path, bytes: &[u8]) -> Result<CreatedPath> {
     Ok(owned)
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 fn create_owned_private_directory(path: &Path) -> Result<CreatedPath> {
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
@@ -463,6 +458,7 @@ fn create_owned_private_directory(path: &Path) -> Result<CreatedPath> {
     Ok(owned)
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 fn link_owned_regular_file(staging: &CreatedPath, target: &Path) -> Result<CreatedPath> {
     fs::hard_link(&staging.path, target).map_err(MetaStoreError::io_storage)?;
     let target = CreatedPath::capture_regular_file(target)?;
@@ -472,6 +468,7 @@ fn link_owned_regular_file(staging: &CreatedPath, target: &Path) -> Result<Creat
     Ok(target)
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 fn validate_active_v29_store(path: &Path, key: &[u8], store_id_digest: &str) -> Result<()> {
     if !owner_regular_file_exists(path)? {
         return Err(MetaStoreError::storage_invariant());
@@ -481,6 +478,14 @@ fn validate_active_v29_store(path: &Path, key: &[u8], store_id_digest: &str) -> 
 }
 
 fn validate_active_v29_connection(connection: &Connection, store_id_digest: &str) -> Result<()> {
+    validate_active_connection(connection, schema_v29::VERSION, store_id_digest)
+}
+
+pub(super) fn validate_active_connection(
+    connection: &Connection,
+    expected_version: u32,
+    store_id_digest: &str,
+) -> Result<()> {
     let journal_mode = connection
         .query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
         .map_err(MetaStoreError::storage)?;
@@ -517,8 +522,8 @@ fn validate_active_v29_connection(connection: &Connection, store_id_digest: &str
     if !journal_mode.eq_ignore_ascii_case("delete")
         || integrity != "ok"
         || foreign_key_failures != 0
-        || source_schema_version(connection)? != schema_v29::VERSION
-        || migration_count != i64::from(schema_v29::VERSION)
+        || source_schema_version(connection)? != expected_version
+        || migration_count != i64::from(expected_version)
         || store_identity(connection)? != store_id_digest
         || trigger_count != 8
     {

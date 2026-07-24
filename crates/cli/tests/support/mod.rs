@@ -146,7 +146,7 @@ pub fn write_daemon_auth(path: &Path, token: &str) {
 pub fn write_daemon_discovery(data_dir: &Path, addr: SocketAddr, token: &str) {
     fs::create_dir_all(data_dir).expect("create daemon discovery fixture directory");
     let manifest = serde_json::json!({
-        "schema_version": "resume-ir.daemon-ipc.v3",
+        "schema_version": "resume-ir.daemon-ipc.v4",
         "launch_id": TEST_DAEMON_LAUNCH_ID,
         "instance_id": TEST_DAEMON_INSTANCE_ID,
         "owner_mode": "standalone",
@@ -168,7 +168,7 @@ pub fn write_daemon_discovery(data_dir: &Path, addr: SocketAddr, token: &str) {
 
 pub fn ready_daemon_status_body() -> &'static str {
     r#"{
-        "schema_version":"daemon.status.v3",
+        "schema_version":"daemon.status.v4",
         "status":"ok",
         "process_state":"ready",
         "core":{"state":"ready","reason":null},

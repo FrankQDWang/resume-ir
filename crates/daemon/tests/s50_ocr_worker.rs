@@ -496,7 +496,7 @@ fn wait_for_generation(child: &mut impl PollDaemonChild, data_dir: &Path) -> Gen
         let endpoints = read_json(data_dir.join("ipc.endpoints.json"));
         let auth = read_json(data_dir.join("ipc.auth"));
         if let (Some(endpoints), Some(auth)) = (endpoints, auth) {
-            if endpoints["schema_version"] == "resume-ir.daemon-ipc.v3"
+            if endpoints["schema_version"] == "resume-ir.daemon-ipc.v4"
                 && auth["schema_version"] == "resume-ir.daemon-auth.v3"
                 && endpoints["launch_id"] == auth["launch_id"]
                 && endpoints["instance_id"] == auth["instance_id"]

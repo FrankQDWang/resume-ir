@@ -1,19 +1,24 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
-  "experiment_state": "contract_locked",
+  "workflow_state": "implementation_active",
+  "experiment_state": "implementation_active",
   "evidence_lane": "smoke",
   "contract_pins": {
-    "active_goal_sha256": "45e1757d53f885b1de7215ff8e3d50d5ded69bc470fb0a7ebaeffc16f956a036",
-    "acceptance_matrix_sha256": "73539c980eab72cd3ef14989a4dd98abc4c5c2c9b1fbd486bcc5d42444269eaa",
+    "active_goal_sha256": "4e0662bc3f4e03e3a6113ad0a978bc1db3430f3be3dc5fad2c9cf37c264a48f2",
+    "acceptance_matrix_sha256": "8017fe19e7ef1af05198a5113a8b902ddcfcad7c1336267829024e980f2897e5",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "30868881838b8785fb7f1ccf574cb8bb34c51d00"
   },
-  "current_slice": "#217 P0 v0.1.3-v0.1.8 forward-migration and source-lifecycle feature-train foundation",
+  "current_slice": "#236 v0.1.3 schema v30 encrypted COW forward migration",
   "transition_history": [
+    {
+      "from": "slice_selected",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/236"
+    },
     {
       "from": "evidence_review",
       "to": "next_issue_or_goal_complete",
@@ -2832,7 +2837,16 @@
       {"command":"P0 exact product-version, DMG-plan, worktree-release and Tauri config-resolution checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#p0-contractversion-round"},
       {"command":"P0 exact install, reinstall, journal, source-binding and release-deployment checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#p0-contractversion-round"},
       {"command":"P0 governance mutation, performance contract, autonomous-goal, loop-state and runner checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#p0-contractversion-round"},
-      {"command":"P0 public repo guard and git diff check","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#p0-contractversion-round"}
+      {"command":"P0 public repo guard and git diff check","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#p0-contractversion-round"},
+      {"command":"CARGO_INCREMENTAL=0 cargo test -p meta-store --lib migration_v30::tests:: --locked --jobs 4 -- --test-threads=5","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"exact missing-v29-key and tampered-forward-history meta-store cases","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"resume-desktop Nextest v4/v5 native contract selection","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"exact Vitest migrating control-plane projection","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"locked affected production Cargo check plus frontend TypeScript no-emit","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"exact bootstrap governance mutation plus performance contract checker","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"root-workspace exact pure status v4 test binaries","exit_code":130,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round-not-run-zero-cpu-stall"},
+      {"command":"cargo fmt --all -- --check and git diff --check","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"focused production Clippy for meta-store, daemon-contract, resume-daemon, resume-cli and resume-desktop with -D warnings","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"}
     ],
     "all_required_commands_ran": false,
     "claim": "partial"
@@ -2846,7 +2860,7 @@
     "contains_diagnostics_package": false
   },
   "github_ledger": {
-    "primary_issue": "#217",
+    "primary_issue": "#236",
     "active_prs": [],
     "open_blockers": [
       "#53"

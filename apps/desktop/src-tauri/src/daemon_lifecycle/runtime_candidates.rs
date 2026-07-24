@@ -9,7 +9,7 @@ const PACKAGED_EMBEDDING_MODEL_ID: &str = "intfloat-multilingual-e5-small-qint8-
 const PACKAGED_EMBEDDING_DIMENSION: usize = 384;
 const PACKAGED_OCR_LANG: &str = "eng+chi_sim";
 const OCR_JOBS_PER_TICK: usize = 1;
-const DAEMON_IPC_PROTOCOL: &str = "resume-ir.daemon-ipc.v3";
+const DAEMON_IPC_PROTOCOL: &str = "resume-ir.daemon-ipc.v4";
 const CANDIDATE_PATH_MAX_BYTES: usize = 4096;
 const MODEL_ID_MAX_BYTES: usize = 128;
 
@@ -232,7 +232,7 @@ mod tests {
                 "--import-rescan-min-age-seconds",
                 "300",
                 "--expected-ipc-protocol",
-                "resume-ir.daemon-ipc.v3",
+                "resume-ir.daemon-ipc.v4",
                 "--ipc-listen",
                 "127.0.0.1:0",
             ]

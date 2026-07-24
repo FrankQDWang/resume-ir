@@ -3,7 +3,7 @@ use super::*;
 
 fn ready_status() -> Value {
     serde_json::json!({
-        "schema_version": "daemon.status.v3",
+        "schema_version": "daemon.status.v4",
         "status": "ok",
         "process_state": "ready",
         "core": {"state": "ready", "reason": null},
@@ -95,7 +95,7 @@ fn discovery_and_auth_require_exact_v3_launch_and_instance_binding() {
     assert_eq!(bound.token(), "c".repeat(64));
 
     let mut legacy = discovery.clone();
-    legacy["schema_version"] = Value::String("resume-ir.daemon-ipc.v2".to_string());
+    legacy["schema_version"] = Value::String("resume-ir.daemon-ipc.v3".to_string());
     assert!(parse_discovery(&legacy.to_string()).is_none());
     let mut unknown_discovery = discovery.clone();
     unknown_discovery["private_debug"] = Value::Bool(true);
@@ -123,12 +123,12 @@ fn discovery_and_auth_require_exact_v3_launch_and_instance_binding() {
 }
 
 #[test]
-fn status_v3_rejects_old_unknown_and_illegal_state_combinations() {
+fn status_v4_rejects_old_unknown_and_illegal_state_combinations() {
     let ready = ready_status();
     assert!(valid_status(&ready));
 
     let mut legacy = ready.clone();
-    legacy["schema_version"] = Value::String("daemon.status.v2".to_string());
+    legacy["schema_version"] = Value::String("daemon.status.v3".to_string());
     assert!(!valid_status(&legacy));
     let mut unknown = ready.clone();
     unknown["private_debug"] = Value::Bool(true);
@@ -139,7 +139,7 @@ fn status_v3_rejects_old_unknown_and_illegal_state_combinations() {
 }
 
 #[test]
-fn status_v3_accepts_initializing_with_null_store_projection() {
+fn status_v4_accepts_initializing_with_null_store_projection() {
     let mut status = ready_status();
     status["status"] = Value::String("initializing".to_string());
     status["core"] =
@@ -200,7 +200,7 @@ fn status_v3_accepts_initializing_with_null_store_projection() {
 }
 
 #[test]
-fn status_v3_accepts_independent_capability_reasons_for_combined_runtime_failure() {
+fn status_v4_accepts_independent_capability_reasons_for_combined_runtime_failure() {
     let mut status = ready_status();
     status["optional_runtimes"] = serde_json::json!({
         "embedding": {"state": "unavailable", "reason": "not_configured"},

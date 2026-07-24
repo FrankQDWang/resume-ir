@@ -444,7 +444,7 @@ export function App() {
 
   async function openDiagnostics() {
     resetDetail(); setOverlay("diagnostics"); setDiagnosticsState("loading"); setDiagnosticsMessage("正在读取本地聚合诊断")
-    try { const reply = await readDiagnostics(); if (reply.http_status !== 200 || reply.body.schema_version !== "resume-ir.diagnostics.v4" || reply.body.privacy_boundary !== "redacted_local_aggregate") { setDiagnostics(null); setDiagnosticsState("blocked"); setDiagnosticsMessage("诊断合同未满足脱敏导出边界"); return } setDiagnostics(reply.body); setDiagnosticsState("ready"); setDiagnosticsMessage("只读聚合诊断已就绪") }
+    try { const reply = await readDiagnostics(); if (reply.http_status !== 200 || reply.body.schema_version !== "resume-ir.diagnostics.v5" || reply.body.privacy_boundary !== "redacted_local_aggregate") { setDiagnostics(null); setDiagnosticsState("blocked"); setDiagnosticsMessage("诊断合同未满足脱敏导出边界"); return } setDiagnostics(reply.body); setDiagnosticsState("ready"); setDiagnosticsMessage("只读聚合诊断已就绪") }
     catch (error) { const overload = bridgeFailureKind(error) === "overload"; setDiagnostics(null); setDiagnosticsState(overload ? "overload" : "error"); setDiagnosticsMessage(overload ? "诊断读取入口繁忙，请稍后重试" : bridgeError(error).message) }
   }
 

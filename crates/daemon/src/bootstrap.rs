@@ -84,6 +84,11 @@ fn run_persistent_ipc_with_hooks(
     control_publisher
         .set_runtimes(runtimes)
         .map_err(DaemonError::from)?;
+    if meta_store::metadata_forward_migration_required(data_dir).is_ok_and(|required| required) {
+        control_publisher
+            .mark_migrating()
+            .map_err(DaemonError::from)?;
+    }
     let initialization: Result<PersistentRuntime> = (|| {
         #[cfg(test)]
         if let Some(before_store_open) = _hooks.before_store_open.as_ref() {
