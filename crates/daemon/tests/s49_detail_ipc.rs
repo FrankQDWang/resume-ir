@@ -891,7 +891,8 @@ impl Daemon {
             ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            .env("RESUME_IR_S49_RESET_DIAGNOSTICS", "1");
         let mut child = ContainedChild::spawn(&mut command).expect("start contained resume daemon");
         let parent_lifecycle = child.take_stdin().expect("daemon parent lifecycle");
         let stdout = child.take_stdout().expect("daemon stdout");

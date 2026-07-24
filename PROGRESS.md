@@ -30980,6 +30980,15 @@ Output summary:
   case plus two directly affected lifecycle/response tests passed locally;
   Nextest run `65d9bbe9-7044-4c99-a2df-e99c73f0d323` completed the latter two
   in 0.617 seconds.
+- PR run `30106509107` did not reach s49 because the first server-side probe
+  also emitted a tagged response-sink event during s20's intentional
+  client-disconnect smoke, which correctly requires empty stderr. This is a
+  diagnostic-scope failure, not product evidence. The temporary probe is now
+  enabled only for the s49 child daemon; normal product and all other tests
+  remain silent. Nextest run `02461f85-6549-4c62-a9e1-b3fd0b193b0f` passed the
+  exact s20 fault smoke and hosted-failing s49 case in parallel: 2 passed,
+  37 skipped, 2.477 seconds. Focused Clippy, rustfmt, diff and public guards
+  passed.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

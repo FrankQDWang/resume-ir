@@ -185,10 +185,12 @@ fn handle_business_with_timing(
     let cancellation = match stream.try_clone() {
         Ok(cancellation) => cancellation,
         Err(error) => {
-            eprintln!(
-                "[DEBUG-s49-reset] cancellation_clone_failed kind={:?}",
-                error.kind()
-            );
+            if std::env::var_os("RESUME_IR_S49_RESET_DIAGNOSTICS").is_some() {
+                eprintln!(
+                    "[DEBUG-s49-reset] cancellation_clone_failed kind={:?}",
+                    error.kind()
+                );
+            }
             return Ok(());
         }
     };
@@ -213,14 +215,18 @@ fn handle_business_with_timing(
                     .as_ref()
                     .is_some_and(|shutdown| shutdown.load(Ordering::Acquire))
                 {
-                    eprintln!("[DEBUG-s49-reset] watchdog_cancel reason=parent_shutdown");
+                    if std::env::var_os("RESUME_IR_S49_RESET_DIAGNOSTICS").is_some() {
+                        eprintln!("[DEBUG-s49-reset] watchdog_cancel reason=parent_shutdown");
+                    }
                     publication_revoker.withdraw();
                     watcher_cancelled.store(true, Ordering::Release);
                     let _ = cancellation.shutdown(Shutdown::Both);
                     return;
                 }
                 if Instant::now() >= deadline {
-                    eprintln!("[DEBUG-s49-reset] watchdog_cancel reason=hard_deadline");
+                    if std::env::var_os("RESUME_IR_S49_RESET_DIAGNOSTICS").is_some() {
+                        eprintln!("[DEBUG-s49-reset] watchdog_cancel reason=hard_deadline");
+                    }
                     watcher_cancelled.store(true, Ordering::Release);
                     let _ = cancellation.shutdown(Shutdown::Both);
                     return;
@@ -229,10 +235,12 @@ fn handle_business_with_timing(
             }
         })
         .map_err(|error| {
-            eprintln!(
-                "[DEBUG-s49-reset] watchdog_spawn_failed kind={:?}",
-                error.kind()
-            );
+            if std::env::var_os("RESUME_IR_S49_RESET_DIAGNOSTICS").is_some() {
+                eprintln!(
+                    "[DEBUG-s49-reset] watchdog_spawn_failed kind={:?}",
+                    error.kind()
+                );
+            }
             DaemonFatalError::ControlPlaneFailure
         })?;
 
