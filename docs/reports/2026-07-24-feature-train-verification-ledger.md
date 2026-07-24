@@ -34,6 +34,7 @@ Each execution row must record:
 | P0-04 | Public boundary and changed-file whitespace are clean | `d2ca4f1c8ccc9ea236421aeeaf9818c0d0d1375c23e2c4e01846c1dfa504b29b` | passed | any later public-input change |
 | P0-05 | OCR runtime pack exposes macOS-only identities only on the supported macOS target | `be176872b22588183ff239c3f1b00e5eb35c3b0c7897f1fe2d74d4ce78bfbbb7` | passed: local focused test and hosted Linux Clippy | OCR runtime-pack target ownership changes |
 | P0-06 | Portable workspace tests and reviewed native-runtime tests are separate explicit lanes | `9ee78c55dbfc6fd060112a98abc9a817a82f377b7b33d0871fd84098992eba4f` | local focused pass; hosted portable-lane rerun pending | daemon test target, native runtime feature, reviewed-pack harness, or lane workflow changes |
+| P0-07 | Detail IPC test client completes one bounded HTTP response by `Content-Length`, without requiring transport EOF | `490bd01875132783a30c017814c55266c55ef0eb012f38651845dfcadf9a025b` | local focused pass; hosted Linux replay pending | s49 response reader, response framing, or detail request-limit lifecycle changes |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -108,6 +109,31 @@ P0-06 focused verification on 2026-07-24:
   locally: 1 passed, 21 unrelated tests filtered out.
 - `check-workflows.sh` passed with the public/native lane separation. The next
   hosted Linux/macOS/Windows reruns remain the decisive final receipts.
+
+The next hosted portable run reached the existing
+`detail_distinguishes_stale_from_unpublished_or_invalid_selections` case and
+reported `ConnectionReset` from its test-only `read_to_string` call after the
+fourth and final request. The test client had treated transport EOF as the HTTP
+message boundary even though daemon responses already carry an exact
+`Content-Length`. P0-07 replaces that unbounded EOF dependency only in the
+affected s49 harness with a 2 MiB bounded frame reader. It accepts a transport
+reset only after the declared frame is complete and preserves the reset error
+for a partial body.
+
+P0-07 focused verification on 2026-07-24:
+
+- The new exact synthetic regression was observed red against the old
+  EOF-based reader with `ConnectionReset`.
+- `cargo test -p resume-daemon --locked --test s49_detail_ipc
+  http_response_reader_ -- --nocapture` passed: 2 passed, 4 unrelated tests
+  filtered out. The pair proves complete-frame acceptance and partial-frame
+  rejection.
+- `cargo test -p resume-daemon --locked --test s49_detail_ipc
+  detail_distinguishes_stale_from_unpublished_or_invalid_selections -- --exact
+  --nocapture` passed: 1 passed, 5 unrelated tests filtered out.
+- Focused s49 Clippy with `-D warnings`, `rustfmt --check`,
+  `guard-public-repo.sh` and `git diff --check` passed. No daemon crate or
+  workspace suite was replayed.
 
 ## Version rounds
 

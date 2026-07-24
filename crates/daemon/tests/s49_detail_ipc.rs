@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -930,9 +930,139 @@ fn http_post_command(
     );
     let mut stream = TcpStream::connect(addr).unwrap();
     stream.write_all(request.as_bytes()).unwrap();
-    let mut response = String::new();
-    stream.read_to_string(&mut response).unwrap();
-    response
+    read_http_response(&mut stream).unwrap()
+}
+
+fn read_http_response(reader: &mut impl Read) -> io::Result<String> {
+    const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+
+    let mut response = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    loop {
+        if let Some(frame_len) = complete_http_frame_len(&response)? {
+            if response.len() != frame_len {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "HTTP response contains bytes after the declared body",
+                ));
+            }
+            return String::from_utf8(response).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "HTTP response is not UTF-8")
+            });
+        }
+        if response.len() == MAX_RESPONSE_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HTTP response exceeds the test client limit",
+            ));
+        }
+        let remaining = MAX_RESPONSE_BYTES - response.len();
+        let chunk_limit = remaining.min(chunk.len());
+        let read = reader.read(&mut chunk[..chunk_limit])?;
+        if read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "HTTP response ended before the declared body was complete",
+            ));
+        }
+        response.extend_from_slice(&chunk[..read]);
+    }
+}
+
+fn complete_http_frame_len(response: &[u8]) -> io::Result<Option<usize>> {
+    let Some(header_offset) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
+        return Ok(None);
+    };
+    let header_len = header_offset + 4;
+    let header = std::str::from_utf8(&response[..header_offset]).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "HTTP response header is not UTF-8",
+        )
+    })?;
+    let content_length = header
+        .lines()
+        .skip(1)
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim())
+        })
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HTTP response is missing Content-Length",
+            )
+        })?
+        .parse::<usize>()
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HTTP response has an invalid Content-Length",
+            )
+        })?;
+    let frame_len = header_len.checked_add(content_length).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "HTTP response length overflows usize",
+        )
+    })?;
+    Ok((response.len() >= frame_len).then_some(frame_len))
+}
+
+#[test]
+fn http_response_reader_accepts_a_complete_frame_before_transport_reset() {
+    struct CompleteFrameThenReset {
+        frame: &'static [u8],
+        offset: usize,
+    }
+
+    impl Read for CompleteFrameThenReset {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.offset == self.frame.len() {
+                return Err(io::Error::from(io::ErrorKind::ConnectionReset));
+            }
+            let remaining = &self.frame[self.offset..];
+            let copied = remaining.len().min(buffer.len());
+            buffer[..copied].copy_from_slice(&remaining[..copied]);
+            self.offset += copied;
+            Ok(copied)
+        }
+    }
+
+    let frame = b"HTTP/1.1 404 Not Found\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
+    let mut reader = CompleteFrameThenReset { frame, offset: 0 };
+
+    assert_eq!(
+        read_http_response(&mut reader).unwrap(),
+        String::from_utf8(frame.to_vec()).unwrap()
+    );
+}
+
+#[test]
+fn http_response_reader_rejects_a_partial_frame_before_transport_reset() {
+    struct PartialFrameThenReset {
+        delivered: bool,
+    }
+
+    impl Read for PartialFrameThenReset {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.delivered {
+                return Err(io::Error::from(io::ErrorKind::ConnectionReset));
+            }
+            let partial = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n{}";
+            buffer[..partial.len()].copy_from_slice(partial);
+            self.delivered = true;
+            Ok(partial.len())
+        }
+    }
+
+    assert_eq!(
+        read_http_response(&mut PartialFrameThenReset { delivered: false })
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::ConnectionReset
+    );
 }
 
 fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> String {

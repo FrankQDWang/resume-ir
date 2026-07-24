@@ -30794,6 +30794,15 @@ Output summary:
   it. Its exact watcher regression passed locally with 21 unrelated tests
   filtered out, while the hosted portable Clippy/workspace/closed-loop stages
   had already passed.
+- The next hosted portable run exposed one test-client framing defect in the
+  existing s49 detail contract test: its fourth and final request used
+  unbounded `read_to_string`, so a Linux transport reset at daemon budget exit
+  discarded an otherwise frameable HTTP response. The affected harness now
+  reads one response by its exact `Content-Length` under a 2 MiB cap. A
+  deterministic regression proves that a complete frame survives a subsequent
+  reset while a partial frame still fails. Those two focused reader tests and
+  the original exact s49 test passed; no unrelated daemon or workspace tests
+  were replayed. Hosted Linux remains the final receipt for this repair.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 
