@@ -45,7 +45,7 @@ pub(crate) fn valid_status(body: &Value) -> bool {
         "ipc",
     ];
     if !has_exact_keys(body, &KEYS)
-        || string(body, "schema_version") != Some("daemon.status.v3")
+        || string(body, "schema_version") != Some("daemon.status.v4")
         || string(body, "process_state") != Some("ready")
     {
         return false;

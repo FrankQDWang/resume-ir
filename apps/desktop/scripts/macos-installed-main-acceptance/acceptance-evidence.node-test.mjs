@@ -30,7 +30,7 @@ const SNAPSHOT_ARTIFACT_DIGEST = `sha256:${createHash("sha256")
 
 function readyStatus(overrides = {}) {
   return {
-    schema_version: "daemon.status.v3",
+    schema_version: "daemon.status.v4",
     status: "ok",
     process_state: "ready",
     core: { state: "ready", reason: null },

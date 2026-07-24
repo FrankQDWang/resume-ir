@@ -11,7 +11,7 @@ use crate::daemon_client::DesktopError;
 
 const ENDPOINT_MANIFEST_FILE: &str = "ipc.endpoints.json";
 const AUTH_MANIFEST_FILE: &str = "ipc.auth";
-const ENDPOINT_SCHEMA: &str = "resume-ir.daemon-ipc.v3";
+const ENDPOINT_SCHEMA: &str = "resume-ir.daemon-ipc.v4";
 const AUTH_SCHEMA: &str = "resume-ir.daemon-auth.v3";
 const MAX_ENDPOINT_MANIFEST_BYTES: u64 = 16 * 1024;
 const MAX_AUTH_MANIFEST_BYTES: u64 = 1024;
@@ -445,7 +445,7 @@ mod tests {
     const LAUNCH: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 
     #[test]
-    fn strict_v3_pair_accepts_one_canonical_loopback_generation() {
+    fn strict_v4_discovery_v3_auth_pair_accepts_one_canonical_loopback_generation() {
         let manifest = manifest(INSTANCE, "desktop_supervised", "127.0.0.1:4312");
         let auth = auth(INSTANCE, TOKEN);
         let connection =
@@ -457,7 +457,7 @@ mod tests {
     #[test]
     fn legacy_or_unstructured_auth_contracts_are_rejected() {
         let legacy = manifest(INSTANCE, "desktop_supervised", "127.0.0.1:4312")
-            .replace(ENDPOINT_SCHEMA, "resume-ir.daemon-ipc.v1");
+            .replace(ENDPOINT_SCHEMA, "resume-ir.daemon-ipc.v3");
         let current = manifest(INSTANCE, "desktop_supervised", "127.0.0.1:4312");
         assert!(decode_connection(
             legacy.as_bytes(),
@@ -571,10 +571,10 @@ mod tests {
     fn startup_probe_treats_old_malformed_half_written_and_foreign_files_as_stale() {
         let current = manifest(INSTANCE, "desktop_supervised", "127.0.0.1:4312");
         let current_auth = auth(INSTANCE, TOKEN);
-        let old_v2 = current
-            .replace(ENDPOINT_SCHEMA, "resume-ir.daemon-ipc.v2")
+        let old_v3 = current
+            .replace(ENDPOINT_SCHEMA, "resume-ir.daemon-ipc.v3")
             .replace(&format!(r#","launch_id":"{LAUNCH}"#), "");
-        for bytes in [old_v2.as_bytes(), b"{\"schema_version\":", b"{}"] {
+        for bytes in [old_v3.as_bytes(), b"{\"schema_version\":", b"{}"] {
             assert!(ensure_probe_launch(bytes, LAUNCH)
                 .unwrap_err()
                 .is_stale_generation());

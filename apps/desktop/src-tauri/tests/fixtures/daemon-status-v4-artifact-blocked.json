@@ -1,5 +1,5 @@
 {
-  "schema_version": "daemon.status.v3",
+  "schema_version": "daemon.status.v4",
   "status": "blocked",
   "process_state": "ready",
   "core": { "state": "blocked", "reason": "artifact_unavailable" },

@@ -54,7 +54,12 @@ pub(crate) fn parse_import_service_error(
             "SERVICE_INITIALIZING",
             "wait_for_service",
             None,
-            Some("metadata_initializing" | "migration_rebuild" | "artifact_unavailable"),
+            Some(
+                "metadata_initializing"
+                | "metadata_migrating"
+                | "migration_rebuild"
+                | "artifact_unavailable",
+            ),
         ) => Some(ImportServiceError::Initializing),
         (
             "SERVICE_BLOCKED",

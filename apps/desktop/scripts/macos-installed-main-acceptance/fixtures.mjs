@@ -80,7 +80,7 @@ export function options(overrides = {}) {
 
 export function diagnostics(overrides = {}) {
   return {
-    schema_version: "resume-ir.diagnostics.v4",
+    schema_version: "resume-ir.diagnostics.v5",
     privacy_boundary: "redacted_local_aggregate",
     contains_raw_resume_text: false,
     contains_queries: false,

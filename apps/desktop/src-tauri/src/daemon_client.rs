@@ -250,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_probe_reads_strict_v3_pair_and_authenticates_status_v3() {
+    fn startup_probe_reads_strict_v4_discovery_v3_auth_and_status_v4() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let data_dir = std::env::temp_dir().join(format!(
@@ -276,7 +276,7 @@ mod tests {
             let request = std::str::from_utf8(&request).unwrap();
             assert!(request.starts_with("GET /status HTTP/1.1"), "{request:?}");
             assert!(request.contains(&format!("Authorization: Bearer {TOKEN}")));
-            let body = include_str!("../tests/fixtures/daemon-status-v3-ready.json");
+            let body = include_str!("../tests/fixtures/daemon-status-v4-ready.json");
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -468,7 +468,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_vec(&serde_json::json!({
-                "schema_version": "resume-ir.daemon-ipc.v3",
+                "schema_version": "resume-ir.daemon-ipc.v4",
                 "launch_id": LAUNCH,
                 "instance_id": instance_id,
                 "owner_mode": "desktop_supervised",
@@ -500,7 +500,7 @@ mod tests {
     fn make_owner_only(_path: &Path) {}
 
     fn write_status_response(stream: &mut std::net::TcpStream) {
-        let body = include_str!("../tests/fixtures/daemon-status-v3-ready.json");
+        let body = include_str!("../tests/fixtures/daemon-status-v4-ready.json");
         write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",

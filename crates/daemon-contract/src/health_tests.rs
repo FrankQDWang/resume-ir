@@ -69,6 +69,7 @@ fn all_ready_runtime_combinations_have_one_deterministic_capability_matrix() {
 fn non_serving_core_states_never_authorize_store_access() {
     for core in [
         CoreHealth::initializing(),
+        CoreHealth::migrating(),
         CoreHealth {
             state: CoreState::Repairing,
             reason: Some(CoreReason::ArtifactUnavailable),

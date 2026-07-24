@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#217"
-name = "forward_migration_source_lifecycle_pdf_detail_feature_train_p0"
+issue = "#236"
+name = "v0_1_3_schema_v30_encrypted_cow_forward_migration"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = false
@@ -69,8 +69,12 @@ allowed_paths = [
 
 [contracts]
 query_semantics = "simple_text_required_all_terms_v1"
-ipc_contract = "resume-ir.ipc.v4"
-diagnostics_contract = "resume-ir.diagnostics.v4"
+ipc_contract = "resume-ir.ipc.v5"
+discovery_contract = "resume-ir.daemon-ipc.v4"
+status_contract = "daemon.status.v4"
+diagnostics_contract = "resume-ir.diagnostics.v5"
+metadata_manifest_contract = "resume-ir.metadata-active.v2"
+metadata_migration_receipt_contract = "resume-ir.metadata-forward-migration-receipt.v1"
 feature_train_contract = "resume-ir.forward-migration-feature-train.v1"
 product_version_source = "apps/desktop/package.json"
 evidence_matrix = "resume-ir.perf.acceptance-matrix.v2"

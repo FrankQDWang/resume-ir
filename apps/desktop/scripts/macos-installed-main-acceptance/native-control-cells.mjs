@@ -58,7 +58,7 @@ async function persistPrivateJson(directory, fileName, value) {
 
 function v3Endpoints(origin, launchId, instanceId) {
   return {
-    schema_version: "resume-ir.daemon-ipc.v3",
+    schema_version: "resume-ir.daemon-ipc.v4",
     launch_id: launchId,
     instance_id: instanceId,
     owner_mode: "desktop_supervised",

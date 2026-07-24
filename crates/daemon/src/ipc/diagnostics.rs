@@ -30,7 +30,7 @@ fn render_available(
     let repair_attempt = store.artifact_repair_attempt_state()?;
     let ipc = process_metrics().snapshot();
     let mut body = serde_json::json!({
-        "schema_version": "resume-ir.diagnostics.v4",
+        "schema_version": "resume-ir.diagnostics.v5",
         "privacy_boundary": "redacted_local_aggregate",
         "contains_raw_resume_text": false,
         "contains_queries": false,
@@ -85,7 +85,7 @@ pub(crate) fn render_without_store(
     capabilities: CapabilityMatrix,
 ) -> serde_json::Value {
     let mut body = serde_json::json!({
-        "schema_version": "resume-ir.diagnostics.v4",
+        "schema_version": "resume-ir.diagnostics.v5",
         "privacy_boundary": "redacted_local_aggregate",
         "contains_raw_resume_text": false,
         "contains_queries": false,
@@ -183,7 +183,7 @@ mod tests {
         };
         let value = render_without_store(core, runtimes, CapabilityMatrix::derive(core, runtimes));
 
-        assert_eq!(value["schema_version"], "resume-ir.diagnostics.v4");
+        assert_eq!(value["schema_version"], "resume-ir.diagnostics.v5");
         assert_eq!(value["process_state"], "ready");
         assert_eq!(value["core"]["state"], "degraded");
         assert_eq!(value["core"]["reason"], "metadata_unavailable");
@@ -202,10 +202,10 @@ mod tests {
     }
 
     #[test]
-    fn diagnostics_v4_shared_fixture_matches_producer_shape() {
+    fn diagnostics_v5_shared_fixture_matches_producer_shape() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/desktop/src-tauri/tests/fixtures/daemon-diagnostics-v4-ready.json"
+            "/../../apps/desktop/src-tauri/tests/fixtures/daemon-diagnostics-v5-ready.json"
         )))
         .unwrap();
         let core = CoreHealth {

@@ -8,8 +8,8 @@ import type {
   StatusBody,
 } from "./daemon"
 
-const coreStates = ["initializing", "ready", "repairing", "degraded", "blocked"] as const
-const coreReasons = ["metadata_initializing", "migration_rebuild", "artifact_unavailable", "source_unavailable", "runtime_invariant", "unsupported_store_schema", "metadata_unavailable"] as const
+const coreStates = ["initializing", "migrating", "ready", "repairing", "degraded", "blocked"] as const
+const coreReasons = ["metadata_initializing", "metadata_migrating", "migration_rebuild", "artifact_unavailable", "source_unavailable", "runtime_invariant", "unsupported_store_schema", "metadata_unavailable"] as const
 const runtimeStates = ["initializing", "available", "unavailable"] as const
 const runtimeReasons = ["missing", "invalid", "start_failed", "not_configured"] as const
 const capabilityStates = ["initializing", "available", "degraded", "unavailable", "blocked"] as const
@@ -35,8 +35,8 @@ export function isDiagnosticsReply(value: unknown): value is DaemonReply<Diagnos
 
 export function isStatusBody(value: unknown): value is StatusBody {
   if (!isRecord(value) || !hasExactKeys(value, statusKeys)) return false
-  if (value.schema_version !== "daemon.status.v3" || value.process_state !== "ready") return false
-  if (!["initializing", "ok", "repairing", "degraded", "blocked"].includes(String(value.status))) return false
+  if (value.schema_version !== "daemon.status.v4" || value.process_state !== "ready") return false
+  if (!["initializing", "migrating", "ok", "repairing", "degraded", "blocked"].includes(String(value.status))) return false
   if (!isCore(value.core) || !isRuntimes(value.optional_runtimes) || !isCapabilities(value.capabilities)) return false
   if (!healthStateMatches(value as unknown as StatusBody) || !capabilityMatrixMatches(value.core, value.optional_runtimes, value.capabilities)) return false
   if (!isServiceError(value.error, value.core)) return false
@@ -68,7 +68,7 @@ export function isDiagnosticsBody(value: unknown): value is DiagnosticsBody {
     "contains_candidate_results", "contains_snippet_text", "visible_epoch", "evidence_lane", "evidence_status",
     "process_state", "core", "optional_runtimes", "capabilities", "repair_progress", "error", "metrics", "error_counts",
   ])) return false
-  if (value.schema_version !== "resume-ir.diagnostics.v4" || value.privacy_boundary !== "redacted_local_aggregate" || value.evidence_lane !== "gui_manual" || value.evidence_status !== "unaccepted" || value.process_state !== "ready") return false
+  if (value.schema_version !== "resume-ir.diagnostics.v5" || value.privacy_boundary !== "redacted_local_aggregate" || value.evidence_lane !== "gui_manual" || value.evidence_status !== "unaccepted" || value.process_state !== "ready") return false
   if (![value.contains_raw_resume_text, value.contains_queries, value.contains_resume_paths, value.contains_candidate_results, value.contains_snippet_text].every((flag) => flag === false)) return false
   if (!nullableSafeCount(value.visible_epoch) || !isCore(value.core) || !isRuntimes(value.optional_runtimes) || !isCapabilities(value.capabilities)) return false
   if (!capabilityMatrixMatches(value.core, value.optional_runtimes, value.capabilities) || !isServiceError(value.error, value.core) || !isRepairProgress(value.repair_progress, value.core.state)) return false
@@ -80,6 +80,7 @@ function isCore(value: unknown): value is StatusBody["core"] {
   if (!isRecord(value) || !hasExactKeys(value, ["state", "reason"]) || !coreStates.includes(value.state as typeof coreStates[number])) return false
   if (value.state === "ready") return value.reason === null
   if (value.state === "initializing") return value.reason === "metadata_initializing"
+  if (value.state === "migrating") return value.reason === "metadata_migrating"
   if (value.state === "repairing") return value.reason === "migration_rebuild" || value.reason === "artifact_unavailable"
   return ["artifact_unavailable", "source_unavailable", "runtime_invariant", "unsupported_store_schema", "metadata_unavailable"].includes(String(value.reason))
 }
@@ -109,7 +110,7 @@ function isCapability(value: unknown): value is CapabilityStatus {
 }
 
 function capabilityMatrixMatches(core: StatusBody["core"], runtimes: StatusBody["optional_runtimes"], capabilities: StatusBody["capabilities"]): boolean {
-  if (core.state === "initializing" || core.state === "repairing") return capabilityNames.every((name) => capabilityIs(capabilities[name], "initializing", "core_initializing"))
+  if (core.state === "initializing" || core.state === "migrating" || core.state === "repairing") return capabilityNames.every((name) => capabilityIs(capabilities[name], "initializing", "core_initializing"))
   if (core.state === "degraded" || core.state === "blocked") return capabilityNames.every((name) => capabilityIs(capabilities[name], "blocked", "core_blocked"))
   if (!capabilityIs(capabilities.keyword_search, "available", null) || !capabilityIs(capabilities.detail, "available", null)) return false
   const embedding = runtimes.embedding.state === "available"
@@ -129,12 +130,12 @@ function capabilityIs(value: CapabilityStatus, state: CapabilityStatus["state"],
 function isServiceError(value: unknown, core: StatusBody["core"]): boolean {
   if (core.state === "ready") return value === null
   if (!isRecord(value) || !hasExactKeys(value, ["code", "action", "capability", "reason"]) || value.capability !== null || value.reason !== core.reason) return false
-  if (core.state === "initializing" || core.state === "repairing") return value.code === "SERVICE_INITIALIZING" && value.action === "wait_for_service"
+  if (core.state === "initializing" || core.state === "migrating" || core.state === "repairing") return value.code === "SERVICE_INITIALIZING" && value.action === "wait_for_service"
   return value.code === "SERVICE_BLOCKED" && value.action === (core.state === "degraded" ? "retry" : "repair_required")
 }
 
 function healthStateMatches(value: StatusBody): boolean {
-  const expected = { initializing: "initializing", ready: "ok", repairing: "repairing", degraded: "degraded", blocked: "blocked" }[value.core.state]
+  const expected = { initializing: "initializing", migrating: "migrating", ready: "ok", repairing: "repairing", degraded: "degraded", blocked: "blocked" }[value.core.state]
   return value.status === expected
 }
 

@@ -28,8 +28,8 @@ export interface SearchHit {
   snippet: string
 }
 
-export type CoreState = "initializing" | "ready" | "repairing" | "degraded" | "blocked"
-export type CoreReason = "metadata_initializing" | "migration_rebuild" | "artifact_unavailable" | "source_unavailable" | "runtime_invariant" | "unsupported_store_schema" | "metadata_unavailable"
+export type CoreState = "initializing" | "migrating" | "ready" | "repairing" | "degraded" | "blocked"
+export type CoreReason = "metadata_initializing" | "metadata_migrating" | "migration_rebuild" | "artifact_unavailable" | "source_unavailable" | "runtime_invariant" | "unsupported_store_schema" | "metadata_unavailable"
 export type OptionalRuntimeState = "initializing" | "available" | "unavailable"
 export type OptionalRuntimeReason = "missing" | "invalid" | "start_failed" | "not_configured"
 export type CapabilityState = "initializing" | "available" | "degraded" | "unavailable" | "blocked"
@@ -80,8 +80,8 @@ export interface IpcMetrics {
 }
 
 export interface StatusBody {
-  schema_version: "daemon.status.v3"
-  status: "initializing" | "ok" | "repairing" | "degraded" | "blocked"
+  schema_version: "daemon.status.v4"
+  status: "initializing" | "migrating" | "ok" | "repairing" | "degraded" | "blocked"
   process_state: "ready"
   core: {
     state: CoreState
@@ -151,12 +151,11 @@ export interface StatusBody {
   ipc: IpcMetrics
 }
 
-export function daemonHealth(reply: DaemonReply<StatusBody | DaemonFailureBody>): "ok" | "degraded" {
-  return reply.http_status === 200
-    && reply.body.schema_version === "daemon.status.v3"
-    && reply.body.status === "ok"
-    && reply.body.core.state === "ready"
-    ? "ok"
+export function daemonHealth(reply: DaemonReply<StatusBody | DaemonFailureBody>): "ok" | "initializing" | "degraded" {
+  if (reply.http_status !== 200 || reply.body.schema_version !== "daemon.status.v4") return "degraded"
+  if (reply.body.status === "ok" && reply.body.core.state === "ready") return "ok"
+  return ["initializing", "migrating", "repairing"].includes(reply.body.status)
+    ? "initializing"
     : "degraded"
 }
 
@@ -309,7 +308,7 @@ export function managedRootControlOutcome(reply: DaemonReply<ManagedRootControlB
 }
 
 export interface DiagnosticsBody {
-  schema_version: "resume-ir.diagnostics.v4"
+  schema_version: "resume-ir.diagnostics.v5"
   privacy_boundary: "redacted_local_aggregate"
   evidence_lane: "gui_manual"
   evidence_status: "unaccepted"
@@ -384,7 +383,7 @@ export async function readStatus(): Promise<DaemonReply<StatusBody>> {
   const reply = await invoke<unknown>("daemon_request", {
     request: { operation: "status" },
   })
-  if (!isStatusReply(reply)) throw contractFailure("daemon status v3 合同无效")
+  if (!isStatusReply(reply)) throw contractFailure("daemon status v4 合同无效")
   return reply
 }
 
@@ -392,7 +391,7 @@ export async function readDiagnostics(): Promise<DaemonReply<DiagnosticsBody>> {
   const reply = await invoke<unknown>("daemon_request", {
     request: { operation: "diagnostics" },
   })
-  if (!isDiagnosticsReply(reply)) throw contractFailure("daemon diagnostics v4 合同无效")
+  if (!isDiagnosticsReply(reply)) throw contractFailure("daemon diagnostics v5 合同无效")
   return reply
 }
 

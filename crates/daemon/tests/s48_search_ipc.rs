@@ -728,7 +728,7 @@ fn unsafe_artifact_root_blocks_services_without_exiting_daemon() {
 
     let status = daemon.wait_for_core_state("blocked");
     assert_eq!(status.status_code, 200, "{}", status.raw);
-    assert_eq!(status.body["schema_version"], "daemon.status.v3");
+    assert_eq!(status.body["schema_version"], "daemon.status.v4");
     assert_eq!(status.body["status"], "blocked");
     assert_eq!(status.body["process_state"], "ready");
     assert_eq!(status.body["core"]["state"], "blocked");
@@ -772,7 +772,7 @@ fn unsafe_artifact_root_blocks_services_without_exiting_daemon() {
     daemon.assert_running("after unsafe-root detail and search requests");
     let next_status = daemon.status();
     assert_eq!(next_status.status_code, 200, "{}", next_status.raw);
-    assert_eq!(next_status.body["schema_version"], "daemon.status.v3");
+    assert_eq!(next_status.body["schema_version"], "daemon.status.v4");
     assert_eq!(next_status.body["status"], "blocked");
     assert_eq!(next_status.body["process_state"], "ready");
     assert_eq!(next_status.body["core"]["state"], "blocked");
@@ -1320,7 +1320,7 @@ impl DaemonHarness {
         while Instant::now() < deadline {
             let response = self.status();
             assert_eq!(response.status_code, 200, "{}", response.raw);
-            if response.body["schema_version"] == "daemon.status.v3"
+            if response.body["schema_version"] == "daemon.status.v4"
                 && response.body["process_state"] == "ready"
                 && response.body["core"]["state"]
                     .as_str()

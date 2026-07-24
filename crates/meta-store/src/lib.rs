@@ -32,6 +32,7 @@ mod artifact_repair_attempt;
 mod artifact_repair_context;
 mod classification;
 mod data_directory_owner;
+mod forward_migration;
 mod immutable_ingest_stage;
 mod immutable_search;
 mod import_processing_contract;
@@ -49,12 +50,14 @@ mod migration_v27;
 #[cfg(any(test, feature = "migration-test-support"))]
 mod migration_v28;
 mod migration_v29;
+mod migration_v30;
 mod ocr_publication;
 mod privacy_maintenance;
 mod schema_v27;
 mod schema_v28;
 mod schema_v29;
 mod schema_v29_publication_retirement;
+mod schema_v30;
 mod search_publication;
 mod search_publication_session;
 mod search_snapshot;
@@ -251,7 +254,11 @@ pub enum PendingImportTaskByRootDiagnostic {
 }
 
 pub fn metadata_store_path(data_dir: &Path) -> Result<PathBuf> {
-    migration_v29::active_store_path(data_dir)
+    migration_v30::active_store_path(data_dir)
+}
+
+pub fn metadata_forward_migration_required(data_dir: &Path) -> Result<bool> {
+    migration_v30::migration_required(data_dir)
 }
 
 pub fn metadata_encryption_key_path(data_dir: &Path) -> PathBuf {
@@ -770,29 +777,29 @@ impl fmt::Debug for MetadataEncryptionKeyRotation {
 }
 
 impl ReadMetaStore {
-    /// Opens only an already-published v29 metadata store.
+    /// Opens only an already-published current metadata store.
     ///
     /// This path never creates a key, changes schema, publishes a manifest,
     /// changes SQLite journal state, performs privacy maintenance, or repairs
     /// any artifact. Legacy stores are unsupported; absent stores require an
-    /// explicit [`DataDirectoryOwnerLease`] for fresh v29 initialization.
+    /// explicit [`DataDirectoryOwnerLease`] for initialization or migration.
     pub fn open_data_dir(data_dir: &Path) -> Result<Self> {
-        let published = migration_v29::open_current_v29_store(data_dir)?;
-        Self::open_published_v29(published)
+        let published = migration_v30::open_current_store(data_dir)?;
+        Self::open_published_current(published)
     }
 
-    /// Opens an already-published v29 metadata store when one exists.
+    /// Opens an already-published current metadata store when one exists.
     ///
     /// Absence is reported as `None` without creating storage. A legacy or
     /// partially published authority returns `UnsupportedStoreSchema` instead
     /// of being treated as absent.
     pub fn open_data_dir_if_published(data_dir: &Path) -> Result<Option<Self>> {
-        migration_v29::open_optional_current_v29_store(data_dir)?
-            .map(Self::open_published_v29)
+        migration_v30::open_optional_current_store(data_dir)?
+            .map(Self::open_published_current)
             .transpose()
     }
 
-    fn open_published_v29(
+    fn open_published_current(
         (db_path, key, store_id_digest): (PathBuf, [u8; METADATA_ENCRYPTION_KEY_LEN], String),
     ) -> Result<Self> {
         validate_metadata_encryption_key(&key)?;
@@ -809,7 +816,7 @@ impl ReadMetaStore {
         connection
             .execute_batch("PRAGMA query_only = ON; PRAGMA foreign_keys = ON;")
             .map_err(MetaStoreError::storage)?;
-        migration_v29::validate_current_v29_connection(&connection, &store_id_digest)?;
+        migration_v30::validate_current_connection(&connection, &store_id_digest)?;
         let query_only = connection
             .query_row("PRAGMA query_only", [], |row| row.get::<_, i64>(0))
             .map_err(MetaStoreError::storage)?;
@@ -826,11 +833,12 @@ impl ReadMetaStore {
 }
 
 impl OwnedMetaStore {
-    /// Opens an exact v29 store or initializes a new v29 store when no prior
-    /// metadata authority exists. It never migrates an older store.
+    /// Opens exact current storage, migrates an exact v29 predecessor through
+    /// encrypted COW staging, or initializes current storage in an
+    /// authority-free directory.
     pub(crate) fn open_data_dir_for_owner(owner: &DataDirectoryOwnerLease) -> Result<Self> {
         let owner_guard = owner.shared_guard();
-        let (db_path, key) = migration_v29::prepare_active_v29_store(&owner_guard)?;
+        let (db_path, key) = migration_v30::prepare_active_store(&owner_guard)?;
         Self::open_owned_encrypted(db_path, &key, owner_guard)
     }
 
@@ -838,7 +846,7 @@ impl OwnedMetaStore {
     /// guard. The kernel lock remains held until every sibling is dropped.
     pub fn open_sibling(&self) -> Result<Self> {
         let owner_guard = Arc::clone(self.access.guard());
-        let (db_path, key) = migration_v29::prepare_active_v29_store(&owner_guard)?;
+        let (db_path, key) = migration_v30::prepare_active_store(&owner_guard)?;
         Self::open_owned_encrypted(db_path, &key, owner_guard)
     }
 
@@ -935,7 +943,17 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
         })
     }
 
+    #[cfg(any(test, feature = "migration-test-support"))]
+    #[cfg_attr(not(test), allow(dead_code))]
     fn initialize_current_v29_schema(&self) -> Result<MigrationReport> {
+        self.initialize_empty_schema(schema_v29::VERSION)
+    }
+
+    fn initialize_current_schema(&self) -> Result<MigrationReport> {
+        self.initialize_empty_schema(schema_v30::VERSION)
+    }
+
+    fn initialize_empty_schema(&self, target_version: u32) -> Result<MigrationReport> {
         let persistent_object_count = self
             .connection
             .borrow()
@@ -948,16 +966,16 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
         if persistent_object_count != 0 {
             return Err(MetaStoreError::unsupported_store_schema());
         }
-        self.apply_schema_history()
+        self.apply_schema_history_to(target_version)
     }
 
     /// Test-only entrypoint for constructing historical schema fixtures.
     #[cfg(any(test, feature = "migration-test-support"))]
     pub fn run_migrations(&self) -> Result<MigrationReport> {
-        self.apply_schema_history()
+        self.apply_schema_history_to(schema_v30::VERSION)
     }
 
-    fn apply_schema_history(&self) -> Result<MigrationReport> {
+    fn apply_schema_history_to(&self, target_version: u32) -> Result<MigrationReport> {
         let mut connection = self.connection.borrow_mut();
         connection
             .execute_batch(
@@ -1005,6 +1023,12 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
         if !migration_applied(&connection, schema_v29::VERSION)? {
             apply_v29_target_schema(&mut connection)?;
             applied_versions.push(schema_v29::VERSION);
+        }
+        if target_version >= schema_v30::VERSION
+            && !migration_applied(&connection, schema_v30::VERSION)?
+        {
+            forward_migration::apply_current_schema_from_v29(&mut connection)?;
+            applied_versions.push(schema_v30::VERSION);
         }
 
         privacy_maintenance::complete_privacy_maintenance_after_migration(
