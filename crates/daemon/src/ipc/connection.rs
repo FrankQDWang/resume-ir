@@ -1,4 +1,4 @@
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream};
 use std::time::Duration;
 
 use meta_store::{ImportProcessingContract, OwnedMetaStore, ReadMetaStore};
@@ -52,7 +52,9 @@ fn handle_control_request(
     auth_token: &str,
 ) -> Result<(), RequestFailure> {
     configure(&stream)?;
-    let request = match super::protocol::read(&mut stream) {
+    let read_outcome = super::protocol::read(&mut stream);
+    finish_request_input(&stream)?;
+    let request = match read_outcome {
         ReadOutcome::Request(request) => request,
         ReadOutcome::TooLarge => {
             return response::write_http_response(
@@ -92,7 +94,9 @@ fn handle_request(
     completion: &ConnectionCompletion,
 ) -> Result<(), RequestFailure> {
     configure(&stream)?;
-    let request = match super::protocol::read(&mut stream) {
+    let read_outcome = super::protocol::read(&mut stream);
+    finish_request_input(&stream)?;
+    let request = match read_outcome {
         ReadOutcome::Request(request) => request,
         ReadOutcome::TooLarge => {
             return response::write_http_response(
@@ -134,13 +138,22 @@ fn configure(stream: &TcpStream) -> Result<(), RequestFailure> {
     response::configure(stream).map_err(RequestFailure::ResponseSink)
 }
 
+fn finish_request_input(stream: &TcpStream) -> Result<(), RequestFailure> {
+    stream
+        .shutdown(Shutdown::Read)
+        .map_err(|error| RequestFailure::ResponseSink(ResponseSinkError::from_io(&error)))
+}
+
 #[cfg(test)]
 mod tests {
-    use std::io;
+    use std::io::{self, Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+    use std::time::Duration;
 
-    use super::{RequestFailure, ResponseSinkError};
+    use super::{finish_request_input, RequestFailure, ResponseSinkError};
     use crate::ipc::metrics::IpcMetrics;
-    use crate::ipc::ConnectionOutcome;
+    use crate::ipc::{response, ConnectionOutcome};
 
     fn configure_outcome(result: io::Result<()>) -> Result<(), RequestFailure> {
         result.map_err(|error| RequestFailure::ResponseSink(ResponseSinkError::from_io(&error)))
@@ -167,5 +180,47 @@ mod tests {
         );
         assert_eq!(snapshot.response_failure, 1);
         assert_eq!(snapshot.client_disconnect, 1);
+    }
+
+    #[test]
+    fn terminal_request_input_does_not_abort_the_complete_response() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind connection fixture");
+        let mut client =
+            TcpStream::connect(listener.local_addr().unwrap()).expect("connect fixture");
+        let (mut server, _) = listener.accept().expect("accept fixture");
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("bound response read");
+        client
+            .write_all(&vec![b'x'; 8 * 1024])
+            .expect("write request and unread tail");
+        let mut request_prefix = [0_u8; 1];
+        server
+            .read_exact(&mut request_prefix)
+            .expect("read terminal request frame");
+
+        let response_thread = thread::spawn(move || {
+            finish_request_input(&server).expect("finish request input");
+            response::write_http_response(
+                &mut server,
+                200,
+                "application/octet-stream",
+                &"y".repeat(32 * 1024),
+            )
+            .expect("write complete response");
+        });
+        let mut response = Vec::new();
+        client
+            .read_to_end(&mut response)
+            .expect("response must close without reset");
+        response_thread.join().unwrap();
+
+        let header_end = response
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .expect("response header")
+            + 4;
+        assert!(response.starts_with(b"HTTP/1.1 200 OK\r\n"));
+        assert_eq!(response.len() - header_end, 32 * 1024);
     }
 }
