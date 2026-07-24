@@ -340,6 +340,7 @@ mod tests {
     enum SnapshotEntry {
         Directory,
         File(Vec<u8>),
+        OwnerLock,
         Other,
     }
 
@@ -358,7 +359,12 @@ mod tests {
                     snapshot.insert(relative, SnapshotEntry::Directory);
                     visit(root, &path, snapshot);
                 } else if file_type.is_file() {
-                    snapshot.insert(relative, SnapshotEntry::File(fs::read(path).unwrap()));
+                    let entry = if crate::data_directory_owner::is_process_owner_lock(&relative) {
+                        SnapshotEntry::OwnerLock
+                    } else {
+                        SnapshotEntry::File(fs::read(path).unwrap())
+                    };
+                    snapshot.insert(relative, entry);
                 } else {
                     snapshot.insert(relative, SnapshotEntry::Other);
                 }

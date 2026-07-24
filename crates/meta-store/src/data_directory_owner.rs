@@ -30,6 +30,12 @@ const FILE_SHARE_READ: u32 = 0x0000_0001;
 #[cfg(windows)]
 const FILE_SHARE_WRITE: u32 = 0x0000_0002;
 
+#[cfg(test)]
+pub(crate) fn is_process_owner_lock(relative: &Path) -> bool {
+    relative == Path::new(DATA_DIRECTORY_OWNER_LOCK_FILE)
+        || relative == Path::new(LEGACY_DAEMON_OWNER_LOCK_FILE)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DataDirectoryOwnerAcquireError {
     Storage,

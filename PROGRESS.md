@@ -30810,6 +30810,23 @@ Output summary:
   Its existing bounded wait now observes the complete two-file invariant. The
   exact test passed with 93 unrelated daemon tests filtered out; the production
   cleanup order and one-second deadline are unchanged.
+- The repaired Linux workflow then passed completely, including the portable
+  workspace, CLI loop and daemon loop, and the macOS platform lane also passed.
+  Windows Platform CI run `30084951841` reached one shared meta-store test
+  modeling defect: 15 byte-stability cases tried to read the two owner-lock
+  files while the same process held their kernel locks, which Windows rejected
+  with OS error 33 before the database assertions ran.
+- Migration snapshots now represent only the exact
+  `data-directory-owner.lock` and `daemon.owner.lock` paths as typed
+  `OwnerLock` entries. Presence and type remain compared, while all other
+  regular files retain strict byte reads. This preserves the ciphertext
+  no-write invariant without suppressing Windows I/O errors.
+- Two exact affected meta-store tests passed locally: the fresh-owner v29 case
+  passed with 127 unrelated tests filtered out, and the feature-gated public
+  v28 legacy fixture case passed with 130 unrelated tests filtered out.
+  Focused meta-store Clippy, rustfmt, public guard and diff checks passed. No
+  whole meta-store or workspace suite was replayed; hosted Windows remains the
+  authoritative cross-platform receipt for this repair.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

@@ -994,6 +994,7 @@ fn preserved_v29_summary(
 enum SnapshotEntry {
     Directory,
     File(Vec<u8>),
+    OwnerLock,
     Other,
 }
 
@@ -1021,7 +1022,12 @@ fn snapshot_directory(
             snapshot.insert(relative, SnapshotEntry::Directory);
             snapshot_directory(root, &path, snapshot);
         } else if file_type.is_file() {
-            snapshot.insert(relative, SnapshotEntry::File(fs::read(path).unwrap()));
+            let entry = if crate::data_directory_owner::is_process_owner_lock(&relative) {
+                SnapshotEntry::OwnerLock
+            } else {
+                SnapshotEntry::File(fs::read(path).unwrap())
+            };
+            snapshot.insert(relative, entry);
         } else {
             snapshot.insert(relative, SnapshotEntry::Other);
         }

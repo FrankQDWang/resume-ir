@@ -33,9 +33,10 @@ Each execution row must record:
 | P0-03 | Feature-train machine contract and mutation guards are exact | `bcb97b8b4d950ca6b1d054661e980d12e12cd30d6df3646d658b6b14029cd832` | passed | active goal, matrix, loop state, fixture pin or checker changes |
 | P0-04 | Public boundary and changed-file whitespace are clean | `d2ca4f1c8ccc9ea236421aeeaf9818c0d0d1375c23e2c4e01846c1dfa504b29b` | passed | any later public-input change |
 | P0-05 | OCR runtime pack exposes macOS-only identities only on the supported macOS target | `be176872b22588183ff239c3f1b00e5eb35c3b0c7897f1fe2d74d4ce78bfbbb7` | passed: local focused test and hosted Linux Clippy | OCR runtime-pack target ownership changes |
-| P0-06 | Portable workspace tests and reviewed native-runtime tests are separate explicit lanes | `9ee78c55dbfc6fd060112a98abc9a817a82f377b7b33d0871fd84098992eba4f` | local focused pass; hosted portable-lane rerun pending | daemon test target, native runtime feature, reviewed-pack harness, or lane workflow changes |
-| P0-07 | Detail IPC test client completes one bounded HTTP response by `Content-Length`, without requiring transport EOF | `490bd01875132783a30c017814c55266c55ef0eb012f38651845dfcadf9a025b` | local focused pass; hosted Linux replay pending | s49 response reader, response framing, or detail request-limit lifecycle changes |
-| P0-08 | Initializing-generation shutdown observes complete discovery and auth withdrawal | `8e7d55aac19e47688bbb7b44022b7cf59b43d073fca46a9c7d6116a66d3f4f74` | local exact pass; hosted Linux replay pending | initializing control-file withdrawal or its test synchronization changes |
+| P0-06 | Portable workspace tests and reviewed native-runtime tests are separate explicit lanes | `9ee78c55dbfc6fd060112a98abc9a817a82f377b7b33d0871fd84098992eba4f` | passed: local focused plus hosted Linux/macOS portable lanes | daemon test target, native runtime feature, reviewed-pack harness, or lane workflow changes |
+| P0-07 | Detail IPC test client completes one bounded HTTP response by `Content-Length`, without requiring transport EOF | `490bd01875132783a30c017814c55266c55ef0eb012f38651845dfcadf9a025b` | passed: local focused plus hosted Linux workspace replay | s49 response reader, response framing, or detail request-limit lifecycle changes |
+| P0-08 | Initializing-generation shutdown observes complete discovery and auth withdrawal | `8e7d55aac19e47688bbb7b44022b7cf59b43d073fca46a9c7d6116a66d3f4f74` | passed: local exact plus hosted Linux workspace replay | initializing control-file withdrawal or its test synchronization changes |
+| P0-09 | Byte-stability snapshots model the two held process-owner locks without reading their locked bytes | `8d974924d88179b70c62bde4ccf6f279c94c099a106879c2b988be89aa24d8b1:e44e11ffdca60c366e0ac86ba540e4d43800eafe3f4c81f199898927027df1c6:a27afd24f9d912c018ec811c75c013927156bf5b38037f34832edad8be426796` | local exact passes; hosted Windows replay pending | owner-lock names, data-directory locking, or migration byte-stability snapshot helpers change |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -153,6 +154,35 @@ P0-08 focused verification on 2026-07-24:
 - Focused daemon-bin Clippy with `-D warnings`, `rustfmt --check`,
   `guard-public-repo.sh` and `git diff --check` passed. No other daemon or
   workspace test was replayed.
+
+The next hosted platform run passed the complete macOS lane and reached one
+shared Windows-only test-model defect in 15 meta-store cases. Each byte-stability
+snapshot recursively read `data-directory-owner.lock` and
+`daemon.owner.lock` while that same test process held the corresponding kernel
+lock. Unix permits the read, but Windows correctly returned OS error 33. The
+database and migration assertions were not reached by those cases.
+
+P0-09 gives the two exact process-owner lock names a typed `OwnerLock`
+snapshot entry. Their presence and file type remain part of the before/after
+comparison, but their locked bytes are not read. Every other regular file is
+still read byte-for-byte and still fails the test on any read error; this is not
+a generic Windows exception or a relaxed ciphertext invariant.
+
+P0-09 focused verification on 2026-07-24:
+
+- `cargo test -p meta-store --lib --locked
+  migration_v29::tests::fresh_owner_directory_initializes_and_reopens_exact_current_v29
+  -- --exact` passed: 1 passed, 127 unrelated tests filtered out.
+- `cargo test -p meta-store --lib --locked --features migration-test-support
+  migration_test_support::v28_artifact::tests::public_v28_legacy_fixture_covers_each_byte_stable_hard_cut_head_shape
+  -- --exact` passed: 1 passed, 130 unrelated tests filtered out.
+- Focused meta-store library Clippy with `migration-test-support` and
+  `-D warnings`, `rustfmt --check`, `guard-public-repo.sh` and
+  `git diff --check` passed.
+- The failed hosted receipt is Platform CI run `30084951841`, Windows job
+  `89454828414`. The hosted Windows replay on the repair commit remains the
+  decisive receipt. No meta-store crate or workspace test suite was replayed
+  locally.
 
 ## Version rounds
 
