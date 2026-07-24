@@ -21,10 +21,17 @@ describe("visible daemon health", () => {
   it("distinguishes unsupported v29 data, runtime invariant, and source failure", () => {
     expect(indexServicePresentation("blocked", "unsupported_store_schema")).toEqual({
       title: "数据版本不受支持",
-      message: "当前版本只接受 schema v29；原数据保持未修改",
+      message: "当前版本仅支持从 schema v29 升级或直接打开 v30；原数据保持未修改",
     })
     expect(indexServicePresentation("blocked", "runtime_invariant").message).toContain("导出脱敏诊断")
     expect(indexServicePresentation("degraded", "source_unavailable").message).toContain("来源磁盘")
+  })
+
+  it("does not describe an exact-v30 open as a v29 migration", () => {
+    expect(indexServicePresentation("initializing", null)).toEqual({
+      title: "服务初始化中",
+      message: "daemon 控制面已就绪，正在打开当前本地数据",
+    })
   })
 
   it("shows service_unknown instead of retaining a stale ready presentation", () => {
