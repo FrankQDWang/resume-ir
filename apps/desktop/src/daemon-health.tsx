@@ -50,14 +50,14 @@ export function indexServicePresentation(
 ): { title: string; message: string } {
   if (service === "ready") return { title: "索引可用", message: "daemon 可用" }
   if (service === "unknown") return { title: "服务状态未知", message: "状态读取失败，所有数据面操作已撤销" }
-  if (service === "initializing") return { title: "服务初始化中", message: "daemon 控制面已就绪，正在打开本地 v29 数据" }
+  if (service === "initializing") return { title: "服务初始化中", message: "daemon 控制面已就绪，正在打开当前本地数据" }
   if (service === "migrating") return { title: "正在升级本地数据", message: "原 v29 数据保持不变，正在创建并验证 v30 副本" }
   if (service === "repairing") {
     if (coreReason === "migration_rebuild") return { title: "索引修复中", message: "正在重建当前索引" }
     return { title: "索引修复中", message: "daemon 已连接，索引正在修复" }
   }
   if (coreReason === "unsupported_store_schema") {
-    return { title: "数据版本不受支持", message: "当前版本只接受 schema v29；原数据保持未修改" }
+    return { title: "数据版本不受支持", message: "当前版本仅支持从 schema v29 升级或直接打开 v30；原数据保持未修改" }
   }
   if (coreReason === "runtime_invariant") {
     return { title: "索引修复已阻塞", message: "daemon 已连接，请导出脱敏诊断" }
