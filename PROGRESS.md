@@ -30934,6 +30934,19 @@ Output summary:
   process. Focused daemon-bin/s49 Clippy, rustfmt and diff checks passed. The
   invalidated Platform run `30097965482` was cancelled after macOS passed while
   Windows was still testing; a new hosted Linux/Windows replay is required.
+- Follow-up PR run `30099276417` passed both lifecycle unit regressions and s48
+  but reset another s49 case. This separated the remaining defect from
+  transport timing: s49 alone made its Nth business request double as a process
+  exit signal via `--max-requests`, while s48 already used the real supervised
+  parent-lifecycle capability. Because TCP cannot attest that a peer
+  application consumed a response, s49 now starts the daemon through the
+  repository's cross-platform `ContainedChild`, reads and validates every
+  response, asserts the daemon is still alive, and only then closes parent
+  lifecycle stdin. A raw-child first attempt correctly failed the isolated
+  process-group safety check and was replaced rather than bypassed. All 6 s49
+  cases passed with the final harness. The invalidated Platform run
+  `30099276430` was cancelled after macOS passed while Windows was still
+  testing; hosted replay is pending.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

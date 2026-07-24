@@ -40,7 +40,8 @@ Each execution row must record:
 | P0-10 | Oversized resident-command output is tested independently from long-running-command timeout behavior | `3061010c9986b56dd4afd0b10dccde6ee27c51e4dc6c3883ae78ccfaf964a0f6` | passed: local exact plus hosted Windows | resident command pipe cap, timeout precedence, or oversized-output fixture changes |
 | P0-11 | One-shot responses half-close after the declared frame, and an orderly request-limit exit waits for its final peer close | `52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517:b238323d0018b2a3bc76e262a02fd1a7ad9d857cf2967f8337b62cf059b8612a:1c169b8e7c563b027b9970bc0b414d7fb32c859956c72ab1f65f92e14a356736` | invalidated: hosted parallel s49 proved the nested one-second wait was premature | one-shot response framing, final-peer acknowledgement, streaming ownership, or request-limit lifecycle changes |
 | P0-12 | Metadata-key restore rejects a cross-platform unsafe authority object without replacing it | `44c9cd156a91eda2fae1f78627e2572e25ffbe7676f64a20df3ea5feb6735680:3e25a1fb07e376f040dd3e3428bae9184746f36efd0db659a7d008432cdbaeac:e44e11ffdca60c366e0ac86ba540e4d43800eafe3f4c81f199898927027df1c6` | passed: local exact plus hosted Windows | metadata-key restore, owner-directory validation, or unsafe-authority fixtures change |
-| P0-13 | The final request-limit exit waits first for exactly-once response completion, stops the request watchdog, then grants a bounded TCP delivery window | `e38dc69c9a2fc132b7914cc0299143948b639a0b6f32cd593710fbec855156ba:913985e11e4e026bb8360ff7e783a62f02e23aa99a7fccb046f40a2ad3227369:db79e491b28871d2335eebe2de694fa580eae6796f25e9ac8db8494773c16b7c:25d0d14868986e3b87f845f6e356aa92fbdc607a91bcacd510f39eef18d2428c:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45:490bd01875132783a30c017814c55266c55ef0eb012f38651845dfcadf9a025b` | local exact root-cause regression, prior lifecycle regression and the two hosted-failed s49 cases passed; hosted Linux/Windows replay pending | completion capability, bounded delivery receipt, deferred response ownership, connection hard deadline, or request-limit lifecycle changes |
+| P0-13 | The final request-limit exit waits first for exactly-once response completion, stops the request watchdog, then grants a bounded TCP delivery window | `e38dc69c9a2fc132b7914cc0299143948b639a0b6f32cd593710fbec855156ba:913985e11e4e026bb8360ff7e783a62f02e23aa99a7fccb046f40a2ad3227369:db79e491b28871d2335eebe2de694fa580eae6796f25e9ac8db8494773c16b7c:25d0d14868986e3b87f845f6e356aa92fbdc607a91bcacd510f39eef18d2428c:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45:1d1058e66f917a0d3424d58d81e4e83e248786da90b9f6c2cc64a10399e1ab33` | local exact root-cause regression, prior lifecycle regression and all 6 parent-owned s49 cases passed; hosted Linux/Windows replay pending | completion capability, bounded delivery receipt, deferred response ownership, connection hard deadline, or request-limit lifecycle changes |
+| P0-14 | Detail IPC integration owns daemon shutdown through the real parent-lifecycle capability after every response is fully read | `1d1058e66f917a0d3424d58d81e4e83e248786da90b9f6c2cc64a10399e1ab33` | local all 6 s49 cases passed; hosted Linux/Windows replay pending | s49 daemon harness, process containment, parent lifecycle, response framing, or detail/hydrate request sequence changes |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -316,6 +317,18 @@ independent one-second delivery window. The request execution budget remains
 five seconds and is not enlarged. The invalidated Platform run `30097965482`
 was cancelled after macOS passed while Windows was still testing.
 
+Follow-up PR run `30099276417` passed both lifecycle unit regressions and s48,
+but another s49 case reset. This proved the remaining defect was the s49
+harness contract, not another transport duration. s49 alone used
+`--max-requests` to make the Nth business request double as a process-exit
+signal. TCP supplies no portable receipt that the peer application has
+consumed a response, so any peer-close duration would remain a guess. s49 now
+uses the same contained child and authenticated parent-lifecycle stdin owner as
+s48. Every response is read and validated first; `wait_success` asserts the
+daemon is still alive, closes the parent capability, and only then expects a
+clean exit. All six s49 cases passed locally. The invalidated Platform run
+`30099276430` was cancelled after macOS passed while Windows was still testing.
+
 P0-13 focused verification on 2026-07-24:
 
 - The new exact deadline-separation regression passed after failing before the
@@ -336,6 +349,16 @@ P0-13 focused verification on 2026-07-24:
 - Focused daemon-bin/s49 Clippy with `-D warnings`, rustfmt and changed-file
   checks passed. No daemon crate or workspace suite was replayed.
 - Hosted Linux replay remains decisive for the deferred-response load boundary.
+
+P0-14 focused verification on 2026-07-24:
+
+- `cargo test -p resume-daemon --test s49_detail_ipc --locked -- --nocapture`
+  passed all 6 cases with the contained parent-lifecycle harness.
+- A first harness attempt using a raw child failed closed before endpoint
+  publication because supervised stdin lifecycle requires an isolated process
+  group. The final harness reuses the repository's cross-platform
+  `ContainedChild`; it does not bypass that safety contract.
+- No s48, daemon crate or workspace suite was replayed for the harness change.
 
 ## Version rounds
 

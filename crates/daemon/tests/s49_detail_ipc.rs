@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{ChildStderr, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use index_fulltext::{publish_snapshot, IndexDocument};
@@ -17,6 +17,7 @@ use meta_store::{
     SearchPublicationOutcome, SearchPublicationValidation, SearchSelection, SourceRevision,
     TerminalDocumentUpdate, UnixTimestamp, VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
 };
+use process_containment::ContainedChild;
 use tempfile::TempDir;
 
 mod support;
@@ -30,8 +31,7 @@ const DETAIL_FIELD_LIMIT: usize = 256;
 fn detail_and_hydrate_read_one_exact_selection_across_unrelated_publications() {
     let fixture = Fixture::create("current");
     let expected_body = fixture.current_body.clone();
-    let page_count = expected_body.len().div_ceil(HYDRATE_PAGE_BYTES);
-    let mut daemon = Daemon::start(&fixture.data_dir, page_count + 1);
+    let mut daemon = Daemon::start(&fixture.data_dir);
     let token = daemon.token.clone();
 
     let detail = daemon.post(
@@ -102,7 +102,7 @@ fn detail_and_hydrate_read_one_exact_selection_across_unrelated_publications() {
 #[test]
 fn hydrate_never_mixes_pages_after_the_selected_document_is_republished() {
     let fixture = Fixture::create("hydrate-switch");
-    let mut daemon = Daemon::start(&fixture.data_dir, 1);
+    let mut daemon = Daemon::start(&fixture.data_dir);
     let token = daemon.token.clone();
 
     let first = daemon.post(
@@ -119,7 +119,7 @@ fn hydrate_never_mixes_pages_after_the_selected_document_is_republished() {
     daemon.wait_success();
 
     fixture.replace_current_version();
-    let mut daemon = Daemon::start(&fixture.data_dir, 1);
+    let mut daemon = Daemon::start(&fixture.data_dir);
     let token = daemon.token.clone();
     let interrupted = daemon.post(
         "/details/hydrate",
@@ -145,7 +145,7 @@ fn hydrate_never_mixes_pages_after_the_selected_document_is_republished() {
 #[test]
 fn detail_distinguishes_stale_from_unpublished_or_invalid_selections() {
     let fixture = Fixture::create("selection-errors");
-    let mut daemon = Daemon::start(&fixture.data_dir, 4);
+    let mut daemon = Daemon::start(&fixture.data_dir);
     let token = daemon.token.clone();
 
     let stale = daemon.post(
@@ -203,7 +203,7 @@ fn detail_distinguishes_stale_from_unpublished_or_invalid_selections() {
 #[test]
 fn detail_contract_rejects_legacy_shape_unbounded_ids_and_oversized_pages() {
     let fixture = Fixture::create("contract-errors");
-    let mut daemon = Daemon::start(&fixture.data_dir, 5);
+    let mut daemon = Daemon::start(&fixture.data_dir);
     let token = daemon.token.clone();
 
     let unauthorized = daemon.post(
@@ -859,34 +859,43 @@ fn acquire_data_directory_owner(data_dir: &Path) -> DataDirectoryOwnerLease {
 }
 
 struct Daemon {
-    child: Option<Child>,
+    child: Option<ContainedChild>,
+    parent_lifecycle: Option<ChildStdin>,
+    stderr: Option<ChildStderr>,
     endpoint: String,
     token: String,
 }
 
 impl Daemon {
-    fn start(data_dir: &Path, max_requests: usize) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    fn start(data_dir: &Path) -> Self {
+        let launch_id = random_launch_id();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_resume-daemon"));
+        command
             .args([
                 "--data-dir",
                 path_str(data_dir),
                 "run",
                 "--foreground",
+                "--parent-lifecycle-stdin",
+                "--launch-id",
+                &launch_id,
                 "--ipc-listen",
                 "127.0.0.1:0",
-                "--max-requests",
-                &max_requests.to_string(),
             ])
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("start resume daemon");
-        let stdout = child.stdout.take().expect("daemon stdout");
+            .stderr(Stdio::piped());
+        let mut child = ContainedChild::spawn(&mut command).expect("start contained resume daemon");
+        let parent_lifecycle = child.take_stdin().expect("daemon parent lifecycle");
+        let stdout = child.take_stdout().expect("daemon stdout");
+        let mut stderr = child.take_stderr().expect("daemon stderr");
         let mut stdout = BufReader::new(stdout);
-        let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+        let endpoint = read_ipc_endpoint(&mut child, &mut stderr, &mut stdout);
         let token = read_ipc_auth_token(data_dir);
         Self {
             child: Some(child),
+            parent_lifecycle: Some(parent_lifecycle),
+            stderr: Some(stderr),
             endpoint,
             token,
         }
@@ -897,19 +906,33 @@ impl Daemon {
     }
 
     fn wait_success(mut self) {
-        let output = self
-            .child
+        assert!(
+            self.child
+                .as_mut()
+                .unwrap()
+                .try_wait()
+                .expect("poll daemon before parent shutdown")
+                .is_none(),
+            "daemon exited before its parent lifecycle closed"
+        );
+        drop(self.parent_lifecycle.take());
+        let status = self.child.as_mut().unwrap().wait().expect("wait daemon");
+        let mut stderr = String::new();
+        self.stderr
             .take()
             .unwrap()
-            .wait_with_output()
-            .expect("wait daemon");
-        assert!(
-            output.status.success(),
-            "stderr:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(output.stderr.is_empty());
+            .read_to_string(&mut stderr)
+            .expect("read daemon stderr");
+        assert!(status.success(), "stderr:\n{stderr}");
+        assert!(stderr.is_empty());
+        self.child.take();
     }
+}
+
+fn random_launch_id() -> String {
+    let mut bytes = [0_u8; 32];
+    getrandom::getrandom(&mut bytes).expect("generate daemon test launch identifier");
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn http_post_command(
@@ -1065,7 +1088,11 @@ fn http_response_reader_rejects_a_partial_frame_before_transport_reset() {
     );
 }
 
-fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> String {
+fn read_ipc_endpoint(
+    child: &mut ContainedChild,
+    stderr: &mut ChildStderr,
+    stdout: &mut BufReader<impl Read>,
+) -> String {
     let deadline = Instant::now() + IPC_ENDPOINT_TIMEOUT;
     let mut line = String::new();
     let mut endpoint = None;
@@ -1074,11 +1101,9 @@ fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> St
         let bytes = stdout.read_line(&mut line).unwrap();
         if bytes == 0 {
             if let Ok(Some(status)) = child.try_wait() {
-                let mut stderr = String::new();
-                if let Some(mut pipe) = child.stderr.take() {
-                    let _ = pipe.read_to_string(&mut stderr);
-                }
-                panic!("daemon exited before endpoint: {status}\nstderr:\n{stderr}");
+                let mut stderr_body = String::new();
+                let _ = stderr.read_to_string(&mut stderr_body);
+                panic!("daemon exited before endpoint: {status}\nstderr:\n{stderr_body}");
             }
             continue;
         }
@@ -1089,8 +1114,7 @@ fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> St
             return endpoint.expect("ready line follows endpoint publication");
         }
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    child.terminate();
     panic!("daemon did not print ipc status endpoint");
 }
 
