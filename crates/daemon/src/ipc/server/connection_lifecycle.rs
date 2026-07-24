@@ -186,7 +186,19 @@ pub(super) fn handle_business_with_watchdog(
 
     handle(stream);
     if let Some(mut peer_close) = peer_close {
-        let _ = peer_close.read(&mut [0_u8; 1]);
+        let _ = peer_close.set_read_timeout(None);
+        loop {
+            match peer_close.read(&mut [0_u8; 1]) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+                    ) => {}
+                Err(_) => break,
+            }
+        }
     }
     finished.store(true, Ordering::Release);
     watchdog
@@ -230,7 +242,7 @@ mod tests {
     use crate::ipc::generation::{DaemonGenerationOwner, OwnerMode};
 
     #[test]
-    fn final_connection_remains_owned_past_the_removed_peer_close_timeout() {
+    fn final_connection_clears_the_request_read_timeout_before_waiting_for_peer_close() {
         let directory = tempfile::tempdir().unwrap();
         let data_directory_owner = Arc::new(
             match DataDirectoryOwnerLease::try_acquire(directory.path()).unwrap() {
@@ -258,6 +270,9 @@ mod tests {
                 revoker,
                 BusinessConnectionFinish::AwaitPeerClose,
                 |stream| {
+                    stream
+                        .set_read_timeout(Some(Duration::from_millis(25)))
+                        .unwrap();
                     drop(stream);
                     handler_returned_sender.send(()).unwrap();
                 },
@@ -266,7 +281,7 @@ mod tests {
         });
 
         handler_returned_receiver.recv().unwrap();
-        thread::sleep(Duration::from_millis(1_200));
+        thread::sleep(Duration::from_millis(100));
         assert!(
             matches!(finished_receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
             "final connection was released before its peer closed"

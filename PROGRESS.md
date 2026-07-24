@@ -30879,6 +30879,15 @@ Output summary:
   filtered out, and focused s48 Clippy passed. This extends P0-13's evidence;
   it is not a separate root cause or a reason to replay unrelated Windows
   tests locally.
+- The first single-deadline hosted Linux replay still reset one of six s49
+  cases. Request parsing's two-second read timeout was shared by every cloned
+  socket handle, so removing the explicit one-second timeout had not completed
+  the phase transition. Final-response ownership now clears the request-phase
+  timeout and ignores any residual timeout until the existing five-second
+  watchdog ends the connection. A deterministic regression injects a 25 ms
+  request timeout and proves it cannot release the final connection. The
+  lifecycle case, all 6 s49 cases, both exact s48 cases and combined focused
+  Clippy passed after this correction.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 
