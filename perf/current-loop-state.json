@@ -2846,7 +2846,11 @@
       {"command":"exact bootstrap governance mutation plus performance contract checker","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
       {"command":"root-workspace exact pure status v4 test binaries","exit_code":130,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round-not-run-zero-cpu-stall"},
       {"command":"cargo fmt --all -- --check and git diff --check","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
-      {"command":"focused production Clippy for meta-store, daemon-contract, resume-daemon, resume-cli and resume-desktop with -D warnings","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"}
+      {"command":"focused production Clippy for meta-store, daemon-contract, resume-daemon, resume-cli and resume-desktop with -D warnings","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"node --test apps/desktop/scripts/macos-worktree-install.node-test.mjs","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"node --test apps/desktop/scripts/product-version.node-test.mjs","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"desktop-root exact Vitest unsupported-schema and schema-neutral initializing copy","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"exact-commit macOS worktree DMG build, receipt-bound install and Computer Use v29 migration/clean-v30 acceptance","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"}
     ],
     "all_required_commands_ran": false,
     "claim": "partial"
