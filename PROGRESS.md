@@ -30947,6 +30947,16 @@ Output summary:
   cases passed with the final harness. The invalidated Platform run
   `30099276430` was cancelled after macOS passed while Windows was still
   testing; hosted replay is pending.
+- Parent-owned s49 commit `c31a16f` passed PR run `30100318566`, Security run
+  `30100318710`, and the macOS job in Platform run `30100318606`. Its Windows
+  job remained in workspace tests for 35 minutes, beyond the recent 19–26
+  minute observed range, so it was cancelled before repeating the 47–49 minute
+  failure mode. The s49 harness now bounds each parent-shutdown wait to ten
+  seconds and, on failure, reports only the presence of discovery/auth before
+  terminating the contained process tree. This turns any Windows lifecycle
+  stall into a named, bounded failure without adding a retry or enlarging a
+  product timeout. All 6 s49 cases passed locally after the diagnostic bound;
+  hosted Windows remains pending.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

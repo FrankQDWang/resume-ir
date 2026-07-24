@@ -23,6 +23,7 @@ use tempfile::TempDir;
 mod support;
 
 const IPC_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(30);
+const DAEMON_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const HYDRATE_PAGE_BYTES: usize = 32 * 1024;
 const MAX_BODY_PAGE_BYTES: usize = 32 * 1024;
 const DETAIL_FIELD_LIMIT: usize = 256;
@@ -862,6 +863,7 @@ struct Daemon {
     child: Option<ContainedChild>,
     parent_lifecycle: Option<ChildStdin>,
     stderr: Option<ChildStderr>,
+    data_dir: PathBuf,
     endpoint: String,
     token: String,
 }
@@ -896,6 +898,7 @@ impl Daemon {
             child: Some(child),
             parent_lifecycle: Some(parent_lifecycle),
             stderr: Some(stderr),
+            data_dir: data_dir.to_path_buf(),
             endpoint,
             token,
         }
@@ -916,7 +919,28 @@ impl Daemon {
             "daemon exited before its parent lifecycle closed"
         );
         drop(self.parent_lifecycle.take());
-        let status = self.child.as_mut().unwrap().wait().expect("wait daemon");
+        let deadline = Instant::now() + DAEMON_SHUTDOWN_TIMEOUT;
+        let status = loop {
+            if let Some(status) = self
+                .child
+                .as_mut()
+                .unwrap()
+                .try_wait()
+                .expect("poll daemon after parent shutdown")
+            {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let discovery_present = self.data_dir.join("ipc.endpoints.json").exists();
+                let auth_present = self.data_dir.join("ipc.auth").exists();
+                self.child.as_mut().unwrap().terminate();
+                panic!(
+                    "daemon did not exit after parent lifecycle closed; \
+                     discovery_present={discovery_present}; auth_present={auth_present}"
+                );
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
         let mut stderr = String::new();
         self.stderr
             .take()

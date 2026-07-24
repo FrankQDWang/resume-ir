@@ -40,8 +40,8 @@ Each execution row must record:
 | P0-10 | Oversized resident-command output is tested independently from long-running-command timeout behavior | `3061010c9986b56dd4afd0b10dccde6ee27c51e4dc6c3883ae78ccfaf964a0f6` | passed: local exact plus hosted Windows | resident command pipe cap, timeout precedence, or oversized-output fixture changes |
 | P0-11 | One-shot responses half-close after the declared frame, and an orderly request-limit exit waits for its final peer close | `52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517:b238323d0018b2a3bc76e262a02fd1a7ad9d857cf2967f8337b62cf059b8612a:1c169b8e7c563b027b9970bc0b414d7fb32c859956c72ab1f65f92e14a356736` | invalidated: hosted parallel s49 proved the nested one-second wait was premature | one-shot response framing, final-peer acknowledgement, streaming ownership, or request-limit lifecycle changes |
 | P0-12 | Metadata-key restore rejects a cross-platform unsafe authority object without replacing it | `44c9cd156a91eda2fae1f78627e2572e25ffbe7676f64a20df3ea5feb6735680:3e25a1fb07e376f040dd3e3428bae9184746f36efd0db659a7d008432cdbaeac:e44e11ffdca60c366e0ac86ba540e4d43800eafe3f4c81f199898927027df1c6` | passed: local exact plus hosted Windows | metadata-key restore, owner-directory validation, or unsafe-authority fixtures change |
-| P0-13 | The final request-limit exit waits first for exactly-once response completion, stops the request watchdog, then grants a bounded TCP delivery window | `e38dc69c9a2fc132b7914cc0299143948b639a0b6f32cd593710fbec855156ba:913985e11e4e026bb8360ff7e783a62f02e23aa99a7fccb046f40a2ad3227369:db79e491b28871d2335eebe2de694fa580eae6796f25e9ac8db8494773c16b7c:25d0d14868986e3b87f845f6e356aa92fbdc607a91bcacd510f39eef18d2428c:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45:1d1058e66f917a0d3424d58d81e4e83e248786da90b9f6c2cc64a10399e1ab33` | local exact root-cause regression, prior lifecycle regression and all 6 parent-owned s49 cases passed; hosted Linux/Windows replay pending | completion capability, bounded delivery receipt, deferred response ownership, connection hard deadline, or request-limit lifecycle changes |
-| P0-14 | Detail IPC integration owns daemon shutdown through the real parent-lifecycle capability after every response is fully read | `1d1058e66f917a0d3424d58d81e4e83e248786da90b9f6c2cc64a10399e1ab33` | local all 6 s49 cases passed; hosted Linux/Windows replay pending | s49 daemon harness, process containment, parent lifecycle, response framing, or detail/hydrate request sequence changes |
+| P0-13 | The final request-limit exit waits first for exactly-once response completion, stops the request watchdog, then grants a bounded TCP delivery window | `e38dc69c9a2fc132b7914cc0299143948b639a0b6f32cd593710fbec855156ba:913985e11e4e026bb8360ff7e783a62f02e23aa99a7fccb046f40a2ad3227369:db79e491b28871d2335eebe2de694fa580eae6796f25e9ac8db8494773c16b7c:25d0d14868986e3b87f845f6e356aa92fbdc607a91bcacd510f39eef18d2428c:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45:6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c` | hosted Linux, macOS and local exact lifecycle/s49 passed; Windows shutdown diagnosis pending | completion capability, bounded delivery receipt, deferred response ownership, connection hard deadline, or request-limit lifecycle changes |
+| P0-14 | Detail IPC integration owns daemon shutdown through the real parent-lifecycle capability after every response is fully read | `6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c` | hosted Linux and macOS plus local all 6 s49 cases passed; bounded Windows shutdown diagnosis pending | s49 daemon harness, process containment, parent lifecycle, response framing, or detail/hydrate request sequence changes |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -359,6 +359,14 @@ P0-14 focused verification on 2026-07-24:
   group. The final harness reuses the repository's cross-platform
   `ContainedChild`; it does not bypass that safety contract.
 - No s48, daemon crate or workspace suite was replayed for the harness change.
+- PR run `30100318566`, Security run `30100318710`, and the macOS job in
+  Platform run `30100318606` passed. The Windows job remained in workspace
+  tests for 35 minutes, beyond the recent 19–26 minute observed range, and was
+  cancelled before the prior 47–49 minute failure mode. The harness now bounds
+  each post-parent-close child wait to ten seconds and reports only whether
+  discovery/auth still exist before terminating the contained process tree.
+  This is diagnostic fail-fast behavior, not a retry or a relaxed product
+  timeout.
 
 ## Version rounds
 
