@@ -107,8 +107,14 @@ cases. Previously passed business and integration rows remain reusable.
 | V13-08 | Root-workspace pure status v4 health tests | `ffd3085c7274fb33a0867d99a9ef4a46ee9088bb375dd9a166eec8e4a89eb378` | not_run: two exact test binaries compiled, then remained at zero CPU before emitting test results and were terminated | run only after the local Rust test-process stall is understood or in a clean exact-commit worktree |
 | V13-09 | Frontend type contract, Rust formatting and changed-file whitespace | `eda866b1987b237da2ead756b8d201aa9b9842865428045afb870699512a4f18` | passed: TypeScript no-emit, rustfmt check and `git diff --check` | frontend types, Rust sources or changed text changes |
 | V13-10 | Affected Rust production targets are warning-free | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9:ffd3085c7274fb33a0867d99a9ef4a46ee9088bb375dd9a166eec8e4a89eb378` | passed: focused root and desktop Clippy with `-D warnings`; test targets were not built | affected production Rust source or dependency changes |
+| V13-11 | An internal-test installer binds a worktree artifact manifest, DMG bytes, mounted composition, installed composition and signature without weakening exact-main release provenance | `1ad8acab59a7b9c0042750982b73d4d44ee907b58e948309f58e5c35266ee1c0:794454e8597e98bfe9ddffc132019f7fba2e834c5b7729e3b97c5efc15ed2f85:ea7a20d87ca7a6f18b00eb49752b759c1690df7108d04d864f2fec4f95be44ab` | passed: 3 exact Node cases; valid snapshot installed, DMG drift rejected and copied-App composition drift rejected | worktree artifact schema, source binding, DMG verification, install lifecycle or package runner changes |
+| V13-12 | Product manifest is the v0.1.3 version authority and the worktree installer does not duplicate it | `d181f7f1f894655adccfb5d18563ca27373b32ff65149b6c7ef27f4bb01bf450:ea7a20d87ca7a6f18b00eb49752b759c1690df7108d04d864f2fec4f95be44ab` | passed: 2 exact product-version Node cases | product manifest, version resolver, Tauri version path or listed lifecycle scripts change |
+| V13-13 | Exact feature commit produces one verified arm64 internal-test DMG and installs it without removing user data | `2175fa7958a435b96828ee51b12fdc793d2e23ae:eedb24209c40c27855db0f3bc101c3a11b60cc8510b35afbc5e94836d5fad708` | passed: DMG `8cdfd7771777b6079c3064a6c42c45dbcac0fcb338f9b0adf2981f5948d9dd6c`, composition `28cbe3ba083ba2e4645a1d4a7a7dccc1c2d735c572bed739a855cb54ec78d87d`, install receipt `4a19ece125c33fd2859e8cc978743ffd58a868814add336abaf00572d9fbdcdc`; `user_data_removed=false` | any bundled source, resource, packaging, worktree installer or product version change |
+| V13-14 | Installed v29 authority visibly migrates to v30, retains the source authority and restores the existing searchable/source aggregates | `8699e1cec536ba9fee74bf09908ccbd44ee03c74` | passed: migration screenshot `b867b41e961ee1a630f161afe12955505cba30dc3ce153901321a2821f019cda`; ready-source screenshot `1647c82f473508b63293a93a256c0986f8e0597fbba299f373c9b55b6ef79e23`; 1 root, 8,720 discovered and 7,607 searchable restored | migration/store/daemon bootstrap, migrating projection, source aggregate or data-preservation behavior changes |
+| V13-15 | Latest installed exact-v30 authority initializes without claiming another migration and reaches ready with the preserved searchable aggregate | `a62d791a611f3d97d4d7b1d81e6a06f347b1d07ffc083e6504e126a8ebc2f017:db7aa5d311efe5e0b2f28c5bda27c8a3d87257d8edce9fba0eab42c66d28dee0` | passed: initializing screenshot `4d680c2a9d5e3af6c0b03e77f2f6ab38b8c40b7c6af7006e03d0dd9a23c08dce`; ready screenshot `46fd5c77ce4ebeac001c8590324bdbeed2beff4994f39cf31487a2a222d37638`; fail-closed transient status loss recovered to 7,607 searchable | exact-v30 open, lifecycle/status polling, health copy or ready projection changes |
 | V13-X01 | Broad Nextest inventory discovery attempt | working tree before V13-08 | not_run: cancelled during integration-binary enumeration before selected root tests executed | never reuse; exact `--lib`/`--bin` targeting is required |
 | V13-X02 | Unrelated privacy-maintenance receipt test selected by an overly broad `receipt_` filter | working tree before V13-01 | incidental pass; excluded from v0.1.3 evidence and reuse decisions | never use as feature evidence |
+| V13-X03 | Root-launched Vitest command accidentally discovered an immutable cached worktree | pre-V13-15 working tree | invalid invocation: cached copy could not resolve React; current App test did not execute. Replaced by a desktop-root exact run: 2 passed, 3 skipped | never reuse; frontend Vitest commands must run from `apps/desktop` |
 
 The first v29→v30 regression failed before schema application because the COW
 copy path reused a create-new-only writer to reopen the already-created staging
@@ -117,6 +123,23 @@ database. The repair split `create_encrypted_writer` from
 that point and passed. A later registry review corrected future-chain counting,
 which invalidated all five v30 migration cases; those five and only those five
 were then rerun together and passed.
+
+The first installed-worktree attempt correctly refused a branch artifact at
+the exact-main provenance gate. Supplying the worktree source identity then
+proved a second missing boundary: the installer compared snapshot App bytes to
+an unrelated current build directory. V13-11 adds a separate internal-test
+entrypoint that binds the emitted artifact manifest, recomputed DMG digest,
+mounted and installed bundle-composition digests, source identity and signature.
+The exact-main installer is unchanged. The existing unreceipted v0.1.2 App was
+restored after both failed pre-install checks; neither attempt removed user
+data.
+
+V13-14 remains valid after the installer and health-copy repairs because no
+store, migration, bootstrap, daemon-contract or migrating-state code changed.
+The latest exact-commit DMG was therefore verified with the non-repeating
+clean-v30 start in V13-15 instead of mutating the retained real predecessor to
+force another migration. Screenshots are local-only aggregate UI evidence and
+contain no source path, resume text, query, token or candidate result.
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo

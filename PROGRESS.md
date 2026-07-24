@@ -31074,9 +31074,35 @@ Output summary:
   accidentally selected by a broad filter and is explicitly excluded from
   v0.1.3 evidence. No Linux run or full repository suite is part of this
   version round.
-- v0.1.3 is not yet complete: exact-commit commit/PR, macOS DMG build,
-  installation, synthetic v29→v30 and clean-v30 Computer Use acceptance,
-  evidence comment and #236 closure still remain.
+- v0.1.3 production and native acceptance are complete on the feature branch.
+  Commit `8699e1c` supplied the schema-v30/COW implementation and its installed
+  v29→v30 witness. A missing pre-merge installation boundary was then found:
+  the exact-main installer correctly rejected a worktree artifact, while the
+  generic bundle verifier incorrectly compared snapshot bytes to an unrelated
+  current build directory. Commit `5b2ed81` adds a strict worktree installer
+  that binds the emitted manifest, recomputed DMG digest, mounted and installed
+  composition, source identity and signature without weakening main
+  provenance. Its three exact tests passed.
+- The product-version test still expected v0.1.2 and was corrected to the
+  canonical v0.1.3 manifest; both exact version-authority cases passed.
+  Installed clean-v30 UX also exposed schema-specific startup copy. Commit
+  `2175fa7` now says “正在打开当前本地数据” and explains that unsupported stores
+  must be v29-upgradable or exact v30. The two affected Vitest cases passed;
+  one root-launched command that discovered a cached worktree is recorded as
+  an invalid invocation and excluded.
+- Exact commit `2175fa7958a435b96828ee51b12fdc793d2e23ae` produced DMG SHA-256
+  `8cdfd7771777b6079c3064a6c42c45dbcac0fcb338f9b0adf2981f5948d9dd6c`.
+  The receipt-bound install verified arm64 runtime composition, ad-hoc
+  signature and hardened runtime and reported `user_data_removed=false`.
+  Computer Use confirmed current-data initialization, fail-closed transient
+  status loss, automatic recovery to daemon ready, one restored source root,
+  8,720 discovered and 7,607 searchable documents. The prior installed
+  migration witness remains valid because later commits did not touch storage,
+  migration, bootstrap or the migrating projection.
+- Remaining v0.1.3 delivery work is GitHub-only: publish the branch/PR, attach
+  the bounded evidence comment to #236, obtain the configured merge decision,
+  and close the issue only after that decision. No Linux or full-workspace
+  test is part of this version round.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 
