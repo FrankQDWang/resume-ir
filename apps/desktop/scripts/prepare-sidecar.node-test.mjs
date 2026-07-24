@@ -1048,6 +1048,8 @@ test("desktop config prepares three sidecars and three resource packs", async ()
   const tauriSchema = JSON.parse(await readFile(tauriSchemaPath, "utf8"));
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
 
+  assert.equal(config.version, "../package.json");
+  assert.equal(packageJson.version, "0.1.2");
   assert.equal(config.build.beforeBuildCommand, "npm run build");
   assert.equal(config.bundle.active, false);
   assert.equal(config.bundle.externalBin, undefined);

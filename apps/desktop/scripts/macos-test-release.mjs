@@ -35,6 +35,10 @@ import {
   MACOS_SYSTEM_TOOLS,
   runClosedSystemTool,
 } from "./macos-system-tools.mjs";
+import {
+  PRODUCT_VERSION_SOURCE,
+  productVersionFromManifest,
+} from "./product-version.mjs";
 
 const TARGET_TRIPLE = "aarch64-apple-darwin";
 const PRODUCT_NAME = "resume-ir";
@@ -617,6 +621,7 @@ export function resolveMacosTestReleasePaths(scriptUrl = import.meta.url) {
   return Object.freeze({
     repoRoot: path.resolve(fileURLToPath(new URL("../../..", scriptUrl))),
     frontendRoot,
+    productManifest: path.join(frontendRoot, "package.json"),
     runTauri: fileURLToPath(new URL("./run-tauri.mjs", scriptUrl)),
     baseConfig: path.join(frontendRoot, "src-tauri", "tauri.conf.json"),
     platformConfig: path.join(
@@ -672,16 +677,18 @@ export function createMacosInternalTestPlan({
   frontendRoot,
   platform = process.platform,
   baseConfig,
+  productVersion,
   platformConfig,
   cargoTargetDir = path.join(frontendRoot, "src-tauri", "target"),
 }) {
-  const version = baseConfig?.version;
+  const version = productVersion;
   const macOS = platformConfig?.bundle?.macOS;
   if (
     platform !== "darwin" ||
     !path.isAbsolute(frontendRoot) ||
     !path.isAbsolute(cargoTargetDir) ||
     baseConfig?.productName !== PRODUCT_NAME ||
+    baseConfig?.version !== PRODUCT_VERSION_SOURCE ||
     typeof version !== "string" ||
     !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(version) ||
     !Array.isArray(platformConfig?.bundle?.targets) ||
@@ -748,6 +755,7 @@ export async function buildMacosInternalTestRelease({
   frontendRoot,
   runTauri,
   baseConfig,
+  productVersion,
   platformConfig,
   environment = process.env,
   platform = process.platform,
@@ -768,6 +776,7 @@ export async function buildMacosInternalTestRelease({
       frontendRoot,
       platform,
       baseConfig,
+      productVersion,
       platformConfig,
       cargoTargetDir: environment.CARGO_TARGET_DIR,
     });
@@ -914,10 +923,12 @@ async function runDefaultRelease() {
   const paths = resolveMacosTestReleasePaths();
   let baseConfig;
   let platformConfig;
+  let productManifest;
   try {
-    [baseConfig, platformConfig] = await Promise.all([
+    [baseConfig, platformConfig, productManifest] = await Promise.all([
       readBoundedJson(paths.baseConfig),
       readBoundedJson(paths.platformConfig),
+      readBoundedJson(paths.productManifest),
     ]);
   } catch {
     throw releaseError(
@@ -928,6 +939,7 @@ async function runDefaultRelease() {
   return buildMacosInternalTestRelease({
     ...paths,
     baseConfig,
+    productVersion: productVersionFromManifest(productManifest),
     platformConfig,
   });
 }

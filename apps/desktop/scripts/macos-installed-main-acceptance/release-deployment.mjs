@@ -28,6 +28,7 @@ import {
   verifyGitMainBinding,
   verifyInstalledSourceBindings,
 } from "./source-bindings.mjs";
+import { PRODUCT_VERSION_SOURCE } from "../product-version.mjs";
 
 const APPLICATIONS_DIRECTORY = "/Applications";
 const MAX_CONFIG_BYTES = 64 * 1024;
@@ -121,7 +122,7 @@ async function defaultBuildVerifiedDmg({
   ]);
   if (
     source.version !== REQUIRED_INSTALLED_VERSION ||
-    baseConfig.version !== REQUIRED_INSTALLED_VERSION
+    baseConfig.version !== PRODUCT_VERSION_SOURCE
   ) {
     fail("required_release_invalid");
   }
@@ -130,6 +131,7 @@ async function defaultBuildVerifiedDmg({
     plan = createMacosInternalTestPlan({
       frontendRoot,
       baseConfig,
+      productVersion: source.version,
       platformConfig,
     });
   } catch {

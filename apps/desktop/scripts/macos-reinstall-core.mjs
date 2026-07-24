@@ -44,13 +44,14 @@ import {
   MACOS_SYSTEM_TOOLS,
   runClosedSystemTool,
 } from "./macos-system-tools.mjs";
+import { PRODUCT_VERSION } from "./product-version.mjs";
 
 const APP_NAME = "resume-ir.app";
 const EXPECTED_BUNDLE_ID = "local.resume-ir.desktop";
 const EXPECTED_DISPLAY_NAME = "resume-ir";
 const EXPECTED_ICON_FILE = "icon.icns";
 const MAX_TOOL_OUTPUT_BYTES = 64 * 1024;
-const CURRENT_VERSION = "0.1.2";
+const CURRENT_VERSION = PRODUCT_VERSION;
 const DEFAULT_LSREGISTER =
   "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 

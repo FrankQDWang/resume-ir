@@ -44,7 +44,7 @@ async function repositoryFixture(context) {
   await writeFile(path.join(repoRoot, "Cargo.toml"), "[workspace]\n");
   await writeFile(
     path.join(frontendRoot, "package.json"),
-    '{"private":true}\n',
+    '{"name":"resume-ir-desktop","version":"0.1.2","private":true}\n',
   );
   await writeFile(
     path.join(frontendRoot, "package-lock.json"),
@@ -52,7 +52,7 @@ async function repositoryFixture(context) {
   );
   await writeFile(
     path.join(tauriRoot, "tauri.conf.json"),
-    '{"productName":"resume-ir","version":"0.1.2"}\n',
+    '{"productName":"resume-ir","version":"../package.json"}\n',
   );
   await writeFile(
     path.join(tauriRoot, "tauri.macos.conf.json"),

@@ -30745,6 +30745,35 @@ Output summary:
 - `cargo test --workspace`: exit 0.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
 
+### P0 v0.1.3–v0.1.8 feature-train foundation
+
+- The complete S810 daemon bootstrap/capability hard-cut tree is preserved as
+  commit `b2e1258dd694dcd5b54ae967ad89b3eb137acadf`. Its immutable R07–R12
+  evidence remains authoritative; the feature train does not replay those
+  valid cells merely to establish a new round.
+- The 2026-07-24 linked spec and plan replace the v29-only product direction
+  with continuous encrypted COW forward migration beginning at v29, followed
+  by database-owned source roots, path-truth reconciliation, durable root
+  deletion, PDFium/resumable OCR, original-PDF preview and native reveal.
+- #217 remains the umbrella issue. At most it and the current version feature
+  issue may be open. Each v0.1.3–v0.1.8 release requires focused tests,
+  exact-commit DMG, native installed Computer Use acceptance and issue
+  reconciliation before the next version starts.
+- `apps/desktop/package.json.version` is now the single product version
+  authority. Tauri references `../package.json`; DMG planning, worktree
+  release, install/reinstall and installed-main source binding derive the same
+  value. The desktop Cargo package uses `0.0.0` as an explicitly non-product
+  internal crate version.
+- The feature-train test authority is
+  `docs/reports/2026-07-24-feature-train-verification-ledger.md`. It records
+  command, behavior boundary, input fingerprint, result, invalidating changes
+  and installed evidence. Passing rows remain reusable until their inputs or
+  behavior boundary change.
+- Final full parallel verification, merged-main installed acceptance and the
+  120-minute soak are intentionally deferred until v0.1.8. Their absence
+  blocks #217/release-ready, not the closure of an individually installed and
+  accepted feature issue.
+
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 
 Changed the private-query benchmark runner so public synthetic smoke runs can

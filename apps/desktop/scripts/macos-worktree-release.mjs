@@ -24,6 +24,7 @@ import {
 } from "./macos-source-identity.mjs";
 import { sha256 } from "./verify-bundled-sidecar.mjs";
 import { createImmutableWorktreeSnapshot } from "./macos-worktree-build-source.mjs";
+import { productVersionFromManifest } from "./product-version.mjs";
 
 const MAX_JSON_BYTES = 64 * 1024;
 const TARGET_TRIPLE = "aarch64-apple-darwin";
@@ -257,14 +258,17 @@ export async function buildMacosWorktreeRelease({
     "macos-test-release.mjs",
   );
   const paths = resolveMacosTestReleasePaths(pathToFileURL(script).href);
-  const [baseConfig, platformConfig] = await Promise.all([
+  const [baseConfig, platformConfig, productManifest] = await Promise.all([
     readBoundedJson(paths.baseConfig),
     readBoundedJson(paths.platformConfig),
+    readBoundedJson(paths.productManifest),
   ]);
+  const productVersion = productVersionFromManifest(productManifest);
   const plan = createMacosInternalTestPlan({
     frontendRoot,
     platform: "darwin",
     baseConfig,
+    productVersion,
     platformConfig,
     cargoTargetDir,
   });
@@ -286,7 +290,7 @@ export async function buildMacosWorktreeRelease({
     dmg: plan.dmg,
     receipt,
     source,
-    version: baseConfig.version,
+    version: productVersion,
   });
 }
 

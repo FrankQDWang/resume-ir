@@ -167,7 +167,7 @@ export function validateLifecycleJournal(journal) {
   });
   if (
     journal.operation === "reinstall" &&
-    (journal.old_version !== "0.1.2" || journal.new_version !== "0.1.2")
+    journal.old_version !== journal.new_version
   ) {
     throw journalError();
   }

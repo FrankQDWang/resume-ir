@@ -1,6 +1,8 @@
 [package]
 name = "resume-desktop"
-version = "0.1.2"
+# This is the internal Rust crate version, not the product version.
+# apps/desktop/package.json is the single product-version authority.
+version = "0.0.0"
 edition = "2021"
 publish = false
 

@@ -27,10 +27,14 @@ import {
   TOOL_TIMEOUT_MS,
   fail,
 } from "./core.mjs";
+import {
+  PRODUCT_VERSION,
+  PRODUCT_VERSION_SOURCE,
+} from "../product-version.mjs";
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_ICON_BYTES = 8 * 1024 * 1024;
-export const REQUIRED_INSTALLED_VERSION = "0.1.2";
+export const REQUIRED_INSTALLED_VERSION = PRODUCT_VERSION;
 const EXPECTED_ORIGIN = "https://github.com/FrankQDWang/resume-ir.git";
 const EXPECTED_BUNDLE_ID = "local.resume-ir.desktop";
 const EXPECTED_PRODUCT_NAME = "resume-ir";
@@ -252,7 +256,7 @@ export async function deriveCommitProductBinding(repoRoot, gitHead, runTool) {
     packageManifest.version !== REQUIRED_INSTALLED_VERSION ||
     tauriManifest?.productName !== EXPECTED_PRODUCT_NAME ||
     tauriManifest?.identifier !== EXPECTED_BUNDLE_ID ||
-    tauriManifest?.version !== packageManifest.version
+    tauriManifest?.version !== PRODUCT_VERSION_SOURCE
   ) {
     fail("source_manifest_invalid");
   }
@@ -365,8 +369,8 @@ export async function verifyInstalledSourceBindings({
   }
   if (
     receipt?.schema_version !== INSTALL_RECEIPT_SCHEMA ||
-    receipt.version !== REQUIRED_INSTALLED_VERSION ||
-    composition.version !== REQUIRED_INSTALLED_VERSION ||
+    receipt.version !== product.version ||
+    composition.version !== product.version ||
     JSON.stringify(receipt.source) !== JSON.stringify(source)
   ) {
     fail("installed_receipt_invalid");

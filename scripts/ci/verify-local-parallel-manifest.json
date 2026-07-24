@@ -32,6 +32,21 @@
       "03_next_goal_高性能本地检索GUI闭环/**",
       "design-qa.md"
     ],
+    "product_version": [
+      "apps/desktop/package.json",
+      "apps/desktop/scripts/product-version.mjs",
+      "apps/desktop/scripts/product-version.node-test.mjs",
+      "apps/desktop/src-tauri/Cargo.toml",
+      "apps/desktop/src-tauri/Cargo.lock",
+      "apps/desktop/src-tauri/tauri.conf.json",
+      "apps/desktop/scripts/macos-install-lifecycle.mjs",
+      "apps/desktop/scripts/macos-reinstall-core.mjs",
+      "apps/desktop/scripts/macos-lifecycle-journal.mjs",
+      "apps/desktop/scripts/macos-test-release.mjs",
+      "apps/desktop/scripts/macos-worktree-release.mjs",
+      "apps/desktop/scripts/macos-installed-main-acceptance/source-bindings.mjs",
+      "apps/desktop/scripts/macos-installed-main-acceptance/release-deployment.mjs"
+    ],
     "workflow_policy": [
       ".github/**",
       "scripts/ci/**",
@@ -70,6 +85,12 @@
       "behavior": "Governance-contract mutation fixtures fail closed as required.",
       "command": ["python3", "scripts/ci/test-governance-contract-mutations.py"],
       "input_sets": ["contracts", "workflow_policy"]
+    },
+    {
+      "id": "desktop-product-version",
+      "behavior": "Desktop product version has one package-manifest authority across Tauri, packaging, install and acceptance.",
+      "command": ["npm", "run", "test:product-version", "--prefix", "apps/desktop"],
+      "input_sets": ["product_version"]
     },
     {
       "id": "search-runtime-boundary",

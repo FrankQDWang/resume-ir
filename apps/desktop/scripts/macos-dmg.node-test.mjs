@@ -184,7 +184,11 @@ async function createTestReleaseFixture(context) {
     mkdir(repoRoot, { recursive: true }),
     writeFile(runTauri, "synthetic"),
   ]);
-  const baseConfig = { productName: "resume-ir", version: "0.1.0" };
+  const baseConfig = {
+    productName: "resume-ir",
+    version: "../package.json",
+  };
+  const productVersion = "0.1.0";
   const platformConfig = {
     bundle: {
       targets: ["dmg"],
@@ -195,6 +199,7 @@ async function createTestReleaseFixture(context) {
     frontendRoot,
     platform: "darwin",
     baseConfig,
+    productVersion,
     platformConfig,
   });
   await mkdir(path.dirname(plan.dmg), { recursive: true });
@@ -204,6 +209,7 @@ async function createTestReleaseFixture(context) {
     frontendRoot,
     runTauri,
     baseConfig,
+    productVersion,
     platformConfig,
     plan,
   };
@@ -1394,6 +1400,7 @@ test("locks one credential-free arm64 internal-test build", async () => {
     frontendRoot: paths.frontendRoot,
     platform: "darwin",
     baseConfig,
+    productVersion: "0.1.2",
     platformConfig,
   });
   assert.deepEqual(plan.tauriArguments, [
@@ -1435,6 +1442,7 @@ test("locks one credential-free arm64 internal-test build", async () => {
           frontendRoot: paths.frontendRoot,
           platform: "darwin",
           baseConfig,
+          productVersion: "0.1.2",
           platformConfig: candidate,
         }),
       /config is invalid/,

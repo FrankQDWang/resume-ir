@@ -46,6 +46,7 @@ import {
   MACOS_SYSTEM_TOOLS,
   runClosedSystemTool,
 } from "./macos-system-tools.mjs";
+import { PRODUCT_VERSION } from "./product-version.mjs";
 
 const APP_NAME = "resume-ir.app";
 const EXPECTED_BUNDLE_ID = "local.resume-ir.desktop";
@@ -246,7 +247,7 @@ export async function installMacosDmg(options) {
     repoRoot: options.repoRoot,
     targetTriple: options.targetTriple,
     applicationsDirectory: options.applicationsDirectory,
-    expectedVersion: options.expectedVersion ?? "0.1.2",
+    expectedVersion: options.expectedVersion ?? PRODUCT_VERSION,
     platform: options.platform ?? process.platform,
   });
   if (
@@ -273,7 +274,7 @@ async function installMacosDmgLocked({
   targetTriple,
   dmg,
   applicationsDirectory,
-  expectedVersion = "0.1.2",
+  expectedVersion = PRODUCT_VERSION,
   temporaryRoot = os.tmpdir(),
   platform = process.platform,
   systemRunner = defaultSystemRunner,
@@ -517,7 +518,7 @@ export async function uninstallMacosApp(options) {
     repoRoot: options.repoRoot,
     targetTriple: options.targetTriple,
     applicationsDirectory: options.applicationsDirectory,
-    expectedVersion: options.expectedVersion ?? "0.1.2",
+    expectedVersion: options.expectedVersion ?? PRODUCT_VERSION,
     platform: options.platform ?? process.platform,
   });
   return runWithMacosLifecycleLock({
@@ -537,7 +538,7 @@ async function uninstallMacosAppLocked({
   repoRoot,
   targetTriple,
   applicationsDirectory,
-  expectedVersion = "0.1.2",
+  expectedVersion = PRODUCT_VERSION,
   platform = process.platform,
   systemRunner = defaultSystemRunner,
   inspectApp = inspectMacosAppBundle,

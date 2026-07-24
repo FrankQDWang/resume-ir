@@ -204,7 +204,7 @@ test("derives version and binary icon digest from exact commit blobs", async () 
           0,
           JSON.stringify({
             productName: "resume-ir",
-            version: "0.1.2",
+            version: "../package.json",
             identifier: "local.resume-ir.desktop",
           }),
         );

@@ -20,6 +20,7 @@ fi
 
 "$CARGO_BIN" metadata --no-deps --locked
 python3 scripts/ci/test-governance-contract-mutations.py
+npm run test:product-version --prefix apps/desktop
 python3 scripts/ci/test-verify-local-parallel.py
 python3 scripts/ci/check-search-runtime-boundary.py --cargo "$CARGO_BIN"
 "$CARGO_BIN" fmt --check

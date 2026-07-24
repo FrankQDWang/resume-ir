@@ -61,7 +61,7 @@ class GovernanceContractMutationTests(unittest.TestCase):
 
     def test_live_contracts_pass_focused_validators(self) -> None:
         self.validate_delivery(copy.deepcopy(self.active_goal))
-        self.performance_checker.validate_correctness_recovery_v29(
+        self.performance_checker.validate_forward_migration_feature_train(
             copy.deepcopy(self.matrix)
         )
 
@@ -230,24 +230,24 @@ class GovernanceContractMutationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.validate_delivery(mutated_goal)
 
-    def test_each_v29_critical_field_is_required_and_exact(self) -> None:
+    def test_each_feature_train_critical_field_is_required_and_exact(self) -> None:
         expected = (
-            self.performance_checker.CORRECTNESS_RECOVERY_V29_REQUIRED_FIELDS
+            self.performance_checker.FORWARD_MIGRATION_FEATURE_TRAIN_REQUIRED_FIELDS
         )
         for key, value in expected.items():
             with self.subTest(key=key, mutation="delete"):
                 mutated_matrix = copy.deepcopy(self.matrix)
-                mutated_matrix["correctness_recovery_v29"].pop(key)
+                mutated_matrix["forward_migration_feature_train_v1"].pop(key)
                 with self.assertRaises(ValueError):
-                    self.performance_checker.validate_correctness_recovery_v29(
+                    self.performance_checker.validate_forward_migration_feature_train(
                         mutated_matrix
                     )
 
             with self.subTest(key=key, mutation="tamper"):
                 mutated_matrix = copy.deepcopy(self.matrix)
-                mutated_matrix["correctness_recovery_v29"][key] = tampered(value)
+                mutated_matrix["forward_migration_feature_train_v1"][key] = tampered(value)
                 with self.assertRaises(ValueError):
-                    self.performance_checker.validate_correctness_recovery_v29(
+                    self.performance_checker.validate_forward_migration_feature_train(
                         mutated_matrix
                     )
 

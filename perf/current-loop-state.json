@@ -1,18 +1,18 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
+  "workflow_state": "slice_selected",
   "experiment_state": "contract_locked",
-  "evidence_lane": "soak_fault",
+  "evidence_lane": "smoke",
   "contract_pins": {
-    "active_goal_sha256": "b478ea5f48aca2917e99f0408df14c408d9b2f1c36ef962f645d231f7cd5fd15",
-    "acceptance_matrix_sha256": "bfea52b5842b8c95aadffefd95501c8f3063de267c837879b8b09e4d198dee72",
+    "active_goal_sha256": "45e1757d53f885b1de7215ff8e3d50d5ded69bc470fb0a7ebaeffc16f956a036",
+    "acceptance_matrix_sha256": "73539c980eab72cd3ef14989a4dd98abc4c5c2c9b1fbd486bcc5d42444269eaa",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "30868881838b8785fb7f1ccf574cb8bb34c51d00"
   },
-  "current_slice": "#217 S810 daemon bootstrap and capability hard cut",
+  "current_slice": "#217 P0 v0.1.3-v0.1.8 forward-migration and source-lifecycle feature-train foundation",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -2828,7 +2828,11 @@
       {"command":"guarded native installed-worktree unsupported-schema and fresh-v29 GUI smoke","exit_code":0,"evidence_ref":"PROGRESS.md#s810"},
       {"command":"CARGO_BUILD_JOBS=6 cargo clippy -p daemon-contract -p resume-daemon -p resume-cli --all-targets --all-features --locked -- -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s810"},
       {"command":"CARGO_BUILD_JOBS=6 cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings","exit_code":101,"evidence_ref":"docs/reports/2026-07-23-s810-verification-ledger.md#focused-quality-round-r12--post-r07-rust-changes"},
-      {"command":"CARGO_BUILD_JOBS=6 cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s810"}
+      {"command":"CARGO_BUILD_JOBS=6 cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s810"},
+      {"command":"P0 exact product-version, DMG-plan, worktree-release and Tauri config-resolution checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#p0-contractversion-round"},
+      {"command":"P0 exact install, reinstall, journal, source-binding and release-deployment checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#p0-contractversion-round"},
+      {"command":"P0 governance mutation, performance contract, autonomous-goal, loop-state and runner checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#p0-contractversion-round"},
+      {"command":"P0 public repo guard and git diff check","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#p0-contractversion-round"}
     ],
     "all_required_commands_ran": false,
     "claim": "partial"
