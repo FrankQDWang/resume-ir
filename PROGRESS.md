@@ -30827,6 +30827,23 @@ Output summary:
   Focused meta-store Clippy, rustfmt, public guard and diff checks passed. No
   whole meta-store or workspace suite was replayed; hosted Windows remains the
   authoritative cross-platform receipt for this repair.
+- The next Windows platform run cleared the former owner-lock failure point and
+  exposed a benchmark fixture that mixed oversized-output and long-running
+  timeout behavior. Its PowerShell text writer could remain buffered until the
+  five-second timeout won. The oversized integration fixture now terminates
+  after emitting 9 MiB; the existing bounded-pipe unit test retains ownership
+  of early cap observation and separate tests retain timeout ownership. The
+  exact oversized-output integration case passed in 0.30 seconds with 115
+  unrelated tests filtered out; no timeout or retry was enlarged.
+- The concurrent Linux run exposed a true final-response truncation in the
+  fifth s49 request. The bounded client correctly refused to treat a reset
+  before the declared body as success. One-shot HTTP and search responses now
+  explicitly close the TCP write half only after their complete response frame
+  is written, while streaming import/batch writers remain multi-write.
+  All 6 directly affected s49 cases, one exact keyword-search case, one exact
+  status case and exact benchmark/daemon test-target Clippy passed, along with
+  rustfmt, public guard and diff checks. No daemon, benchmark-runner or
+  workspace suite was replayed locally.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

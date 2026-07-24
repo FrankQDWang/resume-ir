@@ -37,6 +37,8 @@ Each execution row must record:
 | P0-07 | Detail IPC test client completes one bounded HTTP response by `Content-Length`, without requiring transport EOF | `490bd01875132783a30c017814c55266c55ef0eb012f38651845dfcadf9a025b` | passed: local focused plus hosted Linux workspace replay | s49 response reader, response framing, or detail request-limit lifecycle changes |
 | P0-08 | Initializing-generation shutdown observes complete discovery and auth withdrawal | `8e7d55aac19e47688bbb7b44022b7cf59b43d073fca46a9c7d6116a66d3f4f74` | passed: local exact plus hosted Linux workspace replay | initializing control-file withdrawal or its test synchronization changes |
 | P0-09 | Byte-stability snapshots model the two held process-owner locks without reading their locked bytes | `8d974924d88179b70c62bde4ccf6f279c94c099a106879c2b988be89aa24d8b1:e44e11ffdca60c366e0ac86ba540e4d43800eafe3f4c81f199898927027df1c6:a27afd24f9d912c018ec811c75c013927156bf5b38037f34832edad8be426796` | local exact passes; hosted Windows replay pending | owner-lock names, data-directory locking, or migration byte-stability snapshot helpers change |
+| P0-10 | Oversized resident-command output is tested independently from long-running-command timeout behavior | `3061010c9986b56dd4afd0b10dccde6ee27c51e4dc6c3883ae78ccfaf964a0f6` | local exact pass; hosted Windows replay pending | resident command pipe cap, timeout precedence, or oversized-output fixture changes |
+| P0-11 | Every complete one-shot HTTP response explicitly half-closes its write side after the declared frame | `52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517` | local affected s49 target pass; hosted Linux replay pending | one-shot response framing, response shutdown, streaming ownership, or request-limit lifecycle changes |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -183,6 +185,56 @@ P0-09 focused verification on 2026-07-24:
   `89454828414`. The hosted Windows replay on the repair commit remains the
   decisive receipt. No meta-store crate or workspace test suite was replayed
   locally.
+
+Platform CI run `30086174951` moved past the former 15 Windows owner-lock
+failures and stopped in the benchmark runner's oversized-output contract. The
+test combined two independent requirements in one child script: produce more
+than the 8 MiB pipe cap, then stay alive for 30 seconds. Windows PowerShell can
+retain part of its text output while the process remains alive, so the
+five-second benchmark deadline won before the reader could observe the cap.
+
+P0-10 makes the integration fixture emit its oversized payload and terminate.
+That test now deterministically owns output classification. The existing
+`private_query_command_pipe` unit regression remains the owner for observing a
+pipe cap before its reader is joined, while the separate timeout tests retain
+long-running-command ownership. No timeout was increased and no retry was
+added.
+
+P0-10 focused verification on 2026-07-24:
+
+- `private_query_benchmark_rejects_oversized_resident_batch_stdout` passed
+  against the rebuilt exact integration-test binary: 1 passed, 115 unrelated
+  tests filtered out, 0.30 seconds.
+- The first Cargo invocation never entered the Rust test body and was
+  terminated after remaining in the macOS dynamic loader; it is not recorded
+  as test evidence or as a failed behavior.
+- Exact benchmark-runner test-target Clippy with `-D warnings`, rustfmt,
+  public guard and diff checks passed. Hosted Windows remains the platform
+  receipt.
+
+The same hosted round independently showed that the previous s49 repair had
+correctly rejected a reset before a complete HTTP frame: the fifth and final
+detail-contract response was actually truncated at request-limit process exit.
+The server's one-shot response functions wrote the declared frame but relied
+on ordinary socket drop to establish the response boundary. P0-11 explicitly
+shuts down the TCP write half only after the entire one-shot response buffer is
+accepted. The streaming import and batch writers continue using the separate
+multi-write/flush path and are unchanged.
+
+P0-11 focused verification on 2026-07-24:
+
+- `cargo test -p resume-daemon --test s49_detail_ipc --locked -- --nocapture`
+  passed all 6 directly affected response/detail cases, including both bounded
+  reset-reader regressions and both final-request paths.
+- The exact keyword-search success case passed with 12 unrelated s48 cases
+  filtered out, and the exact redacted status case passed with 32 unrelated s20
+  cases filtered out. These are the minimal direct consumers of the shared
+  search-response and ordinary HTTP-response finish paths.
+- Exact s49 test-target Clippy with `-D warnings`, rustfmt, public guard and
+  diff checks passed. No daemon crate or workspace suite was replayed.
+- The failed hosted receipt is PR run `30086174923`; its exact failing test was
+  `detail_contract_rejects_legacy_shape_unbounded_ids_and_oversized_pages`.
+  Hosted Linux replay on the repair commit remains the decisive receipt.
 
 ## Version rounds
 

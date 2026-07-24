@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream};
 use std::time::Duration;
 
 use super::{ResponseSinkError, ServiceErrorCode};
@@ -37,7 +37,7 @@ pub(crate) fn write_http_response(
     let mut response = Vec::with_capacity(header.len().saturating_add(body.len()));
     response.extend_from_slice(header.as_bytes());
     response.extend_from_slice(body.as_bytes());
-    write_all(stream, &response)
+    write_complete_response(stream, &response)
 }
 
 pub(crate) fn write_search_response(
@@ -52,12 +52,19 @@ pub(crate) fn write_search_response(
     let mut response = Vec::with_capacity(header.len().saturating_add(body.len()));
     response.extend_from_slice(header.as_bytes());
     response.extend_from_slice(body.as_bytes());
-    write_all(stream, &response)
+    write_complete_response(stream, &response)
 }
 
 pub(crate) fn write_all(stream: &mut TcpStream, bytes: &[u8]) -> Result<(), ResponseSinkError> {
     stream
         .write_all(bytes)
+        .map_err(|error| ResponseSinkError::from_io(&error))
+}
+
+fn write_complete_response(stream: &mut TcpStream, bytes: &[u8]) -> Result<(), ResponseSinkError> {
+    write_all(stream, bytes)?;
+    stream
+        .shutdown(Shutdown::Write)
         .map_err(|error| ResponseSinkError::from_io(&error))
 }
 
