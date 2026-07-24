@@ -30852,6 +30852,16 @@ Output summary:
   requests retain immediate completion. The directly affected 6-case s49
   target and exact request-limit cleanup unit passed, plus combined
   daemon-bin/s49 Clippy, rustfmt, public guard and diff checks.
+- Windows Platform CI run `30087200255` passed the prior owner-lock and
+  oversized-output repairs, then exposed one CLI test-fixture portability
+  defect. The unsafe metadata-key restore case created a normal directory on
+  Windows because only Unix permissions made it unsafe. The fixture now places
+  a regular file with sentinel bytes at the directory authority path, which is
+  invalid on every platform; restore must fail without replacing or changing
+  it. Existing Unix meta-store coverage still separately proves rejection of a
+  0755 key directory without chmod repair. The exact s146 CLI case and focused
+  Clippy/rustfmt/diff checks passed; no CLI crate or workspace suite was
+  replayed.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

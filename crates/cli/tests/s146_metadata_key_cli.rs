@@ -137,12 +137,8 @@ fn privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks
 
     copy_active_store_without_key(&source_dir, &source_db, &unsafe_restore_dir);
     let unsafe_key_dir = unsafe_restore_dir.join("metadata-secrets");
-    fs::create_dir(&unsafe_key_dir).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&unsafe_key_dir, fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    let unsafe_key_sentinel = b"synthetic unsafe metadata authority";
+    fs::write(&unsafe_key_dir, unsafe_key_sentinel).unwrap();
     let unsafe_restore = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
             "--data-dir",
@@ -162,18 +158,7 @@ fn privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks
         .join("metadata-secrets")
         .join("metadata-sqlcipher-key-v1")
         .exists());
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(
-            fs::symlink_metadata(&unsafe_key_dir)
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o755
-        );
-    }
+    assert_eq!(fs::read(&unsafe_key_dir).unwrap(), unsafe_key_sentinel);
 
     let duplicate_restore = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([

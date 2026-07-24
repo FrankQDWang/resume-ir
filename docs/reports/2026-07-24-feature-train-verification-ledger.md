@@ -39,6 +39,7 @@ Each execution row must record:
 | P0-09 | Byte-stability snapshots model the two held process-owner locks without reading their locked bytes | `8d974924d88179b70c62bde4ccf6f279c94c099a106879c2b988be89aa24d8b1:e44e11ffdca60c366e0ac86ba540e4d43800eafe3f4c81f199898927027df1c6:a27afd24f9d912c018ec811c75c013927156bf5b38037f34832edad8be426796` | local exact passes; hosted Windows replay pending | owner-lock names, data-directory locking, or migration byte-stability snapshot helpers change |
 | P0-10 | Oversized resident-command output is tested independently from long-running-command timeout behavior | `3061010c9986b56dd4afd0b10dccde6ee27c51e4dc6c3883ae78ccfaf964a0f6` | local exact pass; hosted Windows replay pending | resident command pipe cap, timeout precedence, or oversized-output fixture changes |
 | P0-11 | One-shot responses half-close after the declared frame, and an orderly request-limit exit waits for its final peer close | `52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517:b238323d0018b2a3bc76e262a02fd1a7ad9d857cf2967f8337b62cf059b8612a:1c169b8e7c563b027b9970bc0b414d7fb32c859956c72ab1f65f92e14a356736` | local affected s49/lifecycle pass; hosted Linux replay pending | one-shot response framing, final-peer acknowledgement, streaming ownership, or request-limit lifecycle changes |
+| P0-12 | Metadata-key restore rejects a cross-platform unsafe authority object without replacing it | `44c9cd156a91eda2fae1f78627e2572e25ffbe7676f64a20df3ea5feb6735680:3e25a1fb07e376f040dd3e3428bae9184746f36efd0db659a7d008432cdbaeac:e44e11ffdca60c366e0ac86ba540e4d43800eafe3f4c81f199898927027df1c6` | local exact pass; hosted Windows replay pending | metadata-key restore, owner-directory validation, or unsafe-authority fixtures change |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -252,6 +253,28 @@ P0-11 focused verification on 2026-07-24:
   the half-close-only follow-up `30087200184` failed
   `detail_and_hydrate_read_one_exact_selection_across_unrelated_publications`.
   Hosted Linux replay on the final-peer repair commit remains decisive.
+
+Platform CI run `30087200255` then passed the repaired owner-lock and
+oversized-output boundaries and reached a Windows-only fixture defect in
+`privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks`.
+The fixture created an ordinary `metadata-secrets` directory and made it
+permission-unsafe only on Unix, so Windows correctly accepted it. P0-12 uses a
+regular file at that authority path on every platform and verifies that the
+failed restore preserves its sentinel bytes. The existing Unix meta-store
+regression separately retains ownership of rejecting a permissive 0755 key
+directory without chmod repair; no production validator was relaxed.
+
+P0-12 focused verification on 2026-07-24:
+
+- `cargo test -p resume-cli --test s146_metadata_key_cli --locked
+  privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks
+  -- --exact` passed: 1 passed, 0 filtered out.
+- Exact s146 test-target Clippy with `-D warnings`, workspace rustfmt,
+  `git diff --check` and the public-boundary guard passed. No CLI crate or
+  workspace suite was replayed.
+- The failed hosted receipt is Platform CI run `30087200255`, Windows job
+  `89462046881`. Hosted Windows replay on the cross-platform fixture remains
+  decisive.
 
 ## Version rounds
 
