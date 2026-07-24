@@ -30778,7 +30778,16 @@ Output summary:
   also compiled by `cfg(test)` on Linux and rejected as dead code under
   `-D warnings`. The root repair scopes those symbols to macOS arm64. Its
   focused runtime-pack test passed 8 tests with 86 unrelated tests filtered
-  out; hosted Linux Clippy remains the decisive rerun.
+  out; hosted Linux Clippy subsequently passed.
+- That run then exposed two test-ownership gaps instead of product failures.
+  Arm64 Mach-O attestation cases were unconditionally run on Linux, and daemon
+  integration cases requiring uncommitted reviewed runtime packs were part of
+  the public workspace lane. Mach-O cases are now macOS arm64 tests. Reviewed
+  runtime execution now has an explicit `native-runtime-tests` feature:
+  public CI keeps portable tests and reports native cases as excluded/ignored,
+  while the local reviewed-pack lane runs the same cases with the feature.
+  One exact case passed in both modes: explicitly ignored without the feature
+  and executed successfully with it.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

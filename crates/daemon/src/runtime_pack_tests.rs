@@ -5,11 +5,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use serde_json::{json, Value};
 use tempfile::tempdir;
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use super::{
-    current_profile, current_target, executable_payload_identity, sha256_file, validate_classifier,
-    validate_embedding, validate_executable_for_identity, validate_ocr, validate_ocr_for_identity,
+    current_profile, current_target, executable_payload_identity, validate_executable_for_identity,
+    ExecutableIdentity, ExecutableRole,
+};
+use super::{
+    sha256_file, validate_classifier, validate_embedding, validate_ocr, validate_ocr_for_identity,
     validate_pack_file_entries, validate_pack_file_entries_with_cancel, windows_ocr_identity,
-    ExecutableIdentity, ExecutableRole, OptionalRuntimeReason, PackFile,
+    OptionalRuntimeReason, PackFile,
 };
 
 #[test]
@@ -38,7 +42,8 @@ fn embedding_candidate_requires_an_explicit_runtime_pack() {
 }
 
 #[test]
-fn exact_runtime_payload_identity_accepts_only_signature_blob_drift() {
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn macos_runtime_payload_identity_accepts_only_signature_blob_drift() {
     let directory = tempdir().unwrap();
     let root = directory.path().canonicalize().unwrap();
     let command = write_file(
@@ -79,7 +84,8 @@ fn exact_runtime_payload_identity_accepts_only_signature_blob_drift() {
 }
 
 #[test]
-fn executable_attestation_rejects_name_payload_and_shape_drift() {
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn macos_executable_attestation_rejects_name_payload_and_shape_drift() {
     let directory = tempdir().unwrap();
     let root = directory.path().canonicalize().unwrap();
     let original = signed_macho(b"reviewed-code-and-data", b"signature");
@@ -349,6 +355,7 @@ fn cancellation_aborts_pack_hash_before_entry_is_accepted() {
     assert!(callback_calls.load(Ordering::SeqCst) > 4);
 }
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn signed_macho(payload: &[u8], signature: &[u8]) -> Vec<u8> {
     const HEADER_BYTES: usize = 32;
     const SEGMENT_BYTES: usize = 72;

@@ -5,9 +5,28 @@ version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+native-runtime-tests = []
+
 [[bin]]
 name = "resume-daemon"
 path = "src/main.rs"
+
+[[test]]
+name = "s4_daemon"
+path = "tests/s4_daemon.rs"
+required-features = ["native-runtime-tests"]
+
+[[test]]
+name = "s50_ocr_worker"
+path = "tests/s50_ocr_worker.rs"
+required-features = ["native-runtime-tests"]
+
+[[test]]
+name = "s82_classifier_model"
+path = "tests/s82_classifier_model.rs"
+required-features = ["native-runtime-tests"]
 
 [dependencies]
 daemon-contract = { path = "../daemon-contract" }

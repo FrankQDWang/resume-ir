@@ -140,6 +140,10 @@ fn parent_lifecycle_eof_gracefully_stops_foreground_daemon() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn parent_lifecycle_eof_interrupts_an_active_import_without_partial_publication() {
     serialize_windows_s81_daemon_test!();
     let runtime_capacity = support::import_runtime_capacity_lease();

@@ -32,7 +32,8 @@ Each execution row must record:
 | P0-02 | Install/reinstall/source-binding evidence derives the canonical version | `4404c062a4d1ecfbd25b072f8f83028af2309f7264bf124c6e5c9b9fcb84190e` | passed | lifecycle, source binding or deployment changes |
 | P0-03 | Feature-train machine contract and mutation guards are exact | `bcb97b8b4d950ca6b1d054661e980d12e12cd30d6df3646d658b6b14029cd832` | passed | active goal, matrix, loop state, fixture pin or checker changes |
 | P0-04 | Public boundary and changed-file whitespace are clean | `d2ca4f1c8ccc9ea236421aeeaf9818c0d0d1375c23e2c4e01846c1dfa504b29b` | passed | any later public-input change |
-| P0-05 | OCR runtime pack exposes macOS-only identities only on the supported macOS target | `be176872b22588183ff239c3f1b00e5eb35c3b0c7897f1fe2d74d4ce78bfbbb7` | local focused pass; hosted Linux Clippy pending | OCR runtime-pack target ownership changes |
+| P0-05 | OCR runtime pack exposes macOS-only identities only on the supported macOS target | `be176872b22588183ff239c3f1b00e5eb35c3b0c7897f1fe2d74d4ce78bfbbb7` | passed: local focused test and hosted Linux Clippy | OCR runtime-pack target ownership changes |
+| P0-06 | Portable workspace tests and reviewed native-runtime tests are separate explicit lanes | `019f9f244ef6432efa5863845032d55c094c8c6a528c1809e296c986a9828526` | local focused pass; hosted workspace rerun pending | daemon test target, native runtime feature, or reviewed-pack harness changes |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -66,9 +67,38 @@ P0-05 focused verification on 2026-07-24:
   because this Mac has no `x86_64-linux-gnu-gcc`.
 - A native daemon all-target Clippy attempt was interrupted after the Clippy
   process stopped making progress; it is not recorded as passed.
-- The hosted Linux `rust workspace` rerun is the authoritative reproduction of
-  the original failing boundary. Its receipt remains pending until this repair
-  commit is pushed.
+- Hosted Linux Clippy passed on repair commit `4424204`; the original failing
+  boundary is closed.
+
+That hosted job then reached two arm64 Mach-O tests that had been incorrectly
+owned by every host target. Linux failed before test behavior with
+`current_target() == None`; macOS passed both tests. They are now named and
+compiled as macOS arm64 executable-attestation tests, including their fixture
+and test-only imports.
+
+The platform workspace run also exposed a separate evidence-lane defect:
+daemon integration tests that intentionally require the uncommitted, reviewed
+embedding/classifier/OCR runtime packs were part of the default public Cargo
+suite. A public GitHub runner cannot possess those local build inputs. The
+repair adds the explicit `native-runtime-tests` feature, makes the wholly native
+`s4_daemon`, `s50_ocr_worker`, and `s82_classifier_model` targets require it,
+and marks only the reviewed-runtime cases in mixed `s20_ipc`,
+`s48_search_ipc`, and `s81_daemon_kill` targets ignored without it. Portable
+tests in those mixed targets remain in the default suite.
+
+P0-06 focused verification on 2026-07-24:
+
+- Default exact `s20_ipc` reviewed-runtime case: 1 explicitly ignored with the
+  bounded reason `requires reviewed native runtime packs`; 32 unrelated tests
+  filtered out.
+- The same exact case with `--features native-runtime-tests`: 1 passed,
+  32 unrelated tests filtered out, using the existing local reviewed packs.
+- macOS arm64 runtime-pack unit filter: 8 passed, 86 unrelated tests filtered
+  out.
+- Locked Cargo metadata exposes the feature and binds exactly the three wholly
+  native integration targets to it.
+- Hosted Linux/macOS/Windows workspace reruns remain pending. They are the
+  decisive receipts for portable-lane compilation and execution.
 
 ## Version rounds
 

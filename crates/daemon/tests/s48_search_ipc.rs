@@ -267,6 +267,10 @@ fn missing_embedding_keeps_keyword_and_detail_and_returns_lexical_hybrid_partial
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn product_disabled_semantic_contract_returns_semantic_disabled() {
     let corpus = SyntheticCorpus::single(
         "semantic-product-disabled",
@@ -416,6 +420,10 @@ fn content_update_publishes_a_new_immutable_version_pair() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn corrupted_published_generation_is_rebuilt_before_search() {
     let corpus = SyntheticCorpus::single_vectorized(
         "corrupt-generation",
@@ -500,6 +508,10 @@ fn client_disconnect_only_ends_that_connection() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn persisted_startup_repair_converges_before_the_first_post_repair_search() {
     let corpus = SyntheticCorpus::single_vectorized(
         "repairing-context",
@@ -567,6 +579,10 @@ fn status_only_does_not_deep_open_a_corrupt_search_payload() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn routine_index_ticks_use_manifests_without_deep_opening_payloads() {
     let runtime_capacity = support::import_runtime_capacity_lease();
     let corpus = SyntheticCorpus::single_vectorized(
@@ -607,6 +623,10 @@ fn routine_index_ticks_use_manifests_without_deep_opening_payloads() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn closed_bootstrap_stdout_does_not_interrupt_query_fault_repair_or_final_accepted_response() {
     let corpus = SyntheticCorpus::single_vectorized(
         "query-fault-repair",
@@ -645,6 +665,10 @@ fn closed_bootstrap_stdout_does_not_interrupt_query_fault_repair_or_final_accept
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn generation_local_key_fault_is_repaired_without_restarting_daemon() {
     let corpus = SyntheticCorpus::single_vectorized(
         "query-key-fault-repair",
@@ -684,6 +708,10 @@ fn generation_local_key_fault_is_repaired_without_restarting_daemon() {
 
 #[cfg(unix)]
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn unsafe_artifact_root_blocks_services_without_exiting_daemon() {
     let corpus = SyntheticCorpus::single_vectorized(
         "unsafe-artifact-root",

@@ -521,6 +521,10 @@ fn daemon_requires_bearer_token_for_import_command_ipc() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_authenticates_and_queues_import_command_over_ipc() {
     let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-command-data");
@@ -595,6 +599,10 @@ fn daemon_authenticates_and_queues_import_command_over_ipc() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_import_response_reflects_the_persisted_replacement_budget() {
     let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-budget-replacement-data");
@@ -654,6 +662,10 @@ fn daemon_import_response_reflects_the_persisted_replacement_budget() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_multi_root_import_conflict_rolls_back_every_root() {
     let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-atomic-conflict-data");
@@ -726,6 +738,10 @@ fn daemon_multi_root_import_conflict_rolls_back_every_root() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_controls_managed_root_durably_with_bounded_path_free_contract() {
     let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-root-control-data");
@@ -807,6 +823,10 @@ fn daemon_controls_managed_root_durably_with_bounded_path_free_contract() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_import_command_can_requeue_root_after_prior_task_cancelled() {
     let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-command-cancel-requeue-data");
@@ -868,6 +888,10 @@ fn daemon_import_command_can_requeue_root_after_prior_task_cancelled() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_import_command_preserves_local_discovery_preset_scope() {
     let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-preset-command-data");
@@ -924,6 +948,10 @@ fn daemon_import_command_preserves_local_discovery_preset_scope() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_import_cancel_command_records_cancellation_without_path_leak() {
     let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-cancel-command-data");
@@ -1514,6 +1542,10 @@ fn assert_soak_diagnostics(
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_rejects_import_command_for_running_root_without_rewriting_scope() {
     let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-running-conflict-data");
@@ -1570,6 +1602,10 @@ fn daemon_rejects_import_command_for_running_root_without_rewriting_scope() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
     let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-command-worker-data");
@@ -1680,6 +1716,10 @@ fn daemon_replaces_legacy_auth_with_private_generation_credentials() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
     let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-worker-data");

@@ -60,11 +60,12 @@ pub(crate) fn validate_classifier_with_cancel(
 }
 
 #[cfg(test)]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use attestation::{
     current_profile, current_target, validate_for_identity as validate_executable_for_identity,
     ExecutableIdentity, ExecutableRole,
 };
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
 use macho::payload_identity as executable_payload_identity;
 #[cfg(test)]
 use ocr::{
