@@ -30888,6 +30888,17 @@ Output summary:
   request timeout and proves it cannot release the final connection. The
   lifecycle case, all 6 s49 cases, both exact s48 cases and combined focused
   Clippy passed after this correction.
+- The same intermediate tree then left the Windows platform job in workspace
+  tests for about 47 minutes, versus 19–26 minutes for preceding runs. A
+  blocking peer-close read still depended on `shutdown()` waking another
+  Windows socket handle. The invalidated run was cancelled as hung. The final
+  lifecycle uses 25 ms read polling only as a progress mechanism: poll timeouts
+  never release ownership, and the five-second watchdog publishes the sole
+  cancellation decision through a shared atomic flag. Two final-tree local
+  execution attempts never entered the Rust test body because the macOS
+  process stalled in `_dyld_start`; they are recorded as non-evidence.
+  Focused final-tree daemon-bin/s48/s49 Clippy passed, and hosted Linux/Windows
+  remain the execution receipts.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

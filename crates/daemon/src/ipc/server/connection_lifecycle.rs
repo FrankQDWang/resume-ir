@@ -159,11 +159,12 @@ pub(super) fn handle_business_with_watchdog(
         .flatten();
     let finished = Arc::new(AtomicBool::new(false));
     let watcher_finished = Arc::clone(&finished);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let watcher_cancelled = Arc::clone(&cancelled);
     let watchdog = thread::spawn(move || {
         let deadline = Instant::now()
             .checked_add(CONNECTION_HARD_DEADLINE)
             .unwrap_or_else(Instant::now);
-        let mut deadline_cancelled = false;
         loop {
             if watcher_finished.load(Ordering::Acquire) {
                 return;
@@ -173,12 +174,14 @@ pub(super) fn handle_business_with_watchdog(
                 .is_some_and(|shutdown| shutdown.load(Ordering::Acquire))
             {
                 publication_revoker.withdraw();
+                watcher_cancelled.store(true, Ordering::Release);
                 let _ = cancellation.shutdown(Shutdown::Both);
                 return;
             }
-            if !deadline_cancelled && Instant::now() >= deadline {
+            if Instant::now() >= deadline {
+                watcher_cancelled.store(true, Ordering::Release);
                 let _ = cancellation.shutdown(Shutdown::Both);
-                deadline_cancelled = true;
+                return;
             }
             thread::sleep(LISTENER_POLL_INTERVAL);
         }
@@ -186,8 +189,8 @@ pub(super) fn handle_business_with_watchdog(
 
     handle(stream);
     if let Some(mut peer_close) = peer_close {
-        let _ = peer_close.set_read_timeout(None);
-        loop {
+        let _ = peer_close.set_read_timeout(Some(LISTENER_POLL_INTERVAL));
+        while !cancelled.load(Ordering::Acquire) {
             match peer_close.read(&mut [0_u8; 1]) {
                 Ok(0) => break,
                 Ok(_) => {}
@@ -242,7 +245,7 @@ mod tests {
     use crate::ipc::generation::{DaemonGenerationOwner, OwnerMode};
 
     #[test]
-    fn final_connection_clears_the_request_read_timeout_before_waiting_for_peer_close() {
+    fn final_connection_ignores_poll_timeouts_until_peer_close_or_watchdog() {
         let directory = tempfile::tempdir().unwrap();
         let data_directory_owner = Arc::new(
             match DataDirectoryOwnerLease::try_acquire(directory.path()).unwrap() {
