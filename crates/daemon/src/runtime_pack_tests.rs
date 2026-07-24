@@ -391,10 +391,12 @@ fn signed_macho(payload: &[u8], signature: &[u8]) -> Vec<u8> {
     bytes
 }
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
     bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
 }
 
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
     bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
 }
