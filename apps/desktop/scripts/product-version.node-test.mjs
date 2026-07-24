@@ -10,7 +10,7 @@ import {
 } from "./product-version.mjs";
 
 test("package manifest is the single product version authority", () => {
-  assert.equal(PRODUCT_VERSION, "0.1.2");
+  assert.equal(PRODUCT_VERSION, "0.1.3");
   assert.equal(PRODUCT_VERSION_SOURCE, "../package.json");
   const tauriConfig = JSON.parse(
     readFileSync(
@@ -32,6 +32,7 @@ test("package manifest is the single product version authority", () => {
     "macos-reinstall-core.mjs",
     "macos-lifecycle-journal.mjs",
     "macos-test-release.mjs",
+    "macos-worktree-install.mjs",
     "macos-worktree-release.mjs",
     "macos-installed-main-acceptance/source-bindings.mjs",
     "macos-installed-main-acceptance/release-deployment.mjs",
