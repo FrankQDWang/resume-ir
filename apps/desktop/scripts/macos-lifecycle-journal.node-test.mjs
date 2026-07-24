@@ -14,33 +14,23 @@ import {
 } from "./macos-lifecycle-journal.mjs";
 
 const TARGET = "aarch64-apple-darwin";
-const OLD_DIGEST =
-  "18a2d41769f6e2fcc6cc504085b40f25ec185a27109eac525e551513ec5801c6";
 const NEW_DIGEST = "b".repeat(64);
-const OLD_DMG =
-  "363ce8d5db7c120a05fc7c282a9f9b6a8e1173f3175c308839dfb1440867c780";
 const SOURCE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
+const SOURCE = Object.freeze({
+  authority: "worktree_snapshot",
+  base_commit: SOURCE_COMMIT,
+  source_tree_sha256: "a".repeat(64),
+});
 
 function currentReceipt(version = "0.1.2", compositionDigest = NEW_DIGEST) {
   return {
-    schema_version: "resume-ir.macos-install-receipt.v2",
+    schema_version: "resume-ir.macos-install-receipt.v3",
     bundle_id: "local.resume-ir.desktop",
     version,
     target_triple: TARGET,
-    source_commit: SOURCE_COMMIT,
+    source: SOURCE,
     composition_digest: compositionDigest,
     dmg_sha256: "c".repeat(64),
-  };
-}
-
-function legacyReceipt() {
-  return {
-    schema_version: "resume-ir.macos-install-receipt.v1",
-    bundle_id: "local.resume-ir.desktop",
-    version: "0.1.1",
-    target_triple: TARGET,
-    composition_digest: OLD_DIGEST,
-    dmg_sha256: OLD_DMG,
   };
 }
 
@@ -54,15 +44,19 @@ async function fixture(context) {
   return { applicationSupportRoot, root };
 }
 
-function upgradeJournal() {
+function reinstallJournal() {
+  const oldReceipt = {
+    ...currentReceipt(),
+    dmg_sha256: "d".repeat(64),
+  };
   return createLifecycleJournal({
-    operation: "upgrade",
-    phase: "upgrade_prepared",
-    oldVersion: "0.1.1",
+    operation: "reinstall",
+    phase: "reinstall_prepared",
+    oldVersion: "0.1.2",
     newVersion: "0.1.2",
-    oldCompositionDigest: OLD_DIGEST,
+    oldCompositionDigest: NEW_DIGEST,
     newCompositionDigest: NEW_DIGEST,
-    oldReceipt: legacyReceipt(),
+    oldReceipt,
     newReceipt: currentReceipt(),
   });
 }
@@ -98,7 +92,7 @@ test("reinstall journal binds two current receipts without pretending to upgrade
 
 test("persists one canonical owner-only journal and advances only its phase", async (context) => {
   const values = await fixture(context);
-  const prepared = upgradeJournal();
+  const prepared = reinstallJournal();
   await persistLifecycleJournal({
     applicationSupportRoot: values.applicationSupportRoot,
     journal: prepared,
@@ -120,7 +114,7 @@ test("persists one canonical owner-only journal and advances only its phase", as
 
   const advanced = advanceLifecycleJournal({
     journal: prepared,
-    phase: "upgrade_before_backup",
+    phase: "reinstall_before_backup",
   });
   await persistLifecycleJournal({
     applicationSupportRoot: values.applicationSupportRoot,
@@ -143,14 +137,14 @@ test("rejects unknown, non-canonical, corrupt, or transaction-drifted journals",
         phase: "upgrade_prepared",
         oldVersion: "0.1.2",
         newVersion: "0.1.1",
-        oldCompositionDigest: OLD_DIGEST,
+        oldCompositionDigest: NEW_DIGEST,
         newCompositionDigest: NEW_DIGEST,
-        oldReceipt: currentReceipt("0.1.2", OLD_DIGEST),
-        newReceipt: legacyReceipt(),
+        oldReceipt: currentReceipt(),
+        newReceipt: currentReceipt("0.1.1"),
       }),
     /lifecycle journal is invalid/,
   );
-  const journal = upgradeJournal();
+  const journal = reinstallJournal();
   await persistLifecycleJournal({
     applicationSupportRoot: values.applicationSupportRoot,
     journal,
@@ -200,14 +194,14 @@ test("rejects unknown, non-canonical, corrupt, or transaction-drifted journals",
 
 test("restores journal bytes after post-rename or post-remove fsync failure", async (context) => {
   const values = await fixture(context);
-  const prepared = upgradeJournal();
+  const prepared = reinstallJournal();
   await persistLifecycleJournal({
     applicationSupportRoot: values.applicationSupportRoot,
     journal: prepared,
   });
   const advanced = advanceLifecycleJournal({
     journal: prepared,
-    phase: "upgrade_before_backup",
+    phase: "reinstall_before_backup",
   });
   let persistSyncs = 0;
   await assert.rejects(
@@ -250,15 +244,15 @@ test("restores journal bytes after post-rename or post-remove fsync failure", as
 
 test("creates exactly one transaction under a concurrent journal race", async (context) => {
   const values = await fixture(context);
-  const first = upgradeJournal();
+  const first = reinstallJournal();
   const second = createLifecycleJournal({
-    operation: "upgrade",
-    phase: "upgrade_prepared",
-    oldVersion: "0.1.1",
+    operation: "reinstall",
+    phase: "reinstall_prepared",
+    oldVersion: "0.1.2",
     newVersion: "0.1.2",
-    oldCompositionDigest: OLD_DIGEST,
+    oldCompositionDigest: NEW_DIGEST,
     newCompositionDigest: NEW_DIGEST,
-    oldReceipt: legacyReceipt(),
+    oldReceipt: { ...currentReceipt(), dmg_sha256: "d".repeat(64) },
     newReceipt: currentReceipt(),
   });
   const outcomes = await Promise.allSettled(

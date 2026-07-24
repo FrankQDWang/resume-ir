@@ -89,7 +89,7 @@ fn detail_ipc_rejects_inconsistent_v3_field_counts_without_printing_values() {
 }
 
 #[test]
-fn detail_ipc_auto_discovery_binds_v2_manifest_auth_and_status_generation() {
+fn detail_ipc_auto_discovery_binds_v3_manifest_auth_and_status_generation() {
     let data_dir = temp_path("detail-ipc-auto-data");
     let selection = test_selection("auto");
     let token = "2323232323232323232323232323232323232323232323232323232323232323";
@@ -101,7 +101,7 @@ fn detail_ipc_auto_discovery_binds_v2_manifest_auth_and_status_generation() {
         let (mut status_stream, _) = accept_with_timeout(&listener);
         let status_request = read_http_request(&mut status_stream);
         assert!(status_request.starts_with("GET /status HTTP/1.1"));
-        assert!(!status_request.contains("Authorization:"));
+        assert!(status_request.contains(&format!("Authorization: Bearer {token}")));
         write_json_response(&mut status_stream, "200 OK", ready_daemon_status_body());
         drop(status_stream);
 

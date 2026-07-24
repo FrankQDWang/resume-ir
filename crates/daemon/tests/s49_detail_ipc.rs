@@ -1,8 +1,10 @@
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{ChildStderr, ChildStdin, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use index_fulltext::{publish_snapshot, IndexDocument};
@@ -17,21 +19,23 @@ use meta_store::{
     SearchPublicationOutcome, SearchPublicationValidation, SearchSelection, SourceRevision,
     TerminalDocumentUpdate, UnixTimestamp, VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
 };
+use process_containment::ContainedChild;
 use tempfile::TempDir;
 
 mod support;
 
 const IPC_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(30);
+const DAEMON_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const HYDRATE_PAGE_BYTES: usize = 32 * 1024;
 const MAX_BODY_PAGE_BYTES: usize = 32 * 1024;
 const DETAIL_FIELD_LIMIT: usize = 256;
+const STDERR_DIAGNOSTIC_LIMIT: usize = 64 * 1024;
 
 #[test]
 fn detail_and_hydrate_read_one_exact_selection_across_unrelated_publications() {
     let fixture = Fixture::create("current");
     let expected_body = fixture.current_body.clone();
-    let page_count = expected_body.len().div_ceil(HYDRATE_PAGE_BYTES);
-    let mut daemon = Daemon::start(&fixture.data_dir, page_count + 1);
+    let mut daemon = Daemon::start(&fixture.data_dir);
     let token = daemon.token.clone();
 
     let detail = daemon.post(
@@ -102,7 +106,7 @@ fn detail_and_hydrate_read_one_exact_selection_across_unrelated_publications() {
 #[test]
 fn hydrate_never_mixes_pages_after_the_selected_document_is_republished() {
     let fixture = Fixture::create("hydrate-switch");
-    let mut daemon = Daemon::start(&fixture.data_dir, 1);
+    let mut daemon = Daemon::start(&fixture.data_dir);
     let token = daemon.token.clone();
 
     let first = daemon.post(
@@ -119,7 +123,7 @@ fn hydrate_never_mixes_pages_after_the_selected_document_is_republished() {
     daemon.wait_success();
 
     fixture.replace_current_version();
-    let mut daemon = Daemon::start(&fixture.data_dir, 1);
+    let mut daemon = Daemon::start(&fixture.data_dir);
     let token = daemon.token.clone();
     let interrupted = daemon.post(
         "/details/hydrate",
@@ -145,7 +149,7 @@ fn hydrate_never_mixes_pages_after_the_selected_document_is_republished() {
 #[test]
 fn detail_distinguishes_stale_from_unpublished_or_invalid_selections() {
     let fixture = Fixture::create("selection-errors");
-    let mut daemon = Daemon::start(&fixture.data_dir, 4);
+    let mut daemon = Daemon::start(&fixture.data_dir);
     let token = daemon.token.clone();
 
     let stale = daemon.post(
@@ -155,7 +159,7 @@ fn detail_distinguishes_stale_from_unpublished_or_invalid_selections() {
     );
     assert_status(&stale, "HTTP/1.1 409 Conflict");
     let stale_payload = response_json(&stale);
-    assert_eq!(stale_payload["schema_version"], "resume-ir.error.v1");
+    assert_eq!(stale_payload["schema_version"], "resume-ir.error.v2");
     assert_eq!(stale_payload["request_id"], "detail-stale");
     assert_eq!(stale_payload["error"]["code"], "STALE_SELECTION");
     assert_eq!(stale_payload["error"]["action"], "refresh_search");
@@ -203,7 +207,7 @@ fn detail_distinguishes_stale_from_unpublished_or_invalid_selections() {
 #[test]
 fn detail_contract_rejects_legacy_shape_unbounded_ids_and_oversized_pages() {
     let fixture = Fixture::create("contract-errors");
-    let mut daemon = Daemon::start(&fixture.data_dir, 5);
+    let mut daemon = Daemon::start(&fixture.data_dir);
     let token = daemon.token.clone();
 
     let unauthorized = daemon.post(
@@ -215,8 +219,9 @@ fn detail_contract_rejects_legacy_shape_unbounded_ids_and_oversized_pages() {
         &unauthorized,
         "HTTP/1.1 401 Unauthorized",
         "UNAUTHORIZED",
-        Some("unauthorized"),
+        None,
     );
+    assert!(!unauthorized.contains("unauthorized"));
     assert!(!unauthorized.contains(fixture.current_selection.document_id.as_str()));
 
     let mut wrong_schema_request = detail_request("wrong-schema", &fixture.current_selection);
@@ -326,7 +331,7 @@ fn assert_not_found_without_selection(
 fn assert_error(response: &str, status: &str, code: &str, request_id: Option<&str>) {
     assert_status(response, status);
     let payload = response_json(response);
-    assert_eq!(payload["schema_version"], "resume-ir.error.v1");
+    assert_eq!(payload["schema_version"], "resume-ir.error.v2");
     assert_eq!(payload["status"], "error");
     assert_eq!(payload["error"]["code"], code);
     assert_eq!(
@@ -858,57 +863,155 @@ fn acquire_data_directory_owner(data_dir: &Path) -> DataDirectoryOwnerLease {
 }
 
 struct Daemon {
-    child: Option<Child>,
+    child: Option<ContainedChild>,
+    parent_lifecycle: Option<ChildStdin>,
+    stderr: Arc<Mutex<Vec<u8>>>,
+    stderr_reader: Option<JoinHandle<()>>,
+    data_dir: PathBuf,
     endpoint: String,
     token: String,
+    request_count: usize,
 }
 
 impl Daemon {
-    fn start(data_dir: &Path, max_requests: usize) -> Self {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    fn start(data_dir: &Path) -> Self {
+        let launch_id = random_launch_id();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_resume-daemon"));
+        command
             .args([
                 "--data-dir",
                 path_str(data_dir),
                 "run",
                 "--foreground",
+                "--parent-lifecycle-stdin",
+                "--launch-id",
+                &launch_id,
                 "--ipc-listen",
                 "127.0.0.1:0",
-                "--max-requests",
-                &max_requests.to_string(),
             ])
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()
-            .expect("start resume daemon");
-        let stdout = child.stdout.take().expect("daemon stdout");
+            .env("RESUME_IR_S49_RESET_DIAGNOSTICS", "1");
+        let mut child = ContainedChild::spawn(&mut command).expect("start contained resume daemon");
+        let parent_lifecycle = child.take_stdin().expect("daemon parent lifecycle");
+        let stdout = child.take_stdout().expect("daemon stdout");
+        let stderr = child.take_stderr().expect("daemon stderr");
+        let stderr_buffer = Arc::new(Mutex::new(Vec::new()));
+        let stderr_reader = collect_bounded_stderr(stderr, Arc::clone(&stderr_buffer));
         let mut stdout = BufReader::new(stdout);
-        let endpoint = read_ipc_endpoint(&mut child, &mut stdout);
+        let endpoint = read_ipc_endpoint(&mut child, &stderr_buffer, &mut stdout);
         let token = read_ipc_auth_token(data_dir);
         Self {
             child: Some(child),
+            parent_lifecycle: Some(parent_lifecycle),
+            stderr: stderr_buffer,
+            stderr_reader: Some(stderr_reader),
+            data_dir: data_dir.to_path_buf(),
             endpoint,
             token,
+            request_count: 0,
         }
     }
 
     fn post(&mut self, path: &str, token: Option<&str>, payload: serde_json::Value) -> String {
-        http_post_command(&self.endpoint, path, token, payload)
+        self.request_count += 1;
+        http_post_command(&self.endpoint, path, token, payload).unwrap_or_else(|error| {
+            let daemon_state = match self.child.as_mut().unwrap().try_wait() {
+                Ok(None) => "running".to_string(),
+                Ok(Some(status)) => format!("exited:{status}"),
+                Err(_) => "unknown".to_string(),
+            };
+            panic!(
+                "[DEBUG-s49-reset] request_ordinal={} route={path} \
+                 daemon_state={daemon_state} response_error={error} server_events={}",
+                self.request_count,
+                self.debug_events()
+            )
+        })
     }
 
     fn wait_success(mut self) {
-        let output = self
-            .child
-            .take()
-            .unwrap()
-            .wait_with_output()
-            .expect("wait daemon");
         assert!(
-            output.status.success(),
-            "stderr:\n{}",
-            String::from_utf8_lossy(&output.stderr)
+            self.child
+                .as_mut()
+                .unwrap()
+                .try_wait()
+                .expect("poll daemon before parent shutdown")
+                .is_none(),
+            "daemon exited before its parent lifecycle closed"
         );
-        assert!(output.stderr.is_empty());
+        drop(self.parent_lifecycle.take());
+        let deadline = Instant::now() + DAEMON_SHUTDOWN_TIMEOUT;
+        let status = loop {
+            if let Some(status) = self
+                .child
+                .as_mut()
+                .unwrap()
+                .try_wait()
+                .expect("poll daemon after parent shutdown")
+            {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let discovery_present = self.data_dir.join("ipc.endpoints.json").exists();
+                let auth_present = self.data_dir.join("ipc.auth").exists();
+                self.child.as_mut().unwrap().terminate();
+                panic!(
+                    "daemon did not exit after parent lifecycle closed; \
+                     discovery_present={discovery_present}; auth_present={auth_present}"
+                );
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        self.stderr_reader.take().unwrap().join().unwrap();
+        let stderr_buffer = self
+            .stderr
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let stderr = String::from_utf8_lossy(&stderr_buffer);
+        assert!(status.success(), "stderr:\n{stderr}");
+        assert!(stderr.is_empty());
+        self.child.take();
     }
+
+    fn debug_events(&self) -> String {
+        let stderr = self
+            .stderr
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let stderr = String::from_utf8_lossy(&stderr);
+        let events = stderr
+            .lines()
+            .filter(|line| line.contains("[DEBUG-s49-reset]"))
+            .take(8)
+            .collect::<Vec<_>>();
+        if events.is_empty() {
+            "none".to_string()
+        } else {
+            events.join(" | ")
+        }
+    }
+}
+
+fn collect_bounded_stderr(mut stderr: ChildStderr, buffer: Arc<Mutex<Vec<u8>>>) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut chunk = [0_u8; 1024];
+        while let Ok(read) = stderr.read(&mut chunk) {
+            if read == 0 {
+                return;
+            }
+            let mut buffer = buffer.lock().unwrap_or_else(|error| error.into_inner());
+            let remaining = STDERR_DIAGNOSTIC_LIMIT.saturating_sub(buffer.len());
+            buffer.extend_from_slice(&chunk[..read.min(remaining)]);
+        }
+    })
+}
+
+fn random_launch_id() -> String {
+    let mut bytes = [0_u8; 32];
+    getrandom::getrandom(&mut bytes).expect("generate daemon test launch identifier");
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn http_post_command(
@@ -916,7 +1019,7 @@ fn http_post_command(
     path: &str,
     token: Option<&str>,
     payload: serde_json::Value,
-) -> String {
+) -> io::Result<String> {
     let rest = endpoint.strip_prefix("http://").unwrap();
     let (addr, _) = rest.split_once('/').unwrap();
     let body = payload.to_string();
@@ -927,42 +1030,203 @@ fn http_post_command(
         "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n{authorization}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
-    let mut stream = TcpStream::connect(addr).unwrap();
-    stream.write_all(request.as_bytes()).unwrap();
-    let mut response = String::new();
-    stream.read_to_string(&mut response).unwrap();
-    response
+    let mut stream = TcpStream::connect(addr)?;
+    stream.write_all(request.as_bytes())?;
+    read_http_response(&mut stream)
 }
 
-fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> String {
+fn read_http_response(reader: &mut impl Read) -> io::Result<String> {
+    const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+
+    let mut response = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    loop {
+        if let Some(frame_len) = complete_http_frame_len(&response)? {
+            if response.len() != frame_len {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "HTTP response contains bytes after the declared body",
+                ));
+            }
+            return String::from_utf8(response).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "HTTP response is not UTF-8")
+            });
+        }
+        if response.len() == MAX_RESPONSE_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HTTP response exceeds the test client limit",
+            ));
+        }
+        let remaining = MAX_RESPONSE_BYTES - response.len();
+        let chunk_limit = remaining.min(chunk.len());
+        let read = reader.read(&mut chunk[..chunk_limit]).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "{}; received_bytes={}; declared_frame_bytes={:?}",
+                    error,
+                    response.len(),
+                    declared_http_frame_len(&response)
+                ),
+            )
+        })?;
+        if read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "HTTP response ended before the declared body was complete",
+            ));
+        }
+        response.extend_from_slice(&chunk[..read]);
+    }
+}
+
+fn declared_http_frame_len(response: &[u8]) -> Option<usize> {
+    let header_offset = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")?;
+    let header_len = header_offset + 4;
+    let header = std::str::from_utf8(&response[..header_offset]).ok()?;
+    let content_length = header.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("content-length")
+            .then(|| value.trim().parse::<usize>().ok())
+            .flatten()
+    })?;
+    header_len.checked_add(content_length)
+}
+
+fn complete_http_frame_len(response: &[u8]) -> io::Result<Option<usize>> {
+    let Some(header_offset) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
+        return Ok(None);
+    };
+    let header_len = header_offset + 4;
+    let header = std::str::from_utf8(&response[..header_offset]).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "HTTP response header is not UTF-8",
+        )
+    })?;
+    let content_length = header
+        .lines()
+        .skip(1)
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim())
+        })
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HTTP response is missing Content-Length",
+            )
+        })?
+        .parse::<usize>()
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HTTP response has an invalid Content-Length",
+            )
+        })?;
+    let frame_len = header_len.checked_add(content_length).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "HTTP response length overflows usize",
+        )
+    })?;
+    Ok((response.len() >= frame_len).then_some(frame_len))
+}
+
+#[test]
+fn http_response_reader_accepts_a_complete_frame_before_transport_reset() {
+    struct CompleteFrameThenReset {
+        frame: &'static [u8],
+        offset: usize,
+    }
+
+    impl Read for CompleteFrameThenReset {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.offset == self.frame.len() {
+                return Err(io::Error::from(io::ErrorKind::ConnectionReset));
+            }
+            let remaining = &self.frame[self.offset..];
+            let copied = remaining.len().min(buffer.len());
+            buffer[..copied].copy_from_slice(&remaining[..copied]);
+            self.offset += copied;
+            Ok(copied)
+        }
+    }
+
+    let frame = b"HTTP/1.1 404 Not Found\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
+    let mut reader = CompleteFrameThenReset { frame, offset: 0 };
+
+    assert_eq!(
+        read_http_response(&mut reader).unwrap(),
+        String::from_utf8(frame.to_vec()).unwrap()
+    );
+}
+
+#[test]
+fn http_response_reader_rejects_a_partial_frame_before_transport_reset() {
+    struct PartialFrameThenReset {
+        delivered: bool,
+    }
+
+    impl Read for PartialFrameThenReset {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.delivered {
+                return Err(io::Error::from(io::ErrorKind::ConnectionReset));
+            }
+            let partial = b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n{}";
+            buffer[..partial.len()].copy_from_slice(partial);
+            self.delivered = true;
+            Ok(partial.len())
+        }
+    }
+
+    assert_eq!(
+        read_http_response(&mut PartialFrameThenReset { delivered: false })
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::ConnectionReset
+    );
+}
+
+fn read_ipc_endpoint(
+    child: &mut ContainedChild,
+    stderr: &Arc<Mutex<Vec<u8>>>,
+    stdout: &mut BufReader<impl Read>,
+) -> String {
     let deadline = Instant::now() + IPC_ENDPOINT_TIMEOUT;
     let mut line = String::new();
+    let mut endpoint = None;
     while Instant::now() < deadline {
         line.clear();
         let bytes = stdout.read_line(&mut line).unwrap();
         if bytes == 0 {
             if let Ok(Some(status)) = child.try_wait() {
-                let mut stderr = String::new();
-                if let Some(mut pipe) = child.stderr.take() {
-                    let _ = pipe.read_to_string(&mut stderr);
-                }
-                panic!("daemon exited before endpoint: {status}\nstderr:\n{stderr}");
+                let stderr = stderr.lock().unwrap_or_else(|error| error.into_inner());
+                let stderr_body = String::from_utf8_lossy(&stderr);
+                panic!("daemon exited before endpoint: {status}\nstderr:\n{stderr_body}");
             }
             continue;
         }
-        if let Some(endpoint) = line.trim().strip_prefix("ipc status endpoint: ") {
-            return endpoint.to_string();
+        if let Some(value) = line.trim().strip_prefix("ipc status endpoint: ") {
+            endpoint = Some(value.to_string());
+        }
+        if line.trim() == "resume-daemon foreground ready" {
+            return endpoint.expect("ready line follows endpoint publication");
         }
     }
-    let _ = child.kill();
-    let _ = child.wait();
+    child.terminate();
     panic!("daemon did not print ipc status endpoint");
 }
 
 fn read_ipc_auth_token(data_dir: &Path) -> String {
     let body = fs::read_to_string(data_dir.join("ipc.auth")).unwrap();
     let auth: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(auth["schema_version"], "resume-ir.daemon-auth.v2");
+    assert_eq!(auth["schema_version"], "resume-ir.daemon-auth.v3");
+    assert_eq!(auth["launch_id"].as_str().map(str::len), Some(64));
     auth["token"].as_str().unwrap().to_string()
 }
 

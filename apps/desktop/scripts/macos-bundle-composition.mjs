@@ -6,9 +6,10 @@ import {
   executablePayloadSha256,
   sha256,
 } from "./verify-bundled-sidecar.mjs";
+import { validateSourceIdentity } from "./macos-source-identity.mjs";
 
-export const BUNDLE_COMPOSITION_FILE = "resume-ir.bundle-composition.v2.json";
-export const BUNDLE_COMPOSITION_SCHEMA = "resume-ir.macos-bundle-composition.v2";
+export const BUNDLE_COMPOSITION_FILE = "resume-ir.bundle-composition.v3.json";
+export const BUNDLE_COMPOSITION_SCHEMA = "resume-ir.macos-bundle-composition.v3";
 
 const EXPECTED_BUNDLE_ID = "local.resume-ir.desktop";
 const EXPECTED_DISPLAY_NAME = "resume-ir";
@@ -22,7 +23,6 @@ const MAX_BOUND_FILE_BYTES = 512 * 1024 * 1024;
 const MAX_RUNTIME_FILES = 128;
 const MAX_APP_FILES = 4096;
 const DIGEST = /^[a-f0-9]{64}$/;
-const SOURCE_COMMIT = /^[a-f0-9]{40}$/;
 const VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 const MIN_VERSION = [0, 1, 2];
 
@@ -87,7 +87,7 @@ function baseComposition(composition) {
     bundle_id,
     version,
     target_triple,
-    source_commit,
+    source,
     mach_o_digest,
     file_digest,
     executables,
@@ -101,7 +101,7 @@ function baseComposition(composition) {
     bundle_id,
     version,
     target_triple,
-    source_commit,
+    source,
     mach_o_digest,
     file_digest,
     executables,
@@ -122,13 +122,18 @@ function validateEntry(entry, expected) {
 }
 
 function validateCompositionShape(value) {
+  try {
+    validateSourceIdentity(value?.source);
+  } catch {
+    throw evidenceError();
+  }
   if (
     !exactKeys(value, [
       "schema_version",
       "bundle_id",
       "version",
       "target_triple",
-      "source_commit",
+      "source",
       "mach_o_digest",
       "file_digest",
       "executables",
@@ -142,7 +147,6 @@ function validateCompositionShape(value) {
     value.bundle_id !== EXPECTED_BUNDLE_ID ||
     !supportedVersion(value.version) ||
     value.target_triple !== SUPPORTED_TARGET ||
-    !SOURCE_COMMIT.test(value.source_commit) ||
     value.mach_o_digest !== "sha256_without_code_signature_v1" ||
     value.file_digest !== "sha256" ||
     !Array.isArray(value.executables) ||
@@ -185,6 +189,10 @@ function validateCompositionShape(value) {
     throw evidenceError();
   }
   return value;
+}
+
+export function validateBundleCompositionEvidence(value) {
+  return validateCompositionShape(value);
 }
 
 async function requireBoundFile(file, message) {
@@ -461,22 +469,28 @@ async function readIdentity(appBundle) {
   return identity;
 }
 
-function validateArguments(appBundle, targetTriple, sourceCommit) {
+function validateArguments(appBundle, targetTriple, source) {
+  let validatedSource;
+  try {
+    validatedSource = validateSourceIdentity(source);
+  } catch {
+    throw evidenceError("bundle composition arguments are invalid");
+  }
   if (
     !path.isAbsolute(appBundle) ||
-    targetTriple !== SUPPORTED_TARGET ||
-    !SOURCE_COMMIT.test(sourceCommit ?? "")
+    targetTriple !== SUPPORTED_TARGET
   ) {
     throw evidenceError("bundle composition arguments are invalid");
   }
+  return validatedSource;
 }
 
 export async function createBundleComposition({
   appBundle,
   targetTriple,
-  sourceCommit,
+  source,
 }) {
-  validateArguments(appBundle, targetTriple, sourceCommit);
+  const validatedSource = validateArguments(appBundle, targetTriple, source);
   const resolvedAppBundle = await resolveAppBundle(appBundle);
   const identity = await readIdentity(resolvedAppBundle);
   const macos = path.join(resolvedAppBundle, "Contents", "MacOS");
@@ -517,7 +531,7 @@ export async function createBundleComposition({
     bundle_id: identity.bundleId,
     version: identity.version,
     target_triple: targetTriple,
-    source_commit: sourceCommit,
+    source: validatedSource,
     mach_o_digest: "sha256_without_code_signature_v1",
     file_digest: "sha256",
     executables,
@@ -532,12 +546,12 @@ export async function createBundleComposition({
 export async function writeBundleComposition({
   appBundle,
   targetTriple,
-  sourceCommit,
+  source,
 }) {
   const composition = await createBundleComposition({
     appBundle,
     targetTriple,
-    sourceCommit,
+    source,
   });
   const resolvedAppBundle = await resolveAppBundle(appBundle);
   const file = path.join(
@@ -563,16 +577,9 @@ export async function writeBundleComposition({
   return composition;
 }
 
-export async function verifyBundleComposition({
-  appBundle,
-  targetTriple,
-  expectedVersion,
-  expectedSourceCommit,
-  verifySignaturePolicy,
-}) {
-  validateArguments(appBundle, targetTriple, expectedSourceCommit);
-  if (typeof verifySignaturePolicy !== "function") {
-    throw evidenceError("bundle signature policy is unavailable");
+export async function readBundleCompositionEvidence({ appBundle }) {
+  if (!path.isAbsolute(appBundle)) {
+    throw evidenceError("bundle composition arguments are invalid");
   }
   const resolvedAppBundle = await resolveAppBundle(appBundle);
   const file = path.join(
@@ -599,23 +606,45 @@ export async function verifyBundleComposition({
   let stored;
   try {
     source = await readFile(file, "utf8");
-    stored = validateCompositionShape(JSON.parse(source));
+    stored = validateBundleCompositionEvidence(JSON.parse(source));
   } catch (error) {
     if (error?.message === "bundle composition evidence is invalid") throw error;
     throw evidenceError();
   }
   if (`${JSON.stringify(stored)}\n` !== source) throw evidenceError();
+  return stored;
+}
+
+export async function verifyBundleComposition({
+  appBundle,
+  targetTriple,
+  expectedVersion,
+  expectedSource,
+  verifySignaturePolicy,
+}) {
+  const validatedSource = validateArguments(
+    appBundle,
+    targetTriple,
+    expectedSource,
+  );
+  if (typeof verifySignaturePolicy !== "function") {
+    throw evidenceError("bundle signature policy is unavailable");
+  }
+  const resolvedAppBundle = await resolveAppBundle(appBundle);
+  const stored = await readBundleCompositionEvidence({
+    appBundle: resolvedAppBundle,
+  });
   if (
     stored.target_triple !== targetTriple ||
     (expectedVersion !== undefined && stored.version !== expectedVersion) ||
-    stored.source_commit !== expectedSourceCommit
+    JSON.stringify(stored.source) !== JSON.stringify(validatedSource)
   ) {
     throw evidenceError("bundle composition identity does not match");
   }
   const actual = await createBundleComposition({
     appBundle,
     targetTriple,
-    sourceCommit: expectedSourceCommit,
+    source: validatedSource,
   });
   if (JSON.stringify(stored) !== JSON.stringify(actual)) {
     throw evidenceError("bundle composition payload does not match");

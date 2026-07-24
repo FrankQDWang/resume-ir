@@ -12,6 +12,7 @@ fn privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks
     let source_dir = temp_dir("metadata-key-source");
     let restore_dir = temp_dir("metadata-key-target");
     let wrong_restore_dir = temp_dir("metadata-key-wrong-passphrase-target");
+    let unsafe_restore_dir = temp_dir("metadata-key-unsafe-target");
     let backup_dir = temp_dir("metadata-key-backup");
     let backup_path = backup_dir.join("metadata-key.backup");
     let passphrase_path = backup_dir.join("metadata-key.passphrase");
@@ -104,6 +105,7 @@ fn privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks
         MetadataEncryptionState::SqlCipher
     );
     assert_eq!(restored.schema_version().unwrap(), 29);
+    assert_private_directory(&restore_dir.join("metadata-secrets"));
 
     copy_active_store_without_key(&source_dir, &source_db, &wrong_restore_dir);
     let wrong_passphrase_restore = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
@@ -133,6 +135,31 @@ fn privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks
         .join("metadata-sqlcipher-key-v1")
         .exists());
 
+    copy_active_store_without_key(&source_dir, &source_db, &unsafe_restore_dir);
+    let unsafe_key_dir = unsafe_restore_dir.join("metadata-secrets");
+    let unsafe_key_sentinel = b"synthetic unsafe metadata authority";
+    fs::write(&unsafe_key_dir, unsafe_key_sentinel).unwrap();
+    let unsafe_restore = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&unsafe_restore_dir),
+            "privacy",
+            "restore-metadata-key",
+            "--input",
+            path_str(&backup_path),
+            "--passphrase-file",
+            path_str(&passphrase_path),
+        ])
+        .output()
+        .expect("run metadata key restore with unsafe key directory");
+    assert!(!unsafe_restore.status.success());
+    assert!(unsafe_restore.stdout.is_empty());
+    assert!(!unsafe_restore_dir
+        .join("metadata-secrets")
+        .join("metadata-sqlcipher-key-v1")
+        .exists());
+    assert_eq!(fs::read(&unsafe_key_dir).unwrap(), unsafe_key_sentinel);
+
     let duplicate_restore = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args([
             "--data-dir",
@@ -159,7 +186,25 @@ fn privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks
     remove_dir(&source_dir);
     remove_dir(&restore_dir);
     remove_dir(&wrong_restore_dir);
+    remove_dir(&unsafe_restore_dir);
     remove_dir(&backup_dir);
+}
+
+#[cfg(unix)]
+fn assert_private_directory(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let metadata = fs::symlink_metadata(path).unwrap();
+    assert!(metadata.file_type().is_dir());
+    assert!(!metadata.file_type().is_symlink());
+    assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
+}
+
+#[cfg(not(unix))]
+fn assert_private_directory(path: &Path) {
+    let metadata = fs::symlink_metadata(path).unwrap();
+    assert!(metadata.file_type().is_dir());
+    assert!(!metadata.file_type().is_symlink());
 }
 
 fn temp_dir(label: &str) -> PathBuf {

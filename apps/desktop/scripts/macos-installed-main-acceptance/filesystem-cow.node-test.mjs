@@ -33,7 +33,7 @@ import {
   workspaceMarker,
 } from "./filesystem-cow.mjs";
 import { WORKSPACE_PREFIX } from "./core.mjs";
-import { COMPOSITION, DMG, HEAD } from "./fixtures.mjs";
+import { COMPOSITION, DMG, SOURCE } from "./fixtures.mjs";
 
 const darwinTest = process.platform === "darwin" ? test : test.skip;
 
@@ -221,13 +221,13 @@ test("creates the test HOME with forced per-file COW while leaving the source un
   await chmod(source, 0o755);
   const manifestBody = [
     "resume-ir.metadata-active.v1",
-    "file=metadata-v28-1111111111111111.sqlite3",
-    "schema=28",
+    "file=metadata-v29-1111111111111111.sqlite3",
+    "schema=29",
     `digest=${"1".repeat(64)}`,
     "",
   ].join("\n");
   await writeFile(path.join(source, "metadata-active.v1"), manifestBody, {
-    mode: 0o644,
+    mode: 0o600,
   });
   await writeFile(path.join(source, "data-directory-owner.lock"), "", {
     mode: 0o600,
@@ -236,16 +236,16 @@ test("creates the test HOME with forced per-file COW while leaving the source un
     mode: 0o600,
   });
   await writeFile(path.join(source, "index-publication.lock"), "", {
-    mode: 0o644,
+    mode: 0o600,
   });
   await writeFile(
-    path.join(source, "resume-ir.install-receipt.v2.json"),
+    path.join(source, "resume-ir.install-receipt.v3.json"),
     `${JSON.stringify({
-      schema_version: "resume-ir.macos-install-receipt.v2",
+      schema_version: "resume-ir.macos-install-receipt.v3",
       bundle_id: "local.resume-ir.desktop",
       version: "0.1.2",
       target_triple: "aarch64-apple-darwin",
-      source_commit: HEAD,
+      source: SOURCE,
       composition_digest: COMPOSITION,
       dmg_sha256: DMG,
     })}\n`,
@@ -279,7 +279,7 @@ test("creates the test HOME with forced per-file COW while leaving the source un
       bundle_id: "local.resume-ir.desktop",
       version: "0.1.2",
       target_triple: "aarch64-apple-darwin",
-      source_commit: HEAD,
+      source: SOURCE,
       composition_digest: COMPOSITION,
     },
     runTool,
@@ -295,7 +295,12 @@ test("creates the test HOME with forced per-file COW while leaving the source un
     releaseLock: async ({ file }) => lockCalls.push(["release", file]),
   });
 
-  assert.equal(workspace.sourceSchema, 28);
+  assert.equal(workspace.sourceSchema, 29);
+  assert.deepEqual(workspace.v29Authority, {
+    fileName: "metadata-v29-1111111111111111.sqlite3",
+    schema: 29,
+    digest: "1".repeat(64),
+  });
   assert.equal(
     await readFile(path.join(workspace.dataDir, "metadata-active.v1"), "utf8"),
     manifestBody,
@@ -308,12 +313,12 @@ test("creates the test HOME with forced per-file COW while leaving the source un
   assert.equal(
     (await stat(path.join(workspace.dataDir, "metadata-active.v1"))).mode &
       0o777,
-    0o644,
+      0o600,
   );
   assert.equal(
     (await stat(path.join(workspace.dataDir, "index-publication.lock"))).mode &
       0o777,
-    0o644,
+      0o600,
   );
   assert.equal(
     calls.some(

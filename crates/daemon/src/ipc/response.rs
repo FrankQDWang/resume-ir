@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream};
 use std::time::Duration;
 
 use super::{ResponseSinkError, ServiceErrorCode};
@@ -37,7 +37,7 @@ pub(crate) fn write_http_response(
     let mut response = Vec::with_capacity(header.len().saturating_add(body.len()));
     response.extend_from_slice(header.as_bytes());
     response.extend_from_slice(body.as_bytes());
-    write_all(stream, &response)
+    write_complete_response(stream, &response)
 }
 
 pub(crate) fn write_search_response(
@@ -52,13 +52,34 @@ pub(crate) fn write_search_response(
     let mut response = Vec::with_capacity(header.len().saturating_add(body.len()));
     response.extend_from_slice(header.as_bytes());
     response.extend_from_slice(body.as_bytes());
-    write_all(stream, &response)
+    write_complete_response(stream, &response)
 }
 
 pub(crate) fn write_all(stream: &mut TcpStream, bytes: &[u8]) -> Result<(), ResponseSinkError> {
     stream
         .write_all(bytes)
         .map_err(|error| ResponseSinkError::from_io(&error))
+}
+
+fn write_complete_response(stream: &mut TcpStream, bytes: &[u8]) -> Result<(), ResponseSinkError> {
+    if let Err(error) = stream.write_all(bytes) {
+        if std::env::var_os("RESUME_IR_S49_RESET_DIAGNOSTICS").is_some() {
+            eprintln!(
+                "[DEBUG-s49-reset] response_failed stage=write kind={:?}",
+                error.kind()
+            );
+        }
+        return Err(ResponseSinkError::from_io(&error));
+    }
+    stream.shutdown(Shutdown::Write).map_err(|error| {
+        if std::env::var_os("RESUME_IR_S49_RESET_DIAGNOSTICS").is_some() {
+            eprintln!(
+                "[DEBUG-s49-reset] response_failed stage=shutdown kind={:?}",
+                error.kind()
+            );
+        }
+        ResponseSinkError::from_io(&error)
+    })
 }
 
 pub(crate) fn flush(stream: &mut TcpStream) -> Result<(), ResponseSinkError> {
@@ -77,11 +98,36 @@ pub(crate) fn write_service_unavailable(
 
 pub(crate) fn unified_error_body(request_id: Option<&str>, code: &str, action: &str) -> String {
     let mut body = serde_json::json!({
-        "schema_version": "resume-ir.error.v1",
+        "schema_version": "resume-ir.error.v2",
         "status": "error",
         "error": {
             "code": code,
             "action": action,
+            "capability": serde_json::Value::Null,
+            "reason": serde_json::Value::Null,
+        },
+    });
+    if let Some(request_id) = request_id {
+        body["request_id"] = serde_json::json!(request_id);
+    }
+    body.to_string()
+}
+
+pub(crate) fn service_error_body(
+    request_id: Option<&str>,
+    code: &str,
+    action: &str,
+    capability: Option<&str>,
+    reason: Option<&str>,
+) -> String {
+    let mut body = serde_json::json!({
+        "schema_version": "resume-ir.error.v2",
+        "status": "error",
+        "error": {
+            "code": code,
+            "action": action,
+            "capability": capability,
+            "reason": reason,
         },
     });
     if let Some(request_id) = request_id {

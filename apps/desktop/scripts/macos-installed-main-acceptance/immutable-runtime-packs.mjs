@@ -28,7 +28,7 @@ export async function stageImmutableRuntimePacks(
     fail("immutable_build_source_invalid");
   }
   const cacheRoot = path.join(immutableRepoRoot, ".cache");
-  await mkdir(cacheRoot, { mode: 0o700 });
+  await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
   await chmod(cacheRoot, 0o700);
   const plan = (
     dependencies.createPlan ?? createDesktopCompositionPlan

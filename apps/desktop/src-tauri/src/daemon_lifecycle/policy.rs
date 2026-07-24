@@ -40,31 +40,17 @@ pub(super) struct RestartPolicy {
     automatic_restarts: VecDeque<Duration>,
     stable_since: Option<Duration>,
     half_open_attempt: bool,
-    manual_half_open_available: bool,
+    manual_half_open_at: Option<Duration>,
 }
 
 impl RestartPolicy {
-    #[cfg(test)]
     pub(super) fn new(config: RestartPolicyConfig) -> Self {
-        Self::with_restart_attempt_ages(config, VecDeque::new())
-    }
-
-    pub(super) fn with_restart_attempt_ages(
-        config: RestartPolicyConfig,
-        ages: VecDeque<Duration>,
-    ) -> Self {
-        let automatic_restarts = ages
-            .into_iter()
-            .filter(|age| *age < config.window)
-            .take(MAX_AUTOMATIC_RESTARTS)
-            .map(|age| config.window.saturating_sub(age))
-            .collect();
         Self {
             config,
-            automatic_restarts,
+            automatic_restarts: VecDeque::new(),
             stable_since: None,
             half_open_attempt: false,
-            manual_half_open_available: false,
+            manual_half_open_at: None,
         }
     }
 
@@ -73,12 +59,12 @@ impl RestartPolicy {
         self.stable_since = None;
         if self.half_open_attempt {
             self.half_open_attempt = false;
-            self.manual_half_open_available = false;
+            self.manual_half_open_at = Some(now.saturating_add(self.config.circuit_open));
             return RecoveryDecision::OpenCircuit(self.config.circuit_open);
         }
         self.prune(now);
         if self.automatic_restarts.len() >= MAX_AUTOMATIC_RESTARTS {
-            self.manual_half_open_available = true;
+            self.manual_half_open_at = Some(now.saturating_add(self.config.circuit_open));
             return RecoveryDecision::OpenCircuit(self.config.circuit_open);
         }
         let delay = self.config.backoff[self.automatic_restarts.len()];
@@ -86,24 +72,24 @@ impl RestartPolicy {
         RecoveryDecision::RetryAfter(delay)
     }
 
-    pub(super) fn begin_half_open(&mut self) {
+    fn begin_half_open(&mut self) {
         self.half_open_attempt = true;
-        self.manual_half_open_available = false;
+        self.manual_half_open_at = None;
         self.stable_since = None;
     }
 
-    pub(super) fn restore_circuit_open(&mut self) {
-        self.half_open_attempt = false;
-        self.manual_half_open_available = true;
-        self.stable_since = None;
-    }
-
-    pub(super) fn begin_manual_half_open(&mut self) -> bool {
-        if !self.manual_half_open_available {
+    pub(super) fn begin_manual_half_open(&mut self, now: Duration) -> bool {
+        let now = self.policy_time(now);
+        if self.manual_half_open_at.is_none_or(|at| now < at) {
             return false;
         }
         self.begin_half_open();
         true
+    }
+
+    pub(super) fn manual_half_open_retry_after(&self, now: Duration) -> Option<Duration> {
+        let now = self.policy_time(now);
+        self.manual_half_open_at.map(|at| at.saturating_sub(now))
     }
 
     pub(super) fn on_ready(&mut self, now: Duration) {
@@ -119,7 +105,7 @@ impl RestartPolicy {
     pub(super) fn complete_stable_reset(&mut self, now: Duration) {
         self.automatic_restarts.clear();
         self.half_open_attempt = false;
-        self.manual_half_open_available = false;
+        self.manual_half_open_at = None;
         self.stable_since = Some(self.policy_time(now));
     }
 
@@ -195,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_manual_half_open_cannot_bypass_the_reopened_circuit() {
+    fn manual_half_open_waits_for_expiry_allows_once_and_reopens_after_failure() {
         let mut policy = RestartPolicy::new(test_config());
         for second in 0..MAX_AUTOMATIC_RESTARTS {
             assert!(matches!(
@@ -207,13 +193,19 @@ mod tests {
             policy.on_failure(Duration::from_secs(MAX_AUTOMATIC_RESTARTS as u64)),
             RecoveryDecision::OpenCircuit(Duration::from_secs(300))
         );
-        assert!(policy.begin_manual_half_open());
-        assert!(!policy.begin_manual_half_open());
         assert_eq!(
-            policy.on_failure(Duration::from_secs(6)),
+            policy.manual_half_open_retry_after(Duration::from_secs(5)),
+            Some(Duration::from_secs(300))
+        );
+        assert!(!policy.begin_manual_half_open(Duration::from_secs(304)));
+        assert!(policy.begin_manual_half_open(Duration::from_secs(305)));
+        assert!(!policy.begin_manual_half_open(Duration::from_secs(305)));
+        assert_eq!(
+            policy.on_failure(Duration::from_secs(306)),
             RecoveryDecision::OpenCircuit(Duration::from_secs(300))
         );
-        assert!(!policy.begin_manual_half_open());
+        assert!(!policy.begin_manual_half_open(Duration::from_secs(605)));
+        assert!(policy.begin_manual_half_open(Duration::from_secs(606)));
     }
 
     #[test]
@@ -243,21 +235,15 @@ mod tests {
     }
 
     #[test]
-    fn hydrated_wall_clock_ages_preserve_backoff_and_expire_in_the_current_actor() {
-        let mut policy = RestartPolicy::with_restart_attempt_ages(
-            test_config(),
-            VecDeque::from([
-                Duration::from_secs(599),
-                Duration::from_secs(300),
-                Duration::from_secs(1),
-            ]),
-        );
-        assert_eq!(policy.restart_attempts(Duration::ZERO), 3);
-        assert_eq!(
-            policy.on_failure(Duration::ZERO),
-            RecoveryDecision::RetryAfter(Duration::from_secs(15))
-        );
-        assert_eq!(policy.restart_attempts(Duration::from_secs(1)), 3);
-        assert_eq!(policy.restart_attempts(Duration::from_secs(600)), 0);
+    fn a_new_policy_session_starts_with_a_fresh_budget() {
+        let mut first = RestartPolicy::new(test_config());
+        assert!(matches!(
+            first.on_failure(Duration::ZERO),
+            RecoveryDecision::RetryAfter(_)
+        ));
+        assert_eq!(first.restart_attempts(Duration::ZERO), 1);
+
+        let mut reopened = RestartPolicy::new(test_config());
+        assert_eq!(reopened.restart_attempts(Duration::ZERO), 0);
     }
 }

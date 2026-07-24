@@ -25,20 +25,21 @@ mod enums {
     snake_enum!(pub(super) enum QueryMode { Keyword, FieldFilter, Hybrid, Semantic });
     snake_enum!(pub(super) enum PartialReason { SearchIndexNotReady, DeadlineExceeded, EmbeddingRuntimeUnavailable });
     snake_enum!(pub(super) enum ErrorStatus { Error });
-    snake_enum!(pub(super) enum DaemonErrorStatus { Unauthorized, BadRequest, Conflict, NotFound, TooLarge, Internal });
 }
 
 mod detail;
+mod diagnostics;
 mod error;
+mod health_contract;
 mod search;
 mod status;
 
 use serde::{Deserialize, Serialize};
 
 use self::detail::{CancelBody, DetailBody, HydrateBody, ImportBody};
+pub(crate) use self::diagnostics::DiagnosticsBody;
 use self::enums::RootControlStatus;
 use self::search::SearchBody;
-pub(crate) use self::status::DiagnosticsBody;
 use self::status::StatusBody;
 use crate::daemon_client::DesktopError;
 use crate::daemon_exchange::ExpectedResponse;
@@ -86,7 +87,7 @@ impl DesktopResponse {
 #[derive(Serialize)]
 #[serde(untagged)]
 enum DesktopBody {
-    Status(StatusBody),
+    Status(Box<StatusBody>),
     Diagnostics(Box<DiagnosticsBody>),
     Import(ImportBody),
     RootControl(RootControlBody),
@@ -124,8 +125,10 @@ pub(crate) fn project_response(
 
 fn project_success(body: &[u8], expected: &ExpectedResponse) -> Result<DesktopBody, DesktopError> {
     match expected.operation() {
-        Operation::Status => status::project_status(body).map(DesktopBody::Status),
-        Operation::Diagnostics => status::project_diagnostics(body)
+        Operation::Status => status::project_status(body)
+            .map(Box::new)
+            .map(DesktopBody::Status),
+        Operation::Diagnostics => diagnostics::project_diagnostics(body)
             .map(Box::new)
             .map(DesktopBody::Diagnostics),
         Operation::Import => detail::project_import(body).map(DesktopBody::Import),

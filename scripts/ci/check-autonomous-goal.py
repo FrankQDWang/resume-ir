@@ -70,16 +70,18 @@ CORRECTNESS_DELIVERY_TRANSITIONS = {
         ],
         "allowed_actions": ["build_release", "verify_release", "install_local"],
     },
-    "accept_installed_v28_cow": {
+    "accept_installed_v29_cow": {
         "from": ["merged_main_0_1_2_installed"],
-        "to": "installed_v28_cow_acceptance_green",
+        "to": "installed_v29_cow_acceptance_green",
         "required_permissions": ["private_resume_root_read_allowed"],
         "required_evidence": [
-            "authorized_v28_source",
+            "authorized_v29_source",
             "apfs_cow_no_fallback",
             "source_unchanged",
             "mutation_authority_revalidated",
-            "cold_v29_ready",
+            "exact_v29_preserved",
+            "launch_bound_control_plane",
+            "runtime_capability_faults",
             "artifact_identity_consistent",
             "ciphertext_digest_verified",
             "nonzero_exact_epoch_synthetic_canary",
@@ -92,7 +94,7 @@ CORRECTNESS_DELIVERY_TRANSITIONS = {
         "allowed_actions": ["run_installed_acceptance", "write_redacted_evidence"],
     },
     "freeze_installed_acceptance_commit": {
-        "from": ["installed_v28_cow_acceptance_green"],
+        "from": ["installed_v29_cow_acceptance_green"],
         "to": "exact_commit_frozen",
         "required_permissions": [],
         "required_evidence": [
@@ -118,7 +120,7 @@ CORRECTNESS_DELIVERY_TRANSITIONS = {
             "pr_merged",
             "branch_cleaned_main_synced",
             "merged_main_0_1_2_installed",
-            "installed_v28_cow_acceptance_green",
+            "installed_v29_cow_acceptance_green",
             "exact_commit_frozen",
             "soak_120m_green",
         ],
@@ -159,10 +161,10 @@ CORRECTNESS_DELIVERY_OUTGOING = {
         "regress_deployed_failure",
     },
     "merged_main_0_1_2_installed": {
-        "accept_installed_v28_cow",
+        "accept_installed_v29_cow",
         "regress_deployed_failure",
     },
-    "installed_v28_cow_acceptance_green": {
+    "installed_v29_cow_acceptance_green": {
         "freeze_installed_acceptance_commit",
         "regress_deployed_failure",
     },

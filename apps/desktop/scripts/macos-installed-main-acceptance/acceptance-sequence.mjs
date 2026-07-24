@@ -8,11 +8,14 @@ import {
   fail,
   throwIfAborted,
 } from "./core.mjs";
+import { verifyInstalledCombinedDiagnosticsExport } from "./diagnostics-export-acceptance.mjs";
+import { executeRuntimeFaultAcceptance } from "./runtime-fault-acceptance-sequence.mjs";
 import { REQUIRED_INSTALLED_VERSION } from "./source-bindings.mjs";
 
 export function stableBindingsMatch(left, right) {
   return (
     left?.gitHead === right?.gitHead &&
+    JSON.stringify(left?.source) === JSON.stringify(right?.source) &&
     left?.version === right?.version &&
     left?.dmgSha256 === right?.dmgSha256 &&
     left?.iconSha256 === right?.iconSha256 &&
@@ -23,7 +26,7 @@ export function stableBindingsMatch(left, right) {
 
 export function requireDeploymentBinding(deployment, verified) {
   if (
-    !["install", "upgrade", "reinstall"].includes(
+    !["install", "reinstall"].includes(
       deployment?.deploymentAction,
     ) ||
     !GIT_HEAD.test(deployment?.gitHead ?? "") ||
@@ -31,6 +34,8 @@ export function requireDeploymentBinding(deployment, verified) {
     !DIGEST.test(deployment?.compositionDigest ?? "") ||
     !DIGEST.test(verified?.iconSha256 ?? "") ||
     deployment?.gitHead !== verified?.gitHead ||
+    JSON.stringify(deployment?.source) !==
+      JSON.stringify(verified?.source) ||
     deployment?.version !== REQUIRED_INSTALLED_VERSION ||
     verified?.version !== REQUIRED_INSTALLED_VERSION ||
     deployment?.dmgSha256 !== verified?.dmgSha256 ||
@@ -71,9 +76,106 @@ function requireReadyArtifactEvidence(value) {
   }
 }
 
+function publicStaleControlEvidence(value) {
+  if (
+    !exactKeys(value, [
+      "legacyContractReplaced",
+      "newGenerationReady",
+      "v29AuthorityPreserved",
+    ]) ||
+    Object.values(value).some((observed) => observed !== true)
+  ) {
+    fail("stale_control_evidence_invalid");
+  }
+  return Object.freeze({
+    legacy_contract_replaced: true,
+    new_generation_ready: true,
+    v29_authority_preserved: true,
+  });
+}
+
+function publicForeignControlEvidence(value) {
+  if (
+    !exactKeys(value, [
+      "foreignEndpointPreserved",
+      "newGenerationReady",
+      "notAdopted",
+      "notProbed",
+      "v29AuthorityPreserved",
+    ]) ||
+    Object.values(value).some((observed) => observed !== true)
+  ) {
+    fail("foreign_control_evidence_invalid");
+  }
+  return Object.freeze({
+    foreign_endpoint_preserved: true,
+    new_generation_ready: true,
+    not_adopted: true,
+    not_probed: true,
+    v29_authority_preserved: true,
+  });
+}
+
+function publicSlowInitializationEvidence(value) {
+  if (
+    !exactKeys(value, [
+      "sameInstance",
+      "sameLaunch",
+      "sameListener",
+      "slowWindowObserved",
+      "statusWithinTenSeconds",
+      "v29AuthorityPreserved",
+    ]) ||
+    Object.values(value).some((observed) => observed !== true)
+  ) {
+    fail("slow_initialization_evidence_invalid");
+  }
+  return Object.freeze({
+    same_instance: true,
+    same_launch: true,
+    same_listener: true,
+    slow_window_observed: true,
+    status_within_ten_seconds: true,
+    v29_authority_preserved: true,
+  });
+}
+
+function publicCombinedDiagnosticsEvidence(value) {
+  if (
+    !exactKeys(value, [
+      "desktopContract",
+      "nativeSaveDialog",
+      "ownerOnlyFile",
+      "boundedBytes",
+      "daemonAvailableState",
+      "daemonUnavailableState",
+      "daemonDownLifecycleState",
+    ]) ||
+    value.desktopContract !== "resume-ir.desktop-diagnostics.v2" ||
+    value.nativeSaveDialog !== true ||
+    value.ownerOnlyFile !== true ||
+    value.boundedBytes !== 256 * 1024 ||
+    value.daemonAvailableState !== "included" ||
+    value.daemonUnavailableState !== "unavailable" ||
+    value.daemonDownLifecycleState !== "circuit_open"
+  ) {
+    fail("combined_diagnostics_evidence_invalid");
+  }
+  return Object.freeze({
+    desktop_contract: value.desktopContract,
+    daemon_available_export: "verified",
+    daemon_unavailable_export: "verified",
+    daemon_down_lifecycle_state: value.daemonDownLifecycleState,
+    native_save_dialog: "automated",
+    maximum_export_bytes: value.boundedBytes,
+    file_permissions: "owner_only",
+  });
+}
+
 export async function executeAcceptance(runtime, signal) {
   throwIfAborted(signal);
   await runtime.validatePreLockInputs();
+  await runtime.requireInstalledFaultHarness();
   const sourceExpectation = await runtime.precheckSourceAuthority();
   await runtime.acquireAcceptanceLease();
   await runtime.bindSourceAuthorityAfterLease(sourceExpectation);
@@ -84,11 +186,15 @@ export async function executeAcceptance(runtime, signal) {
   const launchVerified = async (workspace) => {
     throwIfAborted(signal);
     await runtime.verifyBindings();
+    await runtime.activateFaultCell(workspace);
     return runtime.launchApp(workspace);
   };
   const baseline = await runtime.createClone("cold-start");
   let session = await launchVerified(baseline);
   const cold = await runtime.waitForColdReady(session);
+  if (cold?.v29AuthorityPreserved !== true) {
+    fail("cold_v29_preservation_invalid");
+  }
   requireReadyArtifactEvidence(
     await runtime.validateColdReadyArtifacts(session, cold),
   );
@@ -164,16 +270,56 @@ export async function executeAcceptance(runtime, signal) {
     error_kind: blocked.errorKind,
     kind: persistentKind,
     phase: blocked.phase,
-    repair_reason: blocked.repairReason,
+    core_reason: blocked.repairReason,
     status: "expected_block_observed",
   };
+
+  const staleClone = await runtime.createClone("stale-control");
+  const staleFixture = await runtime.prepareStaleControl(staleClone);
+  const staleSession = await launchVerified(staleClone);
+  const staleControl = publicStaleControlEvidence(
+    await runtime.validateStaleControl(staleSession, staleFixture),
+  );
+  await runtime.quitApp(staleSession);
+  await runtime.assertZeroResidue(staleSession);
+  await runtime.closeControlFixture(staleFixture);
+
+  const foreignClone = await runtime.createClone("foreign-control");
+  const foreignFixture = await runtime.prepareForeignControl(foreignClone);
+  const foreignSession = await launchVerified(foreignClone);
+  const foreignControl = publicForeignControlEvidence(
+    await runtime.validateForeignControl(foreignSession, foreignFixture),
+  );
+  await runtime.quitApp(foreignSession);
+  await runtime.assertZeroResidue(foreignSession);
+  await runtime.closeControlFixture(foreignFixture);
+
+  const slowClone = await runtime.createClone("slow-initialization");
+  const slowFault = await runtime.prepareFaultCell(
+    slowClone,
+    "slow_initialization",
+  );
+  const slowSession = await launchVerified(slowClone);
+  const slowInitialization = publicSlowInitializationEvidence(
+    await runtime.validateSlowInitialization(slowSession),
+  );
+  await runtime.quitApp(slowSession);
+  await runtime.assertZeroResidue(slowSession);
+  await runtime.releaseFaultCell(slowFault);
+
+  const optionalRuntimeFaults = await executeRuntimeFaultAcceptance(
+    runtime,
+    launchVerified,
+  );
 
   session = await launchVerified(baseline);
   const finalReady = await runtime.waitForReady(session);
   const finalEvidence = publicRecoveryEvidence(
     await runtime.validateRecoveryEvidence(session, finalReady, canary),
   );
-  await runtime.validateDiagnostics(session);
+  const diagnosticsEvidence = publicCombinedDiagnosticsEvidence(
+    await verifyInstalledCombinedDiagnosticsExport(runtime, session, signal),
+  );
   await runtime.quitApp(session);
   await runtime.assertZeroResidue(session);
 
@@ -210,7 +356,9 @@ export async function executeAcceptance(runtime, signal) {
     },
     cold_start: {
       target_schema: 29,
-      migration_and_index_recovery: "ready",
+      v29_data_preservation_and_index_recovery: "ready",
+      v29_logical_authority_preserved: true,
+      v29_manifest_identity_preserved: true,
       index_health: "ready",
       recovery_evidence: coldEvidence,
     },
@@ -228,11 +376,17 @@ export async function executeAcceptance(runtime, signal) {
     },
     contention,
     persistent_contention: persistent,
+    bootstrap_control: {
+      stale: staleControl,
+      foreign: foreignControl,
+      slow_initialization: slowInitialization,
+    },
+    optional_runtime_faults: optionalRuntimeFaults,
     diagnostics: {
-      daemon_contract: "resume-ir.diagnostics.v3",
+      daemon_contract: "resume-ir.diagnostics.v4",
       lifecycle_receipt: "validated",
       privacy_boundary: "redacted_local_aggregate",
-      gui_combined_export: "manual_required_native_save_dialog",
+      gui_combined_export: diagnosticsEvidence,
     },
   };
 }

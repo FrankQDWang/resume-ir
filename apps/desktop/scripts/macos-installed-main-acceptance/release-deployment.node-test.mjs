@@ -6,7 +6,7 @@ import {
   parseReleaseBuildReceipt,
 } from "./release-deployment.mjs";
 import { MACOS_TEST_RELEASE_ERROR_CODES } from "../macos-test-release.mjs";
-import { COMPOSITION, DMG, HEAD, ICON } from "./fixtures.mjs";
+import { COMPOSITION, DMG, HEAD, ICON, SOURCE } from "./fixtures.mjs";
 
 const baseOptions = Object.freeze({
   applicationSupportRoot: "/synthetic/support",
@@ -117,13 +117,22 @@ function dependencies(installedVersion) {
         calls.push("source");
         return { iconSha256: ICON, version: "0.1.2" };
       },
+      deriveSourceIdentity: async () => {
+        calls.push("source-identity");
+        return SOURCE;
+      },
       verifyGitMainBinding: async () => {
         calls.push("git");
         return { detached: false, gitHead: HEAD };
       },
       assertMutationAuthority: async () => {
         calls.push("guard");
-        return { gitHead: HEAD, iconSha256: ICON, version: "0.1.2" };
+        return {
+          gitHead: HEAD,
+          iconSha256: ICON,
+          source: SOURCE,
+          version: "0.1.2",
+        };
       },
       createImmutableBuildSource: async () => {
         calls.push("immutable-clone");
@@ -141,7 +150,7 @@ function dependencies(installedVersion) {
           appCompositionDigest: COMPOSITION,
           dmg: "/synthetic/release/resume-ir_0.1.2_aarch64.dmg",
           dmgSha256: DMG,
-          sourceCommit: HEAD,
+          source: SOURCE,
         };
       },
       inspectInstalledVersion: async () => {
@@ -150,7 +159,6 @@ function dependencies(installedVersion) {
       },
       installCurrent: async () => calls.push("install"),
       reinstallCurrent: async () => calls.push("reinstall"),
-      upgradeLegacy: async () => calls.push("upgrade"),
       verifyInstalledSourceBindings: async () => {
         calls.push("verify-installed");
         return {
@@ -158,6 +166,7 @@ function dependencies(installedVersion) {
           dmgSha256: DMG,
           gitHead: HEAD,
           iconSha256: ICON,
+          source: SOURCE,
           version: "0.1.2",
         };
       },
@@ -167,12 +176,43 @@ function dependencies(installedVersion) {
 
 test("always builds and promotes the exact release instead of accepting a pre-existing App", async () => {
   for (const [installedVersion, expectedAction, expectedCalls] of [
-    [undefined, "install", ["git", "source", "guard", "immutable-clone", "guard", "build", "guard", "inspect", "guard", "install", "verify-installed", "immutable-cleanup"]],
-    ["0.1.1", "upgrade", ["git", "source", "guard", "immutable-clone", "guard", "build", "guard", "inspect", "guard", "upgrade", "verify-installed", "immutable-cleanup"]],
+    [
+      undefined,
+      "install",
+      [
+        "git",
+        "source",
+        "source-identity",
+        "guard",
+        "immutable-clone",
+        "guard",
+        "build",
+        "guard",
+        "inspect",
+        "guard",
+        "install",
+        "verify-installed",
+        "immutable-cleanup",
+      ],
+    ],
     [
       "0.1.2",
       "reinstall",
-      ["git", "source", "guard", "immutable-clone", "guard", "build", "guard", "inspect", "guard", "reinstall", "verify-installed", "immutable-cleanup"],
+      [
+        "git",
+        "source",
+        "source-identity",
+        "guard",
+        "immutable-clone",
+        "guard",
+        "build",
+        "guard",
+        "inspect",
+        "guard",
+        "reinstall",
+        "verify-installed",
+        "immutable-cleanup",
+      ],
     ],
   ]) {
     const fixture = dependencies(installedVersion);
@@ -183,6 +223,7 @@ test("always builds and promotes the exact release instead of accepting a pre-ex
     assert.equal(result.deploymentAction, expectedAction);
     assert.equal(result.version, "0.1.2");
     assert.equal(result.gitHead, HEAD);
+    assert.deepEqual(result.source, SOURCE);
     assert.equal(result.compositionDigest, COMPOSITION);
     assert.deepEqual(fixture.calls, expectedCalls);
   }
@@ -198,7 +239,7 @@ test("rejects future source, future installed versions, and build-to-install dri
     deployExactInstalledRelease(baseOptions, futureSource.values),
     /required_release_invalid/,
   );
-  assert.deepEqual(futureSource.calls, ["git"]);
+  assert.deepEqual(futureSource.calls, ["git", "source-identity"]);
 
   const futureInstalled = dependencies("0.1.3");
   await assert.rejects(
@@ -208,6 +249,7 @@ test("rejects future source, future installed versions, and build-to-install dri
   assert.deepEqual(futureInstalled.calls, [
     "git",
     "source",
+    "source-identity",
     "guard",
     "immutable-clone",
     "guard",
@@ -223,6 +265,7 @@ test("rejects future source, future installed versions, and build-to-install dri
     dmgSha256: DMG,
     gitHead: HEAD,
     iconSha256: ICON,
+    source: SOURCE,
     version: "0.1.2",
   });
   await assert.rejects(
@@ -236,6 +279,7 @@ test("rejects future source, future installed versions, and build-to-install dri
     dmgSha256: "f".repeat(64),
     gitHead: HEAD,
     iconSha256: ICON,
+    source: SOURCE,
     version: "0.1.2",
   });
   await assert.rejects(
@@ -258,7 +302,7 @@ test("dirty, non-main, and ahead-or-behind provenance cannot reach build or syst
     assert.deepEqual(fixture.calls, [`git-${provenanceFailure}`]);
     assert.equal(
       fixture.calls.some((call) =>
-        ["build", "inspect", "install", "uninstall", "upgrade"].includes(
+        ["build", "inspect", "install", "uninstall", "reinstall"].includes(
           call,
         ),
       ),
@@ -295,16 +339,24 @@ test("builds only from an immutable commit-derived root and rechecks authority a
       appCompositionDigest: COMPOSITION,
       dmg: "/synthetic/release/resume-ir_0.1.2_aarch64.dmg",
       dmgSha256: DMG,
-      sourceCommit: HEAD,
+      source: SOURCE,
     };
   };
-  for (const operation of ["installCurrent", "reinstallCurrent", "upgradeLegacy"]) {
+  for (const operation of ["installCurrent", "reinstallCurrent"]) {
     fixture.values[operation] = async () => systemMutations.push(operation);
   }
 
   await assert.rejects(
     deployExactInstalledRelease(
-      { ...baseOptions, preverifiedSource: { gitHead: HEAD, iconSha256: ICON, version: "0.1.2" } },
+      {
+        ...baseOptions,
+        preverifiedSource: {
+          gitHead: HEAD,
+          iconSha256: ICON,
+          source: SOURCE,
+          version: "0.1.2",
+        },
+      },
       fixture.values,
     ),
     /source_authority_changed/,
@@ -333,7 +385,15 @@ test("reinstall rechecks live authority before the atomic replacement", async ()
 
   await assert.rejects(
     deployExactInstalledRelease(
-      { ...baseOptions, preverifiedSource: { gitHead: HEAD, iconSha256: ICON, version: "0.1.2" } },
+      {
+        ...baseOptions,
+        preverifiedSource: {
+          gitHead: HEAD,
+          iconSha256: ICON,
+          source: SOURCE,
+          version: "0.1.2",
+        },
+      },
       fixture.values,
     ),
     /lifecycle_lock_lost/,
@@ -348,7 +408,12 @@ test("a drift-and-restore during build cannot alter the commit-derived build roo
   fixture.values.assertMutationAuthority = async () => {
     fixture.calls.push("guard");
     if (liveAuthority !== HEAD) throw new Error("source_authority_changed");
-    return { gitHead: HEAD, iconSha256: ICON, version: "0.1.2" };
+    return {
+      gitHead: HEAD,
+      iconSha256: ICON,
+      source: SOURCE,
+      version: "0.1.2",
+    };
   };
   fixture.values.buildVerifiedDmg = async ({ repoRoot }) => {
     builtFrom = repoRoot;
@@ -360,7 +425,7 @@ test("a drift-and-restore during build cannot alter the commit-derived build roo
       appCompositionDigest: COMPOSITION,
       dmg: "/synthetic/release/resume-ir_0.1.2_aarch64.dmg",
       dmgSha256: DMG,
-      sourceCommit: HEAD,
+      source: SOURCE,
     };
   };
   const result = await deployExactInstalledRelease(
@@ -369,6 +434,7 @@ test("a drift-and-restore during build cannot alter the commit-derived build roo
       preverifiedSource: {
         gitHead: HEAD,
         iconSha256: ICON,
+        source: SOURCE,
         version: "0.1.2",
       },
     },
@@ -394,7 +460,7 @@ test("passes the immutable source closed environment through the Tauri build bou
       appCompositionDigest: COMPOSITION,
       dmg: "/synthetic/release/resume-ir_0.1.2_aarch64.dmg",
       dmgSha256: DMG,
-      sourceCommit: HEAD,
+      source: SOURCE,
     };
   };
 

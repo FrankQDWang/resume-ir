@@ -470,6 +470,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52560adf09603e58c9a7ee1fe1dcb95a16927b17c127f0ac02d6e768a0e25bc1"
 
 [[package]]
+name = "daemon-contract"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "darling"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2440,13 +2447,14 @@ dependencies = [
 
 [[package]]
 name = "resume-desktop"
-version = "0.1.2"
+version = "0.0.0"
 dependencies = [
+ "daemon-contract",
+ "getrandom 0.3.4",
  "process-containment",
  "rfd",
  "serde",
  "serde_json",
- "sha2",
  "tauri",
  "tauri-build",
  "tempfile",

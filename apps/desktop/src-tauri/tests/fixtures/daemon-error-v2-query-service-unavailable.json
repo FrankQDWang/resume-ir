@@ -1,0 +1,11 @@
+{
+  "schema_version": "resume-ir.error.v2",
+  "request_id": "synthetic-request",
+  "status": "error",
+  "error": {
+    "code": "QUERY_SERVICE_UNAVAILABLE",
+    "action": "repair_required",
+    "capability": null,
+    "reason": null
+  }
+}

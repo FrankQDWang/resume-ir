@@ -46,6 +46,15 @@ production-ready scope source.
   Only bounded redacted aggregate outcomes may be retained; no database, index,
   resume data, root path, query, token, raw diagnostics, lifecycle/restart
   ledger, process identity or model artifact is committed or uploaded.
+  S810 uses synthetic v27/v28/v29 store, daemon bootstrap, control-file,
+  optional-runtime, supervisor, lifecycle, IPC, diagnostics and frontend
+  fixtures only. Runtime executable attestation tests use generated synthetic
+  Mach-O payloads and reviewed packaged build inputs; no database, index, resume
+  data, root path, raw query, token, raw diagnostics, lifecycle receipt, process
+  identity, model artifact, signing secret or private benchmark evidence is
+  committed or uploaded. The future installed-main gate remains authorized to
+  use only a temporary APFS copy-on-write witness of the user-authorized v29
+  store and may retain only bounded redacted aggregate outcomes.
   S264 also used a private local-only OCR throughput smoke against the
   user-authorized local resume sample directory with temporary redacted
   manifests and local Tesseract/Poppler commands; no real resume data,
@@ -3369,6 +3378,136 @@ guards, local runtime discovery, and PR #9 CI state.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S810
+
+- The daemon/bootstrap contract is hard-cut to discovery/auth v3, status v3,
+  diagnostics v4, error v2, aggregate IPC v4 and desktop lifecycle/receipt v2.
+  The linked spec and plan replace S809 startup, supervisor, runtime and
+  installed-acceptance clauses while retaining the v29 publication and
+  `{doc_id, version_id, visible_epoch}` detail consistency contracts.
+- Production metadata open is current-v29-only. Existing v29 stores are opened
+  in place under the data-directory owner and validated before use. v27, v28,
+  unknown authorities, missing keys, fingerprint mismatches and integrity
+  failures return typed errors without migration, deletion or byte mutation.
+  A new store is staged as schema 29 and atomically published only when no
+  manifest, key, legacy database or migration authority exists.
+- The persistent daemon now binds and publishes a launch-bound authenticated
+  control plane before optional runtime probes, metadata open, processing
+  contract activation or repair. Its in-memory state machine is
+  `Initializing -> Serving(ResidentRuntime) | Blocked(CoreFailure)`; only
+  authenticated status/diagnostics are served while initializing or blocked,
+  and business routes return bounded typed 503 responses without store access.
+- Discovery/auth share one supervisor-generated 256-bit `launch_id` and one
+  daemon-generated `instance_id`; token and listener stay fixed through the
+  handoff. The generation owner retains the data-directory owner capability,
+  rejects unsafe control-file objects, removes only stale regular control files
+  after exclusive ownership is obtained, and withdraws owned discovery before
+  potentially blocking runtime shutdown work.
+- Optional embedding, OCR and classifier health is resolved independently after
+  control-plane publication. Invalid or unavailable runtimes never spawn or
+  claim work. Keyword search and detail remain available from a Ready store;
+  semantic search fails with typed capability-unavailable, hybrid search falls
+  back to bounded lexical partial results, and mutation workers are gated at
+  claim boundaries according to the current vector/classifier/OCR publication
+  contract.
+- Release builds first stage the embedding runtime and PDF renderer, derive the
+  bounded `sha256_without_code_signature_v1` identity, and compile the exact
+  target/profile/role/runtime-name/payload identity into the daemon. Build-time
+  and runtime checks share one strict arm64 Mach-O canonicalizer; only the
+  terminal code-signature payload and its exact load-command/linkedit size
+  fields are neutralized. Ordinary workspace builds carry no executable
+  authority, so executable optional runtimes fail closed rather than using a
+  debug bypass. Unsupported targets remain compile-only/fail-closed.
+- The desktop supervisor no longer probes or adopts pre-existing discovery and
+  no longer persists restart policy. Five attempts per ten minutes, fixed
+  backoff, five-minute circuit cooldown and five-minute Ready reset live only
+  on the current process monotonic clock. Blocked retry creates a new launch;
+  circuit retry is one half-open attempt after cooldown. Old ledger regular
+  files are best-effort removed but never read or migrated; unsafe objects do
+  not influence policy.
+- The frontend and Tauri bridge fail closed across process lifecycle, core,
+  optional runtime, operation capability and bridge/service availability.
+  Bridge errors and unknown service state revoke stale Ready operations;
+  blocked/circuit retry is explicit, status panels expose bounded typed state,
+  and combined desktop diagnostics remain exportable without a live daemon.
+  The previous central files were split into focused bootstrap, capability,
+  runtime-candidate, health-panel and diagnostics modules.
+- Focused v29 preservation/byte-stability coverage and the complete meta-store
+  all-feature suite passed. Desktop Vitest, Node contract tests and production
+  frontend build passed. Governance performance/autonomous-goal/loop-state
+  checks and governance mutation tests passed after the contract hard cut.
+- Focused import-IPC corrective coverage now decodes only exact
+  `resume-ir.error.v2` import service failures into bounded CLI messages;
+  malformed, old, or mismatched responses remain generic failures. The
+  daemon closed-loop check seeds a current-v29 store, proves keyword search and
+  detail remain available without optional runtimes, and proves import is
+  rejected before a write; the strict attested-runtime IPC test separately
+  proves actual import success. Exact CLI parser/error tests, the strict daemon
+  import test, the revised daemon closed-loop check, and its workflow guard
+  passed. This is a focused corrective slice, not release-readiness evidence.
+- Local verification now has a resumable parallel entrypoint:
+  `./scripts/ci/verify-local.sh --parallel --jobs 10`. Its declarative manifest
+  assigns three concurrent ordinary Cargo slots plus an exclusive native-runtime
+  slot for child-process checks, alongside separate packaging and runtime
+  locks, dividing configured build/test workers across those slots; a local
+  ignored ledger
+  fingerprints declared inputs, records immutable round receipts, reuses only
+  exact unchanged passes, and keeps unrelated checks running after a failure.
+  The historical morning batch was not retroactively guessed from a later
+  duplicate run; its unresolved position remains `unknown` in the S810 test
+  ledger, while all future rounds have durable per-command evidence.
+- The status/capability matrix now has one Rust owner in `daemon-contract` and
+  one shared conformance fixture consumed by daemon, CLI, Tauri and TypeScript.
+  This removed the producer/consumer drift that made the unattended R07 daemon
+  closed-loop fail at initial status. The exact closed-loop cell and focused
+  producer/consumer tests pass; the other 38 R07 passing cells were not rerun.
+- macOS artifact provenance is hard-cut to v3
+  `{authority, base_commit, source_tree_sha256}` evidence. The current worktree
+  is copied into a content-addressed immutable snapshot; tracked deletions are
+  represented as absence, runtime packs and dependency caches stay outside the
+  source digest, and the final verifier binds the actual configured Cargo
+  target executable instead of assuming `src-tauri/target`. The v1/v2
+  composition/install readers and 0.1.1 upgrade executor are deleted; only
+  current v3 first-install and same-version reinstall remain.
+- A current-worktree arm64 DMG passed mounted composition verification with
+  source tree
+  `e96277992d5cb701b8b084afe0e73b9e9bd853c1b0d1c60ed3947d1353f3c3f6`,
+  DMG SHA-256
+  `1bdf2ee42f45a175a0dfd2ecd207a9229a28206a576e9722952ad82568cc57cd`
+  and App composition digest
+  `6bedc5c2db0f4a3c4cf2d672a5bbdb1e2093f7d3e485773fb65c8931c3890cab`.
+  It proves arm64 composition, all three runtime packs, ad-hoc signature,
+  hardened runtime, exact embedding-only entitlement scope and zero
+  build-machine path markers. It is `gui_manual`/`composition_only` evidence,
+  not installed acceptance or notarized release evidence.
+- The same worktree DMG was installed through the manual-test lane and its
+  copied App revalidated against the exact source identity, composition,
+  reviewed executable, icon and runtime manifests. A normal launch against the
+  existing pre-v29 user data displayed the typed unsupported-schema blocked
+  state with search disabled. A guarded fresh-data launch showed the control
+  plane while core initialization continued, then reached Ready with all three
+  optional runtimes available; a synthetic empty-corpus keyword search and the
+  combined redacted diagnostics UI passed. Normal quit left no process/control
+  residue, and the original user data directory was restored with the same
+  inode. This is recoverable `gui_manual` evidence, not the merged-clean-main
+  installed-acceptance gate.
+- Post-R07 Rust quality checks were limited to changed scopes. All-target,
+  all-feature Clippy passed for `daemon-contract`, `resume-daemon` and
+  `resume-cli`. Desktop all-target Clippy first found one dead test-only
+  `CoreReason` re-export; removing that unused production import made the exact
+  failed Clippy command pass. Exact Rustfmt and diff checks passed without
+  replaying any R07 test.
+- Frozen-code daemon/workspace Clippy and tests, the release Tauri App build,
+  merged-clean-main native macOS installed acceptance and the renewed two-hour
+  mixed fault soak remain mandatory before S810 can claim release readiness.
+  The default installed-acceptance path now owns a real external fault harness:
+  it verifies exact installed bindings before activating same-directory,
+  no-clobber runtime removal, restores the exact object on every exit, and
+  delays only the launch-bound embedding child with `SIGSTOP`/`SIGCONT` for the
+  slow-bootstrap cell. Test injection is isolated to a test-only entrypoint and
+  is explicitly marked `not_native_evidence`; passing unit tests are not
+  represented as native installed evidence.
 
 ### S809
 
@@ -30605,6 +30744,251 @@ Output summary:
 
 - `cargo test --workspace`: exit 0.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
+
+### P0 v0.1.3–v0.1.8 feature-train foundation
+
+- The complete S810 daemon bootstrap/capability hard-cut tree is preserved as
+  commit `b2e1258dd694dcd5b54ae967ad89b3eb137acadf`. Its immutable R07–R12
+  evidence remains authoritative; the feature train does not replay those
+  valid cells merely to establish a new round.
+- The 2026-07-24 linked spec and plan replace the v29-only product direction
+  with continuous encrypted COW forward migration beginning at v29, followed
+  by database-owned source roots, path-truth reconciliation, durable root
+  deletion, PDFium/resumable OCR, original-PDF preview and native reveal.
+- #217 remains the umbrella issue. At most it and the current version feature
+  issue may be open. Each v0.1.3–v0.1.8 release requires focused tests,
+  exact-commit DMG, native installed Computer Use acceptance and issue
+  reconciliation before the next version starts.
+- `apps/desktop/package.json.version` is now the single product version
+  authority. Tauri references `../package.json`; DMG planning, worktree
+  release, install/reinstall and installed-main source binding derive the same
+  value. The desktop Cargo package uses `0.0.0` as an explicitly non-product
+  internal crate version.
+- The feature-train test authority is
+  `docs/reports/2026-07-24-feature-train-verification-ledger.md`. It records
+  command, behavior boundary, input fingerprint, result, invalidating changes
+  and installed evidence. Passing rows remain reusable until their inputs or
+  behavior boundary change.
+- Final full parallel verification, merged-main installed acceptance and the
+  120-minute soak are intentionally deferred until v0.1.8. Their absence
+  blocks #217/release-ready, not the closure of an individually installed and
+  accepted feature issue.
+- The first hosted Linux Clippy run for PR #235 exposed a target-ownership
+  error in the OCR runtime pack: macOS-only production identity constants were
+  also compiled by `cfg(test)` on Linux and rejected as dead code under
+  `-D warnings`. The root repair scopes those symbols to macOS arm64. Its
+  focused runtime-pack test passed 8 tests with 86 unrelated tests filtered
+  out; hosted Linux Clippy subsequently passed.
+- That run then exposed two test-ownership gaps instead of product failures.
+  Arm64 Mach-O attestation cases were unconditionally run on Linux, and daemon
+  integration cases requiring uncommitted reviewed runtime packs were part of
+  the public workspace lane. Mach-O cases are now macOS arm64 tests. Reviewed
+  runtime execution now has an explicit `native-runtime-tests` feature:
+  public CI keeps portable tests and reports native cases as excluded/ignored,
+  while the local reviewed-pack lane runs the same cases with the feature.
+  One exact case passed in both modes: explicitly ignored without the feature
+  and executed successfully with it.
+- The dedicated daemon incremental-import check is also native-runtime
+  evidence. It now enables the feature explicitly and stays in local/full
+  delivery verification; the public PR workflow is machine-checked to exclude
+  it. Its exact watcher regression passed locally with 21 unrelated tests
+  filtered out, while the hosted portable Clippy/workspace/closed-loop stages
+  had already passed.
+- The next hosted portable run exposed one test-client framing defect in the
+  existing s49 detail contract test: its fourth and final request used
+  unbounded `read_to_string`, so a Linux transport reset at daemon budget exit
+  discarded an otherwise frameable HTTP response. The affected harness now
+  reads one response by its exact `Content-Length` under a 2 MiB cap. A
+  deterministic regression proves that a complete frame survives a subsequent
+  reset while a partial frame still fails. Those two focused reader tests and
+  the original exact s49 test passed; no unrelated daemon or workspace tests
+  were replayed. Hosted Linux remains the final receipt for this repair.
+- The subsequent Linux run stopped earlier on an initializing-generation
+  cleanup test that waited only for discovery removal before asserting both
+  discovery and auth were gone. Because owned cleanup removes those files in
+  sequence, the test could observe the valid interval between the two unlinks.
+  Its existing bounded wait now observes the complete two-file invariant. The
+  exact test passed with 93 unrelated daemon tests filtered out; the production
+  cleanup order and one-second deadline are unchanged.
+- The repaired Linux workflow then passed completely, including the portable
+  workspace, CLI loop and daemon loop, and the macOS platform lane also passed.
+  Windows Platform CI run `30084951841` reached one shared meta-store test
+  modeling defect: 15 byte-stability cases tried to read the two owner-lock
+  files while the same process held their kernel locks, which Windows rejected
+  with OS error 33 before the database assertions ran.
+- Migration snapshots now represent only the exact
+  `data-directory-owner.lock` and `daemon.owner.lock` paths as typed
+  `OwnerLock` entries. Presence and type remain compared, while all other
+  regular files retain strict byte reads. This preserves the ciphertext
+  no-write invariant without suppressing Windows I/O errors.
+- Two exact affected meta-store tests passed locally: the fresh-owner v29 case
+  passed with 127 unrelated tests filtered out, and the feature-gated public
+  v28 legacy fixture case passed with 130 unrelated tests filtered out.
+  Focused meta-store Clippy, rustfmt, public guard and diff checks passed. No
+  whole meta-store or workspace suite was replayed; hosted Windows remains the
+  authoritative cross-platform receipt for this repair.
+- The next Windows platform run cleared the former owner-lock failure point and
+  exposed a benchmark fixture that mixed oversized-output and long-running
+  timeout behavior. Its PowerShell text writer could remain buffered until the
+  five-second timeout won. The oversized integration fixture now terminates
+  after emitting 9 MiB; the existing bounded-pipe unit test retains ownership
+  of early cap observation and separate tests retain timeout ownership. The
+  exact oversized-output integration case passed in 0.30 seconds with 115
+  unrelated tests filtered out; no timeout or retry was enlarged.
+- The concurrent Linux run exposed a true final-response truncation in the
+  fifth s49 request. The bounded client correctly refused to treat a reset
+  before the declared body as success. One-shot HTTP and search responses now
+  explicitly close the TCP write half only after their complete response frame
+  is written, while streaming import/batch writers remain multi-write.
+  All 6 directly affected s49 cases, one exact keyword-search case, one exact
+  status case and exact benchmark/daemon test-target Clippy passed, along with
+  rustfmt, public guard and diff checks. No daemon, benchmark-runner or
+  workspace suite was replayed locally.
+- The half-close-only hosted replay moved the reset to another s49 final
+  request, proving that kernel-buffer acceptance was still not a complete
+  request-limit exit receipt. Only the explicit final `--max-requests`
+  connection now waits for peer close after sending FIN, bounded to one second
+  while the existing five-second watchdog remains active. Normal resident
+  requests retain immediate completion. The directly affected 6-case s49
+  target and exact request-limit cleanup unit passed, plus combined
+  daemon-bin/s49 Clippy, rustfmt, public guard and diff checks.
+- Windows Platform CI run `30087200255` passed the prior owner-lock and
+  oversized-output repairs, then exposed one CLI test-fixture portability
+  defect. The unsafe metadata-key restore case created a normal directory on
+  Windows because only Unix permissions made it unsafe. The fixture now places
+  a regular file with sentinel bytes at the directory authority path, which is
+  invalid on every platform; restore must fail without replacing or changing
+  it. Existing Unix meta-store coverage still separately proves rejection of a
+  0755 key directory without chmod repair. The exact s146 CLI case and focused
+  Clippy/rustfmt/diff checks passed; no CLI crate or workspace suite was
+  replayed.
+- PR run `30088754395` then proved that the final request's one-second
+  peer-close read was itself premature for deferred detail/hydrate responses
+  under hosted parallel load: three s49 cases were truncated even though the
+  daemon unit lifecycle passed. The nested timeout is deleted, not enlarged.
+  The existing five-second connection watchdog is now the single bounded
+  lifetime owner; only the explicit request-limit final connection waits,
+  while normal resident requests remain immediate. A deterministic lifecycle
+  regression proves ownership remains after 1.2 seconds until the peer closes,
+  and all 6 directly affected s49 cases plus combined daemon-bin/s49 Clippy
+  passed locally.
+- The concurrent Windows run passed the repaired s146 metadata-key restore
+  case, closing that platform row, then failed two final deferred s48 search
+  responses on the same old one-second lifecycle. Both exact affected s48
+  cases passed against the single-deadline repair with 12 unrelated cases
+  filtered out, and focused s48 Clippy passed. This extends P0-13's evidence;
+  it is not a separate root cause or a reason to replay unrelated Windows
+  tests locally.
+- The first single-deadline hosted Linux replay still reset one of six s49
+  cases. Request parsing's two-second read timeout was shared by every cloned
+  socket handle, so removing the explicit one-second timeout had not completed
+  the phase transition. Final-response ownership now clears the request-phase
+  timeout and ignores any residual timeout until the existing five-second
+  watchdog ends the connection. A deterministic regression injects a 25 ms
+  request timeout and proves it cannot release the final connection. The
+  lifecycle case, all 6 s49 cases, both exact s48 cases and combined focused
+  Clippy passed after this correction.
+- The same intermediate tree then left the Windows platform job in workspace
+  tests for about 47 minutes, versus 19–26 minutes for preceding runs. A
+  blocking peer-close read still depended on `shutdown()` waking another
+  Windows socket handle. The invalidated run was cancelled as hung. The final
+  lifecycle uses 25 ms read polling only as a progress mechanism: poll timeouts
+  never release ownership, and the five-second watchdog publishes the sole
+  cancellation decision through a shared atomic flag. Two final-tree local
+  execution attempts never entered the Rust test body because the macOS
+  process stalled in `_dyld_start`; they are recorded as non-evidence.
+  Focused final-tree daemon-bin/s48/s49 Clippy passed, and hosted Linux/Windows
+  remain the execution receipts.
+- The polling intermediate tree subsequently passed Linux and macOS but again
+  left Windows in workspace tests for about 49 minutes. This proved that TCP
+  peer-close was the wrong lifecycle authority, regardless of timeout
+  implementation. The server now waits on the existing exactly-once
+  `ConnectionCompletion` shared with deferred response workers. Synchronous
+  responses are already terminal; deferred responses become terminal only
+  after their writer finishes; lost owners remain bounded by the five-second
+  watchdog. The exact completion regression passed 1/1, all 6 s49 cases
+  passed, both affected s48 cases passed individually, and combined focused
+  Clippy passed. The invalidated Windows run was cancelled; hosted
+  Linux/Windows replay remains the platform receipt.
+- Completion-only PR run `30096972706` passed s48 and five of six s49 cases but
+  still reset one final detail response after the writer completed. The final
+  lifecycle therefore has two ordered receipts: exactly-once
+  `ConnectionCompletion` proves the full response reached the kernel, then a
+  one-second transport receipt holds the socket until a normal
+  `Connection: close` client closes. The transport timer starts only after
+  business completion, so it cannot mask worker latency and cannot accumulate
+  five-second Windows long tails. The exact two-phase regression passed 1/1,
+  all 6 s49 cases passed, both affected s48 cases passed individually, and
+  combined focused Clippy passed. The invalidated Windows run was cancelled;
+  hosted Linux/Windows remain the platform receipts.
+- Two-phase PR run `30097965483` passed s48 but reset two s49 final responses.
+  The request watchdog remained active while the server waited for the client
+  delivery receipt, so a response completing within the five-second request
+  budget received only the remainder of that budget for delivery; expiry used
+  `Shutdown::Both` and reset the otherwise complete socket. A deterministic
+  300 ms lifecycle regression failed before the repair and passed after the
+  request watchdog was stopped and joined at response completion. The separate
+  one-second delivery window then starts; the request budget is unchanged.
+  The prior lifecycle regression and the two exact hosted-failed s49 cases
+  passed, the latter in parallel with five unrelated cases filtered from each
+  process. Focused daemon-bin/s49 Clippy, rustfmt and diff checks passed. The
+  invalidated Platform run `30097965482` was cancelled after macOS passed while
+  Windows was still testing; a new hosted Linux/Windows replay is required.
+- Follow-up PR run `30099276417` passed both lifecycle unit regressions and s48
+  but reset another s49 case. This separated the remaining defect from
+  transport timing: s49 alone made its Nth business request double as a process
+  exit signal via `--max-requests`, while s48 already used the real supervised
+  parent-lifecycle capability. Because TCP cannot attest that a peer
+  application consumed a response, s49 now starts the daemon through the
+  repository's cross-platform `ContainedChild`, reads and validates every
+  response, asserts the daemon is still alive, and only then closes parent
+  lifecycle stdin. A raw-child first attempt correctly failed the isolated
+  process-group safety check and was replaced rather than bypassed. All 6 s49
+  cases passed with the final harness. The invalidated Platform run
+  `30099276430` was cancelled after macOS passed while Windows was still
+  testing; hosted replay is pending.
+- Parent-owned s49 commit `c31a16f` passed PR run `30100318566`, Security run
+  `30100318710`, and the macOS job in Platform run `30100318606`. Its Windows
+  job remained in workspace tests for 35 minutes, beyond the recent 19–26
+  minute observed range, so it was cancelled before repeating the 47–49 minute
+  failure mode. The s49 harness now bounds each parent-shutdown wait to ten
+  seconds and, on failure, reports only the presence of discovery/auth before
+  terminating the contained process tree. This turns any Windows lifecycle
+  stall into a named, bounded failure without adding a retry or enlarging a
+  product timeout. All 6 s49 cases passed locally after the diagnostic bound;
+  hosted Windows remains pending.
+- PR run `30103086599` then reset three concurrent s49 responses on Linux under
+  the parent-owned harness. Closing request input after each terminal parse was
+  tested as a falsifiable socket-state hypothesis. One exact invariant and
+  eight directly affected s49/s20/s48 cases passed locally, but Linux PR run
+  `30104547488` still reset the large detail/hydrate case. The production
+  change has therefore been reverted rather than retained speculatively.
+  A temporary bounded s49 diagnostic now records only request ordinal, route,
+  daemon liveness, received byte count and declared frame length on failure.
+  It excludes payload, path, token, request id and candidate data. Nextest run
+  `444e7973-df5a-48f6-9c7e-f16a24d28d79` passed the hosted-failing case and
+  both response-reader regressions locally; hosted Linux will provide the
+  decisive trace.
+- Linux PR run `30105663529` then showed two failures at request ordinal 1 on
+  `/details`: the daemon was still running and the client had received zero
+  bytes with no response header. This rules out large-body truncation, hydrate
+  pagination and client frame parsing. The next failure-only probe
+  distinguishes cancellation-socket clone, watchdog spawn/cancellation and
+  response write/shutdown failures. Daemon stderr is drained into a bounded
+  local buffer and only tagged closed events can reach CI; payload, path,
+  token and request identifiers remain excluded. The exact hosted-failing
+  case plus two directly affected lifecycle/response tests passed locally;
+  Nextest run `65d9bbe9-7044-4c99-a2df-e99c73f0d323` completed the latter two
+  in 0.617 seconds.
+- PR run `30106509107` did not reach s49 because the first server-side probe
+  also emitted a tagged response-sink event during s20's intentional
+  client-disconnect smoke, which correctly requires empty stderr. This is a
+  diagnostic-scope failure, not product evidence. The temporary probe is now
+  enabled only for the s49 child daemon; normal product and all other tests
+  remain silent. Nextest run `02461f85-6549-4c62-a9e1-b3fd0b193b0f` passed the
+  exact s20 fault smoke and hosted-failing s49 case in parallel: 2 passed,
+  37 skipped, 2.477 seconds. Focused Clippy, rustfmt, diff and public guards
+  passed.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

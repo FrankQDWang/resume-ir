@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdout, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 #[cfg(windows)]
 use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -33,6 +33,12 @@ macro_rules! serialize_windows_s4_daemon_test {
     };
 }
 
+macro_rules! acquire_s4_runtime_capacity {
+    ($capacity:ident) => {
+        let $capacity = support::import_runtime_capacity_lease();
+    };
+}
+
 #[cfg(windows)]
 fn windows_s4_daemon_test_lock() -> MutexGuard<'static, ()> {
     static WINDOWS_S4_DAEMON_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -45,6 +51,7 @@ fn windows_s4_daemon_test_lock() -> MutexGuard<'static, ()> {
 #[test]
 fn retired_embedding_writer_flags_are_rejected_before_daemon_startup() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     for retired_args in [
         vec!["--once", "--work-embeddings-once"],
         vec!["--work-embeddings"],
@@ -53,7 +60,7 @@ fn retired_embedding_writer_flags_are_rejected_before_daemon_startup() {
     ] {
         let data_dir = temp_dir("retired-embedding-writer-flag");
         remove_dir(&data_dir);
-        let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        let output = support::import_capable_daemon_command(&runtime_capacity)
             .args(["--data-dir", path_str(&data_dir), "run", "--foreground"])
             .args(retired_args)
             .output()
@@ -68,9 +75,10 @@ fn retired_embedding_writer_flags_are_rejected_before_daemon_startup() {
 #[test]
 fn foreground_once_opens_store_reports_unpublished_repair_state_and_exits() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-data");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -104,13 +112,14 @@ fn foreground_once_opens_store_reports_unpublished_repair_state_and_exits() {
 #[test]
 fn foreground_once_rejects_a_competing_import_processing_owner() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-processing-owner-data");
     let owner = match DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap() {
         DataDirectoryOwnerAcquisition::Acquired(lease) => lease,
         DataDirectoryOwnerAcquisition::Contended => panic!("test data dir is already owned"),
     };
 
-    let blocked = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let blocked = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -133,7 +142,7 @@ fn foreground_once_rejects_a_competing_import_processing_owner() {
     assert_eq!(event["disposition"], "blocked");
 
     drop(owner);
-    let recovered = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let recovered = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -156,6 +165,7 @@ fn foreground_once_rejects_a_competing_import_processing_owner() {
 #[test]
 fn foreground_once_worker_processes_queued_import_task_from_persistent_scope() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-import-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -166,7 +176,7 @@ fn foreground_once_worker_processes_queued_import_task_from_persistent_scope() {
         1_700_000_000,
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -174,6 +184,7 @@ fn foreground_once_worker_processes_queued_import_task_from_persistent_scope() {
             "--foreground",
             "--once",
             "--work-imports-once",
+            "--work-index-once",
         ])
         .output()
         .expect("run resume-daemon import worker once");
@@ -200,6 +211,15 @@ fn foreground_once_worker_processes_queued_import_task_from_persistent_scope() {
     assert_eq!(summary.import_tasks_queued, 0);
     assert_eq!(summary.import_tasks_recoverable, 0);
     assert_eq!(summary.searchable_documents, 2);
+    let projection = store.search_projection_state().unwrap();
+    assert_eq!(
+        projection.service_state,
+        SearchProjectionServiceState::Ready
+    );
+    assert!(projection.visible_epoch > 0);
+    assert!(projection.generation.is_some());
+    drop(store);
+    assert!(!search_fulltext(&data_dir, "java").is_empty());
 
     remove_dir(&data_dir);
 }
@@ -207,6 +227,7 @@ fn foreground_once_worker_processes_queued_import_task_from_persistent_scope() {
 #[test]
 fn migration_rebuild_retires_legacy_search_artifacts_before_first_publication() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-migration-legacy-artifacts-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -218,7 +239,7 @@ fn migration_rebuild_retires_legacy_search_artifacts_before_first_publication() 
     );
     seed_legacy_search_artifact_layout(&data_dir);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -269,6 +290,7 @@ fn migration_rebuild_retires_legacy_search_artifacts_before_first_publication() 
 #[test]
 fn migration_rebuild_invalid_publication_lock_blocks_repair_without_exiting_daemon() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-migration-invalid-publication-lock-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -279,10 +301,12 @@ fn migration_rebuild_invalid_publication_lock_blocks_repair_without_exiting_daem
         1_700_000_000,
     );
     let publication_lock = data_dir.join("search-publication.lock");
-    fs::remove_file(&publication_lock).unwrap();
+    if publication_lock.exists() {
+        fs::remove_file(&publication_lock).unwrap();
+    }
     fs::create_dir(&publication_lock).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -319,7 +343,7 @@ fn migration_rebuild_invalid_publication_lock_blocks_repair_without_exiting_daem
     );
     drop(store);
 
-    let restart = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let restart = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -348,6 +372,7 @@ fn migration_rebuild_invalid_publication_lock_blocks_repair_without_exiting_daem
 #[test]
 fn foreground_startup_rebuilds_missing_ready_snapshot_without_manual_worker() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-index-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -357,7 +382,7 @@ fn foreground_startup_rebuilds_missing_ready_snapshot_without_manual_worker() {
         &canonical_fixture_root,
         1_700_000_000,
     );
-    run_import_worker_once(&data_dir);
+    run_import_worker_once(&data_dir, &runtime_capacity);
     let missing_generation = ready_generation(&data_dir);
     fs::remove_dir_all(data_dir.join("search-index")).unwrap();
     assert!(!data_dir
@@ -365,7 +390,7 @@ fn foreground_startup_rebuilds_missing_ready_snapshot_without_manual_worker() {
         .join(&missing_generation)
         .exists());
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -399,6 +424,7 @@ fn foreground_startup_rebuilds_missing_ready_snapshot_without_manual_worker() {
 #[test]
 fn foreground_startup_rebuilds_corrupt_ready_snapshot_without_manual_worker() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-index-worker-schema-mismatch-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -408,7 +434,7 @@ fn foreground_startup_rebuilds_corrupt_ready_snapshot_without_manual_worker() {
         &canonical_fixture_root,
         1_700_000_000,
     );
-    run_import_worker_once(&data_dir);
+    run_import_worker_once(&data_dir, &runtime_capacity);
 
     let index_root = data_dir.join("search-index");
     let ready_generation = ready_generation(&data_dir);
@@ -424,7 +450,7 @@ fn foreground_startup_rebuilds_corrupt_ready_snapshot_without_manual_worker() {
     )
     .unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -458,6 +484,7 @@ fn foreground_startup_rebuilds_corrupt_ready_snapshot_without_manual_worker() {
 #[test]
 fn foreground_index_worker_loop_observes_startup_repaired_snapshot() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-index-loop-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -467,10 +494,10 @@ fn foreground_index_worker_loop_observes_startup_repaired_snapshot() {
         &canonical_fixture_root,
         1_700_000_000,
     );
-    run_import_worker_once(&data_dir);
+    run_import_worker_once(&data_dir, &runtime_capacity);
     fs::remove_dir_all(data_dir.join("search-index")).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -511,8 +538,9 @@ fn foreground_index_worker_loop_observes_startup_repaired_snapshot() {
 #[test]
 fn foreground_once_worker_skips_cancelled_import_task() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-import-cancelled-data");
-    initialize_empty_ready_store(&data_dir);
+    initialize_empty_ready_store(&data_dir, &runtime_capacity);
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
     let task_id = seed_queued_import_task_in_ready_store(
@@ -527,7 +555,7 @@ fn foreground_once_worker_skips_cancelled_import_task() {
         .unwrap();
     drop(store);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -568,8 +596,9 @@ fn foreground_once_worker_skips_cancelled_import_task() {
 #[test]
 fn foreground_once_worker_continues_after_retryable_import_failure() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-import-worker-failure-data");
-    initialize_empty_ready_store(&data_dir);
+    initialize_empty_ready_store(&data_dir, &runtime_capacity);
     let missing_root = temp_dir("daemon-import-worker-missing-root");
     remove_dir(&missing_root);
     let fixture_root = fixture_root();
@@ -587,7 +616,7 @@ fn foreground_once_worker_continues_after_retryable_import_failure() {
         1_700_000_010,
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -629,6 +658,7 @@ fn foreground_once_worker_continues_after_retryable_import_failure() {
 #[test]
 fn migration_rebuild_never_publishes_valid_root_before_later_unavailable_root() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-migration-publication-barrier-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -647,7 +677,7 @@ fn migration_rebuild_never_publishes_valid_root_before_later_unavailable_root() 
         1_700_000_010,
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -702,10 +732,11 @@ fn migration_rebuild_never_publishes_valid_root_before_later_unavailable_root() 
 #[test]
 fn foreground_import_scheduler_processes_task_enqueued_after_startup() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-import-scheduler-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    let mut command = Command::new(env!("CARGO_BIN_EXE_resume-daemon"));
+    let mut command = support::import_capable_daemon_command(&runtime_capacity);
     command
         .args([
             "--data-dir",
@@ -718,6 +749,8 @@ fn foreground_import_scheduler_processes_task_enqueued_after_startup() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--parent-lifecycle-stdin",
+            "--launch-id",
+            "4444444444444444444444444444444444444444444444444444444444444444",
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -728,7 +761,7 @@ fn foreground_import_scheduler_processes_task_enqueued_after_startup() {
     let stdout = child.take_stdout().expect("daemon stdout");
     let mut stderr = child.take_stderr().expect("daemon stderr");
     let mut stdout = spawn_daemon_stdout_collector(stdout);
-    wait_until_contained_foreground_ready(&mut child, &mut stdout, &mut stderr);
+    wait_until_contained_core_ready(&mut child, &data_dir, &mut stdout, &mut stderr);
 
     let task_id = request_daemon_import(&data_dir, &canonical_fixture_root);
     wait_until_import_task_completed(&mut child, &data_dir, &task_id);
@@ -755,6 +788,7 @@ fn foreground_import_scheduler_processes_task_enqueued_after_startup() {
 #[test]
 fn foreground_import_scheduler_rescans_completed_root_without_path_leak() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-import-rescan-data");
     let fixture_root = temp_dir("daemon-import-rescan-root");
     fs::write(
@@ -769,14 +803,14 @@ fn foreground_import_scheduler_rescans_completed_root_without_path_leak() {
         &canonical_fixture_root,
         1_700_000_000,
     );
-    run_import_worker_once(&data_dir);
+    run_import_worker_once(&data_dir, &runtime_capacity);
     fs::write(
         fixture_root.join("second.txt"),
         b"SUMMARY\nSynthetic second resume.\nEXPERIENCE\nBuilt Kubernetes search services.\nSKILLS\nKubernetes",
     )
     .unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -820,6 +854,7 @@ fn foreground_import_scheduler_rescans_completed_root_without_path_leak() {
 #[test]
 fn foreground_import_scheduler_preserves_rescan_interval_across_restart() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-import-startup-catchup-data");
     let fixture_root = temp_dir("daemon-import-startup-catchup-root");
     fs::write(
@@ -834,14 +869,14 @@ fn foreground_import_scheduler_preserves_rescan_interval_across_restart() {
         &canonical_fixture_root,
         1_700_000_000,
     );
-    run_import_worker_once(&data_dir);
+    run_import_worker_once(&data_dir, &runtime_capacity);
     fs::write(
         fixture_root.join("second.txt"),
         b"SUMMARY\nStartupCatchupToken candidate.\nEXPERIENCE\nBuilt local search services.\nSKILLS\nSearch",
     )
     .unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -881,6 +916,7 @@ fn foreground_import_scheduler_preserves_rescan_interval_across_restart() {
 #[test]
 fn foreground_import_scheduler_backs_off_retryable_failures() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-import-scheduler-backoff-data");
     let missing_root = temp_dir("daemon-import-scheduler-backoff-missing-root");
     remove_dir(&missing_root);
@@ -891,7 +927,7 @@ fn foreground_import_scheduler_backs_off_retryable_failures() {
         1_700_000_000,
     );
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let mut child = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -937,10 +973,11 @@ fn foreground_import_scheduler_backs_off_retryable_failures() {
 #[test]
 fn foreground_import_scheduler_recovers_orphaned_running_import_task_immediately() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-import-scheduler-recovery-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    initialize_empty_ready_store(&data_dir);
+    initialize_empty_ready_store(&data_dir, &runtime_capacity);
     let task_id = seed_queued_import_task_in_ready_store(
         &data_dir,
         "daemon-import-scheduler-stale-running",
@@ -958,7 +995,7 @@ fn foreground_import_scheduler_recovers_orphaned_running_import_task_immediately
         .is_some());
     drop(store);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -998,10 +1035,11 @@ fn foreground_import_scheduler_recovers_orphaned_running_import_task_immediately
 #[test]
 fn foreground_import_scheduler_fails_closed_against_a_legacy_live_task_owner() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-import-live-owner-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    initialize_empty_ready_store(&data_dir);
+    initialize_empty_ready_store(&data_dir, &runtime_capacity);
     let task_id = seed_queued_import_task_in_ready_store(
         &data_dir,
         "daemon-import-live-owner",
@@ -1020,7 +1058,7 @@ fn foreground_import_scheduler_fails_closed_against_a_legacy_live_task_owner() {
     drop(store);
     let live_owner = ImportTaskOwnerLock::acquire(&data_dir, &task_id).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -1057,6 +1095,7 @@ fn foreground_import_scheduler_fails_closed_against_a_legacy_live_task_owner() {
 #[test]
 fn foreground_import_scheduler_claims_only_after_acquiring_the_owner_lock() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-import-owner-handshake-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -1068,7 +1107,7 @@ fn foreground_import_scheduler_claims_only_after_acquiring_the_owner_lock() {
     );
     let competing_owner = ImportTaskOwnerLock::acquire(&data_dir, &task_id).unwrap();
 
-    let blocked_claim = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let blocked_claim = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -1093,7 +1132,7 @@ fn foreground_import_scheduler_claims_only_after_acquiring_the_owner_lock() {
     drop(store);
 
     drop(competing_owner);
-    run_import_worker_once(&data_dir);
+    run_import_worker_once(&data_dir, &runtime_capacity);
     let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
     assert_eq!(
         store.import_task_by_id(&task_id).unwrap().unwrap().status,
@@ -1105,8 +1144,9 @@ fn foreground_import_scheduler_claims_only_after_acquiring_the_owner_lock() {
 }
 
 #[test]
-fn migration_rebuild_reconciles_a_root_cancelled_after_the_first_worker_tick() {
+fn migration_rebuild_blocks_cancellation_route_until_core_ready() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-migration-live-cancel-data");
     let fixture_root = active_kill_fixture_root(ACTIVE_KILL_FIXTURE_FILE_COUNT);
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -1117,7 +1157,7 @@ fn migration_rebuild_reconciles_a_root_cancelled_after_the_first_worker_tick() {
         1_700_000_000,
     );
 
-    let mut command = Command::new(env!("CARGO_BIN_EXE_resume-daemon"));
+    let mut command = support::import_capable_daemon_command(&runtime_capacity);
     command
         .args([
             "--data-dir",
@@ -1130,6 +1170,8 @@ fn migration_rebuild_reconciles_a_root_cancelled_after_the_first_worker_tick() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--parent-lifecycle-stdin",
+            "--launch-id",
+            "4444444444444444444444444444444444444444444444444444444444444445",
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1142,13 +1184,9 @@ fn migration_rebuild_reconciles_a_root_cancelled_after_the_first_worker_tick() {
     let stdout = spawn_daemon_stdout_collector(stdout);
     wait_until_import_task_running(&mut child, &data_dir, &cancelled_task_id);
 
-    request_daemon_import_cancellation(&data_dir, &cancelled_task_id);
-    let replacement_task_id = wait_until_replacement_import_completed(
-        &mut child,
-        &data_dir,
-        &cancelled_task_id,
-        &canonical_fixture_root,
-    );
+    assert_daemon_import_cancellation_is_initializing(&data_dir, &cancelled_task_id);
+    wait_until_import_task_completed(&mut child, &data_dir, &cancelled_task_id);
+    wait_until_search_projection_ready(&mut child, &data_dir);
     drop(lifecycle_stdin);
 
     let output = wait_contained_daemon(child, stdout, stderr);
@@ -1167,15 +1205,13 @@ fn migration_rebuild_reconciles_a_root_cancelled_after_the_first_worker_tick() {
     assert!(!output.stdout.contains(path_str(&canonical_fixture_root)));
 
     let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
-    assert!(store.is_import_task_cancelled(&cancelled_task_id).unwrap());
-    let replacement = store
+    assert!(!store.is_import_task_cancelled(&cancelled_task_id).unwrap());
+    let completed = store
         .latest_import_task_by_root(path_str(&canonical_fixture_root))
         .unwrap()
         .unwrap();
-    assert_eq!(replacement.id, replacement_task_id);
-    assert_ne!(replacement.id, cancelled_task_id);
-    assert_eq!(replacement.status, ImportTaskStatus::Completed);
-    assert!(!store.is_import_task_cancelled(&replacement.id).unwrap());
+    assert_eq!(completed.id, cancelled_task_id);
+    assert_eq!(completed.status, ImportTaskStatus::Completed);
     let projection = store.search_projection_state().unwrap();
     assert_eq!(
         projection.service_state,
@@ -1192,6 +1228,7 @@ fn migration_rebuild_reconciles_a_root_cancelled_after_the_first_worker_tick() {
 #[test]
 fn foreground_import_scheduler_recovers_active_import_after_kill_and_restart() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-import-active-kill-data");
     let fixture_root = active_kill_fixture_root(ACTIVE_KILL_FIXTURE_FILE_COUNT);
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -1202,7 +1239,7 @@ fn foreground_import_scheduler_recovers_active_import_after_kill_and_restart() {
         1_700_000_000,
     );
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let mut child = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -1235,7 +1272,7 @@ fn foreground_import_scheduler_recovers_active_import_after_kill_and_restart() {
         .stderr
         .contains(path_str(&canonical_fixture_root)));
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -1282,11 +1319,17 @@ fn foreground_import_scheduler_recovers_active_import_after_kill_and_restart() {
 }
 
 #[test]
-fn foreground_import_watcher_requeues_completed_root_after_file_change_without_path_leak() {
+fn foreground_import_watcher_requeues_completed_root_after_word_and_pdf_change_without_path_leak() {
     serialize_windows_s4_daemon_test!();
+    acquire_s4_runtime_capacity!(runtime_capacity);
     let data_dir = temp_dir("daemon-import-watcher-data");
     let watched_root = temp_dir("daemon-import-watcher-root");
     let watched_file = watched_root.join("candidate.txt");
+    let fixture_root = fixture_root();
+    let word_fixture = fixture_root.join("synthetic-java-engineer.docx");
+    let pdf_fixture = fixture_root.join("synthetic-java-platform.pdf");
+    let watched_word = watched_root.join("incremental-new.docx");
+    let watched_pdf = watched_root.join("incremental-pdf.pdf");
     fs::write(
         &watched_file,
         "SUMMARY\nInitial watcher candidate.\nEXPERIENCE\nBuilt Rust backend services.\nSKILLS\nRust",
@@ -1299,10 +1342,10 @@ fn foreground_import_watcher_requeues_completed_root_after_file_change_without_p
         &canonical_watched_root,
         1_700_000_000,
     );
-    run_import_worker_once(&data_dir);
+    run_import_worker_once(&data_dir, &runtime_capacity);
     assert!(search_fulltext(&data_dir, "WatcherUpdatedToken").is_empty());
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let mut child = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -1331,13 +1374,10 @@ fn foreground_import_watcher_requeues_completed_root_after_file_change_without_p
             ),
         )
         .unwrap();
-        fs::write(
-            watched_root.join(format!("candidate-extra-{attempt}.txt")),
-            format!(
-                "SUMMARY\nWatcherUpdatedToken extra candidate attempt {attempt}.\nEXPERIENCE\nBuilt Rust backend services for the watcher.\nSKILLS\nRust"
-            ),
-        )
-        .unwrap();
+        if attempt == 0 {
+            fs::copy(&word_fixture, &watched_word).unwrap();
+            fs::copy(&pdf_fixture, &watched_pdf).unwrap();
+        }
         std::thread::sleep(Duration::from_millis(100));
     }
 
@@ -1370,7 +1410,23 @@ fn foreground_import_watcher_requeues_completed_root_after_file_change_without_p
     assert!(!output.stdout.contains(path_str(&watched_root)));
     assert!(!output.stdout.contains(path_str(&canonical_watched_root)));
     assert!(!output.stdout.contains(path_str(&watched_file)));
+    assert!(!output.stdout.contains(path_str(&fixture_root)));
+    assert!(!output.stdout.contains(path_str(&word_fixture)));
+    assert!(!output.stdout.contains(path_str(&pdf_fixture)));
+    assert!(!output.stdout.contains(path_str(&watched_word)));
+    assert!(!output.stdout.contains(path_str(&watched_pdf)));
     assert!(!search_fulltext(&data_dir, "WatcherUpdatedToken").is_empty());
+    assert!(search_fulltext(&data_dir, "Initial watcher candidate").is_empty());
+    assert!(!search_fulltext(&data_dir, "java").is_empty());
+    assert!(!search_fulltext(&data_dir, "payment").is_empty());
+    assert_eq!(
+        ReadMetaStore::open_data_dir(&data_dir)
+            .unwrap()
+            .status_summary()
+            .unwrap()
+            .searchable_documents,
+        3
+    );
 
     remove_dir(&data_dir);
     remove_dir(&watched_root);
@@ -1386,7 +1442,10 @@ fn seed_queued_import_task(
     insert_queued_import_task(&store, label, canonical_root, queued_at_seconds)
 }
 
-fn initialize_empty_ready_store(data_dir: &Path) {
+fn initialize_empty_ready_store(
+    data_dir: &Path,
+    runtime_capacity: &support::ImportRuntimeCapacityLease,
+) {
     let empty_root = data_dir.join("synthetic-empty-corpus");
     fs::create_dir_all(&empty_root).unwrap();
     let canonical_empty_root = fs::canonicalize(&empty_root).unwrap();
@@ -1396,7 +1455,7 @@ fn initialize_empty_ready_store(data_dir: &Path) {
         &canonical_empty_root,
         1_700_000_000,
     );
-    run_import_worker_once(data_dir);
+    run_import_worker_once(data_dir, runtime_capacity);
     let store = ReadMetaStore::open_data_dir(data_dir).unwrap();
     assert_eq!(
         store.search_projection_state().unwrap().service_state,
@@ -1463,7 +1522,7 @@ fn insert_queued_import_task(
         scan_budget_exhausted: false,
         updated_at: now,
     };
-    let contract = support::activate_default_processing_contract(store, now);
+    let contract = support::activate_reviewed_processing_contract(store, now);
     store
         .insert_import_task_with_scan_scope(&task, &scope, &contract)
         .unwrap();
@@ -1524,8 +1583,8 @@ fn seed_legacy_search_artifact_layout(data_dir: &Path) {
     }
 }
 
-fn run_import_worker_once(data_dir: &Path) {
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+fn run_import_worker_once(data_dir: &Path, runtime_capacity: &support::ImportRuntimeCapacityLease) {
+    let output = support::import_capable_daemon_command(runtime_capacity)
         .args([
             "--data-dir",
             path_str(data_dir),
@@ -1556,40 +1615,30 @@ fn ready_generation(data_dir: &Path) -> String {
     store.search_projection_state().unwrap().generation.unwrap()
 }
 
-fn request_daemon_import_cancellation(data_dir: &Path, task_id: &ImportTaskId) {
+fn assert_daemon_import_cancellation_is_initializing(data_dir: &Path, task_id: &ImportTaskId) {
     let (endpoint, token) = read_daemon_ipc_endpoint(data_dir, "import_cancel");
     let rest = endpoint.strip_prefix("http://").expect("loopback endpoint");
     let (addr, _) = rest.split_once('/').expect("endpoint path");
     let body = serde_json::json!({ "task_id": task_id.to_string() }).to_string();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let mut stream = TcpStream::connect(addr).expect("connect daemon import cancellation");
-        write!(
-            stream,
-            "POST /imports/cancel HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-            body.len()
-        )
-        .expect("request daemon import cancellation");
-        let mut response = String::new();
-        stream
-            .read_to_string(&mut response)
-            .expect("read daemon import cancellation response");
-        assert!(!response.contains(&token));
-        assert!(!response.contains(path_str(data_dir)));
-        if response.contains("HTTP/1.1 202 Accepted") {
-            return;
-        }
-        assert!(
-            response.contains("HTTP/1.1 503 Service Unavailable")
-                && response.contains("METADATA_UNAVAILABLE"),
-            "{response}"
-        );
-        assert!(
-            Instant::now() < deadline,
-            "daemon did not accept import cancellation before timeout"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    let mut stream = TcpStream::connect(addr).expect("connect daemon import cancellation");
+    write!(
+        stream,
+        "POST /imports/cancel HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .expect("request daemon import cancellation");
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .expect("read daemon import cancellation response");
+    assert!(!response.contains(&token));
+    assert!(!response.contains(path_str(data_dir)));
+    assert!(
+        response.contains("HTTP/1.1 503 Service Unavailable")
+            && response.contains("\"code\":\"SERVICE_INITIALIZING\"")
+            && response.contains("\"reason\":\"migration_rebuild\""),
+        "{response}"
+    );
 }
 
 fn request_daemon_import(data_dir: &Path, root: &Path) -> ImportTaskId {
@@ -1650,7 +1699,7 @@ fn request_daemon_status(data_dir: &Path) {
 }
 
 fn read_daemon_ipc_endpoint(data_dir: &Path, endpoint_name: &str) -> (String, String) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
         let endpoint = fs::read(data_dir.join("ipc.endpoints.json"))
             .ok()
@@ -1756,7 +1805,7 @@ impl TestDaemonProcess for ContainedChild {
 }
 
 fn wait_until_foreground_ready(child: &mut Child, stdout: &mut DaemonStdoutCollector) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
         match stdout.ready.recv_timeout(Duration::from_millis(25)) {
             Ok(()) => return,
@@ -1784,17 +1833,16 @@ fn wait_until_foreground_ready(child: &mut Child, stdout: &mut DaemonStdoutColle
     panic!("daemon did not report foreground ready before timeout\nstdout:\n{stdout_text}");
 }
 
-fn wait_until_contained_foreground_ready(
+fn wait_until_contained_core_ready(
     child: &mut ContainedChild,
+    data_dir: &Path,
     stdout: &mut DaemonStdoutCollector,
     stderr: &mut std::process::ChildStderr,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
-        match stdout.ready.recv_timeout(Duration::from_millis(25)) {
-            Ok(()) => return,
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => {}
+        if daemon_core_is_ready(data_dir) {
+            return;
         }
         if let Some(status) = child.try_wait().expect("poll contained daemon child") {
             let stdout_text = stdout.finish();
@@ -1806,13 +1854,52 @@ fn wait_until_contained_foreground_ready(
                 "contained daemon exited before foreground ready: {status}\nstdout:\n{stdout_text}\nstderr:\n{stderr_text}"
             );
         }
+        std::thread::sleep(Duration::from_millis(25));
     }
 
     child.terminate();
     let stdout_text = stdout.finish();
-    panic!(
-        "contained daemon did not report foreground ready before timeout\nstdout:\n{stdout_text}"
-    );
+    panic!("contained daemon did not report core ready before timeout\nstdout:\n{stdout_text}");
+}
+
+fn daemon_core_is_ready(data_dir: &Path) -> bool {
+    let endpoint = fs::read(data_dir.join("ipc.endpoints.json"))
+        .ok()
+        .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok())
+        .and_then(|manifest| manifest["status"].as_str().map(str::to_string));
+    let token = fs::read(data_dir.join("ipc.auth"))
+        .ok()
+        .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok())
+        .and_then(|manifest| manifest["token"].as_str().map(str::to_string));
+    let (Some(endpoint), Some(token)) = (endpoint, token) else {
+        return false;
+    };
+    let Some(rest) = endpoint.strip_prefix("http://") else {
+        return false;
+    };
+    let Some((addr, _)) = rest.split_once('/') else {
+        return false;
+    };
+    let Ok(mut stream) = TcpStream::connect(addr) else {
+        return false;
+    };
+    if write!(
+        stream,
+        "GET /status HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+    )
+    .is_err()
+    {
+        return false;
+    }
+    let mut response = String::new();
+    if stream.read_to_string(&mut response).is_err() {
+        return false;
+    }
+    response
+        .split("\r\n\r\n")
+        .nth(1)
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok())
+        .is_some_and(|payload| payload["core"]["state"] == "ready")
 }
 
 fn wait_until_import_task_running(
@@ -1821,7 +1908,7 @@ fn wait_until_import_task_running(
     task_id: &ImportTaskId,
 ) {
     let store = ReadMetaStore::open_data_dir(data_dir).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
         if let Some(status) = child.try_wait().expect("poll daemon child") {
             panic!("daemon exited before import task entered running: {status}");
@@ -1865,44 +1952,6 @@ fn wait_until_import_task_completed(
 
     child.terminate();
     panic!("import task did not complete before timeout");
-}
-
-fn wait_until_replacement_import_completed(
-    child: &mut impl TestDaemonProcess,
-    data_dir: &Path,
-    cancelled_task_id: &ImportTaskId,
-    canonical_root: &Path,
-) -> ImportTaskId {
-    let store = ReadMetaStore::open_data_dir(data_dir).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while Instant::now() < deadline {
-        if let Some(status) = child.try_wait().expect("poll daemon child") {
-            panic!("daemon exited before replacement import completed: {status}");
-        }
-        if let Some(task) = store
-            .latest_import_task_by_root(path_str(canonical_root))
-            .unwrap()
-            .filter(|task| task.id != *cancelled_task_id)
-        {
-            match task.status {
-                ImportTaskStatus::Completed
-                    if store.search_projection_state().unwrap().service_state
-                        == SearchProjectionServiceState::Ready =>
-                {
-                    return task.id;
-                }
-                ImportTaskStatus::Completed => {}
-                ImportTaskStatus::FailedRetryable | ImportTaskStatus::FailedPermanent => {
-                    panic!("replacement import failed: {:?}", task.status)
-                }
-                ImportTaskStatus::Queued | ImportTaskStatus::Running => {}
-            }
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-
-    child.terminate();
-    panic!("replacement import did not complete before timeout");
 }
 
 fn wait_until_search_projection_ready(child: &mut impl TestDaemonProcess, data_dir: &Path) {

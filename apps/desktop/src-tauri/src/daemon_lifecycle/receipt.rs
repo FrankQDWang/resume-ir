@@ -14,15 +14,14 @@ use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
 use super::supervisor::{
-    DaemonBlockedReason, DaemonExitClass, DaemonLifecycleKind, DaemonLifecycleSnapshot,
-    RestartLedgerReason,
+    DaemonExitClass, DaemonLifecycleKind, DaemonLifecycleSnapshot, DaemonTransitionReason,
 };
 use crate::daemon_response::DiagnosticsBody;
 use crate::native_import::MAX_DIAGNOSTICS_EXPORT_BYTES;
 
-const RECEIPT_SCHEMA: &str = "resume-ir.desktop-daemon-lifecycle-receipt.v1";
-const DIAGNOSTICS_SCHEMA: &str = "resume-ir.desktop-diagnostics.v1";
-const RECEIPT_FILE: &str = "desktop-daemon-lifecycle.v1.json";
+const RECEIPT_SCHEMA: &str = "resume-ir.desktop-daemon-lifecycle-receipt.v2";
+const DIAGNOSTICS_SCHEMA: &str = "resume-ir.desktop-diagnostics.v2";
+const RECEIPT_FILE: &str = "desktop-daemon-lifecycle.v2.json";
 const MAX_EVENTS: usize = 16;
 const MAX_RECEIPT_BYTES: usize = 16 * 1024;
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
@@ -41,15 +40,13 @@ enum ReceiptPersistenceState {
 struct LifecycleReceiptEvent {
     at_unix_ms: u64,
     state: DaemonLifecycleKind,
+    transition_reason: DaemonTransitionReason,
     generation: u64,
-    restart_attempt: u8,
-    restart_budget: u8,
-    retry_delay_ms: Option<u64>,
-    consecutive_heartbeat_failures: u8,
-    blocked_reason: Option<DaemonBlockedReason>,
+    automatic_restart_attempt: u8,
+    automatic_restart_limit: u8,
+    retry_after_ms: Option<u64>,
+    heartbeat_failures: u8,
     last_exit: Option<DaemonExitClass>,
-    #[serde(default)]
-    restart_ledger_reason: Option<RestartLedgerReason>,
 }
 
 impl LifecycleReceiptEvent {
@@ -57,16 +54,15 @@ impl LifecycleReceiptEvent {
         Self {
             at_unix_ms: unix_time_ms(),
             state: snapshot.state,
+            transition_reason: snapshot.transition_reason,
             generation: snapshot.generation.min(MAX_SAFE_INTEGER),
-            restart_attempt: snapshot.restart_attempt,
-            restart_budget: snapshot.restart_budget,
-            retry_delay_ms: snapshot
-                .retry_delay_ms
+            automatic_restart_attempt: snapshot.automatic_restart_attempt,
+            automatic_restart_limit: snapshot.automatic_restart_limit,
+            retry_after_ms: snapshot
+                .retry_after_ms
                 .map(|value| value.min(MAX_SAFE_INTEGER)),
-            consecutive_heartbeat_failures: snapshot.consecutive_heartbeat_failures,
-            blocked_reason: snapshot.blocked_reason,
+            heartbeat_failures: snapshot.heartbeat_failures,
             last_exit: snapshot.last_exit,
-            restart_ledger_reason: snapshot.restart_ledger_reason,
         }
     }
 }
@@ -468,16 +464,15 @@ mod tests {
 
     fn snapshot(generation: u64) -> DaemonLifecycleSnapshot {
         DaemonLifecycleSnapshot {
-            schema_version: "resume-ir.desktop-daemon-lifecycle.v1",
-            state: DaemonLifecycleKind::Recovering,
+            schema_version: "resume-ir.desktop-daemon-lifecycle.v2",
+            state: DaemonLifecycleKind::RetryWait,
+            transition_reason: DaemonTransitionReason::ChildExited,
             generation,
-            restart_attempt: 2,
-            restart_budget: 5,
-            retry_delay_ms: Some(1_000),
-            consecutive_heartbeat_failures: 0,
-            blocked_reason: None,
+            automatic_restart_attempt: 2,
+            automatic_restart_limit: 5,
+            retry_after_ms: Some(1_000),
+            heartbeat_failures: 0,
             last_exit: Some(DaemonExitClass::ChildExited),
-            restart_ledger_reason: None,
         }
     }
 
@@ -530,7 +525,7 @@ mod tests {
         let loaded = load_receipt(&directory.path().join(RECEIPT_FILE));
         assert_eq!(loaded.events.len(), 1);
         assert_eq!(loaded.events[0].generation, 1);
-        assert_eq!(loaded.events[0].state, DaemonLifecycleKind::Recovering);
+        assert_eq!(loaded.events[0].state, DaemonLifecycleKind::RetryWait);
     }
 
     #[test]

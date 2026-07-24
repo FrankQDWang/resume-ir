@@ -69,7 +69,7 @@ pub(crate) fn execute_search_command(
             execution.cancellation,
             &mut stage_timing,
         )
-        .map_err(map_query_failure)?;
+        .map_err(|error| map_query_failure(error, args.mode))?;
     match outcome {
         query_runtime::SearchExecutionOutcome::Complete(search) => Ok(completed_search_output(
             execution.request_id,
@@ -102,7 +102,7 @@ pub(crate) fn execute_search_command(
     }
 }
 
-fn map_query_failure(error: query_runtime::QueryFailure) -> CommandFailure {
+fn map_query_failure(error: query_runtime::QueryFailure, mode: DaemonSearchMode) -> CommandFailure {
     match error {
         query_runtime::QueryFailure::BadRequest => {
             CommandFailure::BadRequest("semantic query configuration is invalid")
@@ -112,6 +112,9 @@ fn map_query_failure(error: query_runtime::QueryFailure) -> CommandFailure {
         }
         query_runtime::QueryFailure::SemanticDisabled => {
             CommandFailure::ServiceUnavailable("SEMANTIC_DISABLED")
+        }
+        query_runtime::QueryFailure::Unavailable if mode == DaemonSearchMode::Semantic => {
+            CommandFailure::ServiceUnavailable("SEMANTIC_RUNTIME_UNAVAILABLE")
         }
         query_runtime::QueryFailure::Integrity | query_runtime::QueryFailure::Unavailable => {
             CommandFailure::ServiceUnavailable("QUERY_SERVICE_UNAVAILABLE")
@@ -177,5 +180,31 @@ pub(crate) fn daemon_search_cancelled_output(
         elapsed,
         stage_timing,
         hits: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_query_failure;
+    use crate::command_failure::CommandFailure;
+    use crate::query_runtime::QueryFailure;
+    use crate::search_contract::DaemonSearchMode;
+
+    #[test]
+    fn only_semantic_runtime_unavailability_gets_capability_classification() {
+        assert!(matches!(
+            map_query_failure(QueryFailure::Unavailable, DaemonSearchMode::Semantic),
+            CommandFailure::ServiceUnavailable("SEMANTIC_RUNTIME_UNAVAILABLE")
+        ));
+        for (failure, mode) in [
+            (QueryFailure::Integrity, DaemonSearchMode::Semantic),
+            (QueryFailure::Unavailable, DaemonSearchMode::Hybrid),
+            (QueryFailure::Unavailable, DaemonSearchMode::FullText),
+        ] {
+            assert!(matches!(
+                map_query_failure(failure, mode),
+                CommandFailure::ServiceUnavailable("QUERY_SERVICE_UNAVAILABLE")
+            ));
+        }
     }
 }

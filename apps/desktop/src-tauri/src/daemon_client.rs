@@ -44,6 +44,10 @@ impl DesktopError {
         self.code == "daemon_unavailable"
     }
 
+    pub(crate) fn is_stale_generation(&self) -> bool {
+        self.code == "daemon_generation_changed"
+    }
+
     #[cfg(test)]
     pub(crate) fn code(&self) -> &'static str {
         self.code
@@ -60,9 +64,10 @@ impl std::error::Error for DesktopError {}
 
 pub(crate) fn execute_status_probe_from_with_timeout(
     data_dir: &Path,
+    expected_launch_id: &str,
     response_timeout: Duration,
 ) -> Result<DesktopResponse, DesktopError> {
-    let connection = daemon_connection::load_probe_connection(data_dir)?;
+    let connection = daemon_connection::load_probe_connection(data_dir, expected_launch_id)?;
     let prepared = PreparedDaemonRequest::empty(ExpectedResponse::Status, response_timeout);
     send("GET", DaemonRoute::Status, &connection, &prepared)
 }
@@ -200,6 +205,7 @@ mod tests {
     const INSTANCE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const NEXT_INSTANCE: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
     const TOKEN: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const LAUNCH: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 
     struct TestGeneration(AtomicU64);
 
@@ -210,17 +216,20 @@ mod tests {
     }
 
     impl ConnectionGenerationSource for TestGeneration {
-        fn ready_generation(&self) -> Option<u64> {
+        fn ready_identity(&self) -> Option<crate::daemon_lifecycle::ReadyDaemonIdentity> {
             match self.0.load(Ordering::SeqCst) {
                 0 => None,
-                generation => Some(generation),
+                supervisor_generation => Some(crate::daemon_lifecycle::ReadyDaemonIdentity {
+                    supervisor_generation,
+                    launch_id: LAUNCH.to_string(),
+                }),
             }
         }
     }
 
     #[test]
-    fn webview_error_projection_drops_daemon_messages_and_extra_fields() {
-        let body = r#"{"schema_version":"resume-ir.error.v1","request_id":"synthetic-request","status":"error","error":{"code":"OVERLOADED","action":"retry","message":"synthetic-private-message","retry_after_ms":250,"degraded_mode":"interactive_only"},"private_debug":true}"#;
+    fn webview_error_projection_accepts_only_the_exact_v2_shape() {
+        let body = r#"{"schema_version":"resume-ir.error.v2","request_id":"synthetic-request","status":"error","error":{"code":"OVERLOADED","action":"retry","retry_after_ms":250,"capability":null,"reason":null}}"#;
         let expected = ExpectedResponse::Search {
             request_id: "synthetic-request".to_string(),
             max_results: 10,
@@ -230,20 +239,18 @@ mod tests {
 
         assert!(exposed.contains("OVERLOADED"));
         assert!(exposed.contains("retry_after_ms"));
-        assert!(!exposed.contains("message"));
-        assert!(!exposed.contains("private_debug"));
-        assert!(!exposed.contains("synthetic-private-message"));
-        assert!(!exposed.contains("degraded_mode"));
+        let extra = r#"{"schema_version":"resume-ir.error.v2","request_id":"synthetic-request","status":"error","error":{"code":"OVERLOADED","action":"retry","retry_after_ms":250,"capability":null,"reason":null,"private_debug":true}}"#;
+        assert!(parse_response(&http_response(503, extra), &expected).is_err());
     }
 
     #[test]
     fn response_projection_rejects_schema_state_confusion() {
-        let body = r#"{"schema_version":"daemon.error.v1","status":"not_found","message":"synthetic-private-message"}"#;
+        let body = r#"{"schema_version":"resume-ir.error.v1","status":"error","error":{"code":"BAD_REQUEST","action":"correct_request","capability":null,"reason":null}}"#;
         assert!(parse_response(&http_response(400, body), &ExpectedResponse::Status).is_err());
     }
 
     #[test]
-    fn startup_probe_reads_strict_v2_pair_and_authenticates_status() {
+    fn startup_probe_reads_strict_v3_pair_and_authenticates_status_v3() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let data_dir = std::env::temp_dir().join(format!(
@@ -269,7 +276,7 @@ mod tests {
             let request = std::str::from_utf8(&request).unwrap();
             assert!(request.starts_with("GET /status HTTP/1.1"), "{request:?}");
             assert!(request.contains(&format!("Authorization: Bearer {TOKEN}")));
-            let body = r#"{"schema_version":"daemon.status.v2","status":"ok","process_state":"ready","service_state":"ready","services":{"metadata":"ready","query":"ready"},"repair_reason":null,"repair_progress":null,"error":null,"indexed_documents":4,"searchable_documents":3,"partial_documents":1,"visible_epoch":7,"failed_retryable":0,"failed_permanent":0,"recovery_queue_depth":0,"ocr_queue_depth":0,"embedding_queue_depth":0,"entity_mentions":8,"import_tasks_queued":0,"index_health":"ready","latest_import_scan":null,"ipc":{"accepted":1,"completed":1,"client_disconnect":0,"request_failure":0,"response_failure":0},"private_debug":"synthetic-private-value"}"#;
+            let body = include_str!("../tests/fixtures/daemon-status-v3-ready.json");
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -279,12 +286,12 @@ mod tests {
         });
 
         let response =
-            execute_status_probe_from_with_timeout(&data_dir, Duration::from_secs(1)).unwrap();
+            execute_status_probe_from_with_timeout(&data_dir, LAUNCH, Duration::from_secs(1))
+                .unwrap();
         server.join().unwrap();
         assert_eq!(response.http_status, 200);
         let response = serde_json::to_string(&response).unwrap();
         assert!(response.contains("\"status\":\"ok\""));
-        assert!(!response.contains("private_debug"));
         fs::remove_dir_all(data_dir).unwrap();
     }
 
@@ -447,7 +454,8 @@ mod tests {
         fs::write(
             &auth_path,
             serde_json::to_vec(&serde_json::json!({
-                "schema_version": "resume-ir.daemon-auth.v2",
+                "schema_version": "resume-ir.daemon-auth.v3",
+                "launch_id": LAUNCH,
                 "instance_id": instance_id,
                 "token": token,
             }))
@@ -460,7 +468,8 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_vec(&serde_json::json!({
-                "schema_version": "resume-ir.daemon-ipc.v2",
+                "schema_version": "resume-ir.daemon-ipc.v3",
+                "launch_id": LAUNCH,
                 "instance_id": instance_id,
                 "owner_mode": "desktop_supervised",
                 "status": format!("http://{addr}/status"),
@@ -491,7 +500,7 @@ mod tests {
     fn make_owner_only(_path: &Path) {}
 
     fn write_status_response(stream: &mut std::net::TcpStream) {
-        let body = r#"{"schema_version":"daemon.status.v2","status":"ok","process_state":"ready","service_state":"ready","services":{"metadata":"ready","query":"ready"},"repair_reason":null,"repair_progress":null,"error":null,"indexed_documents":4,"searchable_documents":3,"partial_documents":1,"visible_epoch":7,"failed_retryable":0,"failed_permanent":0,"recovery_queue_depth":0,"ocr_queue_depth":0,"embedding_queue_depth":0,"entity_mentions":8,"import_tasks_queued":0,"index_health":"ready","latest_import_scan":null,"ipc":{"accepted":1,"completed":1,"client_disconnect":0,"request_failure":0,"response_failure":0}}"#;
+        let body = include_str!("../tests/fixtures/daemon-status-v3-ready.json");
         write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",

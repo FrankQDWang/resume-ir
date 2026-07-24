@@ -212,6 +212,15 @@ impl DaemonError {
         self.exit_code
     }
 
+    pub(crate) fn core_block_reason(&self) -> ipc::CoreReason {
+        match self.kind {
+            DaemonErrorKind::Store(MetaStoreErrorClass::UnsupportedStoreSchema) => {
+                ipc::CoreReason::UnsupportedStoreSchema
+            }
+            _ => ipc::CoreReason::RuntimeInvariant,
+        }
+    }
+
     pub(crate) fn worker_disposition(&self) -> WorkerErrorDisposition {
         match self.kind {
             DaemonErrorKind::LifecycleCancellation => WorkerErrorDisposition::LifecycleCancellation,
@@ -249,6 +258,7 @@ impl DaemonError {
             ) => DaemonFatalClass::ConfigurationInvalid,
             DaemonErrorKind::Store(
                 MetaStoreErrorClass::Migration
+                | MetaStoreErrorClass::UnsupportedStoreSchema
                 | MetaStoreErrorClass::InvalidValue
                 | MetaStoreErrorClass::NotFound
                 | MetaStoreErrorClass::InvalidTransition

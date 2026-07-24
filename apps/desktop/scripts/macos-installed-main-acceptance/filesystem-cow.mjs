@@ -32,6 +32,7 @@ import {
   DATA_OWNER_LOCK,
   DIGEST,
   ENTRY_SCRIPT_FILE,
+  LEGACY_ACCEPTANCE_SCHEMA,
   LOCK_READY,
   MAX_OWNER_FILE_BYTES,
   RUN_ID,
@@ -107,7 +108,9 @@ export function validateWorkspaceMarker(value) {
       "application",
     ]) ||
     value.schema_version !== WORKSPACE_MARKER_SCHEMA ||
-    value.acceptance_schema !== ACCEPTANCE_SCHEMA ||
+    ![ACCEPTANCE_SCHEMA, LEGACY_ACCEPTANCE_SCHEMA].includes(
+      value.acceptance_schema,
+    ) ||
     !RUN_ID.test(value.run_id ?? "") ||
     !WORKSPACE_STATES.has(value.state) ||
     (helper !== null &&
@@ -298,7 +301,6 @@ export async function requirePrivateFile(
   file,
   {
     afterVerifiedOpen,
-    allowLegacyReadOnly = false,
     empty = false,
     maxBytes,
     read = false,
@@ -316,9 +318,7 @@ export async function requirePrivateFile(
       resolved !== path.resolve(file) ||
       metadata.uid !== currentUid() ||
       metadata.nlink !== 1 ||
-      (allowLegacyReadOnly
-        ? (metadata.mode & 0o022) !== 0 || (metadata.mode & 0o400) === 0
-        : (metadata.mode & 0o777) !== 0o600) ||
+      (metadata.mode & 0o777) !== 0o600 ||
       (empty ? metadata.size !== 0 : metadata.size === 0) ||
       (maxBytes !== undefined && metadata.size > maxBytes)
     ) {
@@ -374,23 +374,19 @@ export async function readVerifiedPrivateText(
   return source;
 }
 
-export async function readActiveStoreManifest(
-  dataDir,
-  { allowLegacyReadOnly = false } = {},
-) {
+export async function readActiveStoreManifest(dataDir) {
   const file = path.join(dataDir, ACTIVE_STORE_MANIFEST);
   const { source } = await requirePrivateFile(file, {
-    allowLegacyReadOnly,
     maxBytes: 512,
     read: true,
   });
   const match = source.match(
-    /^resume-ir\.metadata-active\.v1\nfile=(metadata-v(27|28|29)-[a-f0-9]{16}\.sqlite3)\nschema=(27|28|29)\ndigest=([a-f0-9]{64})\n$/,
+    /^resume-ir\.metadata-active\.v1\nfile=(metadata-v29-[a-f0-9]{16}\.sqlite3)\nschema=(29)\ndigest=([a-f0-9]{64})\n$/,
   );
-  if (!match || Number(match[2]) !== Number(match[3])) {
+  if (!match) {
     fail("active_store_manifest_invalid");
   }
-  const [, fileName, , schemaValue, digest] = match;
+  const [, fileName, schemaValue, digest] = match;
   const schema = Number(schemaValue);
   if (fileName !== `metadata-v${schema}-${digest.slice(0, 16)}.sqlite3`) {
     fail("active_store_manifest_invalid");
@@ -674,10 +670,8 @@ export async function createCowCloneWorkspace({
   );
   let root;
   try {
-    const sourceManifest = await readManifest(source.resolved, {
-      allowLegacyReadOnly: true,
-    });
-    if (sourceManifest.schema !== 28) fail("authorized_source_schema_invalid");
+    const sourceManifest = await readManifest(source.resolved);
+    if (sourceManifest.schema !== 29) fail("authorized_source_schema_invalid");
     const sourceWitness = await readSourceModeWitness(source.resolved);
     root = await mkdtemp(path.join(temporary.resolved, WORKSPACE_PREFIX));
     await chmod(root, 0o700);
@@ -730,9 +724,7 @@ export async function createCowCloneWorkspace({
       fail("apfs_clone_failed");
     }
     await requireSecureDirectory(dataDir);
-    const cloneManifest = await readManifest(dataDir, {
-      allowLegacyReadOnly: true,
-    });
+    const cloneManifest = await readManifest(dataDir);
     if (
       cloneManifest.schema !== sourceManifest.schema ||
       cloneManifest.fileName !== sourceManifest.fileName ||
@@ -742,9 +734,7 @@ export async function createCowCloneWorkspace({
     }
     const receipt = await readInstallReceipt({ applicationSupportRoot });
     verifyInstallReceipt({ receipt, composition: expectedComposition });
-    const sourceManifestAfter = await readManifest(source.resolved, {
-      allowLegacyReadOnly: true,
-    });
+    const sourceManifestAfter = await readManifest(source.resolved);
     if (
       sourceManifestAfter.schema !== sourceManifest.schema ||
       sourceManifestAfter.fileName !== sourceManifest.fileName ||
@@ -767,6 +757,7 @@ export async function createCowCloneWorkspace({
       root,
       runId,
       sourceSchema: sourceManifest.schema,
+      v29Authority: Object.freeze({ ...sourceManifest }),
     };
   } catch (error) {
     if (root) {

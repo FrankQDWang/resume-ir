@@ -43,7 +43,12 @@ import {
 import { writeBundleComposition } from "./macos-bundle-composition.mjs";
 
 const SOURCE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
-const verifySyntheticSource = async () => SOURCE_COMMIT;
+const SOURCE = Object.freeze({
+  authority: "worktree_snapshot",
+  base_commit: SOURCE_COMMIT,
+  source_tree_sha256: "a".repeat(64),
+});
+const verifySyntheticSource = async () => SOURCE;
 
 function syntheticMachO(payload) {
   const suffix = Buffer.from(payload);
@@ -120,7 +125,7 @@ async function createMountedLayout(root, { withComposition = false } = {}) {
     await writeBundleComposition({
       appBundle,
       targetTriple: "aarch64-apple-darwin",
-      sourceCommit: SOURCE_COMMIT,
+      source: SOURCE,
     });
   }
   await symlink("/Applications", path.join(root, "Applications"));
@@ -179,7 +184,11 @@ async function createTestReleaseFixture(context) {
     mkdir(repoRoot, { recursive: true }),
     writeFile(runTauri, "synthetic"),
   ]);
-  const baseConfig = { productName: "resume-ir", version: "0.1.0" };
+  const baseConfig = {
+    productName: "resume-ir",
+    version: "../package.json",
+  };
+  const productVersion = "0.1.0";
   const platformConfig = {
     bundle: {
       targets: ["dmg"],
@@ -190,6 +199,7 @@ async function createTestReleaseFixture(context) {
     frontendRoot,
     platform: "darwin",
     baseConfig,
+    productVersion,
     platformConfig,
   });
   await mkdir(path.dirname(plan.dmg), { recursive: true });
@@ -199,6 +209,7 @@ async function createTestReleaseFixture(context) {
     frontendRoot,
     runTauri,
     baseConfig,
+    productVersion,
     platformConfig,
     plan,
   };
@@ -214,8 +225,8 @@ function testReleaseCandidatePath(dmg) {
 
 function verifiedDmgReceipt() {
   return {
-    schema_version: "resume-ir.macos-dmg-composition.v2",
-    source_commit: SOURCE_COMMIT,
+    schema_version: "resume-ir.macos-dmg-composition.v3",
+    source: SOURCE,
     distribution_signature: "accepted",
     distribution_profile: "internal_test",
     code_signature: "ad_hoc_valid",
@@ -407,7 +418,7 @@ test("rebuilds the Tauri DMG from a clean staging root and signs only the embedd
   const entitlementReceipt = await applyMacosInternalTestEntitlements({
     dmg,
     entitlements: fileURLToPath(entitlements),
-    sourceCommit: SOURCE_COMMIT,
+    source: SOURCE,
     platform: "darwin",
     runner,
   });
@@ -507,7 +518,7 @@ test("keeps the original DMG and cleans the staging workspace when re-signing fa
     applyMacosInternalTestEntitlements({
       dmg,
       entitlements,
-      sourceCommit: SOURCE_COMMIT,
+      source: SOURCE,
       platform: "darwin",
       runner,
     }),
@@ -561,7 +572,7 @@ test("rejects a symlinked embedding signing path before codesign", async (contex
     applyMacosInternalTestEntitlements({
       dmg,
       entitlements,
-      sourceCommit: SOURCE_COMMIT,
+      source: SOURCE,
       platform: "darwin",
       runner,
     }),
@@ -611,7 +622,7 @@ test("rejects a symlinked daemon before the outer App codesign", async (context)
     applyMacosInternalTestEntitlements({
       dmg,
       entitlements,
-      sourceCommit: SOURCE_COMMIT,
+      source: SOURCE,
       platform: "darwin",
       runner,
     }),
@@ -648,7 +659,7 @@ test("rejects a symlinked .fseventsd entry instead of deleting through it", asyn
     applyMacosInternalTestEntitlements({
       dmg,
       entitlements,
-      sourceCommit: SOURCE_COMMIT,
+      source: SOURCE,
       platform: "darwin",
       runner,
     }),
@@ -703,7 +714,7 @@ test("fails closed after bounded detach recovery during DMG rewriting", async (c
     applyMacosInternalTestEntitlements({
       dmg,
       entitlements,
-      sourceCommit: SOURCE_COMMIT,
+      source: SOURCE,
       platform: "darwin",
       runner,
       mountProbe: async () => mounted,
@@ -750,7 +761,7 @@ test("detaches a partial mount after attach times out and preserves the attach e
     applyMacosInternalTestEntitlements({
       dmg,
       entitlements,
-      sourceCommit: SOURCE_COMMIT,
+      source: SOURCE,
       platform: "darwin",
       runner,
       mountProbe: async () => true,
@@ -876,9 +887,9 @@ test("verifies one DMG across a read-only attach ctime change and always detache
   assert.deepEqual(await readdir(temporaryRoot), []);
   assert.match(receipt.app_composition_digest, /^[a-f0-9]{64}$/);
   assert.deepEqual(receipt, {
-    schema_version: "resume-ir.macos-dmg-composition.v2",
+    schema_version: "resume-ir.macos-dmg-composition.v3",
     target_triple: "aarch64-apple-darwin",
-    source_commit: SOURCE_COMMIT,
+    source: SOURCE,
     dmg_count: 1,
     dmg_bytes: 13,
     dmg_sha256: "bf55618abcf4f76365c1784a970a08f5c650c6fc3ad8a613a042601c9a688b61",
@@ -1379,6 +1390,8 @@ test("locked macOS platform config selects only the DMG installer", async () => 
 
 test("locks one credential-free arm64 internal-test build", async () => {
   const paths = resolveMacosTestReleasePaths();
+  assert.equal(paths.repoRoot, path.resolve(paths.repoRoot));
+  assert.equal(paths.frontendRoot, path.resolve(paths.frontendRoot));
   const baseConfig = JSON.parse(await readFile(paths.baseConfig, "utf8"));
   const platformConfig = JSON.parse(
     await readFile(paths.platformConfig, "utf8"),
@@ -1387,6 +1400,7 @@ test("locks one credential-free arm64 internal-test build", async () => {
     frontendRoot: paths.frontendRoot,
     platform: "darwin",
     baseConfig,
+    productVersion: "0.1.2",
     platformConfig,
   });
   assert.deepEqual(plan.tauriArguments, [
@@ -1428,6 +1442,7 @@ test("locks one credential-free arm64 internal-test build", async () => {
           frontendRoot: paths.frontendRoot,
           platform: "darwin",
           baseConfig,
+          productVersion: "0.1.2",
           platformConfig: candidate,
         }),
       /config is invalid/,
@@ -1583,7 +1598,9 @@ test("deletes the candidate when source provenance drifts before promotion", asy
       ...fixture,
       verifySource: async () => {
         provenanceChecks += 1;
-        return provenanceChecks === 1 ? SOURCE_COMMIT : "f".repeat(40);
+        return provenanceChecks === 1
+          ? SOURCE
+          : { ...SOURCE, source_tree_sha256: "f".repeat(64) };
       },
       platform: "darwin",
       runner: () => {
@@ -1735,6 +1752,17 @@ test("test-release wrapper returns only a verified bounded receipt", async (cont
   assert.equal(entitlementCalls.length, 1);
   assert.notEqual(entitlementCalls[0].dmg, fixture.plan.dmg);
   assert.equal(verificationCalls.length, 1);
+  assert.equal(
+    verificationCalls[0].expectedDesktop,
+    path.join(
+      fixture.frontendRoot,
+      "src-tauri",
+      "target",
+      "aarch64-apple-darwin",
+      "release",
+      "resume-desktop",
+    ),
+  );
   assert.equal(Object.hasOwn(verificationCalls[0], "runner"), false);
   assert.equal(Object.hasOwn(verificationCalls[0], "systemRunner"), false);
 

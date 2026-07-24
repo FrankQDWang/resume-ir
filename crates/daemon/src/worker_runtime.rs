@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use embedder::ResidentEmbeddingStatus;
 use import_pipeline::{
     begin_reported_artifact_repair, prepare_migration_rebuild_artifacts, ImportPipelineErrorClass,
     PipelineRunControl, ReportedArtifactRepairOutcome,
@@ -28,6 +29,8 @@ pub(crate) struct WorkerLoopRuntime {
     pub(crate) stop_signal: Option<Arc<AtomicBool>>,
     pub(crate) artifact_fault_receiver: Option<ipc::search_service::ArtifactFaultReceiver>,
     pub(crate) summary_output: WorkerSummaryOutput,
+    pub(crate) capability_state: Option<ipc::ControlPlaneState>,
+    pub(crate) runtime_health_reporter: Option<ipc::RuntimeHealthReporter>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -181,10 +184,19 @@ fn run_worker_tick(
         return Ok(WorkerOutcome::StopRequested);
     }
 
+    let gates = runtime_gates(options, runtime.capability_state.as_ref());
+    if !gates.import && !gates.ocr && !gates.index {
+        return Ok(WorkerOutcome::Continue);
+    }
+
     let now = current_timestamp()?;
+    let gates = runtime_gates(options, runtime.capability_state.as_ref());
+    if !gates.import && !gates.ocr && !gates.index {
+        return Ok(WorkerOutcome::Continue);
+    }
     import_processing::activate_contract(store, processing_contract, now)?;
     if state.migration_artifacts.is_none() {
-        state.migration_artifacts = Some(if options.work_imports || options.work_index {
+        state.migration_artifacts = Some(if gates.import || gates.index {
             prepare_migration_artifacts_for_worker(store, pipeline_control)?
         } else {
             MigrationArtifactPreparation::Ready
@@ -193,7 +205,7 @@ fn run_worker_tick(
 
     run_fault_priority_gate(
         || {
-            if options.work_index {
+            if runtime_gates(options, runtime.capability_state.as_ref()).index {
                 if let Some(fault) = runtime
                     .artifact_fault_receiver
                     .as_ref()
@@ -232,7 +244,7 @@ fn run_worker_tick(
             if state.migration_artifacts == Some(MigrationArtifactPreparation::RepairBlocked) {
                 return Ok(());
             }
-            if options.work_imports {
+            if runtime_gates(options, runtime.capability_state.as_ref()).import {
                 if options.watch_import_roots && state.import_watcher.is_none() {
                     state.import_watcher = Some(ImportWatcher::new()?);
                 }
@@ -267,19 +279,22 @@ fn run_worker_tick(
                         now,
                     )?);
                 }
-                import_summary.extend(run_import_worker_once_with_retry_due(
-                    data_dir,
-                    store,
-                    options,
-                    processing_contract,
-                    timestamp_minus_seconds(
-                        now,
-                        options
-                            .import_retry_backoff_seconds
-                            .unwrap_or(IMPORT_RETRY_BACKOFF_SECONDS),
-                    ),
-                    (*pipeline_control).clone(),
-                )?);
+                if runtime_gates(options, runtime.capability_state.as_ref()).import {
+                    import_summary.extend(run_import_worker_once_with_retry_due(
+                        data_dir,
+                        store,
+                        options,
+                        processing_contract,
+                        timestamp_minus_seconds(
+                            now,
+                            options
+                                .import_retry_backoff_seconds
+                                .unwrap_or(IMPORT_RETRY_BACKOFF_SECONDS),
+                        ),
+                        (*pipeline_control).clone(),
+                        || runtime_gates(options, runtime.capability_state.as_ref()).import,
+                    )?);
+                }
                 if runtime.summary_output == WorkerSummaryOutput::Stdout
                     && import_summary.has_activity()
                 {
@@ -287,7 +302,7 @@ fn run_worker_tick(
                 }
                 state.initial_import_tick_pending = false;
             }
-            if options.work_ocr {
+            if runtime_gates(options, runtime.capability_state.as_ref()).ocr {
                 let ocr_summary = run_ocr_worker_batch(
                     data_dir,
                     store,
@@ -295,14 +310,24 @@ fn run_worker_tick(
                     options
                         .ocr_jobs_per_tick
                         .unwrap_or(DEFAULT_OCR_JOBS_PER_TICK),
+                    || runtime_gates(options, runtime.capability_state.as_ref()).ocr,
                 )?;
+                if let Some(reason) = ocr_summary.runtime_unavailable {
+                    if let Some(reporter) = runtime.runtime_health_reporter.as_ref() {
+                        reporter.ocr_unavailable(reason).map_err(|_| {
+                            DaemonError::control_plane("runtime health reporter disconnected")
+                        })?;
+                    }
+                }
                 if runtime.summary_output == WorkerSummaryOutput::Stdout
                     && ocr_summary.has_activity()
                 {
                     print_ocr_worker_summary(&ocr_summary)?;
                 }
             }
-            if options.work_index && !repaired_reported_fault {
+            if runtime_gates(options, runtime.capability_state.as_ref()).index
+                && !repaired_reported_fault
+            {
                 let recovery = run_search_artifact_worker_once(
                     store,
                     options,
@@ -323,6 +348,36 @@ fn run_worker_tick(
         Ok(WorkerOutcome::StopRequested)
     } else {
         Ok(WorkerOutcome::Continue)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RuntimeGates {
+    import: bool,
+    ocr: bool,
+    index: bool,
+}
+
+fn runtime_gates(
+    options: &RunOptions,
+    control_state: Option<&ipc::ControlPlaneState>,
+) -> RuntimeGates {
+    let runtimes = control_state.map(|state| state.snapshot().runtimes);
+    let embedding_available = options
+        .resident_embedding
+        .as_ref()
+        .is_some_and(|client| client.status() == ResidentEmbeddingStatus::Ready)
+        && runtimes.is_none_or(|runtimes| {
+            runtimes.embedding.state == ipc::OptionalRuntimeState::Available
+        });
+    let classifier_available = runtimes
+        .is_none_or(|runtimes| runtimes.classifier.state == ipc::OptionalRuntimeState::Available);
+    let ocr_available =
+        runtimes.is_none_or(|runtimes| runtimes.ocr.state == ipc::OptionalRuntimeState::Available);
+    RuntimeGates {
+        import: options.work_imports && embedding_available && classifier_available,
+        ocr: options.work_ocr && embedding_available && classifier_available && ocr_available,
+        index: options.work_index && embedding_available,
     }
 }
 

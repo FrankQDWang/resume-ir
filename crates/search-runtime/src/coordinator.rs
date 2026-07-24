@@ -303,6 +303,7 @@ fn map_store_error(error: MetaStoreError) -> SearchRuntimeError {
         MetaStoreErrorClass::Storage
         | MetaStoreErrorClass::Migration
         | MetaStoreErrorClass::MigrationOwnershipRequired
+        | MetaStoreErrorClass::UnsupportedStoreSchema
         | MetaStoreErrorClass::Crypto
         | MetaStoreErrorClass::WeakPassphrase
         | MetaStoreErrorClass::InvalidBackup

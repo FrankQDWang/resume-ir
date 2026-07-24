@@ -7,13 +7,14 @@ use std::time::{Duration, Instant};
 
 use process_containment::ContainedChild;
 
+use super::configured_daemon_binary;
+use super::runtime_candidates::{
+    configured_classifier_runtime, configured_embedding_runtime, configured_ocr_runtime,
+    daemon_arguments,
+};
 use super::supervisor::{
     ChildExitOutcome, DaemonBlockedReason, DaemonProbe, DaemonRuntime, RuntimeFailure,
     SupervisedChild,
-};
-use super::{
-    classifier::configured_classifier_runtime, configured_daemon_binary,
-    configured_embedding_runtime, configured_ocr_runtime, daemon_arguments,
 };
 use crate::daemon_client;
 
@@ -110,16 +111,15 @@ impl DaemonRuntime for ProductionDaemonRuntime {
         let binary = configured_daemon_binary()
             .map_err(|_| RuntimeFailure::Blocked(DaemonBlockedReason::RuntimeIntegrity))?;
         let embedding =
-            configured_embedding_runtime(&self.current_exe, &self.embedding_resource_dir)
-                .map_err(|_| RuntimeFailure::Blocked(DaemonBlockedReason::ConfigurationInvalid))?;
-        let ocr = configured_ocr_runtime(&self.current_exe, &self.ocr_resource_dir)
-            .map_err(|_| RuntimeFailure::Blocked(DaemonBlockedReason::ConfigurationInvalid))?;
-        let classifier = configured_classifier_runtime(&self.classifier_resource_dir)
-            .map_err(|_| RuntimeFailure::Blocked(DaemonBlockedReason::ConfigurationInvalid))?;
+            configured_embedding_runtime(&self.current_exe, &self.embedding_resource_dir);
+        let ocr = configured_ocr_runtime(&self.current_exe, &self.ocr_resource_dir);
+        let classifier = configured_classifier_runtime(&self.classifier_resource_dir);
+        let launch_id = new_launch_id()?;
         let mut command = Command::new(binary);
         command
             .args(daemon_arguments(
                 &self.data_dir,
+                &launch_id,
                 embedding.as_ref(),
                 ocr.as_ref(),
                 classifier.as_ref(),
@@ -128,9 +128,7 @@ impl DaemonRuntime for ProductionDaemonRuntime {
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
         if let Some(embedding) = &embedding {
-            embedding
-                .configure_command(&mut command)
-                .map_err(|_| RuntimeFailure::Blocked(DaemonBlockedReason::ConfigurationInvalid))?;
+            embedding.configure_command(&mut command);
         }
         if let Some(ocr) = &ocr {
             ocr.configure_command(&mut command);
@@ -150,15 +148,9 @@ impl DaemonRuntime for ProductionDaemonRuntime {
             process,
             lifecycle_stdin: Some(lifecycle_stdin),
             fatal_reader,
+            data_dir: self.data_dir.clone(),
+            launch_id,
         })
-    }
-
-    fn probe(&mut self, timeout: Duration) -> DaemonProbe {
-        match daemon_client::execute_status_probe_from_with_timeout(&self.data_dir, timeout) {
-            Ok(_) => DaemonProbe::Ready,
-            Err(error) if error.is_daemon_unavailable() => DaemonProbe::Unavailable,
-            Err(_) => DaemonProbe::ProtocolMismatch,
-        }
     }
 }
 
@@ -166,6 +158,8 @@ pub(super) struct OwnedDaemon {
     process: ContainedChild,
     lifecycle_stdin: Option<ChildStdin>,
     fatal_reader: FatalEventReader,
+    data_dir: PathBuf,
+    launch_id: String,
 }
 
 impl OwnedDaemon {
@@ -185,6 +179,24 @@ impl OwnedDaemon {
 }
 
 impl SupervisedChild for OwnedDaemon {
+    fn launch_id(&self) -> &str {
+        &self.launch_id
+    }
+
+    fn probe(&mut self, timeout: Duration) -> DaemonProbe {
+        match daemon_client::execute_status_probe_from_with_timeout(
+            &self.data_dir,
+            &self.launch_id,
+            timeout,
+        ) {
+            Ok(_) => DaemonProbe::Ready,
+            Err(error) if error.is_daemon_unavailable() || error.is_stale_generation() => {
+                DaemonProbe::Unavailable
+            }
+            Err(_) => DaemonProbe::ProtocolMismatch,
+        }
+    }
+
     fn poll_exit(&mut self) -> ChildExitOutcome {
         match self.process.try_wait() {
             Ok(Some(_)) => self
@@ -199,6 +211,18 @@ impl SupervisedChild for OwnedDaemon {
     fn stop(self) {
         OwnedDaemon::stop(self);
     }
+}
+
+fn new_launch_id() -> Result<String, RuntimeFailure> {
+    let mut random = [0_u8; 32];
+    getrandom::fill(&mut random).map_err(|_| RuntimeFailure::Transient)?;
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut value = String::with_capacity(64);
+    for byte in random {
+        value.push(HEX[usize::from(byte >> 4)] as char);
+        value.push(HEX[usize::from(byte & 0x0f)] as char);
+    }
+    Ok(value)
 }
 
 impl Drop for OwnedDaemon {
@@ -306,5 +330,14 @@ mod tests {
 
         let oversized = vec![b'x'; FATAL_EVENT_MAX_BYTES + 1];
         assert_eq!(read_fatal_event(Cursor::new(oversized)), None);
+    }
+
+    #[test]
+    fn launch_ids_are_256_bit_lowercase_hex_values() {
+        let launch_id = new_launch_id().unwrap();
+        assert_eq!(launch_id.len(), 64);
+        assert!(launch_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)));
     }
 }

@@ -2,10 +2,6 @@ import { createHash, randomBytes } from "node:crypto";
 
 import { validateInstallReceipt } from "./macos-install-receipt.mjs";
 import {
-  LEGACY_EXACT_VERSION,
-  validateLegacyExactInstallReceipt,
-} from "./macos-legacy-exact-artifact.mjs";
-import {
   createOwnerEvidence,
   ownerEvidencePath,
   persistOwnerEvidence,
@@ -57,28 +53,6 @@ const PHASES = Object.freeze({
     "reinstall_before_restore",
     "reinstall_complete",
   ]),
-  upgrade: new Set([
-    "upgrade_prepared",
-    "upgrade_before_stage_publish",
-    "upgrade_stage_ready",
-    "upgrade_before_stage_cleanup",
-    "upgrade_stage_tombstoned",
-    "upgrade_before_backup",
-    "upgrade_backup_ready",
-    "upgrade_before_promotion",
-    "upgrade_target_promoted",
-    "upgrade_before_receipt_commit",
-    "upgrade_receipt_committed",
-    "upgrade_before_legacy_receipt_removal",
-    "upgrade_legacy_receipt_removed",
-    "upgrade_before_backup_cleanup",
-    "upgrade_backup_tombstoned",
-    "upgrade_before_recovery_target_cleanup",
-    "upgrade_target_tombstoned",
-    "upgrade_before_old_receipt_restore",
-    "upgrade_before_restore",
-    "upgrade_complete",
-  ]),
   uninstall: new Set([
     "uninstall_prepared",
     "uninstall_before_quarantine",
@@ -127,24 +101,12 @@ function digestReceipt(receipt) {
   return createHash("sha256").update(JSON.stringify(receipt)).digest("hex");
 }
 
-function isNewerVersion(candidate, installed) {
-  const candidateParts = candidate.split(".").map(Number);
-  const installedParts = installed.split(".").map(Number);
-  for (let index = 0; index < candidateParts.length; index += 1) {
-    if (candidateParts[index] !== installedParts[index]) {
-      return candidateParts[index] > installedParts[index];
-    }
-  }
-  return false;
-}
-
 function validateEvidenceSide({
   version,
   compositionDigest,
   receipt,
   receiptDigest,
   required,
-  legacyAllowed = false,
 }) {
   if (!required) {
     if (
@@ -159,10 +121,7 @@ function validateEvidenceSide({
   }
   let validatedReceipt;
   try {
-    validatedReceipt =
-      legacyAllowed && version === LEGACY_EXACT_VERSION
-        ? validateLegacyExactInstallReceipt(receipt)
-        : validateInstallReceipt(receipt);
+    validatedReceipt = validateInstallReceipt(receipt);
   } catch {
     throw journalError();
   }
@@ -198,7 +157,6 @@ export function validateLifecycleJournal(journal) {
     receipt: journal.old_receipt,
     receiptDigest: journal.old_receipt_digest,
     required: hasOld,
-    legacyAllowed: journal.operation === "upgrade",
   });
   validateEvidenceSide({
     version: journal.new_version,
@@ -208,16 +166,8 @@ export function validateLifecycleJournal(journal) {
     required: hasNew,
   });
   if (
-    journal.operation === "upgrade" &&
-    (journal.old_version !== LEGACY_EXACT_VERSION ||
-      journal.new_version !== "0.1.2" ||
-      !isNewerVersion(journal.new_version, journal.old_version))
-  ) {
-    throw journalError();
-  }
-  if (
     journal.operation === "reinstall" &&
-    (journal.old_version !== "0.1.2" || journal.new_version !== "0.1.2")
+    journal.old_version !== journal.new_version
   ) {
     throw journalError();
   }

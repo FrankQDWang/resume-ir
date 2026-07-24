@@ -7,9 +7,9 @@ use crate::command_failure::CommandFailure;
 
 use super::super::protocol::Request;
 use super::super::search_service;
-use super::super::{ConnectionCompletion, RequestFailure};
+use super::super::{CapabilityState, ConnectionCompletion, ControlPlaneState, RequestFailure};
 use super::status::query_service_error;
-use super::{authorized, unauthorized_body, write, RouteResult};
+use super::{authorized, unauthorized_body, unified_error_body, write, RouteResult};
 
 pub(super) fn single(
     store: &ReadMetaStore,
@@ -18,6 +18,7 @@ pub(super) fn single(
     mut stream: TcpStream,
     query_service: &search_service::SearchService,
     completion: &ConnectionCompletion,
+    control_state: &ControlPlaneState,
 ) -> RouteResult {
     if !authorized(auth_token, request) {
         return write(&mut stream, 401, "application/json", &unauthorized_body());
@@ -50,6 +51,20 @@ pub(super) fn single(
             );
         }
     };
+    if args.mode == crate::search_contract::DaemonSearchMode::Semantic {
+        let semantic = control_state.snapshot().capabilities.semantic_search;
+        if semantic.state != CapabilityState::Available {
+            let body = search_service::capability_unavailable_body(
+                &envelope.request_id,
+                "semantic_search",
+                semantic
+                    .reason
+                    .map(|reason| reason.label())
+                    .unwrap_or("embedding_unavailable"),
+            );
+            return write(&mut stream, 503, "application/json", &body);
+        }
+    }
     if let Some(code) = query_service_error(store) {
         let body = search_service::service_error_body(&envelope.request_id, code);
         return write(&mut stream, 503, "application/json", &body);
@@ -91,6 +106,7 @@ pub(super) fn batch(
     mut stream: TcpStream,
     query_service: &search_service::SearchService,
     completion: &ConnectionCompletion,
+    control_state: &ControlPlaneState,
 ) -> RouteResult {
     if !authorized(auth_token, request) {
         return write(&mut stream, 401, "application/json", &unauthorized_body());
@@ -110,11 +126,7 @@ pub(super) fn batch(
                 return write_bad_request(&mut stream, message);
             }
             Err(_) => {
-                let body = serde_json::json!({
-                    "schema_version": "daemon.error.v1",
-                    "status": "internal",
-                })
-                .to_string();
+                let body = unified_error_body(None, "INTERNAL", "retry");
                 return write(&mut stream, 500, "application/json", &body);
             }
         };
@@ -137,8 +149,26 @@ pub(super) fn batch(
     )
     .map_err(RequestFailure::from)?;
     for (sequence, (envelope, args, query_parse_duration)) in children.into_iter().enumerate() {
+        let request_id = envelope.request_id.clone();
+        if args.mode == crate::search_contract::DaemonSearchMode::Semantic {
+            let semantic = control_state.snapshot().capabilities.semantic_search;
+            if semantic.state != CapabilityState::Available {
+                writer.child(sequence, request_id.clone()).complete(
+                    503,
+                    &search_service::capability_unavailable_body(
+                        &request_id,
+                        "semantic_search",
+                        semantic
+                            .reason
+                            .map(|reason| reason.label())
+                            .unwrap_or("embedding_unavailable"),
+                    ),
+                );
+                continue;
+            }
+        }
         if let Err(error) = query_service.dispatch_batch_child(
-            writer.child(sequence, envelope.request_id.clone()),
+            writer.child(sequence, request_id),
             envelope,
             args,
             query_parse_duration,
@@ -152,12 +182,8 @@ pub(super) fn batch(
 }
 
 fn write_bad_request(stream: &mut TcpStream, message: &str) -> RouteResult {
-    let body = serde_json::json!({
-        "schema_version": "daemon.error.v1",
-        "status": "bad_request",
-        "message": message,
-    })
-    .to_string();
+    let _ = message;
+    let body = unified_error_body(None, "BAD_REQUEST", "correct_request");
     write(stream, 400, "application/json", &body)
 }
 

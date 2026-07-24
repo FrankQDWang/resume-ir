@@ -107,12 +107,7 @@ pub(super) fn send_query_at_workload_index(
         .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok())
         .ok_or_else(|| BenchmarkError::invalid_config("resident_query_response"))?;
     let overloaded = response.starts_with("HTTP/1.1 503 Service Unavailable")
-        && payload["schema_version"] == "resume-ir.error.v1"
-        && payload["request_id"] == request_id
-        && payload["status"] == "error"
-        && payload["error"]["code"] == "OVERLOADED"
-        && payload["error"]["action"] == "retry"
-        && payload["error"]["retry_after_ms"] == 250;
+        && valid_correlated_overload(&payload, &request_id);
     if overloaded {
         return Ok(Observation {
             service_ms,
@@ -145,6 +140,45 @@ pub(super) fn send_query_at_workload_index(
         bucket,
         mode,
     })
+}
+
+fn valid_correlated_overload(payload: &serde_json::Value, request_id: &str) -> bool {
+    let Some(envelope) = payload.as_object() else {
+        return false;
+    };
+    let Some(error) = envelope.get("error").and_then(serde_json::Value::as_object) else {
+        return false;
+    };
+
+    exact_keys(
+        envelope,
+        &["schema_version", "request_id", "status", "error"],
+    ) && exact_keys(
+        error,
+        &["code", "action", "retry_after_ms", "capability", "reason"],
+    ) && envelope
+        .get("schema_version")
+        .and_then(serde_json::Value::as_str)
+        == Some("resume-ir.error.v2")
+        && envelope
+            .get("request_id")
+            .and_then(serde_json::Value::as_str)
+            == Some(request_id)
+        && envelope.get("status").and_then(serde_json::Value::as_str) == Some("error")
+        && error.get("code").and_then(serde_json::Value::as_str) == Some("OVERLOADED")
+        && error.get("action").and_then(serde_json::Value::as_str) == Some("retry")
+        && error
+            .get("retry_after_ms")
+            .and_then(serde_json::Value::as_u64)
+            == Some(250)
+        && error
+            .get("capability")
+            .is_some_and(serde_json::Value::is_null)
+        && error.get("reason").is_some_and(serde_json::Value::is_null)
+}
+
+fn exact_keys(object: &serde_json::Map<String, serde_json::Value>, expected: &[&str]) -> bool {
+    object.len() == expected.len() && expected.iter().all(|key| object.contains_key(*key))
 }
 
 fn valid_search_results(payload: &serde_json::Value) -> bool {
@@ -310,13 +344,15 @@ mod tests {
             let envelope: serde_json::Value = serde_json::from_str(body).unwrap();
             let request_id = envelope["request_id"].as_str().unwrap();
             let response = serde_json::json!({
-                "schema_version": "resume-ir.error.v1",
+                "schema_version": "resume-ir.error.v2",
                 "request_id": request_id,
                 "status": "error",
                 "error": {
                     "code": "OVERLOADED",
                     "action": "retry",
                     "retry_after_ms": 250,
+                    "capability": null,
+                    "reason": null,
                 },
             })
             .to_string();
@@ -340,6 +376,46 @@ mod tests {
         assert!(observation.overloaded);
         assert!(!observation.successful());
         assert_eq!(observation.hits, 0);
+    }
+
+    #[test]
+    fn overload_contract_rejects_legacy_missing_and_uncorrelated_payloads() {
+        let request_id = "resident-benchmark-1-1";
+        let valid = serde_json::json!({
+            "schema_version": "resume-ir.error.v2",
+            "request_id": request_id,
+            "status": "error",
+            "error": {
+                "code": "OVERLOADED",
+                "action": "retry",
+                "retry_after_ms": 250,
+                "capability": null,
+                "reason": null,
+            },
+        });
+        assert!(valid_correlated_overload(&valid, request_id));
+
+        let mut legacy = valid.clone();
+        legacy["schema_version"] = serde_json::Value::String("resume-ir.error.v1".to_string());
+        assert!(!valid_correlated_overload(&legacy, request_id));
+
+        let mut missing_required_null = valid.clone();
+        missing_required_null["error"]
+            .as_object_mut()
+            .unwrap()
+            .remove("capability");
+        assert!(!valid_correlated_overload(
+            &missing_required_null,
+            request_id
+        ));
+
+        let mut wrong_request = valid;
+        wrong_request["request_id"] = serde_json::Value::String("other-request".to_string());
+        assert!(!valid_correlated_overload(&wrong_request, request_id));
+
+        let mut unknown = wrong_request;
+        unknown["error"]["private_debug"] = serde_json::Value::Bool(true);
+        assert!(!valid_correlated_overload(&unknown, "other-request"));
     }
 
     fn read_request(stream: &mut TcpStream) -> String {

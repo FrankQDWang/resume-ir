@@ -1,22 +1,24 @@
-use std::{fs, path::Path, process::Command};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use import_pipeline::{current_import_processing_contract, ImportOptions};
 use meta_store::{
     migration_test_support::{
-        active_projection_count_for_processing_contract,
-        completed_import_task_count_for_processing_contract,
-        completed_migration_rebuild_task_count, seed_v27_repairing_fixture,
-        seed_v28_blocked_processing_contract_fixture,
+        seed_v27_repairing_fixture, seed_v28_blocked_processing_contract_fixture,
     },
-    EntityType, ImportProcessingContract, ImportTaskPurpose, ImportTaskStatus, ReadMetaStore,
-    SearchProjectionServiceState, SearchRepairReason, MAX_ENTITY_MENTIONS_PER_VERSION,
-    MAX_ENTITY_MENTION_VALUE_BYTES,
+    DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, MetaStoreErrorClass, ReadMetaStore,
 };
-use search_runtime::{HitLimit, QueryCoordinator};
+use process_containment::ContainedChild;
+use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
-const LEGACY_VISIBLE_EPOCH: u64 = 41;
-const UNIQUE_SEARCH_TOKEN: &str = "S83V27V28ConvergenceToken";
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[test]
 fn migration_fixture_builder_rejects_non_synthetic_roots() {
@@ -29,385 +31,333 @@ fn migration_fixture_builder_rejects_non_synthetic_roots() {
 }
 
 #[test]
-fn bounded_daemon_loop_converges_a_failed_v27_rebuild_to_one_ready_v29_publication() {
+fn standalone_daemon_rejects_v27_without_migrating_or_rewriting_existing_files() {
     let workspace = tempdir().unwrap();
     let data_dir = workspace.path().join("data");
-    let source_root = workspace.path().join("resume-ir-synthetic-v27-source");
+    let source_root = workspace.path().join("resume-ir-synthetic-v27-hard-cut");
     fs::create_dir_all(&source_root).unwrap();
-    let date_ranges = unique_closed_date_ranges(MAX_ENTITY_MENTIONS_PER_VERSION + 32);
-    let synthetic_text = format!(
-        "SUMMARY\nSynthetic software engineer resume.\n\
-         EXPERIENCE\n{}Built {UNIQUE_SEARCH_TOKEN} local-first search services in Rust.\n\
-         EDUCATION\nSynthetic University, Computer Science.\n\
-         SKILLS\nRust Java Kubernetes distributed systems.\n",
-        date_ranges
-    );
-    fs::write(source_root.join("synthetic-resume.txt"), &synthetic_text).unwrap();
+    fs::write(source_root.join("synthetic.txt"), "synthetic v27 fixture").unwrap();
     let canonical_root = fs::canonicalize(&source_root).unwrap();
-    let legacy =
-        seed_v27_repairing_fixture(&data_dir, &canonical_root, LEGACY_VISIBLE_EPOCH).unwrap();
-    seed_stale_search_artifacts(&data_dir);
+    seed_v27_repairing_fixture(&data_dir, &canonical_root, 41).unwrap();
+    assert_unsupported_store(&data_dir);
+    let before = snapshot_existing_files(&data_dir);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
-        .args([
-            "--data-dir",
-            path_str(&data_dir),
-            "run",
-            "--foreground",
-            "--work-imports",
-            "--work-index",
-            "--worker-interval-ms",
-            "1",
-            "--max-worker-ticks",
-            "3",
-        ])
-        .output()
-        .expect("run the bounded daemon import loop");
+    let output = run_once(&data_dir);
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "bounded daemon convergence failed: stdout={stdout:?}, stderr={stderr:?}"
-    );
-    assert!(stderr.is_empty(), "unexpected daemon stderr: {stderr:?}");
-    for private_path in [
-        path_str(workspace.path()),
-        path_str(&data_dir),
-        path_str(&canonical_root),
+    assert!(!output.status.success());
+    assert_fatal_runtime_integrity(&output.stderr);
+    assert_eq!(snapshot_existing_files(&data_dir), before);
+    assert_unsupported_store(&data_dir);
+}
+
+#[test]
+fn standalone_daemon_rejects_v28_without_migrating_or_rewriting_existing_files() {
+    let workspace = tempdir().unwrap();
+    let data_dir = workspace.path().join("data");
+    let source_root = workspace.path().join("resume-ir-synthetic-v28-hard-cut");
+    fs::create_dir_all(&source_root).unwrap();
+    fs::write(source_root.join("synthetic.txt"), "synthetic v28 fixture").unwrap();
+    let canonical_root = fs::canonicalize(&source_root).unwrap();
+    let contract = current_import_processing_contract(&ImportOptions::default()).unwrap();
+    seed_v28_blocked_processing_contract_fixture(&data_dir, &canonical_root, 41, &contract)
+        .unwrap();
+    assert_unsupported_store(&data_dir);
+    let before = snapshot_existing_files(&data_dir);
+
+    let output = run_once(&data_dir);
+
+    assert!(!output.status.success());
+    assert_fatal_runtime_integrity(&output.stderr);
+    assert_eq!(snapshot_existing_files(&data_dir), before);
+    assert_unsupported_store(&data_dir);
+}
+
+#[test]
+fn standalone_daemon_rejects_unknown_manifest_authority_without_rewriting_existing_files() {
+    let workspace = tempdir().unwrap();
+    let data_dir = workspace.path().join("data");
+    let owner = match DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("synthetic data dir is owned"),
+    };
+    drop(owner.open_store().unwrap());
+    drop(owner);
+    let manifest_path = data_dir.join("metadata-active.v1");
+    let manifest = fs::read_to_string(&manifest_path).unwrap();
+    assert!(manifest.contains("\nschema=29\n"));
+    fs::write(
+        &manifest_path,
+        manifest.replace("\nschema=29\n", "\nschema=30\n"),
+    )
+    .unwrap();
+    assert_unsupported_store(&data_dir);
+    let before = snapshot_existing_files(&data_dir);
+
+    let output = run_once(&data_dir);
+
+    assert!(!output.status.success());
+    assert_fatal_runtime_integrity(&output.stderr);
+    assert_eq!(snapshot_existing_files(&data_dir), before);
+    assert_unsupported_store(&data_dir);
+}
+
+#[test]
+fn repeated_v28_control_plane_generations_remain_blocked_and_never_consume_old_bytes() {
+    let workspace = tempdir().unwrap();
+    let data_dir = workspace.path().join("data");
+    let source_root = workspace
+        .path()
+        .join("resume-ir-synthetic-v28-restart-hard-cut");
+    fs::create_dir_all(&source_root).unwrap();
+    let canonical_root = fs::canonicalize(&source_root).unwrap();
+    let contract = current_import_processing_contract(&ImportOptions::default()).unwrap();
+    seed_v28_blocked_processing_contract_fixture(&data_dir, &canonical_root, 41, &contract)
+        .unwrap();
+    let before = snapshot_existing_files(&data_dir);
+    let mut prior_instance_id = None;
+
+    for launch_id in [
+        "8383838383838383838383838383838383838383838383838383838383838383",
+        "8484848484848484848484848484848484848484848484848484848484848484",
     ] {
-        assert!(!stdout.contains(private_path));
-        assert!(!stderr.contains(private_path));
-    }
-
-    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 29);
-    assert!(store
-        .import_task_by_id(legacy.legacy_task_id())
-        .unwrap()
-        .is_none());
-    let completed = store
-        .latest_import_task_by_root(path_str(&canonical_root))
-        .unwrap()
-        .unwrap();
-    assert_ne!(&completed.id, legacy.legacy_task_id());
-    assert_eq!(completed.status, ImportTaskStatus::Completed);
-    assert_eq!(
-        store.import_task_purpose(&completed.id).unwrap(),
-        ImportTaskPurpose::MigrationRebuildFullCorpus
-    );
-    assert_eq!(completed_migration_rebuild_task_count(&store).unwrap(), 1);
-    let completed_scope = store
-        .import_scan_scope_by_task_id(&completed.id)
-        .unwrap()
-        .unwrap();
-    assert_eq!(completed_scope.scan_budget_kind, None);
-    assert_eq!(completed_scope.scan_budget_limit, None);
-    assert_eq!(completed_scope.scan_budget_observed, None);
-    assert!(!completed_scope.scan_budget_exhausted);
-
-    let status = store.status_summary().unwrap();
-    assert_eq!(status.import_tasks_queued, 0);
-    assert_eq!(status.import_tasks_recoverable, 0);
-    assert_eq!(status.searchable_documents, 1);
-    let projection = store.search_projection_state().unwrap();
-    assert_eq!(
-        projection.service_state,
-        SearchProjectionServiceState::Ready
-    );
-    assert_eq!(projection.repair_reason, None);
-    assert!(projection.generation.is_some());
-    assert!(projection.publication.is_some());
-    assert_eq!(
-        projection.visible_epoch,
-        legacy.inherited_visible_epoch() + 1
-    );
-
-    assert!(!data_dir
-        .join("search-index/fulltext.snapshot.key-v1")
-        .exists());
-    assert!(!data_dir
-        .join("vector-index/vector.snapshot.key-v1")
-        .exists());
-    let mut coordinator = QueryCoordinator::open(&data_dir).unwrap();
-    let hits = coordinator
-        .with_query(|scope| {
-            scope.fulltext_candidates(UNIQUE_SEARCH_TOKEN, HitLimit::new(10)?, None)
-        })
-        .unwrap();
-    assert_eq!(hits.len(), 1);
-    let version_id = hits[0].projection.resume_version_id.clone();
-    let mentions = store.entity_mentions_for_version(&version_id).unwrap();
-    assert!(mentions.len() <= MAX_ENTITY_MENTIONS_PER_VERSION);
-    assert!(mentions.iter().all(|mention| {
-        mention.raw_value.len() <= MAX_ENTITY_MENTION_VALUE_BYTES
-            && mention
-                .normalized_value
-                .as_deref()
-                .is_none_or(|value| value.len() <= MAX_ENTITY_MENTION_VALUE_BYTES)
-    }));
-    let years = mentions
-        .iter()
-        .filter(|mention| mention.entity_type == EntityType::YearsExperience)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        years.len(),
-        1,
-        "bounded synthetic migration must retain one derived years mention; total_mentions={}",
-        mentions.len()
-    );
-    let years = years[0];
-    assert_eq!(years.span_start, None);
-    assert_eq!(years.span_end, None);
-    assert_eq!(years.raw_value, years.normalized_value.as_deref().unwrap());
-    for entity_type in [EntityType::School, EntityType::Skill] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_resume-daemon"));
+        command
+            .args([
+                "--data-dir",
+                path_str(&data_dir),
+                "run",
+                "--foreground",
+                "--parent-lifecycle-stdin",
+                "--launch-id",
+                launch_id,
+                "--ipc-listen",
+                "127.0.0.1:0",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        let mut child = ContainedChild::spawn(&mut command).unwrap();
+        let parent_stdin = child.take_stdin().unwrap();
+        let mut stderr = child.take_stderr().unwrap();
+        let generation = wait_for_generation(&mut child, &data_dir, launch_id);
+        assert_ne!(
+            prior_instance_id.as_deref(),
+            Some(generation.instance_id.as_str())
+        );
+        assert_eq!(generation.launch_id, launch_id);
+        prior_instance_id = Some(generation.instance_id.clone());
+        let payload = wait_for_blocked_status(&mut child, &generation);
+        assert_eq!(payload["process_state"], "ready");
+        assert_eq!(payload["status"], "blocked");
+        assert_eq!(payload["core"]["state"], "blocked");
+        assert_eq!(payload["core"]["reason"], "unsupported_store_schema");
+        assert_eq!(payload["error"]["code"], "SERVICE_BLOCKED");
+        assert_eq!(payload["error"]["action"], "repair_required");
+        assert_eq!(payload["error"]["capability"], serde_json::Value::Null);
+        assert_eq!(payload["error"]["reason"], "unsupported_store_schema");
+        drop(parent_stdin);
+        let status = child.wait().unwrap();
+        let mut stderr_body = Vec::new();
+        stderr.read_to_end(&mut stderr_body).unwrap();
         assert!(
-            mentions
-                .iter()
-                .any(|mention| mention.entity_type == entity_type),
-            "bounded migration dropped {entity_type:?}"
+            status.success(),
+            "daemon shutdown failed: {}",
+            String::from_utf8_lossy(&stderr_body)
         );
+        assert!(stderr_body.is_empty());
+        assert_eq!(snapshot_existing_files(&data_dir), before);
+        assert!(!data_dir.join("ipc.endpoints.json").exists());
+        assert!(!data_dir.join("ipc.auth").exists());
     }
 }
 
-#[test]
-fn daemon_hard_cuts_a_blocked_old_v28_contract_and_publishes_only_current_rows() {
-    let workspace = tempdir().unwrap();
-    let data_dir = workspace.path().join("data");
-    let source_root = workspace
-        .path()
-        .join("resume-ir-synthetic-blocked-old-contract");
-    fs::create_dir_all(&source_root).unwrap();
-    fs::write(
-        source_root.join("current-contract-resume.txt"),
-        format!(
-            "SUMMARY\nSynthetic platform engineer resume.\n\
-             EXPERIENCE\nBuilt {UNIQUE_SEARCH_TOKEN} deterministic services in Rust.\n\
-             EDUCATION\nSynthetic University.\n\
-             SKILLS\nRust distributed systems.\n"
-        ),
-    )
-    .unwrap();
-    let canonical_root = fs::canonicalize(&source_root).unwrap();
-    let old_contract = ImportProcessingContract::new(
-        "parser-v1",
-        "ocr-v1",
-        "resume-ir-s9-v1",
-        meta_store::CLASSIFIER_EPOCH,
-    )
-    .unwrap();
-    let current_contract = current_import_processing_contract(&ImportOptions::default()).unwrap();
-    assert_ne!(old_contract.id(), current_contract.id());
-    let fixture = seed_v28_blocked_processing_contract_fixture(
-        &data_dir,
-        &canonical_root,
-        LEGACY_VISIBLE_EPOCH,
-        &old_contract,
-    )
-    .unwrap();
-
-    run_bounded_daemon(&data_dir, workspace.path(), &canonical_root);
-
-    let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 29);
-    assert!(store
-        .import_task_by_id(fixture.legacy_task_id())
-        .unwrap()
-        .is_none());
-    assert!(store
-        .document_by_id(fixture.immutable_document_id())
-        .unwrap()
-        .is_some());
-    assert!(store
-        .source_revision_by_id(fixture.immutable_source_revision_id())
-        .unwrap()
-        .is_some());
-    assert!(store
-        .resume_version_by_id(fixture.immutable_resume_version_id())
-        .unwrap()
-        .is_some());
-    assert!(store
-        .resume_version_classification(
-            fixture.immutable_resume_version_id(),
-            old_contract.classifier_epoch(),
-        )
-        .unwrap()
-        .is_some());
-
-    let completed = store
-        .latest_import_task_by_root(path_str(&canonical_root))
-        .unwrap()
-        .unwrap();
-    assert_eq!(completed.status, ImportTaskStatus::Completed);
-    assert_eq!(
-        store.import_task_purpose(&completed.id).unwrap(),
-        ImportTaskPurpose::MigrationRebuildFullCorpus
-    );
-    assert_eq!(
-        store
-            .import_task_processing_contract_id(&completed.id)
-            .unwrap()
-            .as_ref(),
-        Some(current_contract.id())
-    );
-    assert_eq!(
-        completed_import_task_count_for_processing_contract(&store, old_contract.id()).unwrap(),
-        0
-    );
-    assert_eq!(
-        completed_import_task_count_for_processing_contract(&store, current_contract.id()).unwrap(),
-        1
-    );
-    assert_eq!(
-        active_projection_count_for_processing_contract(&store, old_contract.id()).unwrap(),
-        0
-    );
-    assert_eq!(
-        active_projection_count_for_processing_contract(&store, current_contract.id()).unwrap(),
-        1
-    );
-    assert_eq!(store.status_summary().unwrap().searchable_documents, 1);
-    let projection = store.search_projection_state().unwrap();
-    assert_eq!(
-        projection.service_state,
-        SearchProjectionServiceState::Ready
-    );
-    assert_eq!(projection.repair_reason, None);
-    assert_eq!(
-        projection.visible_epoch,
-        fixture.inherited_visible_epoch() + 1
-    );
-
-    let mut coordinator = QueryCoordinator::open(&data_dir).unwrap();
-    let hits = coordinator
-        .with_query(|scope| {
-            scope.fulltext_candidates(UNIQUE_SEARCH_TOKEN, HitLimit::new(10)?, None)
-        })
-        .unwrap();
-    assert_eq!(hits.len(), 1);
-    assert_ne!(
-        &hits[0].projection.resume_version_id,
-        fixture.immutable_resume_version_id()
-    );
-}
-
-#[test]
-fn daemon_restart_does_not_reopen_a_blocked_current_v28_contract() {
-    let workspace = tempdir().unwrap();
-    let data_dir = workspace.path().join("data");
-    let source_root = workspace
-        .path()
-        .join("resume-ir-synthetic-blocked-current-contract");
-    fs::create_dir_all(&source_root).unwrap();
-    fs::write(
-        source_root.join("blocked-current-resume.txt"),
-        "SUMMARY\nSynthetic blocked current contract resume.\n",
-    )
-    .unwrap();
-    let canonical_root = fs::canonicalize(&source_root).unwrap();
-    let current_contract = current_import_processing_contract(&ImportOptions::default()).unwrap();
-    let fixture = seed_v28_blocked_processing_contract_fixture(
-        &data_dir,
-        &canonical_root,
-        LEGACY_VISIBLE_EPOCH,
-        &current_contract,
-    )
-    .unwrap();
-
-    for _ in 0..2 {
-        run_bounded_daemon(&data_dir, workspace.path(), &canonical_root);
-        let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
-        let projection = store.search_projection_state().unwrap();
-        assert_eq!(
-            projection.service_state,
-            SearchProjectionServiceState::RepairBlocked
-        );
-        assert_eq!(
-            projection.repair_reason,
-            Some(SearchRepairReason::RuntimeInvariant)
-        );
-        assert_eq!(projection.generation, None);
-        assert_eq!(projection.visible_epoch, fixture.inherited_visible_epoch());
-        assert_eq!(store.status_summary().unwrap().searchable_documents, 0);
-        assert_eq!(
-            store
-                .import_task_by_id(fixture.legacy_task_id())
-                .unwrap()
-                .unwrap()
-                .status,
-            ImportTaskStatus::Completed
-        );
-        assert_eq!(
-            completed_import_task_count_for_processing_contract(&store, current_contract.id())
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            active_projection_count_for_processing_contract(&store, current_contract.id()).unwrap(),
-            0
-        );
-    }
-}
-
-fn run_bounded_daemon(data_dir: &Path, workspace: &Path, canonical_root: &Path) {
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+fn run_once(data_dir: &Path) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
         .args([
             "--data-dir",
             path_str(data_dir),
             "run",
             "--foreground",
-            "--work-imports",
-            "--work-index",
-            "--worker-interval-ms",
-            "1",
-            "--max-worker-ticks",
-            "3",
+            "--once",
         ])
         .output()
-        .expect("run the bounded daemon import loop");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "bounded daemon convergence failed: stdout={stdout:?}, stderr={stderr:?}"
+        .unwrap()
+}
+
+fn assert_unsupported_store(data_dir: &Path) {
+    assert_eq!(
+        ReadMetaStore::open_data_dir(data_dir).unwrap_err().class(),
+        MetaStoreErrorClass::UnsupportedStoreSchema
     );
-    assert!(stderr.is_empty(), "unexpected daemon stderr: {stderr:?}");
-    for private_path in [
-        path_str(workspace),
-        path_str(data_dir),
-        path_str(canonical_root),
-    ] {
-        assert!(!stdout.contains(private_path));
-        assert!(!stderr.contains(private_path));
+}
+
+fn assert_fatal_runtime_integrity(stderr: &[u8]) {
+    let payload: serde_json::Value = serde_json::from_slice(stderr).unwrap();
+    assert_eq!(payload["schema_version"], "resume-ir.daemon-fatal.v1");
+    assert_eq!(payload["class"], "runtime_integrity");
+    assert_eq!(payload["disposition"], "blocked");
+}
+
+struct Generation {
+    launch_id: String,
+    instance_id: String,
+    token: String,
+    status_endpoint: String,
+}
+
+fn wait_for_generation(
+    child: &mut ContainedChild,
+    data_dir: &Path,
+    expected_launch_id: &str,
+) -> Generation {
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    loop {
+        let endpoints = fs::read(data_dir.join("ipc.endpoints.json"))
+            .ok()
+            .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok());
+        let auth = fs::read(data_dir.join("ipc.auth"))
+            .ok()
+            .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok());
+        if let (Some(endpoints), Some(auth)) = (endpoints, auth) {
+            if endpoints["schema_version"] == "resume-ir.daemon-ipc.v3"
+                && auth["schema_version"] == "resume-ir.daemon-auth.v3"
+                && endpoints["launch_id"] == auth["launch_id"]
+                && endpoints["instance_id"] == auth["instance_id"]
+            {
+                assert_control_file_contract(&endpoints, &auth, expected_launch_id);
+                return Generation {
+                    launch_id: endpoints["launch_id"].as_str().unwrap().to_string(),
+                    instance_id: endpoints["instance_id"].as_str().unwrap().to_string(),
+                    token: auth["token"].as_str().unwrap().to_string(),
+                    status_endpoint: endpoints["status"].as_str().unwrap().to_string(),
+                };
+            }
+        }
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!("daemon exited before v3 control publication: {status}");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "v3 control publication timed out"
+        );
+        thread::sleep(Duration::from_millis(20));
     }
 }
 
-fn unique_closed_date_ranges(count: usize) -> String {
-    (0..count)
-        .map(|ordinal| {
-            let start_year = 1980 + ordinal / 12;
-            let start_month = ordinal % 12 + 1;
-            let (end_year, end_month) = if start_month == 12 {
-                (start_year + 1, 1)
-            } else {
-                (start_year, start_month + 1)
-            };
-            format!("{start_year}-{start_month:02} - {end_year}-{end_month:02}\n")
-        })
+fn wait_for_blocked_status(
+    child: &mut ContainedChild,
+    generation: &Generation,
+) -> serde_json::Value {
+    let deadline = Instant::now() + STARTUP_TIMEOUT;
+    loop {
+        let status = authenticated_get(&generation.status_endpoint, &generation.token);
+        assert!(status.starts_with("HTTP/1.1 200"), "{status}");
+        let payload: serde_json::Value =
+            serde_json::from_str(status.split_once("\r\n\r\n").unwrap().1).unwrap();
+        assert_eq!(payload["schema_version"], "daemon.status.v3");
+        assert_eq!(payload["process_state"], "ready");
+        if payload["core"]["state"] == "blocked" {
+            return payload;
+        }
+        assert_eq!(payload["core"]["state"], "initializing");
+        assert_eq!(payload["core"]["reason"], "metadata_initializing");
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!("daemon exited before publishing blocked status: {status}");
+        }
+        assert!(Instant::now() < deadline, "blocked status timed out");
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn assert_control_file_contract(
+    endpoints: &serde_json::Value,
+    auth: &serde_json::Value,
+    expected_launch_id: &str,
+) {
+    assert_eq!(
+        object_keys(endpoints),
+        BTreeSet::from([
+            "schema_version",
+            "launch_id",
+            "instance_id",
+            "owner_mode",
+            "status",
+            "diagnostics",
+            "imports",
+            "import_cancel",
+            "import_control",
+            "import_progress",
+            "search",
+            "search_batch",
+            "details",
+            "delete",
+        ])
+    );
+    assert_eq!(
+        object_keys(auth),
+        BTreeSet::from(["schema_version", "launch_id", "instance_id", "token"])
+    );
+    assert_eq!(endpoints["owner_mode"], "desktop_supervised");
+    assert_eq!(endpoints["launch_id"], auth["launch_id"]);
+    assert_eq!(endpoints["instance_id"], auth["instance_id"]);
+    assert_eq!(endpoints["launch_id"].as_str().unwrap(), expected_launch_id);
+    assert_eq!(endpoints["instance_id"].as_str().unwrap().len(), 64);
+    assert_eq!(auth["token"].as_str().unwrap().len(), 64);
+}
+
+fn object_keys(value: &serde_json::Value) -> BTreeSet<&str> {
+    value
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
         .collect()
 }
 
-fn seed_stale_search_artifacts(data_dir: &Path) {
-    let fulltext = data_dir.join("search-index");
-    let vector = data_dir.join("vector-index");
-    fs::create_dir_all(fulltext.join("snapshots/stale-generation")).unwrap();
-    fs::create_dir_all(vector.join("staging/stale-generation")).unwrap();
-    fs::write(
-        fulltext.join("fulltext.snapshot.key-v1"),
-        b"synthetic stale",
+fn authenticated_get(endpoint: &str, token: &str) -> String {
+    let (address, path) = endpoint
+        .strip_prefix("http://")
+        .unwrap()
+        .split_once('/')
+        .unwrap();
+    let mut stream = TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write!(
+        stream,
+        "GET /{path} HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
     )
     .unwrap();
-    fs::write(vector.join("vector.snapshot.key-v1"), b"synthetic stale").unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    response
+}
+
+fn snapshot_existing_files(root: &Path) -> BTreeMap<PathBuf, (u64, String)> {
+    let mut snapshot = BTreeMap::new();
+    collect_files(root, root, &mut snapshot);
+    snapshot
+}
+
+fn collect_files(root: &Path, current: &Path, snapshot: &mut BTreeMap<PathBuf, (u64, String)>) {
+    for entry in fs::read_dir(current).unwrap() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path).unwrap();
+        if metadata.file_type().is_dir() {
+            collect_files(root, &path, snapshot);
+        } else if metadata.file_type().is_file() {
+            let bytes = fs::read(&path).unwrap();
+            snapshot.insert(
+                path.strip_prefix(root).unwrap().to_path_buf(),
+                (bytes.len() as u64, format!("{:x}", Sha256::digest(bytes))),
+            );
+        }
+    }
 }
 
 fn path_str(path: &Path) -> &str {

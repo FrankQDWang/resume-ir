@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use import_pipeline::{current_import_processing_contract, ImportOptions, LinearPromotionPolicy};
@@ -8,11 +7,12 @@ use meta_store::{
     DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, ImportRootKind, ImportScanProfile,
     ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, ReadMetaStore, UnixTimestamp,
 };
-use serde_json::json;
-use sha2::{Digest, Sha256};
+
+mod support;
 
 #[test]
 fn daemon_import_uses_the_bundled_classifier_model_by_default() {
+    let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("daemon-classifier-data");
     let root = temp_dir("daemon-classifier-root");
     fs::write(
@@ -21,11 +21,10 @@ fn daemon_import_uses_the_bundled_classifier_model_by_default() {
     )
     .unwrap();
     let canonical_root = fs::canonicalize(&root).unwrap();
-    let model = data_dir.join("bundled-classifier-model.json");
-    write_synthetic_bundled_model(&model);
+    let model = support::reviewed_classifier_model();
     seed_queued_import_task(&data_dir, &canonical_root, &model);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let output = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -33,8 +32,6 @@ fn daemon_import_uses_the_bundled_classifier_model_by_default() {
             "--foreground",
             "--once",
             "--work-imports-once",
-            "--resume-classifier-model",
-            path_str(&model),
         ])
         .output()
         .expect("run daemon import worker with bundled classifier model");
@@ -64,34 +61,6 @@ fn daemon_import_uses_the_bundled_classifier_model_by_default() {
 
     remove_dir(&data_dir);
     remove_dir(&root);
-}
-
-fn write_synthetic_bundled_model(path: &Path) {
-    let model = json!({
-        "schema": "resume_ir_linear_promotion_v1",
-        "classifier_epoch": "precision_first_v4",
-        "feature_contract": "bounded_normalized_text_plus_structure_v1",
-        "max_input_chars": 128,
-        "threshold": 0.7,
-        "intercept": 0.0,
-        "features": [{"ngram": "pla", "idf": 1.0, "coefficient": 12.0}]
-    });
-    let model_json = serde_json::to_string(&model).unwrap();
-    let model_sha256 = format!("{:x}", Sha256::digest(model_json.as_bytes()));
-    fs::write(
-        path,
-        serde_json::to_vec(&json!({
-            "model_json": model_json,
-            "model_sha256": model_sha256
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o644)).unwrap();
-    }
 }
 
 fn seed_queued_import_task(data_dir: &Path, canonical_root: &Path, model: &Path) {

@@ -20,7 +20,7 @@ import {
   removeInstallReceipt,
   verifyInstallReceipt,
 } from "./macos-install-receipt.mjs";
-import { readLegacyExactInstallReceipt } from "./macos-legacy-exact-artifact.mjs";
+import { validateSourceIdentity } from "./macos-source-identity.mjs";
 import {
   advanceLifecycleJournal,
   createLifecycleJournal,
@@ -46,6 +46,7 @@ import {
   MACOS_SYSTEM_TOOLS,
   runClosedSystemTool,
 } from "./macos-system-tools.mjs";
+import { PRODUCT_VERSION } from "./product-version.mjs";
 
 const APP_NAME = "resume-ir.app";
 const EXPECTED_BUNDLE_ID = "local.resume-ir.desktop";
@@ -133,10 +134,14 @@ function requireIdentity(metadata, expectedVersion) {
 }
 
 function requireDmgReceipt(receipt, targetTriple) {
+  try {
+    validateSourceIdentity(receipt?.source);
+  } catch {
+    throw new Error("DMG composition receipt is invalid");
+  }
   if (
-    receipt?.schema_version !== "resume-ir.macos-dmg-composition.v2" ||
+    receipt?.schema_version !== "resume-ir.macos-dmg-composition.v3" ||
     receipt?.target_triple !== targetTriple ||
-    !/^[a-f0-9]{40}$/.test(receipt?.source_commit ?? "") ||
     receipt?.release_claim !== "composition_only" ||
     receipt?.dmg_count !== 1 ||
     receipt?.app_bundle_count !== 1 ||
@@ -242,7 +247,7 @@ export async function installMacosDmg(options) {
     repoRoot: options.repoRoot,
     targetTriple: options.targetTriple,
     applicationsDirectory: options.applicationsDirectory,
-    expectedVersion: options.expectedVersion ?? "0.1.2",
+    expectedVersion: options.expectedVersion ?? PRODUCT_VERSION,
     platform: options.platform ?? process.platform,
   });
   if (
@@ -269,7 +274,7 @@ async function installMacosDmgLocked({
   targetTriple,
   dmg,
   applicationsDirectory,
-  expectedVersion = "0.1.2",
+  expectedVersion = PRODUCT_VERSION,
   temporaryRoot = os.tmpdir(),
   platform = process.platform,
   systemRunner = defaultSystemRunner,
@@ -283,7 +288,6 @@ async function installMacosDmgLocked({
   createReceipt = createInstallReceipt,
   readReceipt = readInstallReceipt,
   persistReceipt = createInstallReceiptEvidence,
-  readLegacyReceipt = readLegacyExactInstallReceipt,
   readJournal = readLifecycleJournal,
   persistJournal = persistLifecycleJournal,
   launchServicesCommand = DEFAULT_LSREGISTER,
@@ -304,15 +308,6 @@ async function installMacosDmgLocked({
   const target = path.join(resolvedApplications, APP_NAME);
   const resolvedApplicationSupport =
     applicationSupportRoot ?? (await resolveApplicationSupportRoot());
-  if (
-    (await readLegacyReceipt({
-      applicationSupportRoot: resolvedApplicationSupport,
-      allowMissing: true,
-    })) !== undefined
-  ) {
-    throw new Error("legacy install receipt is invalid for current install");
-  }
-
   let installedSignature;
   const verifyNew = async (appBundle, journal) => {
     if (
@@ -341,7 +336,7 @@ async function installMacosDmgLocked({
       appBundle,
       targetTriple,
       expectedVersion,
-      expectedSourceCommit: journal.new_receipt.source_commit,
+      expectedSource: journal.new_receipt.source,
       verifySignaturePolicy: async () => installedSignature,
     });
     verifyInstallReceipt({ receipt: journal.new_receipt, composition });
@@ -428,7 +423,8 @@ async function installMacosDmgLocked({
           sourceComposition?.bundle_id !== EXPECTED_BUNDLE_ID ||
           sourceComposition?.version !== expectedVersion ||
           sourceComposition?.target_triple !== targetTriple ||
-          sourceComposition?.source_commit !== dmgReceipt.source_commit ||
+          JSON.stringify(sourceComposition?.source) !==
+            JSON.stringify(dmgReceipt.source) ||
           sourceComposition?.composition_digest !==
             dmgReceipt.app_composition_digest
         ) {
@@ -522,7 +518,7 @@ export async function uninstallMacosApp(options) {
     repoRoot: options.repoRoot,
     targetTriple: options.targetTriple,
     applicationsDirectory: options.applicationsDirectory,
-    expectedVersion: options.expectedVersion ?? "0.1.2",
+    expectedVersion: options.expectedVersion ?? PRODUCT_VERSION,
     platform: options.platform ?? process.platform,
   });
   return runWithMacosLifecycleLock({
@@ -542,7 +538,7 @@ async function uninstallMacosAppLocked({
   repoRoot,
   targetTriple,
   applicationsDirectory,
-  expectedVersion = "0.1.2",
+  expectedVersion = PRODUCT_VERSION,
   platform = process.platform,
   systemRunner = defaultSystemRunner,
   inspectApp = inspectMacosAppBundle,
@@ -554,7 +550,6 @@ async function uninstallMacosAppLocked({
   verifyReceipt = verifyInstallReceipt,
   removeReceipt = removeInstallReceipt,
   persistReceipt = createInstallReceiptEvidence,
-  readLegacyReceipt = readLegacyExactInstallReceipt,
   readJournal = readLifecycleJournal,
   persistJournal = persistLifecycleJournal,
   launchServicesCommand = DEFAULT_LSREGISTER,
@@ -572,14 +567,6 @@ async function uninstallMacosAppLocked({
   const target = path.join(resolvedApplications, APP_NAME);
   const resolvedApplicationSupport =
     applicationSupportRoot ?? (await resolveApplicationSupportRoot());
-  if (
-    (await readLegacyReceipt({
-      applicationSupportRoot: resolvedApplicationSupport,
-      allowMissing: true,
-    })) !== undefined
-  ) {
-    throw new Error("legacy install receipt is invalid for current uninstall");
-  }
   const verifyOld = async (appBundle, journal) => {
     if (
       journal.old_version !== expectedVersion ||
@@ -606,7 +593,7 @@ async function uninstallMacosAppLocked({
       appBundle,
       targetTriple,
       expectedVersion,
-      expectedSourceCommit: journal.old_receipt.source_commit,
+      expectedSource: journal.old_receipt.source,
       verifySignaturePolicy: async () => signaturePolicy,
     });
     verifyReceipt({ receipt: journal.old_receipt, composition });

@@ -150,13 +150,30 @@ SYNTHETIC_SMOKE_KEYS = {
     "quality",
 }
 
-CORRECTNESS_RECOVERY_V29_IDENTITY = {
-    "contract": "resume-ir.correctness-recovery.v29",
-    "schema_migration": "additive_copy_on_write_v28_to_v29",
-    "metadata_schema": 29,
+FORWARD_MIGRATION_FEATURE_TRAIN_IDENTITY = {
+    "contract": "resume-ir.forward-migration-feature-train.v1",
+    "schema_migration": "continuous_encrypted_cow_from_v29",
+    "train_base_schema": 29,
+    "train_final_schema": 33,
+    "pre_v29_runtime_migration_allowed": False,
+    "future_schema_read_allowed": False,
+    "migration_dual_reader_allowed": False,
+    "migration_dual_write_allowed": False,
+    "migration_registry_contiguous_required": True,
+    "migration_source_ciphertext_may_change": False,
+    "migration_predecessor_retention_count": 1,
+    "product_version_source": "apps/desktop/package.json",
+    "feature_versions": ["0.1.3", "0.1.4", "0.1.5", "0.1.6", "0.1.7", "0.1.8"],
+    "feature_schemas": [30, 31, 32, 33, 33, 33],
+    "per_feature_installed_acceptance_required": True,
+    "final_full_matrix_after_version": "0.1.8",
+    "final_soak_minutes": 120,
+    "existing_v29_key_repair_allowed": False,
+    "unsupported_store_bytes_may_change": False,
+    "fresh_current_store_requires_no_legacy_authority": True,
 }
 
-CORRECTNESS_RECOVERY_V29_PUBLICATION_RETIREMENT = {
+FEATURE_TRAIN_PUBLICATION_RETIREMENT = {
     "failed_publication_artifact_retirement": "exact_generation_or_terminal_block",
     "failed_publication_artifact_accumulation_allowed": False,
     "artifact_retirement_failure_action": "repair_required_without_next_attempt",
@@ -204,15 +221,12 @@ CORRECTNESS_RECOVERY_V29_PUBLICATION_RETIREMENT = {
         "exact_pending_intent_and_not_retained_only"
     ),
     "publication_terminal_cleanup_attempt_preserved": True,
-    "v28_interrupted_publication_migration": (
-        "abandoned_pending_may_exist_not_complete"
-    ),
     "publication_supersession_may_accumulate_artifacts": False,
     "publication_prepared_owner_boundary": "internal_transaction_closure_only",
     "publication_prepared_plain_drop_allowed": False,
 }
 
-CORRECTNESS_RECOVERY_V29_INSTALLED_ACCEPTANCE = {
+FEATURE_TRAIN_INSTALLED_ACCEPTANCE = {
     "macos_source_commit_provenance_required": True,
     "macos_v2_trust_lane_system_tools": "absolute_path_closed_env_shell_false",
     "macos_dmg_verified_consumption": "single_mount_lease",
@@ -222,7 +236,7 @@ CORRECTNESS_RECOVERY_V29_INSTALLED_ACCEPTANCE = {
     ),
     "macos_partial_attach_cleanup": "mount_probe_then_single_detach",
     "macos_installed_acceptance_runwide_lifecycle_lock": True,
-    "macos_installed_acceptance_exact_version": "0.1.2",
+    "macos_installed_acceptance_product_version_source": "apps/desktop/package.json",
     "macos_installed_acceptance_source_head": "clean_head_equals_fresh_origin_main",
     "macos_installed_acceptance_source_observation": (
         "serial_bracketed_head_branch_status_origin_remote"
@@ -238,12 +252,12 @@ CORRECTNESS_RECOVERY_V29_INSTALLED_ACCEPTANCE = {
     "macos_installed_acceptance_commit_binding": (
         "bundle_dmg_receipt_installed_acceptance_and_soak_equal"
     ),
-    "macos_installed_acceptance_authorized_source_schema": 28,
+    "macos_installed_acceptance_authorized_source_schema": 29,
     "macos_installed_acceptance_cow_mode": (
         "apfs_clonefile_no_fallback_source_unchanged"
     ),
     "macos_installed_acceptance_cold_gate": (
-        "v28_to_v29_ready_metadata_fulltext_vector_epoch_and_search"
+        "direct_v29_to_current_preserved_control_plane_ready_metadata_fulltext_vector_epoch_and_search"
     ),
     "macos_installed_acceptance_search_witness": (
         "owner_only_public_canary_daemon_import_nonzero_exact_epoch"
@@ -276,7 +290,7 @@ CORRECTNESS_RECOVERY_V29_INSTALLED_ACCEPTANCE = {
     ),
 }
 
-CORRECTNESS_RECOVERY_V29_SOAK = {
+FEATURE_TRAIN_FINAL_DELIVERY = {
     "synthetic_soak_minutes": 120,
     "merged_main_installed_acceptance_precedes_soak": True,
     "soak_commit_equals_installed_acceptance_commit": True,
@@ -284,11 +298,75 @@ CORRECTNESS_RECOVERY_V29_SOAK = {
     "deployed_regression_restarts_soak_from_zero": True,
 }
 
-CORRECTNESS_RECOVERY_V29_REQUIRED_FIELDS = {
-    **CORRECTNESS_RECOVERY_V29_IDENTITY,
-    **CORRECTNESS_RECOVERY_V29_PUBLICATION_RETIREMENT,
-    **CORRECTNESS_RECOVERY_V29_INSTALLED_ACCEPTANCE,
-    **CORRECTNESS_RECOVERY_V29_SOAK,
+FORWARD_MIGRATION_FEATURE_TRAIN_REQUIRED_FIELDS = {
+    **FORWARD_MIGRATION_FEATURE_TRAIN_IDENTITY,
+    **FEATURE_TRAIN_PUBLICATION_RETIREMENT,
+    **FEATURE_TRAIN_INSTALLED_ACCEPTANCE,
+    **FEATURE_TRAIN_FINAL_DELIVERY,
+}
+
+DAEMON_BOOTSTRAP_V1_REQUIRED_FIELDS = {
+    "contract": "resume-ir.daemon-bootstrap.v1",
+    "aggregate_ipc_contract": "resume-ir.ipc.v4",
+    "discovery_contract": "resume-ir.daemon-ipc.v3",
+    "auth_contract": "resume-ir.daemon-auth.v3",
+    "status_contract": "daemon.status.v3",
+    "diagnostics_contract": "resume-ir.diagnostics.v4",
+    "error_contract": "resume-ir.error.v2",
+    "launch_id_bytes": 32,
+    "pre_spawn_discovery_probe_allowed": False,
+    "foreign_launch_adoption_allowed": False,
+    "status_authentication_required": True,
+    "control_plane_deadline_ms": 10_000,
+    "control_plane_publish_precedes_store_open": True,
+    "control_plane_publish_precedes_runtime_validation": True,
+    "status_reads_metadata_on_heartbeat": False,
+    "initializing_business_route_status": 503,
+    "initializing_business_route_code": "SERVICE_INITIALIZING",
+    "automatic_business_request_replay_allowed": False,
+}
+
+DESKTOP_SUPERVISOR_V2_REQUIRED_FIELDS = {
+    "contract": "resume-ir.desktop-daemon-lifecycle.v2",
+    "lifecycle_receipt_contract": "resume-ir.desktop-daemon-lifecycle-receipt.v2",
+    "desktop_diagnostics_contract": "resume-ir.desktop-diagnostics.v2",
+    "restart_policy_scope": "tauri_process_generation",
+    "persistent_restart_ledger_allowed": False,
+    "legacy_restart_ledger_is_input": False,
+    "child_poll_ms": 100,
+    "heartbeat_interval_ms": 5_000,
+    "heartbeat_timeout_ms": 2_000,
+    "heartbeat_failures_before_recycle": 3,
+    "unexpected_exit_budget_count": 5,
+    "unexpected_exit_budget_window_seconds": 600,
+    "circuit_open_seconds": 300,
+    "ready_reset_seconds": 300,
+    "restart_backoff_ms": [250, 1_000, 4_000, 15_000, 30_000],
+    "normal_app_shutdown_consumes_failure_budget": False,
+    "manual_retry_states": ["blocked", "circuit_open"],
+    "retry_outside_allowed_state": "typed_retry_not_allowed",
+}
+
+RUNTIME_CAPABILITY_DEGRADATION_V1_REQUIRED_FIELDS = {
+    "contract": "resume-ir.runtime-capabilities.v1",
+    "optional_runtimes": ["embedding", "ocr", "classifier"],
+    "operation_capabilities": [
+        "keyword_search",
+        "detail",
+        "semantic_search",
+        "hybrid_search",
+        "text_import",
+        "ocr_import",
+        "index_publication",
+    ],
+    "runtime_validation_precedes_control_plane": False,
+    "runtime_fault_may_exit_core_daemon": False,
+    "keyword_and_detail_survive_optional_runtime_faults": True,
+    "embedding_fault_hybrid_behavior": "lexical_partial",
+    "ocr_fault_behavior": "retain_unclaimed_backlog",
+    "classifier_fault_behavior": "freeze_mutation_preserve_epoch",
+    "worker_capability_gate_precedes_claim": True,
+    "runtime_degradation_may_weaken_package_gate": False,
 }
 
 
@@ -657,16 +735,31 @@ def validate_synthetic_smoke_manifest_schema(schema: Mapping[str, object]) -> No
         fail("perf/synthetic-smoke-artifact-manifest.schema.json contract_pins.git_head_sha must reject working-tree")
 
 
-def validate_correctness_recovery_v29(matrix: Mapping[str, object]) -> None:
+def validate_forward_migration_feature_train(matrix: Mapping[str, object]) -> None:
     correctness = require_mapping(
-        matrix.get("correctness_recovery_v29"),
-        "matrix.correctness_recovery_v29",
+        matrix.get("forward_migration_feature_train_v1"),
+        "matrix.forward_migration_feature_train_v1",
     )
-    for key, expected in CORRECTNESS_RECOVERY_V29_REQUIRED_FIELDS.items():
+    for key, expected in FORWARD_MIGRATION_FEATURE_TRAIN_REQUIRED_FIELDS.items():
         observed = correctness.get(key)
         if observed != expected:
             fail(
-                f"matrix.correctness_recovery_v29.{key}: "
+                f"matrix.forward_migration_feature_train_v1.{key}: "
+                f"expected {expected!r}, got {observed!r}"
+            )
+
+
+def validate_exact_contract_section(
+    matrix: Mapping[str, object],
+    section_name: str,
+    required_fields: Mapping[str, object],
+) -> None:
+    section = require_mapping(matrix.get(section_name), f"matrix.{section_name}")
+    for key, expected in required_fields.items():
+        observed = section.get(key)
+        if observed != expected:
+            fail(
+                f"matrix.{section_name}.{key}: "
                 f"expected {expected!r}, got {observed!r}"
             )
 
@@ -674,7 +767,18 @@ def validate_correctness_recovery_v29(matrix: Mapping[str, object]) -> None:
 def validate_matrix(matrix: Mapping[str, object]) -> None:
     if matrix.get("schema_version") != "resume-ir.perf.acceptance-matrix.v2":
         fail("perf/acceptance-matrix.toml: expected v2 schema")
-    validate_correctness_recovery_v29(matrix)
+    validate_forward_migration_feature_train(matrix)
+    validate_exact_contract_section(
+        matrix, "daemon_bootstrap_v1", DAEMON_BOOTSTRAP_V1_REQUIRED_FIELDS
+    )
+    validate_exact_contract_section(
+        matrix, "desktop_supervisor_v2", DESKTOP_SUPERVISOR_V2_REQUIRED_FIELDS
+    )
+    validate_exact_contract_section(
+        matrix,
+        "runtime_capability_degradation_v1",
+        RUNTIME_CAPABILITY_DEGRADATION_V1_REQUIRED_FIELDS,
+    )
     smoke_lane = require_mapping(matrix.get("evidence_lanes", {}).get("smoke"), "matrix.evidence_lanes.smoke")
     if smoke_lane.get("report_schema") != "resume-ir.synthetic-smoke-baseline.v1":
         fail("matrix.evidence_lanes.smoke.report_schema mismatch")

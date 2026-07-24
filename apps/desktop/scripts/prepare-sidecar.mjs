@@ -15,6 +15,7 @@ import {
   rename,
   rm,
   stat,
+  writeFile,
 } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -26,6 +27,7 @@ import { stageOcrResourcePack } from "./ocr-pack.mjs";
 import { readWindowsEmbeddingSourceContract } from "./windows-embedding-pack.mjs";
 import { readWindowsOcrSourceContract } from "./windows-ocr-pack.mjs";
 import { readWindowsPdfRendererSourceContract } from "./windows-pdf-renderer.mjs";
+import { stageRuntimeExecutableAttestation } from "./runtime-executable-attestation.mjs";
 
 const SUPPORTED_TARGET_TRIPLES = new Set([
   "aarch64-apple-darwin",
@@ -43,6 +45,12 @@ const EXPECTED_PACK_ROLES = new Set([
   "tokenizer_config",
 ]);
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const RUNTIME_ATTESTATION_ENV =
+  "RESUME_IR_RUNTIME_EXECUTABLE_ATTESTATION";
+const RUNTIME_EXECUTABLE_ROLES = Object.freeze([
+  Object.freeze({ role: "embedding_runtime", binaryName: "resume-embedding-runtime" }),
+  Object.freeze({ role: "pdf_renderer", binaryName: "resume-pdf-render-runtime" }),
+]);
 const WINDOWS_PROCESS_OWNERS = Object.freeze([
   "desktop_daemon",
   "embedding_one_shot",
@@ -318,7 +326,34 @@ export function createDesktopCompositionPlan({
       sourcePackRoot,
       targetTriple,
     }),
+    runtimeExecutableAttestation: Object.freeze({
+      destination: path.join(
+        repoRoot,
+        "target",
+        "tauri-sidecars",
+        `runtime-executable-attestation-${targetTriple}.json`,
+      ),
+      profile: debug ? "debug" : "release",
+      targetTriple,
+    }),
     targetTriple,
+  });
+}
+
+export function sidecarsInAttestedBuildOrder(plan) {
+  const byName = new Map(plan.sidecars.map((sidecar) => [sidecar.binaryName, sidecar]));
+  const runtimeSidecars = RUNTIME_EXECUTABLE_ROLES.map(({ binaryName }) => {
+    const sidecar = byName.get(binaryName);
+    if (!sidecar) throw new Error(`required ${binaryName} build is missing`);
+    return sidecar;
+  });
+  const daemon = byName.get("resume-daemon");
+  if (!daemon || byName.size !== RUNTIME_EXECUTABLE_ROLES.length + 1) {
+    throw new Error("attested sidecar build role set is invalid");
+  }
+  return Object.freeze({
+    runtimeSidecars: Object.freeze(runtimeSidecars),
+    daemon,
   });
 }
 
@@ -585,10 +620,12 @@ export async function stageEmbeddingResourcePack(plan) {
   });
 }
 
-export function runSidecarBuild(plan, runner = spawnSync) {
+export function runSidecarBuild(plan, runner = spawnSync, environment = process.env) {
   prepareBuildTargetDirectory(plan);
+  const env = environmentForSidecarBuild(plan, environment);
   const result = runner("cargo", plan.cargoArgs, {
     cwd: plan.repoRoot,
+    env,
     shell: false,
     stdio: "inherit",
   });
@@ -596,6 +633,23 @@ export function runSidecarBuild(plan, runner = spawnSync) {
     const label = plan.binaryName === "resume-daemon" ? "daemon" : "embedding runtime";
     throw new Error(`${label} sidecar build failed`);
   }
+}
+
+function environmentForSidecarBuild(plan, environment) {
+  if (
+    environment === null ||
+    typeof environment !== "object" ||
+    Array.isArray(environment)
+  ) {
+    throw new Error("sidecar build environment is invalid");
+  }
+  const { [RUNTIME_ATTESTATION_ENV]: inheritedAttestation, ...cleanEnvironment } =
+    environment;
+  if (plan.binaryName !== "resume-daemon") return cleanEnvironment;
+  if (typeof inheritedAttestation !== "string" || !path.isAbsolute(inheritedAttestation)) {
+    throw new Error("daemon sidecar build requires an absolute runtime executable attestation");
+  }
+  return { ...cleanEnvironment, [RUNTIME_ATTESTATION_ENV]: inheritedAttestation };
 }
 
 export function runPdfRendererBuild(plan, runner = spawnSync) {
@@ -659,6 +713,35 @@ function debugFromEnvironment(value) {
   throw new Error("TAURI_ENV_DEBUG must be true or false");
 }
 
+export async function buildAttestedSidecars(
+  plan,
+  {
+    cargoRunner = spawnSync,
+    environment = process.env,
+    pdfRunner = spawnSync,
+  } = {},
+) {
+  const { daemon, runtimeSidecars } = sidecarsInAttestedBuildOrder(plan);
+  for (const sidecar of runtimeSidecars) {
+    if (sidecar.buildKind === "cargo") {
+      runSidecarBuild(sidecar, cargoRunner, environment);
+    } else {
+      runPdfRendererBuild(sidecar, pdfRunner);
+    }
+    await stageBuiltSidecar(sidecar);
+  }
+  const attestationPath = await stageRuntimeExecutableAttestation(
+    plan.runtimeExecutableAttestation,
+    runtimeSidecars,
+  );
+  runSidecarBuild(daemon, cargoRunner, {
+    ...environment,
+    [RUNTIME_ATTESTATION_ENV]: attestationPath,
+  });
+  await stageBuiltSidecar(daemon);
+  return attestationPath;
+}
+
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
@@ -670,11 +753,7 @@ async function main() {
     targetTriple,
     debug,
   });
-  for (const sidecar of plan.sidecars) {
-    if (sidecar.buildKind === "cargo") runSidecarBuild(sidecar);
-    else runPdfRendererBuild(sidecar);
-    await stageBuiltSidecar(sidecar);
-  }
+  await buildAttestedSidecars(plan);
   await stageEmbeddingResourcePack(plan.resourcePack);
   await stageOcrResourcePack(plan.ocrResourcePack);
   await stageClassifierResourcePack(plan.classifierResourcePack);
