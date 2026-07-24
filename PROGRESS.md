@@ -30910,6 +30910,17 @@ Output summary:
   passed, both affected s48 cases passed individually, and combined focused
   Clippy passed. The invalidated Windows run was cancelled; hosted
   Linux/Windows replay remains the platform receipt.
+- Completion-only PR run `30096972706` passed s48 and five of six s49 cases but
+  still reset one final detail response after the writer completed. The final
+  lifecycle therefore has two ordered receipts: exactly-once
+  `ConnectionCompletion` proves the full response reached the kernel, then a
+  one-second transport receipt holds the socket until a normal
+  `Connection: close` client closes. The transport timer starts only after
+  business completion, so it cannot mask worker latency and cannot accumulate
+  five-second Windows long tails. The exact two-phase regression passed 1/1,
+  all 6 s49 cases passed, both affected s48 cases passed individually, and
+  combined focused Clippy passed. The invalidated Windows run was cancelled;
+  hosted Linux/Windows remain the platform receipts.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

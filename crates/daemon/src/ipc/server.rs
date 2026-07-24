@@ -334,7 +334,7 @@ impl BoundServer {
             {
                 Ok((stream, _)) => {
                     let finish = if handled_requests + 1 == request_limit {
-                        BusinessConnectionFinish::AwaitResponseCompletion
+                        BusinessConnectionFinish::AwaitResponseDelivery
                     } else {
                         BusinessConnectionFinish::Immediate
                     };

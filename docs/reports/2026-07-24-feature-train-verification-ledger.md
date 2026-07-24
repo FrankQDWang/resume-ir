@@ -40,7 +40,7 @@ Each execution row must record:
 | P0-10 | Oversized resident-command output is tested independently from long-running-command timeout behavior | `3061010c9986b56dd4afd0b10dccde6ee27c51e4dc6c3883ae78ccfaf964a0f6` | passed: local exact plus hosted Windows | resident command pipe cap, timeout precedence, or oversized-output fixture changes |
 | P0-11 | One-shot responses half-close after the declared frame, and an orderly request-limit exit waits for its final peer close | `52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517:b238323d0018b2a3bc76e262a02fd1a7ad9d857cf2967f8337b62cf059b8612a:1c169b8e7c563b027b9970bc0b414d7fb32c859956c72ab1f65f92e14a356736` | invalidated: hosted parallel s49 proved the nested one-second wait was premature | one-shot response framing, final-peer acknowledgement, streaming ownership, or request-limit lifecycle changes |
 | P0-12 | Metadata-key restore rejects a cross-platform unsafe authority object without replacing it | `44c9cd156a91eda2fae1f78627e2572e25ffbe7676f64a20df3ea5feb6735680:3e25a1fb07e376f040dd3e3428bae9184746f36efd0db659a7d008432cdbaeac:e44e11ffdca60c366e0ac86ba540e4d43800eafe3f4c81f199898927027df1c6` | passed: local exact plus hosted Windows | metadata-key restore, owner-directory validation, or unsafe-authority fixtures change |
-| P0-13 | The final request-limit exit waits for the daemon's exactly-once response completion capability, never TCP peer close | `e38dc69c9a2fc132b7914cc0299143948b639a0b6f32cd593710fbec855156ba:913985e11e4e026bb8360ff7e783a62f02e23aa99a7fccb046f40a2ad3227369:85538b8a22c45bf44bfccc5e51edf7b07402a473cc61f0a9da70c9ca52422931:bb13449bad15b036fbaad5491e93453f141d115e57d7eff83a464e7124de52ad:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45:490bd01875132783a30c017814c55266c55ef0eb012f38651845dfcadf9a025b` | local exact lifecycle, s48 and s49 passed; hosted Linux/Windows replay pending | completion capability, deferred response ownership, connection hard deadline, or request-limit lifecycle changes |
+| P0-13 | The final request-limit exit waits first for exactly-once response completion, then for a bounded TCP delivery receipt | `e38dc69c9a2fc132b7914cc0299143948b639a0b6f32cd593710fbec855156ba:913985e11e4e026bb8360ff7e783a62f02e23aa99a7fccb046f40a2ad3227369:fd47c4d8d4d021482483c604041c636d2be406b95459e77c9e16266b6a317a1a:25d0d14868986e3b87f845f6e356aa92fbdc607a91bcacd510f39eef18d2428c:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45:490bd01875132783a30c017814c55266c55ef0eb012f38651845dfcadf9a025b` | local exact lifecycle, s48 and s49 passed; hosted Linux/Windows replay pending | completion capability, bounded delivery receipt, deferred response ownership, connection hard deadline, or request-limit lifecycle changes |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -294,21 +294,23 @@ peer-close clone. Clearing that timeout made Linux pass, but Platform runs
 as a proxy for whether the deferred response owner had finished; both
 invalidated Windows jobs were cancelled as hung after macOS passed.
 
-The final implementation removes peer-close waiting entirely.
-`ConnectionCompletion` already provides one exactly-once capability shared
-with deferred search/detail workers. The connection handler now returns that
-capability to the server, and only the explicit final request-limit connection
-waits for its terminal state. Synchronous responses are already complete when
-the handler returns. Deferred responses complete after their writer finishes.
-Lost deferred owners remain bounded by the existing five-second watchdog.
-Normal resident requests remain immediate.
+Completion-only PR run `30096972706` passed s48 and five of six s49 cases but
+still reset one final detail response after its writer completed. This
+separates two required phases. `ConnectionCompletion` is the exactly-once
+business receipt shared with deferred search/detail workers; it proves the
+complete frame reached the kernel. A subsequent transport receipt keeps the
+final socket owned until the `Connection: close` client closes, bounded to one
+second from the completed response. The transport window never starts before
+completion, so it cannot hide slow or lost workers. Lost deferred owners remain
+bounded by the existing five-second watchdog. Normal resident requests remain
+immediate.
 
 P0-13 focused verification on 2026-07-24:
 
-- The exact lifecycle regression keeps the TCP peer open, proves that the
-  final connection does not release before its deferred response owner
-  finishes, then proves it releases immediately on explicit completion:
-  1 passed, 94 unrelated tests filtered out.
+- The exact lifecycle regression proves the final connection does not release
+  before deferred response completion, then keeps the TCP peer open and proves
+  it still does not release before the delivery receipt; closing the peer
+  releases it immediately: 1 passed, 94 unrelated tests filtered out.
 - `cargo test -p resume-daemon --test s49_detail_ipc --locked --
   --nocapture` passed all 6 directly affected detail/hydrate and response-frame
   cases.

@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -10,6 +11,7 @@ use crate::ipc::{connection, ControlPlaneState, DaemonFatalError};
 use super::{classify_accept_error, AcceptErrorDisposition};
 
 const CONNECTION_HARD_DEADLINE: Duration = Duration::from_secs(5);
+const RESPONSE_DELIVERY_RECEIPT_TIMEOUT: Duration = Duration::from_secs(1);
 pub(super) const LISTENER_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,7 +24,7 @@ pub(super) enum ControlLoopStop {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum BusinessConnectionFinish {
     Immediate,
-    AwaitResponseCompletion,
+    AwaitResponseDelivery,
 }
 
 pub(super) struct ControlLoopConfig {
@@ -153,6 +155,9 @@ pub(super) fn handle_business_with_watchdog(
         Ok(cancellation) => cancellation,
         Err(_) => return Ok(()),
     };
+    let delivery_receipt = matches!(finish, BusinessConnectionFinish::AwaitResponseDelivery)
+        .then(|| stream.try_clone().ok())
+        .flatten();
     let finished = Arc::new(AtomicBool::new(false));
     let watcher_finished = Arc::clone(&finished);
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -184,9 +189,22 @@ pub(super) fn handle_business_with_watchdog(
     });
 
     let completion = handle(stream);
-    if matches!(finish, BusinessConnectionFinish::AwaitResponseCompletion) {
+    if matches!(finish, BusinessConnectionFinish::AwaitResponseDelivery) {
         while !completion.is_finished() && !cancelled.load(Ordering::Acquire) {
             thread::sleep(LISTENER_POLL_INTERVAL);
+        }
+    }
+    if let (true, false, Some(mut delivery_receipt)) = (
+        completion.is_finished(),
+        cancelled.load(Ordering::Acquire),
+        delivery_receipt,
+    ) {
+        let _ = delivery_receipt.set_read_timeout(Some(RESPONSE_DELIVERY_RECEIPT_TIMEOUT));
+        loop {
+            match delivery_receipt.read(&mut [0_u8; 1]) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
         }
     }
     finished.store(true, Ordering::Release);
@@ -220,7 +238,7 @@ fn cancel_and_join(
 
 #[cfg(test)]
 mod tests {
-    use std::net::{TcpListener, TcpStream};
+    use std::net::{Shutdown, TcpListener, TcpStream};
     use std::sync::{mpsc, Arc};
     use std::thread;
     use std::time::Duration;
@@ -232,7 +250,7 @@ mod tests {
     use crate::ipc::{ConnectionCompletion, ConnectionOutcome};
 
     #[test]
-    fn final_connection_waits_for_deferred_response_completion_not_peer_close() {
+    fn final_connection_waits_for_response_completion_before_delivery_receipt() {
         let directory = tempfile::tempdir().unwrap();
         let data_directory_owner = Arc::new(
             match DataDirectoryOwnerLease::try_acquire(directory.path()).unwrap() {
@@ -260,7 +278,7 @@ mod tests {
                 server,
                 None,
                 revoker,
-                BusinessConnectionFinish::AwaitResponseCompletion,
+                BusinessConnectionFinish::AwaitResponseDelivery,
                 |stream| {
                     drop(stream);
                     handler_returned_sender.send(()).unwrap();
@@ -277,6 +295,12 @@ mod tests {
             "final connection was released before its response owner completed"
         );
         response_owner.finish(ConnectionOutcome::Completed);
+        thread::sleep(Duration::from_millis(100));
+        assert!(
+            matches!(finished_receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
+            "final connection skipped its response delivery receipt"
+        );
+        client.shutdown(Shutdown::Both).unwrap();
         assert_eq!(
             finished_receiver
                 .recv_timeout(Duration::from_secs(1))
@@ -284,6 +308,5 @@ mod tests {
             Ok(())
         );
         join.join().unwrap();
-        drop(client);
     }
 }
