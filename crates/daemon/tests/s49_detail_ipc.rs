@@ -3,6 +3,8 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{ChildStderr, ChildStdin, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use index_fulltext::{publish_snapshot, IndexDocument};
@@ -27,6 +29,7 @@ const DAEMON_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const HYDRATE_PAGE_BYTES: usize = 32 * 1024;
 const MAX_BODY_PAGE_BYTES: usize = 32 * 1024;
 const DETAIL_FIELD_LIMIT: usize = 256;
+const STDERR_DIAGNOSTIC_LIMIT: usize = 64 * 1024;
 
 #[test]
 fn detail_and_hydrate_read_one_exact_selection_across_unrelated_publications() {
@@ -862,7 +865,8 @@ fn acquire_data_directory_owner(data_dir: &Path) -> DataDirectoryOwnerLease {
 struct Daemon {
     child: Option<ContainedChild>,
     parent_lifecycle: Option<ChildStdin>,
-    stderr: Option<ChildStderr>,
+    stderr: Arc<Mutex<Vec<u8>>>,
+    stderr_reader: Option<JoinHandle<()>>,
     data_dir: PathBuf,
     endpoint: String,
     token: String,
@@ -891,14 +895,17 @@ impl Daemon {
         let mut child = ContainedChild::spawn(&mut command).expect("start contained resume daemon");
         let parent_lifecycle = child.take_stdin().expect("daemon parent lifecycle");
         let stdout = child.take_stdout().expect("daemon stdout");
-        let mut stderr = child.take_stderr().expect("daemon stderr");
+        let stderr = child.take_stderr().expect("daemon stderr");
+        let stderr_buffer = Arc::new(Mutex::new(Vec::new()));
+        let stderr_reader = collect_bounded_stderr(stderr, Arc::clone(&stderr_buffer));
         let mut stdout = BufReader::new(stdout);
-        let endpoint = read_ipc_endpoint(&mut child, &mut stderr, &mut stdout);
+        let endpoint = read_ipc_endpoint(&mut child, &stderr_buffer, &mut stdout);
         let token = read_ipc_auth_token(data_dir);
         Self {
             child: Some(child),
             parent_lifecycle: Some(parent_lifecycle),
-            stderr: Some(stderr),
+            stderr: stderr_buffer,
+            stderr_reader: Some(stderr_reader),
             data_dir: data_dir.to_path_buf(),
             endpoint,
             token,
@@ -916,8 +923,9 @@ impl Daemon {
             };
             panic!(
                 "[DEBUG-s49-reset] request_ordinal={} route={path} \
-                 daemon_state={daemon_state} response_error={error}",
-                self.request_count
+                 daemon_state={daemon_state} response_error={error} server_events={}",
+                self.request_count,
+                self.debug_events()
             )
         })
     }
@@ -955,16 +963,48 @@ impl Daemon {
             }
             std::thread::sleep(Duration::from_millis(10));
         };
-        let mut stderr = String::new();
-        self.stderr
-            .take()
-            .unwrap()
-            .read_to_string(&mut stderr)
-            .expect("read daemon stderr");
+        self.stderr_reader.take().unwrap().join().unwrap();
+        let stderr_buffer = self
+            .stderr
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let stderr = String::from_utf8_lossy(&stderr_buffer);
         assert!(status.success(), "stderr:\n{stderr}");
         assert!(stderr.is_empty());
         self.child.take();
     }
+
+    fn debug_events(&self) -> String {
+        let stderr = self
+            .stderr
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let stderr = String::from_utf8_lossy(&stderr);
+        let events = stderr
+            .lines()
+            .filter(|line| line.contains("[DEBUG-s49-reset]"))
+            .take(8)
+            .collect::<Vec<_>>();
+        if events.is_empty() {
+            "none".to_string()
+        } else {
+            events.join(" | ")
+        }
+    }
+}
+
+fn collect_bounded_stderr(mut stderr: ChildStderr, buffer: Arc<Mutex<Vec<u8>>>) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut chunk = [0_u8; 1024];
+        while let Ok(read) = stderr.read(&mut chunk) {
+            if read == 0 {
+                return;
+            }
+            let mut buffer = buffer.lock().unwrap_or_else(|error| error.into_inner());
+            let remaining = STDERR_DIAGNOSTIC_LIMIT.saturating_sub(buffer.len());
+            buffer.extend_from_slice(&chunk[..read.min(remaining)]);
+        }
+    })
 }
 
 fn random_launch_id() -> String {
@@ -1153,7 +1193,7 @@ fn http_response_reader_rejects_a_partial_frame_before_transport_reset() {
 
 fn read_ipc_endpoint(
     child: &mut ContainedChild,
-    stderr: &mut ChildStderr,
+    stderr: &Arc<Mutex<Vec<u8>>>,
     stdout: &mut BufReader<impl Read>,
 ) -> String {
     let deadline = Instant::now() + IPC_ENDPOINT_TIMEOUT;
@@ -1164,8 +1204,8 @@ fn read_ipc_endpoint(
         let bytes = stdout.read_line(&mut line).unwrap();
         if bytes == 0 {
             if let Ok(Some(status)) = child.try_wait() {
-                let mut stderr_body = String::new();
-                let _ = stderr.read_to_string(&mut stderr_body);
+                let stderr = stderr.lock().unwrap_or_else(|error| error.into_inner());
+                let stderr_body = String::from_utf8_lossy(&stderr);
                 panic!("daemon exited before endpoint: {status}\nstderr:\n{stderr_body}");
             }
             continue;

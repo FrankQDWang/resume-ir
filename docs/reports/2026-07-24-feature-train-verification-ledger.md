@@ -43,7 +43,7 @@ Each execution row must record:
 | P0-13 | The final request-limit exit waits first for exactly-once response completion, stops the request watchdog, then grants a bounded TCP delivery window | `e38dc69c9a2fc132b7914cc0299143948b639a0b6f32cd593710fbec855156ba:913985e11e4e026bb8360ff7e783a62f02e23aa99a7fccb046f40a2ad3227369:db79e491b28871d2335eebe2de694fa580eae6796f25e9ac8db8494773c16b7c:25d0d14868986e3b87f845f6e356aa92fbdc607a91bcacd510f39eef18d2428c:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45:6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c` | hosted Linux, macOS and local exact lifecycle/s49 passed; Windows shutdown diagnosis pending | completion capability, bounded delivery receipt, deferred response ownership, connection hard deadline, or request-limit lifecycle changes |
 | P0-14 | Detail IPC integration owns daemon shutdown through the real parent-lifecycle capability after every response is fully read | `6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c` | hosted Linux and macOS plus local all 6 s49 cases passed; bounded Windows shutdown diagnosis pending | s49 daemon harness, process containment, parent lifecycle, response framing, or detail/hydrate request sequence changes |
 | P0-15 | Rejected hypothesis: closing request input after parse prevents the hosted s49 response reset | `2e7f4fb504e027d787ddcc7da15a99dbebff15a1970106e86912c4ece24adb75:52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517:db79e491b28871d2335eebe2de694fa580eae6796f25e9ac8db8494773c16b7c:6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c:23fd9ede7e7d330e06afd3181b9095671f8f5d28a7df5157bc2157e9087e329e:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45` | failed: Linux PR run `30104547488` still reset one s49 response; production change reverted | never reused; retained only as negative diagnostic evidence |
-| P0-16 | Bounded s49 reset diagnosis reports request ordinal, route, daemon liveness, received bytes and declared frame bytes without payload, path or token | `05b0b6f7013e72bfe31ffc4fa8f371ed56a3afa8e8ba6d2660b814d195336fe1` | local diagnostic compile and three directly affected cases passed; hosted Linux diagnosis pending | s49 request harness, response reader or diagnostic fields change |
+| P0-16 | Bounded s49 reset diagnosis distinguishes pre-response server clone, watchdog and response-sink failure from client framing without payload, path or token | `1eb0609fb6f7b9aae6c6d35e3d32a8cc80f2cdc0b0f98a656d03ae9ac5f49ee1:e109691bf00a7ce198a86998c31b260f91f34164e3c5eac04b29ac9bfa186637:b3e34e490b448eace4eb22b25b7248a7d05b7a96af81eb309ad31fade0e7bb2b` | first hosted trace captured; expanded local diagnostic cases passed; second hosted trace pending | s49 request harness, response reader, connection watchdog, response sink or diagnostic fields change |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -405,6 +405,23 @@ records payload, local path, token, request id or candidate data. Nextest run
 regressions and the hosted-failing detail/hydrate case locally: 3 passed,
 3 skipped. The diagnostic remains temporary and must be removed after the
 cause is proven.
+
+PR run `30105663529` produced two identical first-request traces:
+`request_ordinal=1`, `route=/details`, `daemon_state=running`,
+`received_bytes=0`, and no declared response frame. This rules out large-body
+write truncation, hydrate pagination and response-reader framing. The next
+probe is failure-only and distinguishes cancellation-socket clone failure,
+watchdog spawn/cancellation and response write/shutdown failure. The test
+harness drains daemon stderr continuously into a 64 KiB local cap and emits
+only tagged closed diagnostics; untagged stderr, payload, paths, tokens and
+request identifiers never enter the CI report.
+
+The exact hosted-failing s49 case passed locally after this diagnostic-only
+change. Nextest run `65d9bbe9-7044-4c99-a2df-e99c73f0d323` passed the exact
+abortive-response and independent-delivery-window boundaries: 2 passed,
+94 skipped. Focused daemon-bin/s49 Clippy, rustfmt, changed-file checks and the
+public guard passed. Platform run `30105663695` was cancelled after the Linux
+trace invalidated that commit.
 
 ## Version rounds
 

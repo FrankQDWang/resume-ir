@@ -30969,6 +30969,17 @@ Output summary:
   `444e7973-df5a-48f6-9c7e-f16a24d28d79` passed the hosted-failing case and
   both response-reader regressions locally; hosted Linux will provide the
   decisive trace.
+- Linux PR run `30105663529` then showed two failures at request ordinal 1 on
+  `/details`: the daemon was still running and the client had received zero
+  bytes with no response header. This rules out large-body truncation, hydrate
+  pagination and client frame parsing. The next failure-only probe
+  distinguishes cancellation-socket clone, watchdog spawn/cancellation and
+  response write/shutdown failures. Daemon stderr is drained into a bounded
+  local buffer and only tagged closed events can reach CI; payload, path,
+  token and request identifiers remain excluded. The exact hosted-failing
+  case plus two directly affected lifecycle/response tests passed locally;
+  Nextest run `65d9bbe9-7044-4c99-a2df-e99c73f0d323` completed the latter two
+  in 0.617 seconds.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 
