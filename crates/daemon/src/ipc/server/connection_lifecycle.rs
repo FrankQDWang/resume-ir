@@ -11,7 +11,6 @@ use crate::ipc::{connection, ControlPlaneState, DaemonFatalError};
 use super::{classify_accept_error, AcceptErrorDisposition};
 
 const CONNECTION_HARD_DEADLINE: Duration = Duration::from_secs(5);
-const FINAL_RESPONSE_PEER_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 pub(super) const LISTENER_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -187,7 +186,6 @@ pub(super) fn handle_business_with_watchdog(
 
     handle(stream);
     if let Some(mut peer_close) = peer_close {
-        let _ = peer_close.set_read_timeout(Some(FINAL_RESPONSE_PEER_CLOSE_TIMEOUT));
         let _ = peer_close.read(&mut [0_u8; 1]);
     }
     finished.store(true, Ordering::Release);
@@ -217,4 +215,69 @@ fn cancel_and_join(
     };
     connection.cancel();
     connection.join()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::{Shutdown, TcpListener, TcpStream};
+    use std::sync::{mpsc, Arc};
+    use std::thread;
+    use std::time::Duration;
+
+    use meta_store::{DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease};
+
+    use super::{handle_business_with_watchdog, BusinessConnectionFinish};
+    use crate::ipc::generation::{DaemonGenerationOwner, OwnerMode};
+
+    #[test]
+    fn final_connection_remains_owned_past_the_removed_peer_close_timeout() {
+        let directory = tempfile::tempdir().unwrap();
+        let data_directory_owner = Arc::new(
+            match DataDirectoryOwnerLease::try_acquire(directory.path()).unwrap() {
+                DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+                DataDirectoryOwnerAcquisition::Contended => panic!("synthetic owner contended"),
+            },
+        );
+        let generation = DaemonGenerationOwner::acquire(
+            data_directory_owner,
+            OwnerMode::Standalone,
+            "e".repeat(64),
+        )
+        .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        let (handler_returned_sender, handler_returned_receiver) = mpsc::sync_channel(1);
+        let (finished_sender, finished_receiver) = mpsc::sync_channel(1);
+        let revoker = generation.publication_revoker();
+
+        let join = thread::spawn(move || {
+            let result = handle_business_with_watchdog(
+                server,
+                None,
+                revoker,
+                BusinessConnectionFinish::AwaitPeerClose,
+                |stream| {
+                    drop(stream);
+                    handler_returned_sender.send(()).unwrap();
+                },
+            );
+            finished_sender.send(result).unwrap();
+        });
+
+        handler_returned_receiver.recv().unwrap();
+        thread::sleep(Duration::from_millis(1_200));
+        assert!(
+            matches!(finished_receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
+            "final connection was released before its peer closed"
+        );
+        client.shutdown(Shutdown::Both).unwrap();
+        assert_eq!(
+            finished_receiver
+                .recv_timeout(Duration::from_secs(1))
+                .unwrap(),
+            Ok(())
+        );
+        join.join().unwrap();
+    }
 }

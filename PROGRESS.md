@@ -30862,6 +30862,23 @@ Output summary:
   0755 key directory without chmod repair. The exact s146 CLI case and focused
   Clippy/rustfmt/diff checks passed; no CLI crate or workspace suite was
   replayed.
+- PR run `30088754395` then proved that the final request's one-second
+  peer-close read was itself premature for deferred detail/hydrate responses
+  under hosted parallel load: three s49 cases were truncated even though the
+  daemon unit lifecycle passed. The nested timeout is deleted, not enlarged.
+  The existing five-second connection watchdog is now the single bounded
+  lifetime owner; only the explicit request-limit final connection waits,
+  while normal resident requests remain immediate. A deterministic lifecycle
+  regression proves ownership remains after 1.2 seconds until the peer closes,
+  and all 6 directly affected s49 cases plus combined daemon-bin/s49 Clippy
+  passed locally.
+- The concurrent Windows run passed the repaired s146 metadata-key restore
+  case, closing that platform row, then failed two final deferred s48 search
+  responses on the same old one-second lifecycle. Both exact affected s48
+  cases passed against the single-deadline repair with 12 unrelated cases
+  filtered out, and focused s48 Clippy passed. This extends P0-13's evidence;
+  it is not a separate root cause or a reason to replay unrelated Windows
+  tests locally.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

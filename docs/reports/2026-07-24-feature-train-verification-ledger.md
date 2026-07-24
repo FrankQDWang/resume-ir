@@ -36,10 +36,11 @@ Each execution row must record:
 | P0-06 | Portable workspace tests and reviewed native-runtime tests are separate explicit lanes | `9ee78c55dbfc6fd060112a98abc9a817a82f377b7b33d0871fd84098992eba4f` | passed: local focused plus hosted Linux/macOS portable lanes | daemon test target, native runtime feature, reviewed-pack harness, or lane workflow changes |
 | P0-07 | Detail IPC test client completes one bounded HTTP response by `Content-Length`, without requiring transport EOF | `490bd01875132783a30c017814c55266c55ef0eb012f38651845dfcadf9a025b` | passed: local focused plus hosted Linux workspace replay | s49 response reader, response framing, or detail request-limit lifecycle changes |
 | P0-08 | Initializing-generation shutdown observes complete discovery and auth withdrawal | `8e7d55aac19e47688bbb7b44022b7cf59b43d073fca46a9c7d6116a66d3f4f74` | passed: local exact plus hosted Linux workspace replay | initializing control-file withdrawal or its test synchronization changes |
-| P0-09 | Byte-stability snapshots model the two held process-owner locks without reading their locked bytes | `8d974924d88179b70c62bde4ccf6f279c94c099a106879c2b988be89aa24d8b1:e44e11ffdca60c366e0ac86ba540e4d43800eafe3f4c81f199898927027df1c6:a27afd24f9d912c018ec811c75c013927156bf5b38037f34832edad8be426796` | local exact passes; hosted Windows replay pending | owner-lock names, data-directory locking, or migration byte-stability snapshot helpers change |
-| P0-10 | Oversized resident-command output is tested independently from long-running-command timeout behavior | `3061010c9986b56dd4afd0b10dccde6ee27c51e4dc6c3883ae78ccfaf964a0f6` | local exact pass; hosted Windows replay pending | resident command pipe cap, timeout precedence, or oversized-output fixture changes |
-| P0-11 | One-shot responses half-close after the declared frame, and an orderly request-limit exit waits for its final peer close | `52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517:b238323d0018b2a3bc76e262a02fd1a7ad9d857cf2967f8337b62cf059b8612a:1c169b8e7c563b027b9970bc0b414d7fb32c859956c72ab1f65f92e14a356736` | local affected s49/lifecycle pass; hosted Linux replay pending | one-shot response framing, final-peer acknowledgement, streaming ownership, or request-limit lifecycle changes |
-| P0-12 | Metadata-key restore rejects a cross-platform unsafe authority object without replacing it | `44c9cd156a91eda2fae1f78627e2572e25ffbe7676f64a20df3ea5feb6735680:3e25a1fb07e376f040dd3e3428bae9184746f36efd0db659a7d008432cdbaeac:e44e11ffdca60c366e0ac86ba540e4d43800eafe3f4c81f199898927027df1c6` | local exact pass; hosted Windows replay pending | metadata-key restore, owner-directory validation, or unsafe-authority fixtures change |
+| P0-09 | Byte-stability snapshots model the two held process-owner locks without reading their locked bytes | `8d974924d88179b70c62bde4ccf6f279c94c099a106879c2b988be89aa24d8b1:e44e11ffdca60c366e0ac86ba540e4d43800eafe3f4c81f199898927027df1c6:a27afd24f9d912c018ec811c75c013927156bf5b38037f34832edad8be426796` | passed: local exact plus hosted Windows | owner-lock names, data-directory locking, or migration byte-stability snapshot helpers change |
+| P0-10 | Oversized resident-command output is tested independently from long-running-command timeout behavior | `3061010c9986b56dd4afd0b10dccde6ee27c51e4dc6c3883ae78ccfaf964a0f6` | passed: local exact plus hosted Windows | resident command pipe cap, timeout precedence, or oversized-output fixture changes |
+| P0-11 | One-shot responses half-close after the declared frame, and an orderly request-limit exit waits for its final peer close | `52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517:b238323d0018b2a3bc76e262a02fd1a7ad9d857cf2967f8337b62cf059b8612a:1c169b8e7c563b027b9970bc0b414d7fb32c859956c72ab1f65f92e14a356736` | invalidated: hosted parallel s49 proved the nested one-second wait was premature | one-shot response framing, final-peer acknowledgement, streaming ownership, or request-limit lifecycle changes |
+| P0-12 | Metadata-key restore rejects a cross-platform unsafe authority object without replacing it | `44c9cd156a91eda2fae1f78627e2572e25ffbe7676f64a20df3ea5feb6735680:3e25a1fb07e376f040dd3e3428bae9184746f36efd0db659a7d008432cdbaeac:e44e11ffdca60c366e0ac86ba540e4d43800eafe3f4c81f199898927027df1c6` | passed: local exact plus hosted Windows | metadata-key restore, owner-directory validation, or unsafe-authority fixtures change |
+| P0-13 | The final request-limit connection remains owned until peer close under the single five-second connection deadline | `06d745659a684fe29043eeaa74d4249e57731a2b3b56e7da54d3048c76157ba0:b238323d0018b2a3bc76e262a02fd1a7ad9d857cf2967f8337b62cf059b8612a:52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517:490bd01875132783a30c017814c55266c55ef0eb012f38651845dfcadf9a025b:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45` | local exact lifecycle, s48 and affected s49 pass; hosted Linux/Windows replay pending | final-peer ownership, connection hard deadline, deferred response ownership, or request-limit lifecycle changes |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -272,9 +273,40 @@ P0-12 focused verification on 2026-07-24:
 - Exact s146 test-target Clippy with `-D warnings`, workspace rustfmt,
   `git diff --check` and the public-boundary guard passed. No CLI crate or
   workspace suite was replayed.
-- The failed hosted receipt is Platform CI run `30087200255`, Windows job
-  `89462046881`. Hosted Windows replay on the cross-platform fixture remains
-  decisive.
+- The failed hosted receipt was Platform CI run `30087200255`, Windows job
+  `89462046881`. Follow-up Platform run `30088754382`, Windows job
+  `89466992046`, passed the exact s146 case before reaching a later daemon
+  response-lifecycle failure, so this row is closed.
+
+PR run `30088754395` passed Clippy and the daemon unit binary, including the
+request-limit cleanup case, then failed three concurrent s49 integration cases.
+This proved that P0-11's one-second peer-close read was a second, shorter
+deadline: detail/hydrate responses are owned by a deferred search worker, so
+the server could release its final connection and begin process cleanup before
+that worker completed under hosted load.
+
+P0-13 removes the nested one-second deadline rather than increasing it. The
+existing five-second connection watchdog is now the single bounded owner for
+both response work and peer-close observation. Only the explicit final
+request-limit connection takes this path; normal resident requests remain
+immediate.
+
+P0-13 focused verification on 2026-07-24:
+
+- The new exact lifecycle regression keeps the peer open for 1.2 seconds after
+  the request handler returns and proves that final-connection ownership has
+  not ended; it passed: 1 passed, 94 unrelated tests filtered out.
+- `cargo test -p resume-daemon --test s49_detail_ipc --locked --
+  --nocapture` passed all 6 directly affected detail/hydrate and response-frame
+  cases.
+- The same old hosted commit failed two final deferred search responses on
+  Windows in Platform run `30088754382`: `client_disconnect_only_ends_that_connection`
+  and `content_update_publishes_a_new_immutable_version_pair`. Both exact s48
+  cases passed against P0-13 locally with 12 unrelated cases filtered out.
+- Combined daemon-bin/s48/s49 Clippy with `-D warnings`, rustfmt, public guard
+  and changed-file checks passed. No daemon crate or workspace suite was
+  replayed.
+- Hosted Linux replay remains decisive for the deferred-response load boundary.
 
 ## Version rounds
 
