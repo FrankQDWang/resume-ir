@@ -62,24 +62,10 @@ pub(crate) fn write_all(stream: &mut TcpStream, bytes: &[u8]) -> Result<(), Resp
 }
 
 fn write_complete_response(stream: &mut TcpStream, bytes: &[u8]) -> Result<(), ResponseSinkError> {
-    if let Err(error) = stream.write_all(bytes) {
-        if std::env::var_os("RESUME_IR_S49_RESET_DIAGNOSTICS").is_some() {
-            eprintln!(
-                "[DEBUG-s49-reset] response_failed stage=write kind={:?}",
-                error.kind()
-            );
-        }
-        return Err(ResponseSinkError::from_io(&error));
-    }
-    stream.shutdown(Shutdown::Write).map_err(|error| {
-        if std::env::var_os("RESUME_IR_S49_RESET_DIAGNOSTICS").is_some() {
-            eprintln!(
-                "[DEBUG-s49-reset] response_failed stage=shutdown kind={:?}",
-                error.kind()
-            );
-        }
-        ResponseSinkError::from_io(&error)
-    })
+    write_all(stream, bytes)?;
+    stream
+        .shutdown(Shutdown::Write)
+        .map_err(|error| ResponseSinkError::from_io(&error))
 }
 
 pub(crate) fn flush(stream: &mut TcpStream) -> Result<(), ResponseSinkError> {

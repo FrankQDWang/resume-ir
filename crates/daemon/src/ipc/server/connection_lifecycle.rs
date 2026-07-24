@@ -184,15 +184,7 @@ fn handle_business_with_timing(
 ) -> Result<(), DaemonFatalError> {
     let cancellation = match stream.try_clone() {
         Ok(cancellation) => cancellation,
-        Err(error) => {
-            if std::env::var_os("RESUME_IR_S49_RESET_DIAGNOSTICS").is_some() {
-                eprintln!(
-                    "[DEBUG-s49-reset] cancellation_clone_failed kind={:?}",
-                    error.kind()
-                );
-            }
-            return Ok(());
-        }
+        Err(_) => return Ok(()),
     };
     let delivery_receipt = matches!(finish, BusinessConnectionFinish::AwaitResponseDelivery)
         .then(|| stream.try_clone().ok())
@@ -201,48 +193,31 @@ fn handle_business_with_timing(
     let watcher_finished = Arc::clone(&finished);
     let cancelled = Arc::new(AtomicBool::new(false));
     let watcher_cancelled = Arc::clone(&cancelled);
-    let watchdog = thread::Builder::new()
-        .name("resume-ir-ipc-watchdog".to_string())
-        .spawn(move || {
-            let deadline = Instant::now()
-                .checked_add(timing.hard_deadline)
-                .unwrap_or_else(Instant::now);
-            loop {
-                if watcher_finished.load(Ordering::Acquire) {
-                    return;
-                }
-                if shutdown
-                    .as_ref()
-                    .is_some_and(|shutdown| shutdown.load(Ordering::Acquire))
-                {
-                    if std::env::var_os("RESUME_IR_S49_RESET_DIAGNOSTICS").is_some() {
-                        eprintln!("[DEBUG-s49-reset] watchdog_cancel reason=parent_shutdown");
-                    }
-                    publication_revoker.withdraw();
-                    watcher_cancelled.store(true, Ordering::Release);
-                    let _ = cancellation.shutdown(Shutdown::Both);
-                    return;
-                }
-                if Instant::now() >= deadline {
-                    if std::env::var_os("RESUME_IR_S49_RESET_DIAGNOSTICS").is_some() {
-                        eprintln!("[DEBUG-s49-reset] watchdog_cancel reason=hard_deadline");
-                    }
-                    watcher_cancelled.store(true, Ordering::Release);
-                    let _ = cancellation.shutdown(Shutdown::Both);
-                    return;
-                }
-                thread::sleep(timing.poll_interval);
+    let watchdog = thread::spawn(move || {
+        let deadline = Instant::now()
+            .checked_add(timing.hard_deadline)
+            .unwrap_or_else(Instant::now);
+        loop {
+            if watcher_finished.load(Ordering::Acquire) {
+                return;
             }
-        })
-        .map_err(|error| {
-            if std::env::var_os("RESUME_IR_S49_RESET_DIAGNOSTICS").is_some() {
-                eprintln!(
-                    "[DEBUG-s49-reset] watchdog_spawn_failed kind={:?}",
-                    error.kind()
-                );
+            if shutdown
+                .as_ref()
+                .is_some_and(|shutdown| shutdown.load(Ordering::Acquire))
+            {
+                publication_revoker.withdraw();
+                watcher_cancelled.store(true, Ordering::Release);
+                let _ = cancellation.shutdown(Shutdown::Both);
+                return;
             }
-            DaemonFatalError::ControlPlaneFailure
-        })?;
+            if Instant::now() >= deadline {
+                watcher_cancelled.store(true, Ordering::Release);
+                let _ = cancellation.shutdown(Shutdown::Both);
+                return;
+            }
+            thread::sleep(timing.poll_interval);
+        }
+    });
 
     let completion = handle(stream);
     if matches!(finish, BusinessConnectionFinish::AwaitResponseDelivery) {

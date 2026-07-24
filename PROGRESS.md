@@ -30989,6 +30989,11 @@ Output summary:
   exact s20 fault smoke and hosted-failing s49 case in parallel: 2 passed,
   37 skipped, 2.477 seconds. Focused Clippy, rustfmt, diff and public guards
   passed.
+- Product-scope correction: Linux is not a native release gate for this
+  macOS-first feature train. The active Linux and platform diagnostic runs
+  were cancelled, all temporary reset probes were removed, and P0 no longer
+  blocks v0.1.3 implementation on that investigation. The prior traces remain
+  historical evidence only.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

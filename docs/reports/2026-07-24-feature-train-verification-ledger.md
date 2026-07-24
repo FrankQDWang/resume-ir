@@ -43,7 +43,7 @@ Each execution row must record:
 | P0-13 | The final request-limit exit waits first for exactly-once response completion, stops the request watchdog, then grants a bounded TCP delivery window | `e38dc69c9a2fc132b7914cc0299143948b639a0b6f32cd593710fbec855156ba:913985e11e4e026bb8360ff7e783a62f02e23aa99a7fccb046f40a2ad3227369:db79e491b28871d2335eebe2de694fa580eae6796f25e9ac8db8494773c16b7c:25d0d14868986e3b87f845f6e356aa92fbdc607a91bcacd510f39eef18d2428c:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45:6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c` | hosted Linux, macOS and local exact lifecycle/s49 passed; Windows shutdown diagnosis pending | completion capability, bounded delivery receipt, deferred response ownership, connection hard deadline, or request-limit lifecycle changes |
 | P0-14 | Detail IPC integration owns daemon shutdown through the real parent-lifecycle capability after every response is fully read | `6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c` | hosted Linux and macOS plus local all 6 s49 cases passed; bounded Windows shutdown diagnosis pending | s49 daemon harness, process containment, parent lifecycle, response framing, or detail/hydrate request sequence changes |
 | P0-15 | Rejected hypothesis: closing request input after parse prevents the hosted s49 response reset | `2e7f4fb504e027d787ddcc7da15a99dbebff15a1970106e86912c4ece24adb75:52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517:db79e491b28871d2335eebe2de694fa580eae6796f25e9ac8db8494773c16b7c:6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c:23fd9ede7e7d330e06afd3181b9095671f8f5d28a7df5157bc2157e9087e329e:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45` | failed: Linux PR run `30104547488` still reset one s49 response; production change reverted | never reused; retained only as negative diagnostic evidence |
-| P0-16 | Bounded s49 reset diagnosis distinguishes pre-response server clone, watchdog and response-sink failure from client framing without payload, path or token | `b7910b0140b3fc70044b3286deafcab6152fa79354e36b5700758e348f37c642:b014282b3981a5cd68d72ebb2662dbbf8083c3388f02ea320973b93c3392dc8a:6b02342a05c30852465bb8176f07b7a7d78edfee12cf8f268716129ebbc204b6:23fd9ede7e7d330e06afd3181b9095671f8f5d28a7df5157bc2157e9087e329e` | first hosted trace captured; s49-scoped server probe and directly affected local cases passed; second hosted trace pending | s49 request harness, response reader, connection watchdog, response sink, diagnostic gate or s20 fault-smoke changes |
+| P0-16 | Historical diagnosis of the non-release Linux s49 reset | `b7910b0140b3fc70044b3286deafcab6152fa79354e36b5700758e348f37c642:b014282b3981a5cd68d72ebb2662dbbf8083c3388f02ea320973b93c3392dc8a:6b02342a05c30852465bb8176f07b7a7d78edfee12cf8f268716129ebbc204b6:23fd9ede7e7d330e06afd3181b9095671f8f5d28a7df5157bc2157e9087e329e` | stopped by product-scope correction; all temporary diagnostics removed | never reused; Linux is not a native release gate for this feature train |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -433,6 +433,12 @@ normal product runs retain empty stderr. Nextest run
 hosted-failing s49 case in parallel: 2 passed, 37 skipped, 2.477 seconds.
 Focused daemon-bin/s20/s49 Clippy, rustfmt, changed-file checks and the public
 guard passed.
+
+Product-scope correction: Linux is not a native target or release gate for
+this macOS-first feature train. Runs `30107075347` and `30107075263` were
+cancelled, all temporary reset diagnostics were removed, and no further
+feature work is gated on that investigation. This historical row remains only
+to explain the consumed evidence; it cannot delay v0.1.3 implementation.
 
 ## Version rounds
 
