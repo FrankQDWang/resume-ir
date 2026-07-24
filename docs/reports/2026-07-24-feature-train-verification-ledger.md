@@ -32,6 +32,7 @@ Each execution row must record:
 | P0-02 | Install/reinstall/source-binding evidence derives the canonical version | `4404c062a4d1ecfbd25b072f8f83028af2309f7264bf124c6e5c9b9fcb84190e` | passed | lifecycle, source binding or deployment changes |
 | P0-03 | Feature-train machine contract and mutation guards are exact | `bcb97b8b4d950ca6b1d054661e980d12e12cd30d6df3646d658b6b14029cd832` | passed | active goal, matrix, loop state, fixture pin or checker changes |
 | P0-04 | Public boundary and changed-file whitespace are clean | `d2ca4f1c8ccc9ea236421aeeaf9818c0d0d1375c23e2c4e01846c1dfa504b29b` | passed | any later public-input change |
+| P0-05 | OCR runtime pack exposes macOS-only identities only on the supported macOS target | `be176872b22588183ff239c3f1b00e5eb35c3b0c7897f1fe2d74d4ce78bfbbb7` | local focused pass; hosted Linux Clippy pending | OCR runtime-pack target ownership changes |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -48,6 +49,26 @@ autonomous-goal checker, loop-state checker and parallel-runner self-test.
 P0-04 commands passed on 2026-07-24: public repository guard and
 `git diff --check`. The two user-owned research documents and generated
 `node_modules/` remain outside the train.
+
+P0-05 repair round started after hosted Linux Clippy rejected macOS pack
+constants and `mac_identity` as dead code under `-D warnings`. Their former
+`cfg(test)` ownership made Linux all-target builds compile production macOS
+identity data that no Linux test used. The repair gives those production
+symbols the exact `macos/aarch64` target boundary instead of suppressing the
+warning.
+
+P0-05 focused verification on 2026-07-24:
+
+- `cargo test -p resume-daemon --bin resume-daemon runtime_pack::tests --locked`
+  passed: 8 passed, 86 filtered out.
+- `cargo fmt --all -- --check` and the changed-file `git diff --check` passed.
+- The local Linux cross-target Clippy attempt produced no repository verdict
+  because this Mac has no `x86_64-linux-gnu-gcc`.
+- A native daemon all-target Clippy attempt was interrupted after the Clippy
+  process stopped making progress; it is not recorded as passed.
+- The hosted Linux `rust workspace` rerun is the authoritative reproduction of
+  the original failing boundary. Its receipt remains pending until this repair
+  commit is pushed.
 
 ## Version rounds
 

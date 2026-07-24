@@ -30773,6 +30773,12 @@ Output summary:
   120-minute soak are intentionally deferred until v0.1.8. Their absence
   blocks #217/release-ready, not the closure of an individually installed and
   accepted feature issue.
+- The first hosted Linux Clippy run for PR #235 exposed a target-ownership
+  error in the OCR runtime pack: macOS-only production identity constants were
+  also compiled by `cfg(test)` on Linux and rejected as dead code under
+  `-D warnings`. The root repair scopes those symbols to macOS arm64. Its
+  focused runtime-pack test passed 8 tests with 86 unrelated tests filtered
+  out; hosted Linux Clippy remains the decisive rerun.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

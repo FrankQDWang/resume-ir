@@ -13,14 +13,15 @@ use super::security::{
 
 const SCHEMA: &str = "resume-ir.desktop-ocr-runtime-pack.v1";
 const VERSION: &str = "5.5.2";
-#[cfg(any(test, all(target_os = "macos", target_arch = "aarch64")))]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 const MAC_PACK_ID: &str = "tesseract-5.5.2-tessdata-fast-4.1.0-macos-arm64-r1";
 #[cfg(test)]
 const WINDOWS_PACK_ID: &str = "tesseract-5.5.2-tessdata-fast-4.1.0-windows-x64-static-r1";
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 const MAC_MANIFEST_SHA256: &str =
     "bd86a197f5b9518df622196c4d4c16201567295237bab06a133b2d3496528ad1";
 
-#[cfg(any(test, all(target_os = "macos", target_arch = "aarch64")))]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 const MAC_LICENSES: [&str; 10] = [
     "LICENSES/0BSD.txt",
     "LICENSES/Apache-2.0.txt",
@@ -33,7 +34,7 @@ const MAC_LICENSES: [&str; 10] = [
     "LICENSES/libpng-2.0.txt",
     "LICENSES/libtiff.txt",
 ];
-#[cfg(any(test, all(target_os = "macos", target_arch = "aarch64")))]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 const MAC_LIBRARIES: [&str; 15] = [
     "lib/libarchive.13.dylib",
     "lib/libb2.1.dylib",
@@ -240,7 +241,7 @@ fn host_identity() -> Result<PackIdentity, OptionalRuntimeReason> {
     Err(OptionalRuntimeReason::Invalid)
 }
 
-#[cfg(any(test, all(target_os = "macos", target_arch = "aarch64")))]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 const fn mac_identity() -> PackIdentity {
     PackIdentity {
         pack_id: MAC_PACK_ID,
