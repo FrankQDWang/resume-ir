@@ -334,7 +334,7 @@ impl BoundServer {
             {
                 Ok((stream, _)) => {
                     let finish = if handled_requests + 1 == request_limit {
-                        BusinessConnectionFinish::AwaitPeerClose
+                        BusinessConnectionFinish::AwaitResponseCompletion
                     } else {
                         BusinessConnectionFinish::Immediate
                     };
@@ -344,7 +344,7 @@ impl BoundServer {
                         publication_revoker.clone(),
                         finish,
                         |stream| {
-                            let _ = connection::handle(
+                            connection::handle(
                                 stream,
                                 connection::Context {
                                     store: context.store,
@@ -354,7 +354,7 @@ impl BoundServer {
                                     auth_token: &auth_token,
                                     control_state: &context.control_state,
                                 },
-                            );
+                            )
                         },
                     );
                     if let Err(error) = result {

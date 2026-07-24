@@ -30899,6 +30899,17 @@ Output summary:
   process stalled in `_dyld_start`; they are recorded as non-evidence.
   Focused final-tree daemon-bin/s48/s49 Clippy passed, and hosted Linux/Windows
   remain the execution receipts.
+- The polling intermediate tree subsequently passed Linux and macOS but again
+  left Windows in workspace tests for about 49 minutes. This proved that TCP
+  peer-close was the wrong lifecycle authority, regardless of timeout
+  implementation. The server now waits on the existing exactly-once
+  `ConnectionCompletion` shared with deferred response workers. Synchronous
+  responses are already terminal; deferred responses become terminal only
+  after their writer finishes; lost owners remain bounded by the five-second
+  watchdog. The exact completion regression passed 1/1, all 6 s49 cases
+  passed, both affected s48 cases passed individually, and combined focused
+  Clippy passed. The invalidated Windows run was cancelled; hosted
+  Linux/Windows replay remains the platform receipt.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

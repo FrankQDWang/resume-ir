@@ -43,6 +43,10 @@ impl ConnectionCompletion {
         self.inner.deferred.load(Ordering::Acquire)
     }
 
+    pub(crate) fn is_finished(&self) -> bool {
+        self.inner.finished.load(Ordering::Acquire)
+    }
+
     pub(crate) fn finish(&self, outcome: ConnectionOutcome) {
         if outcome == ConnectionOutcome::Deferred
             || self.inner.finished.swap(true, Ordering::AcqRel)

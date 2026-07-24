@@ -19,10 +19,10 @@ pub(crate) struct Context<'a> {
     pub(crate) control_state: &'a ControlPlaneState,
 }
 
-/// Handles one accepted connection. Socket configuration, parsing, routing,
-/// and response failures are closed into a connection outcome; this function
-/// has no process-fatal return channel.
-pub(crate) fn handle(stream: TcpStream, context: Context<'_>) -> ConnectionOutcome {
+/// Handles one accepted connection and returns its exactly-once completion
+/// capability. Deferred response owners finish the shared capability after
+/// writing their response; this function has no process-fatal return channel.
+pub(crate) fn handle(stream: TcpStream, context: Context<'_>) -> ConnectionCompletion {
     let completion = ConnectionCompletion::accepted();
     let result = handle_request(stream, context, &completion);
     let outcome = match result {
@@ -31,7 +31,7 @@ pub(crate) fn handle(stream: TcpStream, context: Context<'_>) -> ConnectionOutco
         Err(error) => ConnectionOutcome::from_request_result(Err(error)),
     };
     completion.finish(outcome);
-    outcome
+    completion
 }
 
 pub(crate) fn handle_control(

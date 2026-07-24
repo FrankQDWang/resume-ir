@@ -1,4 +1,3 @@
-use std::io::Read;
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -23,7 +22,7 @@ pub(super) enum ControlLoopStop {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum BusinessConnectionFinish {
     Immediate,
-    AwaitPeerClose,
+    AwaitResponseCompletion,
 }
 
 pub(super) struct ControlLoopConfig {
@@ -148,15 +147,12 @@ pub(super) fn handle_business_with_watchdog(
     shutdown: Option<Arc<AtomicBool>>,
     publication_revoker: GenerationPublicationRevoker,
     finish: BusinessConnectionFinish,
-    handle: impl FnOnce(TcpStream),
+    handle: impl FnOnce(TcpStream) -> crate::ipc::ConnectionCompletion,
 ) -> Result<(), DaemonFatalError> {
     let cancellation = match stream.try_clone() {
         Ok(cancellation) => cancellation,
         Err(_) => return Ok(()),
     };
-    let peer_close = matches!(finish, BusinessConnectionFinish::AwaitPeerClose)
-        .then(|| stream.try_clone().ok())
-        .flatten();
     let finished = Arc::new(AtomicBool::new(false));
     let watcher_finished = Arc::clone(&finished);
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -187,20 +183,10 @@ pub(super) fn handle_business_with_watchdog(
         }
     });
 
-    handle(stream);
-    if let Some(mut peer_close) = peer_close {
-        let _ = peer_close.set_read_timeout(Some(LISTENER_POLL_INTERVAL));
-        while !cancelled.load(Ordering::Acquire) {
-            match peer_close.read(&mut [0_u8; 1]) {
-                Ok(0) => break,
-                Ok(_) => {}
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
-                    ) => {}
-                Err(_) => break,
-            }
+    let completion = handle(stream);
+    if matches!(finish, BusinessConnectionFinish::AwaitResponseCompletion) {
+        while !completion.is_finished() && !cancelled.load(Ordering::Acquire) {
+            thread::sleep(LISTENER_POLL_INTERVAL);
         }
     }
     finished.store(true, Ordering::Release);
@@ -234,7 +220,7 @@ fn cancel_and_join(
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Shutdown, TcpListener, TcpStream};
+    use std::net::{TcpListener, TcpStream};
     use std::sync::{mpsc, Arc};
     use std::thread;
     use std::time::Duration;
@@ -243,9 +229,10 @@ mod tests {
 
     use super::{handle_business_with_watchdog, BusinessConnectionFinish};
     use crate::ipc::generation::{DaemonGenerationOwner, OwnerMode};
+    use crate::ipc::{ConnectionCompletion, ConnectionOutcome};
 
     #[test]
-    fn final_connection_ignores_poll_timeouts_until_peer_close_or_watchdog() {
+    fn final_connection_waits_for_deferred_response_completion_not_peer_close() {
         let directory = tempfile::tempdir().unwrap();
         let data_directory_owner = Arc::new(
             match DataDirectoryOwnerLease::try_acquire(directory.path()).unwrap() {
@@ -265,19 +252,19 @@ mod tests {
         let (handler_returned_sender, handler_returned_receiver) = mpsc::sync_channel(1);
         let (finished_sender, finished_receiver) = mpsc::sync_channel(1);
         let revoker = generation.publication_revoker();
+        let completion = ConnectionCompletion::accepted();
+        let response_owner = completion.defer();
 
         let join = thread::spawn(move || {
             let result = handle_business_with_watchdog(
                 server,
                 None,
                 revoker,
-                BusinessConnectionFinish::AwaitPeerClose,
+                BusinessConnectionFinish::AwaitResponseCompletion,
                 |stream| {
-                    stream
-                        .set_read_timeout(Some(Duration::from_millis(25)))
-                        .unwrap();
                     drop(stream);
                     handler_returned_sender.send(()).unwrap();
+                    completion
                 },
             );
             finished_sender.send(result).unwrap();
@@ -287,9 +274,9 @@ mod tests {
         thread::sleep(Duration::from_millis(100));
         assert!(
             matches!(finished_receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
-            "final connection was released before its peer closed"
+            "final connection was released before its response owner completed"
         );
-        client.shutdown(Shutdown::Both).unwrap();
+        response_owner.finish(ConnectionOutcome::Completed);
         assert_eq!(
             finished_receiver
                 .recv_timeout(Duration::from_secs(1))
@@ -297,5 +284,6 @@ mod tests {
             Ok(())
         );
         join.join().unwrap();
+        drop(client);
     }
 }
