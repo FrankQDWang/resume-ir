@@ -30957,17 +30957,18 @@ Output summary:
   stall into a named, bounded failure without adding a retry or enlarging a
   product timeout. All 6 s49 cases passed locally after the diagnostic bound;
   hosted Windows remains pending.
-- PR run `30103086599` then reset three concurrent s49 responses on Linux even
-  though their parent-owned daemon processes were still resident. The
-  one-request protocol had parsed each bounded request but left the socket read
-  half non-terminal until all server clones dropped. The connection owner now
-  closes request input after every terminal parser outcome and before response
-  dispatch, so Linux cannot turn immediate one-shot teardown into an abortive
-  close. This adds no retry, sleep or deadline. One exact unread-input/complete
-  response invariant and eight directly affected s49/s20/s48 cases passed;
-  Nextest run `ede53eeb-ab53-4b8b-a1ff-806c58b88267` completed them with three
-  workers in 16.893 seconds. Focused Clippy, rustfmt and diff checks passed;
-  hosted Linux remains the decisive replay.
+- PR run `30103086599` then reset three concurrent s49 responses on Linux under
+  the parent-owned harness. Closing request input after each terminal parse was
+  tested as a falsifiable socket-state hypothesis. One exact invariant and
+  eight directly affected s49/s20/s48 cases passed locally, but Linux PR run
+  `30104547488` still reset the large detail/hydrate case. The production
+  change has therefore been reverted rather than retained speculatively.
+  A temporary bounded s49 diagnostic now records only request ordinal, route,
+  daemon liveness, received byte count and declared frame length on failure.
+  It excludes payload, path, token, request id and candidate data. Nextest run
+  `444e7973-df5a-48f6-9c7e-f16a24d28d79` passed the hosted-failing case and
+  both response-reader regressions locally; hosted Linux will provide the
+  decisive trace.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

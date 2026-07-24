@@ -42,7 +42,8 @@ Each execution row must record:
 | P0-12 | Metadata-key restore rejects a cross-platform unsafe authority object without replacing it | `44c9cd156a91eda2fae1f78627e2572e25ffbe7676f64a20df3ea5feb6735680:3e25a1fb07e376f040dd3e3428bae9184746f36efd0db659a7d008432cdbaeac:e44e11ffdca60c366e0ac86ba540e4d43800eafe3f4c81f199898927027df1c6` | passed: local exact plus hosted Windows | metadata-key restore, owner-directory validation, or unsafe-authority fixtures change |
 | P0-13 | The final request-limit exit waits first for exactly-once response completion, stops the request watchdog, then grants a bounded TCP delivery window | `e38dc69c9a2fc132b7914cc0299143948b639a0b6f32cd593710fbec855156ba:913985e11e4e026bb8360ff7e783a62f02e23aa99a7fccb046f40a2ad3227369:db79e491b28871d2335eebe2de694fa580eae6796f25e9ac8db8494773c16b7c:25d0d14868986e3b87f845f6e356aa92fbdc607a91bcacd510f39eef18d2428c:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45:6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c` | hosted Linux, macOS and local exact lifecycle/s49 passed; Windows shutdown diagnosis pending | completion capability, bounded delivery receipt, deferred response ownership, connection hard deadline, or request-limit lifecycle changes |
 | P0-14 | Detail IPC integration owns daemon shutdown through the real parent-lifecycle capability after every response is fully read | `6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c` | hosted Linux and macOS plus local all 6 s49 cases passed; bounded Windows shutdown diagnosis pending | s49 daemon harness, process containment, parent lifecycle, response framing, or detail/hydrate request sequence changes |
-| P0-15 | Every one-request connection closes its request read half after a terminal parse outcome, before any complete response is written | `2e7f4fb504e027d787ddcc7da15a99dbebff15a1970106e86912c4ece24adb75:52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517:db79e491b28871d2335eebe2de694fa580eae6796f25e9ac8db8494773c16b7c:6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c:23fd9ede7e7d330e06afd3181b9095671f8f5d28a7df5157bc2157e9087e329e:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45` | local invariant plus 8 directly affected integration cases passed; hosted Linux replay pending | request parser, connection input terminal transition, response completion, s49 detail/hydrate, malformed request, or client-disconnect behavior changes |
+| P0-15 | Rejected hypothesis: closing request input after parse prevents the hosted s49 response reset | `2e7f4fb504e027d787ddcc7da15a99dbebff15a1970106e86912c4ece24adb75:52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517:db79e491b28871d2335eebe2de694fa580eae6796f25e9ac8db8494773c16b7c:6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c:23fd9ede7e7d330e06afd3181b9095671f8f5d28a7df5157bc2157e9087e329e:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45` | failed: Linux PR run `30104547488` still reset one s49 response; production change reverted | never reused; retained only as negative diagnostic evidence |
+| P0-16 | Bounded s49 reset diagnosis reports request ordinal, route, daemon liveness, received bytes and declared frame bytes without payload, path or token | `05b0b6f7013e72bfe31ffc4fa8f371ed56a3afa8e8ba6d2660b814d195336fe1` | local diagnostic compile and three directly affected cases passed; hosted Linux diagnosis pending | s49 request harness, response reader or diagnostic fields change |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -370,15 +371,9 @@ P0-14 focused verification on 2026-07-24:
   timeout.
 
 PR run `30103086599` then failed three concurrent s49 responses on Linux while
-the parent-owned daemon processes remained resident. This ruled out
-request-limit exit and parent-lifecycle shutdown as the active cause. The
-one-request protocol parsed a complete request but left the socket read half
-open until every cloned server handle was dropped. On Linux, releasing that
-non-terminal input side immediately after a one-shot response can turn the
-normal close into an abortive reset. The connection owner now transitions
-request input to `Shutdown::Read` after every terminal parser outcome, including
-bad and oversized requests, before dispatching or writing any response. This
-does not retry, sleep, enlarge a deadline or wait for a peer.
+using the parent-owned daemon harness. Closing the request read half after
+every terminal parser outcome was tested as a falsifiable socket-state
+hypothesis. It added no retry, sleep, enlarged deadline or peer wait.
 
 P0-15 focused verification on 2026-07-24:
 
@@ -393,8 +388,23 @@ P0-15 focused verification on 2026-07-24:
 - Focused daemon-bin/s49/s20/s48 Clippy with `-D warnings`, rustfmt and
   changed-file checks passed. No daemon crate or workspace suite was replayed.
 - Platform run `30103086413` was cancelled because its commit was invalidated
-  by this connection-state repair. Hosted Linux remains the decisive replay
-  for the original reset.
+  by this connection-state experiment.
+
+PR run `30104547488` passed the new invariant, all daemon unit tests, s20 and
+s48, then reset
+`detail_and_hydrate_read_one_exact_selection_across_unrelated_publications`.
+The read-half transition therefore did not fix the hosted failure and has been
+reverted rather than retained as speculative production code. P0-15 is closed
+as negative evidence.
+
+P0-16 adds bounded test-only diagnosis at the actual failing client boundary.
+On reset it records only request ordinal, route, whether the daemon is still
+running, received response byte count and declared frame length. It never
+records payload, local path, token, request id or candidate data. Nextest run
+`444e7973-df5a-48f6-9c7e-f16a24d28d79` passed the two response-reader
+regressions and the hosted-failing detail/hydrate case locally: 3 passed,
+3 skipped. The diagnostic remains temporary and must be removed after the
+cause is proven.
 
 ## Version rounds
 

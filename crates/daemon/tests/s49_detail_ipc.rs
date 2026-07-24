@@ -866,6 +866,7 @@ struct Daemon {
     data_dir: PathBuf,
     endpoint: String,
     token: String,
+    request_count: usize,
 }
 
 impl Daemon {
@@ -901,11 +902,24 @@ impl Daemon {
             data_dir: data_dir.to_path_buf(),
             endpoint,
             token,
+            request_count: 0,
         }
     }
 
     fn post(&mut self, path: &str, token: Option<&str>, payload: serde_json::Value) -> String {
-        http_post_command(&self.endpoint, path, token, payload)
+        self.request_count += 1;
+        http_post_command(&self.endpoint, path, token, payload).unwrap_or_else(|error| {
+            let daemon_state = match self.child.as_mut().unwrap().try_wait() {
+                Ok(None) => "running".to_string(),
+                Ok(Some(status)) => format!("exited:{status}"),
+                Err(_) => "unknown".to_string(),
+            };
+            panic!(
+                "[DEBUG-s49-reset] request_ordinal={} route={path} \
+                 daemon_state={daemon_state} response_error={error}",
+                self.request_count
+            )
+        })
     }
 
     fn wait_success(mut self) {
@@ -964,7 +978,7 @@ fn http_post_command(
     path: &str,
     token: Option<&str>,
     payload: serde_json::Value,
-) -> String {
+) -> io::Result<String> {
     let rest = endpoint.strip_prefix("http://").unwrap();
     let (addr, _) = rest.split_once('/').unwrap();
     let body = payload.to_string();
@@ -975,9 +989,9 @@ fn http_post_command(
         "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n{authorization}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
-    let mut stream = TcpStream::connect(addr).unwrap();
-    stream.write_all(request.as_bytes()).unwrap();
-    read_http_response(&mut stream).unwrap()
+    let mut stream = TcpStream::connect(addr)?;
+    stream.write_all(request.as_bytes())?;
+    read_http_response(&mut stream)
 }
 
 fn read_http_response(reader: &mut impl Read) -> io::Result<String> {
@@ -1005,7 +1019,17 @@ fn read_http_response(reader: &mut impl Read) -> io::Result<String> {
         }
         let remaining = MAX_RESPONSE_BYTES - response.len();
         let chunk_limit = remaining.min(chunk.len());
-        let read = reader.read(&mut chunk[..chunk_limit])?;
+        let read = reader.read(&mut chunk[..chunk_limit]).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "{}; received_bytes={}; declared_frame_bytes={:?}",
+                    error,
+                    response.len(),
+                    declared_http_frame_len(&response)
+                ),
+            )
+        })?;
         if read == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -1014,6 +1038,21 @@ fn read_http_response(reader: &mut impl Read) -> io::Result<String> {
         }
         response.extend_from_slice(&chunk[..read]);
     }
+}
+
+fn declared_http_frame_len(response: &[u8]) -> Option<usize> {
+    let header_offset = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")?;
+    let header_len = header_offset + 4;
+    let header = std::str::from_utf8(&response[..header_offset]).ok()?;
+    let content_length = header.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("content-length")
+            .then(|| value.trim().parse::<usize>().ok())
+            .flatten()
+    })?;
+    header_len.checked_add(content_length)
 }
 
 fn complete_http_frame_len(response: &[u8]) -> io::Result<Option<usize>> {
