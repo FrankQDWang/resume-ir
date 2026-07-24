@@ -19,7 +19,8 @@ use crate::search_runtime_config::SearchRuntimeConfig;
 mod connection_lifecycle;
 
 use connection_lifecycle::{
-    handle_business_with_watchdog, run_control_loop, ControlLoopConfig, LISTENER_POLL_INTERVAL,
+    handle_business_with_watchdog, run_control_loop, BusinessConnectionFinish, ControlLoopConfig,
+    LISTENER_POLL_INTERVAL,
 };
 
 enum ServerStop {
@@ -332,10 +333,16 @@ impl BoundServer {
                 .accept()
             {
                 Ok((stream, _)) => {
+                    let finish = if handled_requests + 1 == request_limit {
+                        BusinessConnectionFinish::AwaitPeerClose
+                    } else {
+                        BusinessConnectionFinish::Immediate
+                    };
                     let result = handle_business_with_watchdog(
                         stream,
                         context.shutdown.cloned(),
                         publication_revoker.clone(),
+                        finish,
                         |stream| {
                             let _ = connection::handle(
                                 stream,

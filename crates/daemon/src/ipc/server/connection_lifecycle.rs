@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -10,6 +11,7 @@ use crate::ipc::{connection, ControlPlaneState, DaemonFatalError};
 use super::{classify_accept_error, AcceptErrorDisposition};
 
 const CONNECTION_HARD_DEADLINE: Duration = Duration::from_secs(5);
+const FINAL_RESPONSE_PEER_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 pub(super) const LISTENER_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,6 +19,12 @@ pub(super) enum ControlLoopStop {
     Handoff,
     ParentShutdown,
     RequestLimitReached,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum BusinessConnectionFinish {
+    Immediate,
+    AwaitPeerClose,
 }
 
 pub(super) struct ControlLoopConfig {
@@ -140,12 +148,16 @@ pub(super) fn handle_business_with_watchdog(
     stream: TcpStream,
     shutdown: Option<Arc<AtomicBool>>,
     publication_revoker: GenerationPublicationRevoker,
+    finish: BusinessConnectionFinish,
     handle: impl FnOnce(TcpStream),
 ) -> Result<(), DaemonFatalError> {
     let cancellation = match stream.try_clone() {
         Ok(cancellation) => cancellation,
         Err(_) => return Ok(()),
     };
+    let peer_close = matches!(finish, BusinessConnectionFinish::AwaitPeerClose)
+        .then(|| stream.try_clone().ok())
+        .flatten();
     let finished = Arc::new(AtomicBool::new(false));
     let watcher_finished = Arc::clone(&finished);
     let watchdog = thread::spawn(move || {
@@ -174,6 +186,10 @@ pub(super) fn handle_business_with_watchdog(
     });
 
     handle(stream);
+    if let Some(mut peer_close) = peer_close {
+        let _ = peer_close.set_read_timeout(Some(FINAL_RESPONSE_PEER_CLOSE_TIMEOUT));
+        let _ = peer_close.read(&mut [0_u8; 1]);
+    }
     finished.store(true, Ordering::Release);
     watchdog
         .join()

@@ -30844,6 +30844,14 @@ Output summary:
   status case and exact benchmark/daemon test-target Clippy passed, along with
   rustfmt, public guard and diff checks. No daemon, benchmark-runner or
   workspace suite was replayed locally.
+- The half-close-only hosted replay moved the reset to another s49 final
+  request, proving that kernel-buffer acceptance was still not a complete
+  request-limit exit receipt. Only the explicit final `--max-requests`
+  connection now waits for peer close after sending FIN, bounded to one second
+  while the existing five-second watchdog remains active. Normal resident
+  requests retain immediate completion. The directly affected 6-case s49
+  target and exact request-limit cleanup unit passed, plus combined
+  daemon-bin/s49 Clippy, rustfmt, public guard and diff checks.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

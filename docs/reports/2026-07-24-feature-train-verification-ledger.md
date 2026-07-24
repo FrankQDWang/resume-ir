@@ -38,7 +38,7 @@ Each execution row must record:
 | P0-08 | Initializing-generation shutdown observes complete discovery and auth withdrawal | `8e7d55aac19e47688bbb7b44022b7cf59b43d073fca46a9c7d6116a66d3f4f74` | passed: local exact plus hosted Linux workspace replay | initializing control-file withdrawal or its test synchronization changes |
 | P0-09 | Byte-stability snapshots model the two held process-owner locks without reading their locked bytes | `8d974924d88179b70c62bde4ccf6f279c94c099a106879c2b988be89aa24d8b1:e44e11ffdca60c366e0ac86ba540e4d43800eafe3f4c81f199898927027df1c6:a27afd24f9d912c018ec811c75c013927156bf5b38037f34832edad8be426796` | local exact passes; hosted Windows replay pending | owner-lock names, data-directory locking, or migration byte-stability snapshot helpers change |
 | P0-10 | Oversized resident-command output is tested independently from long-running-command timeout behavior | `3061010c9986b56dd4afd0b10dccde6ee27c51e4dc6c3883ae78ccfaf964a0f6` | local exact pass; hosted Windows replay pending | resident command pipe cap, timeout precedence, or oversized-output fixture changes |
-| P0-11 | Every complete one-shot HTTP response explicitly half-closes its write side after the declared frame | `52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517` | local affected s49 target pass; hosted Linux replay pending | one-shot response framing, response shutdown, streaming ownership, or request-limit lifecycle changes |
+| P0-11 | One-shot responses half-close after the declared frame, and an orderly request-limit exit waits for its final peer close | `52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517:b238323d0018b2a3bc76e262a02fd1a7ad9d857cf2967f8337b62cf059b8612a:1c169b8e7c563b027b9970bc0b414d7fb32c859956c72ab1f65f92e14a356736` | local affected s49/lifecycle pass; hosted Linux replay pending | one-shot response framing, final-peer acknowledgement, streaming ownership, or request-limit lifecycle changes |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -216,10 +216,19 @@ The same hosted round independently showed that the previous s49 repair had
 correctly rejected a reset before a complete HTTP frame: the fifth and final
 detail-contract response was actually truncated at request-limit process exit.
 The server's one-shot response functions wrote the declared frame but relied
-on ordinary socket drop to establish the response boundary. P0-11 explicitly
-shuts down the TCP write half only after the entire one-shot response buffer is
-accepted. The streaming import and batch writers continue using the separate
-multi-write/flush path and are unchanged.
+on ordinary socket drop to establish the response boundary. P0-11 first made
+those response functions shut down the TCP write half only after the entire
+frame was accepted. The streaming import and batch writers continue using the
+separate multi-write/flush path and are unchanged.
+
+PR run `30087200184` proved that half-close alone was insufficient: a different
+s49 case reached the same final-request reset while all earlier requests
+passed. This isolated the remaining ownership gap to the explicit
+`--max-requests` terminal path. The server now marks only the final bounded
+request as `AwaitPeerClose`; after the response sends FIN, that connection stays
+owned until the client closes or a one-second bounded peer-close read ends.
+The existing five-second connection watchdog remains active. Normal resident
+daemon requests use `Immediate` and incur no new wait.
 
 P0-11 focused verification on 2026-07-24:
 
@@ -232,9 +241,17 @@ P0-11 focused verification on 2026-07-24:
   search-response and ordinary HTTP-response finish paths.
 - Exact s49 test-target Clippy with `-D warnings`, rustfmt, public guard and
   diff checks passed. No daemon crate or workspace suite was replayed.
+- After adding final-peer ownership, the same 6-case s49 target passed again
+  and the exact
+  `ipc::server::tests::request_limit_stops_status_updater_before_draining_data_plane`
+  lifecycle case passed with 93 unrelated tests filtered out. Combined
+  daemon-bin/s49 Clippy with `-D warnings`, rustfmt, public guard and diff
+  checks passed.
 - The failed hosted receipt is PR run `30086174923`; its exact failing test was
-  `detail_contract_rejects_legacy_shape_unbounded_ids_and_oversized_pages`.
-  Hosted Linux replay on the repair commit remains the decisive receipt.
+  `detail_contract_rejects_legacy_shape_unbounded_ids_and_oversized_pages`;
+  the half-close-only follow-up `30087200184` failed
+  `detail_and_hydrate_read_one_exact_selection_across_unrelated_publications`.
+  Hosted Linux replay on the final-peer repair commit remains decisive.
 
 ## Version rounds
 
