@@ -30803,6 +30803,13 @@ Output summary:
   reset while a partial frame still fails. Those two focused reader tests and
   the original exact s49 test passed; no unrelated daemon or workspace tests
   were replayed. Hosted Linux remains the final receipt for this repair.
+- The subsequent Linux run stopped earlier on an initializing-generation
+  cleanup test that waited only for discovery removal before asserting both
+  discovery and auth were gone. Because owned cleanup removes those files in
+  sequence, the test could observe the valid interval between the two unlinks.
+  Its existing bounded wait now observes the complete two-file invariant. The
+  exact test passed with 93 unrelated daemon tests filtered out; the production
+  cleanup order and one-second deadline are unchanged.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

@@ -35,6 +35,7 @@ Each execution row must record:
 | P0-05 | OCR runtime pack exposes macOS-only identities only on the supported macOS target | `be176872b22588183ff239c3f1b00e5eb35c3b0c7897f1fe2d74d4ce78bfbbb7` | passed: local focused test and hosted Linux Clippy | OCR runtime-pack target ownership changes |
 | P0-06 | Portable workspace tests and reviewed native-runtime tests are separate explicit lanes | `9ee78c55dbfc6fd060112a98abc9a817a82f377b7b33d0871fd84098992eba4f` | local focused pass; hosted portable-lane rerun pending | daemon test target, native runtime feature, reviewed-pack harness, or lane workflow changes |
 | P0-07 | Detail IPC test client completes one bounded HTTP response by `Content-Length`, without requiring transport EOF | `490bd01875132783a30c017814c55266c55ef0eb012f38651845dfcadf9a025b` | local focused pass; hosted Linux replay pending | s49 response reader, response framing, or detail request-limit lifecycle changes |
+| P0-08 | Initializing-generation shutdown observes complete discovery and auth withdrawal | `8e7d55aac19e47688bbb7b44022b7cf59b43d073fca46a9c7d6116a66d3f4f74` | local exact pass; hosted Linux replay pending | initializing control-file withdrawal or its test synchronization changes |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -134,6 +135,24 @@ P0-07 focused verification on 2026-07-24:
 - Focused s49 Clippy with `-D warnings`, `rustfmt --check`,
   `guard-public-repo.sh` and `git diff --check` passed. No daemon crate or
   workspace suite was replayed.
+
+The following hosted Linux run stopped earlier in the daemon unit-test binary:
+`parent_shutdown_revokes_initializing_discovery_before_bootstrap_finishes`
+waited only for `ipc.endpoints.json` to disappear, then asserted that
+`ipc.auth` was also absent. Generation withdrawal deliberately removes those
+two owned files in that order, so the assertion could run between the two
+unlinks. P0-08 makes the existing one-second bounded observation wait for the
+complete two-file invariant; it does not increase the deadline or change
+production cleanup.
+
+P0-08 focused verification on 2026-07-24:
+
+- `cargo test -p resume-daemon --locked --bin resume-daemon
+  ipc::server::tests::parent_shutdown_revokes_initializing_discovery_before_bootstrap_finishes
+  -- --exact --nocapture` passed: 1 passed, 93 unrelated tests filtered out.
+- Focused daemon-bin Clippy with `-D warnings`, `rustfmt --check`,
+  `guard-public-repo.sh` and `git diff --check` passed. No other daemon or
+  workspace test was replayed.
 
 ## Version rounds
 

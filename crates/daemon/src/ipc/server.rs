@@ -813,7 +813,8 @@ mod tests {
 
         shutdown.store(true, Ordering::Release);
         let deadline = std::time::Instant::now() + Duration::from_secs(1);
-        while directory.path().join("ipc.endpoints.json").exists()
+        while (directory.path().join("ipc.endpoints.json").exists()
+            || directory.path().join("ipc.auth").exists())
             && std::time::Instant::now() < deadline
         {
             thread::sleep(Duration::from_millis(10));
