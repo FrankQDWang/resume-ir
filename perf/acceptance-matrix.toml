@@ -1,6 +1,6 @@
 schema_version = "resume-ir.perf.acceptance-matrix.v2"
 goal_id = "resume-ir.performance-gui-loop.2026-06"
-date = "2026-07-17"
+date = "2026-07-21"
 
 [evidence_lanes.smoke]
 data = "synthetic_or_public_tiny"
@@ -179,7 +179,7 @@ raw_query_stream_local_only = true
 
 [correctness_recovery_v29]
 contract = "resume-ir.correctness-recovery.v29"
-schema_migration = "additive_copy_on_write_v28_to_v29"
+schema_migration = "current_v29_only_no_legacy_runtime_migration"
 metadata_schema = 29
 fulltext_snapshot_schema = "fulltext.snapshot.v3"
 fulltext_index_schema = "tantivy.fulltext.v3"
@@ -193,21 +193,11 @@ doc_only_detail_fallback_allowed = false
 legacy_dual_reader_allowed = false
 automatic_business_request_replay_allowed = false
 request_local_socket_failure_may_exit_daemon = false
-desktop_supervisor_is_unique_process_owner = true
-startup_deadline_ms = 10000
-control_plane_publish_precedes_artifact_recovery = true
 restart_bypasses_completed_root_rescan_interval = false
-child_poll_ms = 100
-heartbeat_interval_ms = 5000
-heartbeat_timeout_ms = 2000
-heartbeat_failures_before_recycle = 3
-unexpected_exit_budget_count = 5
-unexpected_exit_budget_window_seconds = 600
-circuit_open_seconds = 300
-ready_reset_seconds = 300
-restart_backoff_ms = [250, 1000, 4000, 15000, 30000]
-restart_budget_persists_across_app_restart = true
-normal_app_shutdown_consumes_failure_budget = false
+legacy_store_runtime_migration_allowed = false
+existing_v29_key_repair_allowed = false
+unsupported_store_bytes_may_change = false
+fresh_v29_requires_no_legacy_authority = true
 publication_lock_may_block_indefinitely = false
 publication_lock_contention = "typed_busy_single_attempt"
 resident_fulltext_lock_contention_required = true
@@ -250,11 +240,9 @@ publication_retirement_completion = "transaction_authorized_exact_artifact_cas_o
 publication_retirement_row_direct_delete_or_replace_allowed = false
 publication_absent_artifact_replay = "exact_pending_intent_and_not_retained_only"
 publication_terminal_cleanup_attempt_preserved = true
-v28_interrupted_publication_migration = "abandoned_pending_may_exist_not_complete"
 publication_supersession_may_accumulate_artifacts = false
 publication_prepared_owner_boundary = "internal_transaction_closure_only"
 publication_prepared_plain_drop_allowed = false
-manual_retry_scope = "circuit_open_half_open_only"
 pre_manifest_v29_staging_reusable = false
 permanent_repair_authority_accepts_legacy_descriptors = false
 offline_mutation_artifact_validation = "open_exact_current_payloads_before_consuming_base"
@@ -292,9 +280,9 @@ macos_installed_acceptance_build_source = "isolated_local_clone_of_exact_commit"
 macos_installed_acceptance_mutation_authority = "live_lease_and_exact_source_revalidated_before_each_mutation"
 macos_installed_acceptance_branch_cleanup_main_sync_required = true
 macos_installed_acceptance_commit_binding = "bundle_dmg_receipt_installed_acceptance_and_soak_equal"
-macos_installed_acceptance_authorized_source_schema = 28
+macos_installed_acceptance_authorized_source_schema = 29
 macos_installed_acceptance_cow_mode = "apfs_clonefile_no_fallback_source_unchanged"
-macos_installed_acceptance_cold_gate = "v28_to_v29_ready_metadata_fulltext_vector_epoch_and_search"
+macos_installed_acceptance_cold_gate = "exact_v29_preserved_control_plane_ready_metadata_fulltext_vector_epoch_and_search"
 macos_installed_acceptance_search_witness = "owner_only_public_canary_daemon_import_nonzero_exact_epoch"
 macos_installed_acceptance_artifact_digest = "streaming_ciphertext_sha256_owner_mode_inode_stable"
 macos_installed_acceptance_strong_kill_evidence = "current_receipt_boundary_next_ready_generation"
@@ -319,6 +307,67 @@ deployed_regression_restarts_soak_from_zero = true
 macos_native_recovery_required = true
 windows_native_recovery_required = true
 windows_compile_only_cannot_close_native_gate = true
+
+[daemon_bootstrap_v1]
+contract = "resume-ir.daemon-bootstrap.v1"
+aggregate_ipc_contract = "resume-ir.ipc.v4"
+discovery_contract = "resume-ir.daemon-ipc.v3"
+auth_contract = "resume-ir.daemon-auth.v3"
+status_contract = "daemon.status.v3"
+diagnostics_contract = "resume-ir.diagnostics.v4"
+error_contract = "resume-ir.error.v2"
+launch_id_bytes = 32
+pre_spawn_discovery_probe_allowed = false
+foreign_launch_adoption_allowed = false
+status_authentication_required = true
+control_plane_deadline_ms = 10000
+control_plane_publish_precedes_store_open = true
+control_plane_publish_precedes_runtime_validation = true
+status_reads_metadata_on_heartbeat = false
+initializing_business_route_status = 503
+initializing_business_route_code = "SERVICE_INITIALIZING"
+automatic_business_request_replay_allowed = false
+
+[desktop_supervisor_v2]
+contract = "resume-ir.desktop-daemon-lifecycle.v2"
+lifecycle_receipt_contract = "resume-ir.desktop-daemon-lifecycle-receipt.v2"
+desktop_diagnostics_contract = "resume-ir.desktop-diagnostics.v2"
+restart_policy_scope = "tauri_process_generation"
+persistent_restart_ledger_allowed = false
+legacy_restart_ledger_is_input = false
+child_poll_ms = 100
+heartbeat_interval_ms = 5000
+heartbeat_timeout_ms = 2000
+heartbeat_failures_before_recycle = 3
+unexpected_exit_budget_count = 5
+unexpected_exit_budget_window_seconds = 600
+circuit_open_seconds = 300
+ready_reset_seconds = 300
+restart_backoff_ms = [250, 1000, 4000, 15000, 30000]
+normal_app_shutdown_consumes_failure_budget = false
+manual_retry_states = ["blocked", "circuit_open"]
+retry_outside_allowed_state = "typed_retry_not_allowed"
+
+[runtime_capability_degradation_v1]
+contract = "resume-ir.runtime-capabilities.v1"
+optional_runtimes = ["embedding", "ocr", "classifier"]
+operation_capabilities = [
+  "keyword_search",
+  "detail",
+  "semantic_search",
+  "hybrid_search",
+  "text_import",
+  "ocr_import",
+  "index_publication",
+]
+runtime_validation_precedes_control_plane = false
+runtime_fault_may_exit_core_daemon = false
+keyword_and_detail_survive_optional_runtime_faults = true
+embedding_fault_hybrid_behavior = "lexical_partial"
+ocr_fault_behavior = "retain_unclaimed_backlog"
+classifier_fault_behavior = "freeze_mutation_preserve_epoch"
+worker_capability_gate_precedes_claim = true
+runtime_degradation_may_weaken_package_gate = false
 
 [latency_p95_ms.D10K_private_calibration]
 single_term = 120

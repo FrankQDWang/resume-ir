@@ -1,7 +1,9 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const ACCEPTANCE_SCHEMA = "resume-ir.macos-installed-main-acceptance.v1";
+export const ACCEPTANCE_SCHEMA = "resume-ir.macos-installed-main-acceptance.v2";
+export const LEGACY_ACCEPTANCE_SCHEMA =
+  "resume-ir.macos-installed-main-acceptance.v1";
 export const INSTALLED_APP_BUNDLE = "/Applications/resume-ir.app";
 export const TARGET_TRIPLE = "aarch64-apple-darwin";
 export const APP_DATA_DIRECTORY = "local.resume-ir.desktop";
@@ -70,7 +72,7 @@ export const ENDPOINT_FILE = "ipc.endpoints.json";
 export const AUTH_FILE = "ipc.auth";
 export const ACTIVE_STORE_MANIFEST = "metadata-active.v1";
 export const DATA_OWNER_LOCK = "data-directory-owner.lock";
-export const LIFECYCLE_RECEIPT = "desktop-daemon-lifecycle.v1.json";
+export const LIFECYCLE_RECEIPT = "desktop-daemon-lifecycle.v2.json";
 export const LOCK_READY = Buffer.from(
   "resume-ir.installed-main-publication-lock.ready.v1\n",
   "utf8",
@@ -87,6 +89,8 @@ export const READY_TIMEOUT_MS = 2 * 60_000;
 export const CONTENTION_TIMEOUT_MS = 2 * 60_000;
 export const CONTENTION_CONVERGENCE_TIMEOUT_MS = 5 * 60_000;
 export const PERSISTENT_CONTENTION_TIMEOUT_MS = 3 * 60_000;
+export const CONTROL_PUBLICATION_TIMEOUT_MS = 10_000;
+export const SLOW_INITIALIZATION_MIN_MS = 10_000;
 export const QUIT_TIMEOUT_MS = 15_000;
 export const HTTP_TIMEOUT_MS = 2_500;
 export const POLL_MS = 200;

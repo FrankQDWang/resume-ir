@@ -93,6 +93,37 @@ fn no_request_shutdown_never_opens_query_artifacts() {
 }
 
 #[test]
+fn post_admission_semantic_runtime_loss_is_a_typed_capability_error() {
+    let (mut client, server) = connected_streams();
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut reply = SearchReply::Single {
+        stream: server,
+        completion: crate::ipc::ConnectionCompletion::accepted(),
+    };
+
+    write_service_unavailable(
+        &mut reply,
+        "semantic-runtime-loss",
+        DaemonSearchMode::Semantic,
+        "SEMANTIC_RUNTIME_UNAVAILABLE",
+    )
+    .unwrap();
+    drop(reply);
+    let mut response = String::new();
+    client.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 503 Service Unavailable"));
+    let body: serde_json::Value =
+        serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+    assert_eq!(body["schema_version"], "resume-ir.error.v2");
+    assert_eq!(body["error"]["code"], "CAPABILITY_UNAVAILABLE");
+    assert_eq!(body["error"]["action"], "select_supported_mode");
+    assert_eq!(body["error"]["capability"], "semantic_search");
+    assert_eq!(body["error"]["reason"], "embedding_unavailable");
+}
+
+#[test]
 fn shutdown_cancels_active_task_and_never_executes_queued_task() {
     let queue = Arc::new(SearchQueue::default());
     let admission = Arc::new(AdmissionState::new());

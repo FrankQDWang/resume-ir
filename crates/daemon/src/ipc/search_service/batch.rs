@@ -153,12 +153,14 @@ impl BatchChildReply {
         let response =
             serde_json::from_str::<serde_json::Value>(response_body).unwrap_or_else(|_| {
                 serde_json::json!({
-                    "schema_version": "resume-ir.error.v1",
+                    "schema_version": "resume-ir.error.v2",
                     "request_id": self.request_id,
                     "status": "error",
                     "error": {
                         "code": "QUERY_SERVICE_UNAVAILABLE",
-                        "action": "retry",
+                        "action": "repair_required",
+                        "capability": serde_json::Value::Null,
+                        "reason": serde_json::Value::Null,
                     },
                 })
             });
@@ -208,13 +210,15 @@ impl BatchChildReply {
 
 pub(crate) fn overload_body(batch_id: &str) -> String {
     serde_json::json!({
-        "schema_version": "resume-ir.search-batch-response.v1",
-        "batch_id": batch_id,
+        "schema_version": "resume-ir.error.v2",
+        "request_id": batch_id,
         "status": "error",
         "error": {
             "code": "OVERLOADED",
+            "action": "retry",
             "retry_after_ms": 250,
-            "reason": "batch_admission_exhausted",
+            "capability": serde_json::Value::Null,
+            "reason": serde_json::Value::Null,
         },
     })
     .to_string()

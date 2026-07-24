@@ -15,6 +15,7 @@ import {
   APP_EXECUTABLE,
   DAEMON_EXECUTABLE,
   DEFAULT_INSTALLED_EXECUTABLES,
+  DIGEST,
   ENTRY_SCRIPT_FILE,
   MAX_TOOL_OUTPUT_BYTES,
   POLL_MS,
@@ -315,6 +316,7 @@ export async function launchInstalledApp(
       guardianRecord,
       home: workspace.home,
       instanceId: null,
+      launchId: null,
       monitor,
       pgid: child.pid,
       pid: handshake.appPid,
@@ -343,9 +345,11 @@ export async function pollStatus(
   timeoutMs,
   expectedInstance,
   signal,
+  runTool,
 ) {
   const deadline = Date.now() + timeoutMs;
   let instanceId = expectedInstance ?? session.instanceId;
+  let launchId = session.launchId;
   while (Date.now() < deadline) {
     throwIfAborted(signal);
     if (session.monitor.settled || session.stderrOverflow()) {
@@ -353,24 +357,33 @@ export async function pollStatus(
     }
     try {
       const connection = await readDaemonConnection(session.dataDir);
+      if (!(await connectionBelongsToOwnedDaemon(session, connection, runTool))) {
+        await wait(POLL_MS);
+        continue;
+      }
       if (instanceId === null) instanceId = connection.instanceId;
-      if (connection.instanceId !== instanceId) {
+      if (launchId === null) launchId = connection.launchId;
+      if (connection.instanceId !== instanceId || connection.launchId !== launchId) {
         fail("daemon_restarted_unexpectedly");
       }
       session.instanceId = instanceId;
+      session.launchId = launchId;
       const status = await requestJson(
         connection.urls.status,
         connection.token,
         undefined,
         signal,
       );
-      if (predicate(status)) return { connection, instanceId, status };
+      if (predicate(status)) return { connection, instanceId, launchId, status };
     } catch (error) {
       if (
         error instanceof AcceptanceError &&
-        ["daemon_restarted_unexpectedly", "installed_app_exited"].includes(
-          error.code,
-        )
+        [
+          "daemon_process_ambiguous",
+          "daemon_restarted_unexpectedly",
+          "installed_app_exited",
+          "process_inspection_failed",
+        ].includes(error.code)
       ) {
         throw error;
       }
@@ -384,8 +397,11 @@ export async function waitForNewGenerationReady(
   session,
   oldInstanceId,
   signal,
+  runTool,
 ) {
   const deadline = Date.now() + READY_TIMEOUT_MS;
+  const oldLaunchId = session.launchId;
+  if (!DIGEST.test(oldLaunchId ?? "")) fail("daemon_generation_invalid");
   while (Date.now() < deadline) {
     throwIfAborted(signal);
     if (session.monitor.settled || session.stderrOverflow()) {
@@ -393,7 +409,11 @@ export async function waitForNewGenerationReady(
     }
     try {
       const connection = await readDaemonConnection(session.dataDir);
-      if (connection.instanceId !== oldInstanceId) {
+      if (
+        connection.instanceId !== oldInstanceId &&
+        connection.launchId !== oldLaunchId &&
+        (await connectionBelongsToOwnedDaemon(session, connection, runTool))
+      ) {
         const status = await requestJson(
           connection.urls.status,
           connection.token,
@@ -402,15 +422,49 @@ export async function waitForNewGenerationReady(
         );
         if (readyStatus(status)) {
           session.instanceId = connection.instanceId;
-          return { connection, instanceId: connection.instanceId, status };
+          session.launchId = connection.launchId;
+          return {
+            connection,
+            instanceId: connection.instanceId,
+            launchId: connection.launchId,
+            status,
+          };
         }
       }
-    } catch {
+    } catch (error) {
+      if (
+        error instanceof AcceptanceError &&
+        ["daemon_process_ambiguous", "process_inspection_failed"].includes(
+          error.code,
+        )
+      ) {
+        throw error;
+      }
       // Endpoint rotation is expected after the exact strong kill.
     }
     await wait(POLL_MS);
   }
   fail("daemon_recovery_timeout");
+}
+
+export async function connectionBelongsToOwnedDaemon(
+  session,
+  connection,
+  runTool,
+) {
+  if (typeof runTool !== "function") fail("process_inspection_failed");
+  const candidates = (await processTable(runTool)).filter(
+    ({ ppid, pgid, command }) =>
+      ppid === session.pid &&
+      pgid === session.pgid &&
+      exactExecutableCommand(command, session.executablePaths.daemon) &&
+      command.includes("--data-dir") &&
+      command.includes(session.dataDir) &&
+      command.includes("--launch-id") &&
+      command.includes(connection.launchId),
+  );
+  if (candidates.length > 1) fail("daemon_process_ambiguous");
+  return candidates.length === 1;
 }
 
 export async function groupProcesses(session, runTool) {
@@ -420,6 +474,7 @@ export async function groupProcesses(session, runTool) {
 }
 
 export async function findOwnedDaemon(session, runTool, signal) {
+  if (!DIGEST.test(session.launchId ?? "")) fail("daemon_generation_invalid");
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     throwIfAborted(signal);
@@ -428,7 +483,9 @@ export async function findOwnedDaemon(session, runTool, signal) {
         ppid === session.pid &&
         exactExecutableCommand(command, session.executablePaths.daemon) &&
         command.includes("--data-dir") &&
-        command.includes(session.dataDir),
+        command.includes(session.dataDir) &&
+        command.includes("--launch-id") &&
+        command.includes(session.launchId),
     );
     if (candidates.length === 1) {
       session.trackedDaemonPid = candidates[0].pid;
@@ -447,7 +504,10 @@ export async function findOwnedDaemon(session, runTool, signal) {
 }
 
 export async function strongKillOwnedDaemon(session, target, runTool) {
-  if (target?.session_authority !== session.sessionAuthority) {
+  if (
+    target?.session_authority !== session.sessionAuthority ||
+    !DIGEST.test(session.launchId ?? "")
+  ) {
     fail("owned_daemon_identity_changed");
   }
   const current = (await processTable(runTool)).find(
@@ -456,7 +516,9 @@ export async function strongKillOwnedDaemon(session, target, runTool) {
       ppid === session.pid &&
       pgid === target.pgid &&
       exactExecutableCommand(command, session.executablePaths.daemon) &&
-      command.includes(session.dataDir),
+      command.includes(session.dataDir) &&
+      command.includes("--launch-id") &&
+      command.includes(session.launchId),
   );
   if (!current) fail("owned_daemon_identity_changed");
   await requireRecordedProcessStart(

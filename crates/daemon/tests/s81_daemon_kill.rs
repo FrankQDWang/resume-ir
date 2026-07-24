@@ -91,7 +91,7 @@ fn foreground_daemon_can_be_killed_and_restarted_without_path_leak() {
     let restart_stdout = String::from_utf8_lossy(&restart.stdout);
     assert!(restart_stdout.contains("resume-daemon foreground ready"));
     assert!(restart_stdout.contains("mode: once"));
-    assert!(restart_stdout.contains("index health: ready"));
+    assert!(restart_stdout.contains("index health: empty"));
     assert!(!restart_stdout.contains(path_str(&data_dir)));
 
     remove_dir(&data_dir);
@@ -110,6 +110,8 @@ fn parent_lifecycle_eof_gracefully_stops_foreground_daemon() {
             "run",
             "--foreground",
             "--parent-lifecycle-stdin",
+            "--launch-id",
+            "8181818181818181818181818181818181818181818181818181818181818101",
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -140,13 +142,14 @@ fn parent_lifecycle_eof_gracefully_stops_foreground_daemon() {
 #[test]
 fn parent_lifecycle_eof_interrupts_an_active_import_without_partial_publication() {
     serialize_windows_s81_daemon_test!();
+    let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("parent-lifecycle-active-import-data");
     let import_root = active_import_root(ACTIVE_IMPORT_FILE_COUNT);
     let canonical_root = fs::canonicalize(&import_root).unwrap();
     let task_id = seed_queued_import_task(&data_dir, &canonical_root);
     let observer = ReadMetaStore::open_data_dir(&data_dir).unwrap();
 
-    let mut command = Command::new(env!("CARGO_BIN_EXE_resume-daemon"));
+    let mut command = support::import_capable_daemon_command(&runtime_capacity);
     command
         .args([
             "--data-dir",
@@ -154,6 +157,8 @@ fn parent_lifecycle_eof_interrupts_an_active_import_without_partial_publication(
             "run",
             "--foreground",
             "--parent-lifecycle-stdin",
+            "--launch-id",
+            "8181818181818181818181818181818181818181818181818181818181818102",
             "--work-imports",
             "--worker-interval-ms",
             "10",
@@ -194,7 +199,7 @@ fn parent_lifecycle_eof_interrupts_an_active_import_without_partial_publication(
     assert!(interrupted_state.generation.is_none());
     drop(observer);
 
-    let restart = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let restart = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -241,7 +246,8 @@ fn parent_lifecycle_stdin_rejects_a_non_group_leader_without_signalling_its_call
             "run",
             "--foreground",
             "--parent-lifecycle-stdin",
-            "--once",
+            "--launch-id",
+            "8181818181818181818181818181818181818181818181818181818181818103",
         ])
         .stdin(Stdio::null())
         .output()
@@ -258,7 +264,7 @@ fn parent_lifecycle_stdin_rejects_a_non_group_leader_without_signalling_its_call
 
 #[cfg(unix)]
 #[test]
-fn parent_lifecycle_eof_forces_a_stalled_daemon_group_to_exit() {
+fn parent_lifecycle_eof_revokes_generation_before_a_slow_client_can_force_kill() {
     let data_dir = temp_dir("parent-lifecycle-stalled-data");
     let mut command = term_ignoring_daemon_command();
     command
@@ -268,6 +274,8 @@ fn parent_lifecycle_eof_forces_a_stalled_daemon_group_to_exit() {
             "run",
             "--foreground",
             "--parent-lifecycle-stdin",
+            "--launch-id",
+            "8181818181818181818181818181818181818181818181818181818181818104",
             "--ipc-listen",
             "127.0.0.1:0",
         ])
@@ -305,18 +313,28 @@ fn parent_lifecycle_eof_forces_a_stalled_daemon_group_to_exit() {
 
     let started = Instant::now();
     drop(lifecycle_stdin);
+    let revocation_deadline = started + Duration::from_millis(1_500);
+    while (data_dir.join("ipc.endpoints.json").exists() || data_dir.join("ipc.auth").exists())
+        && Instant::now() < revocation_deadline
+    {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        !data_dir.join("ipc.endpoints.json").exists(),
+        "discovery survived into the watchdog kill window"
+    );
+    assert!(
+        !data_dir.join("ipc.auth").exists(),
+        "auth survived into the watchdog kill window"
+    );
     let stopped = wait_contained_child(child, stdout, stderr, Duration::from_secs(4));
     let elapsed = started.elapsed();
     dripper.join().expect("join stalled IPC client");
 
-    assert!(!stopped.success, "daemon exited cooperatively");
+    assert!(stopped.success, "stderr:\n{}", stopped.stderr);
     assert!(
-        elapsed >= Duration::from_millis(1_800),
-        "watchdog skipped graceful shutdown window: {elapsed:?}"
-    );
-    assert!(
-        elapsed < Duration::from_secs(3),
-        "watchdog exceeded bounded shutdown: {elapsed:?}"
+        elapsed < Duration::from_secs(2),
+        "slow client prevented cooperative shutdown: {elapsed:?}"
     );
     assert!(stopped.stderr.is_empty(), "stderr:\n{}", stopped.stderr);
     remove_dir(&data_dir);
@@ -364,7 +382,7 @@ fn wait_until_import_task_is_running_and_owned(
     data_dir: &Path,
     task_id: &ImportTaskId,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < deadline {
         let task_is_running = store
             .import_task_by_id(task_id)
@@ -630,7 +648,7 @@ fn seed_queued_import_task(data_dir: &Path, canonical_root: &Path) -> ImportTask
         scan_budget_exhausted: false,
         updated_at: now,
     };
-    let contract = support::activate_default_processing_contract(&store, now);
+    let contract = support::activate_reviewed_processing_contract(&store, now);
     store
         .insert_import_task_with_scan_scope(&task, &scope, &contract)
         .unwrap();

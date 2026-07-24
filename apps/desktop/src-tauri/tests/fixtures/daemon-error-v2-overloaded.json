@@ -1,0 +1,12 @@
+{
+  "schema_version": "resume-ir.error.v2",
+  "request_id": "synthetic-request",
+  "status": "error",
+  "error": {
+    "code": "OVERLOADED",
+    "action": "retry",
+    "retry_after_ms": 250,
+    "capability": null,
+    "reason": null
+  }
+}

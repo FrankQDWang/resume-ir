@@ -77,11 +77,36 @@ pub(crate) fn write_service_unavailable(
 
 pub(crate) fn unified_error_body(request_id: Option<&str>, code: &str, action: &str) -> String {
     let mut body = serde_json::json!({
-        "schema_version": "resume-ir.error.v1",
+        "schema_version": "resume-ir.error.v2",
         "status": "error",
         "error": {
             "code": code,
             "action": action,
+            "capability": serde_json::Value::Null,
+            "reason": serde_json::Value::Null,
+        },
+    });
+    if let Some(request_id) = request_id {
+        body["request_id"] = serde_json::json!(request_id);
+    }
+    body.to_string()
+}
+
+pub(crate) fn service_error_body(
+    request_id: Option<&str>,
+    code: &str,
+    action: &str,
+    capability: Option<&str>,
+    reason: Option<&str>,
+) -> String {
+    let mut body = serde_json::json!({
+        "schema_version": "resume-ir.error.v2",
+        "status": "error",
+        "error": {
+            "code": code,
+            "action": action,
+            "capability": capability,
+            "reason": reason,
         },
     });
     if let Some(request_id) = request_id {

@@ -459,7 +459,7 @@ fn v27_copy_on_write_preserves_only_source_authority_and_epoch() {
 }
 
 #[test]
-fn read_only_open_of_v27_requires_migration_without_mutating_the_manifest() {
+fn read_only_open_of_v27_is_unsupported_without_mutating_the_manifest() {
     let directory = TempDir::new().unwrap();
     let source_manifest = seed_v27_manifest(directory.path(), V27SourceState::Repairing);
     let key_path = seed_test_key(directory.path());
@@ -477,7 +477,7 @@ fn read_only_open_of_v27_requires_migration_without_mutating_the_manifest() {
 
     assert_eq!(
         error.class(),
-        crate::MetaStoreErrorClass::MigrationOwnershipRequired
+        crate::MetaStoreErrorClass::UnsupportedStoreSchema
     );
     assert_eq!(fs::read(&manifest_path).unwrap(), manifest_bytes);
     assert_eq!(fs::read(&source_path).unwrap(), source_bytes);
@@ -639,7 +639,7 @@ fn rollback_snapshot_is_all_old_until_release_then_a_new_reader_sees_the_commit(
 
 #[cfg(unix)]
 #[test]
-fn read_only_v28_open_requires_migration_without_repairing_unsafe_key_permissions() {
+fn read_only_v28_open_is_unsupported_without_repairing_unsafe_key_permissions() {
     use std::os::unix::fs::PermissionsExt;
 
     let directory = TempDir::new().unwrap();
@@ -653,7 +653,7 @@ fn read_only_v28_open_requires_migration_without_repairing_unsafe_key_permission
 
     assert_eq!(
         error.class(),
-        crate::MetaStoreErrorClass::MigrationOwnershipRequired
+        crate::MetaStoreErrorClass::UnsupportedStoreSchema
     );
     assert_eq!(fs::read(&key_path).unwrap(), key_bytes);
     assert_eq!(

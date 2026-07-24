@@ -46,6 +46,15 @@ production-ready scope source.
   Only bounded redacted aggregate outcomes may be retained; no database, index,
   resume data, root path, query, token, raw diagnostics, lifecycle/restart
   ledger, process identity or model artifact is committed or uploaded.
+  S810 uses synthetic v27/v28/v29 store, daemon bootstrap, control-file,
+  optional-runtime, supervisor, lifecycle, IPC, diagnostics and frontend
+  fixtures only. Runtime executable attestation tests use generated synthetic
+  Mach-O payloads and reviewed packaged build inputs; no database, index, resume
+  data, root path, raw query, token, raw diagnostics, lifecycle receipt, process
+  identity, model artifact, signing secret or private benchmark evidence is
+  committed or uploaded. The future installed-main gate remains authorized to
+  use only a temporary APFS copy-on-write witness of the user-authorized v29
+  store and may retain only bounded redacted aggregate outcomes.
   S264 also used a private local-only OCR throughput smoke against the
   user-authorized local resume sample directory with temporary redacted
   manifests and local Tesseract/Poppler commands; no real resume data,
@@ -3369,6 +3378,136 @@ guards, local runtime discovery, and PR #9 CI state.
 | S340 | Private query benchmark report protocol evidence complete locally | Focused RED first failed because `evaluate_benchmark_gate_json` accepted a private real-corpus benchmark report that had hot-index hybrid evidence but omitted the protocol version that produced the private query counts. After implementation, generated private query benchmark reports include `query_protocol: "resume-ir-query-v1"`, the strict private real-corpus gate requires that exact value, CLI/release-readiness fixtures carry it, and the release blocker runbook plus guard document the full stdout protocol shape: `resume-ir-query-v1`, `mode=hybrid`, `layers=fulltext+field+vector+rrf`, `top_k=<n>`, and `hits=<n>`. | This slice is production complete for private query benchmark report protocol evidence only. It does not add field rules, tune benchmark samples, run the real private 10k/8000-document baseline, reduce P95/P99, approve or distribute a model, clear OCR/model/platform/signing/notarization blockers, validate 100k/1M real-corpus scale, or make complete product readiness true. |
 
 ## Command Log
+
+### S810
+
+- The daemon/bootstrap contract is hard-cut to discovery/auth v3, status v3,
+  diagnostics v4, error v2, aggregate IPC v4 and desktop lifecycle/receipt v2.
+  The linked spec and plan replace S809 startup, supervisor, runtime and
+  installed-acceptance clauses while retaining the v29 publication and
+  `{doc_id, version_id, visible_epoch}` detail consistency contracts.
+- Production metadata open is current-v29-only. Existing v29 stores are opened
+  in place under the data-directory owner and validated before use. v27, v28,
+  unknown authorities, missing keys, fingerprint mismatches and integrity
+  failures return typed errors without migration, deletion or byte mutation.
+  A new store is staged as schema 29 and atomically published only when no
+  manifest, key, legacy database or migration authority exists.
+- The persistent daemon now binds and publishes a launch-bound authenticated
+  control plane before optional runtime probes, metadata open, processing
+  contract activation or repair. Its in-memory state machine is
+  `Initializing -> Serving(ResidentRuntime) | Blocked(CoreFailure)`; only
+  authenticated status/diagnostics are served while initializing or blocked,
+  and business routes return bounded typed 503 responses without store access.
+- Discovery/auth share one supervisor-generated 256-bit `launch_id` and one
+  daemon-generated `instance_id`; token and listener stay fixed through the
+  handoff. The generation owner retains the data-directory owner capability,
+  rejects unsafe control-file objects, removes only stale regular control files
+  after exclusive ownership is obtained, and withdraws owned discovery before
+  potentially blocking runtime shutdown work.
+- Optional embedding, OCR and classifier health is resolved independently after
+  control-plane publication. Invalid or unavailable runtimes never spawn or
+  claim work. Keyword search and detail remain available from a Ready store;
+  semantic search fails with typed capability-unavailable, hybrid search falls
+  back to bounded lexical partial results, and mutation workers are gated at
+  claim boundaries according to the current vector/classifier/OCR publication
+  contract.
+- Release builds first stage the embedding runtime and PDF renderer, derive the
+  bounded `sha256_without_code_signature_v1` identity, and compile the exact
+  target/profile/role/runtime-name/payload identity into the daemon. Build-time
+  and runtime checks share one strict arm64 Mach-O canonicalizer; only the
+  terminal code-signature payload and its exact load-command/linkedit size
+  fields are neutralized. Ordinary workspace builds carry no executable
+  authority, so executable optional runtimes fail closed rather than using a
+  debug bypass. Unsupported targets remain compile-only/fail-closed.
+- The desktop supervisor no longer probes or adopts pre-existing discovery and
+  no longer persists restart policy. Five attempts per ten minutes, fixed
+  backoff, five-minute circuit cooldown and five-minute Ready reset live only
+  on the current process monotonic clock. Blocked retry creates a new launch;
+  circuit retry is one half-open attempt after cooldown. Old ledger regular
+  files are best-effort removed but never read or migrated; unsafe objects do
+  not influence policy.
+- The frontend and Tauri bridge fail closed across process lifecycle, core,
+  optional runtime, operation capability and bridge/service availability.
+  Bridge errors and unknown service state revoke stale Ready operations;
+  blocked/circuit retry is explicit, status panels expose bounded typed state,
+  and combined desktop diagnostics remain exportable without a live daemon.
+  The previous central files were split into focused bootstrap, capability,
+  runtime-candidate, health-panel and diagnostics modules.
+- Focused v29 preservation/byte-stability coverage and the complete meta-store
+  all-feature suite passed. Desktop Vitest, Node contract tests and production
+  frontend build passed. Governance performance/autonomous-goal/loop-state
+  checks and governance mutation tests passed after the contract hard cut.
+- Focused import-IPC corrective coverage now decodes only exact
+  `resume-ir.error.v2` import service failures into bounded CLI messages;
+  malformed, old, or mismatched responses remain generic failures. The
+  daemon closed-loop check seeds a current-v29 store, proves keyword search and
+  detail remain available without optional runtimes, and proves import is
+  rejected before a write; the strict attested-runtime IPC test separately
+  proves actual import success. Exact CLI parser/error tests, the strict daemon
+  import test, the revised daemon closed-loop check, and its workflow guard
+  passed. This is a focused corrective slice, not release-readiness evidence.
+- Local verification now has a resumable parallel entrypoint:
+  `./scripts/ci/verify-local.sh --parallel --jobs 10`. Its declarative manifest
+  assigns three concurrent ordinary Cargo slots plus an exclusive native-runtime
+  slot for child-process checks, alongside separate packaging and runtime
+  locks, dividing configured build/test workers across those slots; a local
+  ignored ledger
+  fingerprints declared inputs, records immutable round receipts, reuses only
+  exact unchanged passes, and keeps unrelated checks running after a failure.
+  The historical morning batch was not retroactively guessed from a later
+  duplicate run; its unresolved position remains `unknown` in the S810 test
+  ledger, while all future rounds have durable per-command evidence.
+- The status/capability matrix now has one Rust owner in `daemon-contract` and
+  one shared conformance fixture consumed by daemon, CLI, Tauri and TypeScript.
+  This removed the producer/consumer drift that made the unattended R07 daemon
+  closed-loop fail at initial status. The exact closed-loop cell and focused
+  producer/consumer tests pass; the other 38 R07 passing cells were not rerun.
+- macOS artifact provenance is hard-cut to v3
+  `{authority, base_commit, source_tree_sha256}` evidence. The current worktree
+  is copied into a content-addressed immutable snapshot; tracked deletions are
+  represented as absence, runtime packs and dependency caches stay outside the
+  source digest, and the final verifier binds the actual configured Cargo
+  target executable instead of assuming `src-tauri/target`. The v1/v2
+  composition/install readers and 0.1.1 upgrade executor are deleted; only
+  current v3 first-install and same-version reinstall remain.
+- A current-worktree arm64 DMG passed mounted composition verification with
+  source tree
+  `e96277992d5cb701b8b084afe0e73b9e9bd853c1b0d1c60ed3947d1353f3c3f6`,
+  DMG SHA-256
+  `1bdf2ee42f45a175a0dfd2ecd207a9229a28206a576e9722952ad82568cc57cd`
+  and App composition digest
+  `6bedc5c2db0f4a3c4cf2d672a5bbdb1e2093f7d3e485773fb65c8931c3890cab`.
+  It proves arm64 composition, all three runtime packs, ad-hoc signature,
+  hardened runtime, exact embedding-only entitlement scope and zero
+  build-machine path markers. It is `gui_manual`/`composition_only` evidence,
+  not installed acceptance or notarized release evidence.
+- The same worktree DMG was installed through the manual-test lane and its
+  copied App revalidated against the exact source identity, composition,
+  reviewed executable, icon and runtime manifests. A normal launch against the
+  existing pre-v29 user data displayed the typed unsupported-schema blocked
+  state with search disabled. A guarded fresh-data launch showed the control
+  plane while core initialization continued, then reached Ready with all three
+  optional runtimes available; a synthetic empty-corpus keyword search and the
+  combined redacted diagnostics UI passed. Normal quit left no process/control
+  residue, and the original user data directory was restored with the same
+  inode. This is recoverable `gui_manual` evidence, not the merged-clean-main
+  installed-acceptance gate.
+- Post-R07 Rust quality checks were limited to changed scopes. All-target,
+  all-feature Clippy passed for `daemon-contract`, `resume-daemon` and
+  `resume-cli`. Desktop all-target Clippy first found one dead test-only
+  `CoreReason` re-export; removing that unused production import made the exact
+  failed Clippy command pass. Exact Rustfmt and diff checks passed without
+  replaying any R07 test.
+- Frozen-code daemon/workspace Clippy and tests, the release Tauri App build,
+  merged-clean-main native macOS installed acceptance and the renewed two-hour
+  mixed fault soak remain mandatory before S810 can claim release readiness.
+  The default installed-acceptance path now owns a real external fault harness:
+  it verifies exact installed bindings before activating same-directory,
+  no-clobber runtime removal, restores the exact object on every exit, and
+  delays only the launch-bound embedding child with `SIGSTOP`/`SIGCONT` for the
+  slow-bootstrap cell. Test injection is isolated to a test-only entrypoint and
+  is explicitly marked `not_native_evidence`; passing unit tests are not
+  represented as native installed evidence.
 
 ### S809
 

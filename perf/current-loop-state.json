@@ -5,14 +5,14 @@
   "experiment_state": "contract_locked",
   "evidence_lane": "soak_fault",
   "contract_pins": {
-    "active_goal_sha256": "4aafe0072a5e7904ef399dbc457faa2cc76c6f7f368f58f32dec9cc546c9fdb1",
-    "acceptance_matrix_sha256": "eeef7234d48a8fbfc92a46ef30ceb5ce6398aedac0a1dd9dd87d92dd092d3fc9",
+    "active_goal_sha256": "b478ea5f48aca2917e99f0408df14c408d9b2f1c36ef962f645d231f7cd5fd15",
+    "acceptance_matrix_sha256": "bfea52b5842b8c95aadffefd95501c8f3063de267c837879b8b09e4d198dee72",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "c1428bd24bd55e3de98796db1a8056db66788880"
+    "git_head_sha": "30868881838b8785fb7f1ccf574cb8bb34c51d00"
   },
-  "current_slice": "#217 S809 bounded artifact repair and durable restart correction",
+  "current_slice": "#217 S810 daemon bootstrap and capability hard cut",
   "transition_history": [
     {
       "from": "evidence_review",
@@ -671,7 +671,12 @@
     {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s809"},
     {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s809"},
     {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s809"},
-    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s809"}
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s809"},
+    {"from":"evidence_review","to":"slice_active","evidence_ref":"PROGRESS.md#s810"},
+    {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s810"},
+    {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s810"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s810"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s810"}
   ],
   "verification": {
     "commands": [
@@ -2813,7 +2818,17 @@
       {"command":"governance mutation suite plus performance, autonomous-goal and loop-state contract checks","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
       {"command":"./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
       {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s809"},
-      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s809-expected-product-blocked"}
+      {"command":"cargo run --quiet -p resume-cli --locked -- release-readiness --json","exit_code":1,"evidence_ref":"PROGRESS.md#s809-expected-product-blocked"},
+      {"command":"R07 unattended suffix receipt: 38 passed and 2 failed without fail-fast","exit_code":1,"evidence_ref":"docs/reports/2026-07-23-s810-verification-ledger.md#full-unattended-continuation-round-r07"},
+      {"command":"focused daemon-contract producer and CLI/Tauri/TypeScript consumer conformance tests","exit_code":0,"evidence_ref":"PROGRESS.md#s810"},
+      {"command":"CARGO_BUILD_JOBS=6 CARGO_INCREMENTAL=0 ./scripts/ci/check-daemon-closed-loop.sh","exit_code":0,"evidence_ref":"PROGRESS.md#s810"},
+      {"command":"python3 scripts/ci/test-verify-local-parallel.py and v2 manifest selection","exit_code":0,"evidence_ref":"PROGRESS.md#s810"},
+      {"command":"focused v3 macOS source, install, reinstall, journal, recovery and binding tests","exit_code":0,"evidence_ref":"PROGRESS.md#s810"},
+      {"command":"npm run bundle:macos:worktree --prefix apps/desktop","exit_code":0,"evidence_ref":"PROGRESS.md#s810"},
+      {"command":"guarded native installed-worktree unsupported-schema and fresh-v29 GUI smoke","exit_code":0,"evidence_ref":"PROGRESS.md#s810"},
+      {"command":"CARGO_BUILD_JOBS=6 cargo clippy -p daemon-contract -p resume-daemon -p resume-cli --all-targets --all-features --locked -- -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s810"},
+      {"command":"CARGO_BUILD_JOBS=6 cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings","exit_code":101,"evidence_ref":"docs/reports/2026-07-23-s810-verification-ledger.md#focused-quality-round-r12--post-r07-rust-changes"},
+      {"command":"CARGO_BUILD_JOBS=6 cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings","exit_code":0,"evidence_ref":"PROGRESS.md#s810"}
     ],
     "all_required_commands_ran": false,
     "claim": "partial"

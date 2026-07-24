@@ -1,6 +1,11 @@
 #!/usr/bin/env sh
 set -eu
 
+if [ "${1:-}" = "--parallel" ]; then
+  shift
+  exec python3 scripts/ci/verify-local-parallel.py "$@"
+fi
+
 CARGO_BIN="${CARGO:-}"
 if [ -z "$CARGO_BIN" ] && [ -x /Users/frankqdwang/.cargo/bin/cargo ]; then
   CARGO_BIN=/Users/frankqdwang/.cargo/bin/cargo
@@ -15,6 +20,7 @@ fi
 
 "$CARGO_BIN" metadata --no-deps --locked
 python3 scripts/ci/test-governance-contract-mutations.py
+python3 scripts/ci/test-verify-local-parallel.py
 python3 scripts/ci/check-search-runtime-boundary.py --cargo "$CARGO_BIN"
 "$CARGO_BIN" fmt --check
 "$CARGO_BIN" clippy --workspace --all-targets --all-features --locked -- -D warnings

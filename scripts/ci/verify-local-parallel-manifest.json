@@ -1,0 +1,374 @@
+{
+  "schema_version": "resume-ir.verify-local-parallel-manifest.v2",
+  "resources": {
+    "cargo": 3,
+    "frontend": 2,
+    "native-runtime": 1,
+    "packaging": 1,
+    "runtime": 1
+  },
+  "input_sets": {
+    "workspace_metadata": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/**/Cargo.toml",
+      ".cargo/**"
+    ],
+    "workspace_rust": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "crates/**",
+      "tests/**"
+    ],
+    "fixtures": [
+      "tests/fixtures/**",
+      "perf/fixtures/**"
+    ],
+    "contracts": [
+      "GOAL.md",
+      "ACTIVE_GOAL.toml",
+      "perf/**",
+      "docs/superpowers/**",
+      "03_next_goal_高性能本地检索GUI闭环/**",
+      "design-qa.md"
+    ],
+    "workflow_policy": [
+      ".github/**",
+      "scripts/ci/**",
+      "scripts/ci/verify-local.sh"
+    ],
+    "release_assets": [
+      "apps/desktop/**",
+      "scripts/release/**",
+      "docs/runbooks/**",
+      ".github/**",
+      "Cargo.toml",
+      "Cargo.lock"
+    ],
+    "desktop": [
+      "apps/desktop/**",
+      "crates/daemon/**",
+      "crates/meta-store/**",
+      "crates/core-domain/**",
+      "Cargo.toml",
+      "Cargo.lock"
+    ],
+    "all_public": [
+      "@worktree"
+    ]
+  },
+  "checks": [
+    {
+      "id": "cargo-metadata",
+      "behavior": "Cargo workspace metadata resolves without changing the lockfile.",
+      "command": ["{cargo}", "metadata", "--no-deps", "--locked"],
+      "input_sets": ["workspace_metadata"],
+      "resources": ["cargo"]
+    },
+    {
+      "id": "governance-contract-mutations",
+      "behavior": "Governance-contract mutation fixtures fail closed as required.",
+      "command": ["python3", "scripts/ci/test-governance-contract-mutations.py"],
+      "input_sets": ["contracts", "workflow_policy"]
+    },
+    {
+      "id": "search-runtime-boundary",
+      "behavior": "Search-runtime production consumers retain the required dependency boundary.",
+      "command": ["python3", "scripts/ci/check-search-runtime-boundary.py", "--cargo", "{cargo}"],
+      "input_sets": ["workspace_rust"],
+      "resources": ["cargo"]
+    },
+    {
+      "id": "cargo-format",
+      "behavior": "Workspace Rust sources satisfy the canonical formatter.",
+      "command": ["{cargo}", "fmt", "--check"],
+      "input_sets": ["workspace_rust"],
+      "resources": ["cargo"]
+    },
+    {
+      "id": "cargo-clippy-workspace",
+      "behavior": "Workspace Rust targets satisfy deny-warnings Clippy policy.",
+      "command": ["{cargo}", "clippy", "--workspace", "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"],
+      "input_sets": ["workspace_rust"],
+      "resources": ["cargo"]
+    },
+    {
+      "id": "cargo-test-workspace-core",
+      "behavior": "All non-excluded workspace tests pass through Cargo's canonical harness.",
+      "command": ["{cargo}", "test", "--workspace", "--exclude", "benchmark-runner", "--exclude", "embedder", "--exclude", "resume-cli", "--locked"],
+      "input_sets": ["workspace_rust", "fixtures"],
+      "resources": ["cargo", "native-runtime"]
+    },
+    {
+      "id": "cargo-test-resume-cli",
+      "behavior": "The resume-cli crate test suite passes with its serial test contract.",
+      "command": ["{cargo}", "test", "-p", "resume-cli", "--locked", "--", "--test-threads=1"],
+      "input_sets": ["workspace_rust", "fixtures"],
+      "resources": ["cargo", "native-runtime"]
+    },
+    {
+      "id": "cargo-test-embedder",
+      "behavior": "The embedder crate test suite passes with its serial test contract.",
+      "command": ["{cargo}", "test", "-p", "embedder", "--locked", "--", "--test-threads=1"],
+      "input_sets": ["workspace_rust", "fixtures"],
+      "resources": ["cargo", "native-runtime"]
+    },
+    {
+      "id": "cargo-test-benchmark-runner",
+      "behavior": "The benchmark-runner crate test suite passes with its serial test contract.",
+      "command": ["{cargo}", "test", "-p", "benchmark-runner", "--locked", "--", "--test-threads=1"],
+      "input_sets": ["workspace_rust", "fixtures"],
+      "resources": ["cargo", "native-runtime"]
+    },
+    {
+      "id": "parallel-runner-self-test",
+      "behavior": "The parallel runner proves concurrency, resource exclusion, resume, invalidation, and failure handling.",
+      "command": ["python3", "scripts/ci/test-verify-local-parallel.py"],
+      "inputs": [
+        "scripts/ci/verify-local-parallel.py",
+        "scripts/ci/verify_local_parallel_support.py",
+        "scripts/ci/test-verify-local-parallel.py",
+        "scripts/ci/verify-local-parallel-manifest.json"
+      ]
+    },
+    {
+      "id": "cli-closed-loop",
+      "behavior": "The public CLI import, search, OCR, and redacted diagnostics loop remains usable.",
+      "command": ["./scripts/ci/check-cli-closed-loop.sh"],
+      "input_sets": ["workspace_rust", "fixtures"],
+      "resources": ["cargo"]
+    },
+    {
+      "id": "daemon-closed-loop",
+      "behavior": "A daemon preserves keyword search and detail while optional runtimes are unavailable.",
+      "command": ["./scripts/ci/check-daemon-closed-loop.sh"],
+      "input_sets": ["workspace_rust", "fixtures"],
+      "resources": ["cargo"]
+    },
+    {
+      "id": "daemon-incremental-import",
+      "behavior": "Daemon incremental import preserves its published-search and update contract.",
+      "command": ["./scripts/ci/check-daemon-incremental-import.sh"],
+      "input_sets": ["workspace_rust", "fixtures"],
+      "resources": ["cargo", "native-runtime"]
+    },
+    {
+      "id": "benchmark-smoke",
+      "behavior": "Synthetic benchmark and redacted smoke-report contracts remain executable.",
+      "command": ["./scripts/ci/check-benchmark-smoke.sh"],
+      "input_sets": ["workspace_rust", "fixtures", "contracts"],
+      "resources": ["cargo"]
+    },
+    {
+      "id": "licenses",
+      "behavior": "Workspace dependency license policy remains satisfied.",
+      "command": ["./scripts/ci/check-licenses.sh"],
+      "input_sets": ["workspace_metadata"],
+      "resources": ["cargo"]
+    },
+    {
+      "id": "runtime-bundle-policy",
+      "behavior": "Runtime bundle policy and current-stage linkage remain fail closed.",
+      "command": ["./scripts/ci/check-runtime-bundle-policy.sh"],
+      "input_sets": ["contracts", "release_assets"]
+    },
+    {
+      "id": "runbooks",
+      "behavior": "Operator runbooks retain required bounded release and diagnostics instructions.",
+      "command": ["./scripts/ci/check-runbooks.sh"],
+      "inputs": ["docs/runbooks/**", "docs/reports/**"],
+      "input_sets": ["workflow_policy"]
+    },
+    {
+      "id": "current-stage-observability",
+      "behavior": "Current-stage observability fixtures preserve bounded redacted evidence semantics.",
+      "command": ["./scripts/ci/check-current-stage-observability.sh"],
+      "input_sets": ["contracts"]
+    },
+    {
+      "id": "local-embedding-runtime",
+      "behavior": "Local embedding runtime attestation and failure policy remain coherent.",
+      "command": ["./scripts/ci/check-local-embedding-runtime.sh"],
+      "input_sets": ["release_assets", "contracts"],
+      "resources": ["runtime"]
+    },
+    {
+      "id": "local-ocr-runtime",
+      "behavior": "Local OCR runtime behavior and evidence boundary remain coherent.",
+      "command": ["./scripts/ci/check-local-ocr-runtime.sh"],
+      "input_sets": ["workspace_rust", "release_assets", "contracts"],
+      "resources": ["cargo", "runtime"]
+    },
+    {
+      "id": "local-diagnostics-release-evidence",
+      "behavior": "Local diagnostics release evidence remains bounded and redacted.",
+      "command": ["./scripts/ci/check-local-diagnostics-release-evidence.sh"],
+      "input_sets": ["workspace_rust", "release_assets"],
+      "resources": ["cargo"]
+    },
+    {
+      "id": "local-quality-release-evidence",
+      "behavior": "Local vector-quality release evidence remains bounded and contract-valid.",
+      "command": ["./scripts/ci/check-local-quality-release-evidence.sh"],
+      "input_sets": ["release_assets", "contracts"],
+      "resources": ["runtime"]
+    },
+    {
+      "id": "current-stage-validation",
+      "behavior": "Current-stage validation rejects incomplete, private, or unsafe evidence paths.",
+      "command": ["./scripts/ci/check-current-stage-validation.sh"],
+      "input_sets": ["contracts", "release_assets"],
+      "resources": ["runtime"]
+    },
+    {
+      "id": "current-stage-handoff",
+      "behavior": "Current-stage handoff metadata and blocked-state instructions remain coherent.",
+      "command": ["./scripts/ci/check-current-stage-handoff.sh"],
+      "input_sets": ["contracts", "release_assets"]
+    },
+    {
+      "id": "workflows",
+      "behavior": "Workflow and local-gate wiring retain all required verification references.",
+      "command": ["./scripts/ci/check-workflows.sh"],
+      "input_sets": ["workflow_policy", "release_assets"]
+    },
+    {
+      "id": "release-readiness",
+      "behavior": "Release-readiness output remains fail closed and correctly classified.",
+      "command": ["./scripts/ci/check-release-readiness.sh"],
+      "input_sets": ["workspace_rust", "contracts", "release_assets"],
+      "resources": ["cargo"]
+    },
+    {
+      "id": "release-artifacts",
+      "behavior": "Release artifact manifests preserve required bounded composition evidence.",
+      "command": ["./scripts/ci/check-release-artifacts.sh"],
+      "input_sets": ["release_assets", "workflow_policy"]
+    },
+    {
+      "id": "runtime-bundle-manifest",
+      "behavior": "Runtime bundle manifest policy remains complete and bounded.",
+      "command": ["./scripts/ci/check-runtime-bundle-manifest.sh"],
+      "input_sets": ["release_assets", "workflow_policy"]
+    },
+    {
+      "id": "runtime-bundle-payload",
+      "behavior": "Runtime bundle payload policy rejects unreviewed or unsafe contents.",
+      "command": ["./scripts/ci/check-runtime-bundle-payload.sh"],
+      "input_sets": ["release_assets", "workflow_policy"]
+    },
+    {
+      "id": "release-publication-evidence",
+      "behavior": "Release-publication evidence remains redacted and fail closed.",
+      "command": ["./scripts/ci/check-release-publication-evidence.sh"],
+      "input_sets": ["release_assets", "workflow_policy"]
+    },
+    {
+      "id": "signing-evidence",
+      "behavior": "Signing evidence policy remains explicit and fail closed without credentials.",
+      "command": ["./scripts/ci/check-signing-evidence.sh"],
+      "input_sets": ["release_assets", "workflow_policy"]
+    },
+    {
+      "id": "notarization-evidence",
+      "behavior": "Notarization evidence policy remains explicit and fail closed without credentials.",
+      "command": ["./scripts/ci/check-notarization-evidence.sh"],
+      "input_sets": ["release_assets", "workflow_policy"]
+    },
+    {
+      "id": "release-sbom",
+      "behavior": "Release SBOM generation and privacy boundaries remain valid.",
+      "command": ["./scripts/ci/check-release-sbom.sh"],
+      "input_sets": ["release_assets", "workflow_policy"]
+    },
+    {
+      "id": "runtime-bundle-sbom",
+      "behavior": "Runtime bundle SBOM generation and privacy boundaries remain valid.",
+      "command": ["./scripts/ci/check-runtime-bundle-sbom.sh"],
+      "input_sets": ["release_assets", "workflow_policy"]
+    },
+    {
+      "id": "runtime-bundle-package",
+      "behavior": "Runtime package assembly remains reproducible and policy-compliant.",
+      "command": ["./scripts/ci/check-runtime-bundle-package.sh"],
+      "input_sets": ["release_assets", "workflow_policy"],
+      "resources": ["packaging"]
+    },
+    {
+      "id": "macos-package",
+      "behavior": "macOS package composition and verification remain valid.",
+      "command": ["./scripts/ci/check-macos-package.sh"],
+      "input_sets": ["release_assets", "workflow_policy"],
+      "resources": ["packaging"]
+    },
+    {
+      "id": "macos-installer-evidence",
+      "behavior": "macOS installer evidence remains bounded and correctly blocked when native proof is absent.",
+      "command": ["./scripts/ci/check-macos-installer-evidence.sh"],
+      "input_sets": ["release_assets", "workflow_policy"]
+    },
+    {
+      "id": "windows-package",
+      "behavior": "Windows package composition policy remains valid.",
+      "command": ["./scripts/ci/check-windows-package.sh"],
+      "input_sets": ["release_assets", "workflow_policy"]
+    },
+    {
+      "id": "windows-installer-evidence",
+      "behavior": "Windows installer evidence remains bounded and correctly classified.",
+      "command": ["./scripts/ci/check-windows-installer-evidence.sh"],
+      "input_sets": ["release_assets", "workflow_policy"]
+    },
+    {
+      "id": "windows-service-evidence",
+      "behavior": "Windows service evidence remains bounded and correctly classified.",
+      "command": ["./scripts/ci/check-windows-service-evidence.sh"],
+      "input_sets": ["release_assets", "workflow_policy"]
+    },
+    {
+      "id": "public-repo-guard",
+      "behavior": "The public repository contains no prohibited private material.",
+      "command": ["./scripts/ci/guard-public-repo.sh"],
+      "input_sets": ["all_public"]
+    },
+    {
+      "id": "desktop-frontend-test",
+      "behavior": "Desktop Vitest and Node contract suites pass.",
+      "command": ["npm", "test", "--prefix", "apps/desktop"],
+      "input_sets": ["desktop"],
+      "resources": ["frontend"]
+    },
+    {
+      "id": "desktop-frontend-build",
+      "behavior": "Desktop TypeScript and production frontend build pass.",
+      "command": ["npm", "run", "build", "--prefix", "apps/desktop"],
+      "input_sets": ["desktop"],
+      "resources": ["frontend"]
+    },
+    {
+      "id": "desktop-tauri-test",
+      "behavior": "Desktop Tauri Rust tests pass.",
+      "command": ["{cargo}", "test", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml", "--locked"],
+      "input_sets": ["desktop"],
+      "resources": ["cargo", "native-runtime"]
+    },
+    {
+      "id": "desktop-tauri-clippy",
+      "behavior": "Desktop Tauri Rust targets satisfy deny-warnings Clippy policy.",
+      "command": ["{cargo}", "clippy", "--manifest-path", "apps/desktop/src-tauri/Cargo.toml", "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"],
+      "input_sets": ["desktop"],
+      "resources": ["cargo", "native-runtime"]
+    },
+    {
+      "id": "desktop-macos-worktree-bundle",
+      "behavior": "The content-addressed immutable worktree snapshot produces one verified macOS internal-test DMG without installed-acceptance claims.",
+      "command": ["npm", "run", "bundle:macos:worktree", "--prefix", "apps/desktop"],
+      "input_sets": ["desktop", "release_assets", "contracts"],
+      "resources": ["cargo", "frontend", "packaging", "native-runtime"],
+      "source_authority": "worktree_snapshot",
+      "evidence_lane": "gui_manual",
+      "claim": "manual_test",
+      "produces_artifact": true
+    }
+  ]
+}

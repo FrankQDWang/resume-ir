@@ -41,16 +41,19 @@ credentials, and notarization credentials are human-provided release inputs.
 An Apple Developer account is not required for the bounded internal-test build:
 
 ```bash
-npm run bundle:macos:test --prefix apps/desktop
+npm run bundle:macos:worktree --prefix apps/desktop
 ```
 
-The command removes Apple credential/notarization variables from the child
-environment, uses the official Tauri v2 ad-hoc identity `-`, builds the exact
-arm64 self-contained DMG, and fails unless the mounted App has sealed resources,
+The command captures the current worktree into a content-addressed immutable
+snapshot, installs dependencies and stages the reviewed runtime packs inside
+that snapshot, removes Apple credential/notarization variables from the child
+environment, and uses the official Tauri v2 ad-hoc identity `-`. It builds the
+arm64 self-contained DMG and fails unless the mounted App has sealed resources,
 a valid deep ad-hoc signature, hardened runtime, matching bundled-runtime
-digests, and a bounded `resume-ir.macos-dmg-composition.v1` receipt whose
-`distribution_profile` is `internal_test`. The receipt
-includes the DMG SHA-256 for transfer verification but no local path or secret.
+digests, and a bounded `resume-ir.macos-dmg-composition.v3` receipt bound to the
+same `worktree_snapshot` source identity. The published local artifact receipt
+includes the DMG SHA-256 and makes only a `composition_only` claim; it does not
+claim native installed acceptance.
 
 This artifact is `internal_test_only`: it is not notarized and is not a stable
 release. A tester drags `resume-ir.app` into Applications. On first launch, if

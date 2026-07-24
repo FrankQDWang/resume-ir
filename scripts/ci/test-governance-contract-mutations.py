@@ -251,6 +251,31 @@ class GovernanceContractMutationTests(unittest.TestCase):
                         mutated_matrix
                     )
 
+    def test_each_bootstrap_contract_field_is_required_and_exact(self) -> None:
+        sections = {
+            "daemon_bootstrap_v1": (
+                self.performance_checker.DAEMON_BOOTSTRAP_V1_REQUIRED_FIELDS
+            ),
+            "desktop_supervisor_v2": (
+                self.performance_checker.DESKTOP_SUPERVISOR_V2_REQUIRED_FIELDS
+            ),
+            "runtime_capability_degradation_v1": (
+                self.performance_checker.RUNTIME_CAPABILITY_DEGRADATION_V1_REQUIRED_FIELDS
+            ),
+        }
+        for section, expected in sections.items():
+            for key, value in expected.items():
+                with self.subTest(section=section, key=key, mutation="delete"):
+                    mutated_matrix = copy.deepcopy(self.matrix)
+                    mutated_matrix[section].pop(key)
+                    with self.assertRaises(ValueError):
+                        self.performance_checker.validate_matrix(mutated_matrix)
+
+                with self.subTest(section=section, key=key, mutation="tamper"):
+                    mutated_matrix = copy.deepcopy(self.matrix)
+                    mutated_matrix[section][key] = tampered(value)
+                    with self.assertRaises(ValueError):
+                        self.performance_checker.validate_matrix(mutated_matrix)
 
 if __name__ == "__main__":
     unittest.main()

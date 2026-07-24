@@ -72,6 +72,7 @@ use sysinfo::{
     get_current_pid, DiskRefreshKind, Disks, ProcessRefreshKind, ProcessesToUpdate, System,
 };
 
+mod daemon_ipc_contract;
 mod import_processing;
 mod purge_residual;
 mod release_readiness_matrix;
@@ -83,8 +84,6 @@ const LOCAL_DISCOVERY_ROOTS_ENV: &str = "RESUME_IR_LOCAL_DISCOVERY_ROOTS";
 const LOCAL_DISCOVERY_DEFAULT_MAX_FILES: usize = 10_000;
 const IPC_ENDPOINT_FILE: &str = "ipc.endpoints.json";
 const IPC_AUTH_TOKEN_FILE: &str = "ipc.auth";
-const IPC_ENDPOINT_SCHEMA_VERSION: &str = "resume-ir.daemon-ipc.v2";
-const IPC_AUTH_SCHEMA_VERSION: &str = "resume-ir.daemon-auth.v2";
 const SEARCH_IPC_REQUEST_SCHEMA_VERSION: &str = "resume-ir.ipc-request.v3";
 const SEARCH_IPC_RESPONSE_SCHEMA_VERSION: &str = "resume-ir.search-response.v3";
 const SEARCH_IPC_DEFAULT_DEADLINE_MS: u64 = 1_500;
@@ -10000,10 +9999,10 @@ fn fault_simulate_usage() -> &'static str {
 fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let status_args = parse_status_args(data_dir, args)?;
     if let Some(watch) = status_args.watch_import {
-        return status_watch_import_command(&watch.endpoint, &watch.token_file);
+        return status_watch_import_command(&watch.endpoint, &watch.token);
     }
-    if let Some(endpoint) = status_args.ipc_endpoint {
-        return status_ipc_command(&endpoint);
+    if let Some(ipc) = status_args.ipc {
+        return status_ipc_command(&ipc.endpoint, &ipc.token);
     }
 
     let store = open_store(data_dir)?;
@@ -10075,13 +10074,18 @@ fn status_command(data_dir: &Path, args: &[String]) -> Result<()> {
 }
 
 struct StatusArgs {
-    ipc_endpoint: Option<IpcStatusEndpoint>,
+    ipc: Option<AuthenticatedStatusIpc>,
     watch_import: Option<ImportProgressWatchArgs>,
+}
+
+struct AuthenticatedStatusIpc {
+    endpoint: IpcStatusEndpoint,
+    token: String,
 }
 
 struct ImportProgressWatchArgs {
     endpoint: IpcImportProgressEndpoint,
-    token_file: PathBuf,
+    token: String,
 }
 
 fn print_import_scan_progress(scope: &ImportScanScope) {
@@ -10280,16 +10284,12 @@ fn parse_status_args(data_dir: &Path, args: &[String]) -> Result<StatusArgs> {
         }
     }
 
-    if !watch_import && ipc_token_file.is_some() {
-        return Err(CliError::usage(status_usage()));
-    }
-
     let Some(ipc_value) = ipc_value else {
         if ipc_token_file.is_some() {
             return Err(CliError::usage(status_usage()));
         }
         return Ok(StatusArgs {
-            ipc_endpoint: None,
+            ipc: None,
             watch_import: None,
         });
     };
@@ -10299,37 +10299,61 @@ fn parse_status_args(data_dir: &Path, args: &[String]) -> Result<StatusArgs> {
             if ipc_token_file.is_some() {
                 return Err(CliError::usage(status_usage()));
             }
-            let status_endpoint = discover_status_ipc_endpoint(data_dir)?;
-            let endpoint = discover_import_progress_ipc_endpoint(data_dir)?;
-            ensure_auto_ipc_same_daemon(status_endpoint.addr, endpoint.addr)?;
-            verify_auto_ipc_status(&status_endpoint)?;
+            let daemon = discover_auto_ipc_daemon(data_dir)?;
+            let status_endpoint = IpcStatusEndpoint {
+                addr: daemon.addr(),
+            };
+            verify_auto_ipc_status(&status_endpoint, daemon.token())?;
             return Ok(StatusArgs {
-                ipc_endpoint: None,
+                ipc: None,
                 watch_import: Some(ImportProgressWatchArgs {
-                    endpoint,
-                    token_file: auto_ipc_token_file(data_dir),
+                    endpoint: IpcImportProgressEndpoint {
+                        addr: daemon.addr(),
+                    },
+                    token: daemon.token().to_string(),
                 }),
             });
         }
         let token_file = ipc_token_file.ok_or_else(|| CliError::usage(status_usage()))?;
         return Ok(StatusArgs {
-            ipc_endpoint: None,
+            ipc: None,
             watch_import: Some(ImportProgressWatchArgs {
                 endpoint: parse_import_progress_ipc_endpoint(ipc_value)?,
-                token_file,
+                token: read_daemon_ipc_token(
+                    &token_file,
+                    "unable to read daemon import progress ipc token",
+                    "daemon import progress ipc token is invalid",
+                )?,
             }),
         });
     }
 
     if ipc_value == "auto" {
+        if ipc_token_file.is_some() {
+            return Err(CliError::usage(status_usage()));
+        }
+        let daemon = discover_auto_ipc_daemon(data_dir)?;
         return Ok(StatusArgs {
-            ipc_endpoint: Some(discover_status_ipc_endpoint(data_dir)?),
+            ipc: Some(AuthenticatedStatusIpc {
+                endpoint: IpcStatusEndpoint {
+                    addr: daemon.addr(),
+                },
+                token: daemon.token().to_string(),
+            }),
             watch_import: None,
         });
     }
 
+    let token_file = ipc_token_file.ok_or_else(|| CliError::usage(status_usage()))?;
     Ok(StatusArgs {
-        ipc_endpoint: Some(parse_status_ipc_endpoint(ipc_value)?),
+        ipc: Some(AuthenticatedStatusIpc {
+            endpoint: parse_status_ipc_endpoint(ipc_value)?,
+            token: read_daemon_ipc_token(
+                &token_file,
+                "unable to read daemon status ipc token",
+                "daemon status ipc token is invalid",
+            )?,
+        }),
         watch_import: None,
     })
 }
@@ -10357,8 +10381,8 @@ fn parse_status_ipc_endpoint(value: &str) -> Result<IpcStatusEndpoint> {
     Ok(IpcStatusEndpoint { addr })
 }
 
-fn status_ipc_command(endpoint: &IpcStatusEndpoint) -> Result<()> {
-    let body = request_status_ipc_body(endpoint)?;
+fn status_ipc_command(endpoint: &IpcStatusEndpoint, token: &str) -> Result<()> {
+    let body = request_status_ipc_body(endpoint, token)?;
     if !valid_status_ipc_body(&body) {
         return Err(CliError::user(
             "daemon status ipc returned invalid protocol",
@@ -10368,13 +10392,7 @@ fn status_ipc_command(endpoint: &IpcStatusEndpoint) -> Result<()> {
     Ok(())
 }
 
-fn status_watch_import_command(
-    endpoint: &IpcImportProgressEndpoint,
-    token_file: &Path,
-) -> Result<()> {
-    let token = fs::read_to_string(token_file)
-        .map_err(|_| CliError::user("unable to read daemon import progress ipc token"))?;
-    let token = validate_daemon_ipc_token(&token, "daemon import progress ipc token is invalid")?;
+fn status_watch_import_command(endpoint: &IpcImportProgressEndpoint, token: &str) -> Result<()> {
     let mut stream = TcpStream::connect_timeout(&endpoint.addr, Duration::from_secs(2))
         .map_err(|_| CliError::user("unable to connect to daemon import progress ipc"))?;
     stream
@@ -10407,7 +10425,7 @@ fn status_watch_import_command(
     Ok(())
 }
 
-fn request_status_ipc_body(endpoint: &IpcStatusEndpoint) -> Result<serde_json::Value> {
+fn request_status_ipc_body(endpoint: &IpcStatusEndpoint, token: &str) -> Result<serde_json::Value> {
     let mut stream = TcpStream::connect_timeout(&endpoint.addr, Duration::from_secs(2))
         .map_err(|_| CliError::user("unable to connect to daemon status ipc"))?;
     stream
@@ -10417,8 +10435,8 @@ fn request_status_ipc_body(endpoint: &IpcStatusEndpoint) -> Result<serde_json::V
         .set_write_timeout(Some(Duration::from_secs(2)))
         .map_err(|_| CliError::user("unable to configure daemon status ipc"))?;
     let request = format!(
-        "GET /status HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
-        endpoint.addr
+        "GET /status HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
+        endpoint.addr, token
     );
     stream
         .write_all(request.as_bytes())
@@ -10441,8 +10459,8 @@ fn request_status_ipc_body(endpoint: &IpcStatusEndpoint) -> Result<serde_json::V
     Ok(body)
 }
 
-fn verify_auto_ipc_status(endpoint: &IpcStatusEndpoint) -> Result<()> {
-    let body = request_status_ipc_body(endpoint)
+fn verify_auto_ipc_status(endpoint: &IpcStatusEndpoint, token: &str) -> Result<()> {
+    let body = request_status_ipc_body(endpoint, token)
         .map_err(|_| CliError::user("daemon ipc auto-discovery is stale"))?;
     if !valid_status_ipc_body(&body) {
         return Err(CliError::user("daemon ipc auto-discovery is stale"));
@@ -10451,12 +10469,7 @@ fn verify_auto_ipc_status(endpoint: &IpcStatusEndpoint) -> Result<()> {
 }
 
 fn valid_status_ipc_body(body: &serde_json::Value) -> bool {
-    json_str(body, "schema_version") == Some("daemon.status.v2")
-        && json_str(body, "process_state") == Some("ready")
-        && matches!(
-            json_str(body, "status"),
-            Some("ok" | "repairing" | "degraded")
-        )
+    daemon_ipc_contract::valid_status(body)
 }
 
 fn render_ipc_status(body: &serde_json::Value) {
@@ -10666,107 +10679,44 @@ struct IpcDeleteEndpoint {
     addr: SocketAddr,
 }
 
-fn auto_ipc_token_file(data_dir: &Path) -> PathBuf {
-    data_dir.join(IPC_AUTH_TOKEN_FILE)
-}
-
-fn discover_status_ipc_endpoint(data_dir: &Path) -> Result<IpcStatusEndpoint> {
-    parse_status_ipc_endpoint(&discover_ipc_url(data_dir, "status")?)
-}
-
-fn discover_import_ipc_endpoint(data_dir: &Path) -> Result<IpcImportEndpoint> {
-    parse_import_ipc_endpoint(&discover_ipc_url(data_dir, "imports")?)
-}
-
-fn discover_import_cancel_ipc_endpoint(data_dir: &Path) -> Result<IpcImportCancelEndpoint> {
-    parse_import_cancel_ipc_endpoint(&discover_ipc_url(data_dir, "import_cancel")?)
-}
-
-fn discover_import_progress_ipc_endpoint(data_dir: &Path) -> Result<IpcImportProgressEndpoint> {
-    parse_import_progress_ipc_endpoint(&discover_ipc_url(data_dir, "import_progress")?)
-}
-
-fn discover_search_ipc_endpoint(data_dir: &Path) -> Result<IpcSearchEndpoint> {
-    parse_search_ipc_endpoint(&discover_ipc_url(data_dir, "search")?)
-}
-
-fn discover_detail_ipc_endpoint(data_dir: &Path) -> Result<IpcDetailEndpoint> {
-    parse_detail_ipc_endpoint(&discover_ipc_url(data_dir, "details")?)
-}
-
-fn discover_delete_ipc_endpoint(data_dir: &Path) -> Result<IpcDeleteEndpoint> {
-    parse_delete_ipc_endpoint(&discover_ipc_url(data_dir, "delete")?)
-}
-
-fn ensure_auto_ipc_same_daemon(status_addr: SocketAddr, command_addr: SocketAddr) -> Result<()> {
-    if status_addr != command_addr {
-        return Err(CliError::user("daemon ipc auto-discovery is invalid"));
-    }
-    Ok(())
-}
-
-fn discover_ipc_url(data_dir: &Path, key: &str) -> Result<String> {
+fn discover_auto_ipc_daemon(data_dir: &Path) -> Result<daemon_ipc_contract::BoundDaemonIpc> {
     let manifest_path = data_dir.join(IPC_ENDPOINT_FILE);
+    let auth_path = data_dir.join(IPC_AUTH_TOKEN_FILE);
     let manifest_text = fs::read_to_string(&manifest_path)
         .map_err(|_| CliError::user("daemon ipc auto-discovery is unavailable"))?;
-    let manifest: serde_json::Value = serde_json::from_str(&manifest_text)
-        .map_err(|_| CliError::user("daemon ipc auto-discovery is invalid"))?;
-    let allowed_fields = [
-        "schema_version",
-        "instance_id",
-        "owner_mode",
-        "status",
-        "diagnostics",
-        "imports",
-        "import_cancel",
-        "import_control",
-        "import_progress",
-        "search",
-        "search_batch",
-        "details",
-        "delete",
-    ];
-    let valid_shape = manifest.as_object().is_some_and(|object| {
-        object.len() == allowed_fields.len()
-            && object
-                .keys()
-                .all(|field| allowed_fields.contains(&field.as_str()))
-    });
-    let instance_id = json_str(&manifest, "instance_id");
-    let owner_mode = json_str(&manifest, "owner_mode");
-    if !valid_shape
-        || json_str(&manifest, "schema_version") != Some(IPC_ENDPOINT_SCHEMA_VERSION)
-        || !instance_id.is_some_and(valid_daemon_generation_value)
-        || !matches!(owner_mode, Some("standalone" | "desktop_supervised"))
-        || allowed_fields[3..]
-            .iter()
-            .any(|field| json_str(&manifest, field).is_none())
-    {
-        return Err(CliError::user("daemon ipc auto-discovery is invalid"));
-    }
-    let auth_text = fs::read_to_string(data_dir.join(IPC_AUTH_TOKEN_FILE))
+    let auth_text = fs::read_to_string(&auth_path)
         .map_err(|_| CliError::user("daemon ipc auto-discovery is unavailable"))?;
-    let (auth_instance_id, _) =
-        parse_daemon_ipc_auth(&auth_text, "daemon ipc auto-discovery is invalid")?;
-    let stable_manifest = fs::read_to_string(manifest_path)
+    let discovery = daemon_ipc_contract::parse_discovery(&manifest_text)
+        .ok_or_else(|| CliError::user("daemon ipc auto-discovery is invalid"))?;
+    let auth = daemon_ipc_contract::parse_auth(&auth_text)
+        .ok_or_else(|| CliError::user("daemon ipc auto-discovery is invalid"))?;
+    let stable_manifest = fs::read_to_string(&manifest_path)
         .map_err(|_| CliError::user("daemon ipc auto-discovery is unavailable"))?;
-    if auth_instance_id != instance_id.unwrap_or_default() || stable_manifest != manifest_text {
+    let stable_auth = fs::read_to_string(&auth_path)
+        .map_err(|_| CliError::user("daemon ipc auto-discovery is unavailable"))?;
+    if stable_manifest != manifest_text || stable_auth != auth_text {
         return Err(CliError::user("daemon ipc auto-discovery is stale"));
     }
-    json_str(&manifest, key)
-        .map(str::to_string)
+    discovery
+        .bind(auth)
         .ok_or_else(|| CliError::user("daemon ipc auto-discovery is invalid"))
 }
 
 fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let import_args = parse_import_args(args)?;
     if import_args.ipc_auto {
-        let status_endpoint = discover_status_ipc_endpoint(data_dir)?;
-        let endpoint = discover_import_ipc_endpoint(data_dir)?;
-        ensure_auto_ipc_same_daemon(status_endpoint.addr, endpoint.addr)?;
-        verify_auto_ipc_status(&status_endpoint)?;
-        let token_file = auto_ipc_token_file(data_dir);
-        return import_ipc_command_with_token_file(&endpoint, &token_file, &import_args);
+        let daemon = discover_auto_ipc_daemon(data_dir)?;
+        let status_endpoint = IpcStatusEndpoint {
+            addr: daemon.addr(),
+        };
+        verify_auto_ipc_status(&status_endpoint, daemon.token())?;
+        return import_ipc_command_with_token(
+            &IpcImportEndpoint {
+                addr: daemon.addr(),
+            },
+            daemon.token(),
+            &import_args,
+        );
     }
     if let Some(endpoint) = &import_args.ipc_endpoint {
         return import_ipc_command(endpoint, &import_args);
@@ -12104,7 +12054,14 @@ fn import_ipc_command_with_token_file(
     let token = fs::read_to_string(token_file)
         .map_err(|_| CliError::user("unable to read daemon import ipc token"))?;
     let token = validate_daemon_ipc_token(&token, "daemon import ipc token is invalid")?;
+    import_ipc_command_with_token(endpoint, &token, import_args)
+}
 
+fn import_ipc_command_with_token(
+    endpoint: &IpcImportEndpoint,
+    token: &str,
+    import_args: &ImportArgs,
+) -> Result<()> {
     let roots = expand_import_root_selection(&import_args.root_selection)?;
     let root_values = roots
         .iter()
@@ -12146,8 +12103,14 @@ fn import_ipc_command_with_token_file(
         .split_once("\r\n\r\n")
         .ok_or_else(|| CliError::user("daemon import ipc response is invalid"))?;
     let status_line = headers.lines().next().unwrap_or_default();
-    if !status_line.starts_with("HTTP/1.1 202 ") && !status_line.starts_with("HTTP/1.0 202 ") {
-        return Err(CliError::user("daemon import ipc returned an error"));
+    let http_status = daemon_ipc_contract::parse_http_status(status_line);
+    if http_status != Some(202) {
+        let message = http_status
+            .and_then(|status| daemon_ipc_contract::parse_import_service_error(body, status))
+            .map_or("daemon import ipc returned an error", |error| {
+                error.message()
+            });
+        return Err(CliError::user(message));
     }
 
     let body: serde_json::Value = serde_json::from_str(body)
@@ -12157,38 +12120,23 @@ fn import_ipc_command_with_token_file(
 }
 
 fn validate_daemon_ipc_token(token: &str, invalid_message: &'static str) -> Result<String> {
-    parse_daemon_ipc_auth(token, invalid_message).map(|(_, token)| token)
+    parse_daemon_ipc_auth(token, invalid_message).map(|auth| auth.token().to_string())
 }
 
-fn parse_daemon_ipc_auth(value: &str, invalid_message: &'static str) -> Result<(String, String)> {
-    let value: serde_json::Value =
-        serde_json::from_str(value).map_err(|_| CliError::user(invalid_message))?;
-    let valid_shape = value.as_object().is_some_and(|object| {
-        object.len() == 3
-            && object.contains_key("schema_version")
-            && object.contains_key("instance_id")
-            && object.contains_key("token")
-    });
-    let instance_id = json_str(&value, "instance_id");
-    let token = json_str(&value, "token");
-    if !valid_shape
-        || json_str(&value, "schema_version") != Some(IPC_AUTH_SCHEMA_VERSION)
-        || !instance_id.is_some_and(valid_daemon_generation_value)
-        || !token.is_some_and(valid_daemon_generation_value)
-    {
-        return Err(CliError::user(invalid_message));
-    }
-    Ok((
-        instance_id.unwrap_or_default().to_string(),
-        token.unwrap_or_default().to_string(),
-    ))
+fn parse_daemon_ipc_auth(
+    value: &str,
+    invalid_message: &'static str,
+) -> Result<daemon_ipc_contract::DaemonIpcAuth> {
+    daemon_ipc_contract::parse_auth(value).ok_or_else(|| CliError::user(invalid_message))
 }
 
-fn valid_daemon_generation_value(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+fn read_daemon_ipc_token(
+    path: &Path,
+    read_error: &'static str,
+    invalid_error: &'static str,
+) -> Result<String> {
+    let auth = fs::read_to_string(path).map_err(|_| CliError::user(read_error))?;
+    validate_daemon_ipc_token(&auth, invalid_error)
 }
 
 fn render_import_ipc_result(body: &serde_json::Value) {
@@ -12231,6 +12179,14 @@ fn cancel_import_ipc_command_with_token_file(
     let token = fs::read_to_string(token_file)
         .map_err(|_| CliError::user("unable to read daemon import cancel ipc token"))?;
     let token = validate_daemon_ipc_token(&token, "daemon import cancel ipc token is invalid")?;
+    cancel_import_ipc_command_with_token(endpoint, &token, task_id)
+}
+
+fn cancel_import_ipc_command_with_token(
+    endpoint: &IpcImportCancelEndpoint,
+    token: &str,
+    task_id: &ImportTaskId,
+) -> Result<()> {
     let body = serde_json::json!({
         "task_id": task_id.to_string(),
     })
@@ -13071,12 +13027,18 @@ fn canonical_import_roots(requested_roots: &[PathBuf]) -> Result<Vec<CanonicalIm
 fn search_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let search_args = parse_search_args(data_dir, args)?;
     if search_args.ipc_auto {
-        let status_endpoint = discover_status_ipc_endpoint(data_dir)?;
-        let endpoint = discover_search_ipc_endpoint(data_dir)?;
-        ensure_auto_ipc_same_daemon(status_endpoint.addr, endpoint.addr)?;
-        verify_auto_ipc_status(&status_endpoint)?;
-        let token_file = auto_ipc_token_file(data_dir);
-        return search_ipc_command_with_token_file(&endpoint, &token_file, &search_args);
+        let daemon = discover_auto_ipc_daemon(data_dir)?;
+        let status_endpoint = IpcStatusEndpoint {
+            addr: daemon.addr(),
+        };
+        verify_auto_ipc_status(&status_endpoint, daemon.token())?;
+        return search_ipc_command_with_token(
+            &IpcSearchEndpoint {
+                addr: daemon.addr(),
+            },
+            daemon.token(),
+            &search_args,
+        );
     }
     if let Some(endpoint) = &search_args.ipc_endpoint {
         return search_ipc_command(endpoint, &search_args);
@@ -15248,6 +15210,14 @@ fn search_ipc_command_with_token_file(
     let token = fs::read_to_string(token_file)
         .map_err(|_| CliError::user("unable to read daemon search ipc token"))?;
     let token = validate_daemon_ipc_token(&token, "daemon search ipc token is invalid")?;
+    search_ipc_command_with_token(endpoint, &token, search_args)
+}
+
+fn search_ipc_command_with_token(
+    endpoint: &IpcSearchEndpoint,
+    token: &str,
+    search_args: &SearchArgs,
+) -> Result<()> {
     let request_id = new_search_ipc_request_id()?;
     let body = search_ipc_request_body(&request_id, search_args);
 
@@ -15554,12 +15524,18 @@ fn print_search_hits(hits: Vec<SearchOutputHit>) {
 fn detail_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let detail_args = parse_detail_args(args)?;
     if detail_args.ipc_auto {
-        let status_endpoint = discover_status_ipc_endpoint(data_dir)?;
-        let endpoint = discover_detail_ipc_endpoint(data_dir)?;
-        ensure_auto_ipc_same_daemon(status_endpoint.addr, endpoint.addr)?;
-        verify_auto_ipc_status(&status_endpoint)?;
-        let token_file = auto_ipc_token_file(data_dir);
-        return detail_ipc_command_with_token_file(&endpoint, &token_file, &detail_args);
+        let daemon = discover_auto_ipc_daemon(data_dir)?;
+        let status_endpoint = IpcStatusEndpoint {
+            addr: daemon.addr(),
+        };
+        verify_auto_ipc_status(&status_endpoint, daemon.token())?;
+        return detail_ipc_command_with_token(
+            &IpcDetailEndpoint {
+                addr: daemon.addr(),
+            },
+            daemon.token(),
+            &detail_args,
+        );
     }
     if let Some(endpoint) = &detail_args.ipc_endpoint {
         return detail_ipc_command(endpoint, &detail_args);
@@ -15598,6 +15574,14 @@ fn detail_ipc_command_with_token_file(
     let token = fs::read_to_string(token_file)
         .map_err(|_| CliError::user("unable to read daemon detail ipc token"))?;
     let token = validate_daemon_ipc_token(&token, "daemon detail ipc token is invalid")?;
+    detail_ipc_command_with_token(endpoint, &token, detail_args)
+}
+
+fn detail_ipc_command_with_token(
+    endpoint: &IpcDetailEndpoint,
+    token: &str,
+    detail_args: &DetailArgs,
+) -> Result<()> {
     let request_id = new_search_ipc_request_id()?.replacen("cli-search", "cli-detail", 1);
     let selection = detail_selection(detail_args)?;
     let body = serde_json::json!({
@@ -15950,12 +15934,18 @@ fn truncate_chars(value: &str, max_chars: usize) -> String {
 fn delete_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let delete_args = parse_delete_args(args)?;
     if delete_args.ipc_auto {
-        let status_endpoint = discover_status_ipc_endpoint(data_dir)?;
-        let endpoint = discover_delete_ipc_endpoint(data_dir)?;
-        ensure_auto_ipc_same_daemon(status_endpoint.addr, endpoint.addr)?;
-        verify_auto_ipc_status(&status_endpoint)?;
-        let token_file = auto_ipc_token_file(data_dir);
-        return delete_ipc_command_with_token_file(&endpoint, &token_file, &delete_args);
+        let daemon = discover_auto_ipc_daemon(data_dir)?;
+        let status_endpoint = IpcStatusEndpoint {
+            addr: daemon.addr(),
+        };
+        verify_auto_ipc_status(&status_endpoint, daemon.token())?;
+        return delete_ipc_command_with_token(
+            &IpcDeleteEndpoint {
+                addr: daemon.addr(),
+            },
+            daemon.token(),
+            &delete_args,
+        );
     }
     if let Some(endpoint) = &delete_args.ipc_endpoint {
         return delete_ipc_command(endpoint, &delete_args);
@@ -16110,6 +16100,14 @@ fn delete_ipc_command_with_token_file(
     let token = fs::read_to_string(token_file)
         .map_err(|_| CliError::user("unable to read daemon delete ipc token"))?;
     let token = validate_daemon_ipc_token(&token, "daemon delete ipc token is invalid")?;
+    delete_ipc_command_with_token(endpoint, &token, delete_args)
+}
+
+fn delete_ipc_command_with_token(
+    endpoint: &IpcDeleteEndpoint,
+    token: &str,
+    delete_args: &DeleteArgs,
+) -> Result<()> {
     let body = serde_json::json!({
         "doc_id": delete_args.doc_id.as_str(),
     })
@@ -16355,14 +16353,16 @@ fn task_control_command(data_dir: &Path, args: &[String], paused: bool) -> Resul
 fn cancel_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let cancel_args = parse_cancel_import_args(args)?;
     if cancel_args.ipc_auto {
-        let status_endpoint = discover_status_ipc_endpoint(data_dir)?;
-        let endpoint = discover_import_cancel_ipc_endpoint(data_dir)?;
-        ensure_auto_ipc_same_daemon(status_endpoint.addr, endpoint.addr)?;
-        verify_auto_ipc_status(&status_endpoint)?;
-        let token_file = auto_ipc_token_file(data_dir);
-        return cancel_import_ipc_command_with_token_file(
-            &endpoint,
-            &token_file,
+        let daemon = discover_auto_ipc_daemon(data_dir)?;
+        let status_endpoint = IpcStatusEndpoint {
+            addr: daemon.addr(),
+        };
+        verify_auto_ipc_status(&status_endpoint, daemon.token())?;
+        return cancel_import_ipc_command_with_token(
+            &IpcImportCancelEndpoint {
+                addr: daemon.addr(),
+            },
+            daemon.token(),
             &cancel_args.task_id,
         );
     }

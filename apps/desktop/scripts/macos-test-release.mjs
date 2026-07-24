@@ -26,7 +26,11 @@ import {
   verifyBundleComposition,
   writeBundleComposition,
 } from "./macos-bundle-composition.mjs";
-import { verifyMainSourceProvenance } from "./macos-source-provenance.mjs";
+import {
+  captureSourceIdentity,
+  validateSourceIdentity,
+  verifyImmutableSnapshotSource,
+} from "./macos-source-identity.mjs";
 import {
   MACOS_SYSTEM_TOOLS,
   runClosedSystemTool,
@@ -34,6 +38,7 @@ import {
 
 const TARGET_TRIPLE = "aarch64-apple-darwin";
 const PRODUCT_NAME = "resume-ir";
+const DESKTOP_EXECUTABLE = "resume-desktop";
 const MAX_ENTITLEMENT_BYTES = 16 * 1024;
 const MAX_TOOL_OUTPUT_BYTES = 64 * 1024;
 const LIBRARY_VALIDATION_ENTITLEMENT =
@@ -49,6 +54,7 @@ const CREDENTIAL_VARIABLES = [
   "APPLE_CERTIFICATE_PASSWORD",
   "KEYCHAIN_PASSWORD",
 ];
+const SOURCE_IDENTITY_ENV = "RESUME_IR_MACOS_SOURCE_IDENTITY";
 
 export const MACOS_TEST_RELEASE_FAILURE_SCHEMA =
   "resume-ir.macos-test-release-failure.v1";
@@ -387,16 +393,21 @@ async function resolveNativeSigningTargets(appBundle) {
 export async function applyMacosInternalTestEntitlements({
   dmg,
   entitlements,
-  sourceCommit,
+  source,
   platform = process.platform,
   runner = defaultToolRunner,
   mountProbe = mountedFilesystemAt,
 }) {
+  let validatedSource;
+  try {
+    validatedSource = validateSourceIdentity(source);
+  } catch {
+    throw new Error("macOS internal-test entitlement arguments are invalid");
+  }
   if (
     platform !== "darwin" ||
     !path.isAbsolute(dmg) ||
-    !path.isAbsolute(entitlements) ||
-    !/^[a-f0-9]{40}$/.test(sourceCommit ?? "")
+    !path.isAbsolute(entitlements)
   ) {
     throw new Error("macOS internal-test entitlement arguments are invalid");
   }
@@ -472,7 +483,7 @@ export async function applyMacosInternalTestEntitlements({
     await writeBundleComposition({
       appBundle,
       targetTriple: TARGET_TRIPLE,
-      sourceCommit,
+      source: validatedSource,
     });
     const signApp = await runner(MACOS_SYSTEM_TOOLS.codesign, [
       "--force",
@@ -504,7 +515,7 @@ export async function applyMacosInternalTestEntitlements({
     const composition = await verifyBundleComposition({
       appBundle,
       targetTriple: TARGET_TRIPLE,
-      expectedSourceCommit: sourceCommit,
+      expectedSource: validatedSource,
       verifySignaturePolicy: ({ appBundle: boundAppBundle }) =>
         verifyMacosInternalTestSignaturePolicy({
           appBundle: boundAppBundle,
@@ -602,9 +613,9 @@ async function readBoundedJson(file) {
 }
 
 export function resolveMacosTestReleasePaths(scriptUrl = import.meta.url) {
-  const frontendRoot = fileURLToPath(new URL("..", scriptUrl));
+  const frontendRoot = path.resolve(fileURLToPath(new URL("..", scriptUrl)));
   return Object.freeze({
-    repoRoot: fileURLToPath(new URL("../../..", scriptUrl)),
+    repoRoot: path.resolve(fileURLToPath(new URL("../../..", scriptUrl))),
     frontendRoot,
     runTauri: fileURLToPath(new URL("./run-tauri.mjs", scriptUrl)),
     baseConfig: path.join(frontendRoot, "src-tauri", "tauri.conf.json"),
@@ -622,17 +633,54 @@ export function createMacosInternalTestEnvironment(environment) {
   return sanitized;
 }
 
+async function resolveMacosBuildSource({ repoRoot, environment }) {
+  const serialized = environment?.[SOURCE_IDENTITY_ENV];
+  if (serialized === undefined) {
+    return (
+      await captureSourceIdentity({
+        repoRoot,
+        authority: "exact_main_commit",
+      })
+    ).identity;
+  }
+  if (
+    typeof serialized !== "string" ||
+    Buffer.byteLength(serialized, "utf8") > 1024
+  ) {
+    throw new Error("macOS build source provenance is invalid");
+  }
+  let source;
+  try {
+    source = validateSourceIdentity(JSON.parse(serialized));
+  } catch {
+    throw new Error("macOS build source provenance is invalid");
+  }
+  if (
+    source.authority !== "worktree_snapshot" ||
+    path.basename(repoRoot) !==
+      `${source.base_commit}-${source.source_tree_sha256}` ||
+    path.basename(path.dirname(repoRoot)) !== "sources" ||
+    path.basename(path.dirname(path.dirname(repoRoot))) !==
+      "macos-worktree-build"
+  ) {
+    throw new Error("macOS build source provenance is invalid");
+  }
+  return verifyImmutableSnapshotSource({ repoRoot, expected: source });
+}
+
 export function createMacosInternalTestPlan({
   frontendRoot,
   platform = process.platform,
   baseConfig,
   platformConfig,
+  cargoTargetDir = path.join(frontendRoot, "src-tauri", "target"),
 }) {
   const version = baseConfig?.version;
   const macOS = platformConfig?.bundle?.macOS;
   if (
     platform !== "darwin" ||
     !path.isAbsolute(frontendRoot) ||
+    !path.isAbsolute(cargoTargetDir) ||
     baseConfig?.productName !== PRODUCT_NAME ||
     typeof version !== "string" ||
     !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(version) ||
@@ -655,14 +703,18 @@ export function createMacosInternalTestPlan({
       "--ci",
     ]),
     dmg: path.join(
-      frontendRoot,
-      "src-tauri",
-      "target",
+      cargoTargetDir,
       TARGET_TRIPLE,
       "release",
       "bundle",
       "dmg",
       `${PRODUCT_NAME}_${version}_aarch64.dmg`,
+    ),
+    desktopExecutable: path.join(
+      cargoTargetDir,
+      TARGET_TRIPLE,
+      "release",
+      DESKTOP_EXECUTABLE,
     ),
     entitlements: path.join(
       frontendRoot,
@@ -702,7 +754,7 @@ export async function buildMacosInternalTestRelease({
   runner = defaultRunner,
   applyEntitlements = applyMacosInternalTestEntitlements,
   verifyDmg = verifyMacosDmg,
-  verifySource = verifyMainSourceProvenance,
+  verifySource = resolveMacosBuildSource,
 }) {
   if (!path.isAbsolute(repoRoot) || !path.isAbsolute(runTauri)) {
     throw releaseError(
@@ -717,6 +769,7 @@ export async function buildMacosInternalTestRelease({
       platform,
       baseConfig,
       platformConfig,
+      cargoTargetDir: environment.CARGO_TARGET_DIR,
     });
   } catch {
     throw releaseError(
@@ -725,12 +778,11 @@ export async function buildMacosInternalTestRelease({
     );
   }
   const candidateDmg = internalTestCandidatePath(plan.dmg);
-  let sourceCommit;
+  let source;
   try {
-    sourceCommit = await verifySource({ repoRoot });
-    if (!/^[a-f0-9]{40}$/.test(sourceCommit ?? "")) {
-      throw new Error("macOS build source provenance is invalid");
-    }
+    source = validateSourceIdentity(
+      await verifySource({ repoRoot, environment }),
+    );
   } catch {
     await removeReleaseArtifacts([candidateDmg]);
     throw releaseError(
@@ -769,7 +821,7 @@ export async function buildMacosInternalTestRelease({
     const entitlementReceipt = await applyEntitlements({
       dmg: candidateDmg,
       entitlements: plan.entitlements,
-      sourceCommit,
+      source,
       platform,
     });
     if (
@@ -791,11 +843,12 @@ export async function buildMacosInternalTestRelease({
       targetTriple: plan.targetTriple,
       dmg: candidateDmg,
       platform,
-      verifySource,
+      expectedSource: source,
+      expectedDesktop: plan.desktopExecutable,
     });
     if (
-      receipt?.schema_version !== "resume-ir.macos-dmg-composition.v2" ||
-      receipt?.source_commit !== sourceCommit ||
+      receipt?.schema_version !== "resume-ir.macos-dmg-composition.v3" ||
+      JSON.stringify(receipt?.source) !== JSON.stringify(source) ||
       receipt?.distribution_signature !== "accepted" ||
       receipt?.distribution_profile !== "internal_test" ||
       receipt?.code_signature !== "ad_hoc_valid" ||
@@ -820,9 +873,11 @@ export async function buildMacosInternalTestRelease({
         : "macOS internal-test verification failed",
     );
   }
-  let finalSourceCommit;
+  let finalSource;
   try {
-    finalSourceCommit = await verifySource({ repoRoot });
+    finalSource = validateSourceIdentity(
+      await verifySource({ repoRoot, environment }),
+    );
   } catch {
     await removeReleaseArtifacts([plan.dmg, candidateDmg]);
     throw releaseError(
@@ -830,7 +885,7 @@ export async function buildMacosInternalTestRelease({
       "macOS build source provenance is invalid",
     );
   }
-  if (finalSourceCommit !== sourceCommit) {
+  if (JSON.stringify(finalSource) !== JSON.stringify(source)) {
     await removeReleaseArtifacts([plan.dmg, candidateDmg]);
     throw releaseError(
       "release_source_changed",

@@ -620,6 +620,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "daemon-contract"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2352,6 +2360,7 @@ version = "0.1.0"
 dependencies = [
  "benchmark-runner",
  "core-domain",
+ "daemon-contract",
  "embedder",
  "fs-crawler",
  "fs4",
@@ -2373,6 +2382,7 @@ dependencies = [
 name = "resume-daemon"
 version = "0.1.0"
 dependencies = [
+ "daemon-contract",
  "embedder",
  "embedding-protocol",
  "getrandom 0.2.17",

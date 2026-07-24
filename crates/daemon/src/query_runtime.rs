@@ -18,6 +18,7 @@ use crate::search_contract::{
 use crate::search_runtime_config::SearchRuntimeConfig;
 
 const FILTER_SELECTION_LIMIT: usize = meta_store::MAX_BOUNDED_FILTER_SELECTION;
+const EMBEDDING_RUNTIME_UNAVAILABLE_PARTIAL_REASON: &str = "embedding_runtime_unavailable";
 
 pub(crate) struct DaemonQueryRuntime {
     coordinator: QueryCoordinator,
@@ -60,7 +61,6 @@ enum PreparedSemantic {
         query: SemanticQueryVector,
     },
     RuntimeUnavailable,
-    ConfigurationMissing,
 }
 
 enum QueryPass {
@@ -68,7 +68,6 @@ enum QueryPass {
     Cancelled { visible_epoch: u64 },
     DeadlineExceeded(CompletedSearch),
     SemanticDisabled,
-    SemanticConfigurationMissing,
     SemanticContractMismatch,
     SemanticRuntimeUnavailable,
 }
@@ -162,14 +161,11 @@ impl DaemonQueryRuntime {
                         return Ok(QueryPass::Complete(CompletedSearch {
                             visible_epoch,
                             hits,
-                            partial_reasons: vec!["embedding_runtime_unavailable"],
+                            partial_reasons: vec![EMBEDDING_RUNTIME_UNAVAILABLE_PARTIAL_REASON],
                         }));
                     }
                     return Ok(match terminal {
                         SemanticTerminal::Disabled => QueryPass::SemanticDisabled,
-                        SemanticTerminal::ConfigurationMissing => {
-                            QueryPass::SemanticConfigurationMissing
-                        }
                         SemanticTerminal::ContractMismatch => QueryPass::SemanticContractMismatch,
                         SemanticTerminal::RuntimeUnavailable => {
                             QueryPass::SemanticRuntimeUnavailable
@@ -241,7 +237,6 @@ impl DaemonQueryRuntime {
                 Ok(SearchExecutionOutcome::DeadlineExceeded(search))
             }
             QueryPass::SemanticDisabled => Err(QueryFailure::SemanticDisabled),
-            QueryPass::SemanticConfigurationMissing => Err(QueryFailure::BadRequest),
             QueryPass::SemanticContractMismatch => Err(QueryFailure::Integrity),
             QueryPass::SemanticRuntimeUnavailable => Err(QueryFailure::Unavailable),
         }
@@ -262,7 +257,10 @@ fn prepare_semantic(
         config.embedding_model_id.as_ref(),
         config.embedding_dimension,
     ) else {
-        return Ok(PreparedSemantic::ConfigurationMissing);
+        // Missing optional embedding runtime is an operational capability
+        // outage, not a malformed query. Hybrid can therefore execute its
+        // lexical branch and report a bounded partial reason.
+        return Ok(PreparedSemantic::RuntimeUnavailable);
     };
     let Some(remaining_ms) = deadline.remaining_ms() else {
         return Ok(PreparedSemantic::RuntimeUnavailable);
@@ -307,7 +305,6 @@ fn prepare_semantic(
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SemanticTerminal {
     Disabled,
-    ConfigurationMissing,
     ContractMismatch,
     RuntimeUnavailable,
 }
@@ -330,12 +327,6 @@ fn validate_semantic_contract(
             query: None,
             terminal: Some(SemanticTerminal::Disabled),
         },
-        (SemanticContract::Enabled { .. }, PreparedSemantic::ConfigurationMissing) => {
-            ValidatedSemantic {
-                query: None,
-                terminal: Some(SemanticTerminal::ConfigurationMissing),
-            }
-        }
         (SemanticContract::Enabled { .. }, PreparedSemantic::RuntimeUnavailable) => {
             ValidatedSemantic {
                 query: None,

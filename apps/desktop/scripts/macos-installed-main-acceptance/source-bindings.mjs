@@ -6,6 +6,10 @@ import {
   verifyBundleComposition,
 } from "../macos-bundle-composition.mjs";
 import {
+  captureSourceIdentity,
+  validateSourceIdentity,
+} from "../macos-source-identity.mjs";
+import {
   CLOSED_SYSTEM_TOOL_ENV,
   MACOS_SYSTEM_TOOLS,
 } from "../macos-system-tools.mjs";
@@ -258,6 +262,40 @@ export async function deriveCommitProductBinding(repoRoot, gitHead, runTool) {
   });
 }
 
+export async function deriveExactMainSourceIdentity(
+  repoRoot,
+  gitHead,
+  capture = captureSourceIdentity,
+) {
+  if (
+    !path.isAbsolute(repoRoot ?? "") ||
+    !GIT_HEAD.test(gitHead ?? "") ||
+    typeof capture !== "function"
+  ) {
+    fail("source_manifest_invalid");
+  }
+  let source;
+  try {
+    source = validateSourceIdentity(
+      (
+        await capture({
+          repoRoot,
+          authority: "exact_main_commit",
+        })
+      )?.identity,
+    );
+  } catch {
+    fail("source_manifest_invalid");
+  }
+  if (
+    source.authority !== "exact_main_commit" ||
+    source.base_commit !== gitHead
+  ) {
+    fail("source_manifest_invalid");
+  }
+  return source;
+}
+
 function executablePaths(composition) {
   if (
     !Array.isArray(composition.executables) ||
@@ -282,19 +320,21 @@ function executablePaths(composition) {
 
 export async function verifyInstalledSourceBindings({
   applicationSupportRoot,
+  deriveSourceIdentity = deriveExactMainSourceIdentity,
   repoRoot,
   runTool,
   verifySignaturePolicy = verifyMacosInternalTestSignaturePolicy,
 }) {
   const { gitHead } = await verifyGitMainBinding(repoRoot, runTool);
-  const source = await deriveCommitProductBinding(repoRoot, gitHead, runTool);
+  const product = await deriveCommitProductBinding(repoRoot, gitHead, runTool);
+  const source = await deriveSourceIdentity(repoRoot, gitHead);
   let composition;
   try {
     composition = await verifyBundleComposition({
       appBundle: INSTALLED_APP_BUNDLE,
       targetTriple: TARGET_TRIPLE,
-      expectedVersion: source.version,
-      expectedSourceCommit: gitHead,
+      expectedVersion: product.version,
+      expectedSource: source,
       verifySignaturePolicy: ({ appBundle }) =>
         verifySignaturePolicy({
           appBundle,
@@ -311,8 +351,8 @@ export async function verifyInstalledSourceBindings({
   }
   if (
     composition.schema_version !== BUNDLE_COMPOSITION_SCHEMA ||
-    composition.source_commit !== gitHead ||
-    composition.icon?.sha256 !== source.iconSha256
+    JSON.stringify(composition.source) !== JSON.stringify(source) ||
+    composition.icon?.sha256 !== product.iconSha256
   ) {
     fail("installed_composition_binding_mismatch");
   }
@@ -327,7 +367,7 @@ export async function verifyInstalledSourceBindings({
     receipt?.schema_version !== INSTALL_RECEIPT_SCHEMA ||
     receipt.version !== REQUIRED_INSTALLED_VERSION ||
     composition.version !== REQUIRED_INSTALLED_VERSION ||
-    receipt.source_commit !== gitHead
+    JSON.stringify(receipt.source) !== JSON.stringify(source)
   ) {
     fail("installed_receipt_invalid");
   }
@@ -336,7 +376,8 @@ export async function verifyInstalledSourceBindings({
     dmgSha256: receipt.dmg_sha256,
     executablePaths: executablePaths(composition),
     gitHead,
-    iconSha256: source.iconSha256,
-    version: source.version,
+    iconSha256: product.iconSha256,
+    source,
+    version: product.version,
   });
 }

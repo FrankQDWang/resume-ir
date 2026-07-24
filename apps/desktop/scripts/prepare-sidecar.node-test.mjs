@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -18,6 +19,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  buildAttestedSidecars,
   createDesktopCompositionPlan,
   createPdfRendererPlan,
   createSidecarPlan,
@@ -27,6 +29,11 @@ import {
   stageBuiltSidecar,
   validateWindowsProcessContainmentContract,
 } from "./prepare-sidecar.mjs";
+import {
+  RUNTIME_EXECUTABLE_ATTESTATION_SCHEMA,
+  runtimeExecutablePayloadIdentity,
+  validateRuntimeExecutableAttestation,
+} from "./runtime-executable-attestation.mjs";
 import {
   stageClassifierResourcePack,
   validateClassifierPackManifest,
@@ -687,6 +694,34 @@ test("stages only the exact reviewed embedding pack and rejects symlinks", async
   );
 });
 
+test("stages OCR files with the exact manifest executable contract", async (context) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "resume-ir-ocr-pack-mode-"));
+  context.after(async () => {
+    await rm(repoRoot, { recursive: true, force: true });
+  });
+  const ocrPack = await createSyntheticOcrPack(repoRoot);
+  const plan = createDesktopCompositionPlan({
+    repoRoot,
+    targetTriple: "aarch64-apple-darwin",
+    debug: false,
+    sourceOcrPackRoot: ocrPack.source,
+    expectedOcrManifest: ocrPack.expectedManifest,
+  });
+
+  await stageOcrResourcePack(plan.ocrResourcePack);
+
+  const destination = plan.ocrResourcePack.destination;
+  assert.notEqual((await stat(path.join(destination, "tesseract"))).mode & 0o111, 0);
+  assert.equal(
+    (await stat(path.join(destination, "lib/libsynthetic-00.dylib"))).mode & 0o111,
+    0,
+  );
+  assert.equal(
+    (await stat(path.join(destination, "tessdata/eng.traineddata"))).mode & 0o111,
+    0,
+  );
+});
+
 test("stages only the reviewed private-derived classifier pack", async (context) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "resume-ir-classifier-stage-"));
   context.after(async () => {
@@ -736,6 +771,172 @@ test("stages only the reviewed private-derived classifier pack", async (context)
     /regular non-symlink file/,
   );
   await rm(badRoot, { recursive: true, force: true });
+});
+
+test("runtime executable attestation rejects schema, role, name, target, and profile drift", () => {
+  const plan = { profile: "release", targetTriple: "aarch64-apple-darwin" };
+  const attestation = {
+    schema_version: RUNTIME_EXECUTABLE_ATTESTATION_SCHEMA,
+    target_triple: plan.targetTriple,
+    profile: plan.profile,
+    executables: [
+      {
+        role: "embedding_runtime",
+        build_file: "resume-embedding-runtime-aarch64-apple-darwin",
+        runtime_file: "resume-embedding-runtime",
+        architecture: "arm64",
+        digest: "sha256_without_code_signature_v1",
+        payload_bytes: 64,
+        payload_sha256: "a".repeat(64),
+      },
+      {
+        role: "pdf_renderer",
+        build_file: "resume-pdf-render-runtime-aarch64-apple-darwin",
+        runtime_file: "resume-pdf-render-runtime",
+        architecture: "arm64",
+        digest: "sha256_without_code_signature_v1",
+        payload_bytes: 64,
+        payload_sha256: "b".repeat(64),
+      },
+    ],
+  };
+  assert.equal(validateRuntimeExecutableAttestation(attestation, plan), attestation);
+  for (const mutation of [
+    { schema_version: "resume-ir.runtime-executable-attestation.v0" },
+    { target_triple: "x86_64-apple-darwin" },
+    { profile: "debug" },
+    {
+      executables: [
+        { ...attestation.executables[0], role: "pdf_renderer" },
+        attestation.executables[1],
+      ],
+    },
+    {
+      executables: [
+        { ...attestation.executables[0], build_file: "resume-daemon-aarch64-apple-darwin" },
+        attestation.executables[1],
+      ],
+    },
+    {
+      executables: [
+        { ...attestation.executables[0], runtime_file: "resume-daemon" },
+        attestation.executables[1],
+      ],
+    },
+  ]) {
+    assert.throws(
+      () => validateRuntimeExecutableAttestation({ ...attestation, ...mutation }, plan),
+      /attestation (contract|entry) is invalid/,
+    );
+  }
+});
+
+test("runtime executable identity ignores only a signature blob and detects payload mutations", async (context) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "resume-ir-runtime-attestation-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const executable = path.join(directory, "runtime");
+  const original = syntheticSignedMachO("code:one;data:two", "first-signature");
+  await writeExecutable(executable, original);
+  const expected = await runtimeExecutablePayloadIdentity(executable);
+
+  await writeExecutable(
+    executable,
+    syntheticSignedMachO("code:one;data:two", "second-signature"),
+  );
+  assert.deepEqual(await runtimeExecutablePayloadIdentity(executable), expected);
+
+  for (const offset of [48, 57]) {
+    const mutated = Buffer.from(original);
+    mutated[offset] ^= 0x01;
+    await writeExecutable(executable, mutated);
+    assert.notDeepEqual(await runtimeExecutablePayloadIdentity(executable), expected);
+  }
+
+  const malformedLoadCommand = Buffer.from(original);
+  malformedLoadCommand.writeUInt32LE(8, 36);
+  await writeExecutable(executable, malformedLoadCommand);
+  await assert.rejects(runtimeExecutablePayloadIdentity(executable), /load command|signature command/);
+
+  await writeExecutable(executable, Buffer.concat([original, Buffer.from("append")]));
+  await assert.rejects(runtimeExecutablePayloadIdentity(executable), /signature payload/);
+
+  await writeExecutable(executable, original.subarray(0, original.length - 1));
+  await assert.rejects(runtimeExecutablePayloadIdentity(executable), /signature payload/);
+});
+
+test("attested sidecar build stages runtimes before the daemon and injects the contract only there", async (context) => {
+  const repoRoot = await mkdtemp(path.join(os.tmpdir(), "resume-ir-attested-sidecar-build-"));
+  context.after(() => rm(repoRoot, { recursive: true, force: true }));
+  const plan = createDesktopCompositionPlan({
+    repoRoot,
+    targetTriple: "aarch64-apple-darwin",
+    debug: false,
+  });
+  const calls = [];
+  const byBinaryName = new Map(plan.sidecars.map((sidecar) => [sidecar.binaryName, sidecar]));
+  const writeBuiltExecutable = (binaryName) => {
+    const sidecar = byBinaryName.get(binaryName);
+    mkdirSync(path.dirname(sidecar.source), { recursive: true });
+    writeFileSync(sidecar.source, syntheticMachO(binaryName));
+    if (process.platform !== "win32") chmodSync(sidecar.source, 0o755);
+  };
+  const cargoRunner = (_command, args, options) => {
+    const binaryName = args[args.indexOf("--bin") + 1];
+    calls.push({ binaryName, environment: options.env });
+    writeBuiltExecutable(binaryName);
+    return { status: 0 };
+  };
+  const pdfRunner = (_command, _args, options) => {
+    calls.push({ binaryName: "resume-pdf-render-runtime", environment: options.env });
+    writeBuiltExecutable("resume-pdf-render-runtime");
+    return { status: 0 };
+  };
+
+  const attestationPath = await buildAttestedSidecars(plan, {
+    cargoRunner,
+    environment: { RESUME_IR_RUNTIME_EXECUTABLE_ATTESTATION: "/stale/forbidden.json" },
+    pdfRunner,
+  });
+
+  assert.ok(path.isAbsolute(attestationPath));
+  assert.deepEqual(calls.map((call) => call.binaryName), [
+    "resume-embedding-runtime",
+    "resume-pdf-render-runtime",
+    "resume-daemon",
+  ]);
+  assert.equal(calls[0].environment.RESUME_IR_RUNTIME_EXECUTABLE_ATTESTATION, undefined);
+  assert.equal(calls[1].environment, undefined);
+  assert.equal(
+    calls[2].environment.RESUME_IR_RUNTIME_EXECUTABLE_ATTESTATION,
+    attestationPath,
+  );
+  const attestation = JSON.parse(await readFile(attestationPath, "utf8"));
+  assert.equal(attestation.schema_version, RUNTIME_EXECUTABLE_ATTESTATION_SCHEMA);
+  assert.equal(attestation.target_triple, "aarch64-apple-darwin");
+  assert.equal(attestation.profile, "release");
+  assert.deepEqual(
+    attestation.executables.map(({ role, build_file, runtime_file }) => ({
+      role,
+      build_file,
+      runtime_file,
+    })),
+    [
+      {
+        role: "embedding_runtime",
+        build_file: "resume-embedding-runtime-aarch64-apple-darwin",
+        runtime_file: "resume-embedding-runtime",
+      },
+      {
+        role: "pdf_renderer",
+        build_file: "resume-pdf-render-runtime-aarch64-apple-darwin",
+        runtime_file: "resume-pdf-render-runtime",
+      },
+    ],
+  );
+  assert.throws(
+    () => runSidecarBuild(byBinaryName.get("resume-daemon"), () => ({ status: 0 }), {}),
+    /requires an absolute runtime executable attestation/,
+  );
 });
 
 test(
@@ -817,7 +1018,10 @@ test("a failed Cargo build cannot replace a previously staged daemon", async (co
   await writeFile(plan.destination, "previous-daemon");
 
   assert.throws(
-    () => runSidecarBuild(plan, () => ({ error: undefined, status: 1 })),
+    () =>
+      runSidecarBuild(plan, () => ({ error: undefined, status: 1 }), {
+        RESUME_IR_RUNTIME_EXECUTABLE_ATTESTATION: path.join(repoRoot, "attestation.json"),
+      }),
     /daemon sidecar build failed/,
   );
   assert.equal(await readFile(plan.destination, "utf8"), "previous-daemon");
@@ -900,10 +1104,13 @@ test("desktop frontend needs no inline style CSP exception", async () => {
       "utf8",
     ),
   );
-  const appSource = await readFile(
-    new URL("../src/App.tsx", import.meta.url),
-    "utf8",
-  );
+  const frontendSource = (
+    await Promise.all(
+      ["App.tsx", "daemon-health.tsx", "diagnostics-panel.tsx"].map((file) =>
+        readFile(new URL(`../src/${file}`, import.meta.url), "utf8"),
+      ),
+    )
+  ).join("\n");
   const stylesheet = await readFile(
     new URL("../src/styles.css", import.meta.url),
     "utf8",
@@ -914,10 +1121,10 @@ test("desktop frontend needs no inline style CSP exception", async () => {
     "default-src 'self'; style-src 'self'; img-src 'self' data:",
   );
   assert.doesNotMatch(config.app.security.csp, /unsafe-inline|unsafe-eval|https?:/);
-  assert.doesNotMatch(appSource, /<[^>]+\sstyle\s*=/);
-  assert.doesNotMatch(appSource, /dangerouslySetInnerHTML/);
-  assert.match(appSource, /<progress[^>]+className="progress-track/);
-  assert.match(appSource, /aria-label="可搜索简历比例"/);
+  assert.doesNotMatch(frontendSource, /<[^>]+\sstyle\s*=/);
+  assert.doesNotMatch(frontendSource, /dangerouslySetInnerHTML/);
+  assert.match(frontendSource, /<progress[^>]+className="progress-track/);
+  assert.match(frontendSource, /aria-label="可搜索简历比例"/);
   assert.match(stylesheet, /progress\.progress-track\s*\{/);
   assert.match(stylesheet, /::-webkit-progress-value/);
   assert.match(stylesheet, /::-moz-progress-bar/);

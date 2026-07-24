@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/core-domain",
+    "crates/daemon-contract",
     "crates/config",
     "crates/meta-store",
     "crates/daemon",

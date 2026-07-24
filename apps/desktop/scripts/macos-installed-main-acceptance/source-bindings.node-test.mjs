@@ -4,11 +4,17 @@ import test from "node:test";
 
 import {
   deriveCommitProductBinding,
+  deriveExactMainSourceIdentity,
   verifyGitMainBinding,
 } from "./source-bindings.mjs";
 
 const HEAD = "a".repeat(40);
 const EXPECTED_ORIGIN = "https://github.com/FrankQDWang/resume-ir.git";
+const SOURCE = Object.freeze({
+  authority: "exact_main_commit",
+  base_commit: HEAD,
+  source_tree_sha256: "e".repeat(64),
+});
 
 function toolResult(status, stdout = "") {
   return {
@@ -217,5 +223,31 @@ test("derives version and binary icon digest from exact commit blobs", async () 
   assert.equal(calls.at(-1).options.maxStdoutBytes, 8 * 1024 * 1024);
   assert.ok(
     calls.every(({ args }) => args.at(-1).startsWith(`${HEAD}:apps/desktop/`)),
+  );
+});
+
+test("binds the closed source identity to the exact verified main commit", async () => {
+  assert.deepEqual(
+    await deriveExactMainSourceIdentity(
+      "/synthetic/repo",
+      HEAD,
+      async ({ repoRoot, authority }) => {
+        assert.equal(repoRoot, "/synthetic/repo");
+        assert.equal(authority, "exact_main_commit");
+        return { identity: SOURCE };
+      },
+    ),
+    SOURCE,
+  );
+
+  await assert.rejects(
+    deriveExactMainSourceIdentity(
+      "/synthetic/repo",
+      HEAD,
+      async () => ({
+        identity: { ...SOURCE, base_commit: "b".repeat(40) },
+      }),
+    ),
+    /source_manifest_invalid/,
   );
 });

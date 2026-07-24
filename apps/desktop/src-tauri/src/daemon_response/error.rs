@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-use super::enums::{DaemonErrorStatus, ErrorStatus};
-use super::{decode, ensure, ensure_schema, protocol_error};
+use super::enums::ErrorStatus;
+use super::{decode, ensure, ensure_schema};
 use crate::daemon_client::DesktopError;
 use crate::daemon_exchange::{valid_opaque_id, ExpectedResponse};
 
@@ -9,7 +9,6 @@ use crate::daemon_exchange::{valid_opaque_id, ExpectedResponse};
 #[serde(untagged)]
 pub(super) enum ErrorBody {
     Unified(UnifiedErrorBody),
-    Daemon(DaemonErrorBody),
 }
 
 #[derive(Deserialize)]
@@ -18,12 +17,7 @@ struct ErrorEnvelope {
 }
 
 #[derive(Deserialize, Serialize)]
-pub(super) struct DaemonErrorBody {
-    schema_version: String,
-    status: DaemonErrorStatus,
-}
-
-#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct UnifiedErrorBody {
     schema_version: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -33,11 +27,16 @@ pub(super) struct UnifiedErrorBody {
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct UnifiedError {
     code: UnifiedErrorCode,
     action: UnifiedErrorAction,
     #[serde(skip_serializing_if = "Option::is_none")]
     retry_after_ms: Option<u64>,
+    #[serde(deserialize_with = "required_nullable")]
+    capability: Option<CapabilityName>,
+    #[serde(deserialize_with = "required_nullable")]
+    reason: Option<FailureReason>,
 }
 
 #[derive(Deserialize, Serialize, PartialEq, Eq)]
@@ -56,6 +55,9 @@ enum UnifiedErrorCode {
     SemanticDisabled,
     Overloaded,
     Internal,
+    ServiceInitializing,
+    ServiceBlocked,
+    CapabilityUnavailable,
 }
 
 #[derive(Deserialize, Serialize, PartialEq, Eq)]
@@ -69,6 +71,34 @@ enum UnifiedErrorAction {
     RepairRequired,
     Retry,
     SelectSupportedMode,
+    WaitForService,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum CapabilityName {
+    KeywordSearch,
+    Detail,
+    SemanticSearch,
+    HybridSearch,
+    TextImport,
+    OcrImport,
+    IndexPublication,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum FailureReason {
+    EmbeddingUnavailable,
+    OcrUnavailable,
+    ClassifierUnavailable,
+    MetadataInitializing,
+    MigrationRebuild,
+    ArtifactUnavailable,
+    SourceUnavailable,
+    RuntimeInvariant,
+    UnsupportedStoreSchema,
+    MetadataUnavailable,
 }
 
 pub(super) fn project_error(
@@ -77,13 +107,8 @@ pub(super) fn project_error(
     expected: &ExpectedResponse,
 ) -> Result<ErrorBody, DesktopError> {
     let envelope: ErrorEnvelope = decode(body)?;
-    match envelope.schema_version.as_str() {
-        "resume-ir.error.v1" => {
-            project_unified_error(body, http_status, expected).map(ErrorBody::Unified)
-        }
-        "daemon.error.v1" => project_daemon_error(body, http_status).map(ErrorBody::Daemon),
-        _ => Err(protocol_error()),
-    }
+    ensure_schema(&envelope.schema_version, "resume-ir.error.v2")?;
+    project_unified_error(body, http_status, expected).map(ErrorBody::Unified)
 }
 
 fn project_unified_error(
@@ -92,7 +117,7 @@ fn project_unified_error(
     expected: &ExpectedResponse,
 ) -> Result<UnifiedErrorBody, DesktopError> {
     let value: UnifiedErrorBody = decode(body)?;
-    ensure_schema(&value.schema_version, "resume-ir.error.v1")?;
+    ensure_schema(&value.schema_version, "resume-ir.error.v2")?;
     ensure(error_http_status(&value.error.code) == http_status)?;
     ensure(action_matches(&value.error.code, &value.error.action))?;
     ensure(code_allowed_for_response(&value.error.code, expected))?;
@@ -103,6 +128,7 @@ fn project_unified_error(
             .is_some_and(|milliseconds| (1..=60_000).contains(&milliseconds)),
         _ => value.error.retry_after_ms.is_none(),
     })?;
+    ensure(context_matches(&value.error, expected))?;
     match expected {
         ExpectedResponse::Search { request_id, .. }
         | ExpectedResponse::Detail { request_id, .. }
@@ -111,13 +137,6 @@ fn project_unified_error(
         )?,
         _ => ensure(value.request_id.is_none())?,
     }
-    Ok(value)
-}
-
-fn project_daemon_error(body: &[u8], http_status: u16) -> Result<DaemonErrorBody, DesktopError> {
-    let value: DaemonErrorBody = decode(body)?;
-    ensure_schema(&value.schema_version, "daemon.error.v1")?;
-    ensure(daemon_error_http_status(&value.status) == http_status)?;
     Ok(value)
 }
 
@@ -133,6 +152,9 @@ fn error_http_status(code: &UnifiedErrorCode) -> u16 {
         | UnifiedErrorCode::QueryServiceUnavailable
         | UnifiedErrorCode::SemanticDisabled
         | UnifiedErrorCode::Overloaded => 503,
+        UnifiedErrorCode::ServiceInitializing
+        | UnifiedErrorCode::ServiceBlocked
+        | UnifiedErrorCode::CapabilityUnavailable => 503,
         UnifiedErrorCode::Internal => 500,
     }
 }
@@ -162,9 +184,17 @@ fn action_matches(code: &UnifiedErrorCode, action: &UnifiedErrorAction) -> bool 
             UnifiedErrorCode::QueryServiceUnavailable,
             UnifiedErrorAction::RepairRequired
         ) | (
+            UnifiedErrorCode::ServiceInitializing,
+            UnifiedErrorAction::WaitForService
+        ) | (
+            UnifiedErrorCode::ServiceBlocked,
+            UnifiedErrorAction::RepairRequired | UnifiedErrorAction::Retry
+        ) | (
+            UnifiedErrorCode::CapabilityUnavailable,
+            UnifiedErrorAction::SelectSupportedMode
+        ) | (
             UnifiedErrorCode::Conflict
                 | UnifiedErrorCode::MetadataUnavailable
-                | UnifiedErrorCode::QueryServiceUnavailable
                 | UnifiedErrorCode::Overloaded
                 | UnifiedErrorCode::Internal,
             UnifiedErrorAction::Retry
@@ -174,9 +204,11 @@ fn action_matches(code: &UnifiedErrorCode, action: &UnifiedErrorAction) -> bool 
 
 fn code_allowed_for_response(code: &UnifiedErrorCode, expected: &ExpectedResponse) -> bool {
     match expected {
+        ExpectedResponse::Status | ExpectedResponse::Diagnostics => false,
         ExpectedResponse::Search { .. } => matches!(
             code,
-            UnifiedErrorCode::BadRequest
+            UnifiedErrorCode::Unauthorized
+                | UnifiedErrorCode::BadRequest
                 | UnifiedErrorCode::Conflict
                 | UnifiedErrorCode::NotFound
                 | UnifiedErrorCode::LimitExceeded
@@ -186,6 +218,9 @@ fn code_allowed_for_response(code: &UnifiedErrorCode, expected: &ExpectedRespons
                 | UnifiedErrorCode::SemanticDisabled
                 | UnifiedErrorCode::Overloaded
                 | UnifiedErrorCode::Internal
+                | UnifiedErrorCode::ServiceInitializing
+                | UnifiedErrorCode::ServiceBlocked
+                | UnifiedErrorCode::CapabilityUnavailable
         ),
         ExpectedResponse::Detail { .. } | ExpectedResponse::Hydrate { .. } => matches!(
             code,
@@ -197,27 +232,100 @@ fn code_allowed_for_response(code: &UnifiedErrorCode, expected: &ExpectedRespons
                 | UnifiedErrorCode::Repairing
                 | UnifiedErrorCode::MetadataUnavailable
                 | UnifiedErrorCode::QueryServiceUnavailable
+                | UnifiedErrorCode::ServiceInitializing
+                | UnifiedErrorCode::ServiceBlocked
         ),
-        _ => matches!(
+        ExpectedResponse::Import | ExpectedResponse::RootControl => matches!(
             code,
             UnifiedErrorCode::Unauthorized
                 | UnifiedErrorCode::BadRequest
+                | UnifiedErrorCode::Conflict
+                | UnifiedErrorCode::NotFound
+                | UnifiedErrorCode::LimitExceeded
                 | UnifiedErrorCode::Repairing
                 | UnifiedErrorCode::MetadataUnavailable
                 | UnifiedErrorCode::QueryServiceUnavailable
+                | UnifiedErrorCode::ServiceInitializing
+                | UnifiedErrorCode::ServiceBlocked
+                | UnifiedErrorCode::CapabilityUnavailable
+        ),
+        ExpectedResponse::Cancel { .. } => matches!(
+            code,
+            UnifiedErrorCode::Unauthorized
+                | UnifiedErrorCode::BadRequest
+                | UnifiedErrorCode::ServiceInitializing
+                | UnifiedErrorCode::ServiceBlocked
         ),
     }
 }
 
-fn daemon_error_http_status(status: &DaemonErrorStatus) -> u16 {
-    match status {
-        DaemonErrorStatus::Unauthorized => 401,
-        DaemonErrorStatus::BadRequest => 400,
-        DaemonErrorStatus::Conflict => 409,
-        DaemonErrorStatus::NotFound => 404,
-        DaemonErrorStatus::TooLarge => 413,
-        DaemonErrorStatus::Internal => 500,
+fn context_matches(error: &UnifiedError, expected: &ExpectedResponse) -> bool {
+    match error.code {
+        UnifiedErrorCode::ServiceInitializing => {
+            error.capability.is_none()
+                && matches!(
+                    error.reason,
+                    Some(
+                        FailureReason::MetadataInitializing
+                            | FailureReason::MigrationRebuild
+                            | FailureReason::ArtifactUnavailable
+                    )
+                )
+        }
+        UnifiedErrorCode::ServiceBlocked => {
+            error.capability.is_none()
+                && matches!(
+                    error.reason,
+                    Some(
+                        FailureReason::SourceUnavailable
+                            | FailureReason::RuntimeInvariant
+                            | FailureReason::UnsupportedStoreSchema
+                            | FailureReason::MetadataUnavailable
+                    )
+                )
+        }
+        UnifiedErrorCode::CapabilityUnavailable => {
+            error.capability.is_some()
+                && capability_reason_matches(expected, error.capability, error.reason)
+        }
+        _ => error.capability.is_none() && error.reason.is_none(),
     }
+}
+
+fn capability_reason_matches(
+    expected: &ExpectedResponse,
+    capability: Option<CapabilityName>,
+    reason: Option<FailureReason>,
+) -> bool {
+    match expected {
+        ExpectedResponse::Search { .. } => matches!(
+            (capability, reason),
+            (
+                Some(CapabilityName::SemanticSearch),
+                Some(FailureReason::EmbeddingUnavailable),
+            )
+        ),
+        ExpectedResponse::Import | ExpectedResponse::RootControl => matches!(
+            (capability, reason),
+            (
+                Some(CapabilityName::TextImport),
+                Some(FailureReason::EmbeddingUnavailable | FailureReason::ClassifierUnavailable),
+            )
+        ),
+        ExpectedResponse::Status
+        | ExpectedResponse::Diagnostics
+        | ExpectedResponse::Detail { .. }
+        | ExpectedResponse::Hydrate { .. }
+        | ExpectedResponse::Cancel { .. } => false,
+    }
+}
+
+fn required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
 }
 
 #[cfg(test)]
@@ -240,46 +348,92 @@ mod tests {
             request_id: "detail-request".to_string(),
             selection: selection(),
         };
-        let stale = br#"{"schema_version":"resume-ir.error.v1","request_id":"detail-request","status":"error","error":{"code":"STALE_SELECTION","action":"refresh_search","selection":{"doc_id":"doc_private","version_id":"ver_private"}},"private_debug":true}"#;
+        let stale = br#"{"schema_version":"resume-ir.error.v2","request_id":"detail-request","status":"error","error":{"code":"STALE_SELECTION","action":"refresh_search","capability":null,"reason":null}}"#;
         let projected = project_error(stale, 409, &expected).unwrap();
         let exposed = serde_json::to_string(&projected).unwrap();
         assert!(exposed.contains("STALE_SELECTION"));
-        assert!(!exposed.contains("doc_private"));
-        assert!(!exposed.contains("ver_private"));
-        assert!(!exposed.contains("selection"));
 
-        let wrong_action = br#"{"schema_version":"resume-ir.error.v1","request_id":"detail-request","status":"error","error":{"code":"STALE_SELECTION","action":"retry"}}"#;
+        let wrong_action = br#"{"schema_version":"resume-ir.error.v2","request_id":"detail-request","status":"error","error":{"code":"STALE_SELECTION","action":"retry","capability":null,"reason":null}}"#;
         assert!(project_error(wrong_action, 409, &expected).is_err());
         assert!(project_error(stale, 404, &expected).is_err());
         assert!(project_error(stale, 409, &ExpectedResponse::Status).is_err());
 
-        let unauthorized = br#"{"schema_version":"resume-ir.error.v1","request_id":"detail-request","status":"error","error":{"code":"UNAUTHORIZED","action":"authenticate"}}"#;
+        let unauthorized = br#"{"schema_version":"resume-ir.error.v2","request_id":"detail-request","status":"error","error":{"code":"UNAUTHORIZED","action":"authenticate","capability":null,"reason":null}}"#;
         let projected = project_error(unauthorized, 401, &expected).unwrap();
         assert!(serde_json::to_string(&projected)
             .unwrap()
             .contains("UNAUTHORIZED"));
 
-        let missing_request = br#"{"schema_version":"resume-ir.error.v1","status":"error","error":{"code":"STALE_SELECTION","action":"refresh_search"}}"#;
+        let missing_request = br#"{"schema_version":"resume-ir.error.v2","status":"error","error":{"code":"STALE_SELECTION","action":"refresh_search","capability":null,"reason":null}}"#;
         assert!(project_error(missing_request, 409, &expected).is_err());
     }
 
     #[test]
-    fn search_errors_require_v1_unified_schema_and_exact_request_context() {
+    fn search_errors_require_v2_schema_exact_shape_and_context() {
         let expected = ExpectedResponse::Search {
             request_id: "search-request".to_string(),
             max_results: 10,
         };
-        let overloaded = br#"{"schema_version":"resume-ir.error.v1","request_id":"search-request","status":"error","error":{"code":"OVERLOADED","action":"retry","retry_after_ms":250,"message":"synthetic-private"},"private_debug":true}"#;
+        let overloaded = br#"{"schema_version":"resume-ir.error.v2","request_id":"search-request","status":"error","error":{"code":"OVERLOADED","action":"retry","retry_after_ms":250,"capability":null,"reason":null}}"#;
         let projected = project_error(overloaded, 503, &expected).unwrap();
         let exposed = serde_json::to_string(&projected).unwrap();
         assert!(exposed.contains("OVERLOADED"));
         assert!(exposed.contains("retry_after_ms"));
-        assert!(!exposed.contains("synthetic-private"));
-        assert!(!exposed.contains("private_debug"));
-
-        let legacy = br#"{"schema_version":"resume-ir.ipc-response.v1","request_id":"search-request","status":"error","error":{"code":"OVERLOADED","retry_after_ms":250}}"#;
+        let legacy = br#"{"schema_version":"resume-ir.error.v1","request_id":"search-request","status":"error","error":{"code":"OVERLOADED","action":"retry","retry_after_ms":250,"capability":null,"reason":null}}"#;
         assert!(project_error(legacy, 503, &expected).is_err());
-        let wrong_request = br#"{"schema_version":"resume-ir.error.v1","request_id":"other-request","status":"error","error":{"code":"SEMANTIC_DISABLED","action":"select_supported_mode"}}"#;
+        let wrong_request = br#"{"schema_version":"resume-ir.error.v2","request_id":"other-request","status":"error","error":{"code":"SEMANTIC_DISABLED","action":"select_supported_mode","capability":null,"reason":null}}"#;
         assert!(project_error(wrong_request, 503, &expected).is_err());
+
+        let missing_required_null = br#"{"schema_version":"resume-ir.error.v2","request_id":"search-request","status":"error","error":{"code":"OVERLOADED","action":"retry","retry_after_ms":250,"reason":null}}"#;
+        assert!(project_error(missing_required_null, 503, &expected).is_err());
+        let unknown = br#"{"schema_version":"resume-ir.error.v2","request_id":"search-request","status":"error","error":{"code":"OVERLOADED","action":"retry","retry_after_ms":250,"capability":null,"reason":null,"private_debug":true}}"#;
+        assert!(project_error(unknown, 503, &expected).is_err());
+
+        let wrong_query_service_action = br#"{"schema_version":"resume-ir.error.v2","request_id":"search-request","status":"error","error":{"code":"QUERY_SERVICE_UNAVAILABLE","action":"retry","capability":null,"reason":null}}"#;
+        assert!(project_error(wrong_query_service_action, 503, &expected).is_err());
+    }
+
+    #[test]
+    fn capability_error_reason_is_operation_specific() {
+        let expected = ExpectedResponse::Search {
+            request_id: "search-request".to_string(),
+            max_results: 10,
+        };
+        let semantic = br#"{"schema_version":"resume-ir.error.v2","request_id":"search-request","status":"error","error":{"code":"CAPABILITY_UNAVAILABLE","action":"select_supported_mode","capability":"semantic_search","reason":"embedding_unavailable"}}"#;
+        assert!(project_error(semantic, 503, &expected).is_ok());
+        let impossible = br#"{"schema_version":"resume-ir.error.v2","request_id":"search-request","status":"error","error":{"code":"CAPABILITY_UNAVAILABLE","action":"select_supported_mode","capability":"semantic_search","reason":"ocr_unavailable"}}"#;
+        assert!(project_error(impossible, 503, &expected).is_err());
+
+        let unrelated = br#"{"schema_version":"resume-ir.error.v2","request_id":"search-request","status":"error","error":{"code":"CAPABILITY_UNAVAILABLE","action":"select_supported_mode","capability":"ocr_import","reason":"ocr_unavailable"}}"#;
+        assert!(project_error(unrelated, 503, &expected).is_err());
+        let hybrid = br#"{"schema_version":"resume-ir.error.v2","request_id":"search-request","status":"error","error":{"code":"CAPABILITY_UNAVAILABLE","action":"select_supported_mode","capability":"hybrid_search","reason":"embedding_unavailable"}}"#;
+        assert!(project_error(hybrid, 503, &expected).is_err());
+        let core_alias = br#"{"schema_version":"resume-ir.error.v2","request_id":"search-request","status":"error","error":{"code":"CAPABILITY_UNAVAILABLE","action":"select_supported_mode","capability":"semantic_search","reason":"core_initializing"}}"#;
+        assert!(project_error(core_alias, 503, &expected).is_err());
+
+        let import_embedding = br#"{"schema_version":"resume-ir.error.v2","status":"error","error":{"code":"CAPABILITY_UNAVAILABLE","action":"select_supported_mode","capability":"text_import","reason":"embedding_unavailable"}}"#;
+        assert!(project_error(import_embedding, 503, &ExpectedResponse::Import).is_ok());
+        let import_classifier = br#"{"schema_version":"resume-ir.error.v2","status":"error","error":{"code":"CAPABILITY_UNAVAILABLE","action":"select_supported_mode","capability":"text_import","reason":"classifier_unavailable"}}"#;
+        assert!(project_error(import_classifier, 503, &ExpectedResponse::RootControl).is_ok());
+        let import_semantic = br#"{"schema_version":"resume-ir.error.v2","status":"error","error":{"code":"CAPABILITY_UNAVAILABLE","action":"select_supported_mode","capability":"semantic_search","reason":"embedding_unavailable"}}"#;
+        assert!(project_error(import_semantic, 503, &ExpectedResponse::Import).is_err());
+    }
+
+    #[test]
+    fn control_plane_routes_accept_only_their_http_200_success_contracts() {
+        let query_unavailable = br#"{"schema_version":"resume-ir.error.v2","status":"error","error":{"code":"QUERY_SERVICE_UNAVAILABLE","action":"repair_required","capability":null,"reason":null}}"#;
+        assert!(project_error(query_unavailable, 503, &ExpectedResponse::Status).is_err());
+        assert!(project_error(query_unavailable, 503, &ExpectedResponse::Diagnostics).is_err());
+
+        let unauthorized = br#"{"schema_version":"resume-ir.error.v2","status":"error","error":{"code":"UNAUTHORIZED","action":"authenticate","capability":null,"reason":null}}"#;
+        assert!(project_error(unauthorized, 401, &ExpectedResponse::Status).is_err());
+        assert!(project_error(unauthorized, 401, &ExpectedResponse::Diagnostics).is_err());
+
+        let initializing = br#"{"schema_version":"resume-ir.error.v2","request_id":"search-request","status":"error","error":{"code":"SERVICE_INITIALIZING","action":"wait_for_service","capability":null,"reason":"metadata_initializing"}}"#;
+        let search = ExpectedResponse::Search {
+            request_id: "search-request".to_string(),
+            max_results: 10,
+        };
+        assert!(project_error(initializing, 503, &search).is_ok());
     }
 }

@@ -8,7 +8,15 @@ import {
   type DetailBody,
   type SearchHit,
 } from "./daemon"
-import { detailReadMayContinue, type DaemonLifecycleSnapshot, type DaemonService } from "./runtime-state"
+import {
+  captureDaemonActionAuthority,
+  daemonActionAuthorityIsCurrent,
+  detailReadMayContinue,
+  type DaemonActionAuthority,
+  type DaemonActionAuthorityToken,
+  type DaemonLifecycleSnapshot,
+  type DaemonService,
+} from "./runtime-state"
 
 export const MAX_DETAIL_PAGES = 128
 
@@ -16,6 +24,7 @@ export type DetailViewDocument = DetailBody["document"] & { file_name: string }
 
 interface DetailContinuation {
   hit: SearchHit
+  authorityEpoch: number
   generation: number
   nextOffset: number
   text: string
@@ -25,8 +34,10 @@ interface DetailContinuation {
 
 export function useDetailSession(input: {
   preview: boolean
+  authorityRef: MutableRefObject<DaemonActionAuthority>
   lifecycleRef: MutableRefObject<DaemonLifecycleSnapshot>
   service: DaemonService
+  isCapabilityAuthorized: () => boolean
   onStaleSelection: () => void
 }) {
   const [detail, setDetail] = useState<DetailViewDocument | null>(null)
@@ -58,6 +69,26 @@ export function useDetailSession(input: {
     setDetailError("daemon 恢复中，已保留已读取内容；恢复后请显式续读")
   }
 
+  const authorityTokenFor = (continuation: DetailContinuation): DaemonActionAuthorityToken => ({
+    epoch: continuation.authorityEpoch,
+    generation: continuation.generation,
+  })
+
+  const authorityIsCurrent = (token: DaemonActionAuthorityToken) => daemonActionAuthorityIsCurrent(
+    input.authorityRef.current,
+    input.lifecycleRef.current,
+    token,
+  ) && input.isCapabilityAuthorized()
+
+  const observeAuthority = () => {
+    const continuation = continuationRef.current
+    if (!continuation || authorityIsCurrent(authorityTokenFor(continuation))) return
+    runIdRef.current += 1
+    setDetailLoading(false)
+    setDetailInterrupted(true)
+    setDetailError("服务权限已撤销，已保留已读取内容；状态恢复后请显式续读")
+  }
+
   const handleFailure = (error: unknown, continuation: DetailContinuation, runId: number) => {
     if (runId !== runIdRef.current) return
     const failure = bridgeFailureKind(error)
@@ -74,7 +105,7 @@ export function useDetailSession(input: {
         : "该简历版本已删除或不再发布，私密详情已清除；请刷新搜索")
       return
     }
-    if (failure === "unavailable" || failure === "overload" || !detailReadMayContinue(input.lifecycleRef.current, continuation.generation)) {
+    if (failure === "unavailable" || failure === "overload" || !authorityIsCurrent(authorityTokenFor(continuation))) {
       continuationRef.current = continuation
       setDetailInterrupted(true)
       setDetailError(failure === "overload" ? "详情读取繁忙，已停止分页；可显式续读" : "详情读取已中断，已保留当前内容；daemon 就绪后可显式续读")
@@ -91,26 +122,34 @@ export function useDetailSession(input: {
   }
 
   const hydratePages = async (continuation: DetailContinuation) => {
+    const authority = input.isCapabilityAuthorized()
+      ? captureDaemonActionAuthority(input.authorityRef.current, input.lifecycleRef.current)
+      : null
+    if (!authority) {
+      observeAuthority()
+      return
+    }
     const runId = runIdRef.current + 1
     runIdRef.current = runId
-    continuation.generation = input.lifecycleRef.current.generation
+    continuation.authorityEpoch = authority.epoch
+    continuation.generation = authority.generation
     continuationRef.current = continuation
     setDetailLoading(true)
     setDetailInterrupted(false)
     setDetailError("")
     try {
       for (let page = continuation.pagesRead; page < MAX_DETAIL_PAGES; page += 1) {
-        if (!detailReadMayContinue(input.lifecycleRef.current, continuation.generation)) {
-          throw { code: "daemon_unavailable", message: "daemon generation changed" }
+        if (!authorityIsCurrent(authority)) {
+          throw { code: "daemon_unavailable", message: "daemon action authority changed" }
         }
         const requestedOffset = continuation.nextOffset
         const requestId = `gui-hydrate-${crypto.randomUUID()}`
         const hydrated = await hydrateDetail(requestId, continuation.hit.selection, requestedOffset)
         if (runId !== runIdRef.current) return
-        if (!detailReadMayContinue(input.lifecycleRef.current, continuation.generation)) {
-          throw { code: "daemon_unavailable", message: "daemon generation changed" }
+        if (!authorityIsCurrent(authority)) {
+          throw { code: "daemon_unavailable", message: "daemon action authority changed" }
         }
-        if (hydrated.body.schema_version === "resume-ir.error.v1") {
+        if (hydrated.body.schema_version === "resume-ir.error.v2") {
           throw { code: hydrated.body.error.code, message: "detail service unavailable" }
         }
         if (hydrated.http_status !== 200 || hydrated.body.schema_version !== "resume-ir.detail-hydrate-response.v3") throw new Error("hydrate unavailable")
@@ -139,11 +178,13 @@ export function useDetailSession(input: {
   }
 
   const open = async (hit: SearchHit) => {
-    if (input.lifecycleRef.current.state !== "ready" || input.service === "repairing") return
-    const generation = input.lifecycleRef.current.generation
+    const authority = input.isCapabilityAuthorized()
+      ? captureDaemonActionAuthority(input.authorityRef.current, input.lifecycleRef.current)
+      : null
+    if (!authority || input.service === "repairing") return
     const runId = runIdRef.current + 1
     runIdRef.current = runId
-    const continuation: DetailContinuation = { hit, generation, nextOffset: 0, text: "", pagesRead: 0, metadataLoaded: false }
+    const continuation: DetailContinuation = { hit, authorityEpoch: authority.epoch, generation: authority.generation, nextOffset: 0, text: "", pagesRead: 0, metadataLoaded: false }
     continuationRef.current = continuation
     setDetail(null); setDetailLoading(true); setDetailInterrupted(false); setDetailError(""); setFullText(""); setBodyComplete(false)
     if (input.preview) {
@@ -155,8 +196,8 @@ export function useDetailSession(input: {
       const requestId = `gui-detail-${crypto.randomUUID()}`
       const reply = await readDetail(requestId, hit.selection)
       if (runId !== runIdRef.current) return
-      if (!detailReadMayContinue(input.lifecycleRef.current, generation)) throw { code: "daemon_unavailable", message: "daemon generation changed" }
-      if (reply.body.schema_version === "resume-ir.error.v1") {
+      if (!authorityIsCurrent(authority)) throw { code: "daemon_unavailable", message: "daemon action authority changed" }
+      if (reply.body.schema_version === "resume-ir.error.v2") {
         throw { code: reply.body.error.code, message: "detail service unavailable" }
       }
       if (reply.http_status !== 200 || reply.body.schema_version !== "resume-ir.detail-response.v3") throw new Error("detail unavailable")
@@ -171,7 +212,7 @@ export function useDetailSession(input: {
 
   const resume = async () => {
     const continuation = continuationRef.current
-    if (!continuation || input.lifecycleRef.current.state !== "ready" || input.service === "repairing") return
+    if (!continuation || !input.isCapabilityAuthorized() || !captureDaemonActionAuthority(input.authorityRef.current, input.lifecycleRef.current) || input.service === "repairing") return
     if (!continuation.metadataLoaded) await open(continuation.hit)
     else await hydratePages(continuation)
   }
@@ -186,6 +227,7 @@ export function useDetailSession(input: {
     open,
     resume,
     reset,
+    observeAuthority,
     observeLifecycle,
   }
 }

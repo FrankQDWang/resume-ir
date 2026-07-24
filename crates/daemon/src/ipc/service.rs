@@ -7,19 +7,10 @@ use meta_store::{
 const MAX_REPAIR_RETRY_AFTER_MS: i64 = 60_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ServiceState {
-    Ready,
-    Degraded,
-    Repairing,
-    Unavailable,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ServiceErrorCode {
     Repairing,
     MetadataUnavailable,
     QueryServiceUnavailable,
-    QueryServiceRepairRequired,
 }
 
 impl ServiceErrorCode {
@@ -27,86 +18,16 @@ impl ServiceErrorCode {
         match self {
             Self::Repairing => "REPAIRING",
             Self::MetadataUnavailable => "METADATA_UNAVAILABLE",
-            Self::QueryServiceUnavailable | Self::QueryServiceRepairRequired => {
-                "QUERY_SERVICE_UNAVAILABLE"
-            }
+            Self::QueryServiceUnavailable => "QUERY_SERVICE_UNAVAILABLE",
         }
     }
 
     pub(crate) fn action(self) -> &'static str {
         match self {
             Self::Repairing => "wait_for_repair",
-            Self::MetadataUnavailable | Self::QueryServiceUnavailable => "retry",
-            Self::QueryServiceRepairRequired => "repair_required",
+            Self::MetadataUnavailable => "retry",
+            Self::QueryServiceUnavailable => "repair_required",
         }
-    }
-}
-
-impl ServiceState {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Ready => "ready",
-            Self::Degraded => "degraded",
-            Self::Repairing => "repairing",
-            Self::Unavailable => "unavailable",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ServiceHealth {
-    pub(crate) metadata: ServiceState,
-    pub(crate) query: ServiceState,
-}
-
-impl ServiceHealth {
-    pub(crate) fn aggregate(self) -> ServiceState {
-        match (self.metadata, self.query) {
-            (ServiceState::Unavailable, _) | (_, ServiceState::Unavailable) => {
-                ServiceState::Degraded
-            }
-            (ServiceState::Repairing, _) | (_, ServiceState::Repairing) => ServiceState::Repairing,
-            (ServiceState::Degraded, _) | (_, ServiceState::Degraded) => ServiceState::Degraded,
-            (ServiceState::Ready, ServiceState::Ready) => ServiceState::Ready,
-        }
-    }
-}
-
-pub(crate) fn projection_service_health(state: SearchProjectionServiceState) -> ServiceHealth {
-    ServiceHealth {
-        metadata: ServiceState::Ready,
-        query: match state {
-            SearchProjectionServiceState::Ready => ServiceState::Ready,
-            SearchProjectionServiceState::Repairing => ServiceState::Repairing,
-            SearchProjectionServiceState::RepairBlocked => ServiceState::Unavailable,
-        },
-    }
-}
-
-pub(crate) fn search_repair_reason_label(reason: SearchRepairReason) -> &'static str {
-    match reason {
-        SearchRepairReason::MigrationRebuild => "migration_rebuild",
-        SearchRepairReason::ArtifactUnavailable => "artifact_unavailable",
-        SearchRepairReason::SourceUnavailable => "source_unavailable",
-        SearchRepairReason::RuntimeInvariant => "runtime_invariant",
-    }
-}
-
-pub(crate) fn service_error_json(services: ServiceHealth) -> serde_json::Value {
-    match (services.metadata, services.query) {
-        (ServiceState::Ready, ServiceState::Ready) => serde_json::Value::Null,
-        (ServiceState::Ready, ServiceState::Repairing) => serde_json::json!({
-            "code": "REPAIRING",
-            "action": "wait_for_repair",
-        }),
-        (ServiceState::Ready, ServiceState::Unavailable) => serde_json::json!({
-            "code": "QUERY_SERVICE_UNAVAILABLE",
-            "action": "repair_required",
-        }),
-        _ => serde_json::json!({
-            "code": "METADATA_UNAVAILABLE",
-            "action": "retry",
-        }),
     }
 }
 
@@ -218,22 +139,7 @@ mod tests {
         SearchProjectionServiceState, SearchProjectionState, SearchRepairReason, UnixTimestamp,
     };
 
-    use super::{
-        projection_service_health, repair_progress_json, service_error_json, ServiceHealth,
-        ServiceState,
-    };
-
-    #[test]
-    fn aggregate_never_hides_an_unavailable_dependency() {
-        assert_eq!(
-            ServiceHealth {
-                metadata: ServiceState::Ready,
-                query: ServiceState::Unavailable,
-            }
-            .aggregate(),
-            ServiceState::Degraded
-        );
-    }
+    use super::repair_progress_json;
 
     #[test]
     fn blocked_repair_requires_remediation_and_retry_wait_is_bounded() {
@@ -307,15 +213,6 @@ mod tests {
                 "max_attempts": null,
                 "retry_after_ms": null,
                 "last_error_kind": null,
-            })
-        );
-
-        let blocked = projection_service_health(SearchProjectionServiceState::RepairBlocked);
-        assert_eq!(
-            service_error_json(blocked),
-            serde_json::json!({
-                "code": "QUERY_SERVICE_UNAVAILABLE",
-                "action": "repair_required",
             })
         );
     }

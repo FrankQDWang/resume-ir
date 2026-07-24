@@ -943,6 +943,7 @@ impl ImportPipelineError {
             meta_store::MetaStoreErrorClass::MigrationOwnershipRequired => {
                 "migration_ownership_required"
             }
+            meta_store::MetaStoreErrorClass::UnsupportedStoreSchema => "unsupported_store_schema",
             meta_store::MetaStoreErrorClass::InvalidValue => "invalid_value",
             meta_store::MetaStoreErrorClass::NotFound => "not_found",
             meta_store::MetaStoreErrorClass::InvalidTransition => "invalid_transition",
@@ -1378,7 +1379,6 @@ mod tests {
         let data_dir = temp.path().join("data");
         fs::create_dir_all(&data_dir).unwrap();
         let store = create_test_store(&data_dir);
-        fs::remove_file(data_dir.join("search-publication.lock")).unwrap();
         fs::create_dir_all(data_dir.join("search-publication.lock")).unwrap();
         let contract =
             super::current_import_processing_contract(&ImportOptions::default()).unwrap();

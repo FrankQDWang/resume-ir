@@ -1,26 +1,31 @@
-use std::{
-    fs::{self, File, OpenOptions},
-    path::Path,
-};
+#[cfg(any(test, feature = "migration-test-support"))]
+use std::fs::{self, File};
+use std::{fs::OpenOptions, path::Path};
 
+#[cfg(any(test, feature = "migration-test-support"))]
 use fs4::fs_std::FileExt;
 
-use crate::{
-    active_store_manifest::{validate_owner_regular_metadata, ActiveStoreManifest},
-    restrict_private_file_permissions, MetaStoreError, Result,
-};
+#[cfg(any(test, feature = "migration-test-support"))]
+use crate::active_store_manifest::{validate_owner_regular_metadata, ActiveStoreManifest};
+#[cfg(any(test, feature = "migration-test-support"))]
+use crate::restrict_private_file_permissions;
+use crate::{MetaStoreError, Result};
 
+#[cfg(any(test, feature = "migration-test-support"))]
 mod cleanup;
 mod store_validation;
 
+#[cfg(any(test, feature = "migration-test-support"))]
 use cleanup::{complete_legacy_cleanup, discard_unpublished_cleanup};
+#[cfg(any(test, feature = "migration-test-support"))]
+pub(super) use store_validation::{open_encrypted_connection, validate_active_store};
 pub(super) use store_validation::{
-    open_encrypted_connection, open_encrypted_read_connection, source_schema_version,
-    store_identity, validate_active_store,
+    open_encrypted_read_connection, source_schema_version, store_identity,
 };
 
 pub(crate) const MIGRATION_LOCK_FILE: &str = "metadata-migration.lock";
 
+#[cfg(any(test, feature = "migration-test-support"))]
 pub(super) fn with_migration_lock<T>(
     data_dir: &Path,
     operation: impl FnOnce() -> Result<T>,
@@ -40,10 +45,12 @@ pub(super) fn with_migration_lock<T>(
     }
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 pub(super) fn discard_pending_v27_legacy_cleanup(data_dir: &Path) -> Result<()> {
     discard_unpublished_cleanup(data_dir)
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 pub(super) fn complete_pending_v27_legacy_cleanup(
     data_dir: &Path,
     manifest: &ActiveStoreManifest,
@@ -61,6 +68,7 @@ pub(super) fn sync_validated_store(path: &Path) -> Result<()> {
         .map_err(MetaStoreError::io_storage)
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 pub(super) fn create_private_empty_file(path: &Path) -> Result<()> {
     let mut options = OpenOptions::new();
     options.create_new(true).read(true).write(true);
@@ -74,6 +82,7 @@ pub(super) fn create_private_empty_file(path: &Path) -> Result<()> {
     restrict_private_file_permissions(path)
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 pub(super) fn legacy_owner_regular_file_exists(path: &Path) -> Result<bool> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -90,6 +99,7 @@ pub(super) fn legacy_owner_regular_file_exists(path: &Path) -> Result<bool> {
     }
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 fn acquire_migration_lock(data_dir: &Path) -> Result<File> {
     let path = data_dir.join(MIGRATION_LOCK_FILE);
     if path.try_exists().map_err(MetaStoreError::io_storage)? {

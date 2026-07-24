@@ -8,7 +8,12 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use privacy::{ContactHasher, ContactKind};
 
+mod support;
+
+use support::ready_daemon_status_body;
+
 const TEST_INSTANCE_ID: &str = "abababababababababababababababababababababababababababababababab";
+const TEST_LAUNCH_ID: &str = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
 
 #[test]
 fn search_ipc_submits_authenticated_request_and_renders_redacted_results_without_local_store() {
@@ -324,7 +329,7 @@ fn search_ipc_auto_discovers_endpoint_and_token_file() {
         let (mut status_stream, _) = accept_with_timeout(&listener);
         let status_request = read_http_request(&mut status_stream);
         assert!(status_request.starts_with("GET /status HTTP/1.1"));
-        assert!(!status_request.contains("Authorization:"));
+        assert!(status_request.contains(&format!("Authorization: Bearer {token}")));
         assert!(!status_request.contains("private-auto-query"));
         write_auto_status_response(&mut status_stream);
         drop(status_stream);
@@ -412,7 +417,7 @@ fn search_ipc_auto_discovers_endpoint_and_token_file() {
 }
 
 #[test]
-fn search_ipc_auto_rejects_stale_manifest_without_sending_token_or_query() {
+fn search_ipc_auto_rejects_stale_status_without_sending_query() {
     let data_dir = temp_path("search-ipc-auto-stale-data");
     let token = "8989898989898989898989898989898989898989898989898989898989898989";
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
@@ -422,8 +427,7 @@ fn search_ipc_auto_rejects_stale_manifest_without_sending_token_or_query() {
         let (mut stream, _) = accept_with_timeout(&listener);
         let request = read_http_request(&mut stream);
         assert!(request.starts_with("GET /status HTTP/1.1"));
-        assert!(!request.contains("Authorization:"));
-        assert!(!request.contains(token));
+        assert!(request.contains(&format!("Authorization: Bearer {token}")));
         assert!(!request.contains("private-stale-query"));
         let response = "{\"schema_version\":\"not-daemon.v1\",\"status\":\"ok\"}";
         write!(
@@ -816,8 +820,7 @@ fn write_auto_ipc_files(data_dir: &Path, addr: SocketAddr, token: &str) {
 }
 
 fn write_auto_status_response(stream: &mut impl Write) {
-    let response =
-        "{\"schema_version\":\"daemon.status.v2\",\"status\":\"ok\",\"process_state\":\"ready\"}";
+    let response = ready_daemon_status_body();
     write!(
         stream,
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -831,7 +834,8 @@ fn write_auth_file(path: &Path, token: &str) {
     fs::write(
         path,
         serde_json::json!({
-            "schema_version": "resume-ir.daemon-auth.v2",
+            "schema_version": "resume-ir.daemon-auth.v3",
+            "launch_id": TEST_LAUNCH_ID,
             "instance_id": TEST_INSTANCE_ID,
             "token": token.trim(),
         })
@@ -842,7 +846,8 @@ fn write_auth_file(path: &Path, token: &str) {
 
 fn discovery_manifest(addr: SocketAddr) -> String {
     serde_json::json!({
-        "schema_version": "resume-ir.daemon-ipc.v2",
+        "schema_version": "resume-ir.daemon-ipc.v3",
+        "launch_id": TEST_LAUNCH_ID,
         "instance_id": TEST_INSTANCE_ID,
         "owner_mode": "standalone",
         "status": format!("http://{addr}/status"),

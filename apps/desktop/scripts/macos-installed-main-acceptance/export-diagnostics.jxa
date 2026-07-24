@@ -1,0 +1,208 @@
+ObjC.import("AppKit");
+ObjC.import("Foundation");
+
+const COMPLETE = "resume-ir.native-diagnostics-export.complete.v1";
+const MAX_UI_ELEMENTS = 4096;
+
+function fail(message) {
+  throw new Error(message);
+}
+
+function waitFor(predicate, attempts, intervalSeconds) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const value = predicate();
+    if (value) return value;
+    delay(intervalSeconds);
+  }
+  return null;
+}
+
+function safeValue(callback) {
+  try {
+    const value = callback();
+    return value === undefined || value === null ? "" : String(value);
+  } catch (_) {
+    return "";
+  }
+}
+
+function applicationProcessForPid(systemEvents, pid) {
+  const matches = systemEvents
+    .applicationProcesses()
+    .filter((candidate) => Number(candidate.unixId()) === pid);
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function requireApplicationIdentity(application, pid, expectedExecutable) {
+  const executableUrl = application.executableURL;
+  const executable = executableUrl ? ObjC.unwrap(executableUrl.path) : null;
+  if (
+    Number(application.processIdentifier) !== pid ||
+    executable !== expectedExecutable ||
+    application.terminated
+  ) {
+    fail("target process identity changed");
+  }
+}
+
+function findButton(root, labels) {
+  const pending = [root];
+  let visited = 0;
+  while (pending.length > 0 && visited < MAX_UI_ELEMENTS) {
+    const current = pending.shift();
+    visited += 1;
+    const role = safeValue(() => current.role());
+    const names = [
+      safeValue(() => current.name()),
+      safeValue(() => current.description()),
+      safeValue(() => current.title()),
+      safeValue(() => current.help()),
+    ];
+    if (role === "AXButton" && labels.some((label) => names.includes(label))) {
+      return current;
+    }
+    let children = [];
+    try {
+      children = current.uiElements();
+    } catch (_) {
+      children = [];
+    }
+    for (const child of children) pending.push(child);
+  }
+  return null;
+}
+
+function findText(root, expected) {
+  const pending = [root];
+  let visited = 0;
+  while (pending.length > 0 && visited < MAX_UI_ELEMENTS) {
+    const current = pending.shift();
+    visited += 1;
+    const values = [
+      safeValue(() => current.name()),
+      safeValue(() => current.description()),
+      safeValue(() => current.title()),
+      safeValue(() => current.value()),
+    ];
+    if (values.some((value) => value.includes(expected))) return current;
+    let children = [];
+    try {
+      children = current.uiElements();
+    } catch (_) {
+      children = [];
+    }
+    for (const child of children) pending.push(child);
+  }
+  return null;
+}
+
+function pressButton(process, labels, attempts = 100) {
+  const button = waitFor(() => findButton(process, labels), attempts, 0.1);
+  if (!button) fail("required button is unavailable");
+  try {
+    button.click();
+  } catch (_) {
+    fail("required button cannot be pressed");
+  }
+}
+
+function fileExists(path) {
+  return $.NSFileManager.defaultManager.fileExistsAtPath(path);
+}
+
+function run(argv) {
+  if (
+    argv.length !== 5 ||
+    !/^[1-9][0-9]{0,9}$/.test(argv[0]) ||
+    !["included", "unavailable"].includes(argv[2]) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json$/.test(argv[4])
+  ) {
+    fail("target arguments are invalid");
+  }
+  const pid = Number(argv[0]);
+  const expectedExecutable = String(argv[1]);
+  const expectedDaemonState = String(argv[2]);
+  const exportDirectory = String(argv[3]);
+  const fileName = String(argv[4]);
+  if (
+    !expectedExecutable.startsWith("/") ||
+    !exportDirectory.startsWith("/") ||
+    expectedExecutable.length > 4096 ||
+    exportDirectory.length > 4096 ||
+    expectedExecutable.includes("\0") ||
+    exportDirectory.includes("\0") ||
+    exportDirectory.includes("\n") ||
+    exportDirectory.includes("\r")
+  ) {
+    fail("target arguments are invalid");
+  }
+  const outputPath = `${exportDirectory}/${fileName}`;
+  if (fileExists(outputPath)) fail("diagnostics target already exists");
+
+  const application =
+    $.NSRunningApplication.runningApplicationWithProcessIdentifier(pid);
+  if (!application || Number(application.processIdentifier) !== pid) {
+    fail("target process is unavailable");
+  }
+  requireApplicationIdentity(application, pid, expectedExecutable);
+  application.activateWithOptions($.NSApplicationActivateIgnoringOtherApps);
+
+  const systemEvents = Application("System Events");
+  const process = waitFor(
+    () => applicationProcessForPid(systemEvents, pid),
+    50,
+    0.1,
+  );
+  if (!process) fail("target UI process is unavailable");
+  requireApplicationIdentity(application, pid, expectedExecutable);
+  process.frontmost = true;
+
+  const close = findButton(process, ["关闭面板"]);
+  if (close) close.click();
+  pressButton(process, ["隐私与诊断"]);
+  if (
+    expectedDaemonState === "unavailable" &&
+    !waitFor(
+      () => findText(process, "daemon 已换代，请显式重试当前操作"),
+      100,
+      0.1,
+    )
+  ) {
+    fail("daemon-down diagnostics state was not rendered");
+  }
+  pressButton(
+    process,
+    [
+      expectedDaemonState === "included"
+        ? "导出脱敏 JSON"
+        : "导出桌面生命周期诊断",
+    ],
+  );
+  requireApplicationIdentity(application, pid, expectedExecutable);
+
+  // rfd uses the native NSSavePanel. Navigate to the private acceptance
+  // directory, then replace the bounded default label with the unique witness
+  // name. No path is ever returned to stdout.
+  delay(0.25);
+  systemEvents.keystroke("g", { using: ["command down", "shift down"] });
+  delay(0.25);
+  systemEvents.keystroke(exportDirectory);
+  systemEvents.keyCode(36);
+  delay(0.5);
+  systemEvents.keystroke("a", { using: ["command down"] });
+  systemEvents.keystroke(fileName);
+  requireApplicationIdentity(application, pid, expectedExecutable);
+  pressButton(process, ["Save", "保存"], 50);
+
+  if (
+    !waitFor(
+      () =>
+        findText(process, `已导出 ${fileName}`) && fileExists(outputPath),
+      100,
+      0.1,
+    )
+  ) {
+    fail("diagnostics export did not complete");
+  }
+  return COMPLETE;
+}

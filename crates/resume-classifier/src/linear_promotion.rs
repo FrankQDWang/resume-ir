@@ -56,6 +56,13 @@ impl LinearPromotionPolicy {
         Self::try_load(path, ArtifactAccess::BundledReadOnly).unwrap_or_default()
     }
 
+    /// Parses bytes whose bundle identity and permissions were already
+    /// attested by the caller. Inference owns the parsed model and never
+    /// reopens the bundle path after that attestation boundary.
+    pub fn load_attested_bundled_bytes(bytes: &[u8]) -> Self {
+        Self::try_load_bytes(bytes).unwrap_or_default()
+    }
+
     pub fn enabled(&self) -> bool {
         self.0.is_some()
     }
@@ -103,7 +110,14 @@ impl LinearPromotionPolicy {
             }
         }
         let bytes = fs::read(path).ok()?;
-        let envelope: ArtifactEnvelope = serde_json::from_slice(&bytes).ok()?;
+        Self::try_load_bytes(&bytes)
+    }
+
+    fn try_load_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.is_empty() || bytes.len() as u64 > MAX_ARTIFACT_BYTES {
+            return None;
+        }
+        let envelope: ArtifactEnvelope = serde_json::from_slice(bytes).ok()?;
         let actual = format!("{:x}", Sha256::digest(envelope.model_json.as_bytes()));
         if !constant_time_eq(actual.as_bytes(), envelope.model_sha256.as_bytes()) {
             return None;

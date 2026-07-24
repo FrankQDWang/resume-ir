@@ -155,7 +155,7 @@ fn detail_distinguishes_stale_from_unpublished_or_invalid_selections() {
     );
     assert_status(&stale, "HTTP/1.1 409 Conflict");
     let stale_payload = response_json(&stale);
-    assert_eq!(stale_payload["schema_version"], "resume-ir.error.v1");
+    assert_eq!(stale_payload["schema_version"], "resume-ir.error.v2");
     assert_eq!(stale_payload["request_id"], "detail-stale");
     assert_eq!(stale_payload["error"]["code"], "STALE_SELECTION");
     assert_eq!(stale_payload["error"]["action"], "refresh_search");
@@ -215,8 +215,9 @@ fn detail_contract_rejects_legacy_shape_unbounded_ids_and_oversized_pages() {
         &unauthorized,
         "HTTP/1.1 401 Unauthorized",
         "UNAUTHORIZED",
-        Some("unauthorized"),
+        None,
     );
+    assert!(!unauthorized.contains("unauthorized"));
     assert!(!unauthorized.contains(fixture.current_selection.document_id.as_str()));
 
     let mut wrong_schema_request = detail_request("wrong-schema", &fixture.current_selection);
@@ -326,7 +327,7 @@ fn assert_not_found_without_selection(
 fn assert_error(response: &str, status: &str, code: &str, request_id: Option<&str>) {
     assert_status(response, status);
     let payload = response_json(response);
-    assert_eq!(payload["schema_version"], "resume-ir.error.v1");
+    assert_eq!(payload["schema_version"], "resume-ir.error.v2");
     assert_eq!(payload["status"], "error");
     assert_eq!(payload["error"]["code"], code);
     assert_eq!(
@@ -937,6 +938,7 @@ fn http_post_command(
 fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> String {
     let deadline = Instant::now() + IPC_ENDPOINT_TIMEOUT;
     let mut line = String::new();
+    let mut endpoint = None;
     while Instant::now() < deadline {
         line.clear();
         let bytes = stdout.read_line(&mut line).unwrap();
@@ -950,8 +952,11 @@ fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> St
             }
             continue;
         }
-        if let Some(endpoint) = line.trim().strip_prefix("ipc status endpoint: ") {
-            return endpoint.to_string();
+        if let Some(value) = line.trim().strip_prefix("ipc status endpoint: ") {
+            endpoint = Some(value.to_string());
+        }
+        if line.trim() == "resume-daemon foreground ready" {
+            return endpoint.expect("ready line follows endpoint publication");
         }
     }
     let _ = child.kill();
@@ -962,7 +967,8 @@ fn read_ipc_endpoint(child: &mut Child, stdout: &mut BufReader<impl Read>) -> St
 fn read_ipc_auth_token(data_dir: &Path) -> String {
     let body = fs::read_to_string(data_dir.join("ipc.auth")).unwrap();
     let auth: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(auth["schema_version"], "resume-ir.daemon-auth.v2");
+    assert_eq!(auth["schema_version"], "resume-ir.daemon-auth.v3");
+    assert_eq!(auth["launch_id"].as_str().map(str::len), Some(64));
     auth["token"].as_str().unwrap().to_string()
 }
 

@@ -18,6 +18,7 @@ mod task_lock;
 use lock_ops::{ExclusiveLockAttempt, LockOpenErrorClass};
 
 pub use purge_artifact::MetaStorePurgeArtifactClass;
+#[cfg(any(test, feature = "migration-test-support"))]
 pub(crate) use task_lock::acquire_legacy_task_locks;
 pub use task_lock::{import_task_owner_lock_path, ImportTaskOwnerLock};
 
@@ -95,7 +96,7 @@ impl fmt::Debug for DataDirectoryOwnerAcquisition {
 ///
 /// The capability is intentionally non-cloneable and cannot be constructed by
 /// callers. A conforming daemon or offline writer must retain one lease for its
-/// complete generation. Metadata creation and copy-on-write migration accept
+/// complete generation. Current-schema metadata open and fresh creation accept
 /// this capability instead of a caller-supplied path.
 #[must_use = "dropping the lease releases data-directory storage/import ownership"]
 pub struct DataDirectoryOwnerLease {
@@ -161,9 +162,9 @@ impl DataDirectoryOwnerLease {
         }
     }
 
-    /// Opens the current v29 store, creating or copy-on-write migrating it when
-    /// necessary. The bound canonical directory cannot be substituted by the
-    /// caller.
+    /// Opens an exact current v29 store or initializes v29 in a directory with
+    /// no prior metadata authority. Older schemas are never migrated here. The
+    /// bound canonical directory cannot be substituted by the caller.
     pub fn open_store(&self) -> StoreResult<OwnedMetaStore> {
         OwnedMetaStore::open_data_dir_for_owner(self)
     }
