@@ -46,7 +46,8 @@ Each execution row must record:
 | P0-16 | Historical diagnosis of the non-release Linux s49 reset | `b7910b0140b3fc70044b3286deafcab6152fa79354e36b5700758e348f37c642:b014282b3981a5cd68d72ebb2662dbbf8083c3388f02ea320973b93c3392dc8a:6b02342a05c30852465bb8176f07b7a7d78edfee12cf8f268716129ebbc204b6:23fd9ede7e7d330e06afd3181b9095671f8f5d28a7df5157bc2157e9087e329e` | stopped by product-scope correction; all temporary diagnostics removed | never reused; Linux is not a native release gate for this feature train |
 | P0-17 | Daemon IPC integration startup and shutdown are truly bounded, and s49 serializes only expensive fixture construction rather than product execution | `c5541a0d7581c45ca5de78f929f172e891b747f2f22aa6ed96a540ea796c6e4f:e823a4f27c06ee35c4db66f986a228ce42f63a7a02b8a9a42f536d11d60ffae0:89e6282d4af0ff1cfaeeab7c2761a5ca9f733061963557132c56df9d3dc88129:8bbd5f6c560509ee57866c46646361ce761429c4083dd2740d024801613b191b` | local focused execution/Clippy and hosted Windows s48/s49/s81 passed | shared daemon test-process support, s48/s49 harness lifecycle, s49 fixture construction, or detail capability startup changes |
 | P0-18 | Test IPC clients consume one bounded `Content-Length` frame and never use transport EOF as the success boundary | `6868904bf1e9e69486e7312e56bb1f9172f962155524143ce1cfc3253c520dad:3c6d6b9a7791d75a9c03d5d40f3cb215ea381f3fe98555522e8cb425b1f9a5a1:5a9e20659fe9618a1375bdbba4169d3ce40c73fe369fed084aa00ac515bf4fdc:88d976d94a78148e91f855a4fb660655290f9dbccee4c21777e5ed8a30e6e146:2070a3cc5da91dfe45accfdc2a87570a6eaec06e5b030f2eed12e03bdd73e764:a7dc48cca6431478f638b92a3a006a6fe2f480706ecf05339c0dffa1ecd9d1d5` | passed: local fail-late batch proved the parser; hosted Linux/Windows then correctly exposed partial production frames | shared HTTP frame reader or the four listed IPC harnesses change |
-| P0-19 | Response writers own frame bytes only; the final request-limit lifecycle owner establishes the write boundary after exactly-once completion and watchdog join | `a30ee9944b4ea16f705f2b7896a513730d51979ff259e67c72935315f1f55fdd:7cda9234405a270f67e962d416fa03e6bf97c861934441067f1cfbd942aea3fd:23fd9ede7e7d330e06afd3181b9095671f8f5d28a7df5157bc2157e9087e329e:5a9e20659fe9618a1375bdbba4169d3ce40c73fe369fed084aa00ac515bf4fdc:88d976d94a78148e91f855a4fb660655290f9dbccee4c21777e5ed8a30e6e146:2070a3cc5da91dfe45accfdc2a87570a6eaec06e5b030f2eed12e03bdd73e764:a7dc48cca6431478f638b92a3a006a6fe2f480706ecf05339c0dffa1ecd9d1d5:6868904bf1e9e69486e7312e56bb1f9172f962155524143ce1cfc3253c520dad` | local RED/GREEN, lifecycle unit batch 4/4, fail-late IPC batch 19/19 and exact s20 request-limit consumer passed; hosted replay pending | response framing, connection owner topology, completion capability, watchdog join, delivery receipt, request-limit shutdown, or listed IPC consumers change |
+| P0-19 | Response writers own frame bytes only; the final request-limit lifecycle owner establishes the write boundary after exactly-once completion and watchdog join | `a30ee9944b4ea16f705f2b7896a513730d51979ff259e67c72935315f1f55fdd:7cda9234405a270f67e962d416fa03e6bf97c861934441067f1cfbd942aea3fd:23fd9ede7e7d330e06afd3181b9095671f8f5d28a7df5157bc2157e9087e329e:5a9e20659fe9618a1375bdbba4169d3ce40c73fe369fed084aa00ac515bf4fdc:88d976d94a78148e91f855a4fb660655290f9dbccee4c21777e5ed8a30e6e146:2070a3cc5da91dfe45accfdc2a87570a6eaec06e5b030f2eed12e03bdd73e764:a7dc48cca6431478f638b92a3a006a6fe2f480706ecf05339c0dffa1ecd9d1d5:6868904bf1e9e69486e7312e56bb1f9172f962155524143ce1cfc3253c520dad` | passed: local RED/GREEN, lifecycle 4/4, IPC 19/19 and s20 passed; hosted Linux/macOS plus Windows response-ownership cases passed | response framing, business connection owner topology, completion capability, watchdog join, delivery receipt, request-limit shutdown, or listed IPC consumers change |
+| P0-20 | A completed control connection establishes its write boundary in `ActiveControlConnection::join`, including while another socket owner remains alive | `ff4eead677750065655052d556d916b6009a3105d135dca02393a645de0e95a0:25d0d14868986e3b87f845f6e356aa92fbdc607a91bcacd510f39eef18d2428c:a30ee9944b4ea16f705f2b7896a513730d51979ff259e67c72935315f1f55fdd` | local RED/GREEN, hosted-hanging exact case 1/1 and affected control-loop cases 3/3 passed; hosted replay pending | control connection join/cancellation, one-shot response boundary, control-loop handoff, or control-only routing changes |
 
 The complete hosted batch for P0-18 finished before the next repair began.
 Security and macOS passed. Linux stopped at an s48 partial response frame;
@@ -71,6 +72,26 @@ then passed 19/19 under run `97db1e60-a67c-48bd-abf7-4ad17d512f81`,
 including both hosted failure cases and the previously unreached s84 target.
 The exact s20 request-limit status consumer also passed. No crate-wide or
 workspace suite was replayed.
+
+The complete P0-19 hosted batch passed every required check, Linux workspace
+and macOS platform job. Windows completed the response-ownership regression,
+the affected daemon lifecycle tests and all preceding workspace targets, but
+then kept one control-only unit case alive until the 60-minute job limit:
+`control_only_owner_never_returns_404_if_ready_is_published_out_of_order`.
+That test was the remaining one-shot control client still waiting for TCP EOF.
+The response writer could no longer close a socket shared with the control
+loop, while the control lifecycle owner had not yet assumed responsibility for
+the write boundary.
+
+P0-20 makes `ActiveControlConnection::join` establish `Shutdown::Write` only
+after its handler has completed. A cancelled or panicked handler closes both
+directions instead. A new cross-platform regression retains an independent
+socket owner after join: it failed red with a bounded `WouldBlock` on the prior
+implementation and passed green after the lifecycle repair. Nextest run
+`b6e653fa-8952-4ffc-a019-27a3533f3e49` passed that regression and the exact
+hosted-hanging case 2/2; run `0a3c9514-d110-4eac-a585-1ae6f9387a1c`
+passed the three affected control-loop shutdown, accept and blocked-routing
+cases. Previously passed business and integration rows remain reusable.
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo

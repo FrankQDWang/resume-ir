@@ -31033,6 +31033,19 @@ Output summary:
   `97db1e60-a67c-48bd-abf7-4ad17d512f81`), and the exact s20 request-limit
   consumer passed. No crate-wide or workspace suite was replayed; hosted
   portable replay remains the final P0 receipt.
+- The complete hosted P0-19 batch passed every required check, Linux workspace
+  and macOS. Windows passed the new response-ownership regression and all
+  preceding targets, then kept the remaining EOF-based control-only unit case
+  alive until the 60-minute job limit. P0-20 assigns the completed control
+  connection's write boundary to `ActiveControlConnection::join`; cancelled or
+  panicked handlers close both directions.
+- P0-20's retained-owner regression failed red with bounded `WouldBlock`, then
+  passed with the exact hosted-hanging case 2/2 (Nextest
+  `b6e653fa-8952-4ffc-a019-27a3533f3e49`). The three affected control-loop
+  shutdown, accept and blocked-routing cases passed 3/3 (Nextest
+  `0a3c9514-d110-4eac-a585-1ae6f9387a1c`). Previously passed business and
+  integration rows remain valid; hosted replay must continue the targets that
+  Windows did not reach after the former hang.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

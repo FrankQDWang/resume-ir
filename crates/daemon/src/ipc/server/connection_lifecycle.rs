@@ -72,10 +72,21 @@ impl ActiveControlConnection<'_> {
         self.join.is_finished()
     }
 
-    fn join(self) -> Result<(), DaemonFatalError> {
-        self.join
+    fn join(mut self) -> Result<(), DaemonFatalError> {
+        let result = self
+            .join
             .join()
-            .map_err(|_| DaemonFatalError::ControlPlaneFailure)
+            .map_err(|_| DaemonFatalError::ControlPlaneFailure);
+        if !self.cancellation_sent {
+            let boundary = if result.is_ok() {
+                Shutdown::Write
+            } else {
+                Shutdown::Both
+            };
+            let _ = self.cancellation.shutdown(boundary);
+            self.cancellation_sent = true;
+        }
+        result
     }
 }
 
@@ -275,19 +286,47 @@ fn cancel_and_join(
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
     use std::sync::{mpsc, Arc};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use meta_store::{DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease};
 
     use super::{
-        handle_business_with_timing, handle_business_with_watchdog, BusinessConnectionFinish,
-        BusinessConnectionTiming,
+        handle_business_with_timing, handle_business_with_watchdog, ActiveControlConnection,
+        BusinessConnectionFinish, BusinessConnectionTiming,
     };
     use crate::ipc::generation::{DaemonGenerationOwner, OwnerMode};
     use crate::ipc::{ConnectionCompletion, ConnectionOutcome};
+
+    #[test]
+    fn completed_control_response_establishes_boundary_while_other_owner_is_alive() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut response_writer, _) = listener.accept().unwrap();
+        let lifecycle_owner = response_writer.try_clone().unwrap();
+        let retained_owner = response_writer.try_clone().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_millis(250)))
+            .unwrap();
+
+        thread::scope(|scope| {
+            let connection = ActiveControlConnection {
+                cancellation: lifecycle_owner,
+                join: scope.spawn(move || response_writer.write_all(b"complete").unwrap()),
+                deadline: Instant::now() + Duration::from_secs(1),
+                cancellation_sent: false,
+            };
+            connection.join().unwrap();
+
+            let mut response = String::new();
+            client.read_to_string(&mut response).unwrap();
+            assert_eq!(response, "complete");
+            drop(retained_owner);
+        });
+    }
 
     #[test]
     fn final_connection_waits_for_response_completion_before_delivery_receipt() {
