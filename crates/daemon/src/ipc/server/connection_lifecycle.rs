@@ -234,6 +234,11 @@ fn handle_business_with_timing(
         cancelled.load(Ordering::Acquire),
         delivery_receipt,
     ) {
+        // The response writer may share this socket with deadline and
+        // lifecycle owners. Only the final connection owner may establish the
+        // write boundary, and only after the exactly-once response completion
+        // proves that the declared frame was accepted by the kernel.
+        let _ = delivery_receipt.shutdown(Shutdown::Write);
         let _ = delivery_receipt.set_read_timeout(Some(timing.delivery_receipt_timeout));
         loop {
             match delivery_receipt.read(&mut [0_u8; 1]) {
@@ -270,7 +275,7 @@ fn cancel_and_join(
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Shutdown, TcpListener, TcpStream};
+    use std::net::{TcpListener, TcpStream};
     use std::sync::{mpsc, Arc};
     use std::thread;
     use std::time::Duration;
@@ -335,7 +340,7 @@ mod tests {
             matches!(finished_receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
             "final connection skipped its response delivery receipt"
         );
-        client.shutdown(Shutdown::Both).unwrap();
+        drop(client);
         assert_eq!(
             finished_receiver
                 .recv_timeout(Duration::from_secs(1))
@@ -397,7 +402,7 @@ mod tests {
             matches!(finished_receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
             "request watchdog consumed the response delivery window"
         );
-        client.shutdown(Shutdown::Both).unwrap();
+        drop(client);
         assert_eq!(
             finished_receiver
                 .recv_timeout(Duration::from_secs(1))

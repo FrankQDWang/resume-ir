@@ -31021,6 +31021,18 @@ Output summary:
   and the previously unreached s84 2/2, followed by combined target Clippy,
   rustfmt, changed-file and public-boundary checks. Hosted Windows remains the
   cross-platform receipt; existing PR, Security and macOS passes are retained.
+- The complete hosted P0-18 batch then passed Security and macOS but exposed
+  partial declared frames in Linux s48 and Windows s83. Because both business
+  and control routes failed, P0-19 fixes the shared transport ownership:
+  response writers own bytes only, while the final request-limit lifecycle
+  owner alone half-closes after exactly-once completion and watchdog join.
+- P0-19's ownership regression failed red on the former implementation with
+  `BrokenPipe`. The repaired lifecycle unit batch passed 4/4 (Nextest
+  `e11f8b01-4642-4836-8302-1a63bc333442`), the fail-late s48/s49/s83/s84
+  batch passed 19/19 (Nextest
+  `97db1e60-a67c-48bd-abf7-4ad17d512f81`), and the exact s20 request-limit
+  consumer passed. No crate-wide or workspace suite was replayed; hosted
+  portable replay remains the final P0 receipt.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 
