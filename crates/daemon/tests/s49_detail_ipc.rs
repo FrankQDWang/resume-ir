@@ -1,8 +1,9 @@
 use std::fs;
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{ChildStderr, ChildStdin, Command, Stdio};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use index_fulltext::{publish_snapshot, IndexDocument};
@@ -23,7 +24,9 @@ use tempfile::TempDir;
 mod support;
 
 const IPC_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(30);
+const CORE_CONVERGENCE_TIMEOUT: Duration = Duration::from_secs(30);
 const DAEMON_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 const HYDRATE_PAGE_BYTES: usize = 32 * 1024;
 const MAX_BODY_PAGE_BYTES: usize = 32 * 1024;
 const DETAIL_FIELD_LIMIT: usize = 256;
@@ -368,6 +371,7 @@ struct Fixture {
 
 impl Fixture {
     fn create(label: &str) -> Self {
+        let _fixture_capacity = fixture_build_capacity_lease();
         let data_dir_guard = tempfile::Builder::new()
             .prefix(&format!("resume-ir-s49-{label}-"))
             .tempdir()
@@ -862,6 +866,7 @@ fn acquire_data_directory_owner(data_dir: &Path) -> DataDirectoryOwnerLease {
 struct Daemon {
     child: Option<ContainedChild>,
     parent_lifecycle: Option<ChildStdin>,
+    stdout: Option<support::daemon_process::DaemonStdout>,
     stderr: Option<ChildStderr>,
     data_dir: PathBuf,
     endpoint: String,
@@ -891,21 +896,53 @@ impl Daemon {
         let parent_lifecycle = child.take_stdin().expect("daemon parent lifecycle");
         let stdout = child.take_stdout().expect("daemon stdout");
         let mut stderr = child.take_stderr().expect("daemon stderr");
-        let mut stdout = BufReader::new(stdout);
-        let endpoint = read_ipc_endpoint(&mut child, &mut stderr, &mut stdout);
+        let mut stdout = support::daemon_process::spawn_daemon_stdout(stdout);
+        let endpoint = stdout.wait_for_endpoint(&mut child, &mut stderr, IPC_ENDPOINT_TIMEOUT);
         let token = read_ipc_auth_token(data_dir);
-        Self {
+        let daemon = Self {
             child: Some(child),
             parent_lifecycle: Some(parent_lifecycle),
+            stdout: Some(stdout),
             stderr: Some(stderr),
             data_dir: data_dir.to_path_buf(),
             endpoint,
             token,
-        }
+        };
+        daemon.wait_for_detail_capability();
+        daemon
     }
 
     fn post(&mut self, path: &str, token: Option<&str>, payload: serde_json::Value) -> String {
         http_post_command(&self.endpoint, path, token, payload)
+    }
+
+    fn wait_for_detail_capability(&self) {
+        let deadline = Instant::now() + CORE_CONVERGENCE_TIMEOUT;
+        while Instant::now() < deadline {
+            let response = http_get_status(&self.endpoint, &self.token);
+            assert_status(&response, "HTTP/1.1 200 OK");
+            let payload = response_json(&response);
+            assert_eq!(payload["schema_version"], "daemon.status.v3");
+            assert_eq!(payload["process_state"], "ready");
+            match payload["capabilities"]["detail"]["state"].as_str() {
+                Some("available") => return,
+                Some("blocked" | "unavailable") => {
+                    panic!(
+                        "detail capability did not initialize: core_state={}; core_reason={}; capability_reason={}",
+                        payload["core"]["state"].as_str().unwrap_or("invalid"),
+                        payload["core"]["reason"].as_str().unwrap_or("none"),
+                        payload["capabilities"]["detail"]["reason"]
+                            .as_str()
+                            .unwrap_or("none")
+                    );
+                }
+                Some("initializing" | "degraded") => {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                _ => panic!("detail capability returned an invalid state"),
+            }
+        }
+        panic!("detail capability did not initialize before the bounded deadline");
     }
 
     fn wait_success(mut self) {
@@ -949,6 +986,7 @@ impl Daemon {
             .expect("read daemon stderr");
         assert!(status.success(), "stderr:\n{stderr}");
         assert!(stderr.is_empty());
+        self.stdout.take().unwrap().finish();
         self.child.take();
     }
 }
@@ -957,6 +995,14 @@ fn random_launch_id() -> String {
     let mut bytes = [0_u8; 32];
     getrandom::getrandom(&mut bytes).expect("generate daemon test launch identifier");
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn fixture_build_capacity_lease() -> MutexGuard<'static, ()> {
+    static CAPACITY: OnceLock<Mutex<()>> = OnceLock::new();
+    CAPACITY
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn http_post_command(
@@ -975,7 +1021,23 @@ fn http_post_command(
         "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\n{authorization}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
-    let mut stream = TcpStream::connect(addr).unwrap();
+    http_command(addr, request)
+}
+
+fn http_get_status(endpoint: &str, token: &str) -> String {
+    let rest = endpoint.strip_prefix("http://").unwrap();
+    let (addr, _) = rest.split_once('/').unwrap();
+    let request = format!(
+        "GET /status HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+    );
+    http_command(addr, request)
+}
+
+fn http_command(addr: &str, request: String) -> String {
+    let addr = addr.parse().expect("parse daemon IPC address");
+    let mut stream = TcpStream::connect_timeout(&addr, HTTP_TIMEOUT).unwrap();
+    stream.set_write_timeout(Some(HTTP_TIMEOUT)).unwrap();
+    stream.set_read_timeout(Some(HTTP_TIMEOUT)).unwrap();
     stream.write_all(request.as_bytes()).unwrap();
     read_http_response(&mut stream).unwrap()
 }
@@ -1110,36 +1172,6 @@ fn http_response_reader_rejects_a_partial_frame_before_transport_reset() {
             .kind(),
         io::ErrorKind::ConnectionReset
     );
-}
-
-fn read_ipc_endpoint(
-    child: &mut ContainedChild,
-    stderr: &mut ChildStderr,
-    stdout: &mut BufReader<impl Read>,
-) -> String {
-    let deadline = Instant::now() + IPC_ENDPOINT_TIMEOUT;
-    let mut line = String::new();
-    let mut endpoint = None;
-    while Instant::now() < deadline {
-        line.clear();
-        let bytes = stdout.read_line(&mut line).unwrap();
-        if bytes == 0 {
-            if let Ok(Some(status)) = child.try_wait() {
-                let mut stderr_body = String::new();
-                let _ = stderr.read_to_string(&mut stderr_body);
-                panic!("daemon exited before endpoint: {status}\nstderr:\n{stderr_body}");
-            }
-            continue;
-        }
-        if let Some(value) = line.trim().strip_prefix("ipc status endpoint: ") {
-            endpoint = Some(value.to_string());
-        }
-        if line.trim() == "resume-daemon foreground ready" {
-            return endpoint.expect("ready line follows endpoint publication");
-        }
-    }
-    child.terminate();
-    panic!("daemon did not print ipc status endpoint");
 }
 
 fn read_ipc_auth_token(data_dir: &Path) -> String {

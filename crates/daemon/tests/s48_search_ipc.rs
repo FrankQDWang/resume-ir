@@ -1,11 +1,11 @@
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::num::NonZeroUsize;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
-use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{ChildStderr, ChildStdin, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -1168,7 +1168,7 @@ struct DaemonHarness {
     _runtime_capacity: Option<support::ImportRuntimeCapacityLease>,
     child: Option<ContainedChild>,
     parent_lifecycle: Option<ChildStdin>,
-    bootstrap_stdout: Option<BufReader<ChildStdout>>,
+    stdout: Option<support::daemon_process::DaemonStdout>,
     stderr: Option<ChildStderr>,
     endpoint: String,
     token: String,
@@ -1231,21 +1231,21 @@ impl DaemonHarness {
             .stderr(Stdio::piped());
         let mut child = ContainedChild::spawn(&mut command).unwrap();
         let parent_lifecycle = child.take_stdin().unwrap();
-        let mut bootstrap_stdout = BufReader::new(child.take_stdout().unwrap());
+        let stdout = child.take_stdout().unwrap();
         let mut stderr = child.take_stderr().unwrap();
-        let endpoint = read_ipc_endpoint(&mut child, &mut stderr, &mut bootstrap_stdout);
+        let mut stdout = support::daemon_process::spawn_daemon_stdout(stdout);
+        let endpoint = stdout.wait_for_endpoint(&mut child, &mut stderr, Duration::from_secs(10));
         let token = read_ipc_auth_token(data_dir);
-        let mut harness = Self {
+        let harness = Self {
             _runtime_capacity: runtime_capacity,
             child: Some(child),
             parent_lifecycle: Some(parent_lifecycle),
-            bootstrap_stdout: Some(bootstrap_stdout),
+            stdout: Some(stdout),
             stderr: Some(stderr),
             endpoint,
             token,
         };
         harness.wait_for_core_initialized();
-        drop(harness.bootstrap_stdout.take());
         harness
     }
 
@@ -1395,7 +1395,11 @@ impl DaemonHarness {
 
     fn finish(&mut self) {
         drop(self.parent_lifecycle.take());
-        let status = self.child.as_mut().unwrap().wait().unwrap();
+        let status = support::daemon_process::wait_for_exit(
+            self.child.as_mut().unwrap(),
+            Duration::from_secs(10),
+            "parent lifecycle closed",
+        );
         let mut stderr = Vec::new();
         self.stderr
             .take()
@@ -1408,6 +1412,7 @@ impl DaemonHarness {
             String::from_utf8_lossy(&stderr)
         );
         assert!(stderr.is_empty());
+        self.stdout.take().unwrap().finish();
         self.child.take();
     }
 }
@@ -1482,31 +1487,6 @@ fn assert_candidate_pair_selection(
             || (doc_id == second.document_id.as_str()
                 && version_id == second.resume_version_id.as_str())
     );
-}
-
-fn read_ipc_endpoint(
-    child: &mut ContainedChild,
-    stderr: &mut ChildStderr,
-    stdout: &mut BufReader<impl Read>,
-) -> String {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let mut line = String::new();
-    while Instant::now() < deadline {
-        line.clear();
-        let bytes = stdout.read_line(&mut line).unwrap();
-        if bytes == 0 {
-            if let Ok(Some(status)) = child.try_wait() {
-                let mut stderr_body = String::new();
-                stderr.read_to_string(&mut stderr_body).unwrap();
-                panic!("daemon exited before endpoint: {status}\nstderr:\n{stderr_body}");
-            }
-            continue;
-        }
-        if let Some(endpoint) = line.trim().strip_prefix("ipc status endpoint: ") {
-            return endpoint.to_string();
-        }
-    }
-    panic!("daemon did not print ipc endpoint");
 }
 
 fn read_ipc_auth_token(data_dir: &Path) -> String {

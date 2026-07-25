@@ -44,6 +44,7 @@ Each execution row must record:
 | P0-14 | Detail IPC integration owns daemon shutdown through the real parent-lifecycle capability after every response is fully read | `6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c` | hosted Linux and macOS plus local all 6 s49 cases passed; bounded Windows shutdown diagnosis pending | s49 daemon harness, process containment, parent lifecycle, response framing, or detail/hydrate request sequence changes |
 | P0-15 | Rejected hypothesis: closing request input after parse prevents the hosted s49 response reset | `2e7f4fb504e027d787ddcc7da15a99dbebff15a1970106e86912c4ece24adb75:52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517:db79e491b28871d2335eebe2de694fa580eae6796f25e9ac8db8494773c16b7c:6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c:23fd9ede7e7d330e06afd3181b9095671f8f5d28a7df5157bc2157e9087e329e:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45` | failed: Linux PR run `30104547488` still reset one s49 response; production change reverted | never reused; retained only as negative diagnostic evidence |
 | P0-16 | Historical diagnosis of the non-release Linux s49 reset | `b7910b0140b3fc70044b3286deafcab6152fa79354e36b5700758e348f37c642:b014282b3981a5cd68d72ebb2662dbbf8083c3388f02ea320973b93c3392dc8a:6b02342a05c30852465bb8176f07b7a7d78edfee12cf8f268716129ebbc204b6:23fd9ede7e7d330e06afd3181b9095671f8f5d28a7df5157bc2157e9087e329e` | stopped by product-scope correction; all temporary diagnostics removed | never reused; Linux is not a native release gate for this feature train |
+| P0-17 | Daemon IPC integration startup and shutdown are truly bounded, and s49 serializes only expensive fixture construction rather than product execution | `c5541a0d7581c45ca5de78f929f172e891b747f2f22aa6ed96a540ea796c6e4f:e823a4f27c06ee35c4db66f986a228ce42f63a7a02b8a9a42f536d11d60ffae0:89e6282d4af0ff1cfaeeab7c2761a5ca9f733061963557132c56df9d3dc88129:8bbd5f6c560509ee57866c46646361ce761429c4083dd2740d024801613b191b` | local focused s48/s49 execution and Clippy passed; hosted Windows continuation pending | shared daemon test-process support, s48/s49 harness lifecycle, s49 fixture construction, or detail capability startup changes |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -439,6 +440,33 @@ this macOS-first feature train. Runs `30107075347` and `30107075263` were
 cancelled, all temporary reset diagnostics were removed, and no further
 feature work is gated on that investigation. This historical row remains only
 to explain the consumed evidence; it cannot delay v0.1.3 implementation.
+
+Platform CI run `30134629516` then completed the macOS workspace lane and the
+Windows workspace through s20 and all default s48 cases. Windows entered s49,
+passed both pure HTTP frame-reader cases, then ran all four store-backed cases
+for more than 36 minutes until the job's 60-minute hard limit cancelled the
+batch. No additional failure was printed; s81, s83 and s84 were not reached.
+
+P0-17 removes both sources of unbounded test behavior without changing daemon
+production timing. The shared test-process module drains stdout on a dedicated
+thread, publishes discovery through a channel and keeps the caller's endpoint
+deadline real. It also provides a bounded contained-child exit receipt. s49 now
+waits on authenticated `daemon.status.v3` detail capability state rather than
+the old post-initialization stdout line, fails immediately on a closed blocked
+state, and bounds every loopback request. Only the expensive encrypted
+store/index fixture construction is serialized; the actual daemon and IPC
+cases remain parallel.
+
+P0-17 focused verification on 2026-07-25:
+
+- `cargo test -p resume-daemon --locked --test s48_search_ipc --test
+  s49_detail_ipc -- --nocapture` passed: s48 6 passed and 7 reviewed-runtime
+  cases remained explicitly ignored; s49 passed all 6 cases in 21.36 seconds.
+- Focused s48/s49 Clippy with `-D warnings`, `cargo fmt --all -- --check` and
+  `git diff --check` passed in the same fail-late batch.
+- The decisive Windows continuation must run the invalidated s48/s49 targets
+  and the previously unreached s81/s83/s84 targets. The already-passed macOS
+  workspace receipt remains valid and is not replayed manually.
 
 ## Version rounds
 

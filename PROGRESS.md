@@ -30994,6 +30994,22 @@ Output summary:
   were cancelled, all temporary reset probes were removed, and P0 no longer
   blocks v0.1.3 implementation on that investigation. The prior traces remain
   historical evidence only.
+- Platform CI run `30134629516` subsequently completed macOS and reached the
+  Windows daemon integration targets. Windows passed s20, all default s48 cases
+  and the two pure s49 HTTP frame-reader cases, then kept all four store-backed
+  s49 cases active until the job's 60-minute hard limit. No later daemon target
+  ran, so this was a bounded-test-infrastructure failure rather than evidence
+  for another response-lifecycle production change.
+- P0-17 gives s48 and s49 one shared bounded stdout drain and endpoint channel,
+  replaces s48's unbounded child wait, and makes s49 observe authenticated
+  detail capability state instead of waiting on the old post-initialization
+  stdout summary. s49 serializes only its expensive encrypted fixture
+  construction; daemon execution and IPC assertions remain parallel. The
+  focused s48/s49 batch passed 12 executed tests with 7 reviewed-runtime cases
+  explicitly ignored, s49 completed in 21.36 seconds, and focused Clippy,
+  rustfmt and diff checks passed. Hosted Windows must continue the invalidated
+  s48/s49 targets and the previously unreached s81/s83/s84 targets; macOS is
+  not replayed.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 
