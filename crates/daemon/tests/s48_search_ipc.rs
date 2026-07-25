@@ -1347,28 +1347,13 @@ impl DaemonHarness {
         stream
             .write_all(request.as_bytes())
             .expect("write daemon IPC request before deadline");
-        let mut bytes = Vec::new();
-        let mut buffer = [0_u8; 4096];
-        loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            assert!(!remaining.is_zero(), "daemon IPC response deadline elapsed");
-            stream
-                .set_read_timeout(Some(remaining))
-                .expect("configure bounded daemon IPC response read");
-            match stream.read(&mut buffer) {
-                Ok(0) => break,
-                Ok(read) => {
-                    assert!(
-                        bytes.len().saturating_add(read) <= MAX_HTTP_RESPONSE_BYTES,
-                        "daemon IPC response exceeded {MAX_HTTP_RESPONSE_BYTES} bytes"
-                    );
-                    bytes.extend_from_slice(&buffer[..read]);
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(error) => panic!("read daemon IPC response before deadline: {error}"),
-            }
-        }
-        let raw = String::from_utf8(bytes).expect("daemon IPC response is UTF-8");
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(), "daemon IPC response deadline elapsed");
+        stream
+            .set_read_timeout(Some(remaining))
+            .expect("configure bounded daemon IPC response read");
+        let raw = support::http::read_response(&mut stream, MAX_HTTP_RESPONSE_BYTES)
+            .expect("read one complete daemon IPC response before deadline");
         HttpResponse::parse(raw)
     }
 

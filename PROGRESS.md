@@ -31010,6 +31010,17 @@ Output summary:
   rustfmt and diff checks passed. Hosted Windows must continue the invalidated
   s48/s49 targets and the previously unreached s81/s83/s84 targets; macOS is
   not replayed.
+- Hosted run `30137653620` confirmed the hang repair: Windows completed s48,
+  all six s49 cases in 21.05 seconds and s81. It then exposed the same old
+  EOF-as-message-boundary bug in one s83 blocked-status request; four sibling
+  s83 cases passed and s84 was not reached.
+- P0-18 extracts the proven bounded `Content-Length` frame reader into shared
+  test support and applies it to s48, s49, s83 and s84. Complete frames survive
+  a later transport reset; partial, malformed, extra and oversized frames
+  still fail. The fail-late focused batch passed s48 6/6, s49 6/6, s83 5/5
+  and the previously unreached s84 2/2, followed by combined target Clippy,
+  rustfmt, changed-file and public-boundary checks. Hosted Windows remains the
+  cross-platform receipt; existing PR, Security and macOS passes are retained.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

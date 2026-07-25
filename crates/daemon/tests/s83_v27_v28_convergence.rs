@@ -18,7 +18,11 @@ use process_containment::ContainedChild;
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
+#[path = "support/http.rs"]
+mod http_support;
+
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(20);
+const MAX_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[test]
 fn migration_fixture_builder_rejects_non_synthetic_roots() {
@@ -320,7 +324,8 @@ fn authenticated_get(endpoint: &str, token: &str) -> String {
         .unwrap()
         .split_once('/')
         .unwrap();
-    let mut stream = TcpStream::connect(address).unwrap();
+    let address = address.parse().expect("parse daemon IPC address");
+    let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(5)).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
@@ -332,9 +337,7 @@ fn authenticated_get(endpoint: &str, token: &str) -> String {
         "GET /{path} HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
     )
     .unwrap();
-    let mut response = String::new();
-    stream.read_to_string(&mut response).unwrap();
-    response
+    http_support::read_response(&mut stream, MAX_HTTP_RESPONSE_BYTES).unwrap()
 }
 
 fn snapshot_existing_files(root: &Path) -> BTreeMap<PathBuf, (u64, String)> {

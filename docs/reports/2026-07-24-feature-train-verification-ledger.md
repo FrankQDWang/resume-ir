@@ -40,11 +40,12 @@ Each execution row must record:
 | P0-10 | Oversized resident-command output is tested independently from long-running-command timeout behavior | `3061010c9986b56dd4afd0b10dccde6ee27c51e4dc6c3883ae78ccfaf964a0f6` | passed: local exact plus hosted Windows | resident command pipe cap, timeout precedence, or oversized-output fixture changes |
 | P0-11 | One-shot responses half-close after the declared frame, and an orderly request-limit exit waits for its final peer close | `52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517:b238323d0018b2a3bc76e262a02fd1a7ad9d857cf2967f8337b62cf059b8612a:1c169b8e7c563b027b9970bc0b414d7fb32c859956c72ab1f65f92e14a356736` | invalidated: hosted parallel s49 proved the nested one-second wait was premature | one-shot response framing, final-peer acknowledgement, streaming ownership, or request-limit lifecycle changes |
 | P0-12 | Metadata-key restore rejects a cross-platform unsafe authority object without replacing it | `44c9cd156a91eda2fae1f78627e2572e25ffbe7676f64a20df3ea5feb6735680:3e25a1fb07e376f040dd3e3428bae9184746f36efd0db659a7d008432cdbaeac:e44e11ffdca60c366e0ac86ba540e4d43800eafe3f4c81f199898927027df1c6` | passed: local exact plus hosted Windows | metadata-key restore, owner-directory validation, or unsafe-authority fixtures change |
-| P0-13 | The final request-limit exit waits first for exactly-once response completion, stops the request watchdog, then grants a bounded TCP delivery window | `e38dc69c9a2fc132b7914cc0299143948b639a0b6f32cd593710fbec855156ba:913985e11e4e026bb8360ff7e783a62f02e23aa99a7fccb046f40a2ad3227369:db79e491b28871d2335eebe2de694fa580eae6796f25e9ac8db8494773c16b7c:25d0d14868986e3b87f845f6e356aa92fbdc607a91bcacd510f39eef18d2428c:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45:6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c` | hosted Linux, macOS and local exact lifecycle/s49 passed; Windows shutdown diagnosis pending | completion capability, bounded delivery receipt, deferred response ownership, connection hard deadline, or request-limit lifecycle changes |
-| P0-14 | Detail IPC integration owns daemon shutdown through the real parent-lifecycle capability after every response is fully read | `6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c` | hosted Linux and macOS plus local all 6 s49 cases passed; bounded Windows shutdown diagnosis pending | s49 daemon harness, process containment, parent lifecycle, response framing, or detail/hydrate request sequence changes |
+| P0-13 | The final request-limit exit waits first for exactly-once response completion, stops the request watchdog, then grants a bounded TCP delivery window | `e38dc69c9a2fc132b7914cc0299143948b639a0b6f32cd593710fbec855156ba:913985e11e4e026bb8360ff7e783a62f02e23aa99a7fccb046f40a2ad3227369:db79e491b28871d2335eebe2de694fa580eae6796f25e9ac8db8494773c16b7c:25d0d14868986e3b87f845f6e356aa92fbdc607a91bcacd510f39eef18d2428c:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45:6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c` | hosted Linux, macOS, Windows and local exact lifecycle/s48/s49 passed | completion capability, bounded delivery receipt, deferred response ownership, connection hard deadline, or request-limit lifecycle changes |
+| P0-14 | Detail IPC integration owns daemon shutdown through the real parent-lifecycle capability after every response is fully read | `6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c` | hosted Linux, macOS and Windows plus local all 6 s49 cases passed | s49 daemon harness, process containment, parent lifecycle, response framing, or detail/hydrate request sequence changes |
 | P0-15 | Rejected hypothesis: closing request input after parse prevents the hosted s49 response reset | `2e7f4fb504e027d787ddcc7da15a99dbebff15a1970106e86912c4ece24adb75:52bc4c9590e42f3bab34c38d109de6e4c5284041455276200c6de196f2b7e517:db79e491b28871d2335eebe2de694fa580eae6796f25e9ac8db8494773c16b7c:6aa3024047c5efbd23d890edf2db3145f7a711e7ea88b0fd1c82e213dd323f7c:23fd9ede7e7d330e06afd3181b9095671f8f5d28a7df5157bc2157e9087e329e:f31e55a67aa82e035f4f475c80407814565b6c6fd3771825f7367e53ba992f45` | failed: Linux PR run `30104547488` still reset one s49 response; production change reverted | never reused; retained only as negative diagnostic evidence |
 | P0-16 | Historical diagnosis of the non-release Linux s49 reset | `b7910b0140b3fc70044b3286deafcab6152fa79354e36b5700758e348f37c642:b014282b3981a5cd68d72ebb2662dbbf8083c3388f02ea320973b93c3392dc8a:6b02342a05c30852465bb8176f07b7a7d78edfee12cf8f268716129ebbc204b6:23fd9ede7e7d330e06afd3181b9095671f8f5d28a7df5157bc2157e9087e329e` | stopped by product-scope correction; all temporary diagnostics removed | never reused; Linux is not a native release gate for this feature train |
-| P0-17 | Daemon IPC integration startup and shutdown are truly bounded, and s49 serializes only expensive fixture construction rather than product execution | `c5541a0d7581c45ca5de78f929f172e891b747f2f22aa6ed96a540ea796c6e4f:e823a4f27c06ee35c4db66f986a228ce42f63a7a02b8a9a42f536d11d60ffae0:89e6282d4af0ff1cfaeeab7c2761a5ca9f733061963557132c56df9d3dc88129:8bbd5f6c560509ee57866c46646361ce761429c4083dd2740d024801613b191b` | local focused s48/s49 execution and Clippy passed; hosted Windows continuation pending | shared daemon test-process support, s48/s49 harness lifecycle, s49 fixture construction, or detail capability startup changes |
+| P0-17 | Daemon IPC integration startup and shutdown are truly bounded, and s49 serializes only expensive fixture construction rather than product execution | `c5541a0d7581c45ca5de78f929f172e891b747f2f22aa6ed96a540ea796c6e4f:e823a4f27c06ee35c4db66f986a228ce42f63a7a02b8a9a42f536d11d60ffae0:89e6282d4af0ff1cfaeeab7c2761a5ca9f733061963557132c56df9d3dc88129:8bbd5f6c560509ee57866c46646361ce761429c4083dd2740d024801613b191b` | local focused execution/Clippy and hosted Windows s48/s49/s81 passed | shared daemon test-process support, s48/s49 harness lifecycle, s49 fixture construction, or detail capability startup changes |
+| P0-18 | Test IPC clients consume one bounded `Content-Length` frame and never use transport EOF as the success boundary | `6868904bf1e9e69486e7312e56bb1f9172f962155524143ce1cfc3253c520dad:3c6d6b9a7791d75a9c03d5d40f3cb215ea381f3fe98555522e8cb425b1f9a5a1:5a9e20659fe9618a1375bdbba4169d3ce40c73fe369fed084aa00ac515bf4fdc:88d976d94a78148e91f855a4fb660655290f9dbccee4c21777e5ed8a30e6e146:2070a3cc5da91dfe45accfdc2a87570a6eaec06e5b030f2eed12e03bdd73e764:a7dc48cca6431478f638b92a3a006a6fe2f480706ecf05339c0dffa1ecd9d1d5` | local fail-late batch passed s48, s49, s83, s84 and focused Clippy; hosted Windows replay pending | shared HTTP frame reader or the four listed IPC harnesses change |
 
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
@@ -467,6 +468,31 @@ P0-17 focused verification on 2026-07-25:
 - The decisive Windows continuation must run the invalidated s48/s49 targets
   and the previously unreached s81/s83/s84 targets. The already-passed macOS
   workspace receipt remains valid and is not replayed manually.
+
+Hosted run `30137653620` closed P0-17's original hang: Windows completed s48,
+s49 and s81. s49 passed all six cases in 21.05 seconds. The run then reached
+s83 and reported one `ConnectionReset` while the client used
+`read_to_string` to wait for transport EOF after a complete blocked-status
+response. Four sibling s83 cases passed; s84 was not reached because Cargo
+stopped after the failed test binary. The PR and Security workflows and the
+macOS platform job all passed independently.
+
+P0-18 moves the already-tested s49 frame parser into shared test support.
+s48, s49, s83 and s84 now accept exactly one bounded response by declared
+`Content-Length`; a reset after the complete frame is irrelevant, while a
+partial frame, missing/invalid length, overflow, extra bytes and oversized
+response still fail. s83 and s84 also use bounded loopback connect/read/write
+deadlines.
+
+P0-18 focused verification on 2026-07-25 ran every invalidated or previously
+unreached target without short-circuiting:
+
+- s48: 6 passed, 7 reviewed-runtime cases explicitly ignored.
+- s49: 6 passed.
+- s83: 5 passed, including the hosted Windows failure.
+- s84: 2 passed; this target had not run in the failed Windows batch.
+- Combined target Clippy with `-D warnings`, rustfmt, changed-file checks and
+  the public guard passed.
 
 ## Version rounds
 

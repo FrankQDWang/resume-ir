@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod daemon_process;
+pub mod http;
 
 use std::fs;
 use std::path::{Path, PathBuf};

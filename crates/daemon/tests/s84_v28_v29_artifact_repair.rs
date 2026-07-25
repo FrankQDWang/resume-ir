@@ -27,9 +27,13 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tempfile::tempdir;
 
+#[path = "support/http.rs"]
+mod http_support;
+
 const LAUNCH_ID: &str = "8484848484848484848484848484848484848484848484848484848484848484";
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
+const MAX_HTTP_RESPONSE_BYTES: usize = 1024 * 1024;
 
 #[test]
 fn supervised_daemon_blocks_v28_without_changing_existing_bytes() {
@@ -620,7 +624,8 @@ fn request(endpoint: &str, token: &str, method: &str, body: Option<serde_json::V
             body.len()
         )
     };
-    let mut stream = TcpStream::connect(address).unwrap();
+    let address = address.parse().expect("parse daemon IPC address");
+    let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(5)).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .unwrap();
@@ -632,8 +637,7 @@ fn request(endpoint: &str, token: &str, method: &str, body: Option<serde_json::V
         "{method} /{path} HTTP/1.1\r\nHost: {address}\r\nAuthorization: Bearer {token}\r\n{content_headers}Connection: close\r\n\r\n{body}"
     )
     .unwrap();
-    let mut raw = String::new();
-    stream.read_to_string(&mut raw).unwrap();
+    let raw = http_support::read_response(&mut stream, MAX_HTTP_RESPONSE_BYTES).unwrap();
     let status_code = raw
         .lines()
         .next()
