@@ -1048,10 +1048,10 @@ active delivery platform.
 
 | Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
 | --- | --- | --- | --- | --- |
-| F09-01 | A ready v33 COW receipt validates and atomically publishes its already-verified target | `d771454b6be5dad98b7340b93f8f8b4cdb789bc317f54d3e8f3e43c2ad27d69a` | Rust compile passed; exact assertion pending the next macOS PR run | current-store receipt reconciliation, manifest dispatch or current-store validation changes |
-| F09-02 | Historical v29 publication fixtures remain v29 without entering the production migration boundary | `df187302b5501308b89db3fbdf60ae75b8f628e355c22a99e66b632320b3a44a:b217941a8a313f0bb68fc763b875ae58ee70b6f4ae7a4ca14a7cc71f92d25c0b` | default and `migration-test-support` Rust compilation passed; four exact assertions pending the next macOS PR run | historical fixture seam, v29 publication validation or migration-test support changes |
-| F09-03 | Fresh owner/read paths assert the schema selected by the current product, not the retired v29 hard cut | `dd188f730183e9c8cdc7fef1719306fb89f61e78ca6338828e21f387ddf775a1` | Rust compile passed; two exact assertions pending the next macOS PR run | current schema, owner open or read-only current-store contract changes |
-| F09-04 | An explicit rescan after a failed retryable task creates a new queued attempt and cancels the terminal head | `0778537f42156afad582d44768a6809d60eea2ffe0cac039b0429d8d35919ced` | Rust compile passed; exact assertion pending the next macOS PR run | configured rescan, task-head retention or retry semantics change |
+| F09-01 | A ready v33 COW receipt validates and atomically publishes its already-verified target | `d771454b6be5dad98b7340b93f8f8b4cdb789bc317f54d3e8f3e43c2ad27d69a` | passed in macOS PR run `30204531887` | current-store receipt reconciliation, manifest dispatch or current-store validation changes |
+| F09-02 | Historical v29 publication fixtures remain v29 without entering the production migration boundary | `df187302b5501308b89db3fbdf60ae75b8f628e355c22a99e66b632320b3a44a:b217941a8a313f0bb68fc763b875ae58ee70b6f4ae7a4ca14a7cc71f92d25c0b` | four affected assertions passed in macOS PR run `30204531887`; the complete meta-store lib result was 141 passed | historical fixture seam, v29 publication validation or migration-test support changes |
+| F09-03 | Fresh owner/read paths assert the schema selected by the current product, not the retired v29 hard cut | `dd188f730183e9c8cdc7fef1719306fb89f61e78ca6338828e21f387ddf775a1` | two affected assertions passed in macOS PR run `30204531887` | current schema, owner open or read-only current-store contract changes |
+| F09-04 | An explicit rescan after a failed retryable task creates a new queued attempt and cancels the terminal head | `0778537f42156afad582d44768a6809d60eea2ffe0cac039b0429d8d35919ced` | passed in macOS PR run `30204531887` | configured rescan, task-head retention or retry semantics change |
 | F09-05 | Active goal cannot re-enable Windows/Linux execution through the retired private-corpus transfer policy | `e5d57102184b33586cc83487779292955e28693137fbddf41ce86c86706d48ea:ea873c97d3e92ec546081cc6c3b3323b1690fc3697ca129c7a6842c31bdfc879:050ceb75b004160133b3648533c6387c8442d077a2346cdf65248149f956656d:c477bb451c00357a8adf73df638289202fd7e05467ce4f2923128b67f7eb47bc` | autonomous-goal, loop-state and performance checkers plus seven governance mutation tests passed | active platform contract, pinned synthetic fixtures or autonomous-goal checker changes |
 
 The local exact F09-01 binary compiled, then remained suspended in macOS
@@ -1060,3 +1060,28 @@ confirmed zero test-body execution; the exact cargo parent and orphaned child
 were terminated orderly. This is `not_run`, not a failed assertion. The
 existing macOS PR job is the authoritative red-capable feedback loop and will
 reuse the saved PDFium pack. No unrelated local Rust test was run.
+
+### final stale schema assertion repair F10 — 2026-07-26
+
+macOS PR run `30204531887` proved every F09 repair: the meta-store library
+reported 141 passed and no failures. It also completed Clippy plus every
+fail-late CLI, daemon, license, runbook, handoff, workflow and benchmark check.
+The only remaining workspace failure was the separate
+`excluded_document_status` integration target: its first test called
+`EphemeralMetaStore::run_migrations()`, which now deliberately initializes
+current schema v33, while the old test name and final assertion still expected
+v29. Its excluded-status round-trip and non-deletion assertions had already
+passed, and the target's publication test passed.
+
+The repair renames that one case to current-schema semantics and compares with
+`CURRENT_SCHEMA_VERSION`. No production code or behavior changed.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F10-01 | Excluded status round-trips without deletion in the schema initialized by the current ephemeral migration API | `51d549db58f437176fc7cd9fe23d27e23ffc59c6cf0ebbdc6d280a29dd41ccf0` | exact target compiled and target-specific deny-warnings Clippy passed; exact assertion pending the next macOS PR run | excluded document status, ephemeral migration target or current schema changes |
+
+The local exact integration binary again remained suspended in `_dyld_start`
+after compilation and before the Rust test harness. A process sample confirmed
+the same host loader failure and the exact processes were terminated. It is
+`not_run`; the next macOS PR run is the assertion authority. Every unrelated
+pass from run `30204531887` remains reusable.

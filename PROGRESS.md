@@ -31281,6 +31281,15 @@ Output summary:
   it was terminated and recorded as `not_run`. The cached macOS PR runner is the
   authoritative assertion loop for the eight affected cases; unrelated valid
   passes remain reused.
+- macOS PR run `30204531887` then proved all eight repairs and the complete
+  meta-store library (`141 passed`). Clippy and every fail-late CLI, daemon,
+  license, runbook, handoff, workflow and benchmark check also passed.
+- The only remaining workspace failure was an independent
+  `excluded_document_status` integration assertion that called the current v33
+  ephemeral migration API but still named and expected v29. It now uses
+  `CURRENT_SCHEMA_VERSION`; its exact target compiles and target-specific
+  deny-warnings Clippy passes. The local binary again stalled before main in
+  `_dyld_start`, so the assertion awaits only the next cached macOS PR run.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

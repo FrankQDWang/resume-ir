@@ -5,7 +5,7 @@ use meta_store::{
     ResumeVersion, ResumeVersionClassification, ResumeVersionId, ReviewDisposition,
     SearchProjectionDigest, SearchPublicationCommit, SearchPublicationDraft,
     SearchPublicationOutcome, SearchPublicationValidation, SourceRevision, TerminalDocumentUpdate,
-    UnixTimestamp, VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
+    UnixTimestamp, VectorSnapshotDescriptor, CLASSIFIER_EPOCH, CURRENT_SCHEMA_VERSION,
 };
 
 mod support;
@@ -34,7 +34,7 @@ fn document(status: DocumentStatus) -> Document {
 }
 
 #[test]
-fn excluded_status_round_trips_in_v29_without_deletion() {
+fn excluded_status_round_trips_in_current_schema_without_deletion() {
     let store = EphemeralMetaStore::open_in_memory().unwrap();
     store.run_migrations().unwrap();
     let excluded = document(DocumentStatus::Excluded);
@@ -44,7 +44,7 @@ fn excluded_status_round_trips_in_v29_without_deletion() {
     let persisted = store.document_by_id(&excluded.id).unwrap().unwrap();
     assert_eq!(persisted.status, DocumentStatus::Excluded);
     assert!(!persisted.is_deleted);
-    assert_eq!(store.schema_version().unwrap(), 29);
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 }
 
 #[test]
