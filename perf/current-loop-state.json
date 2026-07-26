@@ -2889,6 +2889,8 @@
       {"command":"F14 exact resume-cli previously failed cases: 14 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"},
       {"command":"F14 exact resume-daemon previously failed cases: 7 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"},
       {"command":"F14 focused production/test-seam Clippy and governance/public-boundary checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"},
+      {"command":"macOS PR run 30210820223 complete fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#direct-cli-managed-root-scan-coordination-repair-f15--2026-07-26"},
+      {"command":"F15 exact repeated managed-root CLI import regression and focused three-crate Clippy","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#direct-cli-managed-root-scan-coordination-repair-f15--2026-07-26"},
       {"command":"performance, autonomous-goal, loop-state, public-repository and diff checks after final repair","exit_code":0,"evidence_ref":"PROGRESS.md#v0.1.8-final-repair-dmg-and-synthetic-installed-acceptance"}
     ],
     "all_required_commands_ran": false,

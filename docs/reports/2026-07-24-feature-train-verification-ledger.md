@@ -1219,3 +1219,28 @@ completed successfully. These cancelled enumerations are `not_run`, not failed
 tests. Focused production/test-seam Clippy, loop-state, performance-contract,
 autonomous-goal and public-repository checks all passed. No previously valid
 workspace target was replayed.
+
+### direct CLI managed-root scan coordination repair F15 — 2026-07-26
+
+macOS PR run `30210820223` proved every F14 case except one previously valid
+s15 idempotency case. The complete fail-late run then passed all later workspace
+targets plus CLI/daemon closed loops, licenses, runbooks, handoff, workflow and
+benchmark smoke. The sole failure was a second direct CLI import after the test
+had established current source-root authority: the CLI still created only the
+legacy task/scope head, so occurrence persistence had no matching task-keyed
+`ScanSnapshot` and failed closed.
+
+The repair gives direct CLI imports of managed roots the same atomic
+task/snapshot coordination contract used by daemon scans. Scan success and
+failure completion moved from daemon-private code into a small shared
+import-pipeline module, so both execution owners update progress, missing-file
+truth, PDF reprocessing and terminal scan state identically. Legacy-only direct
+imports remain batched exactly as before; one invocation cannot mix managed
+and unmanaged roots.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F15-01 | A second direct import of a managed source root creates a matching task-keyed scan, preserves one OCR job and completes the scan | `6676ac93976590aa1a8fa44723bf4966299f967237c96397377af8bc80d9f67d` | the sole failed exact case passed locally; focused Clippy for import-pipeline, resume-cli and resume-daemon passed | direct import coordination, source scan completion, occurrence persistence or OCR job identity changes |
+
+No previously valid workspace target was replayed. The next PR run needs only
+to validate this affected boundary and the repository's required macOS gates.

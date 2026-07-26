@@ -25,6 +25,7 @@ mod search_publication_vector;
 mod search_vectorizer;
 mod source_digest;
 mod source_dispositions;
+mod source_scan;
 mod timing;
 
 use std::collections::BTreeMap;
@@ -109,6 +110,7 @@ pub use search_vectorizer::{
 };
 #[cfg(test)]
 use source_dispositions::{ImportDispositionBatches, ProcessedFile};
+pub use source_scan::{finish_source_scan_failure, finish_source_scan_success};
 pub(crate) use timing::measure_result_stage;
 
 pub(crate) const PARSE_VERSION: &str = "parser-pdfium-v2";

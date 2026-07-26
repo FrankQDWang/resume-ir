@@ -30509,6 +30509,23 @@ Output summary:
 - The authoritative command/run mapping is in
   `docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26`.
 
+### v0.1.8 direct CLI managed-root scan coordination repair F15
+
+- macOS PR run `30210820223` passed every F14 regression except one previously
+  valid repeated-import case, then completed all later workspace targets and
+  independent checks successfully.
+- The remaining defect was a split responsibility boundary: direct CLI import
+  could see a managed source root but created only a legacy task/scope head,
+  leaving occurrence writes without the task-keyed scan snapshot required by
+  current source truth.
+- Managed-root CLI imports now use the same task/snapshot coordinator as daemon
+  scans. Shared success/failure completion lives in import-pipeline, and both
+  execution owners now close scan progress, missing-file truth and PDF
+  reprocessing consistently.
+- The sole failed exact case passed locally. Focused Clippy for
+  import-pipeline, resume-cli and resume-daemon also passed; no unrelated test
+  target was replayed.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2

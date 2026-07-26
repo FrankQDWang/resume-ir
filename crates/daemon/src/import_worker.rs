@@ -5,13 +5,13 @@ use std::thread;
 use std::time::Duration;
 
 use import_pipeline::{
-    import_root_with_options_and_control, ImportOptions, ImportPipelineErrorClass,
-    ImportTaskOwnerLock, PipelineRunControl, ScanProfile,
+    finish_source_scan_failure, finish_source_scan_success, import_root_with_options_and_control,
+    ImportOptions, ImportPipelineErrorClass, ImportTaskOwnerLock, PipelineRunControl, ScanProfile,
 };
 use meta_store::{
     ImportProcessingContract, ImportScanBudgetKind, ImportScanProfile, ImportScanScope,
-    ImportTaskFailure, ImportTaskId, ImportTaskStatus, OwnedMetaStore, ScanCounts, ScanPhase,
-    ScanTrigger, SearchRepairReason, UnixTimestamp,
+    ImportTaskFailure, ImportTaskId, ImportTaskStatus, OwnedMetaStore, ScanTrigger,
+    SearchRepairReason, UnixTimestamp,
 };
 
 use crate::daemon_error::{DaemonError, Result};
@@ -225,22 +225,25 @@ pub(crate) fn run_import_worker_once_with_retry_due(
                 }
                 finish_source_scan_failure(
                     store,
-                    &scope,
+                    &scope.canonical_root_path,
                     &task.id,
                     processing_contract,
                     current_timestamp()?,
-                )?;
+                )
+                .map_err(DaemonError::store)?;
                 continue;
             }
         };
 
         finish_source_scan_success(
             store,
-            &scope,
+            &scope.canonical_root_path,
             &task.id,
             processing_contract,
             &import_summary,
-        )?;
+            current_timestamp()?,
+        )
+        .map_err(DaemonError::store)?;
         worker_summary.processed += 1;
         worker_summary.searchable_documents += import_summary.searchable_documents;
         worker_summary.ocr_jobs_queued += import_summary.ocr_jobs_queued;
@@ -250,138 +253,6 @@ pub(crate) fn run_import_worker_once_with_retry_due(
         let _ = try_finalize_migration_rebuild(store, options, processing_contract, &run_control)?;
     }
     Ok(worker_summary)
-}
-
-fn finish_source_scan_success(
-    store: &OwnedMetaStore,
-    scope: &ImportScanScope,
-    task_id: &ImportTaskId,
-    processing_contract: &ImportProcessingContract,
-    summary: &import_pipeline::ImportSummary,
-) -> Result<()> {
-    let Some(root) = store
-        .source_root_by_canonical_path(&scope.canonical_root_path)
-        .map_err(DaemonError::store)?
-    else {
-        return Ok(());
-    };
-    let Some(snapshot) = store
-        .latest_scan_snapshot(&root.id)
-        .map_err(DaemonError::store)?
-        .filter(|snapshot| snapshot.id == task_id.as_str() && snapshot.phase.is_active())
-    else {
-        return Ok(());
-    };
-    let finished_at = current_timestamp()?;
-    let elapsed = finished_at
-        .as_unix_seconds()
-        .saturating_sub(snapshot.started_at.as_unix_seconds());
-    let processed = summary.processed_documents;
-    let rate = (elapsed > 0 && processed > 0).then_some(processed as f64 / elapsed as f64);
-    let classifications = store
-        .source_root_classification_counts(&root.id, processing_contract.classifier_epoch())
-        .map_err(DaemonError::store)?;
-    let counts = ScanCounts {
-        discovered: summary.files_discovered as u64,
-        searchable: summary.searchable_documents as u64,
-        non_resume: classifications.non_resume,
-        needs_review: classifications.needs_review,
-        ocr: summary.ocr_required_documents as u64,
-        failed: summary.failed_documents as u64,
-        ignored: summary.ignored_entries as u64,
-        processed: processed as u64,
-        total: Some(summary.files_discovered as u64),
-        errors: summary.scan_errors as u64,
-    };
-    // Per-file parse/classification failures are part of a complete source
-    // snapshot. Only an incomplete directory enumeration or an exhausted scan
-    // budget makes absence unsafe to interpret as deletion.
-    let scan_is_complete = summary.source_truth_complete
-        && summary.scan_errors == 0
-        && !summary.scan_budget.is_some_and(|budget| budget.exhausted);
-    if scan_is_complete {
-        store
-            .reconcile_complete_source_scan(&root.id, task_id.as_str(), counts, rate, finished_at)
-            .map_err(DaemonError::store)?;
-        if summary.deferred_pdf_documents == 0 {
-            store
-                .complete_pdf_reprocess_root(
-                    &root.id,
-                    task_id,
-                    processing_contract.primary_parse_version(),
-                    finished_at,
-                )
-                .map_err(DaemonError::store)?;
-        } else {
-            store
-                .requeue_pdf_reprocess_root(
-                    &root.id,
-                    task_id,
-                    processing_contract.primary_parse_version(),
-                    finished_at,
-                )
-                .map_err(DaemonError::store)?;
-        }
-    } else {
-        store
-            .fail_or_partial_scan(
-                &root.id,
-                task_id.as_str(),
-                counts,
-                ScanPhase::Partial,
-                finished_at,
-            )
-            .map_err(DaemonError::store)?;
-        store
-            .requeue_pdf_reprocess_root(
-                &root.id,
-                task_id,
-                processing_contract.primary_parse_version(),
-                finished_at,
-            )
-            .map_err(DaemonError::store)?;
-    }
-    Ok(())
-}
-
-fn finish_source_scan_failure(
-    store: &OwnedMetaStore,
-    scope: &ImportScanScope,
-    task_id: &ImportTaskId,
-    processing_contract: &ImportProcessingContract,
-    now: UnixTimestamp,
-) -> Result<()> {
-    let Some(root) = store
-        .source_root_by_canonical_path(&scope.canonical_root_path)
-        .map_err(DaemonError::store)?
-    else {
-        return Ok(());
-    };
-    let Some(snapshot) = store
-        .latest_scan_snapshot(&root.id)
-        .map_err(DaemonError::store)?
-        .filter(|snapshot| snapshot.id == task_id.as_str() && snapshot.phase.is_active())
-    else {
-        return Ok(());
-    };
-    store
-        .fail_or_partial_scan(
-            &root.id,
-            task_id.as_str(),
-            snapshot.counts,
-            ScanPhase::Failed,
-            now,
-        )
-        .map_err(DaemonError::store)?;
-    store
-        .requeue_pdf_reprocess_root(
-            &root.id,
-            task_id,
-            processing_contract.primary_parse_version(),
-            now,
-        )
-        .map_err(DaemonError::store)?;
-    Ok(())
 }
 
 fn schedule_next_pdf_reprocess(

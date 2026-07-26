@@ -10,8 +10,9 @@ use meta_store::{
     BeginScanOutcome, ClassificationStatus, ContentDigest, CurrentClassifierEpoch,
     DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, Document, DocumentId, DocumentStatus,
     FileExtension, IngestJobFailureKind, IngestJobKind, IngestJobStatus, OcrPageCacheEntry,
-    OcrPageCacheKey, OcrPageCacheStatus, OwnedMetaStore, ReadMetaStore, ReasonCode, ScanTrigger,
-    SearchRepairReason, SourceRevision, SourceRevisionTriage, UnixTimestamp, CLASSIFIER_EPOCH,
+    OcrPageCacheKey, OcrPageCacheStatus, OwnedMetaStore, ReadMetaStore, ReasonCode, ScanCounts,
+    ScanTrigger, SearchRepairReason, SourceRevision, SourceRevisionTriage, UnixTimestamp,
+    CLASSIFIER_EPOCH,
 };
 
 #[test]
@@ -1385,6 +1386,13 @@ fn ensure_scanned_fixture_source_authority(data_dir: &Path, fixture_root: &Path)
     let source_revision =
         SourceRevision::for_content(document.id.clone(), content_digest, document.byte_size);
     store.insert_source_revision(&source_revision).unwrap();
+    if store
+        .active_source_file_for_revision(&document.id, &source_revision.id)
+        .unwrap()
+        .is_some()
+    {
+        return;
+    }
     let scan = store
         .begin_scan(
             &root.id,
@@ -1408,6 +1416,15 @@ fn ensure_scanned_fixture_source_authority(data_dir: &Path, fixture_root: &Path)
             &document.id,
             &source_revision.id,
             &scan_id,
+            document.updated_at,
+        )
+        .unwrap();
+    store
+        .reconcile_complete_source_scan(
+            &root.id,
+            &scan_id,
+            ScanCounts::default(),
+            None,
             document.updated_at,
         )
         .unwrap();
@@ -1623,6 +1640,9 @@ fn seed_ocr_pdf_document_with_bytes(
             &scan_id,
             now,
         )
+        .unwrap();
+    store
+        .reconcile_complete_source_scan(&source_root.id, &scan_id, ScanCounts::default(), None, now)
         .unwrap();
     store
         .insert_source_revision_triage(&SourceRevisionTriage {

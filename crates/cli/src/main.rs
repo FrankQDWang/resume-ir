@@ -35,15 +35,14 @@ use meta_store::{
     backup_metadata_encryption_key, restore_metadata_encryption_key, CandidateId, ContactHash,
     Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
     ImportRootKind as StoreImportRootKind, ImportRootPreset as StoreImportRootPreset,
-    ImportRootTaskHeadBatchOutcome, ImportRootTaskHeadBatchRejection, ImportRootTaskHeadOutcome,
-    ImportRootTaskHeadRequest, ImportScanBudgetKind as StoreImportScanBudgetKind,
-    ImportScanErrorSummary, ImportScanProfile as StoreImportScanProfile, ImportScanScope,
-    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJobFailureKind,
-    IngestJobKind, IngestJobStatus, MetadataEncryptionState, OcrAttemptFailure, OcrPageCacheEntry,
-    OcrPageCacheKey, OwnedMetaStore, PendingImportTaskByRootDiagnostic, QueryLatencySummary,
-    ReadMetaStore, ResumeVersion, ResumeVersionId, SearchFilterCase, SearchProjectionFilter,
-    SearchProjectionPredicate, SearchSelection, SearchSelectionDetailResolution,
-    SearchTextBytePageRequest, UnixTimestamp, VectorSnapshotMode, WorkerTaskKind,
+    ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanErrorSummary,
+    ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexStateStatus, IngestJobFailureKind, IngestJobKind, IngestJobStatus,
+    MetadataEncryptionState, OcrAttemptFailure, OcrPageCacheEntry, OcrPageCacheKey, OwnedMetaStore,
+    PendingImportTaskByRootDiagnostic, QueryLatencySummary, ReadMetaStore, ResumeVersion,
+    ResumeVersionId, SearchFilterCase, SearchProjectionFilter, SearchProjectionPredicate,
+    SearchSelection, SearchSelectionDetailResolution, SearchTextBytePageRequest, UnixTimestamp,
+    VectorSnapshotMode, WorkerTaskKind,
 };
 use ocr_client::{
     inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
@@ -74,6 +73,7 @@ use sysinfo::{
 
 mod daemon_ipc_contract;
 mod import_processing;
+mod import_source_scan;
 mod purge_residual;
 mod release_readiness_matrix;
 
@@ -10787,46 +10787,12 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
             Ok((task, scope))
         })
         .collect::<Result<Vec<_>>>()?;
-    let requests = requested_heads
-        .iter()
-        .map(|(task, scope)| ImportRootTaskHeadRequest::Configured {
-            task,
-            scope,
-            processing_contract: &processing_contract,
-        })
-        .collect::<Vec<_>>();
-    let outcomes = match store
-        .coordinate_import_root_task_heads(&requests)
-        .map_err(CliError::store)?
-    {
-        ImportRootTaskHeadBatchOutcome::Committed { outcomes } => outcomes,
-        ImportRootTaskHeadBatchOutcome::Rejected(
-            ImportRootTaskHeadBatchRejection::RunningTaskConflict,
-        ) => return Err(CliError::user("import task is already running")),
-        ImportRootTaskHeadBatchOutcome::Rejected(ImportRootTaskHeadBatchRejection::RootPaused) => {
-            return Err(CliError::user("managed root is paused"));
-        }
-        ImportRootTaskHeadBatchOutcome::Rejected(
-            ImportRootTaskHeadBatchRejection::MigrationRebuildSuperseded,
-        ) => {
-            return Err(CliError::user(
-                "offline import is blocked until migration rebuild completes",
-            ));
-        }
-    };
-    let tasks = outcomes
-        .into_iter()
-        .map(|outcome| match outcome {
-            ImportRootTaskHeadOutcome::HeadInserted { task, .. }
-            | ImportRootTaskHeadOutcome::HeadPromoted { task, .. }
-            | ImportRootTaskHeadOutcome::HeadRetained { task, .. } => Ok(task),
-            ImportRootTaskHeadOutcome::RunningTaskConflict
-            | ImportRootTaskHeadOutcome::RootPaused
-            | ImportRootTaskHeadOutcome::MigrationRebuildSuperseded => {
-                Err(CliError::user("import root coordination failed"))
-            }
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let tasks = import_source_scan::coordinate_direct_import_tasks(
+        &store,
+        &requested_heads,
+        &processing_contract,
+        now,
+    )?;
 
     let mut summary = ImportSummary::default();
 
@@ -10875,15 +10841,37 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
         let claimed_task =
             import_processing::claim_task_for_local_execution(&store, task, current_timestamp()?)?;
         let root_offset = import_started.elapsed();
-        let root_summary = import_root_with_options(
+        let import_result = import_root_with_options(
             data_dir,
             &store,
             &claimed_task,
             &root.canonical,
             now,
             import_options.clone(),
+        );
+        let root_summary = match import_result {
+            Ok(summary) => summary,
+            Err(error) => {
+                import_pipeline::finish_source_scan_failure(
+                    &store,
+                    &task.root_path,
+                    &task.id,
+                    &processing_contract,
+                    current_timestamp()?,
+                )
+                .map_err(CliError::store)?;
+                return Err(CliError::import(error));
+            }
+        };
+        import_pipeline::finish_source_scan_success(
+            &store,
+            &task.root_path,
+            &task.id,
+            &processing_contract,
+            &root_summary,
+            current_timestamp()?,
         )
-        .map_err(CliError::import)?;
+        .map_err(CliError::store)?;
         merge_import_summary(&mut summary, root_summary, root_offset);
     }
 
