@@ -13,6 +13,7 @@ import { runBoundedTool, toolSucceeded } from "./bounded-process.mjs";
 import {
   INSTALLED_APP_BUNDLE,
   RELEASE_BUILD_TIMEOUT_MS,
+  RELEASE_PROMOTION_TIMEOUT_MS,
   TARGET_TRIPLE,
   exactKeys,
   fail,
@@ -211,7 +212,7 @@ async function runLifecycleCommand({
       cwd: repoRoot,
       env: process.env,
       signal,
-      timeoutMs: CLONE_TIMEOUT_MS,
+      timeoutMs: RELEASE_PROMOTION_TIMEOUT_MS,
     }),
     "release_promotion_failed",
   );
