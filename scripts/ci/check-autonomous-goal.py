@@ -498,6 +498,30 @@ def main() -> int:
     if not isinstance(platform_lanes, dict):
         fail("ACTIVE_GOAL.toml: missing [platform_lanes]")
 
+    current_delivery = platform_lanes.get("current_delivery")
+    if not isinstance(current_delivery, dict):
+        fail("ACTIVE_GOAL.toml: missing [platform_lanes.current_delivery]")
+    require_string(
+        current_delivery.get("target"),
+        "macos_only",
+        "platform_lanes.current_delivery.target",
+    )
+    for key in (
+        "windows_execution_allowed",
+        "linux_execution_allowed",
+        "non_macos_failure_blocks_delivery",
+    ):
+        require_bool(
+            current_delivery.get(key),
+            False,
+            f"platform_lanes.current_delivery.{key}",
+        )
+    require_bool(
+        current_delivery.get("override_requires_explicit_user_instruction"),
+        True,
+        "platform_lanes.current_delivery.override_requires_explicit_user_instruction",
+    )
+
     matrix_platform_lanes = matrix.get("platform_lanes")
     if not isinstance(matrix_platform_lanes, dict):
         fail("perf/acceptance-matrix.toml: missing [platform_lanes]")

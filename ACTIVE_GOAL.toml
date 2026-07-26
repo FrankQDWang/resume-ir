@@ -24,6 +24,7 @@ unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = true
 scope_exception_reason = "Issue #217 is the umbrella owner for the approved v0.1.3-v0.1.8 feature train. The train deliberately replaces current-v29-only storage with continuous encrypted COW forward migration beginning at v29, then adds database-owned source roots, path-truth reconciliation, durable root deletion, PDFium plus resumable OCR, selection-bound original-PDF preview and selection-bound native reveal. The six versions are one atomic business implementation train: production code, contracts, packaging declarations and UI are completed first, without intermediate test, build, installer, Linux or delivery runs. After all business changes are complete, one resumable macOS delivery matrix collects every failure before repair; only failed, invalidated and previously unrun cells are rerun. There is no dual reader, dual write, downgrade read, compatibility flag or request replay. v27/v28/future/corrupt authorities remain fail-closed and byte-preserved. Public evidence is synthetic or bounded redacted aggregate only. Existing launch binding, lifecycle v2, search-selection and atomic publication semantics remain fixed. Windows native evidence, signing, updater, scale and stable release are not claimed."
 allowed_paths = [
+  "AGENTS.md",
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
   "03_next_goal_高性能本地检索GUI闭环/03_数据模型与存储协议.md",
@@ -112,6 +113,13 @@ contains_model_cache = false
 
 [platform_lanes]
 macos_m4_can_rank_hotspots = true
+
+[platform_lanes.current_delivery]
+target = "macos_only"
+windows_execution_allowed = false
+linux_execution_allowed = false
+non_macos_failure_blocks_delivery = false
+override_requires_explicit_user_instruction = true
 
 [platform_lanes.private_corpus_transfer]
 runner_may_choose_transfer_to_windows = true
