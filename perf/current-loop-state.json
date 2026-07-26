@@ -2881,6 +2881,9 @@
       {"command":"macOS PR run 30205337013 fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ocr-cache-source-authority-fixture-repair-f12--2026-07-26"},
       {"command":"cargo clippy -p meta-store --features migration-test-support --test s3_sqlite --locked -- -D warnings","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ocr-cache-source-authority-fixture-repair-f12--2026-07-26"},
       {"command":"macOS PR run 30205798442 fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ocr-cache-source-authority-fixture-repair-f12--2026-07-26"},
+      {"command":"macOS PR run 30206076466 fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#deleted-data-ocr-authority-and-workspace-fail-late-repair-f13--2026-07-26"},
+      {"command":"./scripts/ci/check-workflows.sh","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#deleted-data-ocr-authority-and-workspace-fail-late-repair-f13--2026-07-26"},
+      {"command":"focused resume-cli s14 Clippy launch","exit_code":130,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#deleted-data-ocr-authority-and-workspace-fail-late-repair-f13--2026-07-26"},
       {"command":"performance, autonomous-goal, loop-state, public-repository and diff checks after final repair","exit_code":0,"evidence_ref":"PROGRESS.md#v0.1.8-final-repair-dmg-and-synthetic-installed-acceptance"}
     ],
     "all_required_commands_ran": false,

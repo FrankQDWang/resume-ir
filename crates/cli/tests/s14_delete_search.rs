@@ -6,8 +6,9 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use meta_store::{
-    DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, DocumentId, ImportTaskId,
-    OcrPageCacheEntry, OcrPageCacheKey, OcrWordBox, OwnedMetaStore, ReadMetaStore, UnixTimestamp,
+    BeginScanOutcome, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, DocumentId,
+    ImportTaskId, OcrPageCacheEntry, OcrPageCacheKey, OcrWordBox, OwnedMetaStore, ReadMetaStore,
+    ScanTrigger, UnixTimestamp,
 };
 
 #[test]
@@ -291,6 +292,45 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
             .into_iter()
             .next()
             .expect("deleted candidate version before tombstone");
+        let authority_at = UnixTimestamp::from_unix_seconds(1_800_013_999);
+        let canonical_root = fs::canonicalize(&fixture_root).unwrap();
+        let canonical_root_path = path_str(&canonical_root);
+        let root = store
+            .source_root_by_canonical_path(canonical_root_path)
+            .unwrap()
+            .unwrap_or_else(|| {
+                store
+                    .register_source_root(
+                        canonical_root_path,
+                        canonical_root_path,
+                        "s14 purge fixture",
+                        authority_at,
+                    )
+                    .unwrap()
+            });
+        let scan = store
+            .begin_scan(
+                &root.id,
+                "s14-purge-ocr-cache",
+                ScanTrigger::Manual,
+                authority_at,
+            )
+            .unwrap();
+        let scan_id = match scan {
+            BeginScanOutcome::Started(snapshot) | BeginScanOutcome::Coalesced(snapshot) => {
+                snapshot.id
+            }
+        };
+        store
+            .observe_source_occurrence(
+                &root.id,
+                "synthetic-java-engineer.docx",
+                &deleted_document.id,
+                &deleted_version.source_revision_id,
+                &scan_id,
+                authority_at,
+            )
+            .unwrap();
         let content_hash = deleted_document.content_hash.clone().expect("content hash");
         let ocr_cache_key = OcrPageCacheKey::new(content_hash, 1, 300, "eng", "balanced").unwrap();
         let ocr_cache_entry = OcrPageCacheEntry::succeeded_with_word_boxes(
@@ -305,6 +345,10 @@ fn purge_deleted_removes_tombstoned_metadata_old_snapshots_and_vectors_without_p
         .unwrap();
         assert_eq!(ocr_cache_entry.word_boxes().len(), 1);
         store.upsert_ocr_page_cache_entry(&ocr_cache_entry).unwrap();
+        assert_eq!(
+            store.ocr_page_cache_entry(&ocr_cache_key).unwrap(),
+            Some(ocr_cache_entry)
+        );
         let embedding_job = store
             .enqueue_embedding_job_for_resume_version(
                 &deleted_document.id,

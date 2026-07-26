@@ -73,7 +73,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Tests
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --no-fail-fast
 
       - name: CLI closed-loop check
         if: ${{ !cancelled() && steps.pdfium-verify.outcome == 'success' }}

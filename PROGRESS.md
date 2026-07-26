@@ -31316,6 +31316,14 @@ Output summary:
   coordinator API before observing the source. No foreign key or production
   guard was relaxed. Clippy and every independent fail-late check passed; only
   this affected s3 target awaits the next macOS assertion run.
+- macOS PR run `30206076466` proved all 58 s3 and all 38 s807_v27 cases, then
+  reached one later CLI deleted-data purge failure. That fixture assumed an OCR
+  cache insert without current root/scan/occurrence authority, so the guarded
+  insert was a no-op. It now establishes that authority through public APIs and
+  reads the cache row back before delete/purge. The same run exposed that plain
+  `cargo test --workspace` stopped at the first failed test binary; the macOS PR
+  workflow now uses Cargo `--no-fail-fast`, pinned by the workflow checker, so
+  later targets always run and failures can be repaired as one batch.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

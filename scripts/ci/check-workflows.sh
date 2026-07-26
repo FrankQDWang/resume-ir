@@ -83,6 +83,7 @@ require_text "$pr_workflow" "actions/cache/save@v4"
 require_text "$pr_workflow" "steps.pdfium-cache.outputs.cache-primary-key"
 require_text "$pr_workflow" 'if: ${{ !cancelled() }}'
 require_text "$pr_workflow" "if: \${{ !cancelled() && steps.pdfium-verify.outcome == 'success' }}"
+require_text "$pr_workflow" "cargo test --workspace --locked --no-fail-fast"
 require_text "$pr_workflow" "check-workflows.sh"
 require_text "$pr_workflow" "actions/checkout@v6"
 

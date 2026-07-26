@@ -1109,7 +1109,7 @@ the v30–v33 authority, deletion and PDF reprocessing tables.
 | --- | --- | --- | --- | --- |
 | F11-01 | A paused current source root is excluded while another active root remains eligible for periodic requeue and worker claim | `02dd09a868c3ad6c1ffaa2df431c7c259941706c0b4c0ee8c76815d25d6e0aee` | passed in macOS PR run `30205337013`; 2 target cases passed | source-root authority, pause/resume, periodic requeue or worker-claim filters change |
 | F11-02 | Current ephemeral, owner and read APIs expose the contiguous current schema and complete v30–v33 table set | `95d7618e796c378621cbd7e942130bee289fbc91c97955b8ada7740401394c64` | the affected current-schema assertions passed in macOS PR run `30205337013`; the s3 target reached 56 passes before two independent OCR fixture failures | current schema, migration registry or current table inventory changes |
-| F11-03 | Current owned-store identity and derived rows remain insert-once without claiming historical v29 | `e40d84f2786155bf47d26b5e23c8206a0504e77f5ec97912ee3182c340aaf677` | target-specific compile and deny-warnings Clippy passed; target was unrun after F11-01 failed and awaits the next macOS PR run | current schema or immutable identity/derived-row semantics change |
+| F11-03 | Current owned-store identity and derived rows remain insert-once without claiming historical v29 | `e40d84f2786155bf47d26b5e23c8206a0504e77f5ec97912ee3182c340aaf677` | passed in macOS PR run `30206076466`; all 38 s807_v27 cases passed | current schema or immutable identity/derived-row semantics change |
 
 All independent and fail-late checks in runs `30204933297` and `30205337013`
 passed. F09 and F10 remain reusable and are not reopened by these test-only
@@ -1132,7 +1132,7 @@ privacy behavior.
 
 | Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
 | --- | --- | --- | --- | --- |
-| F12-01 | OCR success, retryable failure and word-box cache rows persist only for an actively referenced source revision while debug output remains redacted | `044645f9b4e14ff7f903e5a195636756dda90903bc86d48ba793383486454438` | first fixture repair reached the current source-occurrence foreign-key guard in macOS PR run `30205798442`; the completed authority fixture compiles and passes deny-warnings Clippy, with exact assertions pending the next macOS PR run | OCR cache authority guard, scan/occurrence lifetime, cache payload persistence or debug redaction changes |
+| F12-01 | OCR success, retryable failure and word-box cache rows persist only for an actively referenced source revision while debug output remains redacted | `044645f9b4e14ff7f903e5a195636756dda90903bc86d48ba793383486454438` | passed in macOS PR run `30206076466`; all 58 s3 cases passed | OCR cache authority guard, scan/occurrence lifetime, cache payload persistence or debug redaction changes |
 
 The first fixture repair created the root, document, revision and occurrence
 but omitted the occurrence's referenced scan snapshot. Both cases failed at
@@ -1145,3 +1145,32 @@ condition would make another launch non-authoritative. Only the affected s3
 target was compiled and linted. The next macOS PR run continues from the
 previous fail point; valid F09–F11 results and all independent checks remain
 reused.
+
+### deleted-data OCR authority and workspace fail-late repair F13 — 2026-07-26
+
+macOS PR run `30206076466` proved F12, F11-03 and every intervening target,
+then isolated one failure in the CLI deleted-data purge target. The test
+constructed an OCR cache entry for an imported document but did not prove that
+the document had a current root/scan/occurrence authority. The guarded cache
+upsert therefore remained a no-op and the later purge correctly reported zero
+cache rows instead of the fixture's expected one.
+
+The fixture now establishes the source authority through public APIs before
+the cache write and immediately reads the cache row back. The purge assertion
+therefore measures real retained derived data instead of assuming an
+unverified insert. Production cache and purge behavior remain unchanged.
+
+The run also exposed that `cargo test --workspace` stops after the first failed
+test binary. That contradicted the train's explicit fail-late requirement even
+though independent workflow steps continued. The macOS PR test command now
+uses Cargo's native `--no-fail-fast`, and the workflow checker pins this
+behavior so future failures cannot silently hide later workspace targets.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F13-01 | Deleted-data purge removes a proven OCR cache row and word-box payload without exposing source paths or OCR text | `4922574b6d3a566645ad37dceb4c617f5f0697c77c38d4da563d35fd3fa7e134` | focused local target compilation entered the known zero-CPU target-directory stall and was terminated as `not_run`; exact assertion pending the next macOS PR run | deleted-data purge, OCR authority/cache retention, residual scan or redaction changes |
+| F13-02 | A macOS workspace test failure does not prevent later workspace test binaries from running | `591ca7951cbd882cb2c466ef38bbc374c9f2be5e50114146b1faf4653ad4e7f7:24cbbb903150585f3d70b2733724cffa6a5648d43bd760eb4e2f62a2da1efff9` | focused workflow checker passed; execution behavior pending the next macOS PR run | PR workflow test command or workflow checker changes |
+
+All independent checks in run `30206076466` passed. Earlier meta-store,
+parser, index, search, OCR client and CLI pass results remain valid and are not
+reopened by this CLI fixture plus workflow-policy repair.
