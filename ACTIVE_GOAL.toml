@@ -121,13 +121,6 @@ linux_execution_allowed = false
 non_macos_failure_blocks_delivery = false
 override_requires_explicit_user_instruction = true
 
-[platform_lanes.private_corpus_transfer]
-runner_may_choose_transfer_to_windows = true
-transfer_public_evidence_allowed = false
-raw_private_paths_public_allowed = false
-public_source_name = "$RESUME_IR_PRIVATE_RESUME_ROOT"
-windows_unavailable_starts_reconciliation = true
-
 [loop]
 blocked_threshold_count = 3
 same_blocker_retries_without_new_evidence = "forbidden"

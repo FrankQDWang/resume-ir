@@ -107,7 +107,7 @@ pub fn seed_v28_legacy_artifact_repair_fixture(
         document_id: document.id.clone(),
         resume_version_id: version.id.clone(),
     };
-    let session = store.into_search_publication_session_without_prepare_for_test()?;
+    let session = store.into_historical_search_publication_session_for_test()?;
     publish_initial_projection(
         &session,
         &document,

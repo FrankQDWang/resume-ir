@@ -541,34 +541,11 @@ def main() -> int:
         "matrix.platform_lanes.cross_os_ci_smoke_can_replace_weak_host_perf",
     )
 
-    private_corpus_transfer = platform_lanes.get("private_corpus_transfer")
-    if not isinstance(private_corpus_transfer, dict):
-        fail("ACTIVE_GOAL.toml: missing [platform_lanes.private_corpus_transfer]")
-    require_bool(
-        private_corpus_transfer.get("runner_may_choose_transfer_to_windows"),
-        True,
-        "platform_lanes.private_corpus_transfer.runner_may_choose_transfer_to_windows",
-    )
-    require_bool(
-        private_corpus_transfer.get("transfer_public_evidence_allowed"),
-        False,
-        "platform_lanes.private_corpus_transfer.transfer_public_evidence_allowed",
-    )
-    require_bool(
-        private_corpus_transfer.get("raw_private_paths_public_allowed"),
-        False,
-        "platform_lanes.private_corpus_transfer.raw_private_paths_public_allowed",
-    )
-    require_string(
-        private_corpus_transfer.get("public_source_name"),
-        "$RESUME_IR_PRIVATE_RESUME_ROOT",
-        "platform_lanes.private_corpus_transfer.public_source_name",
-    )
-    require_bool(
-        private_corpus_transfer.get("windows_unavailable_starts_reconciliation"),
-        True,
-        "platform_lanes.private_corpus_transfer.windows_unavailable_starts_reconciliation",
-    )
+    if "private_corpus_transfer" in platform_lanes:
+        fail(
+            "ACTIVE_GOAL.toml: [platform_lanes.private_corpus_transfer] is "
+            "forbidden by the current macOS-only delivery boundary"
+        )
 
     activation = autonomous.get("activation")
     if not isinstance(activation, dict):

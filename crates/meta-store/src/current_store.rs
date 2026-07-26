@@ -302,11 +302,15 @@ fn validate_store_for_manifest(
     manifest: &ActiveStoreManifest,
 ) -> Result<()> {
     let path = data_dir.join(&manifest.file_name);
-    if !owner_regular_file_exists(&path)? {
-        return Err(MetaStoreError::storage_invariant());
+    if manifest.schema_version == schema_v33::VERSION {
+        validate_current_store(&path, key, &manifest.store_id_digest)
+    } else {
+        if !owner_regular_file_exists(&path)? {
+            return Err(MetaStoreError::storage_invariant());
+        }
+        let connection = open_encrypted_read_connection(&path, key)?;
+        validate_source_store(&connection, manifest)
     }
-    let connection = open_encrypted_read_connection(&path, key)?;
-    validate_source_store(&connection, manifest)
 }
 
 fn require_current_manifest(path: &Path) -> Result<()> {

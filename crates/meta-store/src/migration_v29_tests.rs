@@ -85,7 +85,7 @@ fn current_v29_open_preserves_key_manifest_ciphertext_and_business_data() {
     let fixture = OwnedDirectory::new();
     let projection = {
         let store = fixture.open_v29_store().unwrap();
-        seed_published_v29_projection(&store)
+        seed_published_v29_projection(store)
     };
     let before_summary = {
         let store = fixture.open_v29_store().unwrap();
@@ -133,7 +133,9 @@ fn current_v29_open_accepts_retained_current_ready_history() {
         .acquire_migration_rebuild_barrier_token(contract.id())
         .unwrap()
         .unwrap();
-    let mut session = store.wait_for_search_publication_session().unwrap();
+    let mut session = store
+        .into_historical_search_publication_session_for_test()
+        .unwrap();
     assert!(matches!(
         session
             .acquire_migration_rebuild_publication_attempt(
@@ -161,7 +163,6 @@ fn current_v29_open_accepts_retained_current_ready_history() {
         UnixTimestamp::from_unix_seconds(13),
     );
     drop(session);
-    drop(store);
     let before = snapshot_tree(fixture.data_dir());
 
     let reopened = fixture.open_v29_store().unwrap();
@@ -173,7 +174,11 @@ fn current_v29_open_accepts_retained_current_ready_history() {
         2
     );
     drop(reopened);
-    drop(crate::ReadMetaStore::open_data_dir(fixture.data_dir()).unwrap());
+    let error = match crate::ReadMetaStore::open_data_dir(fixture.data_dir()) {
+        Ok(_) => panic!("historical v29 must not enter the production read path"),
+        Err(error) => error,
+    };
+    assert_eq!(error.class(), MetaStoreErrorClass::UnsupportedStoreSchema);
 
     assert_eq!(snapshot_tree(fixture.data_dir()), before);
 }
@@ -232,8 +237,8 @@ fn current_v29_ciphertext_integrity_failure_is_byte_stable() {
 #[test]
 fn current_v29_publication_fingerprint_corruption_is_rejected_byte_stably() {
     let fixture = OwnedDirectory::new();
+    seed_published_v29_projection(fixture.open_v29_store().unwrap());
     let store = fixture.open_v29_store().unwrap();
-    seed_published_v29_projection(&store);
     {
         let connection = store.connection.borrow();
         connection
@@ -268,8 +273,8 @@ fn current_v29_publication_fingerprint_corruption_is_rejected_byte_stably() {
 #[test]
 fn current_v29_active_head_epoch_corruption_is_rejected_byte_stably() {
     let fixture = OwnedDirectory::new();
+    seed_published_v29_projection(fixture.open_v29_store().unwrap());
     let store = fixture.open_v29_store().unwrap();
-    seed_published_v29_projection(&store);
     {
         let connection = store.connection.borrow();
         let restore = trigger_restore_sql(
@@ -744,7 +749,7 @@ fn trigger_restore_sql(connection: &rusqlite::Connection, names: &[&str]) -> Str
         .collect()
 }
 
-fn seed_published_v29_projection(store: &OwnedMetaStore) -> ActiveSearchProjection {
+fn seed_published_v29_projection(store: OwnedMetaStore) -> ActiveSearchProjection {
     const GENERATION: &str = "v29-preservation-generation";
     let mut document = synthetic_document("preserved-v29");
     let revision = SourceRevision::for_content(
@@ -816,7 +821,9 @@ fn seed_published_v29_projection(store: &OwnedMetaStore) -> ActiveSearchProjecti
         .acquire_migration_rebuild_barrier_token(contract.id())
         .unwrap()
         .unwrap();
-    let mut session = store.wait_for_search_publication_session().unwrap();
+    let mut session = store
+        .into_historical_search_publication_session_for_test()
+        .unwrap();
     assert!(matches!(
         session
             .acquire_migration_rebuild_publication_attempt(

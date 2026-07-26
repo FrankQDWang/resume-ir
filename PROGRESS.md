@@ -31260,9 +31260,27 @@ Output summary:
 - PDFium cache restore/save are now explicit, with save immediately after pack
   verification. Later test failures cannot throw away a successful first
   build. The workflow and formatting checks pass; the repaired exact synthetic
-  admission case awaits the next hosted macOS run because local Rust compilation
-  was blocked enumerating the oversized target dependency directory before any
-  test entered.
+  admission case passed in macOS run `30203505154`.
+- That fail-late run completed every later check and isolated eight meta-store
+  failures after 133 passes. One was a real recovery defect: a ready v33
+  migration target was sent through the v29–v32 predecessor validator. The
+  recovery path now validates current targets with the current-store validator.
+- Four failures came from historical v29 publication fixtures opening a
+  production sibling, which correctly migrated the authority to v33. A
+  consuming test-only session seam now keeps synthetic historical stores behind
+  the migration boundary. Two stale current-schema literals now use
+  `CURRENT_SCHEMA_VERSION`; explicit rescans after terminal retryable failures
+  now assert a new queued attempt instead of retaining an unusable failed head.
+- The active goal no longer contains the obsolete Windows private-corpus
+  transfer policy, and its checker rejects that section. Current delivery,
+  testing, packaging and acceptance remain macOS-only across compaction and
+  handoff.
+- Focused format, autonomous-goal, governance-mutation and
+  `migration-test-support` compilation checks passed. The local exact Rust test
+  binary compiled but stayed in macOS `_dyld_start` before the harness entered;
+  it was terminated and recorded as `not_run`. The cached macOS PR runner is the
+  authoritative assertion loop for the eight affected cases; unrelated valid
+  passes remain reused.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

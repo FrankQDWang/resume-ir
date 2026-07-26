@@ -1009,7 +1009,7 @@ later business assertion cannot discard a successful 14-minute PDFium build.
 
 | Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
 | --- | --- | --- | --- | --- |
-| F08-01 | Frozen public synthetic PDF samples expose distinct visible lines to production PDFium admission | `2af924eabcb91900cb06df1e1bd6f72bdd2c98faee312d0ef6e861461d54f2ca` | hosted exact case failed before repair; repaired case pending the next macOS PR run | public synthetic admission fixture, PDF text extraction, quality or classifier changes |
+| F08-01 | Frozen public synthetic PDF samples expose distinct visible lines to production PDFium admission | `2af924eabcb91900cb06df1e1bd6f72bdd2c98faee312d0ef6e861461d54f2ca` | passed in macOS PR run `30203505154`; the repaired public synthetic admission case no longer appears among workspace failures | public synthetic admission fixture, PDF text extraction, quality or classifier changes |
 | F08-02 | A verified PDFium pack is cached before later test failures | `8a2924957941fd4de7a0bd9c3f2f456539a20f1a63e48fd8abc8d0b8b84600e7:297571b242256bd081325303a241f13761adce53e2f046a15f15afbccdddad22` | workflow checker passed | PR cache ordering, key, verification or workflow policy changes |
 
 A focused local F08-01 attempt did not reach the test: the compiler spent more
@@ -1018,3 +1018,45 @@ than three minutes blocked enumerating the oversized local
 the same syscall. Both exact processes were terminated. This is `not_run`; it
 does not replace the deterministic hosted red result or the required hosted
 green result.
+
+### current-schema and migration recovery repair F09 — 2026-07-26
+
+macOS PR run `30203505154`, job `89797466189`, restored and verified the cached
+PDFium pack, passed Clippy, passed the repaired F08 public fixture and completed
+every fail-late CLI, daemon, license, runbook, handoff, workflow and benchmark
+check. Workspace tests reached 141 meta-store library cases and isolated eight
+failures after 133 passes.
+
+The failures had three shared causes:
+
+- current-store recovery validated a ready v33 target through the predecessor
+  validator, which accepts only v29–v32 source authorities;
+- historical v29 publication fixtures requested a production sibling
+  connection, which correctly migrated their authority to v33 before the
+  historical assertion ran;
+- two current-store tests still asserted v29, and one configured-rescan test
+  still expected a terminal retryable head to be reused instead of creating a
+  new queued attempt.
+
+The repair dispatches receipt validation by manifest role, gives synthetic
+historical fixtures a test-only consuming publication-session seam that cannot
+enter production, and updates current-schema and manual-rescan assertions
+without relaxing migration, integrity or publication validation. The current
+delivery contract also removes the obsolete Windows private-corpus transfer
+section; the checker now rejects its reintroduction. macOS remains the only
+active delivery platform.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F09-01 | A ready v33 COW receipt validates and atomically publishes its already-verified target | `d771454b6be5dad98b7340b93f8f8b4cdb789bc317f54d3e8f3e43c2ad27d69a` | Rust compile passed; exact assertion pending the next macOS PR run | current-store receipt reconciliation, manifest dispatch or current-store validation changes |
+| F09-02 | Historical v29 publication fixtures remain v29 without entering the production migration boundary | `df187302b5501308b89db3fbdf60ae75b8f628e355c22a99e66b632320b3a44a:b217941a8a313f0bb68fc763b875ae58ee70b6f4ae7a4ca14a7cc71f92d25c0b` | default and `migration-test-support` Rust compilation passed; four exact assertions pending the next macOS PR run | historical fixture seam, v29 publication validation or migration-test support changes |
+| F09-03 | Fresh owner/read paths assert the schema selected by the current product, not the retired v29 hard cut | `dd188f730183e9c8cdc7fef1719306fb89f61e78ca6338828e21f387ddf775a1` | Rust compile passed; two exact assertions pending the next macOS PR run | current schema, owner open or read-only current-store contract changes |
+| F09-04 | An explicit rescan after a failed retryable task creates a new queued attempt and cancels the terminal head | `0778537f42156afad582d44768a6809d60eea2ffe0cac039b0429d8d35919ced` | Rust compile passed; exact assertion pending the next macOS PR run | configured rescan, task-head retention or retry semantics change |
+| F09-05 | Active goal cannot re-enable Windows/Linux execution through the retired private-corpus transfer policy | `e5d57102184b33586cc83487779292955e28693137fbddf41ce86c86706d48ea:ea873c97d3e92ec546081cc6c3b3323b1690fc3697ca129c7a6842c31bdfc879:050ceb75b004160133b3648533c6387c8442d077a2346cdf65248149f956656d:c477bb451c00357a8adf73df638289202fd7e05467ce4f2923128b67f7eb47bc` | autonomous-goal, loop-state and performance checkers plus seven governance mutation tests passed | active platform contract, pinned synthetic fixtures or autonomous-goal checker changes |
+
+The local exact F09-01 binary compiled, then remained suspended in macOS
+`_dyld_start` before entering the Rust test harness. A read-only process sample
+confirmed zero test-body execution; the exact cargo parent and orphaned child
+were terminated orderly. This is `not_run`, not a failed assertion. The
+existing macOS PR job is the authoritative red-capable feedback loop and will
+reuse the saved PDFium pack. No unrelated local Rust test was run.

@@ -5,7 +5,7 @@
   "experiment_state": "contract_locked",
   "evidence_lane": "gui_manual",
   "contract_pins": {
-    "active_goal_sha256": "a01a8608e0788e0369c618b153408bd5ac55f64199b730cca6ca65a50df141b2",
+    "active_goal_sha256": "e5d57102184b33586cc83487779292955e28693137fbddf41ce86c86706d48ea",
     "acceptance_matrix_sha256": "4f93b6cc49d11bc039f001a878d78f431a2ce67eb509a5b9736529d755f82d91",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
@@ -2869,6 +2869,10 @@
       {"command":"CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 cargo clippy -p parser-pdf -p import-pipeline -p resume-cli --all-targets --locked -- -D warnings","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-native-manual-round-f04--2026-07-26"},
       {"command":"verify-local-parallel desktop-macos-worktree-bundle receipt 20260726T103209Z-3ba42dfb","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-native-manual-round-f04--2026-07-26"},
       {"command":"receipt-bound v0.1.8 install and isolated-synthetic Computer Use acceptance","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-native-manual-round-f04--2026-07-26"},
+      {"command":"macOS PR run 30203505154 fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#current-schema-and-migration-recovery-repair-f09--2026-07-26"},
+      {"command":"cargo check -p meta-store --features migration-test-support --locked","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#current-schema-and-migration-recovery-repair-f09--2026-07-26"},
+      {"command":"current-tree format, autonomous-goal and governance mutation checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#current-schema-and-migration-recovery-repair-f09--2026-07-26"},
+      {"command":"exact F09-01 local Rust test launch","exit_code":130,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#current-schema-and-migration-recovery-repair-f09--2026-07-26"},
       {"command":"performance, autonomous-goal, loop-state, public-repository and diff checks after final repair","exit_code":0,"evidence_ref":"PROGRESS.md#v0.1.8-final-repair-dmg-and-synthetic-installed-acceptance"}
     ],
     "all_required_commands_ran": false,
@@ -2885,8 +2889,6 @@
   "github_ledger": {
     "primary_issue": "#217",
     "active_prs": [
-      "#235",
-      "#237",
       "#238"
     ],
     "open_blockers": []

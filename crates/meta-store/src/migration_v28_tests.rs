@@ -507,13 +507,19 @@ fn read_only_open_and_queries_leave_the_published_current_tree_byte_for_byte_unc
         DataDirectoryOwnerAcquisition::Contended => panic!("test data directory was contended"),
     };
     let store = owner.open_store().unwrap();
-    assert_eq!(store.schema_version().unwrap(), crate::schema_v29::VERSION);
+    assert_eq!(
+        store.schema_version().unwrap(),
+        crate::CURRENT_SCHEMA_VERSION
+    );
     drop(store);
     drop(owner);
     let before = directory_tree_snapshot(directory.path());
 
     let reader = ReadMetaStore::open_data_dir(directory.path()).unwrap();
-    assert_eq!(reader.schema_version().unwrap(), crate::schema_v29::VERSION);
+    assert_eq!(
+        reader.schema_version().unwrap(),
+        crate::CURRENT_SCHEMA_VERSION
+    );
     let state = reader.search_projection_state().unwrap();
     assert_eq!(
         state.service_state,
