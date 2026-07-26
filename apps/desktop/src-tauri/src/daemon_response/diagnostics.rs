@@ -61,6 +61,14 @@ struct DiagnosticsMetrics {
     #[serde(deserialize_with = "deserialize_required_nullable")]
     import_tasks_cancelled: Option<SafeCount>,
     #[serde(deserialize_with = "deserialize_required_nullable")]
+    source_roots_total: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    source_roots_active: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    source_roots_offline: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    source_root_deletions_in_progress: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     query_latency: Option<QueryLatency>,
 }
 
@@ -105,7 +113,7 @@ struct ScanErrorBucket {
 
 pub(super) fn project_diagnostics(body: &[u8]) -> Result<DiagnosticsBody, DesktopError> {
     let value: DiagnosticsBody = decode(body)?;
-    ensure_schema(&value.schema_version, "resume-ir.diagnostics.v5")?;
+    ensure_schema(&value.schema_version, "resume-ir.diagnostics.v9")?;
     validate_health_contract(
         status_for_core(value.core.state),
         &value.core,
@@ -125,6 +133,10 @@ pub(super) fn project_diagnostics(body: &[u8]) -> Result<DiagnosticsBody, Deskto
             value.metrics.import_tasks_queued.is_some(),
             value.metrics.import_tasks_recoverable.is_some(),
             value.metrics.import_tasks_cancelled.is_some(),
+            value.metrics.source_roots_total.is_some(),
+            value.metrics.source_roots_active.is_some(),
+            value.metrics.source_roots_offline.is_some(),
+            value.metrics.source_root_deletions_in_progress.is_some(),
             value
                 .metrics
                 .query_latency
@@ -138,6 +150,18 @@ pub(super) fn project_diagnostics(body: &[u8]) -> Result<DiagnosticsBody, Deskto
             value.error_counts.ocr_language_unavailable.is_some(),
         ],
     )?;
+    if let (Some(total), Some(active), Some(offline), Some(deleting)) = (
+        value.metrics.source_roots_total,
+        value.metrics.source_roots_active,
+        value.metrics.source_roots_offline,
+        value.metrics.source_root_deletions_in_progress,
+    ) {
+        ensure(
+            total.value() <= 16
+                && active.value().saturating_add(offline.value()) <= total.value()
+                && deleting.value() <= total.value(),
+        )?;
+    }
     validate_repair_progress(value.core.state, value.repair_progress.as_ref())?;
     ensure(
         !value.contains_raw_resume_text
@@ -159,11 +183,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn diagnostics_v5_requires_the_full_daemon_shape_and_redacts_benchmark_refs() {
-        let raw = include_str!("../../tests/fixtures/daemon-diagnostics-v5-ready.json");
+    fn diagnostics_v9_requires_the_full_daemon_shape_and_redacts_benchmark_refs() {
+        let raw = include_str!("../../tests/fixtures/daemon-diagnostics-v9-ready.json");
         let projected = project_diagnostics(raw.as_bytes()).unwrap();
         let exposed = serde_json::to_value(projected).unwrap();
-        assert_eq!(exposed["schema_version"], "resume-ir.diagnostics.v5");
+        assert_eq!(exposed["schema_version"], "resume-ir.diagnostics.v9");
         assert!(exposed.get("benchmark_refs").is_none());
 
         let mut missing: serde_json::Value = serde_json::from_str(raw).unwrap();

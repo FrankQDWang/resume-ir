@@ -46,6 +46,7 @@ export function useDetailSession(input: {
   const [fullText, setFullText] = useState("")
   const [bodyComplete, setBodyComplete] = useState(false)
   const [detailInterrupted, setDetailInterrupted] = useState(false)
+  const [selectedHit, setSelectedHit] = useState<SearchHit | null>(null)
   const continuationRef = useRef<DetailContinuation | null>(null)
   const runIdRef = useRef(0)
 
@@ -58,6 +59,7 @@ export function useDetailSession(input: {
     setDetailInterrupted(false)
     setFullText("")
     setBodyComplete(false)
+    setSelectedHit(null)
   }
 
   const observeLifecycle = (snapshot: DaemonLifecycleSnapshot) => {
@@ -149,7 +151,7 @@ export function useDetailSession(input: {
         if (!authorityIsCurrent(authority)) {
           throw { code: "daemon_unavailable", message: "daemon action authority changed" }
         }
-        if (hydrated.body.schema_version === "resume-ir.error.v2") {
+        if (hydrated.body.schema_version === "resume-ir.error.v3") {
           throw { code: hydrated.body.error.code, message: "detail service unavailable" }
         }
         if (hydrated.http_status !== 200 || hydrated.body.schema_version !== "resume-ir.detail-hydrate-response.v3") throw new Error("hydrate unavailable")
@@ -185,6 +187,7 @@ export function useDetailSession(input: {
     const runId = runIdRef.current + 1
     runIdRef.current = runId
     const continuation: DetailContinuation = { hit, authorityEpoch: authority.epoch, generation: authority.generation, nextOffset: 0, text: "", pagesRead: 0, metadataLoaded: false }
+    setSelectedHit(hit)
     continuationRef.current = continuation
     setDetail(null); setDetailLoading(true); setDetailInterrupted(false); setDetailError(""); setFullText(""); setBodyComplete(false)
     if (input.preview) {
@@ -197,14 +200,15 @@ export function useDetailSession(input: {
       const reply = await readDetail(requestId, hit.selection)
       if (runId !== runIdRef.current) return
       if (!authorityIsCurrent(authority)) throw { code: "daemon_unavailable", message: "daemon action authority changed" }
-      if (reply.body.schema_version === "resume-ir.error.v2") {
+      if (reply.body.schema_version === "resume-ir.error.v3") {
         throw { code: reply.body.error.code, message: "detail service unavailable" }
       }
       if (reply.http_status !== 200 || reply.body.schema_version !== "resume-ir.detail-response.v3") throw new Error("detail unavailable")
       if (reply.body.request_id !== requestId || !sameSearchSelection(reply.body.selection, hit.selection)) throw { code: "bridge_protocol_error", message: "response context mismatch" }
       setDetail({ ...reply.body.document, file_name: hit.file_name })
       continuation.metadataLoaded = true
-      await hydratePages(continuation)
+      continuationRef.current = continuation
+      setDetailLoading(false)
     } catch (error) {
       handleFailure(error, continuation, runId)
     }
@@ -217,6 +221,14 @@ export function useDetailSession(input: {
     else await hydratePages(continuation)
   }
 
+  const loadText = async () => {
+    if (bodyComplete || detailLoading) return
+    const continuation = continuationRef.current
+    if (!continuation) return
+    if (!continuation.metadataLoaded) await open(continuation.hit)
+    else await hydratePages(continuation)
+  }
+
   return {
     detail,
     detailLoading,
@@ -224,7 +236,9 @@ export function useDetailSession(input: {
     fullText,
     bodyComplete,
     detailInterrupted,
+    selectedHit,
     open,
+    loadText,
     resume,
     reset,
     observeAuthority,

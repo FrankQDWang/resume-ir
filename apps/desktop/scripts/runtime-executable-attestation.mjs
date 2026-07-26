@@ -5,27 +5,41 @@ import path from "node:path";
 export const RUNTIME_EXECUTABLE_ATTESTATION_SCHEMA =
   "resume-ir.runtime-executable-attestation.v1";
 
-const SUPPORTED_TARGET = "aarch64-apple-darwin";
 const DIGEST_ALGORITHM = "sha256_without_code_signature_v1";
 const MAX_EXECUTABLE_BYTES = 256 * 1024 * 1024;
 const MAX_LOAD_COMMANDS = 4096;
 const LC_CODE_SIGNATURE = 0x1d;
 const LC_SEGMENT_64 = 0x19;
-const EXPECTED = Object.freeze([
-  Object.freeze({
-    role: "embedding_runtime",
-    binaryName: "resume-embedding-runtime",
-    buildFile: "resume-embedding-runtime-aarch64-apple-darwin",
-    runtimeFile: "resume-embedding-runtime",
+const TARGETS = Object.freeze({
+  "aarch64-apple-darwin": Object.freeze({
+    architecture: "arm64",
+    suffix: "",
   }),
-  Object.freeze({
-    role: "pdf_renderer",
-    binaryName: "resume-pdf-render-runtime",
-    buildFile: "resume-pdf-render-runtime-aarch64-apple-darwin",
-    runtimeFile: "resume-pdf-render-runtime",
+  "x86_64-pc-windows-msvc": Object.freeze({
+    architecture: "x86_64",
+    suffix: ".exe",
   }),
-]);
+});
 const SHA256 = /^[a-f0-9]{64}$/;
+
+function expectedExecutables(targetTriple) {
+  const target = TARGETS[targetTriple];
+  if (!target) throw new Error("runtime executable attestation target is unsupported");
+  return Object.freeze([
+    Object.freeze({
+      role: "embedding_runtime",
+      binaryName: "resume-embedding-runtime",
+      buildFile: `resume-embedding-runtime-${targetTriple}${target.suffix}`,
+      runtimeFile: `resume-embedding-runtime${target.suffix}`,
+    }),
+    Object.freeze({
+      role: "pdf_renderer",
+      binaryName: "resume-pdf-render-runtime",
+      buildFile: `resume-pdf-render-runtime-${targetTriple}${target.suffix}`,
+      runtimeFile: `resume-pdf-render-runtime${target.suffix}`,
+    }),
+  ]);
+}
 
 function exactKeys(value, expected) {
   return (
@@ -37,21 +51,25 @@ function exactKeys(value, expected) {
 }
 
 export function validateRuntimeExecutableAttestation(value, plan) {
+  const target = TARGETS[value?.target_triple];
+  const expectedExecutablesForTarget = target
+    ? expectedExecutables(value.target_triple)
+    : [];
   if (
     !exactKeys(value, ["schema_version", "target_triple", "profile", "executables"]) ||
     value.schema_version !== RUNTIME_EXECUTABLE_ATTESTATION_SCHEMA ||
-    value.target_triple !== SUPPORTED_TARGET ||
+    !target ||
     value.target_triple !== plan.targetTriple ||
     !["debug", "release"].includes(value.profile) ||
     value.profile !== plan.profile ||
     !Array.isArray(value.executables) ||
-    value.executables.length !== EXPECTED.length
+    value.executables.length !== expectedExecutablesForTarget.length
   ) {
     throw new Error("runtime executable attestation contract is invalid");
   }
-  for (let index = 0; index < EXPECTED.length; index += 1) {
+  for (let index = 0; index < expectedExecutablesForTarget.length; index += 1) {
     const entry = value.executables[index];
-    const expected = EXPECTED[index];
+    const expected = expectedExecutablesForTarget[index];
     if (
       !exactKeys(entry, [
         "role",
@@ -65,7 +83,7 @@ export function validateRuntimeExecutableAttestation(value, plan) {
       entry.role !== expected.role ||
       entry.build_file !== expected.buildFile ||
       entry.runtime_file !== expected.runtimeFile ||
-      entry.architecture !== "arm64" ||
+      entry.architecture !== target.architecture ||
       entry.digest !== DIGEST_ALGORITHM ||
       !Number.isSafeInteger(entry.payload_bytes) ||
       entry.payload_bytes <= 0 ||
@@ -79,19 +97,19 @@ export function validateRuntimeExecutableAttestation(value, plan) {
 }
 
 export async function stageRuntimeExecutableAttestation(plan, runtimeSidecars) {
+  const expectedExecutablesForTarget = expectedExecutables(plan.targetTriple);
   if (
     !path.isAbsolute(plan.destination) ||
-    plan.targetTriple !== SUPPORTED_TARGET ||
     !["debug", "release"].includes(plan.profile) ||
     !Array.isArray(runtimeSidecars) ||
-    runtimeSidecars.length !== EXPECTED.length
+    runtimeSidecars.length !== expectedExecutablesForTarget.length
   ) {
     throw new Error("runtime executable attestation plan is invalid");
   }
   const executables = [];
-  for (let index = 0; index < EXPECTED.length; index += 1) {
+  for (let index = 0; index < expectedExecutablesForTarget.length; index += 1) {
     const sidecar = runtimeSidecars[index];
-    const expected = EXPECTED[index];
+    const expected = expectedExecutablesForTarget[index];
     if (
       sidecar.binaryName !== expected.binaryName ||
       path.basename(sidecar.destination) !== expected.buildFile ||
@@ -138,6 +156,13 @@ export async function stageRuntimeExecutableAttestation(plan, runtimeSidecars) {
 
 export async function runtimeExecutablePayloadIdentity(file) {
   const bytes = await readFile(file);
+  if (bytes.subarray(0, 2).toString("ascii") === "MZ") {
+    return pePayloadIdentity(bytes);
+  }
+  return machoPayloadIdentity(bytes);
+}
+
+function machoPayloadIdentity(bytes) {
   if (
     bytes.length < 32 ||
     bytes.length > MAX_EXECUTABLE_BYTES ||
@@ -212,6 +237,59 @@ export async function runtimeExecutablePayloadIdentity(file) {
   }
   return Object.freeze({
     architecture: "arm64",
+    payloadBytes: payload.length,
+    payloadSha256: createHash("sha256").update(payload).digest("hex"),
+  });
+}
+
+function pePayloadIdentity(original) {
+  if (original.length < 0x40 || original.length > MAX_EXECUTABLE_BYTES) {
+    throw new Error("runtime executable is not a bounded x86_64 PE");
+  }
+  const bytes = Buffer.from(original);
+  const peOffset = bytes.readUInt32LE(0x3c);
+  const coffOffset = peOffset + 4;
+  const optionalOffset = coffOffset + 20;
+  if (
+    peOffset > bytes.length - 24 ||
+    bytes.subarray(peOffset, peOffset + 4).toString("binary") !== "PE\u0000\u0000" ||
+    bytes.readUInt16LE(coffOffset) !== 0x8664 ||
+    optionalOffset > bytes.length - 2 ||
+    bytes.readUInt16LE(optionalOffset) !== 0x20b
+  ) {
+    throw new Error("runtime executable is not a bounded x86_64 PE");
+  }
+  const optionalBytes = bytes.readUInt16LE(coffOffset + 16);
+  const optionalEnd = optionalOffset + optionalBytes;
+  const checksumOffset = optionalOffset + 64;
+  const directoryCountOffset = optionalOffset + 108;
+  const securityEntryOffset = optionalOffset + 112 + 4 * 8;
+  if (
+    optionalEnd > bytes.length ||
+    checksumOffset + 4 > optionalEnd ||
+    directoryCountOffset + 4 > optionalEnd ||
+    bytes.readUInt32LE(directoryCountOffset) <= 4 ||
+    securityEntryOffset + 8 > optionalEnd
+  ) {
+    throw new Error("runtime executable PE optional header is invalid");
+  }
+  bytes.fill(0, checksumOffset, checksumOffset + 4);
+  const certificateOffset = bytes.readUInt32LE(securityEntryOffset);
+  const certificateBytes = bytes.readUInt32LE(securityEntryOffset + 4);
+  bytes.fill(0, securityEntryOffset, securityEntryOffset + 8);
+  let payload = bytes;
+  if (certificateOffset !== 0 || certificateBytes !== 0) {
+    if (
+      certificateOffset < optionalEnd ||
+      certificateBytes === 0 ||
+      certificateOffset + certificateBytes !== bytes.length
+    ) {
+      throw new Error("runtime executable PE signature payload is invalid");
+    }
+    payload = bytes.subarray(0, certificateOffset);
+  }
+  return Object.freeze({
+    architecture: "x86_64",
     payloadBytes: payload.length,
     payloadSha256: createHash("sha256").update(payload).digest("hex"),
   });

@@ -9,7 +9,7 @@ const PACKAGED_EMBEDDING_MODEL_ID: &str = "intfloat-multilingual-e5-small-qint8-
 const PACKAGED_EMBEDDING_DIMENSION: usize = 384;
 const PACKAGED_OCR_LANG: &str = "eng+chi_sim";
 const OCR_JOBS_PER_TICK: usize = 1;
-const DAEMON_IPC_PROTOCOL: &str = "resume-ir.daemon-ipc.v4";
+const DAEMON_IPC_PROTOCOL: &str = "resume-ir.daemon-ipc.v5";
 const CANDIDATE_PATH_MAX_BYTES: usize = 4096;
 const MODEL_ID_MAX_BYTES: usize = 128;
 
@@ -37,7 +37,6 @@ impl EmbeddingRuntime {
 /// contents are deliberately validated by the daemon bootstrap worker.
 pub(super) struct OcrRuntime {
     engine_command: PathBuf,
-    renderer_command: PathBuf,
     tessdata_dir: PathBuf,
 }
 
@@ -46,6 +45,17 @@ impl OcrRuntime {
         command
             .env("TESSDATA_PREFIX", &self.tessdata_dir)
             .env("OMP_THREAD_LIMIT", "1");
+    }
+}
+
+pub(super) struct PdfiumRuntime {
+    renderer_command: PathBuf,
+    resource_dir: PathBuf,
+}
+
+impl PdfiumRuntime {
+    pub(super) fn configure_command(&self, command: &mut Command) {
+        command.env("RESUME_IR_PDFIUM_RUNTIME_DIR", &self.resource_dir);
     }
 }
 
@@ -98,13 +108,34 @@ pub(super) fn configured_ocr_runtime(
 
 #[cfg(not(debug_assertions))]
 pub(super) fn configured_ocr_runtime(
-    current_exe: &Path,
+    _current_exe: &Path,
     resource_dir: &Path,
 ) -> Option<OcrRuntime> {
     Some(OcrRuntime {
         engine_command: resource_dir.join("tesseract"),
-        renderer_command: current_exe.parent()?.join(pdf_renderer_binary_name()),
         tessdata_dir: resource_dir.join("tessdata"),
+    })
+}
+
+#[cfg(debug_assertions)]
+pub(super) fn configured_pdfium_runtime(
+    _current_exe: &Path,
+    resource_dir: &Path,
+) -> Option<PdfiumRuntime> {
+    Some(PdfiumRuntime {
+        renderer_command: bounded_env_path("RESUME_IR_PDF_RENDER_COMMAND")?,
+        resource_dir: resource_dir.to_path_buf(),
+    })
+}
+
+#[cfg(not(debug_assertions))]
+pub(super) fn configured_pdfium_runtime(
+    current_exe: &Path,
+    resource_dir: &Path,
+) -> Option<PdfiumRuntime> {
+    Some(PdfiumRuntime {
+        renderer_command: current_exe.parent()?.join(pdf_renderer_binary_name()),
+        resource_dir: resource_dir.to_path_buf(),
     })
 }
 
@@ -126,6 +157,7 @@ pub(super) fn daemon_arguments(
     embedding: Option<&EmbeddingRuntime>,
     ocr: Option<&OcrRuntime>,
     classifier: Option<&ClassifierRuntime>,
+    pdfium: Option<&PdfiumRuntime>,
 ) -> Vec<OsString> {
     let mut arguments: Vec<OsString> = [
         OsString::from("--data-dir"),
@@ -163,12 +195,16 @@ pub(super) fn daemon_arguments(
             OsString::from("--work-ocr"),
             OsString::from("--ocr-tesseract-command"),
             ocr.engine_command.as_os_str().to_os_string(),
-            OsString::from("--ocr-render-command"),
-            ocr.renderer_command.as_os_str().to_os_string(),
             OsString::from("--ocr-lang"),
             OsString::from(PACKAGED_OCR_LANG),
             OsString::from("--ocr-jobs-per-tick"),
             OsString::from(OCR_JOBS_PER_TICK.to_string()),
+        ]);
+    }
+    if let Some(pdfium) = pdfium {
+        arguments.extend([
+            OsString::from("--pdf-render-command"),
+            pdfium.renderer_command.as_os_str().to_os_string(),
         ]);
     }
     if let Some(classifier) = classifier {
@@ -214,7 +250,14 @@ mod tests {
 
     #[test]
     fn daemon_command_is_bounded_to_owned_launch_and_loopback_control_plane() {
-        let arguments = daemon_arguments(Path::new("synthetic-data"), LAUNCH_ID, None, None, None);
+        let arguments = daemon_arguments(
+            Path::new("synthetic-data"),
+            LAUNCH_ID,
+            None,
+            None,
+            None,
+            None,
+        );
         assert_eq!(
             arguments,
             [
@@ -232,7 +275,7 @@ mod tests {
                 "--import-rescan-min-age-seconds",
                 "300",
                 "--expected-ipc-protocol",
-                "resume-ir.daemon-ipc.v4",
+                "resume-ir.daemon-ipc.v5",
                 "--ipc-listen",
                 "127.0.0.1:0",
             ]
@@ -250,8 +293,11 @@ mod tests {
         };
         let ocr = OcrRuntime {
             engine_command: PathBuf::from("/missing/tesseract"),
-            renderer_command: PathBuf::from("/missing/renderer"),
             tessdata_dir: PathBuf::from("/tampered/tessdata"),
+        };
+        let pdfium = PdfiumRuntime {
+            renderer_command: PathBuf::from("/missing/renderer"),
+            resource_dir: PathBuf::from("/tampered/pdfium-runtime-pack"),
         };
         let classifier = ClassifierRuntime {
             model_path: PathBuf::from("/tampered/classifier.json"),
@@ -262,6 +308,7 @@ mod tests {
             Some(&embedding),
             Some(&ocr),
             Some(&classifier),
+            Some(&pdfium),
         );
         assert!(arguments.contains(&OsString::from("/missing/embedding-runtime")));
         assert!(arguments.contains(&OsString::from("/missing/tesseract")));

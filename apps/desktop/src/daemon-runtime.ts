@@ -3,13 +3,11 @@ import { useEffect, useRef, useState } from "react"
 import {
   bridgeError,
   bridgeFailureKind,
-  controlManagedRoot,
   getDaemonLifecycle,
   listManagedRoots,
-  managedRootControlOutcome,
   readStatus,
   retryDaemon,
-  type ManagedRoot,
+  type SourceRoot,
   type StatusBody,
 } from "./daemon"
 import { indexServicePresentation, lifecycleMessage, type RuntimeView } from "./daemon-health"
@@ -36,7 +34,7 @@ import {
   type ResultFreshness,
 } from "./runtime-state"
 
-export type ImportState = "idle" | "selecting" | "selected" | "submitting" | "reauthorizing" | "queued" | "pending" | "active" | "cancelled" | "unavailable" | "mismatch" | "overload" | "error"
+export type ImportState = "idle" | "selecting" | "selected" | "submitting" | "queued" | "pending" | "active" | "cancelled" | "unavailable" | "mismatch" | "overload" | "error"
 export type RootControlState = "loading" | "unmanaged" | "active" | "paused" | "overload" | "error"
 
 interface ResultSnapshot {
@@ -74,7 +72,7 @@ const PREVIEW_LIFECYCLE: DaemonLifecycleSnapshot = {
 }
 
 const PREVIEW_STATUS: StatusBody = {
-  schema_version: "daemon.status.v4",
+  schema_version: "daemon.status.v5",
   status: "ok",
   process_state: "ready",
   core: { state: "ready", reason: null },
@@ -82,6 +80,7 @@ const PREVIEW_STATUS: StatusBody = {
     embedding: { state: "available", reason: null },
     ocr: { state: "available", reason: null },
     classifier: { state: "available", reason: null },
+    pdfium: { state: "available", reason: null },
   },
   capabilities: {
     keyword_search: { state: "available", reason: null },
@@ -89,6 +88,7 @@ const PREVIEW_STATUS: StatusBody = {
     semantic_search: { state: "available", reason: null },
     hybrid_search: { state: "available", reason: null },
     text_import: { state: "available", reason: null },
+    pdf_import: { state: "available", reason: null },
     ocr_import: { state: "available", reason: null },
     index_publication: { state: "available", reason: null },
   },
@@ -135,14 +135,27 @@ const PREVIEW_STATUS: StatusBody = {
   ipc: { accepted: 8, completed: 8, client_disconnect: 0, request_failure: 0, response_failure: 0 },
 }
 
-const PREVIEW_MANAGED_ROOTS: ManagedRoot[] = [
-  { root_handle: "root-00000000000000000000000000000000", display_label: "工程岗位简历", availability: "available" },
-  { root_handle: "root-11111111111111111111111111111111", display_label: "外置盘历史简历", availability: "unavailable" },
+const PREVIEW_SCAN = {
+  scan_id: "imp_00000000000000000000000000000000",
+  trigger: "periodic" as const,
+  phase: "complete" as const,
+  completeness: "complete" as const,
+  counts: { discovered: 1284, searchable: 1098, non_resume: 83, needs_review: 0, ocr: 102, failed: 1, ignored: 0, processed: 1284, total: 1284, errors: 0 },
+  rate_per_second: 12.4,
+  eta_seconds: 0,
+  started_at_seconds: 1,
+  updated_at_seconds: 2,
+  completed_at_seconds: 2,
+}
+
+const PREVIEW_MANAGED_ROOTS: SourceRoot[] = [
+  { root_id: "root-00000000000000000000000000000000", display_label: "工程岗位简历", state: "active", watcher_state: "active", current_counts: { discovered: 1284, searchable: 1098, non_resume: 83, needs_review: 0, ocr: 102, failed: 1 }, last_scan: PREVIEW_SCAN },
+  { root_id: "root-11111111111111111111111111111111", display_label: "外置盘历史简历", state: "offline", watcher_state: "unavailable", current_counts: { discovered: 318, searchable: 294, non_resume: 14, needs_review: 2, ocr: 8, failed: 0 }, last_scan: null },
 ]
 
 const PREVIEW_ROOT_CONTROLS: Record<string, RootControlState> = {
   "root-00000000000000000000000000000000": "active",
-  "root-11111111111111111111111111111111": "paused",
+  "root-11111111111111111111111111111111": "error",
 }
 
 const MAX_RETRY_AFTER_MS = 300_000
@@ -155,7 +168,11 @@ export function daemonRetryControl(snapshot: DaemonLifecycleSnapshot): { disable
   return { disabled: true, label: `${Math.ceil(retryAfterMs / 1000)} 秒后可重试` }
 }
 
-export function useDaemonRuntime(input: { preview: boolean; previewImport: boolean }) {
+export function useDaemonRuntime(input: {
+  preview: boolean
+  previewImport: boolean
+  sourcePanelOpen: boolean
+}) {
   const initialLifecycle = input.preview ? PREVIEW_LIFECYCLE : STARTING_LIFECYCLE
   const initialStatus = input.preview ? PREVIEW_STATUS : null
   const [lifecycle, setLifecycle] = useState<DaemonLifecycleSnapshot>(initialLifecycle)
@@ -165,9 +182,9 @@ export function useDaemonRuntime(input: { preview: boolean; previewImport: boole
   const [connectionMessage, setConnectionMessage] = useState(input.preview ? "daemon 可用" : lifecycleMessage(STARTING_LIFECYCLE))
   const [status, setStatus] = useState<StatusBody | null>(initialStatus)
   const [statusGeneration, setStatusGeneration] = useState<number | null>(input.preview ? 1 : null)
-  const [managedRoots, setManagedRoots] = useState<ManagedRoot[]>(input.previewImport ? PREVIEW_MANAGED_ROOTS : [])
+  const [managedRoots, setManagedRoots] = useState<SourceRoot[]>(input.previewImport ? PREVIEW_MANAGED_ROOTS : [])
   const [rootControls, setRootControls] = useState<Record<string, RootControlState>>(input.previewImport ? PREVIEW_ROOT_CONTROLS : {})
-  const [selectedRoot, setSelectedRoot] = useState<ManagedRoot | null>(input.previewImport ? PREVIEW_MANAGED_ROOTS[0] : null)
+  const [selectedRoot, setSelectedRoot] = useState<SourceRoot | null>(input.previewImport ? PREVIEW_MANAGED_ROOTS[0] : null)
   const [importState, setImportState] = useState<ImportState>(input.previewImport ? "selected" : "idle")
   const [importMessage, setImportMessage] = useState(input.previewImport ? "已恢复 2 个本地授权目录" : "选择一个本地目录后提交完整扫描")
   const lifecycleRef = useRef(initialLifecycle)
@@ -245,7 +262,7 @@ export function useDaemonRuntime(input: { preview: boolean; previewImport: boole
         || currentLifecycle.state !== "running"
         || currentLifecycle.generation !== requestedGeneration
       ) return null
-      const body = reply.body.schema_version === "daemon.status.v4" ? reply.body : null
+      const body = reply.body.schema_version === "daemon.status.v5" ? reply.body : null
       if (reply.http_status !== 200 || body === null) throw new Error("daemon status contract mismatch")
       statusGenerationRef.current = requestedGeneration
       statusRef.current = body
@@ -338,48 +355,51 @@ export function useDaemonRuntime(input: { preview: boolean; previewImport: boole
     }
   }
 
-  async function refreshManagedRoots() {
+  async function refreshManagedRoots(announce = false) {
     if (input.preview) return
     try {
-      const response = await listManagedRoots()
-      if (response.schema_version !== "resume-ir.desktop-managed-roots.v1" || response.limit !== 16 || response.roots.length > response.limit) {
+      const reply = await listManagedRoots()
+      const response = reply.body
+      if (reply.http_status !== 200 || response.schema_version !== "resume-ir.source-roots.v2" || response.limit !== 16 || response.roots.length > response.limit) {
         throw new Error("managed root contract mismatch")
       }
       setManagedRoots(response.roots)
       setSelectedRoot((current) => {
-        const restored = current && response.roots.find((root) => root.root_handle === current.root_handle)
-        return restored ?? response.roots.find((root) => root.availability === "available") ?? response.roots[0] ?? null
+        const restored = current && response.roots.find((root) => root.root_id === current.root_id)
+        return restored ?? response.roots.find((root) => root.state === "active") ?? response.roots[0] ?? null
       })
-      if (response.roots.length > 0) {
-        const available = response.roots.filter((root) => root.availability === "available").length
-        setImportState(available > 0 ? "selected" : "unavailable")
-        setImportMessage(available > 0 ? `已恢复 ${response.roots.length} 个本地授权目录` : "授权目录当前均不可读取")
+      if (announce && response.roots.length > 0) {
+        const available = response.roots.filter((root) => root.state === "active").length
+        const deleting = response.roots.filter((root) => root.state === "deleting").length
+        setImportState(available > 0 ? "selected" : deleting > 0 ? "active" : "unavailable")
+        setImportMessage(
+          available > 0
+            ? `已恢复 ${response.roots.length} 个本地授权目录`
+            : deleting > 0
+              ? `正在继续清理 ${deleting} 个目录的本地派生数据`
+              : "授权目录当前均不可读取",
+        )
+      } else if (announce) {
+        setImportState("idle")
+        setImportMessage("选择一个本地目录后开始扫描")
       }
-      await inspectRootControls(response.roots)
+      setRootControls(Object.fromEntries(response.roots.map((root) => [
+        root.root_id,
+        root.state === "deleting"
+          ? "loading"
+          : root.state === "offline"
+          ? "error"
+          : root.watcher_state === "paused"
+            ? "paused"
+            : root.watcher_state === "active"
+              ? "active"
+              : "error",
+      ])))
     } catch (error) {
       const overload = bridgeFailureKind(error) === "overload"
       setImportState(overload ? "overload" : "error")
       setImportMessage(overload ? "授权目录读取入口繁忙，请稍后重试" : "无法读取本地授权目录记录")
     }
-  }
-
-  async function inspectRootControls(roots: ManagedRoot[]) {
-    const next: Record<string, RootControlState> = {}
-    for (const root of roots) {
-      const authority = captureActionAuthority()
-      if (!authority) return
-      next[root.root_handle] = "loading"
-      setRootControls({ ...next })
-      try {
-        const reply = await controlManagedRoot(root.root_handle, "inspect")
-        if (!actionAuthorityIsCurrent(authority)) return
-        next[root.root_handle] = managedRootControlOutcome(reply)
-      } catch (error) {
-        if (!actionAuthorityIsCurrent(authority)) return
-        next[root.root_handle] = bridgeFailureKind(error) === "overload" ? "overload" : "error"
-      }
-    }
-    setRootControls(next)
   }
 
   useEffect(() => {
@@ -391,9 +411,12 @@ export function useDaemonRuntime(input: { preview: boolean; previewImport: boole
         applyLifecycleSnapshot(snapshot)
         if (snapshot.state === "running") {
           const authority = await refreshStatus()
-          if (authority && actionAuthorityIsCurrent(authority) && managedRootsGeneration.current !== snapshot.generation) {
-            managedRootsGeneration.current = snapshot.generation
-            await refreshManagedRoots()
+          if (authority && actionAuthorityIsCurrent(authority)) {
+            const generationChanged = managedRootsGeneration.current !== snapshot.generation
+            if (generationChanged || input.sourcePanelOpen) {
+              managedRootsGeneration.current = snapshot.generation
+              await refreshManagedRoots(generationChanged)
+            }
           }
         }
       },
@@ -412,7 +435,7 @@ export function useDaemonRuntime(input: { preview: boolean; previewImport: boole
         removeFocusListener: (listener) => window.removeEventListener("focus", listener),
       },
     })
-  }, [input.preview])
+  }, [input.preview, input.sourcePanelOpen])
 
   return {
     lifecycle,

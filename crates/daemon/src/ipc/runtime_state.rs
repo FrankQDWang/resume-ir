@@ -318,12 +318,13 @@ mod tests {
                 embedding: OptionalRuntimeHealth::unavailable(OptionalRuntimeReason::Missing),
                 ocr: OptionalRuntimeHealth::available(),
                 classifier: OptionalRuntimeHealth::available(),
+                pdfium: OptionalRuntimeHealth::available(),
             })
             .unwrap();
         let snapshot = state.snapshot();
         let status = snapshot.status;
 
-        assert_eq!(status["schema_version"], "daemon.status.v4");
+        assert_eq!(status["schema_version"], "daemon.status.v5");
         assert_eq!(snapshot.core.state, CoreState::Initializing);
         assert_eq!(
             status["optional_runtimes"]["embedding"]["reason"],
@@ -346,6 +347,7 @@ mod tests {
             embedding: OptionalRuntimeHealth::available(),
             ocr: OptionalRuntimeHealth::available(),
             classifier: OptionalRuntimeHealth::available(),
+            pdfium: OptionalRuntimeHealth::available(),
         };
         publisher
             .publish_without_store_for_test(ready_core, ready_runtimes)
@@ -403,6 +405,7 @@ mod tests {
             embedding: OptionalRuntimeHealth::available(),
             ocr: OptionalRuntimeHealth::unavailable(OptionalRuntimeReason::Invalid),
             classifier: OptionalRuntimeHealth::unavailable(OptionalRuntimeReason::Missing),
+            pdfium: OptionalRuntimeHealth::available(),
         };
         let snapshot = snapshot_from_fallible_source(
             runtimes,

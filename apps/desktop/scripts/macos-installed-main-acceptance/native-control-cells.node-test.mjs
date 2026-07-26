@@ -15,7 +15,7 @@ import {
 
 function endpoints(origin, launchId, instanceId) {
   return {
-    schema_version: "resume-ir.daemon-ipc.v4",
+    schema_version: "resume-ir.daemon-ipc.v5",
     launch_id: launchId,
     instance_id: instanceId,
     owner_mode: "desktop_supervised",
@@ -28,7 +28,18 @@ function endpoints(origin, launchId, instanceId) {
     search: `${origin}/search`,
     search_batch: `${origin}/search/batch`,
     details: `${origin}/details`,
+    hydrate: `${origin}/details/hydrate`,
     delete: `${origin}/delete`,
+    source_roots: `${origin}/source-roots`,
+    source_root_register: `${origin}/source-roots/register`,
+    source_root_legacy_migration: `${origin}/source-roots/migrate-legacy`,
+    source_root_scan: `${origin}/source-roots/scan`,
+    source_root_control: `${origin}/source-roots/control`,
+    source_root_delete: `${origin}/source-roots/delete`,
+    preview_create: `${origin}/source-preview/create`,
+    preview_range: `${origin}/source-preview/read-range`,
+    preview_close: `${origin}/source-preview/close`,
+    source_reveal: `${origin}/source-reveal/resolve`,
   };
 }
 

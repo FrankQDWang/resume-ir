@@ -1,26 +1,33 @@
-use std::fs;
+use std::collections::HashSet;
+use std::io::Read;
 use std::path::Path;
+use std::sync::{mpsc, Condvar, Mutex, OnceLock};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use import_pipeline::{
     detect_ocr_page_count, index_claimed_ocr_text_with_policy, ocr_preclaim_decision,
     OcrPreclaimDecision,
 };
 use meta_store::{
-    IngestJobFailureKind, OcrAttemptFailure, OcrPageCacheEntry, OcrPageCacheKey,
+    DocumentId, IngestJobFailureKind, OcrAttemptFailure, OcrPageCacheEntry, OcrPageCacheKey,
     OcrPageCacheStatus, OwnedMetaStore, UnixTimestamp, WorkerTaskKind,
 };
 use ocr_client::{
     inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
     LocalOcrCommandSpec, LocalPdfRenderCommandClient, LocalPdfRenderCommandSpec, OcrClient,
-    OcrOptions, OcrPage, OcrPageRequest, OcrWorkerBudget, PdftoppmPdfRenderer, PdftoppmRenderSpec,
-    RenderedPage, TesseractLanguageAvailability, TesseractOcrClient, TesseractOcrSpec,
+    OcrErrorKind, OcrOptions, OcrPage, OcrPageRequest, OcrWorkerBudget,
+    TesseractLanguageAvailability, TesseractOcrClient, TesseractOcrSpec,
 };
 
 use crate::daemon_error::{DaemonError, Result};
 use crate::daemon_policy::STALE_INGEST_JOB_SECONDS;
 use crate::run_options::RunOptions;
+use crate::source_file_authority::SourceFileError;
 use crate::worker_output::OcrWorkerSummary;
 use crate::worker_time::{current_timestamp, timestamp_minus_seconds};
+
+static ACTIVE_OCR_DOCUMENTS: OnceLock<(Mutex<HashSet<String>>, Condvar)> = OnceLock::new();
 
 pub(crate) fn run_ocr_worker_once(
     data_dir: &Path,
@@ -51,9 +58,15 @@ pub(crate) fn run_ocr_worker_once(
     }
     let runtime = match PreparedOcrRuntime::new(options) {
         Ok(runtime) => runtime,
-        Err(reason) => {
+        Err(PreparedOcrRuntimeFailure::Ocr(reason)) => {
             return Ok(OcrWorkerSummary {
                 runtime_unavailable: Some(reason),
+                ..OcrWorkerSummary::default()
+            });
+        }
+        Err(PreparedOcrRuntimeFailure::Pdfium(reason)) => {
+            return Ok(OcrWorkerSummary {
+                pdfium_unavailable: Some(reason),
                 ..OcrWorkerSummary::default()
             });
         }
@@ -72,6 +85,19 @@ pub(crate) fn run_ocr_worker_once(
             ..OcrWorkerSummary::default()
         });
     };
+    let _active_claim = ActiveOcrClaim::register(&job.job.document_id)?;
+    if !store
+        .ocr_claim_is_current(&job)
+        .map_err(DaemonError::store)?
+    {
+        store
+            .discard_ocr_claim_for_source_change(&job, now)
+            .map_err(DaemonError::store)?;
+        return Ok(OcrWorkerSummary {
+            stale_recovered,
+            ..OcrWorkerSummary::default()
+        });
+    }
 
     let mut summary = match run_claimed_ocr_job(data_dir, store, &job, options, &runtime, now) {
         Ok(summary) => summary,
@@ -82,6 +108,75 @@ pub(crate) fn run_ocr_worker_once(
     };
     summary.stale_recovered = stale_recovered;
     Ok(summary)
+}
+
+pub(crate) fn wait_for_documents_to_quiesce(documents: &[DocumentId], timeout: Duration) -> bool {
+    if documents.is_empty() {
+        return true;
+    }
+    let document_ids = documents
+        .iter()
+        .map(|document| document.as_str())
+        .collect::<HashSet<_>>();
+    let (active, changed) =
+        ACTIVE_OCR_DOCUMENTS.get_or_init(|| (Mutex::new(HashSet::new()), Condvar::new()));
+    let Ok(mut active) = active.lock() else {
+        return false;
+    };
+    let deadline = Instant::now() + timeout;
+    while active
+        .iter()
+        .any(|document| document_ids.contains(document.as_str()))
+    {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        let Ok((next, result)) = changed.wait_timeout(active, remaining) else {
+            return false;
+        };
+        active = next;
+        if result.timed_out()
+            && active
+                .iter()
+                .any(|document| document_ids.contains(document.as_str()))
+        {
+            return false;
+        }
+    }
+    true
+}
+
+struct ActiveOcrClaim {
+    document_id: String,
+}
+
+impl ActiveOcrClaim {
+    fn register(document_id: &DocumentId) -> Result<Self> {
+        let (active, _) =
+            ACTIVE_OCR_DOCUMENTS.get_or_init(|| (Mutex::new(HashSet::new()), Condvar::new()));
+        let mut active = active
+            .lock()
+            .map_err(|_| DaemonError::control_plane("OCR activity registry is unavailable"))?;
+        let document_id = document_id.as_str().to_string();
+        if !active.insert(document_id.clone()) {
+            return Err(DaemonError::control_plane(
+                "OCR document was claimed concurrently",
+            ));
+        }
+        Ok(Self { document_id })
+    }
+}
+
+impl Drop for ActiveOcrClaim {
+    fn drop(&mut self) {
+        let (active, changed) =
+            ACTIVE_OCR_DOCUMENTS.get_or_init(|| (Mutex::new(HashSet::new()), Condvar::new()));
+        if let Ok(mut active) = active.lock() {
+            active.remove(&self.document_id);
+            changed.notify_all();
+        }
+    }
 }
 
 pub(crate) fn run_ocr_worker_batch(
@@ -99,6 +194,7 @@ pub(crate) fn run_ocr_worker_batch(
         let summary = run_ocr_worker_once(data_dir, store, options, &claim_allowed)?;
         let stop_after_summary = summary.paused
             || summary.runtime_unavailable.is_some()
+            || summary.pdfium_unavailable.is_some()
             || (summary.processed == 0 && summary.failed == 0);
         aggregate.extend(summary);
         if stop_after_summary {
@@ -128,9 +224,42 @@ fn run_claimed_ocr_job(
     };
     let content_hash = job.source_fingerprint().to_string();
 
-    let bytes = match fs::read(&document.normalized_path) {
-        Ok(bytes) => bytes,
-        Err(_) => {
+    let cancellation = CancellationToken::new();
+    let _claim_monitor = OcrClaimMonitor::start(
+        store.open_sibling().map_err(DaemonError::store)?,
+        job.clone(),
+        cancellation.clone(),
+    )?;
+    let verified = match crate::source_file_authority::open_verified_revision_with_cancellation(
+        store,
+        &job.job.document_id,
+        job.source_revision_id(),
+        || cancellation.is_cancelled(),
+    ) {
+        Ok(verified) => verified,
+        Err(
+            SourceFileError::SourceChanged
+            | SourceFileError::StaleSelection
+            | SourceFileError::NotFound
+            | SourceFileError::Cancelled,
+        ) => {
+            store
+                .discard_ocr_claim_for_source_change(job, now)
+                .map_err(DaemonError::store)?;
+            return Ok(OcrWorkerSummary::default());
+        }
+        Err(SourceFileError::UnsafePath | SourceFileError::UnsupportedFormat) => {
+            mark_ocr_job_failed_permanent(store, job, now)?;
+            return Ok(OcrWorkerSummary {
+                failed: 1,
+                ..OcrWorkerSummary::default()
+            });
+        }
+        Err(
+            SourceFileError::SourceMissing
+            | SourceFileError::MetadataUnavailable
+            | SourceFileError::Io,
+        ) => {
             mark_ocr_job_failed_retryable(store, job, now)?;
             return Ok(OcrWorkerSummary {
                 failed: 1,
@@ -138,6 +267,48 @@ fn run_claimed_ocr_job(
             });
         }
     };
+    let expected_bytes = verified.byte_size();
+    let (mut source, _, _) = verified.into_parts();
+    let mut bytes = Vec::with_capacity(
+        usize::try_from(expected_bytes)
+            .unwrap_or(64 * 1024)
+            .min(256 * 1024 * 1024),
+    );
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        if cancellation.is_cancelled() {
+            store
+                .discard_ocr_claim_for_source_change(job, now)
+                .map_err(DaemonError::store)?;
+            return Ok(OcrWorkerSummary::default());
+        }
+        let read = match source.read(&mut buffer) {
+            Ok(read) => read,
+            Err(_) => {
+                mark_ocr_job_failed_retryable(store, job, now)?;
+                return Ok(OcrWorkerSummary {
+                    failed: 1,
+                    ..OcrWorkerSummary::default()
+                });
+            }
+        };
+        if read == 0 {
+            break;
+        }
+        bytes.extend_from_slice(&buffer[..read]);
+        if bytes.len() as u64 > expected_bytes {
+            store
+                .discard_ocr_claim_for_source_change(job, now)
+                .map_err(DaemonError::store)?;
+            return Ok(OcrWorkerSummary::default());
+        }
+    }
+    if bytes.len() as u64 != expected_bytes {
+        store
+            .discard_ocr_claim_for_source_change(job, now)
+            .map_err(DaemonError::store)?;
+        return Ok(OcrWorkerSummary::default());
+    }
     let page_count = match detect_ocr_page_count(&document.extension, &bytes) {
         Ok(page_count) => page_count,
         Err(error) => return Err(DaemonError::import(error)),
@@ -155,7 +326,6 @@ fn run_claimed_ocr_job(
         });
     }
     let budget = OcrWorkerBudget::new(options.ocr_page_timeout_ms).map_err(DaemonError::ocr)?;
-    let cancellation = CancellationToken::new();
     let ocr_options = OcrOptions::new(options.ocr_lang.as_str(), options.ocr_profile.as_str())
         .map_err(DaemonError::ocr)?;
     let mut page_texts = Vec::new();
@@ -165,6 +335,16 @@ fn run_claimed_ocr_job(
     let mut cache_hits = 0_usize;
 
     for page_no in 1..=page_count {
+        if cancellation.is_cancelled() {
+            store
+                .discard_ocr_claim_for_source_change(job, now)
+                .map_err(DaemonError::store)?;
+            return Ok(OcrWorkerSummary {
+                cache_writes,
+                cache_hits,
+                ..OcrWorkerSummary::default()
+            });
+        }
         let cache_key = OcrPageCacheKey::new(
             content_hash.clone(),
             page_no,
@@ -204,6 +384,7 @@ fn run_claimed_ocr_job(
                     mark_ocr_job_failed_retryable(store, job, now)?;
                     return Ok(OcrWorkerSummary {
                         failed: 1,
+                        runtime_unavailable: Some(crate::ipc::OptionalRuntimeReason::Invalid),
                         ..OcrWorkerSummary::default()
                     });
                 }
@@ -217,6 +398,7 @@ fn run_claimed_ocr_job(
                     mark_ocr_job_failed_retryable(store, job, now)?;
                     return Ok(OcrWorkerSummary {
                         failed: 1,
+                        runtime_unavailable: Some(crate::ipc::OptionalRuntimeReason::StartFailed),
                         ..OcrWorkerSummary::default()
                     });
                 }
@@ -232,18 +414,39 @@ fn run_claimed_ocr_job(
         ) {
             Ok(rendered_page) => rendered_page,
             Err(error) => {
-                let entry = OcrPageCacheEntry::failed_retryable(
-                    cache_key,
-                    format!("{:?}", error.kind()),
-                    now,
-                )
+                if cancelled_obsolete_claim(store, job, error.kind(), now)? {
+                    return Ok(OcrWorkerSummary {
+                        cache_writes,
+                        cache_hits,
+                        ..OcrWorkerSummary::default()
+                    });
+                }
+                let permanent = ocr_failure_is_permanent(error.kind());
+                let entry = if permanent {
+                    OcrPageCacheEntry::failed_permanent(
+                        cache_key,
+                        format!("{:?}", error.kind()),
+                        now,
+                    )
+                } else {
+                    OcrPageCacheEntry::failed_retryable(
+                        cache_key,
+                        format!("{:?}", error.kind()),
+                        now,
+                    )
+                }
                 .map_err(DaemonError::store)?;
                 store
                     .upsert_ocr_page_cache_entry(&entry)
                     .map_err(DaemonError::store)?;
-                mark_ocr_job_failed_retryable(store, job, now)?;
+                if permanent {
+                    mark_ocr_job_failed_permanent(store, job, now)?;
+                } else {
+                    mark_ocr_job_failed_retryable(store, job, now)?;
+                }
                 return Ok(OcrWorkerSummary {
                     failed: 1,
+                    pdfium_unavailable: runtime_failure_reason(error.kind()),
                     ..OcrWorkerSummary::default()
                 });
             }
@@ -257,18 +460,39 @@ fn run_claimed_ocr_job(
         let page = match page_result {
             Ok(page) => page,
             Err(error) => {
-                let entry = OcrPageCacheEntry::failed_retryable(
-                    cache_key,
-                    format!("{:?}", error.kind()),
-                    now,
-                )
+                if cancelled_obsolete_claim(store, job, error.kind(), now)? {
+                    return Ok(OcrWorkerSummary {
+                        cache_writes,
+                        cache_hits,
+                        ..OcrWorkerSummary::default()
+                    });
+                }
+                let permanent = ocr_failure_is_permanent(error.kind());
+                let entry = if permanent {
+                    OcrPageCacheEntry::failed_permanent(
+                        cache_key,
+                        format!("{:?}", error.kind()),
+                        now,
+                    )
+                } else {
+                    OcrPageCacheEntry::failed_retryable(
+                        cache_key,
+                        format!("{:?}", error.kind()),
+                        now,
+                    )
+                }
                 .map_err(DaemonError::store)?;
                 store
                     .upsert_ocr_page_cache_entry(&entry)
                     .map_err(DaemonError::store)?;
-                mark_ocr_job_failed_retryable(store, job, now)?;
+                if permanent {
+                    mark_ocr_job_failed_permanent(store, job, now)?;
+                } else {
+                    mark_ocr_job_failed_retryable(store, job, now)?;
+                }
                 return Ok(OcrWorkerSummary {
                     failed: 1,
+                    runtime_unavailable: runtime_failure_reason(error.kind()),
                     ..OcrWorkerSummary::default()
                 });
             }
@@ -295,6 +519,51 @@ fn run_claimed_ocr_job(
 
     let combined_text = page_texts.join("\n");
     let confidence = (confidence_count > 0).then_some(confidence_sum / confidence_count as f32);
+    match crate::source_file_authority::open_verified_revision_with_cancellation(
+        store,
+        &job.job.document_id,
+        job.source_revision_id(),
+        || cancellation.is_cancelled(),
+    ) {
+        Ok(_) => {}
+        Err(
+            SourceFileError::SourceChanged
+            | SourceFileError::StaleSelection
+            | SourceFileError::NotFound
+            | SourceFileError::Cancelled,
+        ) => {
+            store
+                .discard_ocr_claim_for_source_change(job, now)
+                .map_err(DaemonError::store)?;
+            return Ok(OcrWorkerSummary {
+                cache_writes,
+                cache_hits,
+                ..OcrWorkerSummary::default()
+            });
+        }
+        Err(SourceFileError::UnsafePath | SourceFileError::UnsupportedFormat) => {
+            mark_ocr_job_failed_permanent(store, job, now)?;
+            return Ok(OcrWorkerSummary {
+                failed: 1,
+                cache_writes,
+                cache_hits,
+                ..OcrWorkerSummary::default()
+            });
+        }
+        Err(
+            SourceFileError::SourceMissing
+            | SourceFileError::MetadataUnavailable
+            | SourceFileError::Io,
+        ) => {
+            mark_ocr_job_failed_retryable(store, job, now)?;
+            return Ok(OcrWorkerSummary {
+                failed: 1,
+                cache_writes,
+                cache_hits,
+                ..OcrWorkerSummary::default()
+            });
+        }
+    }
     let outcome = match index_claimed_ocr_text_with_policy(
         data_dir,
         store,
@@ -318,6 +587,74 @@ fn run_claimed_ocr_job(
         cache_hits,
         ..OcrWorkerSummary::default()
     })
+}
+
+fn cancelled_obsolete_claim(
+    store: &OwnedMetaStore,
+    job: &meta_store::ClaimedOcrJob,
+    failure: OcrErrorKind,
+    now: UnixTimestamp,
+) -> Result<bool> {
+    if failure != OcrErrorKind::Cancelled
+        || store
+            .ocr_claim_is_current(job)
+            .map_err(DaemonError::store)?
+    {
+        return Ok(false);
+    }
+    store
+        .discard_ocr_claim_for_source_change(job, now)
+        .map_err(DaemonError::store)?;
+    Ok(true)
+}
+
+struct OcrClaimMonitor {
+    stop: Option<mpsc::Sender<()>>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl OcrClaimMonitor {
+    fn start(
+        store: OwnedMetaStore,
+        job: meta_store::ClaimedOcrJob,
+        cancellation: CancellationToken,
+    ) -> Result<Self> {
+        let (stop, stopped) = mpsc::channel();
+        let worker = thread::Builder::new()
+            .name("resume-ocr-claim-monitor".to_string())
+            .spawn(move || loop {
+                match stopped.recv_timeout(Duration::from_millis(50)) {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                if !store.ocr_claim_is_current(&job).unwrap_or(false) {
+                    cancellation.cancel();
+                    return;
+                }
+            })
+            .map_err(|_| {
+                DaemonError::recoverable_dependency("OCR claim monitor could not start")
+            })?;
+        Ok(Self {
+            stop: Some(stop),
+            worker: Some(worker),
+        })
+    }
+}
+
+impl Drop for OcrClaimMonitor {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+fn ocr_failure_is_permanent(kind: OcrErrorKind) -> bool {
+    matches!(kind, OcrErrorKind::InvalidRequest | OcrErrorKind::Disabled)
 }
 
 enum PreparedOcrEngine {
@@ -349,55 +686,43 @@ impl PreparedOcrEngine {
     }
 }
 
-enum PreparedPdfRenderer {
-    Local(LocalPdfRenderCommandClient),
-    Pdftoppm(PdftoppmPdfRenderer),
-}
-
-impl PreparedPdfRenderer {
-    fn render_page(
-        &self,
-        document: &[u8],
-        page_no: u32,
-        dpi: u32,
-        budget: OcrWorkerBudget,
-        cancellation: &CancellationToken,
-    ) -> std::result::Result<RenderedPage, ocr_client::OcrError> {
-        match self {
-            Self::Local(renderer) => {
-                renderer.render_page(document, page_no, dpi, budget, cancellation)
-            }
-            Self::Pdftoppm(renderer) => {
-                renderer.render_page(document, page_no, dpi, budget, cancellation)
-            }
-        }
-    }
-}
-
 struct PreparedOcrRuntime {
     engine: PreparedOcrEngine,
-    renderer: PreparedPdfRenderer,
+    renderer: LocalPdfRenderCommandClient,
+}
+
+enum PreparedOcrRuntimeFailure {
+    Ocr(crate::ipc::OptionalRuntimeReason),
+    Pdfium(crate::ipc::OptionalRuntimeReason),
 }
 
 impl PreparedOcrRuntime {
-    fn new(options: &RunOptions) -> std::result::Result<Self, crate::ipc::OptionalRuntimeReason> {
+    fn new(options: &RunOptions) -> std::result::Result<Self, PreparedOcrRuntimeFailure> {
         let engine = options
             .ocr_command
             .as_deref()
             .or(options.ocr_tesseract_command.as_deref())
-            .ok_or(crate::ipc::OptionalRuntimeReason::NotConfigured)?;
-        let renderer = options
-            .ocr_render_command
-            .as_deref()
-            .or(options.ocr_pdftoppm_command.as_deref());
+            .ok_or(PreparedOcrRuntimeFailure::Ocr(
+                crate::ipc::OptionalRuntimeReason::NotConfigured,
+            ))?;
+        let renderer =
+            options
+                .pdf_render_command
+                .as_deref()
+                .ok_or(PreparedOcrRuntimeFailure::Pdfium(
+                    crate::ipc::OptionalRuntimeReason::NotConfigured,
+                ))?;
         let tessdata = std::env::var_os("TESSDATA_PREFIX").map(std::path::PathBuf::from);
-        let validated = crate::runtime_pack::validated_ocr_runtime(
+        let engine = crate::runtime_pack::validated_ocr_engine_with_cancel(
             engine,
-            renderer,
             &options.ocr_lang,
             tessdata.as_deref(),
-        )?;
-        let (engine, renderer) = validated.into_paths();
+            &|| false,
+        )
+        .map_err(PreparedOcrRuntimeFailure::Ocr)?;
+        let renderer = crate::runtime_pack::validated_pdf_renderer(renderer)
+            .map_err(PreparedOcrRuntimeFailure::Pdfium)?
+            .into_path();
         let engine = if options.ocr_command.is_some() {
             PreparedOcrEngine::Local(LocalOcrCommandClient::new(
                 LocalOcrCommandSpec::new(
@@ -405,35 +730,44 @@ impl PreparedOcrRuntime {
                     Vec::<String>::new(),
                     options.ocr_engine_profile.as_str(),
                 )
-                .map_err(|_| crate::ipc::OptionalRuntimeReason::StartFailed)?,
+                .map_err(|_| {
+                    PreparedOcrRuntimeFailure::Ocr(crate::ipc::OptionalRuntimeReason::StartFailed)
+                })?,
             ))
         } else {
             let client = TesseractOcrClient::new(
-                TesseractOcrSpec::new(&engine, options.ocr_engine_profile.as_str())
-                    .map_err(|_| crate::ipc::OptionalRuntimeReason::StartFailed)?,
+                TesseractOcrSpec::new(&engine, options.ocr_engine_profile.as_str()).map_err(
+                    |_| {
+                        PreparedOcrRuntimeFailure::Ocr(
+                            crate::ipc::OptionalRuntimeReason::StartFailed,
+                        )
+                    },
+                )?,
             );
             PreparedOcrEngine::Tesseract {
                 command: engine,
                 client,
             }
         };
-        let renderer = if options.ocr_render_command.is_some() {
-            PreparedPdfRenderer::Local(LocalPdfRenderCommandClient::new(
-                LocalPdfRenderCommandSpec::new(renderer, Vec::<String>::new())
-                    .map_err(|_| crate::ipc::OptionalRuntimeReason::StartFailed)?,
-            ))
-        } else {
-            PreparedPdfRenderer::Pdftoppm(PdftoppmPdfRenderer::new(
-                PdftoppmRenderSpec::new(renderer)
-                    .map_err(|_| crate::ipc::OptionalRuntimeReason::StartFailed)?,
-            ))
-        };
+        let renderer = LocalPdfRenderCommandClient::new(
+            LocalPdfRenderCommandSpec::new(renderer, Vec::<String>::new()).map_err(|_| {
+                PreparedOcrRuntimeFailure::Pdfium(crate::ipc::OptionalRuntimeReason::StartFailed)
+            })?,
+        );
         Ok(Self { engine, renderer })
     }
 
     fn tesseract_command(&self) -> Option<&Path> {
         self.engine.tesseract_command()
     }
+}
+
+fn runtime_failure_reason(kind: OcrErrorKind) -> Option<crate::ipc::OptionalRuntimeReason> {
+    matches!(
+        kind,
+        OcrErrorKind::WorkerUnavailable | OcrErrorKind::EngineFailed
+    )
+    .then_some(crate::ipc::OptionalRuntimeReason::StartFailed)
 }
 
 fn ocr_word_boxes_for_cache(page: &ocr_client::OcrPage) -> Result<Vec<meta_store::OcrWordBox>> {

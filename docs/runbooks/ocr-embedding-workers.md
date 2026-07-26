@@ -7,35 +7,37 @@ publication. Do not upload command input files, runtime logs, model caches, vect
 databases, indexes, or local data directories. Synthetic fixtures are required
 for public reproduction.
 
-The product does not ship a reviewed bundled runtime pack or embedding model
-yet. Those remain BLOCKED until OCR runtime, model, language-pack, and PDF
-renderer licenses are reviewed and distribution is approved.
+The desktop product requires reviewed classifier, embedding, OCR and PDFium
+runtime packs. A release remains blocked until the exact target packs and their
+installer composition receipts are complete.
 
 ## Bundled-first runtime decision
 
-The product runtime direction is bundled-first: installers should include a
-reviewed local OCR/PDF runtime pack when license, checksum, notices, and
-upgrade/rollback evidence are complete. External override remains supported for
-operators who need to pin an already installed runtime or test a reviewed local
-binary. All evidence must record `runtime_distribution_mode` and
+The product runtime is bundled: installers include reviewed OCR and PDFium
+packs with exact license, checksum, source/build identity, notices and
+upgrade/rollback evidence. All evidence must record `runtime_distribution_mode` and
 `runtime_package_binaries_included` so a local external command is never
 mistaken for an included product runtime. The privacy sentinel
 `runtime_binaries_included` must remain false because local evidence packages
 must not contain runtime binary contents.
+This bundled-first policy applies to every supported desktop target.
 
-Tesseract/tessdata is the preferred OCR engine/language-pack stack. PDFium is
-the preferred bundled renderer candidate because its license posture is lighter.
-Poppler/pdftoppm remains acceptable when it is operationally better, but a
-bundled Poppler release must use a GPL-compatible product distribution such as
-GPL-3.0-or-later and must include the exact license text, notices, source-offer,
-SBOM entries, artifact checksums, and installer composition evidence. A
-user-supplied Poppler command can still be used through the external override
-path when the default bundle is unavailable or under review.
+Tesseract plus tessdata is the OCR engine/language-pack stack. A pinned
+statically linked PDFium build is the only desktop PDF text and page-rendering runtime on
+macOS and Windows. There is no Poppler compatibility path in the desktop
+product.
+
+An External override is a local developer or diagnostic lane only. It never
+replaces the reviewed bundled runtime, never satisfies installer composition,
+and never becomes release evidence.
 Use `scripts/release/create-runtime-bundle-manifest.sh` during release dry-runs
 to produce the redacted `release.runtime_bundle.v1` manifest for reviewed local
-runtime artifacts. The manifest records basenames, byte counts, sha256 hashes,
-license IDs, sources, notices, and source-offer evidence only; it does not
-commit or upload runtime binaries.
+runtime artifacts. The distribution uses
+`LicenseRef-resume-ir-mixed-runtime-bundle`; each component still carries its
+own exact license identity. Each component records its reviewed status and
+source-offer identity. The manifest records basenames, byte counts, sha256
+hashes, license IDs, sources, notices, and source identity evidence only; it
+does not commit or upload runtime binaries.
 
 For the current-stage private 10k validation flow, use
 `scripts/local/run-current-stage-validation.sh` as the orchestration entrypoint.
@@ -45,174 +47,59 @@ and release-readiness steps locally without uploading evidence.
 
 ## PDF Renderer License Boundary
 
-The repository source license is GPL-3.0-or-later for the bundled-first
-Poppler/pdftoppm path. If a release bundles Poppler binaries, that release
-remains a GPL-family distribution review item. The installer/release evidence
-must record the exact installed Poppler license from the selected distribution,
-include the required license/source-offer materials, and pass legal review
-before the release blocker can be cleared. Runtime manifests should record the
-exact installed Poppler license, version, artifact checksum, runtime source, and
-reviewed status instead of assuming permissive renderer terms.
+The repository source license and the PDFium component license are recorded
+independently. Each product target must carry the exact PDFium root license,
+source commit, dependency revision, GN arguments, static-pack digest and final
+executable identity. Missing, partial, symlinked or mismatched pack content
+fails closed and cannot be treated as a release composition.
 
-This is no longer an unresolved runtime-choice blocker. Current engineering
-work is dependency detection, local manifest validation, checksum/license
-recording, fail-closed operator errors, and redacted diagnostics. If the
-operator does not have Tesseract, tessdata, or pdftoppm installed, commands
-should report the missing dependency and remediation without printing local
-paths, raw resume text, OCR text, page images, command stderr, model caches, or
-index contents.
+## OCR and PDFium runtime admission
 
-PDFium remains the preferred bundled renderer candidate if it satisfies quality
-and platform requirements. MuPDF and Ghostscript can be evaluated as external
-command adapters or commercial-license options, but their AGPL/commercial
-license posture needs the same explicit release review before bundling.
+Desktop runtime admission is daemon-owned and happens after the authenticated
+control plane is available. The daemon validates the immutable runtime-pack
+root supplied by the desktop launcher:
 
-## OCR Runtime Preflight
+- the OCR pack contains the target-native Tesseract executable and exact
+  `eng`/`chi_sim` tessdata described by `runtime-pack.json`;
+- the PDFium pack contains the target-native
+  `resume-pdf-render-runtime`, the pinned source contract and the exact PDFium
+  root license;
+- every executable identity is computed from the target-native canonical
+  executable payload, every data file is hashed, and dependency closure must
+  match the pack contract;
+- missing, modified, symlinked, non-regular or wrong-target content reports the
+  corresponding optional runtime as unavailable without blocking keyword
+  search or details.
 
-Canonical local command form:
-`resume-cli ocr preflight --json`.
-
-Before running OCR workers, check that the selected bundled runtime or external
-override is discoverable without printing command paths:
+macOS pack preparation uses:
 
 ```bash
-resume-cli --data-dir <local-data-dir> ocr preflight --json \
-  --ocr-lang eng
+cd apps/desktop
+npm run build:macos:pdfium
+npm run build:macos:ocr
 ```
 
-If the operator keeps tools outside `PATH`, pass explicit local command paths:
+The PDFium source builder requires a complete Xcode installation selected by
+an explicit `DEVELOPER_DIR` or by `xcode-select`; Command Line Tools alone are
+not accepted. Its preflight runs before source synchronization and leaves the
+global developer-directory selection unchanged.
 
-```bash
-resume-cli --data-dir <local-data-dir> ocr preflight --json \
-  --ocr-lang eng \
-  --tesseract-command <local-tesseract-command> \
-  --pdftoppm-command <local-pdftoppm-command>
+Windows pack preparation runs only on a native Windows x64/MSVC host:
+
+```powershell
+cd apps/desktop
+npm run build:windows:pdfium
+npm run build:windows:ocr
 ```
 
-The JSON schema is `ocr-runtime-preflight.v1`. The command exits nonzero when
-`pdftoppm`, `tesseract`, or the requested Tesseract language pack is missing or
-unknown. When dependencies are available, it also runs one synthetic local runtime probe:
-render a blank local PDF through `pdftoppm`, pass the rendered page to
-Tesseract, and require a successful TSV response. The JSON includes
-`runtime_probe` with `passed`, `failed`, or `not_run`, and remediation such as
-installing Poppler/pdftoppm, Tesseract/tessdata, the requested language pack, or
-fixing the local render/OCR commands. Output must keep paths as `<redacted>` and
-must not print command paths, OCR text, page images, Tesseract language dumps,
-synthetic probe payloads, model caches, indexes, or local data directories.
+The Windows OCR builder does not use a Linux container, cross-emulation or a
+downloaded prebuilt executable. Both targets stage the same four reviewed
+runtime capabilities: classifier, embedding, OCR and PDFium.
 
-## OCR Runtime Manifest Validation
-
-Canonical local draft command form:
-`resume-cli ocr draft-manifest --out <path>`.
-
-After dependency preflight, create a local-only manifest draft from the selected
-external commands and language pack:
-
-```bash
-scripts/local/prepare-local-ocr-runtime-manifest.sh \
-  --out <local-ocr-runtime-manifest.json> \
-  --runtime-pack-id <reviewed-runtime-pack-id> \
-  --language eng \
-  --language-pack <local-tessdata-file> \
-  --engine-license Apache-2.0 \
-  --renderer-license <installed-poppler-license> \
-  --language-license Apache-2.0 \
-  --reviewed
-```
-
-When `--tesseract-command` or `--pdftoppm-command` is omitted, the preparation
-script discovers the external commands with `command -v tesseract` and
-`command -v pdftoppm`. It does not install, download, bundle, upload, or print
-runtime paths or OCR artifacts. Omit `--reviewed` when legal review is not
-complete; the script exits nonzero and reports the OCR runtime as
-external/legal/runtime BLOCKED.
-
-The lower-level manifest command remains available when an operator needs to
-pin explicit command paths:
-
-```bash
-resume-cli --data-dir <local-data-dir> ocr draft-manifest \
-  --out <local-ocr-runtime-manifest.json> \
-  --runtime-pack-id <reviewed-runtime-pack-id> \
-  --tesseract-command <local-tesseract-command> \
-  --pdftoppm-command <local-pdftoppm-command> \
-  --language eng \
-  --language-pack <local-tessdata-file> \
-  --engine-license Apache-2.0 \
-  --renderer-license <installed-poppler-license> \
-  --language-license Apache-2.0 \
-  --reviewed
-```
-
-`resume-cli ocr draft-manifest` intentionally receives explicit command paths
-because the manifest records checksums for exact local artifacts. The
-current-stage orchestration script may discover those paths with
-`command -v tesseract` and `command -v pdftoppm` when its own
-`--tesseract-command` or `--pdftoppm-command` flags are omitted, but the draft
-manifest output and all current-stage summaries must keep runtime paths
-redacted.
-
-For a Tesseract combined language such as `eng+chi_sim`, provide one
-`--language-pack <lang>=<local-tessdata-file>` argument for each language:
-
-```bash
-scripts/local/prepare-local-ocr-runtime-manifest.sh \
-  --out <local-ocr-runtime-manifest.json> \
-  --runtime-pack-id <reviewed-runtime-pack-id> \
-  --language eng+chi_sim \
-  --language-pack eng=<local-eng-tessdata-file> \
-  --language-pack chi_sim=<local-chi-sim-tessdata-file> \
-  --engine-license Apache-2.0 \
-  --renderer-license <installed-poppler-license> \
-  --language-license Apache-2.0 \
-  --reviewed
-```
-
-Equivalent lower-level command:
-
-```bash
-resume-cli --data-dir <local-data-dir> ocr draft-manifest \
-  --out <local-ocr-runtime-manifest.json> \
-  --runtime-pack-id <reviewed-runtime-pack-id> \
-  --tesseract-command <local-tesseract-command> \
-  --pdftoppm-command <local-pdftoppm-command> \
-  --language eng+chi_sim \
-  --language-pack eng=<local-eng-tessdata-file> \
-  --language-pack chi_sim=<local-chi-sim-tessdata-file> \
-  --engine-license Apache-2.0 \
-  --renderer-license <installed-poppler-license> \
-  --language-license Apache-2.0 \
-  --reviewed
-```
-
-The draft command writes the manifest to the local `--out` file and keeps stdout
-redacted. The manifest file itself contains local artifact paths because the
-validator must read those files to verify checksums. Do not commit, upload, or
-paste this manifest unless it has been separately reviewed and stripped of local
-paths. Omit `--reviewed` when legal review is not complete; subsequent
-validation and release-readiness intake must then fail closed.
-
-Canonical local command form:
-`resume-cli ocr validate-manifest --manifest <path>`.
-
-Validate a reviewed local OCR runtime pack before wiring it into OCR workers:
-
-```bash
-resume-cli --data-dir <local-data-dir> ocr validate-manifest \
-  --manifest <local-ocr-runtime-manifest.json>
-```
-
-The manifest schema is `resume-ir.ocr-runtime-manifest.v1` with a
-`runtime_pack_id` and one or more `components`. Each component entry must
-include `id`, `kind`, `engine`, `version`, `artifact.path`, `artifact.sha256`,
-and a `license` object with `id` and `reviewed: true`. Supported component
-kinds are `ocr-engine`, `pdf-renderer`, and `ocr-language-pack`. Optional
-`languages` entries must include `id`, `artifact.path`, `artifact.sha256`, and
-a reviewed license.
-
-The validator reads only local files, verifies artifact checksums, and blocks
-unreviewed licenses. It must not print local paths, runtime bytes, language pack
-bytes, or complete digests.
+Runtime-pack manifests and source contracts may contain pinned public source
+identities and checksums, but no local paths. Runtime bytes, source checkouts,
+OCR pages, model caches and installed pack paths remain local and are never
+included in diagnostics or public evidence.
 
 ## Embedding Runtime Preflight
 

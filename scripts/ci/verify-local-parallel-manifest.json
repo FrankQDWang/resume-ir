@@ -1,7 +1,7 @@
 {
   "schema_version": "resume-ir.verify-local-parallel-manifest.v2",
   "resources": {
-    "cargo": 3,
+    "cargo": 1,
     "frontend": 2,
     "native-runtime": 1,
     "packaging": 1,
@@ -232,7 +232,7 @@
       "behavior": "Local vector-quality release evidence remains bounded and contract-valid.",
       "command": ["./scripts/ci/check-local-quality-release-evidence.sh"],
       "input_sets": ["release_assets", "contracts"],
-      "resources": ["runtime"]
+      "resources": ["cargo", "runtime"]
     },
     {
       "id": "current-stage-validation",
@@ -300,13 +300,15 @@
       "id": "release-sbom",
       "behavior": "Release SBOM generation and privacy boundaries remain valid.",
       "command": ["./scripts/ci/check-release-sbom.sh"],
-      "input_sets": ["release_assets", "workflow_policy"]
+      "input_sets": ["release_assets", "workflow_policy"],
+      "resources": ["cargo"]
     },
     {
       "id": "runtime-bundle-sbom",
       "behavior": "Runtime bundle SBOM generation and privacy boundaries remain valid.",
       "command": ["./scripts/ci/check-runtime-bundle-sbom.sh"],
-      "input_sets": ["release_assets", "workflow_policy"]
+      "input_sets": ["release_assets", "workflow_policy"],
+      "resources": ["cargo"]
     },
     {
       "id": "runtime-bundle-package",

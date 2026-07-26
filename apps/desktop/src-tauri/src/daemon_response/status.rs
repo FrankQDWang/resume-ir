@@ -137,7 +137,7 @@ enum Redacted {
 
 pub(super) fn project_status(body: &[u8]) -> Result<StatusBody, DesktopError> {
     let value: StatusBody = decode(body)?;
-    ensure_schema(&value.schema_version, "daemon.status.v4")?;
+    ensure_schema(&value.schema_version, "daemon.status.v5")?;
     validate_health_contract(
         value.status,
         &value.core,
@@ -218,6 +218,7 @@ mod tests {
             "semantic_search": value,
             "hybrid_search": value,
             "text_import": value,
+            "pdf_import": value,
             "ocr_import": value,
             "index_publication": value,
         })
@@ -225,18 +226,23 @@ mod tests {
 
     fn runtimes(state: &str, reason: Option<&str>) -> serde_json::Value {
         let value = serde_json::json!({"state": state, "reason": reason});
-        serde_json::json!({"embedding": value, "ocr": value, "classifier": value})
+        serde_json::json!({
+            "embedding": value,
+            "ocr": value,
+            "classifier": value,
+            "pdfium": value
+        })
     }
 
     fn status_payload() -> serde_json::Value {
         serde_json::from_str(include_str!(
-            "../../tests/fixtures/daemon-status-v4-ready.json"
+            "../../tests/fixtures/daemon-status-v5-ready.json"
         ))
         .unwrap()
     }
 
     #[test]
-    fn status_v4_accepts_ready_migrating_and_initializing_but_rejects_old_and_unknown_fields() {
+    fn status_v5_accepts_ready_migrating_and_initializing_but_rejects_old_and_unknown_fields() {
         let ready = status_payload();
         assert!(project_status(&serde_json::to_vec(&ready).unwrap()).is_ok());
 
@@ -308,6 +314,8 @@ mod tests {
             serde_json::json!({"state": "degraded", "reason": "embedding_unavailable"});
         payload["capabilities"]["text_import"] =
             serde_json::json!({"state": "unavailable", "reason": "embedding_unavailable"});
+        payload["capabilities"]["pdf_import"] =
+            serde_json::json!({"state": "unavailable", "reason": "embedding_unavailable"});
         payload["capabilities"]["ocr_import"] =
             serde_json::json!({"state": "unavailable", "reason": "embedding_unavailable"});
         payload["capabilities"]["index_publication"] =
@@ -326,6 +334,8 @@ mod tests {
             serde_json::json!({"state": "unavailable", "reason": "not_configured"});
         payload["capabilities"]["text_import"] =
             serde_json::json!({"state": "unavailable", "reason": "classifier_unavailable"});
+        payload["capabilities"]["pdf_import"] =
+            serde_json::json!({"state": "unavailable", "reason": "classifier_unavailable"});
         payload["capabilities"]["ocr_import"] =
             serde_json::json!({"state": "unavailable", "reason": "classifier_unavailable"});
         assert!(project_status(&serde_json::to_vec(&payload).unwrap()).is_ok());
@@ -337,7 +347,7 @@ mod tests {
 
     #[test]
     fn artifact_unavailable_blocked_snapshot_matches_the_daemon_contract() {
-        let payload = include_bytes!("../../tests/fixtures/daemon-status-v4-artifact-blocked.json");
+        let payload = include_bytes!("../../tests/fixtures/daemon-status-v5-artifact-blocked.json");
         let projected = project_status(payload).expect("artifact-blocked status must decode");
         assert!(matches!(projected.core.state, CoreState::Blocked));
         assert!(matches!(

@@ -1,4 +1,4 @@
-use std::{fmt, str::FromStr};
+use std::{fmt, path::PathBuf, str::FromStr};
 
 use core_domain::{
     MAX_ENTITY_MENTIONS_PER_VERSION, MAX_ENTITY_MENTION_EXTRACTOR_BYTES,
@@ -89,6 +89,23 @@ pub enum SearchSelectionDetailsResolution {
     LimitExceeded(SearchSelectionLimit),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SearchSourceFileReference {
+    pub root_path: PathBuf,
+    pub relative_path: PathBuf,
+    pub source_revision_id: SourceRevisionId,
+    pub content_hash: ContentDigest,
+    pub byte_size: u64,
+    pub extension: FileExtension,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SearchSourceFileResolution {
+    Current(SearchSourceFileReference),
+    Stale,
+    NotFound,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SearchSelectionLimit {
     VersionMetadata,
@@ -152,6 +169,76 @@ impl SearchMetadataSnapshot<'_> {
                 mentions,
             },
         )))
+    }
+
+    pub fn source_file(&self, selection: &SearchSelection) -> Result<SearchSourceFileResolution> {
+        let current = match self.resolve_search_selection(selection)? {
+            SearchSelectionResolution::Current { selection } => selection,
+            SearchSelectionResolution::Stale => return Ok(SearchSourceFileResolution::Stale),
+            SearchSelectionResolution::NotFound => {
+                return Ok(SearchSourceFileResolution::NotFound);
+            }
+        };
+        let row = self
+            .connection
+            .query_row(
+                "SELECT root.canonical_path, occurrence.relative_path,
+                        revision.id, revision.content_hash, revision.byte_size,
+                        document.extension
+                 FROM resume_version AS version
+                 JOIN source_revision AS revision
+                   ON revision.id = version.source_revision_id
+                  AND revision.document_id = version.document_id
+                 JOIN document ON document.id = version.document_id
+                 JOIN source_occurrence AS occurrence
+                   ON occurrence.document_id = version.document_id
+                  AND occurrence.source_revision_id = revision.id
+                  AND occurrence.state = 'present'
+                 JOIN source_root AS root ON root.id = occurrence.root_id
+                 WHERE version.id = ?1
+                   AND version.document_id = ?2
+                   AND root.state = 'active'
+                   AND NOT EXISTS (
+                       SELECT 1
+                       FROM source_root_deletion AS deletion
+                       WHERE deletion.root_id = root.id
+                         AND deletion.phase NOT IN ('complete', 'failed')
+                   )
+                 ORDER BY root.id, occurrence.relative_path
+                 LIMIT 1",
+                params![
+                    current.resume_version_id.as_str(),
+                    current.document_id.as_str(),
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(MetaStoreError::storage)?;
+        let Some((root, relative, revision_id, hash, byte_size, extension)) = row else {
+            return Ok(SearchSourceFileResolution::NotFound);
+        };
+        Ok(SearchSourceFileResolution::Current(
+            SearchSourceFileReference {
+                root_path: PathBuf::from(root),
+                relative_path: PathBuf::from(relative),
+                source_revision_id: SourceRevisionId::from_str(&revision_id)
+                    .map_err(|_| MetaStoreError::invalid_value("source_revision.id"))?,
+                content_hash: ContentDigest::from_str(&hash)
+                    .map_err(|_| MetaStoreError::invalid_value("source_revision.content_hash"))?,
+                byte_size: u64::try_from(byte_size)
+                    .map_err(|_| MetaStoreError::invalid_value("source_revision.byte_size"))?,
+                extension: crate::file_extension_from_storage(&extension),
+            },
+        ))
     }
 }
 

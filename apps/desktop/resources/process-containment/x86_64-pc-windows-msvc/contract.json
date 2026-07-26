@@ -13,7 +13,6 @@
     "embedding_resident",
     "ocr_custom_engine",
     "ocr_tesseract",
-    "pdf_custom_renderer",
-    "pdf_pdftoppm"
+    "pdfium"
   ]
 }

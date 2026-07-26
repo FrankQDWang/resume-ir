@@ -11,7 +11,13 @@ import {
   observedRealBackoff,
   runInstalledMainAcceptanceForTesting as runInstalledMainAcceptance,
 } from "./orchestrator-receipt.mjs";
-import { HEAD, diagnostics, fakeRuntime, options } from "./fixtures.mjs";
+import {
+  HEAD,
+  SOURCE,
+  diagnostics,
+  fakeRuntime,
+  options,
+} from "./fixtures.mjs";
 import {
   OPTIONAL_RUNTIME_NAMES,
   RUNTIME_FAULT_CASES,
@@ -50,7 +56,10 @@ function expectedRuntimeFaultCalls(firstSessionId) {
     } else if (behaviorRuntime === "classifier") {
       calls.push(["create-canary", cell]);
     }
-    if (behaviorRuntime === "ocr") {
+    if (
+      ["ocr", "pdfium"].includes(behaviorRuntime) ||
+      cell === "pdfium_start_failed"
+    ) {
       calls.push(["prepare-ocr-fixture", cell]);
     }
     calls.push(
@@ -58,8 +67,11 @@ function expectedRuntimeFaultCalls(firstSessionId) {
       ["verify"],
       ["activate-fault", cell, cell],
       ["launch", cell, sessionId],
-      ["validate-runtime-fault", sessionId, cell],
     );
+    if (cell === "pdfium_start_failed") {
+      calls.push(["trigger-pdfium-start-failure", sessionId]);
+    }
+    calls.push(["validate-runtime-fault", sessionId, cell]);
     if (behaviorRuntime) {
       calls.push([
         `validate-${behaviorRuntime}-behavior`,
@@ -108,7 +120,7 @@ test("accepts only real source, repository, and temporary-root inputs", () => {
   assert.equal(parsed.temporaryParent, "/synthetic/tmp");
   for (const [name, value] of [
     ["--expected-git-head", HEAD],
-    ["--expected-version", "0.1.2"],
+    ["--expected-version", "0.1.8"],
     ["--expected-composition-digest", "b".repeat(64)],
     ["--expected-icon-sha256", "c".repeat(64)],
     ["--persistent-contention", "fulltext"],
@@ -142,7 +154,7 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
   assert.deepEqual(report.deployment, {
     action: "reinstall",
     built_dmg_verified: true,
-    installed_version: "0.1.2",
+    installed_version: "0.1.8",
     source: "clean_origin_main",
   });
   assert.equal(report.data_boundary.clone, "apfs_copy_on_write");
@@ -240,7 +252,8 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
     "fulltext_publication_busy",
   );
   assert.equal(report.persistent_contention.core_reason, "runtime_invariant");
-  assert.equal(report.cold_start.v29_manifest_identity_preserved, true);
+  assert.equal(report.cold_start.v29_predecessor_retained, true);
+  assert.equal(report.cold_start.v33_manifest_published, true);
   assert.equal(report.cold_start.v29_logical_authority_preserved, true);
   assert.deepEqual(report.diagnostics.gui_combined_export, {
     desktop_contract: "resume-ir.desktop-diagnostics.v2",
@@ -439,6 +452,11 @@ test("cannot issue a passing receipt when any required native control or fault c
       "validateClassifierFaultBehavior",
       "classifier_missing",
     ],
+    [
+      "pdfium behavior",
+      "validatePdfiumFaultBehavior",
+      "pdfium_missing",
+    ],
   ];
   for (const [label, method, selectedRuntime] of cases) {
     const runtime = fakeRuntime();
@@ -596,7 +614,11 @@ test("every runtime mutation entrypoint revalidates the live lease and source au
     releaseDeploymentOverrides: {
       deriveCommitProductBinding: async () => ({
         iconSha256: "c".repeat(64),
-        version: "0.1.2",
+        version: "0.1.8",
+      }),
+      deriveSourceIdentity: async () => ({
+        ...SOURCE,
+        base_commit: observedHead,
       }),
       verifyGitMainBinding: async () => authority(),
     },
@@ -641,7 +663,7 @@ test("every runtime mutation entrypoint revalidates the live lease and source au
   );
 });
 
-test("rejects an installed App or receipt that did not come from this exact 0.1.2 build", async () => {
+test("rejects an installed App or receipt that did not come from this exact 0.1.8 build", async () => {
   await assert.rejects(
     runInstalledMainAcceptance(options(), {
       runtime: fakeRuntime({

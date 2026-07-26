@@ -149,6 +149,15 @@ progress.progress-track::-moz-progress-bar { border-radius: inherit; background:
 .overlay { position: fixed; z-index: 50; inset: 0; display: flex; justify-content: flex-end; }
 .overlay-backdrop { position: absolute; inset: 0; border: 0; background: rgb(28 29 33 / 20%); backdrop-filter: blur(1px); }
 .sheet { position: relative; display: flex; width: 100%; max-width: 576px; height: 100%; flex-direction: column; border-left: 1px solid var(--border); background: var(--card); box-shadow: -12px 0 36px rgb(28 29 33 / 16%); animation: sheet-in .18s ease-out; }
+.detail-sheet { max-width: none; }
+.sheet-resize-handle { position: absolute; z-index: 2; top: 0; bottom: 0; left: -5px; width: 10px; cursor: col-resize; outline: none; }
+.sheet-resize-handle::after { position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; background: transparent; content: ""; transition: background .15s; }
+.sheet-resize-handle:hover::after, .sheet-resize-handle:focus::after { background: var(--primary); }
+.detail-sheet-header { align-items: center; }
+.detail-header-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.detail-tabs { display: flex; flex: 0 0 auto; gap: 4px; overflow-x: auto; border-bottom: 1px solid var(--border); padding: 8px 20px; }
+.detail-tabs button { height: 32px; flex: 0 0 auto; border: 0; border-radius: 7px; padding: 0 11px; color: var(--muted-foreground); background: transparent; font-size: 12px; }
+.detail-tabs button.active { color: var(--foreground); background: var(--muted); font-weight: 600; }
 @keyframes sheet-in { from { transform: translateX(16px); opacity: .75; } to { transform: translateX(0); opacity: 1; } }
 .sheet-header { display: flex; min-height: 73px; flex: 0 0 auto; align-items: flex-start; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border); padding: 16px 20px; }
 .sheet-header > div { min-width: 0; }
@@ -158,6 +167,8 @@ progress.progress-track::-moz-progress-bar { border-radius: inherit; background:
 .detail-loading { display: flex; min-height: 260px; align-items: center; justify-content: center; gap: 9px; color: var(--muted-foreground); font-size: 13px; }
 .status-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .detail-section { margin-top: 20px; }
+.first-detail-section { margin-top: 0; }
+.detail-explainer { margin: -2px 0 8px; color: var(--muted-foreground); font-size: 11px; line-height: 1.5; }
 .detail-section h3 { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
 .snippet-box { margin: 0; border-radius: 9px; padding: 11px 12px; background: var(--muted); font-size: 13px; line-height: 1.65; }
 .detail-section .tag-row { margin-top: 8px; }
@@ -173,6 +184,14 @@ progress.progress-track::-moz-progress-bar { border-radius: inherit; background:
 .file-panel strong { font-weight: 500; }
 .file-panel code { min-width: 0; overflow: hidden; color: var(--foreground); text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 .full-text { max-height: 320px; overflow: auto; margin: 0; border-radius: 9px; padding: 12px; color: var(--foreground); background: var(--muted); font-family: inherit; font-size: 12px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pdf-preview { display: flex; min-height: 0; flex-direction: column; }
+.pdf-preview > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.pdf-preview > header > div { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 12px; }
+.pdf-preview-state { display: flex; min-height: 320px; align-items: center; justify-content: center; gap: 8px; border-radius: 10px; color: var(--muted-foreground); background: var(--muted); font-size: 12px; }
+.pdf-preview-error, .pdf-preview-warning { color: var(--err); }
+.pdf-preview-warning { margin: 0 0 8px; font-size: 11px; }
+.pdf-page { overflow: auto; border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: #e7e7e5; text-align: center; }
+.pdf-page canvas { display: inline-block; max-width: none; background: white; box-shadow: 0 2px 12px rgb(28 29 33 / 14%); }
 .muted-note { display: block; margin-top: 7px; color: var(--muted-foreground); font-size: 11px; }
 .banner { display: flex; min-height: 44px; align-items: center; gap: 9px; border: 1px solid var(--border); border-radius: 11px; padding: 10px 12px; color: var(--muted-foreground); background: var(--muted); font-size: 12px; }
 .banner-ok { border-color: rgb(46 158 91 / 15%); color: var(--ok); background: rgb(46 158 91 / 7%); }
@@ -189,6 +208,34 @@ progress.progress-track::-moz-progress-bar { border-radius: inherit; background:
 .source-card > svg { color: var(--primary); }.source-card strong { font-size: 14px; }.source-card p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 12px; }
 .source-copy { flex: 1; min-width: 0; }
 .source-actions { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; max-width: 250px; }
+.source-roots-panel > header > div { display: flex; align-items: baseline; gap: 8px; }
+.source-root-card { margin-top: 10px; border: 1px solid var(--border); border-radius: 14px; padding: 14px; background: var(--background); }
+.source-root-heading { display: flex; align-items: center; gap: 12px; }
+.source-root-heading > svg, .source-empty > svg { color: var(--primary); flex: 0 0 auto; }
+.source-root-heading p, .source-empty p { margin: 3px 0 0; color: var(--muted-foreground); font-size: 12px; }
+.source-state { flex: 0 0 auto; border-radius: 999px; padding: 4px 8px; font-size: 11px; background: var(--muted); color: var(--muted-foreground); }
+.source-state-active { background: color-mix(in srgb, var(--ok) 12%, white); color: var(--ok); }
+.source-state-paused, .source-state-offline { background: color-mix(in srgb, var(--warn) 14%, white); color: var(--warn); }
+.source-state-deleting { background: color-mix(in srgb, var(--err) 12%, white); color: var(--err); }
+.source-progress { margin: 13px 0 10px; }
+.source-progress > div { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 5px; color: var(--muted-foreground); font-size: 11px; }
+.source-progress strong { color: var(--foreground); font-size: 11px; }
+.source-progress progress { display: block; width: 100%; height: 7px; border: 0; border-radius: 999px; overflow: hidden; appearance: none; -webkit-appearance: none; background: var(--muted); }
+.source-progress progress::-webkit-progress-bar { background: var(--muted); }
+.source-progress progress::-webkit-progress-value { border-radius: 999px; background: var(--primary); transition: width .2s; }
+.source-progress progress::-moz-progress-bar { border-radius: 999px; background: var(--primary); }
+.source-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 0 0 12px; }
+.source-counts > div { min-width: 0; border-radius: 8px; padding: 6px 8px; background: var(--muted); }
+.source-counts dt { color: var(--muted-foreground); font-size: 10px; }
+.source-counts dd { margin: 2px 0 0; font-size: 12px; font-weight: 650; }
+.source-root-card .source-actions { margin-left: auto; max-width: none; }
+.source-empty { display: flex; align-items: center; gap: 12px; padding: 20px 8px 12px; }
+.danger-text { color: var(--err); }
+.danger-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; border: 1px solid var(--err); border-radius: 8px; padding: 0 12px; color: white; background: var(--err); font: inherit; font-size: 12px; cursor: pointer; }
+.danger-button:disabled { opacity: .5; cursor: not-allowed; }
+.source-delete-confirm { display: grid; grid-template-columns: 1fr auto; gap: 12px; margin-top: 12px; border: 1px solid color-mix(in srgb, var(--err) 35%, var(--border)); border-radius: 12px; padding: 14px; background: color-mix(in srgb, var(--err) 5%, white); }
+.source-delete-copy p { margin: 5px 0 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
+.source-delete-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
 .sheet-actions { display: flex; gap: 8px; margin-top: 12px; }
 .source-summary { margin-top: 24px; }
 .spin { animation: spin .8s linear infinite; }

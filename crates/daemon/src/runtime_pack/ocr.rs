@@ -4,6 +4,7 @@ use serde::Deserialize;
 
 use crate::ipc::OptionalRuntimeReason;
 
+#[cfg(test)]
 use super::attestation::validated_pdf_renderer;
 use super::security::{
     canonical_input_directory, ensure_not_cancelled, matches_declared_executable,
@@ -19,7 +20,7 @@ const MAC_PACK_ID: &str = "tesseract-5.5.2-tessdata-fast-4.1.0-macos-arm64-r1";
 const WINDOWS_PACK_ID: &str = "tesseract-5.5.2-tessdata-fast-4.1.0-windows-x64-static-r1";
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 const MAC_MANIFEST_SHA256: &str =
-    "bd86a197f5b9518df622196c4d4c16201567295237bab06a133b2d3496528ad1";
+    "cce3a631e03e956461c86590999a29ee623f3fbe364242c10e172bc56a44a5ed";
 
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 const MAC_LICENSES: [&str; 10] = [
@@ -66,51 +67,30 @@ pub(super) fn validate(
     requested_languages: &str,
     tessdata_dir: Option<&Path>,
 ) -> Result<(), OptionalRuntimeReason> {
-    validated_runtime(engine, renderer, requested_languages, tessdata_dir).map(drop)
+    validate_pack_for_identity_with_cancel(
+        engine,
+        requested_languages,
+        tessdata_dir,
+        host_identity()?,
+        &|| false,
+    )?;
+    validated_pdf_renderer(renderer.ok_or(OptionalRuntimeReason::Missing)?)?;
+    Ok(())
 }
 
-pub(crate) struct ValidatedOcrRuntime {
-    engine: PathBuf,
-    renderer: PathBuf,
-}
-
-impl ValidatedOcrRuntime {
-    pub(crate) fn into_paths(self) -> (PathBuf, PathBuf) {
-        (self.engine, self.renderer)
-    }
-}
-
-pub(crate) fn validated_runtime(
+pub(crate) fn validated_engine_with_cancel(
     engine: &Path,
-    renderer: Option<&Path>,
-    requested_languages: &str,
-    tessdata_dir: Option<&Path>,
-) -> Result<ValidatedOcrRuntime, OptionalRuntimeReason> {
-    validated_runtime_with_cancel(engine, renderer, requested_languages, tessdata_dir, &|| {
-        false
-    })
-}
-
-pub(crate) fn validated_runtime_with_cancel(
-    engine: &Path,
-    renderer: Option<&Path>,
     requested_languages: &str,
     tessdata_dir: Option<&Path>,
     cancelled: &dyn Fn() -> bool,
-) -> Result<ValidatedOcrRuntime, OptionalRuntimeReason> {
-    ensure_not_cancelled(cancelled)?;
-    let renderer = renderer.ok_or(OptionalRuntimeReason::Missing)?;
-    let engine = validate_pack_for_identity_with_cancel(
+) -> Result<PathBuf, OptionalRuntimeReason> {
+    validate_pack_for_identity_with_cancel(
         engine,
         requested_languages,
         tessdata_dir,
         host_identity()?,
         cancelled,
-    )?;
-    ensure_not_cancelled(cancelled)?;
-    let renderer = validated_pdf_renderer(renderer)?.into_path();
-    ensure_not_cancelled(cancelled)?;
-    Ok(ValidatedOcrRuntime { engine, renderer })
+    )
 }
 
 #[cfg(test)]
@@ -246,7 +226,7 @@ const fn mac_identity() -> PackIdentity {
     PackIdentity {
         pack_id: MAC_PACK_ID,
         target_triple: "aarch64-apple-darwin",
-        renderer: "macos-pdfkit-coregraphics",
+        renderer: "macos-pdfium-static",
         engine_file: "tesseract",
         licenses: &MAC_LICENSES,
         libraries: &MAC_LIBRARIES,

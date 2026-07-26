@@ -3,10 +3,10 @@ use std::time::{Duration, Instant};
 use fs_crawler::DiscoveredFile;
 use index_fulltext::IndexDocument;
 use meta_store::{
-    ContactHash, Document, DocumentStatus, EntityMention, ResumeVersion,
-    ResumeVersionClassification, ResumeVersionId, SourceRevision, SourceRevisionId,
+    ContactHash, Document, DocumentStatus, EntityMention, ImportTaskId, ResumeVersion,
+    ResumeVersionClassification, ResumeVersionId, SourceRevision, SourceRevisionId, UnixTimestamp,
 };
-use parser_pdf::PdfTextExtractionTimings;
+use parser_pdf::PdfTextExtractionMetrics;
 
 use crate::classification::AdmissionDecision;
 use crate::source_dispositions::ProcessedFile;
@@ -22,6 +22,13 @@ pub(crate) struct PendingSearchableDocument {
     pub(crate) phone_hash: Option<ContactHash>,
     pub(crate) index_document: IndexDocument,
     pub(crate) publication_kind: PendingSearchablePublicationKind,
+    pub(crate) source_occurrence: Option<PendingSourceOccurrence>,
+}
+
+pub(crate) struct PendingSourceOccurrence {
+    pub(crate) task_id: ImportTaskId,
+    pub(crate) normalized_path: String,
+    pub(crate) observed_at: UnixTimestamp,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,14 +68,14 @@ pub(crate) struct ParseWorkResult {
     pub(crate) parse_elapsed: Duration,
     pub(crate) parse_started: Instant,
     pub(crate) parse_finished: Instant,
-    pub(crate) pdf_parse_timings: PdfTextExtractionTimings,
+    pub(crate) pdf_parse_metrics: PdfTextExtractionMetrics,
     pub(crate) post_parser_timings: ImportPostParserTimings,
     pub(crate) outcome: ParseWorkOutcome,
 }
 
 pub(crate) struct ParseWorkItemOutput {
     pub(crate) outcome: ParseWorkOutcome,
-    pub(crate) pdf_parse_timings: PdfTextExtractionTimings,
+    pub(crate) pdf_parse_metrics: PdfTextExtractionMetrics,
     pub(crate) post_parser_timings: ImportPostParserTimings,
 }
 

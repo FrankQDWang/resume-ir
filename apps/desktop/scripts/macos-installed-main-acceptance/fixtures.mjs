@@ -23,6 +23,7 @@ function faultCapabilities(expectedReasons) {
   const embedding = Object.hasOwn(expectedReasons, "embedding");
   const ocr = Object.hasOwn(expectedReasons, "ocr");
   const classifier = Object.hasOwn(expectedReasons, "classifier");
+  const pdfium = Object.hasOwn(expectedReasons, "pdfium");
   return {
     keyword_search: available,
     detail: available,
@@ -37,10 +38,19 @@ function faultCapabilities(expectedReasons) {
       : embedding
         ? unavailable("embedding_unavailable")
         : available,
+    pdf_import: classifier
+      ? unavailable("classifier_unavailable")
+      : embedding
+        ? unavailable("embedding_unavailable")
+        : pdfium
+          ? unavailable("pdfium_unavailable")
+          : available,
     ocr_import: classifier
       ? unavailable("classifier_unavailable")
       : embedding
         ? unavailable("embedding_unavailable")
+        : pdfium
+          ? unavailable("pdfium_unavailable")
         : ocr
           ? unavailable("ocr_unavailable")
           : available,
@@ -80,7 +90,7 @@ export function options(overrides = {}) {
 
 export function diagnostics(overrides = {}) {
   return {
-    schema_version: "resume-ir.diagnostics.v5",
+    schema_version: "resume-ir.diagnostics.v9",
     privacy_boundary: "redacted_local_aggregate",
     contains_raw_resume_text: false,
     contains_queries: false,
@@ -96,6 +106,7 @@ export function diagnostics(overrides = {}) {
       embedding: { state: "available", reason: null },
       ocr: { state: "available", reason: null },
       classifier: { state: "available", reason: null },
+      pdfium: { state: "available", reason: null },
     },
     capabilities: {
       keyword_search: { state: "available", reason: null },
@@ -103,6 +114,7 @@ export function diagnostics(overrides = {}) {
       semantic_search: { state: "available", reason: null },
       hybrid_search: { state: "available", reason: null },
       text_import: { state: "available", reason: null },
+      pdf_import: { state: "available", reason: null },
       ocr_import: { state: "available", reason: null },
       index_publication: { state: "available", reason: null },
     },
@@ -125,6 +137,10 @@ export function diagnostics(overrides = {}) {
       import_tasks_queued: 0,
       import_tasks_recoverable: 0,
       import_tasks_cancelled: 0,
+      source_roots_total: 1,
+      source_roots_active: 1,
+      source_roots_offline: 0,
+      source_root_deletions_in_progress: 0,
       query_latency: {
         sample_count: 0,
         p50_ms: null,
@@ -197,7 +213,7 @@ export function fakeRuntime({
         dmgSha256: DMG,
         gitHead: HEAD,
         source: SOURCE,
-        version: "0.1.2",
+        version: "0.1.8",
         ...deploymentOverrides,
       };
     },
@@ -213,7 +229,7 @@ export function fakeRuntime({
         iconSha256: ICON,
         source: SOURCE,
         sourceSchema: 29,
-        version: "0.1.2",
+        version: "0.1.8",
         ...bindingOverrides,
       };
     },
@@ -339,6 +355,10 @@ export function fakeRuntime({
         },
       };
     },
+    async triggerPdfiumStartFailure(session, fixture) {
+      calls.push(["trigger-pdfium-start-failure", session.id]);
+      assert.equal(fixture.request.max_files, 1);
+    },
     async validateEmbeddingFaultBehavior(session, selection, cell) {
       calls.push(["validate-embedding-behavior", session.id, cell]);
       assert.equal(selection.docId, "doc-synthetic");
@@ -367,6 +387,16 @@ export function fakeRuntime({
       return {
         classifierEpochPreserved: true,
         importRejectedBeforeClaim: true,
+        visibleEpochPreserved: true,
+      };
+    },
+    async validatePdfiumFaultBehavior(session, fixture, cell) {
+      calls.push(["validate-pdfium-behavior", session.id, cell]);
+      assert.equal(fixture.request.max_files, 1);
+      faultByClone.get(session.clone).behaviors.add("pdfium");
+      return {
+        ocrQueueStable: true,
+        pdfDeferred: true,
         visibleEpochPreserved: true,
       };
     },

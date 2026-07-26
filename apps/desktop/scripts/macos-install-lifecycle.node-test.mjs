@@ -41,14 +41,14 @@ const SOURCE = Object.freeze({
 
 const EXPECTED_APP = {
   bundle_id: "local.resume-ir.desktop",
-  version: "0.1.2",
+  version: "0.1.8",
   display_name: "resume-ir",
   icon_file: "icon.icns",
 };
 
 function dmgReceipt() {
   return {
-    schema_version: "resume-ir.macos-dmg-composition.v3",
+    schema_version: "resume-ir.macos-dmg-composition.v4",
     target_triple: "aarch64-apple-darwin",
     source: SOURCE,
     dmg_count: 1,
@@ -271,7 +271,7 @@ test("installs only after DMG verification and emits a bounded receipt", async (
     target_triple: "aarch64-apple-darwin",
     app_bundle_count: 1,
     bundle_id_match: true,
-    version: "0.1.2",
+    version: "0.1.8",
     display_name: "resume-ir",
     icon_metadata: "icon.icns",
     runtime_composition_verified: true,
@@ -683,7 +683,7 @@ test("reads only the expected bounded macOS bundle metadata", async (context) =>
   const calls = [];
   const fields = new Map([
     ["CFBundleIdentifier", "local.resume-ir.desktop"],
-    ["CFBundleShortVersionString", "0.1.2"],
+    ["CFBundleShortVersionString", "0.1.8"],
     ["CFBundleDisplayName", "resume-ir"],
     ["CFBundleIconFile", "icon.icns"],
   ]);

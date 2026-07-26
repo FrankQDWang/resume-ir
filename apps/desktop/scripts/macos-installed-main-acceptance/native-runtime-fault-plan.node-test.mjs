@@ -8,13 +8,14 @@ import {
   runtimeFaultStatusMatches,
 } from "./native-runtime-fault-plan.mjs";
 
-const RUNTIMES = ["embedding", "ocr", "classifier"];
+const RUNTIMES = ["embedding", "ocr", "classifier", "pdfium"];
 
 function capabilitiesFor(runtimes) {
   const available = (name) => runtimes[name].state === "available";
   const embedding = available("embedding");
   const ocr = available("ocr");
   const classifier = available("classifier");
+  const pdfium = available("pdfium");
   const importReason = !classifier
     ? "classifier_unavailable"
     : "embedding_unavailable";
@@ -30,7 +31,7 @@ function capabilitiesFor(runtimes) {
     text_import: classifier && embedding
       ? { state: "available", reason: null }
       : { state: "unavailable", reason: importReason },
-    ocr_import: classifier && embedding && ocr
+    pdf_import: classifier && embedding && pdfium
       ? { state: "available", reason: null }
       : {
           state: "unavailable",
@@ -38,11 +39,28 @@ function capabilitiesFor(runtimes) {
             ? "classifier_unavailable"
             : !embedding
               ? "embedding_unavailable"
-              : "ocr_unavailable",
+              : "pdfium_unavailable",
+        },
+    ocr_import: classifier && embedding && pdfium && ocr
+      ? { state: "available", reason: null }
+      : {
+          state: "unavailable",
+          reason: !classifier
+            ? "classifier_unavailable"
+            : !embedding
+              ? "embedding_unavailable"
+              : !pdfium
+                ? "pdfium_unavailable"
+                : "ocr_unavailable",
         },
     index_publication: classifier && embedding
       ? { state: "available", reason: null }
-      : { state: "unavailable", reason: importReason },
+      : {
+          state: "unavailable",
+          reason: !classifier
+            ? "classifier_unavailable"
+            : "embedding_unavailable",
+        },
   };
 }
 
@@ -56,7 +74,7 @@ function projectedStatus(definition) {
     ]),
   );
   return {
-    schema_version: "daemon.status.v4",
+    schema_version: "daemon.status.v5",
     status: "ok",
     process_state: "ready",
     core: { state: "ready", reason: null },

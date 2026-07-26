@@ -14,7 +14,7 @@ fi
 if [ -n "${RESUME_IR_TEST_OCR_COMMAND:-}" ]; then
   set -- "$@" \
     --ocr-tesseract-command "$RESUME_IR_TEST_OCR_COMMAND" \
-    --ocr-render-command "$RESUME_IR_TEST_OCR_RENDER_COMMAND" \
+    --pdf-render-command "$RESUME_IR_TEST_OCR_RENDER_COMMAND" \
     --ocr-lang eng+chi_sim
 fi
 

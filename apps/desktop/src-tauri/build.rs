@@ -7,7 +7,8 @@ fn main() {
             "select_import_root",
             "list_managed_roots",
             "import_selected_root",
-            "reauthorize_managed_root",
+            "delete_source_root",
+            "reveal_source_file",
             "export_diagnostics",
         ]),
     ))

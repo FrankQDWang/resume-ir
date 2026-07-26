@@ -460,7 +460,7 @@ fn import_ipc_reports_a_typed_unavailable_capability_without_leaking_context() {
         let (mut stream, _) = listener.accept().expect("accept import request");
         let request = read_http_request(&mut stream);
         assert!(request.starts_with("POST /imports HTTP/1.1"));
-        let response = "{\"schema_version\":\"resume-ir.error.v2\",\"status\":\"error\",\"error\":{\"code\":\"CAPABILITY_UNAVAILABLE\",\"action\":\"select_supported_mode\",\"capability\":\"text_import\",\"reason\":\"classifier_unavailable\"}}";
+        let response = "{\"schema_version\":\"resume-ir.error.v3\",\"status\":\"error\",\"error\":{\"code\":\"CAPABILITY_UNAVAILABLE\",\"action\":\"select_supported_mode\",\"capability\":\"text_import\",\"reason\":\"classifier_unavailable\"}}";
         write!(
             stream,
             "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",

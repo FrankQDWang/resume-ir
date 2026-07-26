@@ -3,14 +3,15 @@ use super::*;
 
 fn ready_status() -> Value {
     serde_json::json!({
-        "schema_version": "daemon.status.v4",
+        "schema_version": "daemon.status.v5",
         "status": "ok",
         "process_state": "ready",
         "core": {"state": "ready", "reason": null},
         "optional_runtimes": {
             "embedding": {"state": "available", "reason": null},
             "ocr": {"state": "available", "reason": null},
-            "classifier": {"state": "available", "reason": null}
+            "classifier": {"state": "available", "reason": null},
+            "pdfium": {"state": "available", "reason": null}
         },
         "capabilities": {
             "keyword_search": {"state": "available", "reason": null},
@@ -18,6 +19,7 @@ fn ready_status() -> Value {
             "semantic_search": {"state": "available", "reason": null},
             "hybrid_search": {"state": "available", "reason": null},
             "text_import": {"state": "available", "reason": null},
+            "pdf_import": {"state": "available", "reason": null},
             "ocr_import": {"state": "available", "reason": null},
             "index_publication": {"state": "available", "reason": null}
         },
@@ -60,7 +62,7 @@ fn ready_status() -> Value {
 }
 
 #[test]
-fn discovery_and_auth_require_exact_v3_launch_and_instance_binding() {
+fn discovery_v5_and_auth_v3_require_exact_launch_and_instance_binding() {
     let launch = "a".repeat(64);
     let instance = "b".repeat(64);
     let token = "c".repeat(64);
@@ -79,7 +81,18 @@ fn discovery_and_auth_require_exact_v3_launch_and_instance_binding() {
         "search": format!("http://{addr}/search"),
         "search_batch": format!("http://{addr}/search/batch"),
         "details": format!("http://{addr}/details"),
-        "delete": format!("http://{addr}/delete")
+        "hydrate": format!("http://{addr}/details/hydrate"),
+        "delete": format!("http://{addr}/delete"),
+        "source_roots": format!("http://{addr}/source-roots"),
+        "source_root_register": format!("http://{addr}/source-roots/register"),
+        "source_root_legacy_migration": format!("http://{addr}/source-roots/migrate-legacy"),
+        "source_root_scan": format!("http://{addr}/source-roots/scan"),
+        "source_root_control": format!("http://{addr}/source-roots/control"),
+        "source_root_delete": format!("http://{addr}/source-roots/delete"),
+        "preview_create": format!("http://{addr}/source-preview/create"),
+        "preview_range": format!("http://{addr}/source-preview/read-range"),
+        "preview_close": format!("http://{addr}/source-preview/close"),
+        "source_reveal": format!("http://{addr}/source-reveal/resolve")
     });
     let auth = serde_json::json!({
         "schema_version": AUTH_SCHEMA,
@@ -123,7 +136,7 @@ fn discovery_and_auth_require_exact_v3_launch_and_instance_binding() {
 }
 
 #[test]
-fn status_v4_rejects_old_unknown_and_illegal_state_combinations() {
+fn status_v5_rejects_old_unknown_and_illegal_state_combinations() {
     let ready = ready_status();
     assert!(valid_status(&ready));
 
@@ -139,7 +152,7 @@ fn status_v4_rejects_old_unknown_and_illegal_state_combinations() {
 }
 
 #[test]
-fn status_v4_accepts_initializing_with_null_store_projection() {
+fn status_v5_accepts_initializing_with_null_store_projection() {
     let mut status = ready_status();
     status["status"] = Value::String("initializing".to_string());
     status["core"] =
@@ -147,7 +160,8 @@ fn status_v4_accepts_initializing_with_null_store_projection() {
     status["optional_runtimes"] = serde_json::json!({
         "embedding": {"state": "initializing", "reason": null},
         "ocr": {"state": "initializing", "reason": null},
-        "classifier": {"state": "initializing", "reason": null}
+        "classifier": {"state": "initializing", "reason": null},
+        "pdfium": {"state": "initializing", "reason": null}
     });
     for capability in [
         "keyword_search",
@@ -155,6 +169,7 @@ fn status_v4_accepts_initializing_with_null_store_projection() {
         "semantic_search",
         "hybrid_search",
         "text_import",
+        "pdf_import",
         "ocr_import",
         "index_publication",
     ] {
@@ -200,12 +215,13 @@ fn status_v4_accepts_initializing_with_null_store_projection() {
 }
 
 #[test]
-fn status_v4_accepts_independent_capability_reasons_for_combined_runtime_failure() {
+fn status_v5_accepts_independent_capability_reasons_for_combined_runtime_failure() {
     let mut status = ready_status();
     status["optional_runtimes"] = serde_json::json!({
         "embedding": {"state": "unavailable", "reason": "not_configured"},
         "ocr": {"state": "unavailable", "reason": "not_configured"},
-        "classifier": {"state": "unavailable", "reason": "not_configured"}
+        "classifier": {"state": "unavailable", "reason": "not_configured"},
+        "pdfium": {"state": "unavailable", "reason": "not_configured"}
     });
     status["capabilities"] = serde_json::json!({
         "keyword_search": {"state": "available", "reason": null},
@@ -213,6 +229,7 @@ fn status_v4_accepts_independent_capability_reasons_for_combined_runtime_failure
         "semantic_search": {"state": "unavailable", "reason": "embedding_unavailable"},
         "hybrid_search": {"state": "degraded", "reason": "embedding_unavailable"},
         "text_import": {"state": "unavailable", "reason": "classifier_unavailable"},
+        "pdf_import": {"state": "unavailable", "reason": "classifier_unavailable"},
         "ocr_import": {"state": "unavailable", "reason": "classifier_unavailable"},
         "index_publication": {"state": "unavailable", "reason": "embedding_unavailable"}
     });
@@ -221,9 +238,9 @@ fn status_v4_accepts_independent_capability_reasons_for_combined_runtime_failure
 }
 
 #[test]
-fn import_service_error_v2_accepts_only_exact_import_context() {
+fn import_service_error_v3_accepts_only_exact_import_context() {
     let capability_unavailable = serde_json::json!({
-        "schema_version": "resume-ir.error.v2",
+        "schema_version": "resume-ir.error.v3",
         "status": "error",
         "error": {
             "code": "CAPABILITY_UNAVAILABLE",
@@ -238,7 +255,7 @@ fn import_service_error_v2_accepts_only_exact_import_context() {
     );
 
     let initializing = serde_json::json!({
-        "schema_version": "resume-ir.error.v2",
+        "schema_version": "resume-ir.error.v3",
         "status": "error",
         "error": {
             "code": "SERVICE_INITIALIZING",
@@ -253,7 +270,7 @@ fn import_service_error_v2_accepts_only_exact_import_context() {
     );
 
     let blocked = serde_json::json!({
-        "schema_version": "resume-ir.error.v2",
+        "schema_version": "resume-ir.error.v3",
         "status": "error",
         "error": {
             "code": "SERVICE_BLOCKED",

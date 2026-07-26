@@ -50,6 +50,8 @@ function validateCompositionReceipt(receipt, source, dmgSha256) {
     "classifier_resource_bytes",
     "ocr_resource_file_count",
     "ocr_resource_bytes",
+    "pdfium_resource_file_count",
+    "pdfium_resource_bytes",
     "build_machine_identity_path_markers",
   ];
   if (
@@ -75,7 +77,7 @@ function validateCompositionReceipt(receipt, source, dmgSha256) {
       "release_claim",
     ]) ||
     countFields.some((field) => !validCount(receipt[field])) ||
-    receipt.schema_version !== "resume-ir.macos-dmg-composition.v3" ||
+    receipt.schema_version !== "resume-ir.macos-dmg-composition.v4" ||
     receipt.target_triple !== TARGET_TRIPLE ||
     JSON.stringify(receipt.source) !== JSON.stringify(source) ||
     receipt.dmg_count !== 1 ||
@@ -180,7 +182,7 @@ async function readArtifactManifest({ dmg, artifactManifest }) {
 
 function receiptProjection(receipt) {
   return Object.freeze({
-    schema_version: "resume-ir.desktop-bundle-composition.v1",
+    schema_version: "resume-ir.desktop-bundle-composition.v2",
     target_triple: receipt.target_triple,
     desktop_executable_count: 1,
     icon_file_count: 1,
@@ -193,6 +195,8 @@ function receiptProjection(receipt) {
     classifier_resource_bytes: receipt.classifier_resource_bytes,
     ocr_resource_file_count: receipt.ocr_resource_file_count,
     ocr_resource_bytes: receipt.ocr_resource_bytes,
+    pdfium_resource_file_count: receipt.pdfium_resource_file_count,
+    pdfium_resource_bytes: receipt.pdfium_resource_bytes,
     digest_match: true,
     executable: true,
     architecture: receipt.architecture,

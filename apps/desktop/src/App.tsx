@@ -10,27 +10,22 @@ import {
   HardDriveDownload,
   LoaderCircle,
   MapPin,
-  Pause,
-  Play,
   RefreshCw,
   Search,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
-  Upload,
   X,
 } from "lucide-react"
 import {
   bridgeError,
   bridgeFailureKind,
   controlManagedRoot,
+  deleteSourceRoot,
   exportDiagnostics,
   importSelectedRoot,
-  managedRootControlOutcome,
-  managedRootRecoveryFailure,
-  managedRootScanOutcome,
   readDiagnostics,
-  reauthorizeManagedRoot,
+  revealSourceFile,
   requestSearchCancel,
   rescanManagedRoot,
   searchDeadlineMs,
@@ -38,11 +33,11 @@ import {
   searchResumes,
   selectImportRoot,
   type DiagnosticsBody,
-  type ManagedRoot,
-  type ManagedRootControlAction,
+  type SourceRoot,
   type SearchHit,
 } from "./daemon"
-import { MAX_DETAIL_PAGES, useDetailSession } from "./detail-session"
+import { useDetailSession } from "./detail-session"
+import { DetailDrawer } from "./detail-drawer"
 import { daemonRetryControl, useDaemonRuntime } from "./daemon-runtime"
 import { DiagnosticsContent, type DiagnosticsState } from "./diagnostics-panel"
 import {
@@ -51,6 +46,7 @@ import {
   indexServicePresentation,
   lifecycleLabel,
 } from "./daemon-health"
+import { SourceRootsPanel } from "./source-roots-panel"
 
 export { IndexServiceSummary, indexServicePresentation } from "./daemon-health"
 
@@ -142,6 +138,10 @@ export function App() {
   const [diagnosticsState, setDiagnosticsState] = useState<DiagnosticsState>("idle")
   const [diagnosticsMessage, setDiagnosticsMessage] = useState("尚未读取本地脱敏诊断")
   const [diagnostics, setDiagnostics] = useState<DiagnosticsBody | null>(null)
+  const [pendingDeletions, setPendingDeletions] = useState<Record<string, {
+    displayLabel: string
+    affectedDocuments: number
+  }>>({})
   const cancelToken = useRef<string | null>(null)
   const previewDetailOpened = useRef(false)
   const {
@@ -175,7 +175,31 @@ export function App() {
     refreshStatus,
     retryLifecycle,
     refreshManagedRoots,
-  } = useDaemonRuntime({ preview, previewImport: previewMode === "import" })
+  } = useDaemonRuntime({
+    preview,
+    previewImport: previewMode === "import",
+    sourcePanelOpen: overlay === "import",
+  })
+  useEffect(() => {
+    const activeRootIds = new Set(managedRoots.map((root) => root.root_id))
+    const completed = Object.entries(pendingDeletions).filter(
+      ([rootId]) => !activeRootIds.has(rootId),
+    )
+    if (completed.length === 0) return
+    if (selectedRoot && completed.some(([rootId]) => rootId === selectedRoot.root_id)) {
+      setSelectedRoot(null)
+    }
+    setImportState("selected")
+    const affectedDocuments = completed.reduce(
+      (total, [, deletion]) => total + deletion.affectedDocuments,
+      0,
+    )
+    const labels = completed.map(([, deletion]) => `“${deletion.displayLabel}”`).join("、")
+    setImportMessage(`已删除${labels}的 ${affectedDocuments.toLocaleString()} 份本地派生数据；源文件未改动`)
+    setPendingDeletions((current) => Object.fromEntries(
+      Object.entries(current).filter(([rootId]) => activeRootIds.has(rootId)),
+    ))
+  }, [managedRoots, pendingDeletions, selectedRoot, setImportMessage, setImportState, setSelectedRoot])
   const {
     detail,
     detailLoading,
@@ -183,7 +207,9 @@ export function App() {
     fullText,
     bodyComplete,
     detailInterrupted,
+    selectedHit,
     open: openDetail,
+    loadText: loadDetailText,
     resume: resumeDetail,
     reset: resetDetail,
     observeAuthority: observeDetailAuthority,
@@ -204,7 +230,12 @@ export function App() {
   const filterCount = [skills, location, degree, years].filter((value) => value.trim()).length
   const resultPageCount = Math.max(1, Math.ceil(results.length / RESULT_PAGE_SIZE))
   const visibleResults = results.slice(resultPage * RESULT_PAGE_SIZE, (resultPage + 1) * RESULT_PAGE_SIZE)
-  const latestScan = authoritativeStatus?.latest_import_scan
+  const sourceTotals = useMemo(() => managedRoots.reduce((totals, root) => ({
+    discovered: totals.discovered + root.current_counts.discovered,
+    searchable: totals.searchable + root.current_counts.searchable,
+    ocr: totals.ocr + root.current_counts.ocr,
+    failed: totals.failed + root.current_counts.failed,
+  }), { discovered: 0, searchable: 0, ocr: 0, failed: 0 }), [managedRoots])
   const searchablePercent = authoritativeStatus?.indexed_documents && authoritativeStatus.searchable_documents !== null ? Math.round((authoritativeStatus.searchable_documents / authoritativeStatus.indexed_documents) * 100) : 0
   const health = lifecycle.state === "running" && runtimeView === "trusted"
     ? service === "ready" ? "ok" : "degraded"
@@ -253,7 +284,7 @@ export function App() {
       }
       const body = reply.body
       const outcome = searchOutcome(reply)
-      if (body.schema_version === "resume-ir.error.v2") {
+      if (body.schema_version === "resume-ir.error.v3") {
         if (body.error.code === "REPAIRING" || body.error.code === "METADATA_UNAVAILABLE" || body.error.code === "QUERY_SERVICE_UNAVAILABLE") {
           setService(body.error.code === "REPAIRING" ? "repairing" : "degraded")
           setResultFreshness(results.length > 0 ? "interrupted" : "current")
@@ -315,32 +346,42 @@ export function App() {
 
   async function chooseImportRoot() {
     setImportState("selecting"); setImportMessage("正在打开本机目录选择器")
-    try { const root = await selectImportRoot(); if (!root) { setImportState("cancelled"); setImportMessage("未选择目录"); return } const selected = { ...root, availability: "available" as const }; setSelectedRoot(selected); await refreshManagedRoots(); setSelectedRoot(selected); setImportState("selected"); setImportMessage("目录已持久授权，可提交完整扫描") }
+    try {
+      const reply = await selectImportRoot()
+      if (!reply) { setImportState("cancelled"); setImportMessage("未选择目录"); return }
+      const selected = reply.body.root
+      setSelectedRoot(selected)
+      await refreshManagedRoots()
+      setSelectedRoot(selected)
+      setImportState("selected")
+      setImportMessage("目录已授权；点击“开始扫描”后才会导入")
+    }
     catch (error) { const overload = bridgeFailureKind(error) === "overload"; setSelectedRoot(null); setImportState(overload ? "overload" : "error"); setImportMessage(overload ? "目录选择入口繁忙，请稍后重试" : bridgeError(error).message) }
   }
 
-  async function requestRootScan(root: ManagedRoot, intent: "initial" | "rescan") {
-    if (root.availability !== "available") {
+  async function requestRootScan(root: SourceRoot) {
+    if (root.state === "offline") {
       setImportState("error"); setImportMessage("目录当前不可读取，请恢复磁盘或权限"); return
     }
-    if (rootControls[root.root_handle] === "paused") {
-      setImportState("error"); setImportMessage("目录监控已暂停，请先恢复监控"); return
-    }
     if (preview) {
-      setSelectedRoot(root); setImportState("queued"); setImportMessage(intent === "rescan" ? "已开始增量重新扫描" : "已创建本地导入任务"); return
+      setSelectedRoot(root); setImportState("queued"); setImportMessage(root.last_scan ? "已开始增量重新扫描" : "首次扫描已经开始"); return
     }
     const authority = captureCapabilityAuthority("text_import")
     if (!authority) return
-    setSelectedRoot(root); setImportState("submitting"); setImportMessage(intent === "rescan" ? "正在提交增量重新扫描" : "正在提交本地导入任务")
+    setSelectedRoot(root); setImportState("submitting"); setImportMessage(root.last_scan ? "正在提交增量重新扫描" : "正在提交首次扫描")
     try {
-      const reply = intent === "rescan" ? await rescanManagedRoot(root.root_handle) : await importSelectedRoot(root.root_handle)
+      const reply = root.last_scan ? await rescanManagedRoot(root.root_id) : await importSelectedRoot(root.root_id)
       if (!capabilityAuthorityIsCurrent(authority, "text_import")) return
-      const outcome = managedRootScanOutcome(reply)
-      setImportState(outcome)
-      if (outcome === "queued") setImportMessage(intent === "rescan" ? "已开始增量重新扫描" : "已创建本地导入任务")
-      else if (outcome === "pending") setImportMessage("该目录已有待处理扫描任务")
-      else if (outcome === "active") setImportMessage("该目录正在扫描，无需重复提交")
-      else { setImportMessage("daemon 未接受目录扫描任务"); return }
+      if (!("root" in reply.body)) {
+        setImportState(reply.http_status === 409 ? "active" : "error")
+        setImportMessage(reply.http_status === 409 ? "该目录正在扫描，无需重复提交" : "daemon 未接受目录扫描任务")
+        return
+      }
+      const updatedRoot = reply.body.root
+      setManagedRoots((current) => current.map((candidate) => candidate.root_id === root.root_id ? updatedRoot : candidate))
+      setSelectedRoot(updatedRoot)
+      setImportState("queued")
+      setImportMessage(root.last_scan ? "已开始增量重新扫描" : "首次扫描已经开始")
       await refreshStatus()
     } catch (error) {
       if (!capabilityAuthorityIsCurrent(authority, "text_import")) return
@@ -350,101 +391,95 @@ export function App() {
     }
   }
 
-  async function changeRootControl(root: ManagedRoot, action: ManagedRootControlAction) {
+  async function changeRootControl(root: SourceRoot, action: "pause" | "resume") {
     const authority = captureActionAuthority()
     if (!authority) return
-    if (action === "resume" && root.availability !== "available") {
+    if (action === "resume" && root.state === "offline") {
       setImportState("unavailable")
-      setImportMessage("目录当前不可读取，重新授权后才能恢复监控")
+      setImportMessage("目录当前不可读取，恢复磁盘或权限后才能恢复监控")
       return
     }
     setSelectedRoot(root)
-    setRootControls((current) => ({ ...current, [root.root_handle]: "loading" }))
+    setRootControls((current) => ({ ...current, [root.root_id]: "loading" }))
     if (preview) {
-      const state = action === "pause" ? "paused" : "active"
-      setRootControls((current) => ({ ...current, [root.root_handle]: state }))
+      const watcherState = action === "pause" ? "paused" : "active"
+      setRootControls((current) => ({ ...current, [root.root_id]: watcherState }))
+      setManagedRoots((current) => current.map((candidate) => candidate.root_id === root.root_id ? { ...candidate, watcher_state: watcherState } : candidate))
       setImportState("selected")
-      setImportMessage(state === "paused" ? "已暂停此目录的监听与周期扫描" : "已恢复监控，并开始追赶目录变更")
+      setImportMessage(watcherState === "paused"
+        ? "已暂停此目录的监听与周期扫描，仍可手动重新扫描"
+        : root.last_scan
+          ? "已恢复监控，并开始追赶目录变更"
+          : "已恢复监控；首次导入仍需点击“开始扫描”")
       return
     }
     try {
-      const reply = await controlManagedRoot(root.root_handle, action)
+      const reply = await controlManagedRoot(root.root_id, action)
       if (!actionAuthorityIsCurrent(authority)) return
-      const outcome = managedRootControlOutcome(reply)
-      setRootControls((current) => ({ ...current, [root.root_handle]: outcome }))
-      if (outcome === "unmanaged") {
-        setImportState("selected")
-        setImportMessage("目录已授权；完成首次扫描后可暂停或恢复持续监控")
-        return
-      }
-      if (outcome === "error") {
+      if (reply.body.schema_version === "resume-ir.error.v3") {
         setImportState("error")
         setImportMessage("daemon 未接受目录监控操作，可重试读取状态")
         return
       }
+      const updated = reply.body.root
+      setManagedRoots((current) => current.map((candidate) => candidate.root_id === updated.root_id ? updated : candidate))
+      setSelectedRoot(updated)
+      setRootControls((current) => ({ ...current, [root.root_id]: updated.watcher_state === "paused" ? "paused" : "active" }))
       setImportState("selected")
-      const body = reply.body.schema_version === "daemon.import_root_control.v1" ? reply.body : null
-      if (action === "pause") setImportMessage(body?.task_cancel_requested ? "已暂停监控，并请求取消此目录的活动任务" : "已暂停此目录的监听与周期扫描")
-      else if (action === "resume") setImportMessage(body?.catch_up_queued ? "已恢复监控，并开始追赶目录变更" : "目录监控已恢复，无需重复追赶")
-      else setImportMessage(outcome === "paused" ? "目录监控保持暂停" : "目录持续监控正常")
+      setImportMessage(action === "pause"
+        ? "已暂停此目录的监听与周期扫描，仍可手动重新扫描"
+        : root.last_scan
+          ? "已恢复监控，并开始追赶目录变更"
+          : "已恢复监控；首次导入仍需点击“开始扫描”")
       await refreshStatus()
     } catch (error) {
       if (!actionAuthorityIsCurrent(authority)) return
       const state = bridgeFailureKind(error) === "overload" ? "overload" : "error"
-      setRootControls((current) => ({ ...current, [root.root_handle]: state }))
+      setRootControls((current) => ({ ...current, [root.root_id]: state }))
       setImportState(state)
       setImportMessage(state === "overload" ? "目录监控入口繁忙，请稍后重试" : bridgeError(error).message)
     }
   }
 
-  async function reauthorizeRoot(root: ManagedRoot) {
-    if (root.availability !== "unavailable") return
+  async function removeSourceRoot(root: SourceRoot) {
+    const authority = captureActionAuthority()
+    if (!authority) return
     setSelectedRoot(root)
-    setImportState("reauthorizing")
-    setImportMessage("正在打开原目录重新授权选择器")
-    if (preview) {
-      const restored = { ...root, availability: "available" as const }
-      setManagedRoots((current) => current.map((candidate) => candidate.root_handle === root.root_handle ? restored : candidate))
-      setSelectedRoot(restored)
-      setImportState("selected")
-      setImportMessage("原目录权限已恢复，可重新扫描")
-      return
-    }
+    setImportState("submitting")
+    setImportMessage(`正在删除“${root.display_label}”的本地派生数据`)
     try {
-      const restored = await reauthorizeManagedRoot(root.root_handle)
-      if (!restored) {
-        setImportState("cancelled")
-        setImportMessage("已取消重新授权，原授权记录保持不变")
+      const reply = await deleteSourceRoot(root.root_id)
+      if (!actionAuthorityIsCurrent(authority)) return
+      if (!("affected_documents" in reply.body)) {
+        setImportState("error")
+        setImportMessage("daemon 未完成目录删除")
         return
       }
-      if (restored.root_handle !== root.root_handle) {
-        setImportState("mismatch")
-        setImportMessage("重新授权返回了不一致的目录身份，原授权记录保持不变")
-        return
-      }
-      const availableRoot = { ...restored, availability: "available" as const }
-      setManagedRoots((current) => current.map((candidate) => candidate.root_handle === root.root_handle ? availableRoot : candidate))
+      const affectedDocuments = reply.body.affected_documents
+      setManagedRoots((current) => current.map((candidate) => (
+        candidate.root_id === root.root_id ? { ...candidate, state: "deleting" } : candidate
+      )))
+      setPendingDeletions((current) => ({
+        ...current,
+        [root.root_id]: {
+        displayLabel: root.display_label,
+        affectedDocuments,
+        },
+      }))
+      setImportState("active")
+      setImportMessage(`正在删除“${root.display_label}”的本地派生数据；源文件不会改动`)
       await refreshManagedRoots()
-      setSelectedRoot(availableRoot)
-      setImportState("selected")
-      setImportMessage("原目录权限已恢复，可重新扫描")
+      await refreshStatus()
     } catch (error) {
-      const failure = managedRootRecoveryFailure(error)
-      setImportState(failure)
-      if (failure === "overload") setImportMessage("重新授权入口繁忙，请稍后重试")
-      else if (failure === "mismatch") setImportMessage("所选目录与待恢复授权不一致，原授权记录保持不变")
-      else if (failure === "unavailable") setImportMessage("所选原目录当前仍不可读取，请恢复磁盘或权限后重试")
-      else setImportMessage(bridgeError(error).message)
+      if (!actionAuthorityIsCurrent(authority)) return
+      setImportState(bridgeFailureKind(error) === "overload" ? "overload" : "error")
+      setImportMessage(bridgeError(error).message)
     }
-  }
-
-  async function submitImport() {
-    if (selectedRoot) await requestRootScan(selectedRoot, "initial")
   }
 
   async function openDiagnostics() {
     resetDetail(); setOverlay("diagnostics"); setDiagnosticsState("loading"); setDiagnosticsMessage("正在读取本地聚合诊断")
-    try { const reply = await readDiagnostics(); if (reply.http_status !== 200 || reply.body.schema_version !== "resume-ir.diagnostics.v5" || reply.body.privacy_boundary !== "redacted_local_aggregate") { setDiagnostics(null); setDiagnosticsState("blocked"); setDiagnosticsMessage("诊断合同未满足脱敏导出边界"); return } setDiagnostics(reply.body); setDiagnosticsState("ready"); setDiagnosticsMessage("只读聚合诊断已就绪") }
+    try { const reply = await readDiagnostics(); if (reply.http_status !== 200 || reply.body.schema_version !== "resume-ir.diagnostics.v9" || reply.body.privacy_boundary !== "redacted_local_aggregate") { setDiagnostics(null); setDiagnosticsState("blocked"); setDiagnosticsMessage("诊断合同未满足脱敏导出边界"); return } setDiagnostics(reply.body); setDiagnosticsState("ready"); setDiagnosticsMessage("只读聚合诊断已就绪") }
     catch (error) { const overload = bridgeFailureKind(error) === "overload"; setDiagnostics(null); setDiagnosticsState(overload ? "overload" : "error"); setDiagnosticsMessage(overload ? "诊断读取入口繁忙，请稍后重试" : bridgeError(error).message) }
   }
 
@@ -496,58 +531,28 @@ export function App() {
       </div>
     </main>
 
-    {(detail || detailLoading || detailError) && <SlideOver title={detail ? fileStem(detail.file_name) : "简历详情"} subtitle={detail ? `${fileExtension(detail.file_name)} · ${Math.ceil(detail.source_byte_size / 1024)} KiB` : "正在读取本地详情"} onClose={resetDetail}>
-      <div className="sheet-scroll detail-content">
-        {detailLoading && !detail && <div className="detail-loading"><LoaderCircle className="spin" size={20} />正在读取精确版本的结构化字段与正文</div>}
-        {detailError && <div className="banner banner-err"><AlertTriangle size={16} />{detailError}</div>}
-        {detailInterrupted && detailAllowed && <button type="button" className="plain-button wide-button" onClick={() => void resumeDetail()} disabled={detailLoading}>显式续读当前版本</button>}
-        {detail && <>
-          <div className="status-row"><Pill tone="ok">精确版本</Pill><Pill tone="info">{detail.schema_version}</Pill>{bodyComplete ? <Pill tone="ok">正文完整</Pill> : detailInterrupted ? <Pill tone="warn">正文已中断</Pill> : <Pill tone="warn">正文读取中</Pill>}</div>
-          <section className="detail-section"><h3>搜索命中摘要</h3><p className="snippet-box">{detail.snippet || "（无命中摘要）"}</p><div className="tag-row">{terms.map((term) => <Tag key={term} tone="primary">命中：{term}</Tag>)}</div></section>
-          <section className="detail-section"><h3>提取字段</h3><dl className="field-grid">{detail.fields.slice(0, 32).map((field, index) => <div key={`${field.type}-${index}`}><dt>{field.type}</dt><dd>{field.value}<small>{Math.round(field.confidence * 100)}%</small></dd></div>)}</dl>{detail.fields_truncated && <small className="muted-note">字段已按本地响应上限截断</small>}</section>
-          <section className="file-panel"><div><span>文件类型</span><strong>{fileExtension(detail.file_name)}</strong></div><div><span>来源大小</span><strong>{Math.ceil(detail.source_byte_size / 1024)} KiB</strong></div><div><span>解析合同</span><code>{detail.parse_version} · {detail.schema_version}</code></div><div><span>语言 / 页数</span><strong>{detail.language_set.join("、") || "—"} · {detail.page_count ?? "—"}</strong></div></section>
-          <section className="detail-section"><h3>规范化简历全文</h3><pre className="full-text">{fullText || (detailLoading ? "正在读取…" : "（正文为空）")}</pre>{!bodyComplete && fullText && <small className="muted-note">{detailInterrupted ? "正文读取已中断；现有内容保持不变。" : detailLoading ? "正在继续读取同一版本正文…" : `正文超过桌面展示上限，已显示前 ${MAX_DETAIL_PAGES} 页。`}</small>}</section>
-        </>}
-      </div>
-    </SlideOver>}
+    {(detail || detailLoading || detailError) && <DetailDrawer hit={selectedHit} detail={detail} loading={detailLoading} error={detailError} interrupted={detailInterrupted} detailAllowed={detailAllowed} fullText={fullText} bodyComplete={bodyComplete} previewMode={preview} terms={terms} onClose={resetDetail} onLoadText={() => void loadDetailText()} onResume={() => void resumeDetail()} onReveal={async () => {
+      if (!selectedHit) throw new Error("selection unavailable")
+      await revealSourceFile(selectedHit.selection)
+    }} />}
 
     {overlay === "import" && <SlideOver title="简历来源" subtitle="本地目录只由原生进程持有" onClose={() => setOverlay(null)}>
       <div className="sheet-scroll import-content">
         <div className={`banner banner-${["error", "mismatch", "overload"].includes(importState) ? "err" : ["queued", "pending", "active"].includes(importState) ? "ok" : "neutral"}`} aria-live="polite">
-          {["selecting", "submitting", "reauthorizing"].includes(importState) ? <LoaderCircle className="spin" size={16} /> : ["error", "mismatch", "overload", "unavailable"].includes(importState) ? <AlertTriangle size={16} /> : <FolderOpen size={16} />}
+          {["selecting", "submitting"].includes(importState) ? <LoaderCircle className="spin" size={16} /> : ["error", "mismatch", "overload", "unavailable"].includes(importState) ? <AlertTriangle size={16} /> : <FolderOpen size={16} />}
           <span>{importMessage}</span>
         </div>
-        {managedRoots.length > 0 ? <section className="panel-card">
-          <header><strong>已授权目录</strong><span>{managedRoots.length} / 16</span></header>
-          {managedRoots.map((root) => {
-            const control = rootControls[root.root_handle] ?? "loading"
-            const unavailable = root.availability === "unavailable"
-            const description = unavailable ? "目录不可用 · 授权记录仍保留" : control === "paused" ? "监控已暂停 · 不会监听或周期扫描" : control === "active" ? "持续监控中 · 自动追赶目录变更" : control === "unmanaged" ? "已授权 · 首次扫描后开始持续监控" : control === "loading" ? "正在读取监控状态" : "监控状态暂不可用 · 可重试"
-            const label = unavailable ? "不可用" : control === "active" ? "监控中" : control === "paused" ? "已暂停" : control === "unmanaged" ? "待首次扫描" : control === "loading" ? "读取中" : "状态未知"
-            const tone = unavailable || control === "paused" ? "warn" : control === "active" ? "ok" : control === "error" || control === "overload" ? "err" : "neutral"
-            const busy = control === "loading" || ["selecting", "submitting", "reauthorizing"].includes(importState)
-            return <article className="source-card" key={root.root_handle}>
-              <FolderTree size={24} />
-              <div className="source-copy"><strong>{root.display_label}</strong><p>{description}</p></div>
-              <Pill tone={tone}>{label}</Pill>
-              <div className="source-actions">
-                {unavailable ? <button type="button" className="plain-button" onClick={() => void reauthorizeRoot(root)} disabled={busy}>
-                  <RefreshCw size={14} />{importState === "reauthorizing" && selectedRoot?.root_handle === root.root_handle ? "授权中" : "重新授权"}
-                </button> : control !== "paused" && <button type="button" className="plain-button" onClick={() => void requestRootScan(root, "rescan")} disabled={!importAllowed || busy}>
-                  <RefreshCw size={14} />{importState === "submitting" && selectedRoot?.root_handle === root.root_handle ? "提交中" : control === "unmanaged" ? "开始扫描" : "重新扫描"}
-                </button>}
-                {control === "active" && <button type="button" className="plain-button" onClick={() => void changeRootControl(root, "pause")} disabled={operationsPaused || busy}><Pause size={14} />暂停监控</button>}
-                {control === "paused" && <button type="button" className="plain-button" onClick={() => void changeRootControl(root, "resume")} disabled={operationsPaused || busy || unavailable}><Play size={14} />恢复监控</button>}
-                {(control === "overload" || control === "error") && <button type="button" className="plain-button" onClick={() => void changeRootControl(root, "inspect")} disabled={operationsPaused || busy}><RefreshCw size={14} />重试状态</button>}
-              </div>
-            </article>
-          })}
-        </section> : <section className="source-card"><FolderTree size={24} /><div><strong>尚未选择目录</strong><p>目录扫描、解析、分类与索引全部在本机完成。</p></div></section>}
-        <div className="sheet-actions">
-          <button type="button" className="plain-button" onClick={() => void chooseImportRoot()} disabled={["selecting", "submitting", "reauthorizing"].includes(importState)}><FolderOpen size={15} />{managedRoots.length > 0 ? "添加目录" : "选择目录"}</button>
-          {selectedRoot && <button type="button" className="primary-button" onClick={() => void submitImport()} disabled={selectedRoot.availability !== "available" || rootControls[selectedRoot.root_handle] === "paused" || !importAllowed || ["submitting", "reauthorizing"].includes(importState)}><Upload size={15} />{selectedRoot.availability !== "available" ? "目录不可用" : rootControls[selectedRoot.root_handle] === "paused" ? "监控已暂停" : "扫描此目录"}</button>}
-        </div>
-        <section className="panel-card source-summary"><header><strong>当前本地索引</strong></header><dl><div><dt>已发现</dt><dd>{latestScan?.files_discovered ?? "—"}</dd></div><div><dt>可搜索</dt><dd>{authoritativeStatus?.searchable_documents ?? "—"}</dd></div><div><dt>OCR 待处理</dt><dd>{authoritativeStatus?.ocr_queue_depth ?? "—"}</dd></div><div><dt>失败</dt><dd>{latestScan?.failed_documents ?? "—"}</dd></div></dl></section>
+        <SourceRootsPanel
+          roots={managedRoots}
+          busy={["selecting", "submitting"].includes(importState)}
+          importAllowed={importAllowed}
+          onAdd={() => void chooseImportRoot()}
+          onScan={(root) => void requestRootScan(root)}
+          onPause={(root) => void changeRootControl(root, "pause")}
+          onResume={(root) => void changeRootControl(root, "resume")}
+          onDelete={(root) => void removeSourceRoot(root)}
+        />
+        <section className="panel-card source-summary"><header><strong>当前本地索引</strong></header><dl><div><dt>已发现</dt><dd>{managedRoots.length > 0 ? sourceTotals.discovered.toLocaleString() : "—"}</dd></div><div><dt>可搜索</dt><dd>{authoritativeStatus?.searchable_documents ?? (managedRoots.length > 0 ? sourceTotals.searchable.toLocaleString() : "—")}</dd></div><div><dt>OCR 待处理</dt><dd>{authoritativeStatus?.ocr_queue_depth ?? (managedRoots.length > 0 ? sourceTotals.ocr.toLocaleString() : "—")}</dd></div><div><dt>失败</dt><dd>{managedRoots.length > 0 ? sourceTotals.failed.toLocaleString() : "—"}</dd></div></dl></section>
       </div>
     </SlideOver>}
     {overlay === "diagnostics" && <SlideOver title="隐私与诊断" subtitle="敏感详情可在本地展示；导出证据仍保持脱敏" onClose={() => setOverlay(null)}><DiagnosticsContent state={diagnosticsState} message={diagnosticsMessage} diagnostics={diagnostics} onExport={() => void saveDiagnostics()} /></SlideOver>}

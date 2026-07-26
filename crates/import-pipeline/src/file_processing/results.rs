@@ -117,8 +117,8 @@ pub(crate) fn commit_parse_work_result(
 ) -> Result<ProcessedImportFile> {
     parse_worker_clock.record_result(&result);
     worker_metrics
-        .pdf_parse_timings
-        .add_assign(&result.pdf_parse_timings);
+        .pdf_parse_metrics
+        .add_assign(&result.pdf_parse_metrics);
     worker_metrics
         .post_parser_timings
         .add_assign(&result.post_parser_timings);

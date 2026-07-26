@@ -58,7 +58,7 @@ mkdir -p "$component_dir" "$out_dir" "$target_dir"
 
 printf 'synthetic tesseract runtime binary\n' > "$component_dir/tesseract"
 printf 'synthetic English tessdata payload\n' > "$component_dir/eng.traineddata"
-printf 'synthetic PDF renderer runtime binary\n' > "$component_dir/pdftoppm"
+printf 'synthetic PDFium renderer runtime binary\n' > "$component_dir/resume-pdf-render-runtime"
 printf 'synthetic reviewed embedding model payload\n' > "$component_dir/model.onnx"
 printf 'synthetic source offer archive\n' > "$component_dir/source-offer.tar.gz"
 printf 'synthetic notice text\n' > "$component_dir/NOTICE.txt"
@@ -70,7 +70,7 @@ done
 if "$assemble_script" \
   --version v0.0.0 \
   --runtime-pack-id reviewed-runtime-pack \
-  --distribution-license GPL-3.0-or-later \
+  --distribution-license LicenseRef-resume-ir-mixed-runtime-bundle \
   --source-offer "$component_dir/source-offer.tar.gz" \
   --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$component_dir/tesseract" \
   --out-dir "$out_dir/unreviewed" \
@@ -81,12 +81,12 @@ fi
 "$assemble_script" \
   --version v0.0.0 \
   --runtime-pack-id reviewed-runtime-pack \
-  --distribution-license GPL-3.0-or-later \
+  --distribution-license LicenseRef-resume-ir-mixed-runtime-bundle \
   --source-offer "$component_dir/source-offer.tar.gz" \
   --notice "$component_dir/NOTICE.txt" \
   --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$component_dir/tesseract" \
   --component "eng-tessdata|ocr-language-pack|Apache-2.0|https://github.com/tesseract-ocr/tessdata|$component_dir/eng.traineddata" \
-  --component "poppler-pdftoppm|pdf-renderer|GPL-3.0-or-later|https://poppler.freedesktop.org/|$component_dir/pdftoppm" \
+  --component "resume-pdf-render-runtime|pdf-renderer|LicenseRef-PDFium-Root-LICENSE|https://pdfium.googlesource.com/pdfium.git|$component_dir/resume-pdf-render-runtime" \
   --component "all-minilm-l6-v2|embedding-model|Apache-2.0|https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2|$component_dir/model.onnx" \
   --reviewed \
   --out-dir "$out_dir" \
@@ -107,7 +107,7 @@ require_dir "$runtime_dir"
 require_dir "$evidence_dir"
 require_file "$runtime_dir/tesseract"
 require_file "$runtime_dir/eng.traineddata"
-require_file "$runtime_dir/pdftoppm"
+require_file "$runtime_dir/resume-pdf-render-runtime"
 require_file "$runtime_dir/model.onnx"
 require_file "$evidence_dir/source-offer.tar.gz"
 require_file "$evidence_dir/NOTICE.txt"
@@ -121,7 +121,7 @@ require_text "$manifest" '"notices"'
 require_text "$manifest" '"components"'
 require_text "$manifest" '"file": "tesseract"'
 require_text "$manifest" '"file": "eng.traineddata"'
-require_text "$manifest" '"file": "pdftoppm"'
+require_text "$manifest" '"file": "resume-pdf-render-runtime"'
 require_text "$manifest" '"file": "model.onnx"'
 require_text "$manifest" '"kind": "embedding-model"'
 if grep -Eq "$tmpdir|PRIVATE-runtime-components|raw_path|/Users/|local-data|diagnostics|model-cache|resume text" "$manifest"; then
@@ -158,7 +158,7 @@ SH
     require_text "$package_manifest" '"runtime_distribution_mode": "bundled"'
     require_text "$package_manifest" '"file": "tesseract"'
     require_text "$package_manifest" '"file": "eng.traineddata"'
-    require_text "$package_manifest" '"file": "pdftoppm"'
+    require_text "$package_manifest" '"file": "resume-pdf-render-runtime"'
     require_text "$package_manifest" '"file": "model.onnx"'
     if grep -Fq "$tmpdir" "$package_manifest"; then
       fail "runtime package manifest leaked assembled payload path"

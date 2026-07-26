@@ -184,11 +184,6 @@ fn run_worker_tick(
         return Ok(WorkerOutcome::StopRequested);
     }
 
-    let gates = runtime_gates(options, runtime.capability_state.as_ref());
-    if !gates.import && !gates.ocr && !gates.index {
-        return Ok(WorkerOutcome::Continue);
-    }
-
     let now = current_timestamp()?;
     let gates = runtime_gates(options, runtime.capability_state.as_ref());
     if !gates.import && !gates.ocr && !gates.index {
@@ -246,7 +241,12 @@ fn run_worker_tick(
             }
             if runtime_gates(options, runtime.capability_state.as_ref()).import {
                 if options.watch_import_roots && state.import_watcher.is_none() {
-                    state.import_watcher = Some(ImportWatcher::new()?);
+                    match ImportWatcher::new() {
+                        Ok(watcher) => state.import_watcher = Some(watcher),
+                        Err(_) => {
+                            crate::import_watcher::mark_watchers_unavailable(store, now)?;
+                        }
+                    }
                 }
                 let initial_import_tick = state.initial_import_tick_pending;
                 let mut import_summary = ImportWorkerSummary {
@@ -280,10 +280,14 @@ fn run_worker_tick(
                     )?);
                 }
                 if runtime_gates(options, runtime.capability_state.as_ref()).import {
+                    let mut effective_options = (*options).clone();
+                    if !runtime_gates(options, runtime.capability_state.as_ref()).pdf_import {
+                        effective_options.pdf_import = import_pipeline::PdfImportPolicy::Frozen;
+                    }
                     import_summary.extend(run_import_worker_once_with_retry_due(
                         data_dir,
                         store,
-                        options,
+                        &effective_options,
                         processing_contract,
                         timestamp_minus_seconds(
                             now,
@@ -315,6 +319,13 @@ fn run_worker_tick(
                 if let Some(reason) = ocr_summary.runtime_unavailable {
                     if let Some(reporter) = runtime.runtime_health_reporter.as_ref() {
                         reporter.ocr_unavailable(reason).map_err(|_| {
+                            DaemonError::control_plane("runtime health reporter disconnected")
+                        })?;
+                    }
+                }
+                if let Some(reason) = ocr_summary.pdfium_unavailable {
+                    if let Some(reporter) = runtime.runtime_health_reporter.as_ref() {
+                        reporter.pdfium_unavailable(reason).map_err(|_| {
                             DaemonError::control_plane("runtime health reporter disconnected")
                         })?;
                     }
@@ -354,6 +365,7 @@ fn run_worker_tick(
 #[derive(Clone, Copy)]
 struct RuntimeGates {
     import: bool,
+    pdf_import: bool,
     ocr: bool,
     index: bool,
 }
@@ -374,9 +386,16 @@ fn runtime_gates(
         .is_none_or(|runtimes| runtimes.classifier.state == ipc::OptionalRuntimeState::Available);
     let ocr_available =
         runtimes.is_none_or(|runtimes| runtimes.ocr.state == ipc::OptionalRuntimeState::Available);
+    let pdfium_available = runtimes
+        .is_none_or(|runtimes| runtimes.pdfium.state == ipc::OptionalRuntimeState::Available);
     RuntimeGates {
         import: options.work_imports && embedding_available && classifier_available,
-        ocr: options.work_ocr && embedding_available && classifier_available && ocr_available,
+        pdf_import: pdfium_available,
+        ocr: options.work_ocr
+            && embedding_available
+            && classifier_available
+            && ocr_available
+            && pdfium_available,
         index: options.work_index && embedding_available,
     }
 }

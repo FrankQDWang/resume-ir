@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use embedder::ResidentEmbeddingClient;
-use import_pipeline::{LinearPromotionPolicy, SearchPublicationVectorization};
+use import_pipeline::{LinearPromotionPolicy, PdfImportPolicy, SearchPublicationVectorization};
 
 use crate::daemon_error::{DaemonError, Result};
 use crate::parent_lifecycle::ParentLifecycleMode;
@@ -38,14 +38,14 @@ pub(crate) struct RunOptions {
     pub(crate) classifier_model_configured: bool,
     pub(crate) classifier_model_path: Option<PathBuf>,
     pub(crate) linear_promotion: LinearPromotionPolicy,
+    pub(crate) pdf_import: PdfImportPolicy,
     pub(crate) work_ocr_once: bool,
     pub(crate) work_ocr: bool,
     pub(crate) work_index_once: bool,
     pub(crate) work_index: bool,
     pub(crate) ocr_command: Option<PathBuf>,
     pub(crate) ocr_tesseract_command: Option<PathBuf>,
-    pub(crate) ocr_render_command: Option<PathBuf>,
-    pub(crate) ocr_pdftoppm_command: Option<PathBuf>,
+    pub(crate) pdf_render_command: Option<PathBuf>,
     pub(crate) ocr_engine_profile: String,
     pub(crate) ocr_lang: String,
     pub(crate) ocr_profile: String,
@@ -83,14 +83,14 @@ impl Default for RunOptions {
             classifier_model_configured: false,
             classifier_model_path: None,
             linear_promotion: LinearPromotionPolicy::default(),
+            pdf_import: PdfImportPolicy::Enabled,
             work_ocr_once: false,
             work_ocr: false,
             work_index_once: false,
             work_index: false,
             ocr_command: None,
             ocr_tesseract_command: None,
-            ocr_render_command: None,
-            ocr_pdftoppm_command: None,
+            pdf_render_command: None,
             ocr_engine_profile: DEFAULT_OCR_ENGINE_PROFILE.to_string(),
             ocr_lang: DEFAULT_OCR_LANG.to_string(),
             ocr_profile: DEFAULT_OCR_PROFILE.to_string(),
@@ -254,24 +254,14 @@ pub(crate) fn parse(args: &[String]) -> Result<RunOptions> {
                 options.ocr_tesseract_command = Some(PathBuf::from(value));
                 index += 2;
             }
-            "--ocr-render-command" => {
+            "--pdf-render-command" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(DaemonError::usage(usage()));
                 };
-                if options.ocr_render_command.is_some() {
+                if options.pdf_render_command.is_some() {
                     return Err(DaemonError::usage(usage()));
                 }
-                options.ocr_render_command = Some(PathBuf::from(value));
-                index += 2;
-            }
-            "--ocr-pdftoppm-command" => {
-                let Some(value) = args.get(index + 1) else {
-                    return Err(DaemonError::usage(usage()));
-                };
-                if options.ocr_pdftoppm_command.is_some() {
-                    return Err(DaemonError::usage(usage()));
-                }
-                options.ocr_pdftoppm_command = Some(PathBuf::from(value));
+                options.pdf_render_command = Some(PathBuf::from(value));
                 index += 2;
             }
             "--ocr-engine-profile" => {
@@ -348,15 +338,12 @@ pub(crate) fn parse(args: &[String]) -> Result<RunOptions> {
     if options.ocr_command.is_some() && options.ocr_tesseract_command.is_some() {
         return Err(DaemonError::usage(usage()));
     }
-    if options.ocr_render_command.is_some() && options.ocr_pdftoppm_command.is_some() {
-        return Err(DaemonError::usage(usage()));
-    }
     validation::validate(&options)?;
     Ok(options)
 }
 
 pub(crate) fn usage() -> &'static str {
-    "usage: resume-daemon run --foreground [--parent-lifecycle-stdin --launch-id <64-lowercase-hex>] [--once] [--work-imports-once|--work-imports [--rescan-completed-imports] [--watch-import-roots] [--import-rescan-min-age-seconds <n>] [--stale-import-task-seconds <n>] [--import-retry-backoff-seconds <n>]] [--resume-classifier-model <absolute-path>] [--work-ocr-once|--work-ocr] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--ocr-render-command <path>|--ocr-pdftoppm-command <path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--ocr-jobs-per-tick <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--expected-ipc-protocol <version>] [--max-requests <n>]"
+    "usage: resume-daemon run --foreground [--parent-lifecycle-stdin --launch-id <64-lowercase-hex>] [--once] [--work-imports-once|--work-imports [--rescan-completed-imports] [--watch-import-roots] [--import-rescan-min-age-seconds <n>] [--stale-import-task-seconds <n>] [--import-retry-backoff-seconds <n>]] [--resume-classifier-model <absolute-path>] [--work-ocr-once|--work-ocr] [--work-index-once|--work-index] [--ocr-command <path>|--ocr-tesseract-command <path>] [--pdf-render-command <pdfium-path>] [--ocr-engine-profile <name>] [--ocr-lang <lang>] [--ocr-profile <profile>] [--ocr-render-dpi <dpi>] [--ocr-page-timeout-ms <ms>] [--ocr-max-pages-per-document <n>] [--ocr-jobs-per-tick <n>] [--embedding-command <path>] [--embedding-model-id <id>] [--embedding-dimension <n>] [--embedding-timeout-ms <ms>] [--worker-interval-ms <n>] [--max-worker-ticks <n>] [--ipc-listen <127.0.0.1:port>] [--expected-ipc-protocol <version>] [--max-requests <n>]"
 }
 
 fn non_empty(value: Option<&String>) -> Result<String> {

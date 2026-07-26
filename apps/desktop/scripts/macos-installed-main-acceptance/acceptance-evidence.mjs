@@ -5,7 +5,13 @@ import path from "node:path";
 
 import { CLOSED_SYSTEM_TOOL_ENV } from "../macos-system-tools.mjs";
 import { toolSucceeded } from "./bounded-process.mjs";
-import { TOOL_TIMEOUT_MS, exactKeys, fail } from "./core.mjs";
+import {
+  AUTHORIZED_SOURCE_SCHEMA,
+  INSTALLED_TARGET_SCHEMA,
+  TOOL_TIMEOUT_MS,
+  exactKeys,
+  fail,
+} from "./core.mjs";
 import {
   readActiveStoreManifest,
   readPrivateJson,
@@ -277,15 +283,19 @@ export function validateSyntheticSearchResponse(value) {
   return value;
 }
 
-async function validateMetadataArtifact(dataDir) {
+async function validateMetadataArtifact(
+  dataDir,
+  expectedSchema = INSTALLED_TARGET_SCHEMA,
+) {
   let before;
   try {
     before = await readActiveStoreManifest(dataDir);
   } catch {
     fail("metadata_artifact_invalid");
   }
-  const expectedName = `metadata-v29-${before.digest.slice(0, 16)}.sqlite3`;
-  if (before.schema !== 29 || before.fileName !== expectedName) {
+  const expectedName =
+    `metadata-v${expectedSchema}-${before.digest.slice(0, 16)}.sqlite3`;
+  if (before.schema !== expectedSchema || before.fileName !== expectedName) {
     fail("metadata_artifact_invalid");
   }
   const file = path.join(dataDir, before.fileName);
@@ -429,8 +439,35 @@ async function readMetadataAuthority(file, runTool) {
 }
 
 export async function captureV29LogicalAuthority({ dataDir, runTool }) {
-  const metadata = await validateMetadataArtifact(dataDir);
+  const metadata = await validateMetadataArtifact(
+    dataDir,
+    AUTHORIZED_SOURCE_SCHEMA,
+  );
   return readMetadataAuthority(metadata.file, runTool);
+}
+
+export async function validateRetainedV29Predecessor(
+  dataDir,
+  sourceManifest,
+) {
+  if (
+    sourceManifest?.schema !== AUTHORIZED_SOURCE_SCHEMA ||
+    sourceManifest.fileName !==
+      `metadata-v${AUTHORIZED_SOURCE_SCHEMA}-${sourceManifest.digest?.slice(0, 16)}.sqlite3`
+  ) {
+    fail("v29_predecessor_invalid");
+  }
+  const current = await readActiveStoreManifest(dataDir);
+  if (
+    current.schema !== INSTALLED_TARGET_SCHEMA ||
+    current.fileName === sourceManifest.fileName
+  ) {
+    fail("v29_predecessor_invalid");
+  }
+  await requirePrivateFile(path.join(dataDir, sourceManifest.fileName), {
+    maxBytes: MAX_METADATA_BYTES,
+  });
+  return true;
 }
 
 function parseFulltextManifest(value, generation) {

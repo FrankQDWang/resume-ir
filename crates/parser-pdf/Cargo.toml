@@ -9,8 +9,14 @@ publish.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-lopdf = "0.42.0"
 parser-common = { path = "../parser-common" }
+pdfium-render = { version = "=0.9.3", default-features = false, features = ["pdfium_7881", "static", "thread_safe"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+pdfium-render = { version = "=0.9.3", default-features = false, features = ["pdfium_7881", "static", "libc++", "core_graphics"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+pdfium-render = { version = "=0.9.3", default-features = false, features = ["pdfium_7881", "static", "pdfium_use_win32"] }
 
 [dev-dependencies]
 core-domain = { path = "../core-domain" }

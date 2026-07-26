@@ -15,7 +15,7 @@ const SOURCE = Object.freeze({
 
 function compositionReceipt(dmgSha256) {
   return {
-    schema_version: "resume-ir.macos-dmg-composition.v3",
+    schema_version: "resume-ir.macos-dmg-composition.v4",
     target_triple: "aarch64-apple-darwin",
     source: SOURCE,
     dmg_count: 1,
@@ -36,6 +36,8 @@ function compositionReceipt(dmgSha256) {
     classifier_resource_bytes: 2,
     ocr_resource_file_count: 31,
     ocr_resource_bytes: 31,
+    pdfium_resource_file_count: 4,
+    pdfium_resource_bytes: 4,
     digest_match: true,
     executable: true,
     architecture: "arm64",

@@ -176,6 +176,7 @@ pub struct OptionalRuntimeMatrix {
     pub embedding: OptionalRuntimeHealth,
     pub ocr: OptionalRuntimeHealth,
     pub classifier: OptionalRuntimeHealth,
+    pub pdfium: OptionalRuntimeHealth,
 }
 
 impl OptionalRuntimeMatrix {
@@ -184,6 +185,7 @@ impl OptionalRuntimeMatrix {
             embedding: OptionalRuntimeHealth::initializing(),
             ocr: OptionalRuntimeHealth::initializing(),
             classifier: OptionalRuntimeHealth::initializing(),
+            pdfium: OptionalRuntimeHealth::initializing(),
         }
     }
 }
@@ -220,6 +222,7 @@ pub enum CapabilityReason {
     EmbeddingUnavailable,
     OcrUnavailable,
     ClassifierUnavailable,
+    PdfiumUnavailable,
 }
 
 impl CapabilityReason {
@@ -230,6 +233,7 @@ impl CapabilityReason {
             Self::EmbeddingUnavailable => "embedding_unavailable",
             Self::OcrUnavailable => "ocr_unavailable",
             Self::ClassifierUnavailable => "classifier_unavailable",
+            Self::PdfiumUnavailable => "pdfium_unavailable",
         }
     }
 }
@@ -275,6 +279,7 @@ pub struct CapabilityMatrix {
     pub semantic_search: CapabilityHealth,
     pub hybrid_search: CapabilityHealth,
     pub text_import: CapabilityHealth,
+    pub pdf_import: CapabilityHealth,
     pub ocr_import: CapabilityHealth,
     pub index_publication: CapabilityHealth,
 }
@@ -297,6 +302,7 @@ impl CapabilityMatrix {
         let embedding = runtimes.embedding.is_available();
         let classifier = runtimes.classifier.is_available();
         let ocr = runtimes.ocr.is_available();
+        let pdfium = runtimes.pdfium.is_available();
         Self {
             keyword_search: CapabilityHealth::available(),
             detail: CapabilityHealth::available(),
@@ -317,10 +323,21 @@ impl CapabilityMatrix {
             } else {
                 CapabilityHealth::available()
             },
+            pdf_import: if !classifier {
+                CapabilityHealth::unavailable(CapabilityReason::ClassifierUnavailable)
+            } else if !embedding {
+                CapabilityHealth::unavailable(CapabilityReason::EmbeddingUnavailable)
+            } else if !pdfium {
+                CapabilityHealth::unavailable(CapabilityReason::PdfiumUnavailable)
+            } else {
+                CapabilityHealth::available()
+            },
             ocr_import: if !classifier {
                 CapabilityHealth::unavailable(CapabilityReason::ClassifierUnavailable)
             } else if !embedding {
                 CapabilityHealth::unavailable(CapabilityReason::EmbeddingUnavailable)
+            } else if !pdfium {
+                CapabilityHealth::unavailable(CapabilityReason::PdfiumUnavailable)
             } else if !ocr {
                 CapabilityHealth::unavailable(CapabilityReason::OcrUnavailable)
             } else {
@@ -345,6 +362,7 @@ impl CapabilityMatrix {
             semantic_search: health,
             hybrid_search: health,
             text_import: health,
+            pdf_import: health,
             ocr_import: health,
             index_publication: health,
         }
@@ -360,6 +378,7 @@ pub enum CapabilityName {
     SemanticSearch,
     HybridSearch,
     TextImport,
+    PdfImport,
     OcrImport,
     IndexPublication,
 }
@@ -470,9 +489,14 @@ pub fn validate_health_contract(
     };
     if status != core.status()
         || !valid_core
-        || ![runtimes.embedding, runtimes.ocr, runtimes.classifier]
-            .into_iter()
-            .all(valid_runtime)
+        || ![
+            runtimes.embedding,
+            runtimes.ocr,
+            runtimes.classifier,
+            runtimes.pdfium,
+        ]
+        .into_iter()
+        .all(valid_runtime)
         || capabilities != CapabilityMatrix::derive(core, runtimes)
         || error != CoreError::for_core(core)
     {

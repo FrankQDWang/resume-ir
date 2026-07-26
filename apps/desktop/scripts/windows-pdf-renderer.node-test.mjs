@@ -23,8 +23,15 @@ test("accepts the pinned static PDFium renderer contract", () => {
   assert.equal(contract.rejected_platform_api.desktop_package_identity_required, true);
   assert.equal(contract.wrapper.cargo_feature, "windows-static-pdfium");
   assert.equal(contract.pdfium.source_commit, "91b9d569b34be4f38eed7b3c49b227356c3aadad");
+  assert.equal(contract.protocol.input_max_bytes, 256 * 1024 * 1024);
   assert.ok(contract.pdfium.gn_arguments.includes("is_component_build=false"));
   assert.ok(contract.pdfium.gn_arguments.includes("pdf_is_complete_lib=true"));
+  assert.ok(contract.pdfium.gn_arguments.includes("chrome_pgo_phase=0"));
+  assert.ok(
+    contract.pdfium.gn_arguments.includes("clang_use_unsafe_buffers_plugin=false"),
+  );
+  assert.ok(contract.pdfium.gn_arguments.includes("use_thin_lto=false"));
+  assert.ok(!contract.pdfium.gn_arguments.includes("treat_warnings_as_errors=false"));
 });
 
 test("rejects package-identity, dynamic-link, and resource-bound drift", async () => {

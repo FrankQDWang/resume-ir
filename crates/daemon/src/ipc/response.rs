@@ -25,7 +25,11 @@ pub(crate) fn write_http_response(
         401 => "Unauthorized",
         404 => "Not Found",
         409 => "Conflict",
+        410 => "Gone",
         413 => "Payload Too Large",
+        416 => "Range Not Satisfiable",
+        422 => "Unprocessable Content",
+        429 => "Too Many Requests",
         500 => "Internal Server Error",
         503 => "Service Unavailable",
         _ => "Error",
@@ -77,7 +81,7 @@ pub(crate) fn write_service_unavailable(
 
 pub(crate) fn unified_error_body(request_id: Option<&str>, code: &str, action: &str) -> String {
     let mut body = serde_json::json!({
-        "schema_version": "resume-ir.error.v2",
+        "schema_version": "resume-ir.error.v3",
         "status": "error",
         "error": {
             "code": code,
@@ -100,7 +104,7 @@ pub(crate) fn service_error_body(
     reason: Option<&str>,
 ) -> String {
     let mut body = serde_json::json!({
-        "schema_version": "resume-ir.error.v2",
+        "schema_version": "resume-ir.error.v3",
         "status": "error",
         "error": {
             "code": code,

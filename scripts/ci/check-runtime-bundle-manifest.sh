@@ -50,7 +50,7 @@ mkdir -p "$private_component_dir" "$target_dir" "$out_dir"
 
 printf 'synthetic tesseract bytes\n' > "$private_component_dir/tesseract"
 printf 'synthetic tessdata bytes\n' > "$private_component_dir/eng.traineddata"
-printf 'synthetic pdf renderer bytes\n' > "$private_component_dir/pdftoppm"
+printf 'synthetic PDFium renderer bytes\n' > "$private_component_dir/resume-pdf-render-runtime"
 printf 'synthetic reviewed embedding model bytes\n' > "$private_component_dir/model.onnx"
 printf 'source offer text\n' > "$private_component_dir/source-offer.txt"
 printf 'notice text\n' > "$private_component_dir/NOTICE.txt"
@@ -62,7 +62,7 @@ done
 if "$script" \
   --version v0.0.0 \
   --runtime-pack-id reviewed-runtime-pack \
-  --distribution-license GPL-3.0-or-later \
+  --distribution-license LicenseRef-resume-ir-mixed-runtime-bundle \
   --source-offer "$private_component_dir/source-offer.txt" \
   --notice "$private_component_dir/NOTICE.txt" \
   --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$private_component_dir/tesseract" \
@@ -74,7 +74,7 @@ fi
 if "$script" \
   --version v0.0.0 \
   --runtime-pack-id reviewed-runtime-pack \
-  --distribution-license GPL-3.0-or-later \
+  --distribution-license LicenseRef-resume-ir-mixed-runtime-bundle \
   --source-offer "$private_component_dir/source-offer.txt" \
   --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$private_component_dir/tesseract" \
   --component "tesseract-copy|support-tool|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$private_component_dir/tesseract" \
@@ -87,7 +87,7 @@ fi
 if "$script" \
   --version v0.0.0 \
   --runtime-pack-id reviewed-runtime-pack \
-  --distribution-license GPL-3.0-or-later \
+  --distribution-license LicenseRef-resume-ir-mixed-runtime-bundle \
   --source-offer "$private_component_dir/source-offer.txt" \
   --notice "$private_component_dir/source-offer.txt" \
   --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$private_component_dir/tesseract" \
@@ -100,12 +100,12 @@ fi
 "$script" \
   --version v0.0.0 \
   --runtime-pack-id reviewed-runtime-pack \
-  --distribution-license GPL-3.0-or-later \
+  --distribution-license LicenseRef-resume-ir-mixed-runtime-bundle \
   --source-offer "$private_component_dir/source-offer.txt" \
   --notice "$private_component_dir/NOTICE.txt" \
   --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$private_component_dir/tesseract" \
   --component "eng-tessdata|ocr-language-pack|Apache-2.0|https://github.com/tesseract-ocr/tessdata|$private_component_dir/eng.traineddata" \
-  --component "poppler-pdftoppm|pdf-renderer|GPL-3.0-or-later|https://poppler.freedesktop.org/|$private_component_dir/pdftoppm" \
+  --component "resume-pdf-render-runtime|pdf-renderer|LicenseRef-PDFium-Root-LICENSE|https://pdfium.googlesource.com/pdfium.git|$private_component_dir/resume-pdf-render-runtime" \
   --component "all-minilm-l6-v2|embedding-model|Apache-2.0|https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2|$private_component_dir/model.onnx" \
   --reviewed \
   --out-dir "$out_dir" \
@@ -123,13 +123,13 @@ require_text "$manifest" '"version": "v0.0.0"'
 require_text "$manifest" '"runtime_distribution_mode": "bundled"'
 require_text "$manifest" '"runtime_package_binaries_included": true'
 require_text "$manifest" '"runtime_binaries_included": false'
-require_text "$manifest" '"distribution_license": "GPL-3.0-or-later"'
+require_text "$manifest" '"distribution_license": "LicenseRef-resume-ir-mixed-runtime-bundle"'
 require_text "$manifest" '"source_offer"'
 require_text "$manifest" '"notices"'
 require_text "$manifest" '"components"'
 require_text "$manifest" '"tesseract"'
 require_text "$manifest" '"eng.traineddata"'
-require_text "$manifest" '"pdftoppm"'
+require_text "$manifest" '"resume-pdf-render-runtime"'
 require_text "$manifest" '"model.onnx"'
 require_text "$manifest" '"embedding-model"'
 require_text "$manifest" '"sha256"'

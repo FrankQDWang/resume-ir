@@ -11,7 +11,7 @@ use meta_store::{
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
 use parser_doc::DocParser;
 use parser_docx::DocxParser;
-use parser_pdf::{PdfParser, PdfTextExtractionTimings};
+use parser_pdf::{PdfParser, PdfTextExtractionMetrics};
 use parser_text::TxtParser;
 use resume_classifier::LinearPromotionPolicy;
 use sectionizer::Sectionizer;
@@ -34,7 +34,9 @@ use crate::immutable_ingest::{resume_version, source_revision};
 use crate::source_digest::stream_content_digest;
 use crate::source_dispositions::ProcessedFile;
 use crate::timing::{measure_result_stage, measure_stage};
-use crate::{ImportFailureKind, ImportPostParserTimings, Result, PARSE_VERSION, SCHEMA_VERSION};
+use crate::{
+    primary_parse_version_for, ImportFailureKind, ImportPostParserTimings, Result, SCHEMA_VERSION,
+};
 
 pub(crate) fn prepare_file_for_parse(
     store: &OwnedMetaStore,
@@ -235,7 +237,7 @@ pub(crate) fn parse_work_item(
         parse_elapsed: parse_finished.saturating_duration_since(parse_started),
         parse_started,
         parse_finished,
-        pdf_parse_timings: output.pdf_parse_timings,
+        pdf_parse_metrics: output.pdf_parse_metrics,
         post_parser_timings: output.post_parser_timings,
         outcome: output.outcome,
     }
@@ -249,7 +251,7 @@ pub(crate) fn parse_work_item_inner(
     linear_promotion: &LinearPromotionPolicy,
 ) -> ParseWorkItemOutput {
     let extension = file_extension_label(&file.extension);
-    let mut pdf_parse_timings = PdfTextExtractionTimings::default();
+    let mut pdf_parse_metrics = PdfTextExtractionMetrics::default();
     let mut post_parser_timings = ImportPostParserTimings::default();
     let parse_output = match file.extension {
         FileExtension::Docx => DocxParser.parse(
@@ -261,12 +263,12 @@ pub(crate) fn parse_work_item_inner(
             ResourceBudget::default(),
         ),
         FileExtension::Pdf => {
-            match PdfParser.parse_with_timings(
+            match PdfParser.parse_with_metrics(
                 ParseInput::from_bytes(Some(extension), bytes),
                 ResourceBudget::default(),
             ) {
-                Ok((parse_output, timings)) => {
-                    pdf_parse_timings = timings;
+                Ok((parse_output, metrics)) => {
+                    pdf_parse_metrics = metrics;
                     Ok(parse_output)
                 }
                 Err(error) => Err(error),
@@ -282,7 +284,7 @@ pub(crate) fn parse_work_item_inner(
                     status: DocumentStatus::FailedPermanent,
                     kind: ImportFailureKind::UnsupportedExtension,
                 },
-                pdf_parse_timings,
+                pdf_parse_metrics,
                 post_parser_timings,
             };
         }
@@ -308,7 +310,7 @@ pub(crate) fn parse_work_item_inner(
             };
             return ParseWorkItemOutput {
                 outcome,
-                pdf_parse_timings,
+                pdf_parse_metrics,
                 post_parser_timings,
             };
         }
@@ -317,7 +319,7 @@ pub(crate) fn parse_work_item_inner(
     if parse_output.status() == ParseStatus::OcrRequired {
         return ParseWorkItemOutput {
             outcome: ParseWorkOutcome::OcrRequired,
-            pdf_parse_timings,
+            pdf_parse_metrics,
             post_parser_timings,
         };
     }
@@ -336,7 +338,7 @@ pub(crate) fn parse_work_item_inner(
         };
         return ParseWorkItemOutput {
             outcome,
-            pdf_parse_timings,
+            pdf_parse_metrics,
             post_parser_timings,
         };
     }
@@ -351,7 +353,7 @@ pub(crate) fn parse_work_item_inner(
         document,
         source_revision,
         clean_text.clone(),
-        PARSE_VERSION,
+        primary_parse_version_for(&file.extension),
         SCHEMA_VERSION,
         language_set(&clean_text),
         parse_output
@@ -382,7 +384,7 @@ pub(crate) fn parse_work_item_inner(
 
     ParseWorkItemOutput {
         outcome,
-        pdf_parse_timings,
+        pdf_parse_metrics,
         post_parser_timings,
     }
 }

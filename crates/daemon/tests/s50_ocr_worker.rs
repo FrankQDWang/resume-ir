@@ -127,7 +127,7 @@ fn invalid_ocr_manifest_is_reported_without_claiming_a_queued_job() {
             "--work-ocr",
             "--ocr-command",
             path_str(&command),
-            "--ocr-render-command",
+            "--pdf-render-command",
             path_str(&renderer),
         ],
     );
@@ -231,7 +231,7 @@ fn missing_classifier_is_reported_independently_from_other_missing_runtimes() {
 }
 
 #[test]
-fn unvalidated_renderer_cannot_widen_a_missing_ocr_pack() {
+fn unvalidated_pdfium_renderer_cannot_widen_a_missing_ocr_pack() {
     let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = ready_data_dir("ocr-unvalidated-renderer");
     let engine = fs::canonicalize(marker_command("ocr-unvalidated-engine")).unwrap();
@@ -243,7 +243,7 @@ fn unvalidated_renderer_cannot_widen_a_missing_ocr_pack() {
         &[
             "--ocr-tesseract-command",
             path_str(&engine),
-            "--ocr-pdftoppm-command",
+            "--pdf-render-command",
             path_str(&renderer),
         ],
     );
@@ -312,7 +312,7 @@ fn unsupported_ocr_language_cannot_be_smuggled_into_the_reviewed_pack_contract()
         &[
             "--ocr-tesseract-command",
             path_str(&reviewed_ocr),
-            "--ocr-render-command",
+            "--pdf-render-command",
             path_str(&pdf_renderer),
             "--ocr-lang",
             "deu",
@@ -496,7 +496,7 @@ fn wait_for_generation(child: &mut impl PollDaemonChild, data_dir: &Path) -> Gen
         let endpoints = read_json(data_dir.join("ipc.endpoints.json"));
         let auth = read_json(data_dir.join("ipc.auth"));
         if let (Some(endpoints), Some(auth)) = (endpoints, auth) {
-            if endpoints["schema_version"] == "resume-ir.daemon-ipc.v4"
+            if endpoints["schema_version"] == "resume-ir.daemon-ipc.v5"
                 && auth["schema_version"] == "resume-ir.daemon-auth.v3"
                 && endpoints["launch_id"] == auth["launch_id"]
                 && endpoints["instance_id"] == auth["instance_id"]

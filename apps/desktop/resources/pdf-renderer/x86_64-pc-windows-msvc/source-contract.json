@@ -25,7 +25,7 @@
       "RESUME_IR_PDF_RENDER_PAGE_NO",
       "RESUME_IR_PDF_RENDER_DPI"
     ],
-    "input_max_bytes": 67108864,
+    "input_max_bytes": 268435456,
     "path_max_utf16_units": 32767,
     "page_min": 1,
     "page_max": 512,
@@ -47,7 +47,7 @@
     "release": "chromium/7881",
     "source_repository": "https://pdfium.googlesource.com/pdfium.git",
     "source_commit": "91b9d569b34be4f38eed7b3c49b227356c3aadad",
-    "source_build_dependency_revision": "613f5c13bccbc15bd7ce8da9acb13ac06459f8cb",
+    "source_build_dependency_revision": "f394ab2c993283e94680ca13db98b99927868e98",
     "license": "LicenseRef-PDFium-Root-LICENSE",
     "source_license_file": {
       "file": "LICENSE",
@@ -60,6 +60,9 @@
       "target_cpu=\"x64\"",
       "is_debug=false",
       "is_official_build=true",
+      "chrome_pgo_phase=0",
+      "clang_use_unsafe_buffers_plugin=false",
+      "use_thin_lto=false",
       "is_component_build=false",
       "pdf_is_standalone=true",
       "pdf_is_complete_lib=true",
@@ -86,5 +89,11 @@
       "UCRTBASE",
       "API-MS-WIN-CRT-"
     ]
+  },
+  "pack": {
+    "schema_version": "resume-ir.pdfium-static-build-pack.v1",
+    "library_file": "pdfium.lib",
+    "license_file": "LICENSE",
+    "args_file": "args.gn"
   }
 }

@@ -74,6 +74,39 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         Ok(tasks)
     }
 
+    /// Returns every active task for an exact source root, including tasks
+    /// whose cancellation has already been requested.
+    ///
+    /// Source-root deletion uses this projection only after its durable
+    /// deletion receipt prevents new claims. It must still observe cancelled
+    /// running work so the caller can acquire and retain every task owner lock
+    /// before publishing the privacy removal.
+    pub fn active_import_tasks_for_root_quiescence(
+        &self,
+        canonical_root_path: &str,
+    ) -> Result<Vec<ImportTask>> {
+        let connection = self.connection.borrow();
+        let sql = format!(
+            "SELECT {IMPORT_TASK_COLUMNS} FROM import_task
+             WHERE root_path = ?1 AND status IN (?2, ?3, ?4)
+             ORDER BY queued_at_seconds, rowid"
+        );
+        let mut statement = connection.prepare(&sql).map_err(MetaStoreError::storage)?;
+        let mut rows = statement
+            .query(params![
+                canonical_root_path,
+                import_task_status_to_storage(ImportTaskStatus::Queued),
+                import_task_status_to_storage(ImportTaskStatus::Running),
+                import_task_status_to_storage(ImportTaskStatus::FailedRetryable),
+            ])
+            .map_err(MetaStoreError::storage)?;
+        let mut tasks = Vec::new();
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            tasks.push(read_import_task(row)?);
+        }
+        Ok(tasks)
+    }
+
     /// Normalizes one exactly observed orphaned running attempt. Uncancelled
     /// work becomes immediately claimable; a cancelled attempt remains
     /// unclaimable. The compare-and-swap includes the observed timestamp so a
@@ -573,13 +606,25 @@ fn validate_exact_source_manifest(
                         THEN 1
                         WHEN disposition.disposition = 'searchable' AND (
                           version.id IS NULL OR version.schema_version <> ?4
-                          OR version.parse_version NOT IN (?5, ?6)
+                          OR NOT (
+                            (document.extension = 'pdf' AND version.parse_version = ?5)
+                            OR (document.extension IN ('pdf', 'image')
+                                AND version.parse_version = ?6)
+                            OR (document.extension IN ('doc', 'docx', 'txt')
+                                AND version.parse_version = ?7)
+                          )
                           OR classification.status IS NULL
                           OR classification.status <> 'resume_candidate'
                         ) THEN 1
                         WHEN disposition.disposition = 'excluded' AND (
                           version.id IS NULL OR version.schema_version <> ?4
-                          OR version.parse_version NOT IN (?5, ?6)
+                          OR NOT (
+                            (document.extension = 'pdf' AND version.parse_version = ?5)
+                            OR (document.extension IN ('pdf', 'image')
+                                AND version.parse_version = ?6)
+                            OR (document.extension IN ('doc', 'docx', 'txt')
+                                AND version.parse_version = ?7)
+                          )
                           OR classification.status IS NULL
                           OR classification.status NOT IN ('non_resume', 'needs_review')
                         ) THEN 1
@@ -616,6 +661,7 @@ fn validate_exact_source_manifest(
                 contract.derived_schema_version(),
                 contract.primary_parse_version(),
                 contract.ocr_parse_version(),
+                crate::NON_PDF_PARSE_VERSION,
             ],
             |row| {
                 Ok((

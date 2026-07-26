@@ -196,7 +196,7 @@ test("derives version and binary icon digest from exact commit blobs", async () 
       if (object.endsWith(":apps/desktop/package.json")) {
         return toolResult(
           0,
-          JSON.stringify({ name: "resume-ir-desktop", version: "0.1.2" }),
+          JSON.stringify({ name: "resume-ir-desktop", version: "0.1.8" }),
         );
       }
       if (object.endsWith(":apps/desktop/src-tauri/tauri.conf.json")) {
@@ -217,7 +217,7 @@ test("derives version and binary icon digest from exact commit blobs", async () 
   );
   assert.deepEqual(result, {
     iconSha256: createHash("sha256").update(icon).digest("hex"),
-    version: "0.1.2",
+    version: "0.1.8",
   });
   assert.equal(calls.at(-1).options.stdoutMode, "buffer");
   assert.equal(calls.at(-1).options.maxStdoutBytes, 8 * 1024 * 1024);

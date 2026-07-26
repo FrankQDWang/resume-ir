@@ -88,10 +88,13 @@ fn standalone_daemon_rejects_unknown_manifest_authority_without_rewriting_existi
     drop(owner);
     let manifest_path = data_dir.join("metadata-active.v1");
     let manifest = fs::read_to_string(&manifest_path).unwrap();
-    assert!(manifest.contains("\nschema=29\n"));
+    assert!(manifest.starts_with("resume-ir.metadata-active.v2\n"));
+    assert!(manifest.contains("\nschema=33\n"));
     fs::write(
         &manifest_path,
-        manifest.replace("\nschema=29\n", "\nschema=30\n"),
+        manifest
+            .replace("file=metadata-v33-", "file=metadata-v34-")
+            .replace("\nschema=33\n", "\nschema=34\n"),
     )
     .unwrap();
     assert_unsupported_store(&data_dir);
@@ -223,7 +226,7 @@ fn wait_for_generation(
             .ok()
             .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok());
         if let (Some(endpoints), Some(auth)) = (endpoints, auth) {
-            if endpoints["schema_version"] == "resume-ir.daemon-ipc.v4"
+            if endpoints["schema_version"] == "resume-ir.daemon-ipc.v5"
                 && auth["schema_version"] == "resume-ir.daemon-auth.v3"
                 && endpoints["launch_id"] == auth["launch_id"]
                 && endpoints["instance_id"] == auth["instance_id"]
@@ -238,11 +241,11 @@ fn wait_for_generation(
             }
         }
         if let Some(status) = child.try_wait().unwrap() {
-            panic!("daemon exited before v3 control publication: {status}");
+            panic!("daemon exited before v5 control publication: {status}");
         }
         assert!(
             Instant::now() < deadline,
-            "v3 control publication timed out"
+            "v5 control publication timed out"
         );
         thread::sleep(Duration::from_millis(20));
     }
@@ -258,7 +261,7 @@ fn wait_for_blocked_status(
         assert!(status.starts_with("HTTP/1.1 200"), "{status}");
         let payload: serde_json::Value =
             serde_json::from_str(status.split_once("\r\n\r\n").unwrap().1).unwrap();
-        assert_eq!(payload["schema_version"], "daemon.status.v4");
+        assert_eq!(payload["schema_version"], "daemon.status.v5");
         assert_eq!(payload["process_state"], "ready");
         if payload["core"]["state"] == "blocked" {
             return payload;
@@ -294,7 +297,18 @@ fn assert_control_file_contract(
             "search",
             "search_batch",
             "details",
+            "hydrate",
             "delete",
+            "source_roots",
+            "source_root_register",
+            "source_root_legacy_migration",
+            "source_root_scan",
+            "source_root_control",
+            "source_root_delete",
+            "preview_create",
+            "preview_range",
+            "preview_close",
+            "source_reveal",
         ])
     );
     assert_eq!(

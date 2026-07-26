@@ -115,7 +115,7 @@ function dependencies(installedVersion) {
     values: {
       deriveCommitProductBinding: async () => {
         calls.push("source");
-        return { iconSha256: ICON, version: "0.1.2" };
+        return { iconSha256: ICON, version: "0.1.8" };
       },
       deriveSourceIdentity: async () => {
         calls.push("source-identity");
@@ -131,7 +131,7 @@ function dependencies(installedVersion) {
           gitHead: HEAD,
           iconSha256: ICON,
           source: SOURCE,
-          version: "0.1.2",
+          version: "0.1.8",
         };
       },
       createImmutableBuildSource: async () => {
@@ -148,7 +148,7 @@ function dependencies(installedVersion) {
         calls.push("build");
         return {
           appCompositionDigest: COMPOSITION,
-          dmg: "/synthetic/release/resume-ir_0.1.2_aarch64.dmg",
+          dmg: "/synthetic/release/resume-ir_0.1.8_aarch64.dmg",
           dmgSha256: DMG,
           source: SOURCE,
         };
@@ -167,7 +167,7 @@ function dependencies(installedVersion) {
           gitHead: HEAD,
           iconSha256: ICON,
           source: SOURCE,
-          version: "0.1.2",
+          version: "0.1.8",
         };
       },
     },
@@ -196,7 +196,7 @@ test("always builds and promotes the exact release instead of accepting a pre-ex
       ],
     ],
     [
-      "0.1.2",
+      "0.1.8",
       "reinstall",
       [
         "git",
@@ -221,7 +221,7 @@ test("always builds and promotes the exact release instead of accepting a pre-ex
       fixture.values,
     );
     assert.equal(result.deploymentAction, expectedAction);
-    assert.equal(result.version, "0.1.2");
+    assert.equal(result.version, "0.1.8");
     assert.equal(result.gitHead, HEAD);
     assert.deepEqual(result.source, SOURCE);
     assert.equal(result.compositionDigest, COMPOSITION);
@@ -266,7 +266,7 @@ test("rejects future source, future installed versions, and build-to-install dri
     gitHead: HEAD,
     iconSha256: ICON,
     source: SOURCE,
-    version: "0.1.2",
+    version: "0.1.8",
   });
   await assert.rejects(
     deployExactInstalledRelease(baseOptions, drift.values),
@@ -280,7 +280,7 @@ test("rejects future source, future installed versions, and build-to-install dri
     gitHead: HEAD,
     iconSha256: ICON,
     source: SOURCE,
-    version: "0.1.2",
+    version: "0.1.8",
   });
   await assert.rejects(
     deployExactInstalledRelease(baseOptions, dmgDrift.values),
@@ -337,7 +337,7 @@ test("builds only from an immutable commit-derived root and rechecks authority a
     live = false;
     return {
       appCompositionDigest: COMPOSITION,
-      dmg: "/synthetic/release/resume-ir_0.1.2_aarch64.dmg",
+      dmg: "/synthetic/release/resume-ir_0.1.8_aarch64.dmg",
       dmgSha256: DMG,
       source: SOURCE,
     };
@@ -354,7 +354,7 @@ test("builds only from an immutable commit-derived root and rechecks authority a
           gitHead: HEAD,
           iconSha256: ICON,
           source: SOURCE,
-          version: "0.1.2",
+          version: "0.1.8",
         },
       },
       fixture.values,
@@ -366,7 +366,7 @@ test("builds only from an immutable commit-derived root and rechecks authority a
 });
 
 test("reinstall rechecks live authority before the atomic replacement", async () => {
-  const fixture = dependencies("0.1.2");
+  const fixture = dependencies("0.1.8");
   let guardCalls = 0;
   const mutations = [];
   fixture.values.assertMutationAuthority = async (operation) => {
@@ -391,7 +391,7 @@ test("reinstall rechecks live authority before the atomic replacement", async ()
           gitHead: HEAD,
           iconSha256: ICON,
           source: SOURCE,
-          version: "0.1.2",
+          version: "0.1.8",
         },
       },
       fixture.values,
@@ -412,7 +412,7 @@ test("a drift-and-restore during build cannot alter the commit-derived build roo
       gitHead: HEAD,
       iconSha256: ICON,
       source: SOURCE,
-      version: "0.1.2",
+      version: "0.1.8",
     };
   };
   fixture.values.buildVerifiedDmg = async ({ repoRoot }) => {
@@ -423,7 +423,7 @@ test("a drift-and-restore during build cannot alter the commit-derived build roo
     liveAuthority = HEAD;
     return {
       appCompositionDigest: COMPOSITION,
-      dmg: "/synthetic/release/resume-ir_0.1.2_aarch64.dmg",
+      dmg: "/synthetic/release/resume-ir_0.1.8_aarch64.dmg",
       dmgSha256: DMG,
       source: SOURCE,
     };
@@ -435,7 +435,7 @@ test("a drift-and-restore during build cannot alter the commit-derived build roo
         gitHead: HEAD,
         iconSha256: ICON,
         source: SOURCE,
-        version: "0.1.2",
+        version: "0.1.8",
       },
     },
     fixture.values,
@@ -458,7 +458,7 @@ test("passes the immutable source closed environment through the Tauri build bou
     assert.equal(environment.PATH.includes(baseOptions.repoRoot), false);
     return {
       appCompositionDigest: COMPOSITION,
-      dmg: "/synthetic/release/resume-ir_0.1.2_aarch64.dmg",
+      dmg: "/synthetic/release/resume-ir_0.1.8_aarch64.dmg",
       dmgSha256: DMG,
       source: SOURCE,
     };

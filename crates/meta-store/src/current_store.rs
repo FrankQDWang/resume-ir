@@ -1,4 +1,4 @@
-//! Current v30 store publication and exact v29-to-v30 COW migration.
+//! Current store publication and contiguous encrypted COW forward migration.
 
 use std::{
     fs::{self, OpenOptions},
@@ -8,28 +8,31 @@ use std::{
     time::Duration,
 };
 
-use rusqlite::{backup::Backup, Connection};
-use tempfile::Builder;
-
 use crate::{
     active_store_manifest::{
         owner_regular_file_exists, publish_new_active_store, random_store_id_digest, read_manifest,
         read_manifest_format_version, read_manifest_schema_version, replace_active_store,
-        sync_parent_directory, validate_owner_regular_metadata, ActiveStoreManifest, MANIFEST_FILE,
+        sync_parent_directory, validate_owner_directory_metadata, validate_owner_regular_metadata,
+        ActiveStoreManifest, MANIFEST_FILE,
     },
     data_directory_owner::DataDirectoryOwnerGuard,
     forward_migration,
     migration_v27::{open_encrypted_read_connection, store_identity, sync_validated_store},
-    migration_v29, schema_v29, schema_v30, MetaStoreError, MetadataEncryptionState, OwnedMetaStore,
-    Result, METADATA_ENCRYPTION_KEY_LEN,
+    migration_v29, schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, MetaStoreError,
+    MetadataEncryptionState, OwnedMetaStore, Result, METADATA_ENCRYPTION_KEY_LEN,
 };
+use rusqlite::{backup::Backup, types::ValueRef, Connection, OptionalExtension};
+use sha2::{Digest, Sha256};
 
-#[path = "migration_v30_receipt.rs"]
+#[path = "current_store_initialization_receipt.rs"]
+mod initialization_receipt;
+#[path = "forward_migration_receipt.rs"]
 mod receipt;
 
+use initialization_receipt::{InitializationPhase, InitializationReceipt};
 use receipt::{MigrationReceipt, ReceiptPhase};
 
-const STAGING_PREFIX: &str = ".metadata-v30-stage-";
+const STAGING_PREFIX: &str = ".metadata-forward-stage-";
 
 pub(super) fn active_store_path(data_dir: &Path) -> Result<PathBuf> {
     let manifest_path = data_dir.join(MANIFEST_FILE);
@@ -47,7 +50,13 @@ pub(super) fn migration_required(data_dir: &Path) -> Result<bool> {
     }
     match read_manifest_schema_version(&manifest_path)? {
         schema_v29::VERSION if read_manifest_format_version(&manifest_path)? == 1 => Ok(true),
-        schema_v30::VERSION if read_manifest_format_version(&manifest_path)? == 2 => Ok(false),
+        schema_v30::VERSION if read_manifest_format_version(&manifest_path)? == 2 => Ok(true),
+        schema_v31::VERSION | schema_v32::VERSION
+            if read_manifest_format_version(&manifest_path)? == 2 =>
+        {
+            Ok(true)
+        }
+        schema_v33::VERSION if read_manifest_format_version(&manifest_path)? == 2 => Ok(false),
         _ => Err(MetaStoreError::unsupported_store_schema()),
     }
 }
@@ -92,6 +101,7 @@ pub(super) fn prepare_active_store(
     owner: &Arc<DataDirectoryOwnerGuard>,
 ) -> Result<(PathBuf, [u8; METADATA_ENCRYPTION_KEY_LEN])> {
     let data_dir = owner.canonical_data_dir();
+    reconcile_initialization_receipt(data_dir)?;
     reconcile_receipt(data_dir)?;
     let manifest_path = data_dir.join(MANIFEST_FILE);
     if !owner_regular_file_exists(&manifest_path)? {
@@ -104,17 +114,20 @@ pub(super) fn prepare_active_store(
         read_manifest_schema_version(&manifest_path)?,
     );
     match authority {
-        (2, schema_v30::VERSION) => {
+        (2, schema_v33::VERSION) => {
             let manifest = read_manifest(&manifest_path)?;
             let key = read_key(data_dir)?;
             let path = data_dir.join(&manifest.file_name);
             validate_current_store(&path, &key, &manifest.store_id_digest)?;
             Ok((path, key))
         }
-        (1, schema_v29::VERSION) => {
+        (1, schema_v29::VERSION)
+        | (2, schema_v30::VERSION)
+        | (2, schema_v31::VERSION)
+        | (2, schema_v32::VERSION) => {
             let manifest = read_manifest(&manifest_path)?;
             let key = read_key(data_dir)?;
-            migrate_v29(owner, manifest, key)
+            migrate_prior(owner, manifest, key)
         }
         _ => Err(MetaStoreError::unsupported_store_schema()),
     }
@@ -124,11 +137,11 @@ pub(super) fn validate_current_connection(
     connection: &Connection,
     store_id_digest: &str,
 ) -> Result<()> {
-    migration_v29::validate_active_connection(connection, schema_v30::VERSION, store_id_digest)?;
-    forward_migration::validate_chain(connection, schema_v29::VERSION, schema_v30::VERSION)
+    migration_v29::validate_active_connection(connection, schema_v33::VERSION, store_id_digest)?;
+    forward_migration::validate_chain(connection, schema_v29::VERSION, schema_v33::VERSION)
 }
 
-fn migrate_v29(
+fn migrate_prior(
     owner: &Arc<DataDirectoryOwnerGuard>,
     source_manifest: ActiveStoreManifest,
     key: [u8; METADATA_ENCRYPTION_KEY_LEN],
@@ -136,15 +149,20 @@ fn migrate_v29(
     let data_dir = owner.canonical_data_dir();
     let source_path = data_dir.join(&source_manifest.file_name);
     let source = open_encrypted_read_connection(&source_path, &key)?;
-    migration_v29::validate_current_v29_connection(&source, &source_manifest.store_id_digest)?;
+    validate_source_store(&source, &source_manifest)?;
     let source_witness = PreservationWitness::capture(&source)?;
+    // A store migrated by an earlier product version may still retain its own
+    // predecessor and published receipt. Validate the active source first,
+    // then retire that older recovery point before creating this generation's
+    // receipt so there is always exactly one recoverable predecessor.
+    destroy_retained_predecessor(data_dir)?;
 
     let migration_id = random_store_id_digest()?;
     let staging_file = format!("{STAGING_PREFIX}{}.sqlite3", &migration_id[..16]);
-    let target_file = format!("metadata-v30-{}.sqlite3", &migration_id[..16]);
+    let target_file = format!("metadata-v33-{}.sqlite3", &migration_id[..16]);
     let target_manifest = ActiveStoreManifest {
         file_name: target_file.clone(),
-        schema_version: schema_v30::VERSION,
+        schema_version: schema_v33::VERSION,
         store_id_digest: source_manifest.store_id_digest.clone(),
     };
     let mut receipt = MigrationReceipt {
@@ -161,9 +179,9 @@ fn migrate_v29(
     let migration_result = (|| {
         copy_encrypted_store(&source, &staging_path, &key)?;
         let mut staging = open_existing_encrypted_writer(&staging_path, &key)?;
-        forward_migration::apply_current_schema_from_v29(&mut staging)?;
+        forward_migration::apply_current_schema(&mut staging, source_manifest.schema_version)?;
         validate_current_connection(&staging, &target_manifest.store_id_digest)?;
-        if PreservationWitness::capture(&staging)? != source_witness {
+        if !source_witness.matches(&staging)? {
             return Err(MetaStoreError::storage_invariant());
         }
         drop(staging);
@@ -198,16 +216,13 @@ fn create_fresh_store(
     owner: &Arc<DataDirectoryOwnerGuard>,
 ) -> Result<(PathBuf, [u8; METADATA_ENCRYPTION_KEY_LEN])> {
     let data_dir = owner.canonical_data_dir();
+    let initialization_id = random_store_id_digest()?;
+    let mut receipt = InitializationReceipt::new(initialization_id);
+    initialization_receipt::persist(data_dir, &receipt)?;
     let key = crate::random_metadata_encryption_key()?;
-    let mut temporary = Builder::new()
-        .prefix(".metadata-v30-init-")
-        .suffix(".sqlite3")
-        .tempfile_in(data_dir)
-        .map_err(MetaStoreError::io_storage)?;
-    crate::restrict_private_file_permissions(temporary.path())?;
-    let connection = Connection::open(temporary.path()).map_err(MetaStoreError::storage)?;
-    crate::apply_sqlcipher_key(&connection, &key)?;
-    crate::verify_sqlcipher_key(&connection)?;
+    let staging_path = data_dir.join(receipt.staging_file());
+    let target_path = data_dir.join(receipt.target_file());
+    let connection = create_encrypted_writer(&staging_path, &key)?;
     let store = OwnedMetaStore::from_owned_connection(
         connection,
         MetadataEncryptionState::SqlCipher,
@@ -218,36 +233,26 @@ fn create_fresh_store(
         .applied_versions()
         .iter()
         .copied()
-        .ne(1..=schema_v30::VERSION)
+        .ne(1..=schema_v33::VERSION)
     {
         return Err(MetaStoreError::storage_invariant());
     }
     let store_id_digest = store_identity(&store.connection.borrow())?;
     drop(store);
-    temporary
-        .as_file_mut()
-        .sync_all()
-        .map_err(MetaStoreError::io_storage)?;
+    sync_validated_store(&staging_path)?;
+    fs::rename(&staging_path, &target_path).map_err(MetaStoreError::io_storage)?;
+    sync_parent_directory(data_dir)?;
     let manifest = ActiveStoreManifest {
-        file_name: format!("metadata-v30-{}.sqlite3", &store_id_digest[..16]),
-        schema_version: schema_v30::VERSION,
-        store_id_digest,
+        file_name: receipt.target_file().to_string(),
+        schema_version: schema_v33::VERSION,
+        store_id_digest: store_id_digest.clone(),
     };
-    let target_path = data_dir.join(&manifest.file_name);
-    temporary
-        .persist_noclobber(&target_path)
-        .map_err(|error| MetaStoreError::io_storage(error.error))?;
-    if let Err(error) = publish_key(data_dir, &key)
-        .and_then(|()| publish_new_active_store(data_dir, &manifest, || Ok(())))
-    {
-        let published = read_manifest(&data_dir.join(MANIFEST_FILE))
-            .is_ok_and(|published| published == manifest);
-        if !published {
-            let _ = remove_fresh_key(data_dir);
-            let _ = fs::remove_file(&target_path);
-            return Err(error);
-        }
-    }
+    validate_current_store(&target_path, &key, &store_id_digest)?;
+    receipt.mark_ready(store_id_digest);
+    initialization_receipt::persist(data_dir, &receipt)?;
+    publish_key(data_dir, &key)?;
+    publish_new_active_store(data_dir, &manifest, || Ok(()))?;
+    initialization_receipt::remove(data_dir)?;
     Ok((target_path, key))
 }
 
@@ -291,13 +296,47 @@ fn validate_current_store(path: &Path, key: &[u8], store_id_digest: &str) -> Res
     validate_current_connection(&connection, store_id_digest)
 }
 
+fn validate_store_for_manifest(
+    data_dir: &Path,
+    key: &[u8],
+    manifest: &ActiveStoreManifest,
+) -> Result<()> {
+    let path = data_dir.join(&manifest.file_name);
+    if !owner_regular_file_exists(&path)? {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    let connection = open_encrypted_read_connection(&path, key)?;
+    validate_source_store(&connection, manifest)
+}
+
 fn require_current_manifest(path: &Path) -> Result<()> {
     if read_manifest_format_version(path)? != 2
-        || read_manifest_schema_version(path)? != schema_v30::VERSION
+        || read_manifest_schema_version(path)? != schema_v33::VERSION
     {
         return Err(MetaStoreError::unsupported_store_schema());
     }
     Ok(())
+}
+
+fn validate_source_store(connection: &Connection, manifest: &ActiveStoreManifest) -> Result<()> {
+    match manifest.schema_version {
+        schema_v29::VERSION => {
+            migration_v29::validate_current_v29_connection(connection, &manifest.store_id_digest)
+        }
+        schema_v30::VERSION | schema_v31::VERSION | schema_v32::VERSION => {
+            migration_v29::validate_active_connection(
+                connection,
+                manifest.schema_version,
+                &manifest.store_id_digest,
+            )?;
+            forward_migration::validate_chain(
+                connection,
+                schema_v29::VERSION,
+                manifest.schema_version,
+            )
+        }
+        _ => Err(MetaStoreError::unsupported_store_schema()),
+    }
 }
 
 fn read_key(data_dir: &Path) -> Result<[u8; METADATA_ENCRYPTION_KEY_LEN]> {
@@ -336,13 +375,91 @@ fn remove_fresh_key(data_dir: &Path) -> Result<()> {
     let key_directory = key_path
         .parent()
         .ok_or_else(|| MetaStoreError::invalid_value("metadata.encryption_key_path"))?;
-    if key_path.exists() {
-        fs::remove_file(&key_path).map_err(MetaStoreError::io_storage)?;
+    match fs::symlink_metadata(&key_path) {
+        Ok(metadata) => {
+            validate_owner_regular_metadata(&metadata)?;
+            fs::remove_file(&key_path).map_err(MetaStoreError::io_storage)?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(MetaStoreError::io_storage(error)),
     }
-    if key_directory.exists() {
-        fs::remove_dir(key_directory).map_err(MetaStoreError::io_storage)?;
+    match fs::symlink_metadata(key_directory) {
+        Ok(metadata) => {
+            validate_owner_directory_metadata(&metadata)?;
+            fs::remove_dir(key_directory).map_err(MetaStoreError::io_storage)?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(MetaStoreError::io_storage(error)),
     }
     sync_parent_directory(data_dir)
+}
+
+fn reconcile_initialization_receipt(data_dir: &Path) -> Result<()> {
+    let receipt_path = initialization_receipt::path(data_dir);
+    if !owner_regular_file_exists(&receipt_path)? {
+        return Ok(());
+    }
+    let receipt = initialization_receipt::read(&receipt_path)?;
+    let manifest_path = data_dir.join(MANIFEST_FILE);
+    if owner_regular_file_exists(&manifest_path)? {
+        let manifest = read_manifest(&manifest_path)?;
+        let target = receipt
+            .target_manifest()
+            .ok_or_else(MetaStoreError::storage_invariant)?;
+        if manifest != target {
+            return Err(MetaStoreError::storage_invariant());
+        }
+        validate_current_store(
+            &data_dir.join(&manifest.file_name),
+            &read_key(data_dir)?,
+            &manifest.store_id_digest,
+        )?;
+        initialization_receipt::remove(data_dir)?;
+        return Ok(());
+    }
+
+    match receipt.phase() {
+        InitializationPhase::Preparing => cleanup_initialization(data_dir, &receipt),
+        InitializationPhase::Ready => {
+            let Some(target) = receipt.target_manifest() else {
+                return Err(MetaStoreError::storage_invariant());
+            };
+            let key = match read_key(data_dir) {
+                Ok(key) => key,
+                Err(_) => return cleanup_initialization(data_dir, &receipt),
+            };
+            let target_path = data_dir.join(&target.file_name);
+            if validate_current_store(&target_path, &key, &target.store_id_digest).is_err() {
+                return cleanup_initialization(data_dir, &receipt);
+            }
+            publish_new_active_store(data_dir, &target, || Ok(()))?;
+            initialization_receipt::remove(data_dir)
+        }
+    }
+}
+
+fn cleanup_initialization(data_dir: &Path, receipt: &InitializationReceipt) -> Result<()> {
+    for file_name in [receipt.staging_file(), receipt.target_file()] {
+        let path = data_dir.join(file_name);
+        match fs::symlink_metadata(&path) {
+            Ok(metadata) => {
+                validate_owner_regular_metadata(&metadata)?;
+                fs::remove_file(path).map_err(MetaStoreError::io_storage)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(MetaStoreError::io_storage(error)),
+        }
+    }
+    let key_directory = crate::metadata_encryption_key_path(data_dir)
+        .parent()
+        .ok_or_else(|| MetaStoreError::invalid_value("metadata.encryption_key_path"))?
+        .to_path_buf();
+    match fs::symlink_metadata(&key_directory) {
+        Ok(_) => remove_fresh_key(data_dir)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(MetaStoreError::io_storage(error)),
+    }
+    initialization_receipt::remove(data_dir)
 }
 
 #[cfg(unix)]
@@ -364,11 +481,7 @@ fn reconcile_receipt(data_dir: &Path) -> Result<()> {
     let mut receipt = receipt::read(&path)?;
     let manifest = read_manifest(&data_dir.join(MANIFEST_FILE))?;
     if manifest == receipt.target {
-        validate_current_store(
-            &data_dir.join(&receipt.target.file_name),
-            &read_key(data_dir)?,
-            &receipt.target.store_id_digest,
-        )?;
+        validate_store_for_manifest(data_dir, &read_key(data_dir)?, &receipt.target)?;
         if receipt.phase != ReceiptPhase::Published {
             receipt.phase = ReceiptPhase::Published;
             receipt::persist(data_dir, &receipt)?;
@@ -386,11 +499,7 @@ fn reconcile_receipt(data_dir: &Path) -> Result<()> {
         }
         ReceiptPhase::Ready => {
             let key = read_key(data_dir)?;
-            validate_current_store(
-                &data_dir.join(&receipt.target.file_name),
-                &key,
-                &receipt.target.store_id_digest,
-            )?;
+            validate_store_for_manifest(data_dir, &key, &receipt.target)?;
             replace_active_store(data_dir, &receipt.source, &receipt.target, || Ok(()))?;
             receipt.phase = ReceiptPhase::Published;
             receipt::persist(data_dir, &receipt)
@@ -431,8 +540,34 @@ fn cleanup_unpublished_files(data_dir: &Path, receipt: &MigrationReceipt) -> Res
     sync_parent_directory(data_dir)
 }
 
+pub(super) fn destroy_retained_predecessor(data_dir: &Path) -> Result<bool> {
+    let receipt_path = receipt::path(data_dir);
+    if !owner_regular_file_exists(&receipt_path)? {
+        return Ok(false);
+    }
+    let receipt = receipt::read(&receipt_path)?;
+    let manifest = read_manifest(&data_dir.join(MANIFEST_FILE))?;
+    if receipt.phase != ReceiptPhase::Published || receipt.target != manifest {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    let predecessor = data_dir.join(&receipt.source.file_name);
+    match fs::symlink_metadata(&predecessor) {
+        Ok(metadata) => {
+            validate_owner_regular_metadata(&metadata)?;
+            fs::remove_file(predecessor).map_err(MetaStoreError::io_storage)?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(MetaStoreError::io_storage(error)),
+    }
+    fs::remove_file(receipt_path).map_err(MetaStoreError::io_storage)?;
+    sync_parent_directory(data_dir)?;
+    Ok(true)
+}
+
 #[derive(Debug, Eq, PartialEq)]
 struct PreservationWitness {
+    source_tables: Vec<String>,
+    logical_data_digest: String,
     documents: i64,
     versions: i64,
     projections: i64,
@@ -442,7 +577,8 @@ struct PreservationWitness {
 
 impl PreservationWitness {
     fn capture(connection: &Connection) -> Result<Self> {
-        use rusqlite::OptionalExtension;
+        let source_tables = preserved_source_tables(connection)?;
+        let logical_data_digest = logical_data_digest(connection, &source_tables)?;
         let count = |table: &str| {
             connection
                 .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
@@ -481,6 +617,8 @@ impl PreservationWitness {
             .optional()
             .map_err(MetaStoreError::storage)?;
         Ok(Self {
+            source_tables,
+            logical_data_digest,
             documents: count("document")?,
             versions: count("resume_version")?,
             projections: count("active_search_projection")?,
@@ -488,8 +626,136 @@ impl PreservationWitness {
             artifact,
         })
     }
+
+    fn matches(&self, connection: &Connection) -> Result<bool> {
+        let after = Self {
+            source_tables: self.source_tables.clone(),
+            logical_data_digest: logical_data_digest(connection, &self.source_tables)?,
+            documents: connection
+                .query_row("SELECT COUNT(*) FROM document", [], |row| row.get(0))
+                .map_err(MetaStoreError::storage)?,
+            versions: connection
+                .query_row("SELECT COUNT(*) FROM resume_version", [], |row| row.get(0))
+                .map_err(MetaStoreError::storage)?,
+            projections: connection
+                .query_row("SELECT COUNT(*) FROM active_search_projection", [], |row| {
+                    row.get(0)
+                })
+                .map_err(MetaStoreError::storage)?,
+            head: connection
+                .query_row(
+                    "SELECT generation, visible_epoch FROM search_projection_state
+                     WHERE state_key = 'default'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(MetaStoreError::storage)?,
+            artifact: connection
+                .query_row(
+                    "SELECT publication_fingerprint, projection_digest,
+                            fulltext_logical_content_digest, vector_logical_content_digest
+                     FROM search_publication_journal
+                     WHERE generation = (
+                         SELECT generation FROM search_projection_state
+                         WHERE state_key = 'default'
+                     )",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .optional()
+                .map_err(MetaStoreError::storage)?,
+        };
+        Ok(&after == self)
+    }
+}
+
+fn preserved_source_tables(connection: &Connection) -> Result<Vec<String>> {
+    let mut statement = connection
+        .prepare(
+            "SELECT name FROM sqlite_schema
+             WHERE type = 'table'
+               AND name NOT LIKE 'sqlite_%'
+               AND name NOT IN ('schema_migrations', 'forward_migration_history')
+             ORDER BY name",
+        )
+        .map_err(MetaStoreError::storage)?;
+    let tables = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(MetaStoreError::storage)?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(MetaStoreError::storage)?;
+    Ok(tables)
+}
+
+fn logical_data_digest(connection: &Connection, tables: &[String]) -> Result<String> {
+    let mut digest = Sha256::new();
+    digest.update(b"resume-ir.metadata-logical-preservation.v1");
+    for table in tables {
+        update_digest_part(&mut digest, table.as_bytes());
+        let quoted_table = quote_identifier(table);
+        let mut column_statement = connection
+            .prepare(&format!("PRAGMA table_info({quoted_table})"))
+            .map_err(MetaStoreError::storage)?;
+        let columns = column_statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(MetaStoreError::storage)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(MetaStoreError::storage)?;
+        drop(column_statement);
+        if columns.is_empty() {
+            return Err(MetaStoreError::storage_invariant());
+        }
+        for column in &columns {
+            update_digest_part(&mut digest, column.as_bytes());
+        }
+        let order = columns
+            .iter()
+            .map(|column| quote_identifier(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut row_statement = connection
+            .prepare(&format!("SELECT * FROM {quoted_table} ORDER BY {order}"))
+            .map_err(MetaStoreError::storage)?;
+        let column_count = columns.len();
+        let mut rows = row_statement.query([]).map_err(MetaStoreError::storage)?;
+        while let Some(row) = rows.next().map_err(MetaStoreError::storage)? {
+            digest.update(b"row");
+            for index in 0..column_count {
+                match row.get_ref(index).map_err(MetaStoreError::storage)? {
+                    ValueRef::Null => digest.update(b"null"),
+                    ValueRef::Integer(value) => {
+                        digest.update(b"integer");
+                        update_digest_part(&mut digest, &value.to_be_bytes());
+                    }
+                    ValueRef::Real(value) => {
+                        digest.update(b"real");
+                        update_digest_part(&mut digest, &value.to_bits().to_be_bytes());
+                    }
+                    ValueRef::Text(value) => {
+                        digest.update(b"text");
+                        update_digest_part(&mut digest, value);
+                    }
+                    ValueRef::Blob(value) => {
+                        digest.update(b"blob");
+                        update_digest_part(&mut digest, value);
+                    }
+                }
+            }
+        }
+    }
+    Ok(format!("sha256:{:x}", digest.finalize()))
+}
+
+fn update_digest_part(digest: &mut Sha256, value: &[u8]) {
+    digest.update((value.len() as u64).to_be_bytes());
+    digest.update(value);
+}
+
+fn quote_identifier(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
 }
 
 #[cfg(test)]
-#[path = "migration_v30_tests.rs"]
+#[path = "current_store_tests.rs"]
 mod tests;

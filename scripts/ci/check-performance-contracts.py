@@ -162,10 +162,15 @@ FORWARD_MIGRATION_FEATURE_TRAIN_IDENTITY = {
     "migration_registry_contiguous_required": True,
     "migration_source_ciphertext_may_change": False,
     "migration_predecessor_retention_count": 1,
+    "current_initialization_receipt_contract": (
+        "resume-ir.metadata-initialization-receipt.v1"
+    ),
     "product_version_source": "apps/desktop/package.json",
     "feature_versions": ["0.1.3", "0.1.4", "0.1.5", "0.1.6", "0.1.7", "0.1.8"],
     "feature_schemas": [30, 31, 32, 33, 33, 33],
-    "per_feature_installed_acceptance_required": True,
+    "per_feature_installed_acceptance_required": False,
+    "business_implementation_precedes_validation": True,
+    "collect_all_validation_failures_before_repair": True,
     "final_full_matrix_after_version": "0.1.8",
     "final_soak_minutes": 120,
     "existing_v29_key_repair_allowed": False,
@@ -307,12 +312,12 @@ FORWARD_MIGRATION_FEATURE_TRAIN_REQUIRED_FIELDS = {
 
 DAEMON_BOOTSTRAP_V2_REQUIRED_FIELDS = {
     "contract": "resume-ir.daemon-bootstrap.v2",
-    "aggregate_ipc_contract": "resume-ir.ipc.v5",
-    "discovery_contract": "resume-ir.daemon-ipc.v4",
+    "aggregate_ipc_contract": "resume-ir.ipc.v6",
+    "discovery_contract": "resume-ir.daemon-ipc.v5",
     "auth_contract": "resume-ir.daemon-auth.v3",
-    "status_contract": "daemon.status.v4",
-    "diagnostics_contract": "resume-ir.diagnostics.v5",
-    "error_contract": "resume-ir.error.v2",
+    "status_contract": "daemon.status.v5",
+    "diagnostics_contract": "resume-ir.diagnostics.v9",
+    "error_contract": "resume-ir.error.v3",
     "launch_id_bytes": 32,
     "pre_spawn_discovery_probe_allowed": False,
     "foreign_launch_adoption_allowed": False,
@@ -351,13 +356,14 @@ DESKTOP_SUPERVISOR_V2_REQUIRED_FIELDS = {
 
 RUNTIME_CAPABILITY_DEGRADATION_V1_REQUIRED_FIELDS = {
     "contract": "resume-ir.runtime-capabilities.v1",
-    "optional_runtimes": ["embedding", "ocr", "classifier"],
+    "optional_runtimes": ["embedding", "ocr", "classifier", "pdfium"],
     "operation_capabilities": [
         "keyword_search",
         "detail",
         "semantic_search",
         "hybrid_search",
         "text_import",
+        "pdf_import",
         "ocr_import",
         "index_publication",
     ],

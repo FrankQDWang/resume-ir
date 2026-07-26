@@ -1,9 +1,11 @@
 use std::net::TcpStream;
+use std::path::Path;
 
 use meta_store::{ImportProcessingContract, OwnedMetaStore, ReadMetaStore};
 
 use super::protocol::Request;
 use super::search_service::SearchService;
+use super::source_file_service::SourceFileService;
 use super::{
     CapabilityHealth, CapabilityState, ConnectionCompletion, ControlPlaneState, CoreState,
     RequestFailure,
@@ -12,7 +14,10 @@ use super::{
 mod delete;
 mod detail;
 mod r#import;
+mod preview;
+mod reveal;
 mod search;
+mod source_roots;
 pub(crate) mod status;
 
 pub(super) type RouteResult = Result<(), RequestFailure>;
@@ -33,7 +38,7 @@ pub(super) fn authorized(auth_token: &str, request: &Request) -> bool {
 
 pub(super) fn unauthorized_body() -> String {
     serde_json::json!({
-        "schema_version": "resume-ir.error.v2",
+        "schema_version": "resume-ir.error.v3",
         "status": "error",
         "error": {
             "code": "UNAUTHORIZED",
@@ -57,12 +62,14 @@ pub(super) fn unified_error_body(request_id: Option<&str>, code: &str, action: &
 }
 
 pub(crate) struct Context<'a> {
+    pub(crate) data_dir: &'a Path,
     pub(crate) store: &'a ReadMetaStore,
     pub(crate) owned_store: &'a OwnedMetaStore,
     pub(crate) query_service: &'a SearchService,
     pub(crate) processing_contract: &'a ImportProcessingContract,
     pub(crate) auth_token: &'a str,
     pub(crate) control_state: &'a ControlPlaneState,
+    pub(crate) source_file_service: &'a SourceFileService,
 }
 
 pub(crate) fn dispatch_control(
@@ -79,6 +86,15 @@ pub(crate) fn dispatch_control(
     }
     if !is_business_request(request) {
         return None;
+    }
+    // Closing an already-issued preview is cleanup, not a new business
+    // operation. A resident runtime must keep accepting it while capabilities
+    // are degraded so leases do not linger until their TTL.
+    if request.matches("POST", "/source-preview/close") {
+        if authorized(auth_token, request) {
+            return None;
+        }
+        return Some(write(stream, 401, "application/json", &unauthorized_body()));
     }
     let snapshot = state.snapshot();
     match snapshot.core.state {
@@ -116,11 +132,21 @@ pub(crate) fn is_business_request(request: &Request) -> bool {
         ("POST", "/imports/cancel"),
         ("POST", "/imports/control"),
         ("GET", "/imports/progress"),
+        ("GET", "/source-roots"),
+        ("POST", "/source-roots/register"),
+        ("POST", "/source-roots/migrate-legacy"),
+        ("POST", "/source-roots/scan"),
+        ("POST", "/source-roots/control"),
+        ("POST", "/source-roots/delete"),
         ("POST", "/search"),
         ("POST", "/search/batch"),
         ("POST", "/search/cancel"),
         ("POST", "/details"),
         ("POST", "/details/hydrate"),
+        ("POST", "/source-preview/create"),
+        ("POST", "/source-preview/read-range"),
+        ("POST", "/source-preview/close"),
+        ("POST", "/source-reveal/resolve"),
         ("POST", "/delete"),
     ]
     .into_iter()
@@ -152,7 +178,13 @@ fn write_control_error(
 
 fn contextual_request_id(request: &Request) -> Option<String> {
     let field = match request.path.as_str() {
-        "/search" | "/details" | "/details/hydrate" => "request_id",
+        "/search"
+        | "/details"
+        | "/details/hydrate"
+        | "/source-preview/create"
+        | "/source-preview/read-range"
+        | "/source-preview/close"
+        | "/source-reveal/resolve" => "request_id",
         "/search/batch" => "batch_id",
         _ => return None,
     };
@@ -265,6 +297,71 @@ pub(crate) fn dispatch(
     if request.matches("GET", "/imports/progress") {
         return r#import::progress(context.store, context.auth_token, &request, &mut stream);
     }
+    if request.matches("GET", "/source-roots") {
+        return source_roots::list(
+            context.owned_store,
+            context.processing_contract,
+            context.auth_token,
+            &request,
+            &mut stream,
+        );
+    }
+    if request.matches("POST", "/source-roots/register") {
+        return source_roots::register(
+            context.owned_store,
+            context.processing_contract,
+            context.auth_token,
+            &request,
+            &mut stream,
+        );
+    }
+    if request.matches("POST", "/source-roots/migrate-legacy") {
+        return source_roots::migrate_legacy(
+            context.owned_store,
+            context.processing_contract,
+            context.auth_token,
+            &request,
+            &mut stream,
+        );
+    }
+    if request.matches("POST", "/source-roots/scan") {
+        let capability = context.control_state.snapshot().capabilities.text_import;
+        if let Some(result) = require_capability(
+            &mut stream,
+            context.auth_token,
+            &request,
+            "text_import",
+            capability,
+        ) {
+            return result;
+        }
+        return source_roots::scan(
+            context.owned_store,
+            context.processing_contract,
+            context.auth_token,
+            &request,
+            &mut stream,
+        );
+    }
+    if request.matches("POST", "/source-roots/control") {
+        return source_roots::control(
+            context.owned_store,
+            context.processing_contract,
+            context.auth_token,
+            &request,
+            &mut stream,
+        );
+    }
+    if request.matches("POST", "/source-roots/delete") {
+        return source_roots::delete(
+            context.data_dir,
+            context.owned_store,
+            context.processing_contract,
+            context.auth_token,
+            &request,
+            &mut stream,
+        );
+    }
     if request.matches("POST", "/search") {
         return search::single(
             context.store,
@@ -325,6 +422,72 @@ pub(crate) fn dispatch(
             return result;
         }
         return detail::hydrate(context.store, context.auth_token, &request, &mut stream);
+    }
+    if request.matches("POST", "/source-preview/create") {
+        let capability = context.control_state.snapshot().capabilities.detail;
+        if let Some(result) = require_capability(
+            &mut stream,
+            context.auth_token,
+            &request,
+            "detail",
+            capability,
+        ) {
+            return result;
+        }
+        return preview::create(
+            context.source_file_service,
+            context.auth_token,
+            &request,
+            stream,
+            completion,
+        );
+    }
+    if request.matches("POST", "/source-preview/read-range") {
+        let capability = context.control_state.snapshot().capabilities.detail;
+        if let Some(result) = require_capability(
+            &mut stream,
+            context.auth_token,
+            &request,
+            "detail",
+            capability,
+        ) {
+            return result;
+        }
+        return preview::read_range(
+            context.source_file_service,
+            context.auth_token,
+            &request,
+            stream,
+            completion,
+        );
+    }
+    if request.matches("POST", "/source-preview/close") {
+        return preview::close(
+            context.source_file_service,
+            context.auth_token,
+            &request,
+            stream,
+            completion,
+        );
+    }
+    if request.matches("POST", "/source-reveal/resolve") {
+        let capability = context.control_state.snapshot().capabilities.detail;
+        if let Some(result) = require_capability(
+            &mut stream,
+            context.auth_token,
+            &request,
+            "detail",
+            capability,
+        ) {
+            return result;
+        }
+        return reveal::resolve(
+            context.source_file_service,
+            context.auth_token,
+            &request,
+            stream,
+            completion,
+        );
     }
     if request.matches("POST", "/delete") {
         let capability = context

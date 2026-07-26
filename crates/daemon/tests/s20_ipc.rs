@@ -125,7 +125,7 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
     let base_endpoint = endpoint.strip_suffix("/status").unwrap();
     assert_eq!(
         endpoint_manifest_json["schema_version"],
-        "resume-ir.daemon-ipc.v4"
+        "resume-ir.daemon-ipc.v5"
     );
     assert_eq!(
         endpoint_manifest_json["launch_id"].as_str().map(str::len),
@@ -175,7 +175,7 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
     let response = http_get(&endpoint, &token);
 
     assert!(response.contains("HTTP/1.1 200 OK"));
-    assert!(response.contains("\"schema_version\":\"daemon.status.v4\""));
+    assert!(response.contains("\"schema_version\":\"daemon.status.v5\""));
     assert!(response.contains("\"status\":\"ok\""));
     assert!(response.contains("\"index_health\":\"ready\""));
     assert!(response.contains("\"import_tasks_queued\":0"));
@@ -226,7 +226,7 @@ fn daemon_serves_only_authenticated_redacted_v4_diagnostics() {
     assert!(response.contains("HTTP/1.1 200 OK"));
     let body = response.split("\r\n\r\n").nth(1).unwrap();
     let payload: serde_json::Value = serde_json::from_str(body).unwrap();
-    assert_eq!(payload["schema_version"], "resume-ir.diagnostics.v5");
+    assert_eq!(payload["schema_version"], "resume-ir.diagnostics.v9");
     assert_eq!(payload["privacy_boundary"], "redacted_local_aggregate");
     assert_eq!(payload["evidence_lane"], "gui_manual");
     assert_eq!(payload["evidence_status"], "unaccepted");
@@ -268,7 +268,7 @@ fn delete_cannot_publish_when_index_publication_capability_is_unavailable() {
     let response = http_post_json(&endpoint, "/delete", &token, serde_json::json!({}));
     assert!(response.starts_with("HTTP/1.1 503"), "{response}");
     let body = response_json(&response);
-    assert_eq!(body["schema_version"], "resume-ir.error.v2");
+    assert_eq!(body["schema_version"], "resume-ir.error.v3");
     assert_eq!(body["error"]["code"], "CAPABILITY_UNAVAILABLE");
     assert_eq!(body["error"]["capability"], "index_publication");
     assert_eq!(body["error"]["reason"], "embedding_unavailable");
@@ -1372,7 +1372,7 @@ fn stale_generation_cannot_delete_replaced_owner_files_and_auth_is_in_memory() {
         "token": "e".repeat(64),
     });
     let fake_manifest = serde_json::json!({
-        "schema_version": "resume-ir.daemon-ipc.v4",
+        "schema_version": "resume-ir.daemon-ipc.v5",
         "launch_id": "d".repeat(64),
         "instance_id": fake_instance_id.clone(),
         "owner_mode": "standalone",
@@ -2284,7 +2284,7 @@ fn response_json(response: &str) -> serde_json::Value {
 fn assert_ready_status(response: &str) {
     assert!(response.contains("HTTP/1.1 200 OK"), "{response}");
     let payload = response_json(response);
-    assert_eq!(payload["schema_version"], "daemon.status.v4");
+    assert_eq!(payload["schema_version"], "daemon.status.v5");
     assert_eq!(payload["process_state"], "ready");
     assert_eq!(payload["core"]["state"], "ready");
     assert_eq!(payload["core"]["reason"], serde_json::Value::Null);
@@ -2974,7 +2974,7 @@ fn assert_text_import_available_without_ocr(response: &str) {
 
 fn assert_conflict_error_v2(response: &str) {
     let error = response_json(response);
-    assert_eq!(error["schema_version"], "resume-ir.error.v2");
+    assert_eq!(error["schema_version"], "resume-ir.error.v3");
     assert_eq!(error["status"], "error");
     assert_eq!(error["error"]["code"], "CONFLICT");
     assert_eq!(error["error"]["action"], "retry");

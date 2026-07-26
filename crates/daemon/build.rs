@@ -9,11 +9,13 @@ use sha2::{Digest, Sha256};
 
 #[path = "src/runtime_pack/macho_payload.rs"]
 mod macho_payload;
+#[path = "src/runtime_pack/pe_payload.rs"]
+mod pe_payload;
 
 const ATTESTATION_ENV: &str = "RESUME_IR_RUNTIME_EXECUTABLE_ATTESTATION";
 const ATTESTATION_SCHEMA: &str = "resume-ir.runtime-executable-attestation.v1";
 const MAX_ATTESTATION_BYTES: u64 = 16 * 1024;
-const MAX_EXECUTABLE_BYTES: u64 = macho_payload::MAX_EXECUTABLE_BYTES;
+const MAX_EXECUTABLE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,7 +77,7 @@ fn main() {
             || executable.runtime_file != expected_runtime_name
             || !valid_direct_name(&executable.build_file)
             || !valid_direct_name(&executable.runtime_file)
-            || executable.architecture != "arm64"
+            || executable.architecture != expected_architecture(&target)
             || executable.digest != "sha256_without_code_signature_v1"
             || executable.payload_bytes == 0
             || executable.payload_bytes > MAX_EXECUTABLE_BYTES
@@ -130,6 +132,26 @@ fn expected_names(target: &str) -> [(&'static str, &'static str, &'static str); 
                 "resume-pdf-render-runtime",
             ),
         ],
+        "x86_64-pc-windows-msvc" => [
+            (
+                "embedding_runtime",
+                "resume-embedding-runtime-x86_64-pc-windows-msvc.exe",
+                "resume-embedding-runtime.exe",
+            ),
+            (
+                "pdf_renderer",
+                "resume-pdf-render-runtime-x86_64-pc-windows-msvc.exe",
+                "resume-pdf-render-runtime.exe",
+            ),
+        ],
+        _ => panic!("runtime executable attestation target is unsupported"),
+    }
+}
+
+fn expected_architecture(target: &str) -> &'static str {
+    match target {
+        "aarch64-apple-darwin" => "arm64",
+        "x86_64-pc-windows-msvc" => "x86_64",
         _ => panic!("runtime executable attestation target is unsupported"),
     }
 }
@@ -148,7 +170,7 @@ fn validate_attested_executable(path: &Path, expected: &Executable) {
             panic!("attested runtime executable permissions are invalid");
         }
     }
-    let (architecture, payload_bytes, payload_sha256) = macho_payload_identity(path);
+    let (architecture, payload_bytes, payload_sha256) = executable_payload_identity(path);
     if architecture != expected.architecture
         || payload_bytes != expected.payload_bytes
         || payload_sha256 != expected.payload_sha256
@@ -157,17 +179,24 @@ fn validate_attested_executable(path: &Path, expected: &Executable) {
     }
 }
 
-fn macho_payload_identity(path: &Path) -> (&'static str, u64, String) {
-    let payload = macho_payload::read_canonical_payload(path)
-        .expect("attested runtime executable is not a canonical bounded arm64 Mach-O");
-    let payload_bytes = payload.bytes.len() as u64;
+fn executable_payload_identity(path: &Path) -> (&'static str, u64, String) {
+    let payload = match env::var("TARGET").as_deref() {
+        Ok("aarch64-apple-darwin") => {
+            let payload = macho_payload::read_canonical_payload(path)
+                .expect("attested runtime executable is not a canonical bounded arm64 Mach-O");
+            (payload.architecture, payload.bytes)
+        }
+        Ok("x86_64-pc-windows-msvc") => {
+            let payload = pe_payload::read_canonical_payload(path)
+                .expect("attested runtime executable is not a canonical bounded x86_64 PE");
+            (payload.architecture, payload.bytes)
+        }
+        _ => panic!("runtime executable attestation target is unsupported"),
+    };
+    let payload_bytes = payload.1.len() as u64;
     let mut digest = Sha256::new();
-    digest.update(&payload.bytes);
-    (
-        payload.architecture,
-        payload_bytes,
-        format!("{:x}", digest.finalize()),
-    )
+    digest.update(&payload.1);
+    (payload.0, payload_bytes, format!("{:x}", digest.finalize()))
 }
 
 fn valid_direct_name(value: &str) -> bool {

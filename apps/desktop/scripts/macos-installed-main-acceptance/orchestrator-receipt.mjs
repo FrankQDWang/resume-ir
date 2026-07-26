@@ -25,11 +25,13 @@ import {
   captureV29LogicalAuthority,
   SYNTHETIC_SEARCH_REQUEST,
   SYNTHETIC_CANARY_TOKEN,
+  validateRetainedV29Predecessor,
   validateInstalledReadyArtifacts,
   validateInstalledRecoveryEvidence,
 } from "./acceptance-evidence.mjs";
 import {
   COLD_READY_TIMEOUT_MS,
+  AUTHORIZED_SOURCE_SCHEMA,
   CONTENTION_CONVERGENCE_TIMEOUT_MS,
   CONTENTION_ERROR_KINDS,
   CONTENTION_LOCKS,
@@ -223,7 +225,9 @@ export function observedRealBackoff(retryAfterMs, elapsedMs) {
 async function verifySourceData(options) {
   const source = await requireSecureDirectory(options.authorizedSourceDataDir);
   const sourceManifest = await readActiveStoreManifest(source.resolved);
-  if (sourceManifest.schema !== 29) fail("authorized_source_schema_invalid");
+  if (sourceManifest.schema !== AUTHORIZED_SOURCE_SCHEMA) {
+    fail("authorized_source_schema_invalid");
+  }
   await requirePrivateFile(path.join(source.resolved, DATA_OWNER_LOCK), {
     empty: true,
   });
@@ -533,13 +537,10 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
         signal,
         runTool,
       );
-      const preserved = await readActiveStoreManifest(session.dataDir);
       const authority = session.workspace?.v29Authority;
       if (
-        preserved.schema !== 29 ||
-        authority?.schema !== 29 ||
-        preserved.fileName !== authority.fileName ||
-        preserved.digest !== authority.digest
+        authority?.schema !== AUTHORIZED_SOURCE_SCHEMA ||
+        !(await validateRetainedV29Predecessor(session.dataDir, authority))
       ) {
         fail("cold_v29_preservation_invalid");
       }
@@ -565,9 +566,11 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
     validateProjectedRuntimeFault: nativeCells.validateProjectedRuntimeFault,
     captureFaultWitness: nativeCells.captureFaultWitness,
     prepareOcrFaultFixture: nativeCells.prepareOcrFaultFixture,
+    triggerPdfiumStartFailure: nativeCells.triggerPdfiumStartFailure,
     validateEmbeddingFaultBehavior: nativeCells.validateEmbeddingFaultBehavior,
     validateOcrFaultBehavior: nativeCells.validateOcrFaultBehavior,
     validateClassifierFaultBehavior: nativeCells.validateClassifierFaultBehavior,
+    validatePdfiumFaultBehavior: nativeCells.validatePdfiumFaultBehavior,
     releaseFaultCell: nativeCells.releaseFaultCell,
     validateFaultCoverage: nativeCells.validateFaultCoverage,
     async validateColdReadyArtifacts(session, observed) {

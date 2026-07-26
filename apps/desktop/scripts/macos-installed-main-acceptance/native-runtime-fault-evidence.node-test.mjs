@@ -163,7 +163,7 @@ test("embedding fault rejects an unmarked hybrid lexical fallback", async (conte
 test("classifier gate accepts only the typed capability-unavailable response", async (context) => {
   const exact = await startServer(context, () => ({
     body: {
-      schema_version: "resume-ir.error.v2",
+      schema_version: "resume-ir.error.v3",
       status: "error",
       error: {
         code: "CAPABILITY_UNAVAILABLE",
@@ -182,7 +182,7 @@ test("classifier gate accepts only the typed capability-unavailable response", a
 
   const wrong = await startServer(context, () => ({
     body: {
-      schema_version: "resume-ir.error.v2",
+      schema_version: "resume-ir.error.v3",
       status: "error",
       error: {
         code: "SERVICE_BLOCKED",
@@ -275,10 +275,10 @@ test("classifier epoch reader is exact, read-only, and closed-environment", asyn
   await chmod(root, 0o700);
   context.after(() => rm(root, { force: true, recursive: true }));
   const digest = "e".repeat(64);
-  const fileName = `metadata-v29-${digest.slice(0, 16)}.sqlite3`;
+  const fileName = `metadata-v33-${digest.slice(0, 16)}.sqlite3`;
   await writeFile(
     path.join(root, "metadata-active.v1"),
-    `resume-ir.metadata-active.v1\nfile=${fileName}\nschema=29\ndigest=${digest}\n`,
+    `resume-ir.metadata-active.v2\nfile=${fileName}\nschema=33\ndigest=${digest}\n`,
     { mode: 0o600 },
   );
   const invocations = [];

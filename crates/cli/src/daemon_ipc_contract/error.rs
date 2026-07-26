@@ -35,7 +35,7 @@ pub(crate) fn parse_import_service_error(
     }
     let body: Value = serde_json::from_str(body).ok()?;
     if !has_exact_keys(&body, &["schema_version", "status", "error"])
-        || string(&body, "schema_version") != Some("resume-ir.error.v2")
+        || string(&body, "schema_version") != Some("resume-ir.error.v3")
         || string(&body, "status") != Some("error")
     {
         return None;

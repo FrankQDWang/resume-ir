@@ -212,6 +212,8 @@ fn is_reserved_store_authority(name: &str) -> bool {
         || name.starts_with(MANIFEST_TEMP_PREFIX)
         || name == "metadata-forward-migration-receipt.v1"
         || name.starts_with(".metadata-forward-migration-receipt-")
+        || name == "metadata-initialization-receipt.v1"
+        || name.starts_with(".metadata-initialization-receipt-")
         || name.starts_with(FRESH_V29_TEMP_PREFIX)
         || ((name.starts_with("metadata-v") || name.starts_with(".metadata-v"))
             && SQLITE_AUTHORITY_SUFFIXES

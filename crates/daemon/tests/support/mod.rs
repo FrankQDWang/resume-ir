@@ -99,9 +99,11 @@ pub fn import_capable_daemon_command(_capacity: &ImportRuntimeCapacityLease) -> 
 pub fn fully_capable_daemon_command(capacity: &ImportRuntimeCapacityLease) -> Command {
     let mut command = import_capable_daemon_command(capacity);
     let ocr_pack = reviewed_pack_root().join("ocr-runtime-pack");
+    let pdfium_pack = reviewed_pack_root().join("pdfium-static-runtime-pack");
     let ocr_command = reviewed_ocr_command();
     let tessdata = reviewed_ocr_tessdata();
     assert_reviewed_pack_file(&ocr_pack.join("runtime-pack.json"));
+    assert_reviewed_pack_file(&pdfium_pack.join("runtime-pack.json"));
     assert_reviewed_pack_file(&ocr_command);
     assert!(
         tessdata.is_dir(),
@@ -113,6 +115,7 @@ pub fn fully_capable_daemon_command(capacity: &ImportRuntimeCapacityLease) -> Co
             "RESUME_IR_TEST_OCR_RENDER_COMMAND",
             &attested_test_runtime().pdf_renderer,
         )
+        .env("RESUME_IR_PDFIUM_RUNTIME_DIR", pdfium_pack)
         .env("TESSDATA_PREFIX", tessdata);
     command
 }
@@ -252,24 +255,27 @@ fn build_attested_test_runtime() -> AttestedTestRuntime {
     let renderer_build =
         attestation_root.join(format!("resume-pdf-render-runtime-{target_triple}"));
     run_checked(
-        Command::new("xcrun")
+        Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
             .current_dir(&repo_root)
             .args([
-                "clang",
-                "-O0",
-                "-fobjc-arc",
-                "-arch",
-                "arm64",
-                "-mmacosx-version-min=13.0",
-                "-framework",
-                "Foundation",
-                "-framework",
-                "CoreGraphics",
+                "build",
+                "-p",
+                "resume-pdf-render-runtime",
+                "--bin",
+                "resume-pdf-render-runtime",
+                "--locked",
+                "--target",
+                target_triple,
+                "--target-dir",
             ])
-            .arg(repo_root.join("apps/desktop/native/macos/pdf_render_runtime.m"))
-            .arg("-o")
-            .arg(&renderer_build),
+            .arg(&build_target)
+            .env("CARGO_PROFILE_DEV_DEBUG", "0")
+            .env("CARGO_PROFILE_DEV_SPLIT_DEBUGINFO", "off"),
         "build attested PDF renderer test runtime",
+    );
+    copy_executable(
+        &build_target.join(format!("{target_triple}/debug/resume-pdf-render-runtime")),
+        &renderer_build,
     );
 
     let attestation = attestation_root.join("runtime-executable-attestation.json");

@@ -590,13 +590,279 @@ unreached target without short-circuiting:
 
 ## Version rounds
 
-Rows for v0.1.3 through v0.1.8 are appended when each linked issue opens.
-Every round begins with focused failing regressions, retains unaffected earlier
-passes, and ends with an exact-commit installed native row before issue closure.
+The original v0.1.3 rows remain historical evidence for their exact inputs.
+The approved execution contract subsequently made v0.1.3–v0.1.8 one atomic
+business implementation train: later production code, contracts, packaging
+declarations and UI were completed without intermediate test, build, Linux,
+DMG, install or Computer Use runs. No historical pass is inherited when its
+declared behavior boundary or input fingerprint changed.
+
+| Round | Business boundary | Status | Validation disposition |
+| --- | --- | --- | --- |
+| V14 | schema v31 source-root authority, path truth, watcher/periodic/manual scan coordinator and per-root progress UI | implementation_complete | not_run |
+| V15 | schema v32 durable root deletion and privacy purge | implementation_complete | not_run |
+| V16 | schema v33 PDFium text/render runtime and resumable OCR/reprocess | implementation_complete | not_run |
+| V17 | selection-bound original-PDF reader and resizable detail drawer | implementation_complete | not_run |
+| V18 | selection-bound native source reveal and final v0.1.8 packaging contract | implementation_complete | not_run |
 
 ## Final round
 
-The complete resumable parallel matrix, merged-main install and soak remain
-`not_run` until v0.1.8 is merged. Their absence does not block an individual
-feature issue from closing after its own installed acceptance, but it does
-block #217 and release-ready claims.
+The complete resumable parallel matrix, exact-tree macOS DMG/install,
+Computer Use acceptance and 120-minute soak remain `not_run` until the full
+v0.1.8 business tree is frozen. The matrix runs fail-late and records every
+failure before any repair. Repair invalidates only the rows whose declared
+inputs or behavior boundary changed; all other passes remain reusable. Until
+these rows pass, #217 and every release-ready claim remain open.
+
+### Final matrix round F01 — 2026-07-25
+
+The frozen v0.1.8 tree entered the resumable fail-late matrix. No Linux product
+lane was run. Runner receipts remain local and contain only bounded command
+metadata and redacted logs.
+
+| Row | Behavior boundary | Receipt | Status |
+| --- | --- | --- | --- |
+| F01-01 | Workspace Rust targets satisfy deny-warnings Clippy policy | `20260725T172451Z-2dad7880` | passed in 742.37 seconds; later PDFium source-identity constant change invalidated only the daemon boundary |
+| F01-02 | Embedder tests | `20260725T173724Z-56c66437` | passed in 406.26 seconds; reusable |
+| F01-03 | Benchmark-runner tests | `20260725T173724Z-56c66437` | passed in 586.91 seconds; reusable |
+| F01-04 | License gate | `20260725T173724Z-56c66437` | passed; reusable |
+| F01-05 | Local quality release evidence | `20260725T173724Z-56c66437` | passed; reusable |
+| F01-06 | Release SBOM | `20260725T173724Z-56c66437` | passed; reusable |
+| F01-07 | Desktop Tauri Rust tests | `20260725T180648Z-bdeef06f` | passed after removing the obsolete path-based import IPC and correcting v5 fixtures; 63 passed |
+| F01-08 | Desktop Tauri deny-warnings Clippy | `20260725T180754Z-72692d5a` | passed after the same dead-contract removal; reusable |
+| F01-09 | Release/operator runbooks | `20260725T180856Z-1a99114b` plus focused current-tree rerun | passed after exact vocabulary and Xcode prerequisite documentation |
+| F01-10 | macOS Xcode/PDFium build prerequisite | focused Node tests and native preflight | 5 tests passed; explicit `DEVELOPER_DIR` is isolated from global selection; current host blocked before source synchronization because only Apple Command Line Tools are installed |
+| F01-11 | Changed-file whitespace | focused current-tree rerun | passed |
+| F01-12 | Daemon/PDFium source-identity deny-warnings Clippy boundary | `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 cargo clippy -p resume-daemon --bin resume-daemon --locked -- -D warnings` | passed in 6m02s; replaces only the daemon boundary invalidated after F01-01 |
+| F01-13 | Public repository privacy boundary | `./scripts/ci/guard-public-repo.sh` | passed on the current public-input tree |
+
+The fail-late receipt `20260725T173724Z-56c66437` also recorded one shared
+native-link blocker across workspace-core, resume-cli, CLI/daemon closed loops,
+incremental import, benchmark smoke, local OCR, diagnostics evidence and
+release readiness: the reviewed macOS `libpdfium.a` pack did not yet exist.
+The worktree bundle failed for the same missing pack. This was not treated as
+ten unrelated product defects.
+
+The source builder was then repaired to use real pinned depot_tools revision
+`f394ab2c993283e94680ca13db98b99927868e98`, deterministic minimal PDFium
+checkout configuration and official depot_tools bootstrap. The pinned PDFium
+source synced successfully. Generation then failed at the official Chromium
+macOS SDK probe because the machine's selected developer directory is
+`/Library/Developer/CommandLineTools` and no complete Xcode installation is
+present. PDFium's official macOS prerequisites require Xcode; the build does
+not spoof `xcodebuild`, patch the upstream checkout or claim a Command Line
+Tools build as release evidence.
+
+The production builder now performs this capability check before any network
+or source-sync work, prefers a command-scoped explicit `DEVELOPER_DIR`, falls
+back to the selected Xcode directory, binds that directory to the child build,
+rejects symlinked/unsafe selections and leaves the global `xcode-select`
+setting unchanged. Once complete Xcode is available, the remaining
+invalid/failed set is exactly:
+
+- `cargo-test-workspace-core`
+- `cargo-test-resume-cli`
+- `cli-closed-loop`
+- `daemon-closed-loop`
+- `daemon-incremental-import`
+- `benchmark-smoke`
+- `local-ocr-runtime`
+- `local-diagnostics-release-evidence`
+- `release-readiness`
+- `desktop-macos-worktree-bundle`
+
+Those cells, followed by installed macOS acceptance, Computer Use and the
+120-minute soak, remain `not_run`/blocked. Already-valid rows above must not be
+replayed merely because the host prerequisite is later supplied.
+
+### Final repair round F02 — 2026-07-26
+
+The host prerequisite is now satisfied by `/Applications/Xcode.app`:
+`xcodebuild -version` reports Xcode 16.4 (build 16F6). The reviewed local
+PDFium build pack exists under the private build cache, and the bounded runtime
+identity pack is staged for daemon tests. This unblocks only the ten F01 cells
+listed above; reusable F01 passes remain closed.
+
+The current repair-boundary fingerprint is
+`e3843830c1be594c478817c2370f980664dfa5bf0d66198617953ac6eb6f4c40`
+over the source-root retry, import publication, frozen-PDF manifest,
+PDFium-attestation and watcher regression inputs. The repository base is
+`0f1b45c3fdd10eb857a0feb56d768745e8331865`; this fingerprint intentionally
+describes the dirty feature-train tree rather than claiming an immutable
+commit.
+
+| Row | Behavior boundary | Exact command/result | Status |
+| --- | --- | --- | --- |
+| F02-01 | A retryable source-root failure receives a new scan attempt while a queued retry keeps its identity | `cargo test -p meta-store --lib --locked source_roots_tests::source_root_retry_ -- --test-threads=1`; 2 passed | passed; reusable unless source-root retry/head logic changes |
+| F02-02 | Frozen PDFs remain part of source scan truth without making the sealed import disposition manifest impossible to satisfy | `CARGO_INCREMENTAL=0 cargo test -p import-pipeline --lib --locked import_run::orchestrator::tests:: -- --test-threads=1`; 2 passed, 126 filtered out | passed; reusable unless import summary, PDF policy or sealed-manifest construction changes |
+| F02-03 | A completed watched root is requeued after text and PDF-family changes using the current reviewed runtime contracts | `CARGO_INCREMENTAL=0 cargo test -p resume-daemon --locked --test s4_daemon --features native-runtime-tests foreground_import_watcher_requeues_completed_root_after_word_and_pdf_change_without_path_leak -- --exact --test-threads=1`; 1 passed, 21 filtered out, 53.62 seconds | passed; reusable unless watcher/coordinator, source occurrence publication, runtime attestation or daemon test harness changes |
+| F02-04 | Rust formatting after the repair set | `cargo fmt --all -- --check` | passed; invalidated by later Rust edits |
+| F02-X01 | Initial exact watcher retry with incremental compilation enabled | compilation remained at zero CPU before test execution and was cancelled orderly | not a test result; never reuse |
+
+Earlier failing watcher attempts have no reuse value. Their combined root
+causes were repaired at their owning boundaries: failed scan attempts now
+restart instead of retaining terminal identity; searchable source occurrences
+are published only after immutable document/version facts exist; frozen PDF
+deferrals are excluded from the sealed processed-disposition count while
+remaining visible in source scan progress; and the daemon's reviewed PDFium
+identity constants match the generated pack. No Linux lane was run.
+
+### Final fail-late round F02-B — 2026-07-26
+
+Runner receipt `20260726T091240Z-183931d2` resumed exactly the ten F01 cells
+that Xcode/PDFium had blocked. It ran to completion without fail-fast:
+
+| Cell | Result | Reuse disposition |
+| --- | --- | --- |
+| `cargo-test-workspace-core` | failed after 866.62 seconds: 125 import-pipeline unit tests passed and three PDF fixture/metrics cases failed | failure has no reuse value; only the parser/import boundary is reopened |
+| `cargo-test-resume-cli` | failed after 334.16 seconds: all reached tests passed except s146 expected schema 29 while the current authority returned 33 | failure has no reuse value; s147 had not yet executed and shares the same stale literal |
+| `cli-closed-loop` | passed in 39.89 seconds | invalidated by the subsequent PDFium metrics CLI-output hard cut; rerun this cell only |
+| `daemon-closed-loop` | passed in 25.03 seconds | reusable |
+| `daemon-incremental-import` | passed in 109.35 seconds | reusable |
+| `benchmark-smoke` | passed in 22.36 seconds | reusable |
+| `local-ocr-runtime` | passed in 2.82 seconds | reusable |
+| `local-diagnostics-release-evidence` | passed in 4.08 seconds | reusable |
+| `release-readiness` | passed in 3.37 seconds | reusable |
+| `desktop-macos-worktree-bundle` | passed in 241.30 seconds | invalidated by the subsequent source repair; do not install this artifact |
+
+The invalidated pre-repair artifact was
+`resume-ir_0.1.8_aarch64_e299dc95a986.dmg`, source-tree SHA-256
+`e299dc95a9868f4a2dd06d0a619f8ae75329def51512bb7ba665cfb8cef436f9`,
+DMG SHA-256
+`dc6b69dc4903ed428be5948c220ad30a6397a35c279af202e88085a6430fdc6e`
+and composition digest
+`9827aff82096f70b5d463336dddc3369e7f011b4b4d5cd89ef3b46d7e08261ec`.
+It is retained only as bounded build evidence and is not an install candidate.
+
+F02-03 and `daemon-incremental-import` were the same exact test under
+different evidence identifiers. The latter therefore repeated one already
+passed test. Future executions must use the manifest cell id
+`daemon-incremental-import` as the ledger authority rather than recording an
+ad-hoc alias row.
+
+### Final repair round F03 — 2026-07-26
+
+The three workspace-core failures were caused by legacy lopdf fixture
+assumptions rather than a production PDFium defect. The UTF-16BE literal used a
+Type1 Helvetica font without `ToUnicode`, so its raw bytes are not valid
+visible Chinese text; that case now asserts the intended OCR-required
+disposition. The valid `ToUnicode` fixture had used `T*` without defining text
+leading, placing every line at the same location; it now has explicit leading
+and remains directly searchable. The production visual-text quality gate is
+unchanged.
+
+The failure exposed a second contract defect before the next assertion could
+run: `PdfTextExtractionTimings` and CLI output still named removed lopdf phases
+that PDFium could never populate. F03 hard-cuts that dead surface to
+`PdfTextExtractionMetrics`, containing only PDFium document load, page-text
+load, character iteration, quality evaluation, page/character and byte
+counts. No compatibility fields or zero-valued aliases remain.
+
+The CLI key tests now use the exported `CURRENT_SCHEMA_VERSION` authority
+instead of literals 29 or 33, covering both backup/restore and the previously
+unreached rotation case.
+
+Focused F03 verification:
+
+- `tests::import_root_routes_utf16be_literal_without_tounicode_to_ocr` passed:
+  1 passed, 127 filtered out, 13.65 seconds.
+- `tests::import_root_keeps_tounicode_cmap_pdf_text_layer_searchable_without_ocr`
+  passed: 1 passed, 127 filtered out, 14.62 seconds.
+- `tests::parallel_parse_workers_record_pdfium_and_post_parser_metrics` passed:
+  1 passed, 127 filtered out, 14.64 seconds.
+- `cargo test -p resume-cli --locked --test s146_metadata_key_cli --test
+  s147_metadata_key_rotation_cli -- --test-threads=1 --nocapture` passed both
+  exact one-case targets.
+- `cli-closed-loop` passed in runner receipt
+  `20260726T103040Z-3f02d3f5`: one executed cell, no failure.
+- Rust formatting and focused changed-file whitespace checks passed.
+
+Before the successful run, macOS repeatedly held new Rust processes before
+their entry point while Storage Management and `syspolicyd` scanned local
+build artifacts. Attempts cancelled before a selected test entered Rust
+`main` remain `not_run`, not failures. Closing the Storage settings UI and
+terminating its exact helper processes did not modify project or user data.
+The user accepted the macOS execution prompt, after which compiler and test
+processes ran normally.
+
+One attempted `launchctl submit` workaround was incorrectly inferred by
+launchd as a keep-alive job. It restarted the same UTF-16BE exact case six
+times before removal; its overwritten logs are not evidence. The subsequent
+direct, single execution above is the authoritative result. No further
+launchd-backed test execution is allowed in this train.
+
+### Final native manual round F04 — 2026-07-26
+
+The repaired worktree produced one new internal-test artifact in runner receipt
+`20260726T103209Z-3ba42dfb`. The `desktop-macos-worktree-bundle` cell passed in
+306.43 seconds with input fingerprint
+`ecc1133f009c47747e942b9df34f28af49c5b445de503786f2e80d1ab70723dd`.
+The artifact is `resume-ir_0.1.8_aarch64_f161c5b820ad.dmg`, source-tree digest
+`f161c5b820adb5e1006c9f2ebe99283d242408497c75a2a9f7821742b0426bb1`,
+DMG digest
+`caabc8890fe699f0f0a074b5f791c1617afed38175f6bfb09fa910f235315897`
+and App composition digest
+`cbe255133e4af2d43588361300ce7ceaea18ac9f1a8f58a2bff121b2f8fb392b`.
+The mounted composition contained one arm64 App, daemon, embedding and PDF
+renderer sidecars, all four reviewed runtime packs, an ad-hoc valid hardened
+runtime signature and no build-machine path marker.
+
+The receipt-bound installer installed version 0.1.8 in `/Applications` and
+returned `user_data_removed=false`. The previously installed 0.1.3 App and its
+incompatible pre-release install receipt were archived as recoverable local
+artifacts after both current install and uninstall transactions correctly
+failed closed. No metadata database, encryption key, authorized root, search
+index or source file was moved during that installer-contract hard cut.
+
+Computer Use then launched the installed App against an isolated synthetic
+HOME. Acceptance proved:
+
+- an empty current store initialized directly at schema v33 and reached daemon
+  ready without reading the operator's normal application data;
+- one selected directory displayed per-root progress, nullable ETA, watcher
+  state, start/rescan, pause and delete controls;
+- first scan reached 100% with one discovered/searchable TXT; a zero-change
+  rescan kept the count at one;
+- adding a public synthetic PDF was detected by the live watcher without a
+  manual scan, increasing the searchable count to two;
+- keyword search returned the exact synthetic TXT and PDF;
+- the detail drawer exposed structured fields, extracted text, a draggable
+  left edge and reset control; a visual drag increased its width;
+- Finder reveal selected the exact synthetic TXT without returning a path to
+  WebView state;
+- the original-PDF view rendered the visible one-page synthetic PDF inside the
+  drawer;
+- root deletion revoked the old generation, removed the root card and all
+  search results, and a new explicit search returned zero of zero;
+- both source files remained present, and the PDF retained digest
+  `38a88c1ebeb3d02b499b3dfb04e952dcfd346c87df3217707b669eb74ee1c011`;
+- normal App exit left no installed App/daemon/runtime process, IPC file or
+  lifecycle workspace behind.
+
+The six local-only screenshots are bounded synthetic UI evidence. Their
+digests, in state order, are:
+
+- initial:
+  `187af378166642b50a890c20a6458894ab3786a5601a7ddccbb65db2bd292acd`
+- scan:
+  `cf1e8b9a45bc5bbc46f4424ce9a7f1243bb70620f88cd71c672a69ce242f668e`
+- resized detail:
+  `17f2fdd16f49e6dcdc2411f36866dc19c0b2ce2b5902ae3c4f7687a33285eb1c`
+- Finder reveal:
+  `0f54c6273a618134cc55c47d111ad524bd8ddb53063205a981f4125fb78c3866`
+- PDF:
+  `3a1e996853486dc60d01563634d28571e3e2ee9b652ec76c24c40c308260835f`
+- deleted:
+  `83a39b0532ce77dbe93b8d42813e7a549584aae26909542d15151e95ecf6be8e`
+
+The post-repair focused deny-warnings boundary passed for `parser-pdf`,
+`import-pipeline` and `resume-cli`. Its `--all-targets` selection linted every
+CLI test target and took 8 minutes 09 seconds; that was wider than necessary.
+It is retained as valid evidence, but future repair rounds must select only the
+affected lib/bin and named test targets.
+
+Every failed or unrun F02-B cell is now closed by its authoritative focused
+repair result, while the unaffected F01/F02-B passes remain reused. The
+remaining release-train sequence is commit/PR reconciliation, an exact
+merged-main build and installed-main acceptance, followed by the uninterrupted
+120-minute soak bound to that same commit. No soak result is claimed yet.

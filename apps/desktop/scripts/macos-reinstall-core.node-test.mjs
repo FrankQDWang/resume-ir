@@ -16,7 +16,7 @@ import test from "node:test";
 
 import { reinstallMacosDmg } from "./macos-reinstall-core.mjs";
 
-const VERSION = "0.1.2";
+const VERSION = "0.1.8";
 const OLD_SOURCE = Object.freeze({
   authority: "exact_main_commit",
   base_commit: "1".repeat(40),
@@ -61,7 +61,7 @@ function installReceipt(generation) {
 
 function dmgReceipt(overrides = {}) {
   return {
-    schema_version: "resume-ir.macos-dmg-composition.v3",
+    schema_version: "resume-ir.macos-dmg-composition.v4",
     target_triple: "aarch64-apple-darwin",
     source: NEW_SOURCE,
     dmg_count: 1,

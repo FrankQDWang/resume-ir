@@ -75,6 +75,7 @@ async function createMountedLayout(root, { withComposition = false } = {}) {
     "classifier/runtime-pack",
     "embedding/runtime-pack",
     "ocr/runtime-pack",
+    "pdfium/runtime-pack",
   ]) {
     await mkdir(path.join(resourcesDirectory, directory), { recursive: true });
   }
@@ -84,7 +85,7 @@ async function createMountedLayout(root, { withComposition = false } = {}) {
       '<?xml version="1.0" encoding="UTF-8"?>',
       '<plist version="1.0"><dict>',
       "<key>CFBundleIdentifier</key><string>local.resume-ir.desktop</string>",
-      "<key>CFBundleShortVersionString</key><string>0.1.2</string>",
+      "<key>CFBundleShortVersionString</key><string>0.1.8</string>",
       "<key>CFBundleDisplayName</key><string>resume-ir</string>",
       "<key>CFBundleIconFile</key><string>icon.icns</string>",
       "<key>CFBundleExecutable</key><string>resume-desktop</string>",
@@ -108,7 +109,12 @@ async function createMountedLayout(root, { withComposition = false } = {}) {
     await writeFile(
       path.join(packDirectory, "runtime-pack.json"),
       `${JSON.stringify({
-        schema_version: `synthetic.${pack}.v1`,
+        schema_version:
+          pack === "classifier"
+            ? "resume-ir.desktop-classifier-model-pack.v1"
+            : pack === "embedding"
+              ? "resume-ir.embedding-runtime-pack.v1"
+              : "resume-ir.desktop-ocr-runtime-pack.v1",
         files: [
           {
             role: "payload",
@@ -120,6 +126,62 @@ async function createMountedLayout(root, { withComposition = false } = {}) {
       })}\n`,
     );
   }
+  const pdfiumDirectory = path.join(resourcesDirectory, "pdfium", "runtime-pack");
+  const sourceContract = JSON.parse(
+    await readFile(
+      new URL(
+        "../resources/pdf-renderer/aarch64-apple-darwin/source-contract.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const pdfiumPayloads = [
+    {
+      role: "license",
+      file: "LICENSE",
+      body: await readFile(
+        new URL(
+          "../resources/pdf-renderer/aarch64-apple-darwin/LICENSE.pdfium",
+          import.meta.url,
+        ),
+      ),
+    },
+    {
+      role: "build_arguments",
+      file: "args.gn",
+      body: Buffer.from(`${sourceContract.pdfium.gn_arguments.join("\n")}\n`),
+    },
+    {
+      role: "source_contract",
+      file: "source-contract.json",
+      body: Buffer.from(`${JSON.stringify(sourceContract)}\n`),
+    },
+  ];
+  const pdfiumFiles = [];
+  for (const payload of pdfiumPayloads) {
+    await writeFile(path.join(pdfiumDirectory, payload.file), payload.body);
+    pdfiumFiles.push({
+      role: payload.role,
+      file: payload.file,
+      bytes: payload.body.length,
+      sha256: sha256(payload.body),
+    });
+  }
+  await writeFile(
+    path.join(pdfiumDirectory, "runtime-pack.json"),
+    `${JSON.stringify({
+      schema_version: "resume-ir.pdfium-static-runtime-pack.v1",
+      runtime_pack_id: "pdfium-chromium-7881-static-arm64-v1",
+      target_triple: "aarch64-apple-darwin",
+      link_mode: "static",
+      source_commit: sourceContract.pdfium.source_commit,
+      source_build_dependency_revision:
+        sourceContract.pdfium.source_build_dependency_revision,
+      product_runtime_network_access: "disabled",
+      files: pdfiumFiles,
+    })}\n`,
+  );
   await writeFile(path.join(resourcesDirectory, "icon.icns"), "synthetic-icon");
   if (withComposition) {
     await writeBundleComposition({
@@ -225,7 +287,7 @@ function testReleaseCandidatePath(dmg) {
 
 function verifiedDmgReceipt() {
   return {
-    schema_version: "resume-ir.macos-dmg-composition.v3",
+    schema_version: "resume-ir.macos-dmg-composition.v4",
     source: SOURCE,
     distribution_signature: "accepted",
     distribution_profile: "internal_test",
@@ -851,6 +913,8 @@ test("verifies one DMG across a read-only attach ctime change and always detache
         classifier_resource_bytes: 15,
         ocr_resource_file_count: 31,
         ocr_resource_bytes: 20,
+        pdfium_resource_file_count: 4,
+        pdfium_resource_bytes: 12,
         digest_match: true,
         executable: true,
         architecture: "arm64",
@@ -887,7 +951,7 @@ test("verifies one DMG across a read-only attach ctime change and always detache
   assert.deepEqual(await readdir(temporaryRoot), []);
   assert.match(receipt.app_composition_digest, /^[a-f0-9]{64}$/);
   assert.deepEqual(receipt, {
-    schema_version: "resume-ir.macos-dmg-composition.v3",
+    schema_version: "resume-ir.macos-dmg-composition.v4",
     target_triple: "aarch64-apple-darwin",
     source: SOURCE,
     dmg_count: 1,
@@ -908,6 +972,8 @@ test("verifies one DMG across a read-only attach ctime change and always detache
     classifier_resource_bytes: 15,
     ocr_resource_file_count: 31,
     ocr_resource_bytes: 20,
+    pdfium_resource_file_count: 4,
+    pdfium_resource_bytes: 12,
     digest_match: true,
     executable: true,
     architecture: "arm64",
@@ -986,6 +1052,8 @@ test("rejects a DMG pathname replacement between digest and attach", async (cont
         classifier_resource_bytes: 1,
         ocr_resource_file_count: 1,
         ocr_resource_bytes: 1,
+        pdfium_resource_file_count: 1,
+        pdfium_resource_bytes: 1,
         digest_match: true,
         executable: true,
         architecture: "arm64",
@@ -1053,6 +1121,8 @@ test("rejects an unsealed or non-ad-hoc App instead of issuing a test receipt", 
           classifier_resource_bytes: 15,
           ocr_resource_file_count: 31,
           ocr_resource_bytes: 20,
+          pdfium_resource_file_count: 4,
+          pdfium_resource_bytes: 12,
           digest_match: true,
           executable: true,
           architecture: "arm64",
@@ -1134,6 +1204,8 @@ test("rejects a nested executable whose signature policy differs from the App", 
         classifier_resource_bytes: 15,
         ocr_resource_file_count: 31,
         ocr_resource_bytes: 20,
+        pdfium_resource_file_count: 4,
+        pdfium_resource_bytes: 12,
         digest_match: true,
         executable: true,
         architecture: "arm64",
@@ -1400,7 +1472,7 @@ test("locks one credential-free arm64 internal-test build", async () => {
     frontendRoot: paths.frontendRoot,
     platform: "darwin",
     baseConfig,
-    productVersion: "0.1.2",
+    productVersion: "0.1.8",
     platformConfig,
   });
   assert.deepEqual(plan.tauriArguments, [
@@ -1411,7 +1483,7 @@ test("locks one credential-free arm64 internal-test build", async () => {
     "dmg",
     "--ci",
   ]);
-  assert.equal(path.basename(plan.dmg), "resume-ir_0.1.2_aarch64.dmg");
+  assert.equal(path.basename(plan.dmg), "resume-ir_0.1.8_aarch64.dmg");
   assert.equal(
     plan.entitlements,
     path.join(paths.frontendRoot, "src-tauri", "entitlements.internal-test.plist"),
@@ -1442,7 +1514,7 @@ test("locks one credential-free arm64 internal-test build", async () => {
           frontendRoot: paths.frontendRoot,
           platform: "darwin",
           baseConfig,
-          productVersion: "0.1.2",
+          productVersion: "0.1.8",
           platformConfig: candidate,
         }),
       /config is invalid/,

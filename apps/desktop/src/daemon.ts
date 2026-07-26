@@ -33,8 +33,8 @@ export type CoreReason = "metadata_initializing" | "metadata_migrating" | "migra
 export type OptionalRuntimeState = "initializing" | "available" | "unavailable"
 export type OptionalRuntimeReason = "missing" | "invalid" | "start_failed" | "not_configured"
 export type CapabilityState = "initializing" | "available" | "degraded" | "unavailable" | "blocked"
-export type CapabilityReason = "core_initializing" | "core_blocked" | "embedding_unavailable" | "ocr_unavailable" | "classifier_unavailable"
-export type CapabilityName = "keyword_search" | "detail" | "semantic_search" | "hybrid_search" | "text_import" | "ocr_import" | "index_publication"
+export type CapabilityReason = "core_initializing" | "core_blocked" | "embedding_unavailable" | "ocr_unavailable" | "classifier_unavailable" | "pdfium_unavailable"
+export type CapabilityName = "keyword_search" | "detail" | "semantic_search" | "hybrid_search" | "text_import" | "pdf_import" | "ocr_import" | "index_publication"
 
 export interface OptionalRuntimeStatus {
   state: OptionalRuntimeState
@@ -55,15 +55,15 @@ export interface RepairProgress {
 }
 
 export interface DaemonServiceError {
-  code: "UNAUTHORIZED" | "BAD_REQUEST" | "CONFLICT" | "NOT_FOUND" | "STALE_SELECTION" | "RESPONSE_TOO_LARGE" | "LIMIT_EXCEEDED" | "SEMANTIC_DISABLED" | "REPAIRING" | "METADATA_UNAVAILABLE" | "QUERY_SERVICE_UNAVAILABLE" | "OVERLOADED" | "INTERNAL" | "SERVICE_INITIALIZING" | "SERVICE_BLOCKED" | "CAPABILITY_UNAVAILABLE"
-  action: "authenticate" | "correct_request" | "refresh_search" | "reduce_page_size" | "select_supported_mode" | "wait_for_repair" | "wait_for_service" | "retry" | "repair_required"
+  code: "UNAUTHORIZED" | "BAD_REQUEST" | "CONFLICT" | "NOT_FOUND" | "STALE_SELECTION" | "RESPONSE_TOO_LARGE" | "LIMIT_EXCEEDED" | "SEMANTIC_DISABLED" | "REPAIRING" | "METADATA_UNAVAILABLE" | "QUERY_SERVICE_UNAVAILABLE" | "OVERLOADED" | "INTERNAL" | "SERVICE_INITIALIZING" | "SERVICE_BLOCKED" | "CAPABILITY_UNAVAILABLE" | "SOURCE_UNAVAILABLE" | "SOURCE_CHANGED" | "SOURCE_UNSUPPORTED" | "PREVIEW_EXPIRED" | "INVALID_RANGE" | "PREVIEW_CAPACITY"
+  action: "authenticate" | "correct_request" | "refresh_search" | "reduce_page_size" | "select_supported_mode" | "wait_for_repair" | "wait_for_service" | "retry" | "repair_required" | "rescan_source" | "select_supported_view" | "reopen_preview"
   retry_after_ms?: number
   capability: CapabilityName | null
   reason: CoreReason | CapabilityReason | null
 }
 
 export interface DaemonServiceErrorBody {
-  schema_version: "resume-ir.error.v2"
+  schema_version: "resume-ir.error.v3"
   request_id?: string
   status: "error"
   error: DaemonServiceError
@@ -80,7 +80,7 @@ export interface IpcMetrics {
 }
 
 export interface StatusBody {
-  schema_version: "daemon.status.v4"
+  schema_version: "daemon.status.v5"
   status: "initializing" | "migrating" | "ok" | "repairing" | "degraded" | "blocked"
   process_state: "ready"
   core: {
@@ -91,6 +91,7 @@ export interface StatusBody {
     embedding: OptionalRuntimeStatus
     ocr: OptionalRuntimeStatus
     classifier: OptionalRuntimeStatus
+    pdfium: OptionalRuntimeStatus
   }
   capabilities: {
     keyword_search: CapabilityStatus
@@ -98,6 +99,7 @@ export interface StatusBody {
     semantic_search: CapabilityStatus
     hybrid_search: CapabilityStatus
     text_import: CapabilityStatus
+    pdf_import: CapabilityStatus
     ocr_import: CapabilityStatus
     index_publication: CapabilityStatus
   }
@@ -152,7 +154,7 @@ export interface StatusBody {
 }
 
 export function daemonHealth(reply: DaemonReply<StatusBody | DaemonFailureBody>): "ok" | "initializing" | "degraded" {
-  if (reply.http_status !== 200 || reply.body.schema_version !== "daemon.status.v4") return "degraded"
+  if (reply.http_status !== 200 || reply.body.schema_version !== "daemon.status.v5") return "degraded"
   if (reply.body.status === "ok" && reply.body.core.state === "ready") return "ok"
   return ["initializing", "migrating", "repairing"].includes(reply.body.status)
     ? "initializing"
@@ -200,7 +202,7 @@ export function searchDeadlineMs(mode: "keyword" | "field" | "hybrid" | "semanti
 }
 
 export function searchOutcome(reply: DaemonReply<SearchBody | DaemonFailureBody>): SearchOutcome {
-  if (reply.body.schema_version === "resume-ir.error.v2") return reply.body.error.code === "OVERLOADED" ? "overload" : "error"
+  if (reply.body.schema_version === "resume-ir.error.v3") return reply.body.error.code === "OVERLOADED" ? "overload" : "error"
   if (reply.body.status === "cancelled") return "cancelled"
   if (reply.http_status < 200 || reply.http_status >= 300) return "error"
   if (reply.body.partial) return "partial"
@@ -254,19 +256,103 @@ export interface DetailHydrateBody {
   }
 }
 
+export interface SourcePreviewBody {
+  schema_version: "resume-ir.source-preview.v1"
+  request_id: string
+  status: "ok"
+  lease_id: string
+  byte_size: number
+  expires_in_ms: number
+  range_bytes: 65536
+}
+
+export interface SourcePreviewRangeBody {
+  schema_version: "resume-ir.source-preview-range.v1"
+  request_id: string
+  status: "ok"
+  offset: number
+  bytes_read: number
+  total_bytes: number
+  data_base64: string
+}
+
+export interface SourcePreviewCloseBody {
+  schema_version: "resume-ir.source-preview-close.v1"
+  request_id: string
+  status: "ok"
+  closed: boolean
+}
+
+export interface SourceRevealReceipt {
+  schema_version: "resume-ir.source-reveal.v1"
+  status: "revealed"
+}
+
+export async function revealSourceFile(selection: SearchSelection): Promise<SourceRevealReceipt> {
+  return invoke("reveal_source_file", { request: { selection } })
+}
+
 export interface SelectedImportRoot {
-  root_handle: string
+  root_id: string
   display_label: string
 }
 
-export interface ManagedRoot extends SelectedImportRoot {
-  availability: "available" | "unavailable"
+export interface SourceRootScan {
+  scan_id: string
+  trigger: "initial" | "manual" | "watcher" | "periodic" | "recovery"
+  phase: "queued" | "discovering" | "fingerprinting" | "classifying" | "parsing" | "ocr" | "publishing" | "complete" | "partial" | "failed"
+  completeness: "unknown" | "complete" | "partial"
+  counts: {
+    discovered: number
+    searchable: number
+    non_resume: number
+    needs_review: number
+    ocr: number
+    failed: number
+    ignored: number
+    processed: number
+    total: number | null
+    errors: number
+  }
+  rate_per_second: number | null
+  eta_seconds: number | null
+  started_at_seconds: number
+  updated_at_seconds: number
+  completed_at_seconds: number | null
+}
+
+export interface SourceRoot extends SelectedImportRoot {
+  state: "active" | "offline" | "deleting"
+  watcher_state: "active" | "paused" | "unavailable"
+  current_counts: {
+    discovered: number
+    searchable: number
+    non_resume: number
+    needs_review: number
+    ocr: number
+    failed: number
+  }
+  last_scan: SourceRootScan | null
 }
 
 export interface ManagedRoots {
-  schema_version: "resume-ir.desktop-managed-roots.v1"
+  schema_version: "resume-ir.source-roots.v2"
   limit: 16
-  roots: ManagedRoot[]
+  roots: SourceRoot[]
+}
+
+export interface SourceRootMutation {
+  schema_version: "resume-ir.source-roots.v2"
+  root: SourceRoot
+}
+
+export interface RootDeletionReceipt {
+  schema_version: "resume-ir.root-deletion-receipt.v1"
+  status: "deleting"
+  root_id: string
+  affected_documents: number
+  removed_documents: number
+  source_files_deleted: false
 }
 
 export interface ImportBody {
@@ -281,14 +367,14 @@ export interface ImportBody {
 export type ManagedRootScanOutcome = "queued" | "pending" | "active" | "error"
 
 export function managedRootScanOutcome(reply: DaemonReply<ImportBody | DaemonFailureBody>): ManagedRootScanOutcome {
-  if (reply.body.schema_version === "resume-ir.error.v2") {
+  if (reply.body.schema_version === "resume-ir.error.v3") {
     return reply.http_status === 409 && reply.body.error.code === "CONFLICT" ? "active" : "error"
   }
   if (reply.http_status < 200 || reply.http_status >= 300) return "error"
   return reply.body.new_tasks === 1 ? "queued" : "pending"
 }
 
-export type ManagedRootControlAction = "inspect" | "pause" | "resume"
+export type ManagedRootControlAction = "pause" | "resume"
 export type ManagedRootControlOutcome = "unmanaged" | "active" | "paused" | "error"
 
 export interface ManagedRootControlBody {
@@ -300,7 +386,7 @@ export interface ManagedRootControlBody {
 }
 
 export function managedRootControlOutcome(reply: DaemonReply<ManagedRootControlBody | DaemonFailureBody>): ManagedRootControlOutcome {
-  if (reply.body.schema_version === "resume-ir.error.v2") {
+  if (reply.body.schema_version === "resume-ir.error.v3") {
     return reply.http_status === 404 && reply.body.error.code === "NOT_FOUND" ? "unmanaged" : "error"
   }
   if (reply.http_status < 200 || reply.http_status >= 300) return "error"
@@ -308,7 +394,7 @@ export function managedRootControlOutcome(reply: DaemonReply<ManagedRootControlB
 }
 
 export interface DiagnosticsBody {
-  schema_version: "resume-ir.diagnostics.v5"
+  schema_version: "resume-ir.diagnostics.v9"
   privacy_boundary: "redacted_local_aggregate"
   evidence_lane: "gui_manual"
   evidence_status: "unaccepted"
@@ -327,6 +413,7 @@ export interface DiagnosticsBody {
     embedding: OptionalRuntimeStatus
     ocr: OptionalRuntimeStatus
     classifier: OptionalRuntimeStatus
+    pdfium: OptionalRuntimeStatus
   }
   capabilities: {
     keyword_search: CapabilityStatus
@@ -334,6 +421,7 @@ export interface DiagnosticsBody {
     semantic_search: CapabilityStatus
     hybrid_search: CapabilityStatus
     text_import: CapabilityStatus
+    pdf_import: CapabilityStatus
     ocr_import: CapabilityStatus
     index_publication: CapabilityStatus
   }
@@ -350,6 +438,10 @@ export interface DiagnosticsBody {
     import_tasks_queued: number | null
     import_tasks_recoverable: number | null
     import_tasks_cancelled: number | null
+    source_roots_total: number | null
+    source_roots_active: number | null
+    source_roots_offline: number | null
+    source_root_deletions_in_progress: number | null
     query_latency: null | {
       sample_count: number | null
       p50_ms: number | null
@@ -383,15 +475,67 @@ export async function readStatus(): Promise<DaemonReply<StatusBody>> {
   const reply = await invoke<unknown>("daemon_request", {
     request: { operation: "status" },
   })
-  if (!isStatusReply(reply)) throw contractFailure("daemon status v4 合同无效")
+  if (!isStatusReply(reply)) throw contractFailure("daemon status v5 合同无效")
   return reply
+}
+
+export async function createSourcePreview(
+  requestId: string,
+  selection: SearchSelection,
+): Promise<DaemonReply<SourcePreviewBody | DaemonFailureBody>> {
+  return invoke("daemon_request", {
+    request: {
+      operation: "preview_create",
+      body: {
+        schema_version: "resume-ir.source-preview-create-request.v1",
+        request_id: requestId,
+        selection,
+      },
+    },
+  })
+}
+
+export async function readSourcePreviewRange(
+  requestId: string,
+  leaseId: string,
+  offset: number,
+  length: number,
+): Promise<DaemonReply<SourcePreviewRangeBody | DaemonFailureBody>> {
+  return invoke("daemon_request", {
+    request: {
+      operation: "preview_range",
+      body: {
+        schema_version: "resume-ir.source-preview-range-request.v1",
+        request_id: requestId,
+        lease_id: leaseId,
+        offset,
+        length,
+      },
+    },
+  })
+}
+
+export async function closeSourcePreview(
+  requestId: string,
+  leaseId: string,
+): Promise<DaemonReply<SourcePreviewCloseBody | DaemonFailureBody>> {
+  return invoke("daemon_request", {
+    request: {
+      operation: "preview_close",
+      body: {
+        schema_version: "resume-ir.source-preview-close-request.v1",
+        request_id: requestId,
+        lease_id: leaseId,
+      },
+    },
+  })
 }
 
 export async function readDiagnostics(): Promise<DaemonReply<DiagnosticsBody>> {
   const reply = await invoke<unknown>("daemon_request", {
     request: { operation: "diagnostics" },
   })
-  if (!isDiagnosticsReply(reply)) throw contractFailure("daemon diagnostics v5 合同无效")
+  if (!isDiagnosticsReply(reply)) throw contractFailure("daemon diagnostics v9 合同无效")
   return reply
 }
 
@@ -458,29 +602,31 @@ export async function hydrateDetail(requestId: string, selection: SearchSelectio
   })
 }
 
-export async function selectImportRoot(): Promise<SelectedImportRoot | null> {
-  return invoke<SelectedImportRoot | null>("select_import_root")
+export async function selectImportRoot(): Promise<DaemonReply<SourceRootMutation> | null> {
+  return invoke<DaemonReply<SourceRootMutation> | null>("select_import_root")
 }
 
-export async function listManagedRoots(): Promise<ManagedRoots> {
-  return invoke<ManagedRoots>("list_managed_roots")
+export async function listManagedRoots(): Promise<DaemonReply<ManagedRoots>> {
+  return invoke<DaemonReply<ManagedRoots>>("list_managed_roots")
 }
 
-export async function importSelectedRoot(rootHandle: string): Promise<DaemonReply<ImportBody | DaemonFailureBody>> {
-  return invoke<DaemonReply<ImportBody | DaemonFailureBody>>("import_selected_root", { request: { root_handle: rootHandle } })
+export async function importSelectedRoot(rootId: string): Promise<DaemonReply<SourceRootMutation | DaemonFailureBody>> {
+  return invoke<DaemonReply<SourceRootMutation | DaemonFailureBody>>("import_selected_root", { request: { root_id: rootId } })
 }
 
-export async function reauthorizeManagedRoot(rootHandle: string): Promise<SelectedImportRoot | null> {
-  return invoke<SelectedImportRoot | null>("reauthorize_managed_root", { request: { root_handle: rootHandle } })
+export async function rescanManagedRoot(rootId: string): Promise<DaemonReply<SourceRootMutation | DaemonFailureBody>> {
+  return importSelectedRoot(rootId)
 }
 
-export async function rescanManagedRoot(rootHandle: string): Promise<DaemonReply<ImportBody | DaemonFailureBody>> {
-  return importSelectedRoot(rootHandle)
+export async function controlManagedRoot(rootId: string, action: ManagedRootControlAction): Promise<DaemonReply<SourceRootMutation | DaemonFailureBody>> {
+  return invoke<DaemonReply<SourceRootMutation | DaemonFailureBody>>("daemon_request", {
+    request: { operation: "root_control", body: { root_id: rootId, action } },
+  })
 }
 
-export async function controlManagedRoot(rootHandle: string, action: ManagedRootControlAction): Promise<DaemonReply<ManagedRootControlBody | DaemonFailureBody>> {
-  return invoke<DaemonReply<ManagedRootControlBody | DaemonFailureBody>>("daemon_request", {
-    request: { operation: "root_control", body: { root_handle: rootHandle, action } },
+export async function deleteSourceRoot(rootId: string): Promise<DaemonReply<RootDeletionReceipt | DaemonFailureBody>> {
+  return invoke<DaemonReply<RootDeletionReceipt | DaemonFailureBody>>("delete_source_root", {
+    request: { root_id: rootId },
   })
 }
 

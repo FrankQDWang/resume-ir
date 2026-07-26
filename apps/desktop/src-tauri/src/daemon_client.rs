@@ -12,7 +12,9 @@ use crate::daemon_connection::{self, ConnectionGenerationSource, DaemonConnectio
 use crate::daemon_exchange::MAX_REQUEST_BYTES;
 use crate::daemon_exchange::{ExpectedResponse, PreparedDaemonRequest};
 use crate::daemon_request::{
-    prepare_import_request, prepare_root_control_request, Operation, RootControlAction,
+    prepare_legacy_source_root_migration_request, prepare_source_root_control_request,
+    prepare_source_root_delete_request, prepare_source_root_register_request,
+    prepare_source_root_scan_request, Operation, RootControlAction,
 };
 use crate::daemon_response::project_response;
 
@@ -20,6 +22,7 @@ pub(crate) use crate::daemon_request::DesktopRequest;
 pub(crate) use crate::daemon_response::DesktopResponse;
 
 const MAX_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_RESPONSE_HEADER_BYTES: usize = 16 * 1024;
 const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Serialize)]
@@ -96,38 +99,99 @@ pub(crate) fn execute_from(
         Operation::Search => ("POST", DaemonRoute::Search),
         Operation::Detail => ("POST", DaemonRoute::Details),
         Operation::Hydrate => ("POST", DaemonRoute::Hydrate),
+        Operation::PreviewCreate => ("POST", DaemonRoute::PreviewCreate),
+        Operation::PreviewRange => ("POST", DaemonRoute::PreviewRange),
+        Operation::PreviewClose => ("POST", DaemonRoute::PreviewClose),
         Operation::Cancel => ("POST", DaemonRoute::Cancel),
         Operation::RootControl => unreachable!("root control uses the native root path"),
-        Operation::Import => unreachable!("import uses the native root path"),
+        Operation::SourceRoots => unreachable!("source roots use native bridge commands"),
+        Operation::RootDeletion => unreachable!("root deletion uses a native bridge command"),
     };
     daemon_connection::with_connection_lease(data_dir, generation_source, |connection| {
         send(method, route, connection, &prepared)
     })
 }
 
-pub(crate) fn execute_root_control_from(
+pub(crate) fn execute_source_roots_list(
     data_dir: &Path,
     generation_source: &impl ConnectionGenerationSource,
-    root: &Path,
-    action: RootControlAction,
 ) -> Result<DesktopResponse, DesktopError> {
-    let prepared = prepare_root_control_request(root, action)?;
+    let prepared =
+        PreparedDaemonRequest::empty(ExpectedResponse::SourceRoots, DEFAULT_RESPONSE_TIMEOUT);
     daemon_connection::with_connection_lease(data_dir, generation_source, |connection| {
-        send("POST", DaemonRoute::ImportControl, connection, &prepared)
+        send("GET", DaemonRoute::SourceRoots, connection, &prepared)
     })
 }
 
-pub(crate) fn execute_import_from(
+pub(crate) fn execute_source_root_register(
     data_dir: &Path,
     generation_source: &impl ConnectionGenerationSource,
     root: &Path,
+    display_label: &str,
 ) -> Result<DesktopResponse, DesktopError> {
-    let root = root
-        .to_str()
-        .ok_or_else(|| DesktopError::new("import_root_invalid", "所选目录无法用于本地导入"))?;
-    let prepared = prepare_import_request(root)?;
+    let prepared = prepare_source_root_register_request(root, display_label)?;
     daemon_connection::with_connection_lease(data_dir, generation_source, |connection| {
-        send("POST", DaemonRoute::Imports, connection, &prepared)
+        send(
+            "POST",
+            DaemonRoute::SourceRootRegister,
+            connection,
+            &prepared,
+        )
+    })
+}
+
+pub(crate) fn execute_legacy_source_root_migration(
+    data_dir: &Path,
+    generation_source: &impl ConnectionGenerationSource,
+    roots: &[(&Path, &str)],
+) -> Result<DesktopResponse, DesktopError> {
+    let prepared = prepare_legacy_source_root_migration_request(roots)?;
+    daemon_connection::with_connection_lease(data_dir, generation_source, |connection| {
+        send(
+            "POST",
+            DaemonRoute::SourceRootLegacyMigration,
+            connection,
+            &prepared,
+        )
+    })
+}
+
+pub(crate) fn execute_source_root_scan(
+    data_dir: &Path,
+    generation_source: &impl ConnectionGenerationSource,
+    root_id: &str,
+) -> Result<DesktopResponse, DesktopError> {
+    let prepared = prepare_source_root_scan_request(root_id)?;
+    daemon_connection::with_connection_lease(data_dir, generation_source, |connection| {
+        send("POST", DaemonRoute::SourceRootScan, connection, &prepared)
+    })
+}
+
+pub(crate) fn execute_source_root_control(
+    data_dir: &Path,
+    generation_source: &impl ConnectionGenerationSource,
+    root_id: &str,
+    action: RootControlAction,
+) -> Result<DesktopResponse, DesktopError> {
+    let prepared = prepare_source_root_control_request(root_id, action)?;
+    daemon_connection::with_connection_lease(data_dir, generation_source, |connection| {
+        send(
+            "POST",
+            DaemonRoute::SourceRootControl,
+            connection,
+            &prepared,
+        )
+    })
+}
+
+pub(crate) fn execute_source_root_delete(
+    data_dir: &Path,
+    generation_source: &impl ConnectionGenerationSource,
+    root_id: &str,
+) -> Result<DesktopResponse, DesktopError> {
+    let prepared = prepare_source_root_delete_request(root_id)?;
+    daemon_connection::with_connection_lease(data_dir, generation_source, |connection| {
+        send("POST", DaemonRoute::SourceRootDelete, connection, &prepared)
     })
 }
 
@@ -157,18 +221,80 @@ fn send(
     .and_then(|_| stream.write_all(body))
     .map_err(|_| DesktopError::new("daemon_unavailable", "无法发送本地 daemon 请求"))?;
 
+    let response = read_bounded_http_response(&mut stream, MAX_RESPONSE_BYTES)?;
+    parse_response(&response, prepared.expected())
+}
+
+pub(crate) fn read_bounded_http_response(
+    stream: &mut TcpStream,
+    max_response_bytes: u64,
+) -> Result<Vec<u8>, DesktopError> {
+    let max_response_bytes = usize::try_from(max_response_bytes)
+        .map_err(|_| DesktopError::new("response_too_large", "daemon 响应超过桌面上限"))?;
     let mut response = Vec::new();
-    stream
-        .take(MAX_RESPONSE_BYTES + 1)
-        .read_to_end(&mut response)
-        .map_err(|_| DesktopError::new("daemon_unavailable", "本地 daemon 响应中断"))?;
-    if response.len() as u64 > MAX_RESPONSE_BYTES {
+    let header_end = loop {
+        if let Some(index) = response.windows(4).position(|window| window == b"\r\n\r\n") {
+            break index;
+        }
+        if response.len() >= MAX_RESPONSE_HEADER_BYTES {
+            return Err(DesktopError::new(
+                "daemon_protocol",
+                "daemon HTTP header 超过上限",
+            ));
+        }
+        let mut chunk = [0_u8; 4096];
+        let allowed = (MAX_RESPONSE_HEADER_BYTES - response.len()).min(chunk.len());
+        let read = stream
+            .read(&mut chunk[..allowed])
+            .map_err(|_| DesktopError::new("daemon_unavailable", "本地 daemon 响应中断"))?;
+        if read == 0 {
+            return Err(DesktopError::new(
+                "daemon_protocol",
+                "daemon HTTP 响应不完整",
+            ));
+        }
+        response.extend_from_slice(&chunk[..read]);
+    };
+    let body_start = header_end + 4;
+    let header = std::str::from_utf8(&response[..header_end])
+        .map_err(|_| DesktopError::new("daemon_protocol", "daemon HTTP header 无效"))?;
+    let content_lengths = header
+        .lines()
+        .filter_map(|line| line.strip_prefix("Content-Length: "))
+        .collect::<Vec<_>>();
+    if content_lengths.len() != 1 {
+        return Err(DesktopError::new(
+            "daemon_protocol",
+            "daemon HTTP Content-Length 无效",
+        ));
+    }
+    let content_length = content_lengths[0]
+        .parse::<usize>()
+        .map_err(|_| DesktopError::new("daemon_protocol", "daemon HTTP Content-Length 无效"))?;
+    if body_start
+        .checked_add(content_length)
+        .is_none_or(|total| total > max_response_bytes)
+    {
         return Err(DesktopError::new(
             "response_too_large",
             "daemon 响应超过桌面上限",
         ));
     }
-    parse_response(&response, prepared.expected())
+    let expected = body_start
+        .checked_add(content_length)
+        .ok_or_else(|| DesktopError::new("response_too_large", "daemon 响应超过桌面上限"))?;
+    if response.len() > expected {
+        return Err(DesktopError::new(
+            "daemon_protocol",
+            "daemon HTTP 响应包含多余数据",
+        ));
+    }
+    let observed = response.len();
+    response.resize(expected, 0);
+    stream
+        .read_exact(&mut response[observed..])
+        .map_err(|_| DesktopError::new("daemon_unavailable", "本地 daemon 响应中断"))?;
+    Ok(response)
 }
 
 fn parse_response(
@@ -228,8 +354,8 @@ mod tests {
     }
 
     #[test]
-    fn webview_error_projection_accepts_only_the_exact_v2_shape() {
-        let body = r#"{"schema_version":"resume-ir.error.v2","request_id":"synthetic-request","status":"error","error":{"code":"OVERLOADED","action":"retry","retry_after_ms":250,"capability":null,"reason":null}}"#;
+    fn webview_error_projection_accepts_only_the_exact_v3_shape() {
+        let body = r#"{"schema_version":"resume-ir.error.v3","request_id":"synthetic-request","status":"error","error":{"code":"OVERLOADED","action":"retry","retry_after_ms":250,"capability":null,"reason":null}}"#;
         let expected = ExpectedResponse::Search {
             request_id: "synthetic-request".to_string(),
             max_results: 10,
@@ -239,7 +365,7 @@ mod tests {
 
         assert!(exposed.contains("OVERLOADED"));
         assert!(exposed.contains("retry_after_ms"));
-        let extra = r#"{"schema_version":"resume-ir.error.v2","request_id":"synthetic-request","status":"error","error":{"code":"OVERLOADED","action":"retry","retry_after_ms":250,"capability":null,"reason":null,"private_debug":true}}"#;
+        let extra = r#"{"schema_version":"resume-ir.error.v3","request_id":"synthetic-request","status":"error","error":{"code":"OVERLOADED","action":"retry","retry_after_ms":250,"capability":null,"reason":null,"private_debug":true}}"#;
         assert!(parse_response(&http_response(503, extra), &expected).is_err());
     }
 
@@ -250,7 +376,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_probe_reads_strict_v4_discovery_v3_auth_and_status_v4() {
+    fn startup_probe_reads_strict_v5_discovery_v3_auth_and_status_v5() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let data_dir = std::env::temp_dir().join(format!(
@@ -276,7 +402,7 @@ mod tests {
             let request = std::str::from_utf8(&request).unwrap();
             assert!(request.starts_with("GET /status HTTP/1.1"), "{request:?}");
             assert!(request.contains(&format!("Authorization: Bearer {TOKEN}")));
-            let body = include_str!("../tests/fixtures/daemon-status-v4-ready.json");
+            let body = include_str!("../tests/fixtures/daemon-status-v5-ready.json");
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -293,103 +419,6 @@ mod tests {
         let response = serde_json::to_string(&response).unwrap();
         assert!(response.contains("\"status\":\"ok\""));
         fs::remove_dir_all(data_dir).unwrap();
-    }
-
-    #[test]
-    fn native_import_sends_the_path_only_to_the_authenticated_daemon() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let data_dir = temp_dir("import-data");
-        let root = temp_dir("private-import-root");
-        write_connection_files(&data_dir, addr, INSTANCE, TOKEN);
-        let expected_root = root.to_str().unwrap().to_string();
-
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let request = read_request_with_body(&mut stream);
-            assert!(request.starts_with("POST /imports HTTP/1.1"));
-            assert!(request.contains(&format!("Authorization: Bearer {TOKEN}")));
-            let body = request.split("\r\n\r\n").nth(1).unwrap();
-            let body: serde_json::Value = serde_json::from_str(body).unwrap();
-            assert_eq!(
-                body,
-                serde_json::json!({
-                    "roots": [expected_root],
-                    "profile": "explicit",
-                })
-            );
-            let body = r#"{"schema_version":"daemon.import.v1","status":"accepted","accepted_roots":1,"new_tasks":1,"task_ids":["imp_00000000000000000000000000000000"],"scan_profile":"explicit","scan_file_limit":null}"#;
-            write!(
-                stream,
-                "HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .unwrap();
-        });
-
-        let response = execute_import_from(&data_dir, &TestGeneration::ready(), &root).unwrap();
-        server.join().unwrap();
-        assert_eq!(response.http_status, 202);
-        let exposed = serde_json::to_string(&response).unwrap();
-        assert!(exposed.contains("accepted"));
-        assert!(!exposed.contains("task_ids"));
-        assert!(!exposed.contains("imp_00000000000000000000000000000000"));
-        assert!(!exposed.contains(root.to_str().unwrap()));
-        fs::remove_dir_all(data_dir).unwrap();
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn native_root_control_sends_path_only_to_daemon_and_projects_a_bounded_response() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let data_dir = temp_dir("root-control-data");
-        let root = temp_dir("root-control-private-root");
-        write_connection_files(&data_dir, addr, INSTANCE, TOKEN);
-        let expected_root = root.to_str().unwrap().to_owned();
-
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let request = read_request_with_body(&mut stream);
-            assert!(request.starts_with("POST /imports/control HTTP/1.1"));
-            assert!(request.contains(&format!("Authorization: Bearer {TOKEN}")));
-            let body: serde_json::Value =
-                serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
-            assert_eq!(
-                body,
-                serde_json::json!({
-                    "schema_version": "daemon.import_root_control_request.v1",
-                    "root_path": expected_root,
-                    "action": "pause",
-                })
-            );
-            let body = format!(
-                r#"{{"schema_version":"daemon.import_root_control.v1","status":"paused","changed":true,"task_cancel_requested":true,"catch_up_queued":false,"root_path":{expected_root:?},"private_debug":true}}"#
-            );
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .unwrap();
-        });
-
-        let response = execute_root_control_from(
-            &data_dir,
-            &TestGeneration::ready(),
-            &root,
-            RootControlAction::Pause,
-        )
-        .unwrap();
-        server.join().unwrap();
-        let exposed = serde_json::to_string(&response).unwrap();
-        assert_eq!(response.http_status, 200);
-        assert!(exposed.contains("\"status\":\"paused\""));
-        assert!(!exposed.contains(root.to_str().unwrap()));
-        assert!(!exposed.contains("root_path"));
-        assert!(!exposed.contains("private_debug"));
-        fs::remove_dir_all(data_dir).unwrap();
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -468,7 +497,7 @@ mod tests {
         fs::write(
             &manifest_path,
             serde_json::to_vec(&serde_json::json!({
-                "schema_version": "resume-ir.daemon-ipc.v4",
+                "schema_version": "resume-ir.daemon-ipc.v5",
                 "launch_id": LAUNCH,
                 "instance_id": instance_id,
                 "owner_mode": "desktop_supervised",
@@ -481,7 +510,18 @@ mod tests {
                 "search": format!("http://{addr}/search"),
                 "search_batch": format!("http://{addr}/search/batch"),
                 "details": format!("http://{addr}/details"),
+                "hydrate": format!("http://{addr}/details/hydrate"),
                 "delete": format!("http://{addr}/delete"),
+                "source_roots": format!("http://{addr}/source-roots"),
+                "source_root_register": format!("http://{addr}/source-roots/register"),
+                "source_root_legacy_migration": format!("http://{addr}/source-roots/migrate-legacy"),
+                "source_root_scan": format!("http://{addr}/source-roots/scan"),
+                "source_root_control": format!("http://{addr}/source-roots/control"),
+                "source_root_delete": format!("http://{addr}/source-roots/delete"),
+                "preview_create": format!("http://{addr}/source-preview/create"),
+                "preview_range": format!("http://{addr}/source-preview/read-range"),
+                "preview_close": format!("http://{addr}/source-preview/close"),
+                "source_reveal": format!("http://{addr}/source-reveal/resolve"),
             }))
             .unwrap(),
         )
@@ -500,7 +540,7 @@ mod tests {
     fn make_owner_only(_path: &Path) {}
 
     fn write_status_response(stream: &mut std::net::TcpStream) {
-        let body = include_str!("../tests/fixtures/daemon-status-v4-ready.json");
+        let body = include_str!("../tests/fixtures/daemon-status-v5-ready.json");
         write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",

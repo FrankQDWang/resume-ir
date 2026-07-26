@@ -14,7 +14,8 @@ use import_pipeline::{
 };
 use meta_store::{
     ImportRootKind, ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus,
-    OwnedMetaStore, ReadMetaStore, SearchProjectionServiceState, SearchRepairReason, UnixTimestamp,
+    OwnedMetaStore, ReadMetaStore, ScanTrigger, SearchProjectionServiceState, SearchRepairReason,
+    SourceRootScanCoordination, UnixTimestamp,
 };
 use process_containment::ContainedChild;
 use search_runtime::{HitLimit, QueryCoordinator};
@@ -1336,7 +1337,8 @@ fn foreground_import_watcher_requeues_completed_root_after_word_and_pdf_change_w
     )
     .unwrap();
     let canonical_watched_root = fs::canonicalize(&watched_root).unwrap();
-    seed_queued_import_task(
+    initialize_empty_ready_store(&data_dir, &runtime_capacity);
+    seed_queued_source_root_scan(
         &data_dir,
         "daemon-import-watcher-initial",
         &canonical_watched_root,
@@ -1345,7 +1347,7 @@ fn foreground_import_watcher_requeues_completed_root_after_word_and_pdf_change_w
     run_import_worker_once(&data_dir, &runtime_capacity);
     assert!(search_fulltext(&data_dir, "WatcherUpdatedToken").is_empty());
 
-    let mut child = support::import_capable_daemon_command(&runtime_capacity)
+    let mut child = support::fully_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -1356,7 +1358,7 @@ fn foreground_import_watcher_requeues_completed_root_after_word_and_pdf_change_w
             "--worker-interval-ms",
             "25",
             "--max-worker-ticks",
-            "120",
+            "240",
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1387,7 +1389,11 @@ fn foreground_import_watcher_requeues_completed_root_after_word_and_pdf_change_w
         "stdout:\n{}\nstderr:\n{}",
         output.stdout, output.stderr
     );
-    assert!(output.stderr.is_empty());
+    assert!(
+        output.stderr.is_empty(),
+        "unexpected daemon stderr:\n{}",
+        output.stderr
+    );
     assert!(
         output.stdout.contains("import watcher active roots: 1"),
         "stdout:\n{}\nstderr:\n{}",
@@ -1440,6 +1446,66 @@ fn seed_queued_import_task(
 ) -> ImportTaskId {
     let store = open_owned_store(data_dir);
     insert_queued_import_task(&store, label, canonical_root, queued_at_seconds)
+}
+
+fn seed_queued_source_root_scan(
+    data_dir: &Path,
+    label: &str,
+    canonical_root: &Path,
+    queued_at_seconds: i64,
+) -> ImportTaskId {
+    let store = open_owned_store(data_dir);
+    let now = UnixTimestamp::from_unix_seconds(queued_at_seconds);
+    let canonical = path_str(canonical_root);
+    let contract = support::activate_reviewed_processing_contract(&store, now);
+    let root = store
+        .register_source_root(canonical, canonical, "Synthetic watcher root", now)
+        .unwrap();
+    let task_id = ImportTaskId::from_non_secret_parts(&["s43", label]);
+    let task = ImportTask {
+        id: task_id.clone(),
+        root_path: canonical.to_string(),
+        status: ImportTaskStatus::Queued,
+        queued_at: now,
+        started_at: None,
+        finished_at: None,
+        updated_at: now,
+    };
+    let scope = ImportScanScope {
+        import_task_id: task_id.clone(),
+        root_kind: ImportRootKind::Explicit,
+        root_preset: None,
+        scan_profile: ImportScanProfile::Explicit,
+        requested_root_path: canonical.to_string(),
+        canonical_root_path: canonical.to_string(),
+        files_discovered: 0,
+        ignored_entries: 0,
+        scan_errors: 0,
+        searchable_documents: 0,
+        ocr_required_documents: 0,
+        ocr_jobs_queued: 0,
+        failed_documents: 0,
+        deleted_documents: 0,
+        scan_budget_kind: None,
+        scan_budget_limit: None,
+        scan_budget_observed: None,
+        scan_budget_exhausted: false,
+        updated_at: now,
+    };
+    assert!(matches!(
+        store
+            .coordinate_source_root_scan(
+                &root.id,
+                ScanTrigger::Manual,
+                &task,
+                &scope,
+                &contract,
+                now
+            )
+            .unwrap(),
+        SourceRootScanCoordination::Started { .. }
+    ));
+    task_id
 }
 
 fn initialize_empty_ready_store(

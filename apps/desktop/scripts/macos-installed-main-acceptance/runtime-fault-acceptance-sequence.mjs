@@ -11,6 +11,7 @@ const CAPABILITY_NAMES = Object.freeze([
   "semantic_search",
   "hybrid_search",
   "text_import",
+  "pdf_import",
   "ocr_import",
   "index_publication",
 ]);
@@ -19,12 +20,14 @@ const BEHAVIOR_RUNTIME_BY_CELL = Object.freeze({
   embedding_missing: "embedding",
   ocr_missing: "ocr",
   classifier_missing: "classifier",
+  pdfium_missing: "pdfium",
 });
 
 function expectedCapabilities(expectedReasons) {
   const embedding = Object.hasOwn(expectedReasons, "embedding");
   const ocr = Object.hasOwn(expectedReasons, "ocr");
   const classifier = Object.hasOwn(expectedReasons, "classifier");
+  const pdfium = Object.hasOwn(expectedReasons, "pdfium");
   const available = () => ({ state: "available", reason: null });
   const unavailable = (reason) => ({ state: "unavailable", reason });
   return {
@@ -41,18 +44,27 @@ function expectedCapabilities(expectedReasons) {
       : embedding
         ? unavailable("embedding_unavailable")
         : available(),
+    pdf_import: classifier
+      ? unavailable("classifier_unavailable")
+      : embedding
+        ? unavailable("embedding_unavailable")
+        : pdfium
+          ? unavailable("pdfium_unavailable")
+          : available(),
     ocr_import: classifier
       ? unavailable("classifier_unavailable")
       : embedding
         ? unavailable("embedding_unavailable")
+        : pdfium
+          ? unavailable("pdfium_unavailable")
         : ocr
           ? unavailable("ocr_unavailable")
           : available(),
     index_publication: classifier
       ? unavailable("classifier_unavailable")
       : embedding
-        ? unavailable("embedding_unavailable")
-        : available(),
+      ? unavailable("embedding_unavailable")
+      : available(),
   };
 }
 
@@ -70,6 +82,7 @@ function normalizedBehaviorEvidence(runtimeName, value) {
       "importRejectedBeforeClaim",
       "visibleEpochPreserved",
     ],
+    pdfium: ["ocrQueueStable", "pdfDeferred", "visibleEpochPreserved"],
   };
   const keys = contracts[runtimeName];
   if (!keys || !exactKeys(value, keys) || keys.some((key) => value[key] !== true)) {
@@ -186,7 +199,9 @@ async function prepareBehaviorInputs(runtime, launchVerified, workspace, definit
   } else if (behaviorRuntime === "classifier") {
     canary = await runtime.createSyntheticCanary(workspace);
   }
-  const ocrFixture = behaviorRuntime === "ocr"
+  const ocrFixture =
+    ["ocr", "pdfium"].includes(behaviorRuntime) ||
+    definition.cell === "pdfium_start_failed"
     ? await runtime.prepareOcrFaultFixture(workspace)
     : null;
   return { canary, embeddingSelection, ocrFixture };
@@ -221,6 +236,13 @@ async function validateBehavior(
       definition.cell,
     );
   }
+  if (behaviorRuntime === "pdfium") {
+    evidence.pdfium = await runtime.validatePdfiumFaultBehavior(
+      session,
+      ocrFixture,
+      definition.cell,
+    );
+  }
   return evidence;
 }
 
@@ -247,6 +269,9 @@ export async function executeRuntimeFaultAcceptance(runtime, launchVerified) {
     );
     const fault = await runtime.prepareFaultCell(workspace, definition.cell);
     const session = await launchVerified(workspace);
+    if (definition.cell === "pdfium_start_failed") {
+      await runtime.triggerPdfiumStartFailure(session, behaviorInputs.ocrFixture);
+    }
     const observed = await runtime.validateRuntimeFaultCase(
       session,
       definition.cell,

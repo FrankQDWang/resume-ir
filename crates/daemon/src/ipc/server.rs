@@ -9,6 +9,7 @@ use std::thread::{self, JoinHandle};
 use meta_store::{ImportProcessingContract, OwnedMetaStore, ReadMetaStore, StoreStatusSummary};
 
 use super::search_service::{ArtifactFaultReporter, SearchService};
+use super::source_file_service::SourceFileService;
 use super::status_updater::StatusUpdater;
 use super::{
     connection, ControlPlanePublisher, ControlPlaneState, DaemonFatalError, DaemonGenerationOwner,
@@ -206,11 +207,27 @@ impl BoundServer {
                 );
             }
         };
+        let source_file_service = match start_or_block_core_service(
+            &mut control_publisher,
+            context.control_state.snapshot().runtimes,
+            || SourceFileService::start(context.data_dir),
+        )? {
+            Some(service) => service,
+            None => {
+                query_service.abort_for_process_exit();
+                return self.serve_control_only(
+                    context.control_state,
+                    context.shutdown,
+                    context.max_requests,
+                );
+            }
+        };
         if announce_ready(&summary).is_err()
             || control_publisher.publish_prepared_serving().is_err()
         {
             self.withdraw();
             query_service.abort_for_process_exit();
+            source_file_service.abort_for_process_exit();
             return Err(DaemonFatalError::ControlPlaneFailure);
         }
         let status_updater = StatusUpdater::start(
@@ -220,24 +237,49 @@ impl BoundServer {
             context.control_state.snapshot().runtimes,
             context.runtime_health_receiver.take(),
         );
-        let terminal = self.serve_listener(&context, &query_service, &status_updater);
+        let terminal = self.serve_listener(
+            &context,
+            &query_service,
+            &source_file_service,
+            &status_updater,
+        );
         self.withdraw_then_finish(
             terminal,
             ServerCleanup {
                 updater: status_updater,
-                service: query_service,
+                service: (query_service, source_file_service),
                 shutdown_updater: StatusUpdater::shutdown,
-                drain: |query_service: SearchService| {
-                    query_service
+                drain: |(query_service, source_file_service): (
+                    SearchService,
+                    SourceFileService,
+                )| {
+                    let query_result = query_service
                         .drain_admitted()
-                        .map_err(|_| runtime_failure(RuntimeEvent::QueryWorkerStopped))
+                        .map_err(|_| runtime_failure(RuntimeEvent::QueryWorkerStopped));
+                    let source_result = source_file_service
+                        .drain_admitted()
+                        .map_err(|_| runtime_failure(RuntimeEvent::SourceFileWorkerStopped));
+                    query_result.and(source_result)
                 },
-                cancel_and_join: |query_service: SearchService| {
-                    query_service
+                cancel_and_join: |(query_service, source_file_service): (
+                    SearchService,
+                    SourceFileService,
+                )| {
+                    let source_result = source_file_service
                         .shutdown()
-                        .map_err(|_| runtime_failure(RuntimeEvent::QueryWorkerStopped))
+                        .map_err(|_| runtime_failure(RuntimeEvent::SourceFileWorkerStopped));
+                    let query_result = query_service
+                        .shutdown()
+                        .map_err(|_| runtime_failure(RuntimeEvent::QueryWorkerStopped));
+                    source_result.and(query_result)
                 },
-                abort: SearchService::abort_for_process_exit,
+                abort: |(query_service, source_file_service): (
+                    SearchService,
+                    SourceFileService,
+                )| {
+                    query_service.abort_for_process_exit();
+                    source_file_service.abort_for_process_exit();
+                },
             },
         )
     }
@@ -296,6 +338,7 @@ impl BoundServer {
         &mut self,
         context: &Context<'_>,
         query_service: &SearchService,
+        source_file_service: &SourceFileService,
         status_updater: &StatusUpdater,
     ) -> ServerStop {
         let mut listener = Some(self.listener.take().expect("bound listener is live"));
@@ -313,7 +356,7 @@ impl BoundServer {
         let request_limit = context.max_requests.unwrap_or(usize::MAX);
         let mut handled_requests = 0;
         while handled_requests < request_limit {
-            match observe_runtime(context, query_service, status_updater) {
+            match observe_runtime(context, query_service, source_file_service, status_updater) {
                 RuntimeEvent::Running => {}
                 RuntimeEvent::ShutdownRequested => {
                     drop(listener.take());
@@ -347,12 +390,14 @@ impl BoundServer {
                             connection::handle(
                                 stream,
                                 connection::Context {
+                                    data_dir: context.data_dir,
                                     store: context.store,
                                     owned_store: context.owned_store,
                                     query_service,
                                     processing_contract: context.processing_contract,
                                     auth_token: &auth_token,
                                     control_state: &context.control_state,
+                                    source_file_service,
                                 },
                             )
                         },
@@ -497,6 +542,7 @@ fn bind(
 fn observe_runtime(
     context: &Context<'_>,
     query_service: &SearchService,
+    source_file_service: &SourceFileService,
     status_updater: &StatusUpdater,
 ) -> RuntimeEvent {
     if context
@@ -507,6 +553,9 @@ fn observe_runtime(
     }
     if query_service.check_health().is_err() {
         return RuntimeEvent::QueryWorkerStopped;
+    }
+    if source_file_service.check_health().is_err() {
+        return RuntimeEvent::SourceFileWorkerStopped;
     }
     if status_updater.check_health().is_err() {
         return RuntimeEvent::StatusUpdaterStopped;
@@ -534,6 +583,7 @@ fn fatal_for_event(event: RuntimeEvent) -> Result<(), DaemonFatalError> {
         RuntimeEvent::Running | RuntimeEvent::ShutdownRequested => Ok(()),
         RuntimeEvent::ImportWorkerStopped
         | RuntimeEvent::QueryWorkerStopped
+        | RuntimeEvent::SourceFileWorkerStopped
         | RuntimeEvent::StatusUpdaterStopped => Err(DaemonFatalError::ControlPlaneFailure),
         RuntimeEvent::ImportWorkerFailed(error) => Err(error),
     }
@@ -599,6 +649,10 @@ mod tests {
             Err(DaemonFatalError::ControlPlaneFailure)
         );
         assert_eq!(
+            fatal_for_event(RuntimeEvent::SourceFileWorkerStopped),
+            Err(DaemonFatalError::ControlPlaneFailure)
+        );
+        assert_eq!(
             fatal_for_event(RuntimeEvent::StatusUpdaterStopped),
             Err(DaemonFatalError::ControlPlaneFailure)
         );
@@ -621,6 +675,7 @@ mod tests {
             embedding: OptionalRuntimeHealth::available(),
             ocr: OptionalRuntimeHealth::unavailable(OptionalRuntimeReason::Invalid),
             classifier: OptionalRuntimeHealth::available(),
+            pdfium: OptionalRuntimeHealth::available(),
         };
         publisher.set_runtimes(runtimes).unwrap();
 
@@ -883,6 +938,7 @@ mod tests {
                     embedding: unavailable,
                     ocr: unavailable,
                     classifier: unavailable,
+                    pdfium: unavailable,
                 },
             )
             .unwrap();
@@ -895,7 +951,7 @@ mod tests {
         stream.read_to_string(&mut response).unwrap();
 
         assert!(!response.starts_with("HTTP/1.1 404"), "{response}");
-        assert!(response.contains("\"schema_version\":\"resume-ir.error.v2\""));
+        assert!(response.contains("\"schema_version\":\"resume-ir.error.v3\""));
         initializing.stop().unwrap();
         drop(server);
     }

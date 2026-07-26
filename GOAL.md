@@ -23,10 +23,10 @@
 2. 保留指定目录扫描；全盘扫描视为用户把根目录或磁盘作为扫描根的同一能力。
 3. OCR/PDF/model runtime 采用 bundled-first 方向：默认产品体验应尽量随
    安装包提供可审查 runtime，并保留 external override。Tesseract/tessdata
-   可作为 Apache-2.0 OCR 方案；PDF renderer 优先评估可宽松分发的
-   bundled 方案，Poppler/pdftoppm 可在 GPL-compatible license、
-   source-offer、notice、checksum、SBOM 和 installer composition 审查完成后
-   进入打包方案。
+   作为 Apache-2.0 OCR 方案；PDF 文本解释和 OCR 页面渲染统一使用
+   精确锁定、静态链接的 PDFium。生产桌面包不再包含或探测
+   Poppler/pdftoppm，macOS 与 Windows 使用同一 PDFium 能力合同；每个
+   可分发 runtime 同时保留经审查的 source-offer 身份证据。
 4. 完成 runtime manifest、checksum/license 记录、依赖检测、失败提示和
    runbook；不要把“未选择 OCR runtime”作为本阶段未知 blocker。
 5. 完成 macOS/Windows install、upgrade、uninstall、rollback 的脚本、

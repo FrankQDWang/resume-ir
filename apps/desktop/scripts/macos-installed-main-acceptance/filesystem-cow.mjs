@@ -32,7 +32,8 @@ import {
   DATA_OWNER_LOCK,
   DIGEST,
   ENTRY_SCRIPT_FILE,
-  LEGACY_ACCEPTANCE_SCHEMA,
+  AUTHORIZED_SOURCE_SCHEMA,
+  INSTALLED_TARGET_SCHEMA,
   LOCK_READY,
   MAX_OWNER_FILE_BYTES,
   RUN_ID,
@@ -61,7 +62,7 @@ const CLONEFILE_HELPER = fileURLToPath(
 export const FLOCK_HOLDER_FILE = fileURLToPath(
   new URL("./flock-holder.rb", import.meta.url),
 );
-const APFS_F_TYPE = 0x1an;
+const APFS_F_TYPE = 0x19n;
 const WORKSPACE_STATES = new Set([
   "clone_prepared",
   "clone_active",
@@ -108,9 +109,7 @@ export function validateWorkspaceMarker(value) {
       "application",
     ]) ||
     value.schema_version !== WORKSPACE_MARKER_SCHEMA ||
-    ![ACCEPTANCE_SCHEMA, LEGACY_ACCEPTANCE_SCHEMA].includes(
-      value.acceptance_schema,
-    ) ||
+    value.acceptance_schema !== ACCEPTANCE_SCHEMA ||
     !RUN_ID.test(value.run_id ?? "") ||
     !WORKSPACE_STATES.has(value.state) ||
     (helper !== null &&
@@ -381,14 +380,20 @@ export async function readActiveStoreManifest(dataDir) {
     read: true,
   });
   const match = source.match(
-    /^resume-ir\.metadata-active\.v1\nfile=(metadata-v29-[a-f0-9]{16}\.sqlite3)\nschema=(29)\ndigest=([a-f0-9]{64})\n$/,
+    /^resume-ir\.metadata-active\.v(1|2)\nfile=(metadata-v(29|30|31|32|33)-[a-f0-9]{16}\.sqlite3)\nschema=(29|30|31|32|33)\ndigest=([a-f0-9]{64})\n$/,
   );
   if (!match) {
     fail("active_store_manifest_invalid");
   }
-  const [, fileName, schemaValue, digest] = match;
+  const [, manifestVersion, fileName, fileSchemaValue, schemaValue, digest] =
+    match;
   const schema = Number(schemaValue);
-  if (fileName !== `metadata-v${schema}-${digest.slice(0, 16)}.sqlite3`) {
+  if (
+    fileSchemaValue !== schemaValue ||
+    manifestVersion !== (schema === AUTHORIZED_SOURCE_SCHEMA ? "1" : "2") ||
+    ![AUTHORIZED_SOURCE_SCHEMA, 30, 31, 32, INSTALLED_TARGET_SCHEMA].includes(schema) ||
+    fileName !== `metadata-v${schema}-${digest.slice(0, 16)}.sqlite3`
+  ) {
     fail("active_store_manifest_invalid");
   }
   return Object.freeze({ fileName, schema, digest });
@@ -671,7 +676,9 @@ export async function createCowCloneWorkspace({
   let root;
   try {
     const sourceManifest = await readManifest(source.resolved);
-    if (sourceManifest.schema !== 29) fail("authorized_source_schema_invalid");
+    if (sourceManifest.schema !== AUTHORIZED_SOURCE_SCHEMA) {
+      fail("authorized_source_schema_invalid");
+    }
     const sourceWitness = await readSourceModeWitness(source.resolved);
     root = await mkdtemp(path.join(temporary.resolved, WORKSPACE_PREFIX));
     await chmod(root, 0o700);

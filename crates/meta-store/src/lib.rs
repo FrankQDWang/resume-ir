@@ -31,6 +31,7 @@ mod active_store_manifest;
 mod artifact_repair_attempt;
 mod artifact_repair_context;
 mod classification;
+mod current_store;
 mod data_directory_owner;
 mod forward_migration;
 mod immutable_ingest_stage;
@@ -50,18 +51,34 @@ mod migration_v27;
 #[cfg(any(test, feature = "migration-test-support"))]
 mod migration_v28;
 mod migration_v29;
-mod migration_v30;
 mod ocr_publication;
+mod pdf_reprocess;
 mod privacy_maintenance;
 mod schema_v27;
 mod schema_v28;
 mod schema_v29;
 mod schema_v29_publication_retirement;
 mod schema_v30;
+mod schema_v31;
+mod schema_v32;
+mod schema_v33;
 mod search_publication;
 mod search_publication_session;
 mod search_snapshot;
+mod source_root_deletion;
+mod source_root_privacy;
+mod source_roots;
+#[cfg(test)]
+mod source_roots_tests;
 mod store_access;
+
+pub use source_root_deletion::{SourceRootDeletion, SourceRootDeletionPhase};
+pub use source_roots::{
+    BeginScanOutcome, OccurrenceChange, ScanCompleteness, ScanCounts, ScanPhase, ScanSnapshot,
+    ScanTrigger, SourceRoot, SourceRootId, SourceRootRegistration,
+    SourceRootRegistrationAvailability, SourceRootScanCoordination, SourceRootState,
+    SourceScanProgress, SourceWatcherState,
+};
 
 use store_access::{
     EphemeralStoreAccess, MetadataStore, MetadataStoreAccess, MetadataStoreWriteAccess,
@@ -95,6 +112,9 @@ pub type OwnedMetaStore = MetadataStore<OwnedStoreAccess>;
 /// Explicit in-memory writer for tests and synthetic computation only.
 pub type EphemeralMetaStore = MetadataStore<EphemeralStoreAccess>;
 
+/// Exact metadata schema accepted and produced by the current binary.
+pub const CURRENT_SCHEMA_VERSION: u32 = schema_v33::VERSION;
+
 pub use artifact_repair_attempt::{
     ArtifactRepairAttempt, ArtifactRepairAttemptAcquire, ArtifactRepairAttemptCancellationOutcome,
     ArtifactRepairAttemptErrorKind, ArtifactRepairAttemptFailure,
@@ -120,6 +140,7 @@ pub use import_processing_contract::{
     ImportProcessingContract, ImportProcessingContractId, ImportSourceDispositionKind,
     ImportTaskCompletion, ImportTaskDispositionBatchOutcome, ImportTaskSourceDisposition,
     MigrationRebuildContractActivation, IMPORT_SOURCE_DISPOSITION_BATCH_LIMIT,
+    NON_PDF_PARSE_VERSION,
 };
 pub use import_root_control::{ImportRootControlStatus, ImportRootControlUpdate};
 pub use import_root_head::{
@@ -159,7 +180,8 @@ pub use search_snapshot::{
     SearchMetadataTransactionError, SearchMetadataUnavailable, SearchProjectionFilter,
     SearchProjectionFilterError, SearchProjectionPredicate, SearchSelectionDetailBundle,
     SearchSelectionDetailResolution, SearchSelectionDetails, SearchSelectionDetailsResolution,
-    SearchSelectionLimit, SearchSelectionVersion, SearchTextBytePage, SearchTextBytePageRequest,
+    SearchSelectionLimit, SearchSelectionVersion, SearchSourceFileReference,
+    SearchSourceFileResolution, SearchTextBytePage, SearchTextBytePageRequest,
     SearchTextBytePageResolution, SearchTextPage, SearchTextPageCursor, SearchTextPageCursorError,
     SearchTextPageRequest, SearchTextPageRequestError, SearchTextPageResolution,
     MAX_BOUNDED_FILTER_SELECTION, MAX_EXACT_HIT_HYDRATION, MAX_SEARCH_FILTER_PREDICATES,
@@ -254,11 +276,11 @@ pub enum PendingImportTaskByRootDiagnostic {
 }
 
 pub fn metadata_store_path(data_dir: &Path) -> Result<PathBuf> {
-    migration_v30::active_store_path(data_dir)
+    current_store::active_store_path(data_dir)
 }
 
 pub fn metadata_forward_migration_required(data_dir: &Path) -> Result<bool> {
-    migration_v30::migration_required(data_dir)
+    current_store::migration_required(data_dir)
 }
 
 pub fn metadata_encryption_key_path(data_dir: &Path) -> PathBuf {
@@ -784,7 +806,7 @@ impl ReadMetaStore {
     /// any artifact. Legacy stores are unsupported; absent stores require an
     /// explicit [`DataDirectoryOwnerLease`] for initialization or migration.
     pub fn open_data_dir(data_dir: &Path) -> Result<Self> {
-        let published = migration_v30::open_current_store(data_dir)?;
+        let published = current_store::open_current_store(data_dir)?;
         Self::open_published_current(published)
     }
 
@@ -794,7 +816,7 @@ impl ReadMetaStore {
     /// partially published authority returns `UnsupportedStoreSchema` instead
     /// of being treated as absent.
     pub fn open_data_dir_if_published(data_dir: &Path) -> Result<Option<Self>> {
-        migration_v30::open_optional_current_store(data_dir)?
+        current_store::open_optional_current_store(data_dir)?
             .map(Self::open_published_current)
             .transpose()
     }
@@ -816,7 +838,7 @@ impl ReadMetaStore {
         connection
             .execute_batch("PRAGMA query_only = ON; PRAGMA foreign_keys = ON;")
             .map_err(MetaStoreError::storage)?;
-        migration_v30::validate_current_connection(&connection, &store_id_digest)?;
+        current_store::validate_current_connection(&connection, &store_id_digest)?;
         let query_only = connection
             .query_row("PRAGMA query_only", [], |row| row.get::<_, i64>(0))
             .map_err(MetaStoreError::storage)?;
@@ -838,7 +860,7 @@ impl OwnedMetaStore {
     /// authority-free directory.
     pub(crate) fn open_data_dir_for_owner(owner: &DataDirectoryOwnerLease) -> Result<Self> {
         let owner_guard = owner.shared_guard();
-        let (db_path, key) = migration_v30::prepare_active_store(&owner_guard)?;
+        let (db_path, key) = current_store::prepare_active_store(&owner_guard)?;
         Self::open_owned_encrypted(db_path, &key, owner_guard)
     }
 
@@ -846,7 +868,7 @@ impl OwnedMetaStore {
     /// guard. The kernel lock remains held until every sibling is dropped.
     pub fn open_sibling(&self) -> Result<Self> {
         let owner_guard = Arc::clone(self.access.guard());
-        let (db_path, key) = migration_v30::prepare_active_store(&owner_guard)?;
+        let (db_path, key) = current_store::prepare_active_store(&owner_guard)?;
         Self::open_owned_encrypted(db_path, &key, owner_guard)
     }
 
@@ -862,6 +884,10 @@ impl OwnedMetaStore {
             .map_err(MetaStoreError::io_storage)?;
         restrict_private_file_permissions(&key_path)?;
         Ok(MetadataEncryptionKeyRotation { _private: () })
+    }
+
+    pub fn destroy_retained_migration_predecessor(&self) -> Result<bool> {
+        current_store::destroy_retained_predecessor(self.access.guard().canonical_data_dir())
     }
 
     fn open_owned_encrypted(
@@ -950,7 +976,7 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
     }
 
     fn initialize_current_schema(&self) -> Result<MigrationReport> {
-        self.initialize_empty_schema(schema_v30::VERSION)
+        self.initialize_empty_schema(schema_v33::VERSION)
     }
 
     fn initialize_empty_schema(&self, target_version: u32) -> Result<MigrationReport> {
@@ -972,7 +998,7 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
     /// Test-only entrypoint for constructing historical schema fixtures.
     #[cfg(any(test, feature = "migration-test-support"))]
     pub fn run_migrations(&self) -> Result<MigrationReport> {
-        self.apply_schema_history_to(schema_v30::VERSION)
+        self.apply_schema_history_to(schema_v33::VERSION)
     }
 
     fn apply_schema_history_to(&self, target_version: u32) -> Result<MigrationReport> {
@@ -1024,11 +1050,12 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
             apply_v29_target_schema(&mut connection)?;
             applied_versions.push(schema_v29::VERSION);
         }
-        if target_version >= schema_v30::VERSION
-            && !migration_applied(&connection, schema_v30::VERSION)?
-        {
-            forward_migration::apply_current_schema_from_v29(&mut connection)?;
-            applied_versions.push(schema_v30::VERSION);
+        if target_version >= schema_v30::VERSION {
+            let current = schema_version_in_connection(&connection)?;
+            if current < target_version {
+                forward_migration::apply_chain(&mut connection, current, target_version)?;
+                applied_versions.extend((current + 1)..=target_version);
+            }
         }
 
         privacy_maintenance::complete_privacy_maintenance_after_migration(
@@ -1848,7 +1875,25 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                     confidence, engine_profile, duration_ms, status, error_kind, updated_at_seconds,
                     word_boxes_json
                 )
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM source_revision AS revision
+                    JOIN document ON document.id = revision.document_id
+                    JOIN source_occurrence AS occurrence
+                      ON occurrence.source_revision_id = revision.id
+                     AND occurrence.document_id = revision.document_id
+                    WHERE revision.content_hash = ?1
+                      AND document.is_deleted = 0
+                      AND document.status <> 'deleted'
+                      AND occurrence.state = 'present'
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM source_root_deletion AS deletion
+                        WHERE deletion.root_id = occurrence.root_id
+                          AND deletion.phase NOT IN ('complete', 'failed')
+                      )
+                )
                 ON CONFLICT(file_content_hash, page_no, render_dpi, ocr_lang, ocr_profile)
                 DO UPDATE SET
                     text = excluded.text,
@@ -2691,6 +2736,21 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         })
     }
 
+    pub fn discard_ocr_claim_for_source_change(
+        &self,
+        claimed: &ClaimedOcrJob,
+        now: UnixTimestamp,
+    ) -> Result<bool>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
+        let mut connection = self.connection.borrow_mut();
+        let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
+        let discarded = discard_ocr_claim_in_connection(&transaction, claimed, now)?.is_some();
+        transaction.commit().map_err(MetaStoreError::storage)?;
+        Ok(discarded)
+    }
+
     pub fn claim_next_ocr_job(&self, now: UnixTimestamp) -> Result<Option<ClaimedOcrJob>>
     where
         Access: MetadataStoreWriteAccess,
@@ -2853,6 +2913,14 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                             )
                             AND (?4 IS NULL OR kind = ?4)
                             AND (?5 = 0 OR resume_version_id IS NOT NULL)
+                            AND NOT EXISTS (
+                                SELECT 1
+                                FROM source_occurrence AS occurrence
+                                JOIN source_root_deletion AS deletion
+                                  ON deletion.root_id = occurrence.root_id
+                                WHERE occurrence.document_id = ingest_job.document_id
+                                  AND deletion.phase NOT IN ('complete', 'failed')
+                            )
                             AND (kind <> ?6 OR EXISTS (
                                 SELECT 1 FROM ocr_job_spec AS spec
                                 JOIN source_revision_triage AS triage
@@ -2913,7 +2981,15 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                             OR (status IN (?5, ?6) AND attempt_count < max_attempts)
                         )
                         AND (?7 IS NULL OR kind = ?7)
-                        AND (?8 = 0 OR resume_version_id IS NOT NULL)",
+                        AND (?8 = 0 OR resume_version_id IS NOT NULL)
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM source_occurrence AS occurrence
+                            JOIN source_root_deletion AS deletion
+                              ON deletion.root_id = occurrence.root_id
+                            WHERE occurrence.document_id = ingest_job.document_id
+                              AND deletion.phase NOT IN ('complete', 'failed')
+                        )",
                     params![
                         ingest_job_status_to_storage(IngestJobStatus::Running),
                         now_seconds,
@@ -3281,6 +3357,20 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                     WHERE root_control.canonical_root_path = scope.canonical_root_path
                         AND root_control.paused = 1
                 )
+                AND EXISTS (
+                    SELECT 1
+                    FROM source_root
+                    WHERE source_root.canonical_path = scope.canonical_root_path
+                      AND source_root.state = 'active'
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM source_root
+                    JOIN source_root_deletion AS deletion
+                      ON deletion.root_id = source_root.id
+                    WHERE source_root.canonical_path = scope.canonical_root_path
+                      AND deletion.phase NOT IN ('complete', 'failed')
+                )
             ORDER BY task.finished_at_seconds, task.rowid";
         let mut statement = connection.prepare(sql).map_err(MetaStoreError::storage)?;
         let mut rows = statement
@@ -3335,6 +3425,14 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                     FROM authorized_import_root AS root_control
                     WHERE root_control.canonical_root_path = import_task.root_path
                         AND root_control.paused = 1
+                )
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM source_root
+                    JOIN source_root_deletion AS deletion
+                      ON deletion.root_id = source_root.id
+                    WHERE source_root.canonical_path = import_task.root_path
+                      AND deletion.phase NOT IN ('complete', 'failed')
                 )
                 {excluded_clause}
             ORDER BY CASE WHEN status = ? THEN 0 ELSE 1 END, queued_at_seconds, rowid
@@ -3413,6 +3511,14 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                             FROM authorized_import_root AS root_control
                             WHERE root_control.canonical_root_path = import_task.root_path
                                 AND root_control.paused = 1
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM source_root
+                            JOIN source_root_deletion AS deletion
+                              ON deletion.root_id = source_root.id
+                            WHERE source_root.canonical_path = import_task.root_path
+                              AND deletion.phase NOT IN ('complete', 'failed')
                         )
                         AND NOT EXISTS (
                             SELECT 1 FROM import_task_completion AS completion
@@ -6374,6 +6480,11 @@ fn reset_unsealed_import_attempt(
             params![task_id.as_str(), updated_at_seconds],
         )
         .map_err(MetaStoreError::storage)?;
+    source_roots::restart_failed_scan_attempt_in_connection(
+        connection,
+        task_id,
+        UnixTimestamp::from_unix_seconds(updated_at_seconds),
+    )?;
     Ok(())
 }
 
@@ -6986,7 +7097,15 @@ fn ocr_claim_is_current_in_connection(
                AND job.status = ?4 AND job.attempt_count = ?5 AND job.max_attempts = ?6
                AND document.is_deleted = 0 AND document.status = ?7
                AND document.content_hash = ?8 AND triage.status = ?9
-               AND spec.source_revision_id = ?10 AND spec.triage_epoch = ?11)",
+               AND spec.source_revision_id = ?10 AND spec.triage_epoch = ?11
+               AND NOT EXISTS (
+                    SELECT 1
+                    FROM source_occurrence AS occurrence
+                    JOIN source_root_deletion AS deletion
+                      ON deletion.root_id = occurrence.root_id
+                    WHERE occurrence.source_revision_id = spec.source_revision_id
+                      AND deletion.phase NOT IN ('complete', 'failed')
+               ))",
             params![
                 job.id.as_str(),
                 job.document_id.as_str(),
@@ -7011,6 +7130,15 @@ fn discard_superseded_ocr_claim_in_connection(
     claimed: &ClaimedOcrJob,
     discarded_at: UnixTimestamp,
 ) -> Result<()> {
+    discard_ocr_claim_in_connection(connection, claimed, discarded_at)?;
+    Ok(())
+}
+
+fn discard_ocr_claim_in_connection(
+    connection: &Connection,
+    claimed: &ClaimedOcrJob,
+    discarded_at: UnixTimestamp,
+) -> Result<Option<OcrJobDiscardReason>> {
     let job = &claimed.job;
     let changed = connection
         .execute(
@@ -7039,22 +7167,21 @@ fn discard_superseded_ocr_claim_in_connection(
             ],
         )
         .map_err(MetaStoreError::storage)?;
-    if changed == 1 {
+    let reason = (changed == 1).then_some(OcrJobDiscardReason::SourceRevisionNoLongerCurrent);
+    if let Some(reason) = reason {
         connection
             .execute(
                 "INSERT INTO ocr_job_discard (ingest_job_id, reason, discarded_at_seconds)
                  VALUES (?1, ?2, ?3)",
                 params![
                     job.id.as_str(),
-                    ocr_job_discard_reason_to_storage(
-                        OcrJobDiscardReason::SourceRevisionNoLongerCurrent
-                    ),
+                    ocr_job_discard_reason_to_storage(reason),
                     discarded_at.as_unix_seconds(),
                 ],
             )
             .map_err(MetaStoreError::storage)?;
     }
-    Ok(())
+    Ok(reason)
 }
 
 fn discard_stale_ocr_jobs_in_connection(

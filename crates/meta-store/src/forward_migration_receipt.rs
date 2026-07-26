@@ -11,13 +11,14 @@ use crate::{
     active_store_manifest::{
         sync_parent_directory, validate_owner_regular_metadata, ActiveStoreManifest,
     },
-    schema_v29, schema_v30, MetaStoreError, Result,
+    schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, MetaStoreError, Result,
 };
 
 pub(super) const FILE_NAME: &str = "metadata-forward-migration-receipt.v1";
 const SCHEMA: &str = "resume-ir.metadata-forward-migration-receipt.v1";
 const MAX_BYTES: u64 = 2 * 1024;
-const STAGING_PREFIX: &str = ".metadata-v30-stage-";
+const STAGING_PREFIX: &str = ".metadata-forward-stage-";
+const LEGACY_V30_STAGING_PREFIX: &str = ".metadata-v30-stage-";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ReceiptPhase {
@@ -51,6 +52,7 @@ pub(super) fn path(data_dir: &Path) -> PathBuf {
 
 pub(super) fn persist(data_dir: &Path, receipt: &MigrationReceipt) -> Result<()> {
     validate(receipt)?;
+    crate::active_store_manifest::owner_regular_file_exists(&path(data_dir))?;
     let body = format!(
         "{SCHEMA}\nphase={}\nid={}\nsource_file={}\nsource_schema={}\nsource_digest={}\nstaging_file={}\ntarget_file={}\ntarget_schema={}\ntarget_digest={}\n",
         receipt.phase.label(),
@@ -141,14 +143,29 @@ fn validate(receipt: &MigrationReceipt) -> Result<()> {
         || !receipt
             .migration_id
             .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-        || receipt.source.schema_version != schema_v29::VERSION
-        || receipt.target.schema_version != schema_v30::VERSION
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    let staging_suffix = format!("{}.sqlite3", &receipt.migration_id[..16]);
+    let current_staging = format!("{STAGING_PREFIX}{staging_suffix}");
+    let legacy_v30_staging = format!("{LEGACY_V30_STAGING_PREFIX}{staging_suffix}");
+    let expected_target = format!(
+        "metadata-v{}-{}.sqlite3",
+        receipt.target.schema_version,
+        &receipt.migration_id[..16],
+    );
+    let legacy_v30_pair = receipt.source.schema_version == schema_v29::VERSION
+        && receipt.target.schema_version == schema_v30::VERSION
+        && receipt.staging_file == legacy_v30_staging;
+    let current_pair = matches!(
+        receipt.source.schema_version,
+        schema_v29::VERSION | schema_v30::VERSION | schema_v31::VERSION | schema_v32::VERSION
+    ) && receipt.target.schema_version == schema_v33::VERSION
+        && receipt.staging_file == current_staging;
+    if (!legacy_v30_pair && !current_pair)
         || receipt.source.store_id_digest != receipt.target.store_id_digest
-        || receipt.staging_file
-            != format!("{STAGING_PREFIX}{}.sqlite3", &receipt.migration_id[..16])
-        || receipt.target.file_name
-            != format!("metadata-v30-{}.sqlite3", &receipt.migration_id[..16])
+        || receipt.target.file_name != expected_target
     {
         return Err(MetaStoreError::storage_invariant());
     }

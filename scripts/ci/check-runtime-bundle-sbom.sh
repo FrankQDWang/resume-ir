@@ -42,7 +42,7 @@ out_dir="$tmpdir/out"
 mkdir -p "$private_component_dir" "$out_dir"
 printf 'synthetic tesseract bytes\n' > "$private_component_dir/tesseract"
 printf 'synthetic tessdata bytes\n' > "$private_component_dir/eng.traineddata"
-printf 'synthetic pdf renderer bytes\n' > "$private_component_dir/pdftoppm"
+printf 'synthetic PDFium renderer bytes\n' > "$private_component_dir/resume-pdf-render-runtime"
 printf 'synthetic reviewed embedding model bytes\n' > "$private_component_dir/model.onnx"
 printf 'source offer text\n' > "$private_component_dir/source-offer.txt"
 printf 'notice text\n' > "$private_component_dir/NOTICE.txt"
@@ -50,12 +50,12 @@ printf 'notice text\n' > "$private_component_dir/NOTICE.txt"
 "$runtime_bundle_script" \
   --version v0.0.0 \
   --runtime-pack-id reviewed-runtime-pack \
-  --distribution-license GPL-3.0-or-later \
+  --distribution-license LicenseRef-resume-ir-mixed-runtime-bundle \
   --source-offer "$private_component_dir/source-offer.txt" \
   --notice "$private_component_dir/NOTICE.txt" \
   --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$private_component_dir/tesseract" \
   --component "eng-tessdata|ocr-language-pack|Apache-2.0|https://github.com/tesseract-ocr/tessdata|$private_component_dir/eng.traineddata" \
-  --component "poppler-pdftoppm|pdf-renderer|GPL-3.0-or-later|https://poppler.freedesktop.org/|$private_component_dir/pdftoppm" \
+  --component "resume-pdf-render-runtime|pdf-renderer|LicenseRef-PDFium-Root-LICENSE|https://pdfium.googlesource.com/pdfium.git|$private_component_dir/resume-pdf-render-runtime" \
   --component "all-minilm-l6-v2|embedding-model|Apache-2.0|https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2|$private_component_dir/model.onnx" \
   --reviewed \
   --out-dir "$out_dir/bundle" \
@@ -73,7 +73,7 @@ require_text "$sbom" '"spdxVersion": "SPDX-2.3"'
 require_text "$sbom" '"name": "resume-ir-v0.0.0"'
 require_text "$sbom" '"name": "tesseract"'
 require_text "$sbom" '"name": "eng-tessdata"'
-require_text "$sbom" '"name": "poppler-pdftoppm"'
+require_text "$sbom" '"name": "resume-pdf-render-runtime"'
 require_text "$sbom" '"name": "all-minilm-l6-v2"'
 require_text "$sbom" '"licenseDeclared": "Apache-2.0"'
 require_text "$sbom" '"licenseDeclared": "GPL-3.0-or-later"'
@@ -106,7 +106,12 @@ runtime_packages = {
         for annotation in package.get("annotations", [])
     )
 }
-required = {"tesseract", "eng-tessdata", "poppler-pdftoppm", "all-minilm-l6-v2"}
+required = {
+    "tesseract",
+    "eng-tessdata",
+    "resume-pdf-render-runtime",
+    "all-minilm-l6-v2",
+}
 if set(runtime_packages) != required:
     raise SystemExit("runtime package set is incomplete")
 for name, package in runtime_packages.items():

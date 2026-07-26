@@ -6,8 +6,8 @@ use std::fs::OpenOptions;
 use tempfile::Builder;
 
 use crate::{
-    encode_hex, restrict_private_file_permissions, schema_v29, schema_v30, MetaStoreError, Result,
-    METADATA_STORE_FILE,
+    encode_hex, restrict_private_file_permissions, schema_v29, schema_v30, schema_v31, schema_v32,
+    schema_v33, MetaStoreError, Result, METADATA_STORE_FILE,
 };
 #[cfg(any(test, feature = "migration-test-support"))]
 use crate::{schema_v27, schema_v28};
@@ -117,9 +117,15 @@ fn read_manifest_text(path: &Path) -> Result<String> {
 }
 
 pub(crate) fn validate_store_file_name(file_name: &str) -> Result<()> {
-    let versioned = [schema_v29::VERSION, schema_v30::VERSION]
-        .into_iter()
-        .any(|version| versioned_store_token(file_name, version).is_some());
+    let versioned = [
+        schema_v29::VERSION,
+        schema_v30::VERSION,
+        schema_v31::VERSION,
+        schema_v32::VERSION,
+        schema_v33::VERSION,
+    ]
+    .into_iter()
+    .any(|version| versioned_store_token(file_name, version).is_some());
     #[cfg(any(test, feature = "migration-test-support"))]
     let versioned = versioned
         || [schema_v27::VERSION, schema_v28::VERSION]
@@ -239,7 +245,11 @@ pub(crate) fn sync_parent_directory(_data_dir: &Path) -> Result<()> {
 fn validate_manifest(manifest: &ActiveStoreManifest) -> Result<()> {
     let supported = matches!(
         manifest.schema_version,
-        schema_v29::VERSION | schema_v30::VERSION
+        schema_v29::VERSION
+            | schema_v30::VERSION
+            | schema_v31::VERSION
+            | schema_v32::VERSION
+            | schema_v33::VERSION
     );
     #[cfg(any(test, feature = "migration-test-support"))]
     let supported = supported
@@ -297,7 +307,7 @@ fn persist_manifest(
     manifest: &ActiveStoreManifest,
     mode: ManifestPersistMode,
 ) -> Result<()> {
-    let schema = if manifest.schema_version == schema_v30::VERSION {
+    let schema = if manifest.schema_version >= schema_v30::VERSION {
         MANIFEST_SCHEMA_V2
     } else {
         MANIFEST_SCHEMA_V1

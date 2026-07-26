@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use meta_store::{metadata_store_path, MetadataEncryptionState, ReadMetaStore};
+use meta_store::{
+    metadata_store_path, MetadataEncryptionState, ReadMetaStore, CURRENT_SCHEMA_VERSION,
+};
 
 mod support;
 
@@ -104,7 +106,7 @@ fn privacy_cli_backs_up_and_restores_metadata_sqlcipher_key_without_output_leaks
         restored.metadata_encryption_state(),
         MetadataEncryptionState::SqlCipher
     );
-    assert_eq!(restored.schema_version().unwrap(), 29);
+    assert_eq!(restored.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
     assert_private_directory(&restore_dir.join("metadata-secrets"));
 
     copy_active_store_without_key(&source_dir, &source_db, &wrong_restore_dir);

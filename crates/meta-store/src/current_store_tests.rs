@@ -15,10 +15,10 @@ use crate::{
 };
 
 #[test]
-fn authority_free_directory_initializes_exact_v30_and_reopens_without_writes() {
+fn authority_free_directory_initializes_exact_v33_and_reopens_without_writes() {
     let fixture = OwnedDirectory::new();
     let store = fixture.owner.open_store().unwrap();
-    assert_eq!(store.schema_version().unwrap(), schema_v30::VERSION);
+    assert_eq!(store.schema_version().unwrap(), schema_v33::VERSION);
     assert_eq!(
         store
             .connection
@@ -29,7 +29,7 @@ fn authority_free_directory_initializes_exact_v30_and_reopens_without_writes() {
                 |row| row.get::<_, i64>(0),
             )
             .unwrap(),
-        1
+        4
     );
     drop(store);
 
@@ -57,13 +57,13 @@ fn exact_v29_migrates_through_cow_without_mutating_predecessor() {
     let source_ciphertext = sha256_file(&source_path);
 
     let migrated = fixture.owner.open_store().unwrap();
-    assert_eq!(migrated.schema_version().unwrap(), schema_v30::VERSION);
+    assert_eq!(migrated.schema_version().unwrap(), schema_v33::VERSION);
     assert_eq!(
         migrated.document_by_id(&document.id).unwrap(),
         Some(document)
     );
     let target_manifest = read_manifest(&fixture.data_dir().join(MANIFEST_FILE)).unwrap();
-    assert_eq!(target_manifest.schema_version, schema_v30::VERSION);
+    assert_eq!(target_manifest.schema_version, schema_v33::VERSION);
     assert_eq!(
         target_manifest.store_id_digest,
         source_manifest.store_id_digest
@@ -90,7 +90,7 @@ fn future_manifest_fails_closed_without_mutating_authority() {
     fs::write(
         &manifest_path,
         format!(
-            "resume-ir.metadata-active.v2\nfile=metadata-v31-{}.sqlite3\nschema=31\ndigest={}\n",
+            "resume-ir.metadata-active.v2\nfile=metadata-v34-{}.sqlite3\nschema=34\ndigest={}\n",
             &current.store_id_digest[..16],
             current.store_id_digest,
         ),
@@ -123,7 +123,7 @@ fn preparing_receipt_discards_only_recorded_unpublished_files_then_retries() {
 
     let migrated = fixture.owner.open_store().unwrap();
 
-    assert_eq!(migrated.schema_version().unwrap(), schema_v30::VERSION);
+    assert_eq!(migrated.schema_version().unwrap(), schema_v33::VERSION);
     assert!(!fixture.data_dir().join(interrupted.staging_file).exists());
     assert!(!fixture
         .data_dir()
@@ -150,7 +150,7 @@ fn ready_receipt_atomically_publishes_the_prevalidated_target() {
     let staging_path = fixture.data_dir().join(&interrupted.staging_file);
     copy_encrypted_store(&source, &staging_path, &key).unwrap();
     let mut staging = open_existing_encrypted_writer(&staging_path, &key).unwrap();
-    forward_migration::apply_current_schema_from_v29(&mut staging).unwrap();
+    forward_migration::apply_current_schema(&mut staging, schema_v29::VERSION).unwrap();
     validate_current_connection(&staging, &source_manifest.store_id_digest).unwrap();
     drop(staging);
     let target_path = fixture.data_dir().join(&interrupted.target.file_name);
@@ -161,7 +161,7 @@ fn ready_receipt_atomically_publishes_the_prevalidated_target() {
 
     let recovered = fixture.owner.open_store().unwrap();
 
-    assert_eq!(recovered.schema_version().unwrap(), schema_v30::VERSION);
+    assert_eq!(recovered.schema_version().unwrap(), schema_v33::VERSION);
     assert_eq!(
         recovered.document_by_id(&document.id).unwrap(),
         Some(document)
@@ -202,7 +202,7 @@ fn tampered_forward_history_fails_closed_without_repair() {
             "UPDATE forward_migration_history
              SET migration_checksum = ?1
              WHERE to_version = ?2",
-            rusqlite::params!["0".repeat(64), i64::from(schema_v30::VERSION)],
+            rusqlite::params!["0".repeat(64), i64::from(schema_v33::VERSION)],
         )
         .unwrap();
     drop(store);
@@ -253,8 +253,8 @@ fn migration_receipt(
         phase,
         staging_file: format!("{STAGING_PREFIX}{}.sqlite3", &migration_id[..16]),
         target: ActiveStoreManifest {
-            file_name: format!("metadata-v30-{}.sqlite3", &migration_id[..16]),
-            schema_version: schema_v30::VERSION,
+            file_name: format!("metadata-v33-{}.sqlite3", &migration_id[..16]),
+            schema_version: schema_v33::VERSION,
             store_id_digest: source.store_id_digest.clone(),
         },
         source: source.clone(),
@@ -265,9 +265,9 @@ fn migration_receipt(
 fn synthetic_document() -> Document {
     let now = UnixTimestamp::from_unix_seconds(1_800_000_000);
     Document {
-        id: DocumentId::from_non_secret_parts(&["v30-cow-migration", "preserved"]),
-        source_uri: "synthetic://v30-cow-migration/preserved".to_string(),
-        normalized_path: "synthetic/v30-cow-migration/preserved.txt".to_string(),
+        id: DocumentId::from_non_secret_parts(&["v33-cow-migration", "preserved"]),
+        source_uri: "synthetic://v33-cow-migration/preserved".to_string(),
+        normalized_path: "synthetic/v33-cow-migration/preserved.txt".to_string(),
         file_name: "preserved.txt".to_string(),
         extension: FileExtension::Txt,
         byte_size: 128,

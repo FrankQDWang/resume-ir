@@ -6,6 +6,12 @@ use crate::{ImportTaskId, MetaStoreError, Result, UnixTimestamp};
 
 const CONTRACT_FIELD_MAX_BYTES: usize = 64;
 
+/// Exact parser identity for the non-PDF formats supported by schema v33.
+///
+/// The persisted primary parser field identifies the PDF parser. Changing this
+/// non-PDF identity requires a new metadata schema that carries it explicitly.
+pub const NON_PDF_PARSE_VERSION: &str = "parser-v1";
+
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ImportProcessingContractId(ContentDigest);
 

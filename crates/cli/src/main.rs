@@ -27,9 +27,9 @@ use import_pipeline::{
     publish_search_projection_removals, rebuild_search_artifacts, reconcile_search_artifacts,
     reconcile_search_artifacts_for_offline_mutation, ImportFailureKind, ImportHardwareTier,
     ImportMilestoneTimings, ImportOptions, ImportParseWorkers, ImportResourcePolicy, ImportSummary,
-    ImportTaskOwnerLock, LinearPromotionPolicy, OcrPreclaimDecision, ReportedArtifactRepairOutcome,
-    ScanProfile, SearchProjectionRemoval, SearchProjectionRemovalReason,
-    SearchPublicationVectorization,
+    ImportTaskOwnerLock, LinearPromotionPolicy, OcrPreclaimDecision, PdfImportPolicy,
+    ReportedArtifactRepairOutcome, ScanProfile, SearchProjectionRemoval,
+    SearchProjectionRemovalReason, SearchPublicationVectorization,
 };
 use meta_store::{
     backup_metadata_encryption_key, restore_metadata_encryption_key, CandidateId, ContactHash,
@@ -357,11 +357,11 @@ const RELEASE_READINESS_BLOCKERS: &[ReleaseReadinessBlocker] = &[
     },
     ReleaseReadinessBlocker {
         label: RELEASE_READINESS_OCR_LICENSE_LABEL,
-        detail: "Tesseract/tessdata is the accepted Apache-2.0 OCR runtime direction, and the PDF renderer must follow bundled-first packaging with external override; if Poppler/pdftoppm is bundled, release evidence requires GPL-3.0-or-later-compatible distribution review, source-offer obligations, checksums/licenses, dependency detection, and fail-closed operator guidance",
+        detail: "Tesseract/tessdata is the accepted Apache-2.0 OCR runtime, and the production PDF renderer is the pinned statically linked PDFium pack on macOS and Windows; release evidence requires exact source/build identity, root license and notices, checksums, final dependency closure, installer composition, and fail-closed runtime validation",
         dependency_kind: "reviewed_runtime_manifest",
         needed_from: "local_runtime_review",
-        dependency_summary: "reviewed Tesseract/tessdata and PDF renderer runtime manifest with distribution mode, checksums, licenses, source-offer obligations, and dependency detection evidence",
-        next_action: "generate and review the OCR runtime manifest, then pass it to release-readiness",
+        dependency_summary: "reviewed Tesseract/tessdata and PDFium runtime manifests with distribution mode, source/build identity, checksums, licenses, notices, dependency closure, and installer composition evidence",
+        next_action: "assemble and validate all reviewed OCR and PDFium runtime packs, then pass their bounded receipts to release-readiness",
     },
     ReleaseReadinessBlocker {
         label: RELEASE_READINESS_MODEL_LICENSE_LABEL,
@@ -9652,6 +9652,7 @@ fn simulate_index_snapshot_corrupt_probe_dir(
     let import_options = ImportOptions {
         scan_profile: ScanProfile::Explicit,
         max_files: None,
+        pdf_import: PdfImportPolicy::Enabled,
         parse_workers: ImportParseWorkers::sequential(),
         index_writer_heap_bytes: ImportResourcePolicy::detect().index_writer_heap_bytes,
         linear_promotion: LinearPromotionPolicy::default(),
@@ -10736,6 +10737,7 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let import_options = ImportOptions {
         scan_profile: import_args.profile,
         max_files: import_args.max_files,
+        pdf_import: PdfImportPolicy::Enabled,
         parse_workers: import_args.parse_workers,
         index_writer_heap_bytes: import_args.index_writer_heap_bytes,
         linear_promotion: linear_promotion.clone(),
@@ -10979,6 +10981,7 @@ fn witness_command(args: &[String]) -> Result<()> {
         let import_options = ImportOptions {
             scan_profile,
             max_files: None,
+            pdf_import: PdfImportPolicy::Enabled,
             parse_workers: ImportParseWorkers::default(),
             index_writer_heap_bytes: ImportResourcePolicy::detect().index_writer_heap_bytes,
             linear_promotion: LinearPromotionPolicy::default(),
@@ -12487,74 +12490,39 @@ fn print_import_worker_metrics(summary: &ImportSummary) {
     );
     println!(
         "pdf parse document load ms: {:.3}",
-        duration_millis(summary.worker_metrics.pdf_parse_timings.document_load)
+        duration_millis(summary.worker_metrics.pdf_parse_metrics.document_load)
     );
     println!(
-        "pdf parse page content fetch ms: {:.3}",
-        duration_millis(summary.worker_metrics.pdf_parse_timings.page_content_fetch)
+        "pdf parse page text load ms: {:.3}",
+        duration_millis(summary.worker_metrics.pdf_parse_metrics.page_text_load)
     );
     println!(
-        "pdf parse text operator prefilter ms: {:.3}",
-        duration_millis(
-            summary
-                .worker_metrics
-                .pdf_parse_timings
-                .text_operator_prefilter
-        )
+        "pdf parse character iteration ms: {:.3}",
+        duration_millis(summary.worker_metrics.pdf_parse_metrics.character_iteration)
     );
     println!(
-        "pdf parse font encoding ms: {:.3}",
-        duration_millis(summary.worker_metrics.pdf_parse_timings.font_encoding)
+        "pdf parse quality evaluation ms: {:.3}",
+        duration_millis(summary.worker_metrics.pdf_parse_metrics.quality_evaluation)
     );
     println!(
-        "pdf parse content decode ms: {:.3}",
-        duration_millis(summary.worker_metrics.pdf_parse_timings.content_decode)
+        "pdf parse pages loaded: {}",
+        summary.worker_metrics.pdf_parse_metrics.pages_loaded
     );
     println!(
-        "pdf parse content string parse sampled ms: {:.3}",
-        duration_millis(
-            summary
-                .worker_metrics
-                .pdf_parse_timings
-                .content_string_parse
-        )
+        "pdf parse characters seen: {}",
+        summary.worker_metrics.pdf_parse_metrics.characters_seen
     );
     println!(
-        "pdf parse text collection ms: {:.3}",
-        duration_millis(summary.worker_metrics.pdf_parse_timings.text_collection)
+        "pdf parse characters emitted: {}",
+        summary.worker_metrics.pdf_parse_metrics.characters_emitted
     );
     println!(
-        "pdf parse text byte decode sampled ms: {:.3}",
-        duration_millis(summary.worker_metrics.pdf_parse_timings.text_byte_decode)
+        "pdf parse source bytes: {}",
+        summary.worker_metrics.pdf_parse_metrics.source_bytes
     );
     println!(
-        "pdf parse text accumulation sampled ms: {:.3}",
-        duration_millis(summary.worker_metrics.pdf_parse_timings.text_accumulation)
-    );
-    println!(
-        "pdf parse content string operands: {}",
-        summary
-            .worker_metrics
-            .pdf_parse_timings
-            .content_string_operands
-    );
-    println!(
-        "pdf parse content string bytes: {}",
-        summary
-            .worker_metrics
-            .pdf_parse_timings
-            .content_string_bytes
-    );
-    println!(
-        "pdf parse text decode runs: {}",
-        summary.worker_metrics.pdf_parse_timings.text_decode_runs
-    );
-    println!(
-        "pdf parse text decode input bytes: {}",
-        summary
-            .worker_metrics
-            .pdf_parse_timings
-            .text_decode_input_bytes
+        "pdf parse output bytes: {}",
+        summary.worker_metrics.pdf_parse_metrics.output_bytes
     );
     println!(
         "import post-parser normalization ms: {:.3}",

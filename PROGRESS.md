@@ -30755,10 +30755,11 @@ Output summary:
   with continuous encrypted COW forward migration beginning at v29, followed
   by database-owned source roots, path-truth reconciliation, durable root
   deletion, PDFium/resumable OCR, original-PDF preview and native reveal.
-- #217 remains the umbrella issue. At most it and the current version feature
-  issue may be open. Each v0.1.3–v0.1.8 release requires focused tests,
-  exact-commit DMG, native installed Computer Use acceptance and issue
-  reconciliation before the next version starts.
+- #217 remains the umbrella issue and the execution owner for the atomic
+  v0.1.3–v0.1.8 business train. Production code, contracts, packaging
+  declarations and UI are completed before validation. Per-version DMGs and
+  installed acceptance are not intermediate gates; the exact v0.1.8 tree owns
+  the single final macOS delivery matrix and installed acceptance.
 - `apps/desktop/package.json.version` is now the single product version
   authority. Tauri references `../package.json`; DMG planning, worktree
   release, install/reinstall and installed-main source binding derive the same
@@ -30769,10 +30770,10 @@ Output summary:
   command, behavior boundary, input fingerprint, result, invalidating changes
   and installed evidence. Passing rows remain reusable until their inputs or
   behavior boundary change.
-- Final full parallel verification, merged-main installed acceptance and the
-  120-minute soak are intentionally deferred until v0.1.8. Their absence
-  blocks #217/release-ready, not the closure of an individually installed and
-  accepted feature issue.
+- Final full parallel verification, installed acceptance and the 120-minute
+  soak are intentionally deferred until the complete v0.1.8 business tree is
+  frozen. The matrix must run fail-late, collect every failure before repair,
+  and retain unaffected passes across repair rounds.
 - The first hosted Linux Clippy run for PR #235 exposed a target-ownership
   error in the OCR runtime pack: macOS-only production identity constants were
   also compiled by `cfg(test)` on Linux and rejected as dead code under
@@ -31104,6 +31105,129 @@ Output summary:
   #236. Remaining work is review/merge ordering (#235 before #237) and issue
   closure after that decision. No Linux or full-workspace test is part of this
   version round.
+
+### Atomic v0.1.3–v0.1.8 business implementation freeze
+
+- The working tree now contains the complete approved business train with
+  product version `0.1.8` and metadata schema v33. This supersedes the former
+  per-version stop-and-validate sequence; the historical v0.1.3 evidence above
+  remains evidence for its exact old inputs only.
+- Storage uses one contiguous checksum registry for v29→v30→v31→v32→v33,
+  encrypted same-key COW staging, bounded recovery receipts and one retained
+  predecessor. v27/v28, future and damaged authorities remain fail-closed;
+  there is no dual reader, dual write, downgrade read or compatibility flag.
+- The daemon-owned source-root model gives each authorized directory a stable
+  opaque identity, path-scoped occurrences, revisions and scan snapshots.
+  Watcher events, 750 ms debounce, the 300-second fallback and manual scans
+  share one per-root coordinator. Only a complete, error-free, unbounded scan
+  can remove missing paths; offline, permission-denied and partial scans never
+  clear the index. Rename and move are represented as old-path removal plus
+  new-path import.
+- The source panel keeps global totals and adds per-root counts, truthful
+  progress and nullable ETA, last synchronization, watcher state, one
+  start/rescan action, pause/resume monitoring and durable delete. Root
+  deletion first quiesces scans/import/OCR, atomically publishes search
+  removal, purges all unreferenced application-derived data and migration
+  predecessor material, verifies zero residual state and never modifies source
+  files. Incomplete receipts resume after daemon restart.
+- PDF import now uses the same statically linked PDFium contract on macOS and
+  Windows for text-object interpretation and page rendering. CropBox,
+  render-mode, alpha, Unicode, repetition, entropy and invisible-overlay
+  quality gates prevent corrupt text from reaching classification. Failed
+  pages enter the resumable single-concurrency OCR queue; page checkpoints,
+  source replacement, root deletion, reclassification and publication fences
+  are durable.
+- Detail defaults to a local original-PDF reader with a resizable and
+  keyboard-adjustable drawer. The daemon validates the current
+  `{doc_id, version_id, visible_epoch}` selection and exact active source
+  revision, creates a generation-bound 120-second opaque lease, and serves
+  bounded 64 KiB ranges verified against the open file handle. PDF.js is
+  bundled locally, renders the current page and disables automatic stream
+  prefetch. Structured fields and extracted text remain explicit auxiliary
+  views.
+- “在访达中显示”/“在文件资源管理器中显示” accepts only a selection.
+  Rust revalidates the authorized root, relative path, ordinary-file identity,
+  symlink/reparse boundary, size and SHA-256 before invoking the native reveal
+  API. Paths, tokens, hashes and file bytes never enter WebView state,
+  diagnostics or logs.
+- Discovery/status/diagnostics/error contracts are now v5/v5/v9/v3, aggregate
+  IPC is v6, and optional runtime reporting includes independent PDFium and
+  OCR health. Packaging owns four immutable runtime packs and native macOS and
+  Windows builders; the release workflow has no Linux product lane and cannot
+  package Poppler/pdftoppm as a desktop runtime.
+- At the business implementation freeze, no final validation command, build,
+  DMG, installation, Computer Use step or soak had run against the v0.1.8
+  tree. The following F01 section records the later final-matrix execution;
+  earlier passes whose declared inputs changed remain invalidated rather than
+  silently reused.
+
+### v0.1.8 final matrix F01 and native build prerequisite
+
+- The resumable fail-late final matrix started on the frozen v0.1.8 business
+  tree. It did not run a Linux product lane. Workspace Clippy, embedder,
+  benchmark runner, licenses, quality evidence, release SBOM, desktop Tauri
+  tests, desktop Tauri Clippy, runbooks and changed-file whitespace produced
+  passing receipts. Exact run ids and reuse boundaries are recorded in
+  `docs/reports/2026-07-24-feature-train-verification-ledger.md`.
+- The first full remaining batch correctly collected every failure before
+  repair. Ten native Rust/closed-loop/evidence/bundle cells shared one cause:
+  the reviewed macOS PDFium static pack had not been built. Desktop contract
+  failures and runbook drift were repaired independently and only their
+  invalidated cells were rerun.
+- The macOS PDFium source builder now pins a real depot_tools commit, uses the
+  upstream minimal checkout mode, bootstraps official depot_tools and performs
+  a complete-Xcode capability check before network synchronization. The
+  current machine has only Apple Command Line Tools 16.4 and no Xcode
+  installation, so the official macOS SDK probe cannot build `libpdfium.a`.
+  The builder fails immediately with a bounded prerequisite error, never
+  spoofs Xcode, never patches the upstream source checkout and does not change
+  the global developer-directory selection.
+- Focused Xcode-preflight tests pass 5/5, including command-scoped
+  `DEVELOPER_DIR` selection without a global configuration change; the updated
+  runbook and whitespace checks pass. The daemon/PDFium source-identity Clippy
+  boundary also passes with one build job and incremental compilation
+  disabled, replacing only the narrow daemon input invalidated after the
+  earlier workspace Clippy receipt; the current public repository privacy
+  boundary also passes. The ten PDFium-linked cells, exact-tree DMG,
+  installation, Computer Use acceptance and soak remain blocked/not-run until
+  complete Xcode is available. Previously valid matrix rows remain reusable
+  and must not be replayed when that host prerequisite is supplied.
+
+### v0.1.8 final repair, DMG and synthetic installed acceptance
+
+- Complete Xcode 16.4 and the reviewed local PDFium pack unblocked the ten
+  native cells. Fail-late receipt `20260726T091240Z-183931d2` retained eight
+  passes and isolated two failures: three legacy lopdf-based import fixtures
+  and two stale schema literals in CLI key tests.
+- The production PDF quality gate was not relaxed. A Type1 UTF-16BE literal
+  without `ToUnicode` now correctly requires OCR; the valid `ToUnicode`
+  fixture has explicit visible line leading and remains searchable. Removed
+  lopdf timing names were hard-cut to PDFium document/page/character/quality
+  metrics. CLI key backup/restore and rotation use
+  `CURRENT_SCHEMA_VERSION`.
+- The three exact import/PDFium regressions, s146, the previously unreached
+  s147 and the invalidated CLI closed-loop cell passed. Focused
+  deny-warnings Clippy for `parser-pdf`, `import-pipeline` and `resume-cli`
+  passed. The Clippy `--all-targets` invocation was broader than required and
+  is recorded as valid but must not be repeated.
+- Worktree receipt `20260726T103209Z-3ba42dfb` produced
+  `resume-ir_0.1.8_aarch64_f161c5b820ad.dmg` with DMG SHA-256
+  `caabc8890fe699f0f0a074b5f791c1617afed38175f6bfb09fa910f235315897`.
+  The receipt-bound installation verified version 0.1.8 and reported
+  `user_data_removed=false`. The old 0.1.3 App and incompatible pre-release
+  install receipt were archived without moving metadata, keys, indexes,
+  authorized roots or source files.
+- Computer Use acceptance used an isolated synthetic HOME. It proved current
+  schema v33 initialization, per-root progress, start-to-rescan transition,
+  zero-change stability, watcher-driven PDF import, keyword search, resizable
+  detail, Finder reveal, in-app original-PDF rendering, durable root deletion,
+  zero residual search results, unchanged source PDF digest and clean normal
+  shutdown. Exact local screenshot digests and the full no-repeat ledger are
+  recorded in
+  `docs/reports/2026-07-24-feature-train-verification-ledger.md`.
+- No 120-minute soak is claimed. It must start only after PR reconciliation,
+  exact merged-main build and installed-main acceptance, and must remain bound
+  to that same final commit.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

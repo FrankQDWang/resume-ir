@@ -8,7 +8,7 @@ use meta_store::{DocumentStatus, FileExtension, OwnedMetaStore, SourceRevision, 
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
 use parser_doc::DocParser;
 use parser_docx::DocxParser;
-use parser_pdf::{PdfParser, PdfTextExtractionTimings};
+use parser_pdf::{PdfParser, PdfTextExtractionMetrics};
 use parser_text::TxtParser;
 use resume_classifier::LinearPromotionPolicy;
 use sectionizer::Sectionizer;
@@ -30,8 +30,8 @@ use crate::source_digest::stream_content_digest;
 use crate::source_dispositions::ProcessedFile;
 use crate::timing::{measure_result_stage, measure_stage};
 use crate::{
-    ImportFailureKind, ImportPostParserTimings, ImportStageTimings, ImportWorkerMetrics, Result,
-    PARSE_VERSION, SCHEMA_VERSION,
+    primary_parse_version_for, ImportFailureKind, ImportPostParserTimings, ImportStageTimings,
+    ImportWorkerMetrics, Result, SCHEMA_VERSION,
 };
 
 pub(crate) fn process_file(
@@ -175,7 +175,7 @@ fn process_file_inner(
 
     let extension = file_extension_label(&file.extension);
     ensure_not_cancelled()?;
-    let mut pdf_parse_timings = PdfTextExtractionTimings::default();
+    let mut pdf_parse_metrics = PdfTextExtractionMetrics::default();
     let mut post_parser_timings = ImportPostParserTimings::default();
     let parse_output = match file.extension {
         FileExtension::Docx => DocxParser
@@ -190,12 +190,12 @@ fn process_file_inner(
                 ResourceBudget::default(),
             )
             .map_err(|error| (error, document.clone())),
-        FileExtension::Pdf => match PdfParser.parse_with_timings(
+        FileExtension::Pdf => match PdfParser.parse_with_metrics(
             ParseInput::from_bytes(Some(extension), &bytes),
             ResourceBudget::default(),
         ) {
-            Ok((parse_output, timings)) => {
-                pdf_parse_timings = timings;
+            Ok((parse_output, metrics)) => {
+                pdf_parse_metrics = metrics;
                 Ok(parse_output)
             }
             Err(error) => Err((error, document.clone())),
@@ -225,8 +225,8 @@ fn process_file_inner(
         }
     };
     worker_metrics
-        .pdf_parse_timings
-        .add_assign(&pdf_parse_timings);
+        .pdf_parse_metrics
+        .add_assign(&pdf_parse_metrics);
     ensure_not_cancelled()?;
 
     let parse_output = match parse_output {
@@ -340,7 +340,7 @@ fn process_file_inner(
         &document,
         &source_revision,
         clean_text.clone(),
-        PARSE_VERSION,
+        primary_parse_version_for(&file.extension),
         SCHEMA_VERSION,
         language_set(&clean_text),
         parse_output

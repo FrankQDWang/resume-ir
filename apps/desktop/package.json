@@ -1,6 +1,6 @@
 {
   "name": "resume-ir-desktop",
-  "version": "0.1.3",
+  "version": "0.1.8",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,6 +8,10 @@
     "dev:bundle": "node scripts/prepare-sidecar.mjs --debug && npm run dev",
     "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build",
     "build:bundle": "node scripts/prepare-sidecar.mjs && npm run build",
+    "build:macos:ocr": "node scripts/build-macos-ocr-pack.mjs",
+    "build:macos:pdfium": "node scripts/build-macos-pdfium-static-pack.mjs",
+    "build:windows:ocr": "node scripts/build-windows-ocr-pack.mjs",
+    "build:windows:pdfium": "node scripts/build-windows-pdfium-static-pack.mjs",
     "acceptance:macos:installed-main": "node scripts/macos-installed-main-acceptance.mjs",
     "bundle:macos:test": "node scripts/macos-test-release.mjs",
     "bundle:macos:worktree": "node scripts/macos-worktree-release.mjs",
@@ -22,6 +26,7 @@
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
     "lucide-react": "1.16.0",
+    "pdfjs-dist": "5.4.624",
     "react": "19.2.7",
     "react-dom": "19.2.7"
   },

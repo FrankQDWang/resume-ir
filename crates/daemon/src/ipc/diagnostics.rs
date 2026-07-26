@@ -1,4 +1,4 @@
-use meta_store::ReadMetaStore;
+use meta_store::{ReadMetaStore, SourceRootState};
 
 use super::{
     process_metrics, repair_progress_json, CapabilityMatrix, CoreHealth, OptionalRuntimeMatrix,
@@ -28,9 +28,27 @@ fn render_available(
         })
         .collect::<Vec<_>>();
     let repair_attempt = store.artifact_repair_attempt_state()?;
+    let source_roots = store.source_roots()?;
+    let source_roots_total = u64::try_from(source_roots.len()).unwrap_or(u64::MAX);
+    let source_roots_active = u64::try_from(
+        source_roots
+            .iter()
+            .filter(|root| root.state == SourceRootState::Active)
+            .count(),
+    )
+    .unwrap_or(u64::MAX);
+    let source_roots_offline = u64::try_from(
+        source_roots
+            .iter()
+            .filter(|root| root.state == SourceRootState::Offline)
+            .count(),
+    )
+    .unwrap_or(u64::MAX);
+    let source_root_deletions_in_progress =
+        u64::try_from(store.incomplete_source_root_deletions()?.len()).unwrap_or(u64::MAX);
     let ipc = process_metrics().snapshot();
     let mut body = serde_json::json!({
-        "schema_version": "resume-ir.diagnostics.v5",
+        "schema_version": "resume-ir.diagnostics.v9",
         "privacy_boundary": "redacted_local_aggregate",
         "contains_raw_resume_text": false,
         "contains_queries": false,
@@ -57,6 +75,10 @@ fn render_available(
             "import_tasks_queued": summary.import_tasks_queued,
             "import_tasks_recoverable": summary.import_tasks_recoverable,
             "import_tasks_cancelled": summary.import_tasks_cancelled,
+            "source_roots_total": source_roots_total,
+            "source_roots_active": source_roots_active,
+            "source_roots_offline": source_roots_offline,
+            "source_root_deletions_in_progress": source_root_deletions_in_progress,
             "query_latency": {
                 "sample_count": summary.query_latency.sample_count,
                 "p50_ms": summary.query_latency.p50_ms,
@@ -85,7 +107,7 @@ pub(crate) fn render_without_store(
     capabilities: CapabilityMatrix,
 ) -> serde_json::Value {
     let mut body = serde_json::json!({
-        "schema_version": "resume-ir.diagnostics.v5",
+        "schema_version": "resume-ir.diagnostics.v9",
         "privacy_boundary": "redacted_local_aggregate",
         "contains_raw_resume_text": false,
         "contains_queries": false,
@@ -107,6 +129,10 @@ pub(crate) fn render_without_store(
             "import_tasks_queued": serde_json::Value::Null,
             "import_tasks_recoverable": serde_json::Value::Null,
             "import_tasks_cancelled": serde_json::Value::Null,
+            "source_roots_total": serde_json::Value::Null,
+            "source_roots_active": serde_json::Value::Null,
+            "source_roots_offline": serde_json::Value::Null,
+            "source_root_deletions_in_progress": serde_json::Value::Null,
             "query_latency": {
                 "sample_count": serde_json::Value::Null,
                 "p50_ms": serde_json::Value::Null,
@@ -180,10 +206,11 @@ mod tests {
             embedding: OptionalRuntimeHealth::available(),
             ocr: OptionalRuntimeHealth::unavailable(OptionalRuntimeReason::Invalid),
             classifier: OptionalRuntimeHealth::unavailable(OptionalRuntimeReason::Missing),
+            pdfium: OptionalRuntimeHealth::available(),
         };
         let value = render_without_store(core, runtimes, CapabilityMatrix::derive(core, runtimes));
 
-        assert_eq!(value["schema_version"], "resume-ir.diagnostics.v5");
+        assert_eq!(value["schema_version"], "resume-ir.diagnostics.v9");
         assert_eq!(value["process_state"], "ready");
         assert_eq!(value["core"]["state"], "degraded");
         assert_eq!(value["core"]["reason"], "metadata_unavailable");
@@ -202,10 +229,10 @@ mod tests {
     }
 
     #[test]
-    fn diagnostics_v5_shared_fixture_matches_producer_shape() {
+    fn diagnostics_v9_shared_fixture_matches_producer_shape() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/desktop/src-tauri/tests/fixtures/daemon-diagnostics-v5-ready.json"
+            "/../../apps/desktop/src-tauri/tests/fixtures/daemon-diagnostics-v9-ready.json"
         )))
         .unwrap();
         let core = CoreHealth {
@@ -216,6 +243,7 @@ mod tests {
             embedding: OptionalRuntimeHealth::available(),
             ocr: OptionalRuntimeHealth::available(),
             classifier: OptionalRuntimeHealth::available(),
+            pdfium: OptionalRuntimeHealth::available(),
         };
         let produced =
             render_without_store(core, runtimes, CapabilityMatrix::derive(core, runtimes));

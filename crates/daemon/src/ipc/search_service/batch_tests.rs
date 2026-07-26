@@ -55,10 +55,10 @@ fn batch_request_rejects_more_than_sixty_four_children() {
 }
 
 #[test]
-fn batch_admission_failure_uses_the_unified_error_v2_contract() {
+fn batch_admission_failure_uses_the_unified_error_v3_contract() {
     let value: serde_json::Value = serde_json::from_str(&overload_body("batch-1")).unwrap();
 
-    assert_eq!(value["schema_version"], "resume-ir.error.v2");
+    assert_eq!(value["schema_version"], "resume-ir.error.v3");
     assert_eq!(value["request_id"], "batch-1");
     assert_eq!(value["error"]["code"], "OVERLOADED");
     assert_eq!(value["error"]["action"], "retry");

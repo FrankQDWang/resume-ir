@@ -339,7 +339,7 @@ export async function submitImportExpectedRejected(connection, request, signal) 
   );
   if (
     !exactKeys(response, ["schema_version", "status", "error"]) ||
-    response.schema_version !== "resume-ir.error.v2" ||
+    response.schema_version !== "resume-ir.error.v3" ||
     response.status !== "error" ||
     !exactKeys(response.error, ["code", "action", "capability", "reason"]) ||
     response.error.code !== "CAPABILITY_UNAVAILABLE" ||

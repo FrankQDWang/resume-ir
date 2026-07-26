@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::ipc::OptionalRuntimeReason;
 
-use super::macho::payload_identity;
+use super::executable::payload_identity;
 use super::security::{valid_digest, validate_canonical_executable};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -58,7 +58,7 @@ pub(super) fn validate_for_identity(
     if current_target() != Some(identity.target_triple)
         || current_profile() != identity.profile
         || fixed_runtime_name(role, identity.target_triple) != Some(identity.file)
-        || identity.architecture != "arm64"
+        || expected_architecture(identity.target_triple) != Some(identity.architecture)
         || identity.digest != "sha256_without_code_signature_v1"
         || identity.payload_bytes == 0
         || !valid_digest(identity.payload_sha256)
@@ -77,6 +77,14 @@ pub(super) fn validate_for_identity(
         return Err(OptionalRuntimeReason::Invalid);
     }
     Ok(ValidatedExecutable(canonical))
+}
+
+fn expected_architecture(target: &str) -> Option<&'static str> {
+    match target {
+        "aarch64-apple-darwin" => Some("arm64"),
+        "x86_64-apple-darwin" | "x86_64-pc-windows-msvc" => Some("x86_64"),
+        _ => None,
+    }
 }
 
 fn compiled_identity(

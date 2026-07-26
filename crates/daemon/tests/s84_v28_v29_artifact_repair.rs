@@ -75,7 +75,7 @@ fn supervised_daemon_blocks_v28_without_changing_existing_bytes() {
         })),
     );
     assert_eq!(search.status_code, 503, "{}", search.raw);
-    assert_eq!(search.body["schema_version"], "resume-ir.error.v2");
+    assert_eq!(search.body["schema_version"], "resume-ir.error.v3");
     assert_eq!(search.body["error"]["code"], "SERVICE_BLOCKED");
     assert_eq!(search.body["error"]["action"], "repair_required");
     assert_eq!(search.body["error"]["capability"], serde_json::Value::Null);
@@ -472,7 +472,7 @@ fn wait_for_core_state(
     loop {
         let response = request(&generation.status_endpoint, &generation.token, "GET", None);
         assert_eq!(response.status_code, 200, "{}", response.raw);
-        assert_eq!(response.body["schema_version"], "daemon.status.v4");
+        assert_eq!(response.body["schema_version"], "daemon.status.v5");
         assert_eq!(response.body["process_state"], "ready");
         let state = response.body["core"]["state"].as_str().unwrap();
         if state == expected_state {
@@ -498,7 +498,7 @@ fn wait_for_core_state(
 fn assert_status_contract(body: &serde_json::Value) {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../apps/desktop/src-tauri/tests/fixtures/daemon-status-v4-ready.json"
+        "/../../apps/desktop/src-tauri/tests/fixtures/daemon-status-v5-ready.json"
     )))
     .unwrap();
     assert_eq!(object_keys(body), object_keys(&fixture));
@@ -508,9 +508,9 @@ fn assert_status_contract(body: &serde_json::Value) {
     );
     assert_eq!(
         object_keys(&body["optional_runtimes"]),
-        BTreeSet::from(["embedding", "ocr", "classifier"])
+        BTreeSet::from(["embedding", "ocr", "classifier", "pdfium"])
     );
-    for runtime in ["embedding", "ocr", "classifier"] {
+    for runtime in ["embedding", "ocr", "classifier", "pdfium"] {
         assert_eq!(
             object_keys(&body["optional_runtimes"][runtime]),
             BTreeSet::from(["state", "reason"])
@@ -524,6 +524,7 @@ fn assert_status_contract(body: &serde_json::Value) {
             "semantic_search",
             "hybrid_search",
             "text_import",
+            "pdf_import",
             "ocr_import",
             "index_publication",
         ])
@@ -551,7 +552,7 @@ fn read_generation(data_dir: &Path) -> Option<Generation> {
         serde_json::from_slice(&fs::read(data_dir.join("ipc.endpoints.json")).ok()?).ok()?;
     let auth: serde_json::Value =
         serde_json::from_slice(&fs::read(data_dir.join("ipc.auth")).ok()?).ok()?;
-    if endpoints["schema_version"] != "resume-ir.daemon-ipc.v4"
+    if endpoints["schema_version"] != "resume-ir.daemon-ipc.v5"
         || auth["schema_version"] != "resume-ir.daemon-auth.v3"
         || endpoints["launch_id"] != auth["launch_id"]
         || endpoints["instance_id"] != auth["instance_id"]
@@ -574,7 +575,18 @@ fn read_generation(data_dir: &Path) -> Option<Generation> {
             "search",
             "search_batch",
             "details",
+            "hydrate",
             "delete",
+            "source_roots",
+            "source_root_register",
+            "source_root_legacy_migration",
+            "source_root_scan",
+            "source_root_control",
+            "source_root_delete",
+            "preview_create",
+            "preview_range",
+            "preview_close",
+            "source_reveal",
         ])
     );
     assert_eq!(
@@ -671,7 +683,7 @@ impl DesktopDaemon {
                 "--launch-id",
                 LAUNCH_ID,
                 "--expected-ipc-protocol",
-                "resume-ir.daemon-ipc.v4",
+                "resume-ir.daemon-ipc.v5",
                 "--ipc-listen",
                 "127.0.0.1:0",
             ])

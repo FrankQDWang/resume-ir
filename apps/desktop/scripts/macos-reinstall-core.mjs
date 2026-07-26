@@ -147,7 +147,7 @@ function requireDmgReceipt(receipt, targetTriple) {
     throw new Error("DMG composition receipt is invalid");
   }
   if (
-    receipt?.schema_version !== "resume-ir.macos-dmg-composition.v3" ||
+    receipt?.schema_version !== "resume-ir.macos-dmg-composition.v4" ||
     receipt?.target_triple !== targetTriple ||
     receipt?.release_claim !== "composition_only" ||
     receipt?.distribution_signature !== "accepted" ||

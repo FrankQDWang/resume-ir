@@ -2,11 +2,12 @@ use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 
 use super::{OptionalRuntimeHealth, OptionalRuntimeReason};
 
-const RUNTIME_HEALTH_CHANNEL_CAPACITY: usize = 3;
+const RUNTIME_HEALTH_CHANNEL_CAPACITY: usize = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RuntimeHealthUpdate {
     Ocr(OptionalRuntimeHealth),
+    Pdfium(OptionalRuntimeHealth),
 }
 
 #[derive(Clone)]
@@ -39,6 +40,16 @@ impl RuntimeHealthReporter {
             .send(update)
             .map_err(|_| RuntimeHealthChannelClosed)
     }
+
+    pub(crate) fn pdfium_unavailable(
+        &self,
+        reason: OptionalRuntimeReason,
+    ) -> Result<(), RuntimeHealthChannelClosed> {
+        let update = RuntimeHealthUpdate::Pdfium(OptionalRuntimeHealth::unavailable(reason));
+        self.sender
+            .send(update)
+            .map_err(|_| RuntimeHealthChannelClosed)
+    }
 }
 
 impl RuntimeHealthReceiver {
@@ -66,7 +77,10 @@ mod tests {
             .unwrap();
 
         let update = receiver.try_recv().unwrap().unwrap();
-        let RuntimeHealthUpdate::Ocr(health) = update;
+        let health = match update {
+            RuntimeHealthUpdate::Ocr(health) => health,
+            RuntimeHealthUpdate::Pdfium(_) => panic!("expected OCR runtime health"),
+        };
         assert_eq!(health.state, OptionalRuntimeState::Unavailable);
         assert_eq!(health.reason, Some(OptionalRuntimeReason::Invalid));
         assert!(receiver.try_recv().unwrap().is_none());

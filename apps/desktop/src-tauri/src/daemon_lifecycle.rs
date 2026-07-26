@@ -28,6 +28,7 @@ impl DaemonLifecycleState {
         embedding_resource_dir: &Path,
         ocr_resource_dir: &Path,
         classifier_resource_dir: &Path,
+        pdfium_resource_dir: &Path,
     ) -> Result<Self, DesktopError> {
         Self::launch(
             ProductionDaemonRuntime::initialize(
@@ -36,6 +37,7 @@ impl DaemonLifecycleState {
                 embedding_resource_dir,
                 ocr_resource_dir,
                 classifier_resource_dir,
+                pdfium_resource_dir,
             ),
             LifecycleReceiptRecorder::initialize(data_dir),
         )

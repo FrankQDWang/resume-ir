@@ -5,6 +5,7 @@ export const OPTIONAL_RUNTIME_NAMES = Object.freeze([
   "embedding",
   "ocr",
   "classifier",
+  "pdfium",
 ]);
 
 const nativeMutation = (target, activation) =>
@@ -38,10 +39,10 @@ export const RUNTIME_FAULT_CASES = Object.freeze([
     nativeMutation("embedding", "deny_execution_after_attestation"),
   ]),
   nativeCase("ocr_missing", { ocr: "missing" }, [
-    nativeMutation("pdfRenderer", "missing"),
+    nativeMutation("ocrEngine", "missing"),
   ]),
   nativeCase("ocr_invalid", { ocr: "invalid" }, [
-    nativeMutation("pdfRenderer", "invalid"),
+    nativeMutation("ocrEngine", "invalid"),
   ]),
   nativeCase("ocr_start_failed", { ocr: "start_failed" }, [
     nativeMutation("ocrEngine", "deny_execution_after_attestation"),
@@ -57,12 +58,21 @@ export const RUNTIME_FAULT_CASES = Object.freeze([
     { classifier: "start_failed" },
     "classifier startup has no independently mutable post-attestation process boundary",
   ),
+  nativeCase("pdfium_missing", { pdfium: "missing" }, [
+    nativeMutation("pdfRenderer", "missing"),
+  ]),
+  nativeCase("pdfium_invalid", { pdfium: "invalid" }, [
+    nativeMutation("pdfRenderer", "invalid"),
+  ]),
+  nativeCase("pdfium_start_failed", { pdfium: "start_failed" }, [
+    nativeMutation("pdfRenderer", "deny_execution_after_attestation"),
+  ]),
   nativeCase(
     "embedding_ocr_missing",
     { embedding: "missing", ocr: "missing" },
     [
       nativeMutation("embedding", "missing"),
-      nativeMutation("pdfRenderer", "missing"),
+      nativeMutation("ocrEngine", "missing"),
     ],
   ),
   nativeCase(
@@ -75,11 +85,17 @@ export const RUNTIME_FAULT_CASES = Object.freeze([
   ),
   nativeCase(
     "all_runtimes_missing",
-    { embedding: "missing", ocr: "missing", classifier: "missing" },
+    {
+      embedding: "missing",
+      ocr: "missing",
+      classifier: "missing",
+      pdfium: "missing",
+    },
     [
       nativeMutation("embedding", "missing"),
-      nativeMutation("pdfRenderer", "missing"),
+      nativeMutation("ocrEngine", "missing"),
       nativeMutation("classifierModel", "missing"),
+      nativeMutation("pdfRenderer", "missing"),
     ],
   ),
 ]);

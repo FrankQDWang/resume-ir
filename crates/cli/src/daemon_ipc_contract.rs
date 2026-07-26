@@ -9,10 +9,10 @@ mod status;
 pub(crate) use error::{parse_http_status, parse_import_service_error};
 pub(crate) use status::valid_status;
 
-pub(crate) const DISCOVERY_SCHEMA: &str = "resume-ir.daemon-ipc.v4";
+pub(crate) const DISCOVERY_SCHEMA: &str = "resume-ir.daemon-ipc.v5";
 pub(crate) const AUTH_SCHEMA: &str = "resume-ir.daemon-auth.v3";
 
-const ROUTES: [(&str, &str); 10] = [
+const ROUTES: [(&str, &str); 21] = [
     ("status", "status"),
     ("diagnostics", "diagnostics"),
     ("imports", "imports"),
@@ -22,7 +22,21 @@ const ROUTES: [(&str, &str); 10] = [
     ("search", "search"),
     ("search_batch", "search/batch"),
     ("details", "details"),
+    ("hydrate", "details/hydrate"),
     ("delete", "delete"),
+    ("source_roots", "source-roots"),
+    ("source_root_register", "source-roots/register"),
+    (
+        "source_root_legacy_migration",
+        "source-roots/migrate-legacy",
+    ),
+    ("source_root_scan", "source-roots/scan"),
+    ("source_root_control", "source-roots/control"),
+    ("source_root_delete", "source-roots/delete"),
+    ("preview_create", "source-preview/create"),
+    ("preview_range", "source-preview/read-range"),
+    ("preview_close", "source-preview/close"),
+    ("source_reveal", "source-reveal/resolve"),
 ];
 
 #[derive(Clone)]

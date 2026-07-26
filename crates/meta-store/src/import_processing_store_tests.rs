@@ -14,7 +14,9 @@ use crate::{
 #[test]
 fn blocked_runtime_invariant_contract_hard_cut_restarts_only_derived_rebuild_state() {
     let store = migrated_store();
-    let previous_contract = processing_contract("parser-v1");
+    // The v33 primary parser identifies PDFium. A text source remains valid
+    // only through the schema-owned non-PDF parser identity.
+    let previous_contract = processing_contract("parser-pdfium-v2");
     let replacement_contract = processing_contract("parser-v2");
     let initial_at = UnixTimestamp::from_unix_seconds(1_900_099_990);
     assert_eq!(

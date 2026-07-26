@@ -1,0 +1,3 @@
+[env]
+PDFIUM_STATIC_LIB_PATH_aarch64_apple_darwin = { value = ".cache/resume-ir-macos-pdfium-static-pack", relative = true, force = true }
+PDFIUM_STATIC_LIB_PATH_x86_64_pc_windows_msvc = { value = ".cache/resume-ir-windows-pdfium-static-pack", relative = true, force = true }

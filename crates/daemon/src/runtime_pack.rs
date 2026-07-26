@@ -5,17 +5,18 @@ use crate::ipc::OptionalRuntimeReason;
 mod attestation;
 mod classifier;
 mod embedding;
-mod macho;
+mod executable;
+#[cfg(target_os = "macos")]
 mod macho_payload;
 mod ocr;
+mod pdfium;
+#[cfg(target_os = "windows")]
+mod pe_payload;
 mod security;
 
-pub(crate) use attestation::validated_embedding_command;
+pub(crate) use attestation::{validated_embedding_command, validated_pdf_renderer};
 pub(crate) use classifier::ValidatedClassifierModel;
-pub(crate) use ocr::{
-    validated_runtime as validated_ocr_runtime,
-    validated_runtime_with_cancel as validated_ocr_runtime_with_cancel,
-};
+pub(crate) use ocr::validated_engine_with_cancel as validated_ocr_engine_with_cancel;
 
 #[cfg(test)]
 pub(crate) fn validate_embedding(
@@ -59,6 +60,13 @@ pub(crate) fn validate_classifier_with_cancel(
     classifier::validate_with_cancel(model, cancelled)
 }
 
+pub(crate) fn validate_pdfium_with_cancel(
+    runtime_dir: &Path,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(), OptionalRuntimeReason> {
+    pdfium::validate_with_cancel(runtime_dir, cancelled)
+}
+
 #[cfg(test)]
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use attestation::{
@@ -66,7 +74,7 @@ use attestation::{
     ExecutableIdentity, ExecutableRole,
 };
 #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
-use macho::payload_identity as executable_payload_identity;
+use executable::payload_identity as executable_payload_identity;
 #[cfg(test)]
 use ocr::{
     validate_for_identity as validate_ocr_for_identity, windows_identity as windows_ocr_identity,

@@ -21,7 +21,7 @@ describe("visible daemon health", () => {
   it("distinguishes unsupported v29 data, runtime invariant, and source failure", () => {
     expect(indexServicePresentation("blocked", "unsupported_store_schema")).toEqual({
       title: "数据版本不受支持",
-      message: "当前版本仅支持从 schema v29 升级或直接打开 v30；原数据保持未修改",
+      message: "当前版本支持从 schema v29 连续升级到 v33；更早或未来版本保持未修改",
     })
     expect(indexServicePresentation("blocked", "runtime_invariant").message).toContain("导出脱敏诊断")
     expect(indexServicePresentation("degraded", "source_unavailable").message).toContain("来源磁盘")
@@ -54,6 +54,7 @@ describe("visible daemon health", () => {
         embedding: { state: "unavailable", reason: "invalid" },
         ocr: { state: "available", reason: null },
         classifier: { state: "available", reason: null },
+        pdfium: { state: "available", reason: null },
       },
       capabilities: {
         keyword_search: { state: "available", reason: null },
@@ -61,6 +62,7 @@ describe("visible daemon health", () => {
         semantic_search: { state: "unavailable", reason: "embedding_unavailable" },
         hybrid_search: { state: "degraded", reason: "embedding_unavailable" },
         text_import: { state: "unavailable", reason: "embedding_unavailable" },
+        pdf_import: { state: "unavailable", reason: "embedding_unavailable" },
         ocr_import: { state: "unavailable", reason: "embedding_unavailable" },
         index_publication: { state: "unavailable", reason: "embedding_unavailable" },
       },

@@ -1,8 +1,8 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks"
 import { beforeEach, describe, expect, it } from "vitest"
 
-import readyStatusFixture from "../src-tauri/tests/fixtures/daemon-status-v4-ready.json"
-import artifactBlockedStatusFixture from "../src-tauri/tests/fixtures/daemon-status-v4-artifact-blocked.json"
+import readyStatusFixture from "../src-tauri/tests/fixtures/daemon-status-v5-ready.json"
+import artifactBlockedStatusFixture from "../src-tauri/tests/fixtures/daemon-status-v5-artifact-blocked.json"
 import healthCombinationsFixture from "../../../crates/daemon-contract/tests/fixtures/health-combinations-v1.json"
 import {
   bridgeError,
@@ -97,7 +97,7 @@ function runningLifecycle(): DaemonLifecycleSnapshot {
 function diagnostics(): DiagnosticsBody {
   const status = readyStatus()
   return {
-    schema_version: "resume-ir.diagnostics.v5",
+    schema_version: "resume-ir.diagnostics.v9",
     privacy_boundary: "redacted_local_aggregate",
     evidence_lane: "gui_manual",
     evidence_status: "unaccepted",
@@ -124,6 +124,10 @@ function diagnostics(): DiagnosticsBody {
       import_tasks_queued: 0,
       import_tasks_recoverable: 0,
       import_tasks_cancelled: 0,
+      source_roots_total: 1,
+      source_roots_active: 1,
+      source_roots_offline: 0,
+      source_root_deletions_in_progress: 0,
       query_latency: { sample_count: 1, p50_ms: 2, p95_ms: 3, p99_ms: 4, last_result_count: 1 },
     },
     error_counts: {
@@ -138,7 +142,7 @@ function diagnostics(): DiagnosticsBody {
 }
 
 const badRequest: DaemonServiceErrorBody = {
-  schema_version: "resume-ir.error.v2",
+  schema_version: "resume-ir.error.v3",
   request_id: "request-1",
   status: "error",
   error: { code: "BAD_REQUEST", action: "correct_request", capability: null, reason: null },
@@ -198,6 +202,7 @@ describe("strict control-plane contracts", () => {
     degraded.capabilities.semantic_search = { state: "unavailable", reason: "embedding_unavailable" }
     degraded.capabilities.hybrid_search = { state: "degraded", reason: "embedding_unavailable" }
     degraded.capabilities.text_import = { state: "unavailable", reason: "embedding_unavailable" }
+    degraded.capabilities.pdf_import = { state: "unavailable", reason: "embedding_unavailable" }
     degraded.capabilities.ocr_import = { state: "unavailable", reason: "embedding_unavailable" }
     degraded.capabilities.index_publication = { state: "unavailable", reason: "embedding_unavailable" }
     mockReply({ http_status: 200, body: degraded })
@@ -212,6 +217,7 @@ describe("strict control-plane contracts", () => {
     const degraded = readyStatus()
     degraded.optional_runtimes.classifier = { state: "unavailable", reason: "not_configured" }
     degraded.capabilities.text_import = { state: "unavailable", reason: "classifier_unavailable" }
+    degraded.capabilities.pdf_import = { state: "unavailable", reason: "classifier_unavailable" }
     degraded.capabilities.ocr_import = { state: "unavailable", reason: "classifier_unavailable" }
     mockReply({ http_status: 200, body: degraded })
     await expect(readStatus()).resolves.toEqual({ http_status: 200, body: degraded })
@@ -223,10 +229,10 @@ describe("strict control-plane contracts", () => {
 
   it("accepts every shared ready-runtime capability combination", async () => {
     expect(healthCombinationsFixture.schema_version).toBe("resume-ir.daemon-health-conformance.v1")
-    expect(healthCombinationsFixture.cases).toHaveLength(8)
+    expect(healthCombinationsFixture.cases).toHaveLength(16)
     for (const testCase of healthCombinationsFixture.cases) {
       const status = readyStatus()
-      for (const runtime of ["embedding", "ocr", "classifier"] as const) {
+      for (const runtime of ["embedding", "ocr", "classifier", "pdfium"] as const) {
         status.optional_runtimes[runtime] = testCase.runtime_availability[runtime]
           ? { state: "available", reason: null }
           : { state: "unavailable", reason: "not_configured" }
@@ -270,7 +276,7 @@ describe("strict control-plane contracts", () => {
     mockReply({ http_status: 400, body: missing })
     await expect(readStatus()).rejects.toMatchObject({ code: "daemon_contract" })
 
-    const queryUnavailable = { schema_version: "resume-ir.error.v2", status: "error", error: { code: "QUERY_SERVICE_UNAVAILABLE", action: "repair_required", capability: null, reason: null } }
+    const queryUnavailable = { schema_version: "resume-ir.error.v3", status: "error", error: { code: "QUERY_SERVICE_UNAVAILABLE", action: "repair_required", capability: null, reason: null } }
     mockReply({ http_status: 503, body: queryUnavailable })
     await expect(readStatus()).rejects.toMatchObject({ code: "daemon_contract" })
     await expect(readDiagnostics()).rejects.toMatchObject({ code: "daemon_contract" })
@@ -301,7 +307,7 @@ describe("operation projection and commands", () => {
     expect(searchDeadlineMs("keyword")).toBe(1500)
     expect(searchDeadlineMs("hybrid")).toBe(30000)
     expect(searchOutcome({ http_status: 400, body: badRequest })).toBe("error")
-    expect(searchOutcome({ http_status: 503, body: { schema_version: "resume-ir.error.v2", request_id: "request-2", status: "error", error: { code: "OVERLOADED", action: "retry", retry_after_ms: 250, capability: null, reason: null } } })).toBe("overload")
+    expect(searchOutcome({ http_status: 503, body: { schema_version: "resume-ir.error.v3", request_id: "request-2", status: "error", error: { code: "OVERLOADED", action: "retry", retry_after_ms: 250, capability: null, reason: null } } })).toBe("overload")
     expect(searchOutcome({ http_status: 200, body: { schema_version: "resume-ir.search-response.v3", request_id: "request-3", status: "ok", visible_epoch: 1, query_mode: "keyword", partial: false, partial_reasons: [], latency_ms: 1, result_count: 0, results: [] } })).toBe("empty")
     const selection = { doc_id: "doc_00000000000000000000000000000000", version_id: "ver_00000000000000000000000000000000", visible_epoch: 7 }
     expect(sameSearchSelection(selection, { ...selection })).toBe(true)
@@ -340,16 +346,16 @@ describe("operation projection and commands", () => {
   it("projects managed-root v2 errors without a legacy reader", async () => {
     const accepted = { schema_version: "daemon.import.v1" as const, status: "accepted" as const, accepted_roots: 1, new_tasks: 1, scan_profile: "explicit" as const, scan_file_limit: null }
     expect(managedRootScanOutcome({ http_status: 202, body: accepted })).toBe("queued")
-    const conflict: DaemonServiceErrorBody = { schema_version: "resume-ir.error.v2", status: "error", error: { code: "CONFLICT", action: "retry", capability: null, reason: null } }
+    const conflict: DaemonServiceErrorBody = { schema_version: "resume-ir.error.v3", status: "error", error: { code: "CONFLICT", action: "retry", capability: null, reason: null } }
     expect(managedRootScanOutcome({ http_status: 409, body: conflict })).toBe("active")
-    const notFound: DaemonServiceErrorBody = { schema_version: "resume-ir.error.v2", status: "error", error: { code: "NOT_FOUND", action: "refresh_search", capability: null, reason: null } }
+    const notFound: DaemonServiceErrorBody = { schema_version: "resume-ir.error.v3", status: "error", error: { code: "NOT_FOUND", action: "refresh_search", capability: null, reason: null } }
     expect(managedRootControlOutcome({ http_status: 404, body: notFound })).toBe("unmanaged")
 
     mockReply({ http_status: 200, body: { schema_version: "daemon.import_root_control.v1", status: "paused", changed: true, task_cancel_requested: true, catch_up_queued: false } })
     await controlManagedRoot("root-00000000000000000000000000000000", "pause")
     mockReply({ http_status: 202, body: accepted })
     await importSelectedRoot("root-00000000000000000000000000000000")
-    expect(ipcCalls[0]).toEqual({ command: "daemon_request", payload: { request: { operation: "root_control", body: { root_handle: "root-00000000000000000000000000000000", action: "pause" } } } })
-    expect(ipcCalls[1]).toEqual({ command: "import_selected_root", payload: { request: { root_handle: "root-00000000000000000000000000000000" } } })
+    expect(ipcCalls[0]).toEqual({ command: "daemon_request", payload: { request: { operation: "root_control", body: { root_id: "root-00000000000000000000000000000000", action: "pause" } } } })
+    expect(ipcCalls[1]).toEqual({ command: "import_selected_root", payload: { request: { root_id: "root-00000000000000000000000000000000" } } })
   })
 })

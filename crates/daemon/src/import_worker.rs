@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -9,8 +10,8 @@ use import_pipeline::{
 };
 use meta_store::{
     ImportProcessingContract, ImportScanBudgetKind, ImportScanProfile, ImportScanScope,
-    ImportTaskFailure, ImportTaskId, ImportTaskStatus, OwnedMetaStore, SearchRepairReason,
-    UnixTimestamp,
+    ImportTaskFailure, ImportTaskId, ImportTaskStatus, OwnedMetaStore, ScanCounts, ScanPhase,
+    ScanTrigger, SearchRepairReason, UnixTimestamp,
 };
 
 use crate::daemon_error::{DaemonError, Result};
@@ -33,6 +34,8 @@ pub(crate) fn run_import_worker_once(
     processing_contract: &ImportProcessingContract,
 ) -> Result<ImportWorkerSummary> {
     let retryable_due_at = current_timestamp()?;
+    crate::source_root_deletion::resume_pending(data_dir, store, processing_contract)
+        .map_err(|_| DaemonError::recoverable_dependency("source root deletion recovery failed"))?;
     let mut summary = ImportWorkerSummary {
         repair_requeued: migration_repair::reconcile_authorized_roots(
             store,
@@ -64,6 +67,7 @@ pub(crate) fn run_import_worker_once_with_retry_due(
 ) -> Result<ImportWorkerSummary> {
     let mut worker_summary = ImportWorkerSummary::default();
     let mut attempted = Vec::<ImportTaskId>::new();
+    let mut reprocess_schedule_checked = false;
 
     while !run_control.shutdown_requested() {
         if search_repair_is_blocked(store)? {
@@ -72,13 +76,40 @@ pub(crate) fn run_import_worker_once_with_retry_due(
         if !claim_allowed() {
             break;
         }
-        let Some(candidate) = store
+        let candidate = store
             .import_task_claim_candidate_for_worker_excluding_due_at(retryable_due_at, &attempted)
-            .map_err(DaemonError::store)?
-        else {
+            .map_err(DaemonError::store)?;
+        let Some(candidate) = candidate else {
+            if !reprocess_schedule_checked
+                && options.pdf_import == import_pipeline::PdfImportPolicy::Enabled
+            {
+                reprocess_schedule_checked = true;
+                if schedule_next_pdf_reprocess(store, processing_contract, retryable_due_at)? {
+                    continue;
+                }
+            }
             break;
         };
         attempted.push(candidate.id.clone());
+        let source_root = store
+            .source_root_by_canonical_path(&candidate.root_path)
+            .map_err(DaemonError::store)?;
+        let source_root_is_deleting = match source_root {
+            Some(root) => store
+                .source_root_deletion_in_progress(&root.id)
+                .map_err(DaemonError::store)?,
+            None => false,
+        };
+        if source_root_is_deleting {
+            store
+                .cancel_import_task(
+                    &candidate.id,
+                    timestamp_at_or_after(current_timestamp()?, candidate.updated_at),
+                )
+                .map_err(DaemonError::store)?;
+            worker_summary.cancelled += 1;
+            continue;
+        }
         if !import_processing::task_matches_contract(store, &candidate.id, processing_contract)? {
             store
                 .cancel_import_task(
@@ -192,10 +223,24 @@ pub(crate) fn run_import_worker_once_with_retry_due(
                 } else {
                     worker_summary.failed += 1;
                 }
+                finish_source_scan_failure(
+                    store,
+                    &scope,
+                    &task.id,
+                    processing_contract,
+                    current_timestamp()?,
+                )?;
                 continue;
             }
         };
 
+        finish_source_scan_success(
+            store,
+            &scope,
+            &task.id,
+            processing_contract,
+            &import_summary,
+        )?;
         worker_summary.processed += 1;
         worker_summary.searchable_documents += import_summary.searchable_documents;
         worker_summary.ocr_jobs_queued += import_summary.ocr_jobs_queued;
@@ -205,6 +250,166 @@ pub(crate) fn run_import_worker_once_with_retry_due(
         let _ = try_finalize_migration_rebuild(store, options, processing_contract, &run_control)?;
     }
     Ok(worker_summary)
+}
+
+fn finish_source_scan_success(
+    store: &OwnedMetaStore,
+    scope: &ImportScanScope,
+    task_id: &ImportTaskId,
+    processing_contract: &ImportProcessingContract,
+    summary: &import_pipeline::ImportSummary,
+) -> Result<()> {
+    let Some(root) = store
+        .source_root_by_canonical_path(&scope.canonical_root_path)
+        .map_err(DaemonError::store)?
+    else {
+        return Ok(());
+    };
+    let Some(snapshot) = store
+        .latest_scan_snapshot(&root.id)
+        .map_err(DaemonError::store)?
+        .filter(|snapshot| snapshot.id == task_id.as_str() && snapshot.phase.is_active())
+    else {
+        return Ok(());
+    };
+    let finished_at = current_timestamp()?;
+    let elapsed = finished_at
+        .as_unix_seconds()
+        .saturating_sub(snapshot.started_at.as_unix_seconds());
+    let processed = summary.processed_documents;
+    let rate = (elapsed > 0 && processed > 0).then_some(processed as f64 / elapsed as f64);
+    let classifications = store
+        .source_root_classification_counts(&root.id, processing_contract.classifier_epoch())
+        .map_err(DaemonError::store)?;
+    let counts = ScanCounts {
+        discovered: summary.files_discovered as u64,
+        searchable: summary.searchable_documents as u64,
+        non_resume: classifications.non_resume,
+        needs_review: classifications.needs_review,
+        ocr: summary.ocr_required_documents as u64,
+        failed: summary.failed_documents as u64,
+        ignored: summary.ignored_entries as u64,
+        processed: processed as u64,
+        total: Some(summary.files_discovered as u64),
+        errors: summary.scan_errors as u64,
+    };
+    // Per-file parse/classification failures are part of a complete source
+    // snapshot. Only an incomplete directory enumeration or an exhausted scan
+    // budget makes absence unsafe to interpret as deletion.
+    let scan_is_complete = summary.source_truth_complete
+        && summary.scan_errors == 0
+        && !summary.scan_budget.is_some_and(|budget| budget.exhausted);
+    if scan_is_complete {
+        store
+            .reconcile_complete_source_scan(&root.id, task_id.as_str(), counts, rate, finished_at)
+            .map_err(DaemonError::store)?;
+        if summary.deferred_pdf_documents == 0 {
+            store
+                .complete_pdf_reprocess_root(
+                    &root.id,
+                    task_id,
+                    processing_contract.primary_parse_version(),
+                    finished_at,
+                )
+                .map_err(DaemonError::store)?;
+        } else {
+            store
+                .requeue_pdf_reprocess_root(
+                    &root.id,
+                    task_id,
+                    processing_contract.primary_parse_version(),
+                    finished_at,
+                )
+                .map_err(DaemonError::store)?;
+        }
+    } else {
+        store
+            .fail_or_partial_scan(
+                &root.id,
+                task_id.as_str(),
+                counts,
+                ScanPhase::Partial,
+                finished_at,
+            )
+            .map_err(DaemonError::store)?;
+        store
+            .requeue_pdf_reprocess_root(
+                &root.id,
+                task_id,
+                processing_contract.primary_parse_version(),
+                finished_at,
+            )
+            .map_err(DaemonError::store)?;
+    }
+    Ok(())
+}
+
+fn finish_source_scan_failure(
+    store: &OwnedMetaStore,
+    scope: &ImportScanScope,
+    task_id: &ImportTaskId,
+    processing_contract: &ImportProcessingContract,
+    now: UnixTimestamp,
+) -> Result<()> {
+    let Some(root) = store
+        .source_root_by_canonical_path(&scope.canonical_root_path)
+        .map_err(DaemonError::store)?
+    else {
+        return Ok(());
+    };
+    let Some(snapshot) = store
+        .latest_scan_snapshot(&root.id)
+        .map_err(DaemonError::store)?
+        .filter(|snapshot| snapshot.id == task_id.as_str() && snapshot.phase.is_active())
+    else {
+        return Ok(());
+    };
+    store
+        .fail_or_partial_scan(
+            &root.id,
+            task_id.as_str(),
+            snapshot.counts,
+            ScanPhase::Failed,
+            now,
+        )
+        .map_err(DaemonError::store)?;
+    store
+        .requeue_pdf_reprocess_root(
+            &root.id,
+            task_id,
+            processing_contract.primary_parse_version(),
+            now,
+        )
+        .map_err(DaemonError::store)?;
+    Ok(())
+}
+
+fn schedule_next_pdf_reprocess(
+    store: &OwnedMetaStore,
+    processing_contract: &ImportProcessingContract,
+    now: UnixTimestamp,
+) -> Result<bool> {
+    let parser_contract = processing_contract.primary_parse_version();
+    let Some(root) = store
+        .next_pdf_reprocess_root(parser_contract)
+        .map_err(DaemonError::store)?
+    else {
+        return Ok(false);
+    };
+    let snapshot = crate::source_scan_coordinator::enqueue(
+        store,
+        processing_contract,
+        &root,
+        ScanTrigger::Recovery,
+        now,
+    )
+    .map_err(|_| DaemonError::recoverable_dependency("PDF reprocess scan enqueue failed"))?;
+    let task_id = ImportTaskId::from_str(&snapshot.id)
+        .map_err(|_| DaemonError::control_plane("PDF reprocess scan id was invalid"))?;
+    let scheduled = store
+        .mark_pdf_reprocess_root_scheduled(&root.id, parser_contract, &task_id, now)
+        .map_err(DaemonError::store)?;
+    Ok(scheduled > 0)
 }
 
 pub(crate) fn should_requeue_interrupted_import(
@@ -293,6 +498,7 @@ fn import_options_from_scope(
                 ));
             }
         },
+        pdf_import: options.pdf_import,
         linear_promotion: options.linear_promotion.clone(),
         search_vectorization: options.search_vectorization.clone(),
         ..ImportOptions::default()

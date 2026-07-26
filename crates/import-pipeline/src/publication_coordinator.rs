@@ -142,6 +142,17 @@ pub(super) fn flush_pending_searchable_documents(
                         // is published only by the generation CAS below.
                     }
                 }
+                if let Some(occurrence) = &pending.source_occurrence {
+                    store
+                        .observe_import_task_source_occurrence(
+                            &occurrence.task_id,
+                            &occurrence.normalized_path,
+                            &pending.document.id,
+                            &pending.source_revision.id,
+                            occurrence.observed_at,
+                        )
+                        .map_err(ImportPipelineError::store)?;
+                }
             }
             Ok(())
         })?;

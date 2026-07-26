@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The single local main window may call only the eight bounded resume-ir application commands.",
+  "description": "The single local main window may call only the nine bounded resume-ir application commands.",
   "windows": ["main"],
   "permissions": [
     "allow-get-daemon-lifecycle",
@@ -10,7 +10,8 @@
     "allow-select-import-root",
     "allow-list-managed-roots",
     "allow-import-selected-root",
-    "allow-reauthorize-managed-root",
+    "allow-delete-source-root",
+    "allow-reveal-source-file",
     "allow-export-diagnostics"
   ]
 }

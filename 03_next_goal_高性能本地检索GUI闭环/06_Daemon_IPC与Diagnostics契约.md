@@ -548,3 +548,38 @@ above. There is no dual reader or negotiated downgrade.
 - Status and heartbeat are generated from a bounded in-memory typed snapshot.
   They never open SQLite or initialize a runtime. Listener, token, launch ID,
   and instance ID remain stable across bootstrap-to-ready.
+
+## 14. 2026-07-24 feature-train contract versions
+
+This section supersedes section 13's version pins without changing auth v3,
+desktop lifecycle v2, search/detail/hydrate v3 or selection semantics.
+
+- Discovery is `resume-ir.daemon-ipc.v5`; it adds source-root register/list,
+  legacy-ledger migration, scan/control/delete, preview create/range/close and
+  native reveal resolution endpoints while retaining launch/instance binding.
+- Status is `daemon.status.v5`; optional runtimes are exactly embedding, OCR,
+  classifier and PDFium. Capabilities add `pdf_import`.
+- Diagnostics is `resume-ir.diagnostics.v9`; it retains bounded health and
+  aggregate metrics and adds the number of durable source-root deletions still
+  in progress. It never contains a root path, file name, source hash, preview
+  lease or PDF bytes.
+- Aggregate IPC is `resume-ir.ipc.v6`; bounded business errors are
+  `resume-ir.error.v3`.
+- Source roots are `resume-ir.source-roots.v2`; deletion receipt is
+  `resume-ir.root-deletion-receipt.v1`; preview is
+  `resume-ir.source-preview.v1`; native reveal is
+  `resume-ir.source-reveal.v1`.
+
+`resume-ir.source-roots.v2` carries `current_counts` independently from
+`last_scan`. Current counts describe the root's active occurrences and
+projection even when a migrated root has no post-migration scan; `last_scan`
+describes only one bounded scan's trigger, phase, completeness, progress, rate
+and ETA. The scan snapshot and canonical import-task head are one atomic store
+operation. A complete directory enumeration may contain individual parse or
+classification failures, but enumeration errors, offline roots and exhausted
+budgets never authorize absence-based deletion.
+
+During schema migration `core=migrating`. During a durable root deletion the
+control plane and unrelated search remain available, the affected root is
+projected as `deleting`, all new claims for that root are fenced, and retries
+resume the same receipt rather than creating a second deletion.
