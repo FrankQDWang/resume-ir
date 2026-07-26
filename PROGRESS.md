@@ -31229,6 +31229,21 @@ Output summary:
   exact merged-main build and installed-main acceptance, and must remain bound
   to that same final commit.
 
+### macOS-only PR PDFium prerequisite repair
+
+- PR #238 macOS run `30202037705` passed metadata, search-boundary, format and
+  workspace Clippy, then failed before test execution because the PR workflow
+  had not prepared the reviewed static `libpdfium.a` required by Cargo.
+- The PR workflow now caches the exact reviewed macOS PDFium build pack, builds
+  it from the pinned source contract on cache miss, and always verifies the
+  restored pack before Cargo. It does not disable static linking or skip PDF
+  behavior.
+- Independent checks after the workspace test step now continue when an earlier
+  test fails, unless the run was cancelled, so the final matrix collects all
+  failures before repair.
+- Focused workflow policy, PDFium pack verification and PDF renderer test-link
+  checks passed. No previously valid feature or workspace test was rerun.
+
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 
 Changed the private-query benchmark runner so public synthetic smoke runs can

@@ -32,6 +32,22 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
+      - name: Cache reviewed macOS PDFium static pack
+        id: pdfium-cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/resume-ir-macos-pdfium-static-pack
+          key: macos-pdfium-${{ runner.arch }}-${{ hashFiles('apps/desktop/resources/pdf-renderer/aarch64-apple-darwin/source-contract.json', 'apps/desktop/scripts/build-macos-pdfium-static-pack.mjs', 'apps/desktop/scripts/macos-pdfium-static-pack.mjs', 'apps/desktop/scripts/macos-xcode-toolchain.mjs') }}
+
+      - name: Build reviewed macOS PDFium static pack
+        if: steps.pdfium-cache.outputs.cache-hit != 'true'
+        working-directory: apps/desktop
+        run: npm run build:macos:pdfium
+
+      - name: Verify reviewed macOS PDFium static pack
+        working-directory: apps/desktop
+        run: npm run verify:macos:pdfium
+
       - name: Install OCR renderer dependencies
         run: |
           brew install poppler tesseract pango
@@ -52,24 +68,31 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: CLI closed-loop check
+        if: ${{ !cancelled() }}
         run: ./scripts/ci/check-cli-closed-loop.sh
 
       - name: Daemon closed-loop check
+        if: ${{ !cancelled() }}
         run: ./scripts/ci/check-daemon-closed-loop.sh
 
       - name: License check
+        if: ${{ !cancelled() }}
         run: ./scripts/ci/check-licenses.sh
 
       - name: Runbook check
+        if: ${{ !cancelled() }}
         run: ./scripts/ci/check-runbooks.sh
 
       - name: Current-stage handoff check
+        if: ${{ !cancelled() }}
         run: ./scripts/ci/check-current-stage-handoff.sh
 
       - name: Workflow check
+        if: ${{ !cancelled() }}
         run: ./scripts/ci/check-workflows.sh
 
       - name: Benchmark smoke
+        if: ${{ !cancelled() }}
         run: ./scripts/ci/check-benchmark-smoke.sh
 
   contract_check:

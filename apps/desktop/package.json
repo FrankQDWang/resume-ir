@@ -10,6 +10,7 @@
     "build:bundle": "node scripts/prepare-sidecar.mjs && npm run build",
     "build:macos:ocr": "node scripts/build-macos-ocr-pack.mjs",
     "build:macos:pdfium": "node scripts/build-macos-pdfium-static-pack.mjs",
+    "verify:macos:pdfium": "node scripts/verify-macos-pdfium-static-pack.mjs",
     "build:windows:ocr": "node scripts/build-windows-ocr-pack.mjs",
     "build:windows:pdfium": "node scripts/build-windows-pdfium-static-pack.mjs",
     "acceptance:macos:installed-main": "node scripts/macos-installed-main-acceptance.mjs",

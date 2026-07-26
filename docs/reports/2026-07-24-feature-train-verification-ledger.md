@@ -930,3 +930,28 @@ and it does not invalidate any macOS evidence. The PR and required security
 workflows now execute on macOS; the non-required platform workflow no longer
 runs on pull requests and has no Windows matrix. Required check names and
 branch protection remain unchanged.
+
+### macOS PR PDFium prerequisite repair F06 — 2026-07-26
+
+PR run `30202037705`, job `89793521886`, completed metadata, the search
+boundary, formatting and workspace Clippy, then failed before executing any
+test because the linker could not find `libpdfium.a`. This is a CI prerequisite
+failure, not a failed business assertion. The exact macOS DMG path had already
+proved the reviewed static archive; the PR workflow alone had omitted that
+same preparation boundary.
+
+The repair adds an exact-key Actions cache for the reviewed macOS PDFium static
+pack. Cache misses build from the pinned source contract; every restored or
+new pack is revalidated before Cargo runs. No dynamic fallback, feature
+disablement or test skip was added. Independent post-test checks now use
+`!cancelled()` so one failed test cell does not hide the remaining failures.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F06-01 | PR workflow prepares and validates the same reviewed macOS PDFium static archive required by production linking | `0c64de0fa53675e9714eb49013e014baeb5b3a6abb5f5a692aae4a45d983d7b7:a9676ff49e0a7f852fe4753672540782837ace154292200ab76af166a3e0184c:2f52425a0fc7e0ac5d38415fb8655e3692f4f132ec695e1e6ff53297579e2665` | focused workflow checker and pack verifier passed | PR workflow, PDFium contract/build/verification or workspace static-link configuration changes |
+| F06-02 | The PDF renderer test targets link against the reviewed archive | `0c64de0fa53675e9714eb49013e014baeb5b3a6abb5f5a692aae4a45d983d7b7` | `cargo test -p resume-pdf-render-runtime --locked --no-run` passed in 0.43 seconds | PDF renderer crate, PDFium archive, Cargo link configuration or target toolchain changes |
+
+One attempted local execution was left launch-suspended by the command runner
+after linking. It executed no test body, was terminated by exact PID, and is
+`not_run`; F06-02 is the authoritative compile/link result. No previously valid
+workspace or feature row was replayed.
