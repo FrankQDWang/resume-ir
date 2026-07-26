@@ -1,5 +1,5 @@
 export type DaemonLifecycle = "starting" | "running" | "retry_wait" | "circuit_open" | "blocked"
-export type DaemonService = "ready" | "degraded" | "repairing" | "initializing" | "blocked" | "unknown"
+export type DaemonService = "ready" | "degraded" | "repairing" | "migrating" | "initializing" | "blocked" | "unknown"
 export type ResultFreshness = "current" | "stale" | "interrupted"
 
 export type DaemonTransitionReason =
@@ -211,10 +211,11 @@ export function startSerialLifecyclePolling(input: {
 
 export function serviceStateFromStatus(input: {
   httpStatus: number
-  status: "ready" | "degraded" | "repairing" | "initializing" | "blocked" | "unknown"
+  status: "ready" | "degraded" | "repairing" | "migrating" | "initializing" | "blocked" | "unknown"
 }): DaemonService {
   if (input.httpStatus >= 200 && input.httpStatus < 300 && input.status === "ready") return "ready"
   if (input.status === "repairing") return "repairing"
+  if (input.status === "migrating") return "migrating"
   if (input.status === "initializing") return "initializing"
   if (input.status === "blocked") return "blocked"
   if (input.status === "unknown") return "unknown"

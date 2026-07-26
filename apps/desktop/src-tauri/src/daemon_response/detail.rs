@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use super::enums::{AcceptedStatus, CancelStatus, DetailFieldType, ImportProfile, OkStatus};
+use super::enums::{CancelStatus, DetailFieldType, OkStatus};
 use super::{
     bounded_chars, decode, ensure, ensure_schema, protocol_error, DesktopError, SafeCount,
 };
-use crate::daemon_exchange::{valid_opaque_id, valid_stable_id, ExpectedResponse, SearchSelection};
+use crate::daemon_exchange::{valid_opaque_id, ExpectedResponse, SearchSelection};
 
 const MAX_DETAIL_FIELDS: usize = 256;
 const MAX_UI_DETAIL_FIELDS: usize = 32;
@@ -99,18 +99,6 @@ struct HydratePrivacy {
 struct HydrateLimits {
     max_body_page_bytes: u64,
     max_response_bytes: u64,
-}
-
-#[derive(Deserialize, Serialize)]
-pub(super) struct ImportBody {
-    schema_version: String,
-    status: AcceptedStatus,
-    accepted_roots: usize,
-    new_tasks: usize,
-    #[serde(skip_serializing)]
-    task_ids: Vec<String>,
-    scan_profile: ImportProfile,
-    scan_file_limit: Option<u64>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -215,22 +203,6 @@ pub(super) fn project_hydrate(
             && !value.privacy.public_output_allowed
             && value.limits.max_body_page_bytes == MAX_BODY_PAGE_BYTES as u64
             && value.limits.max_response_bytes == MAX_DETAIL_RESPONSE_BYTES as u64,
-    )?;
-    Ok(value)
-}
-
-pub(super) fn project_import(body: &[u8]) -> Result<ImportBody, DesktopError> {
-    let value: ImportBody = decode(body)?;
-    ensure_schema(&value.schema_version, "daemon.import.v1")?;
-    ensure(
-        value.accepted_roots == 1
-            && value.new_tasks <= 1
-            && value.task_ids.len() == 1
-            && value
-                .task_ids
-                .iter()
-                .all(|task_id| valid_stable_id(task_id, "imp_"))
-            && value.scan_file_limit.is_none(),
     )?;
     Ok(value)
 }

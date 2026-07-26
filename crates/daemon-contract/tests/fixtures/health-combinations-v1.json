@@ -2,139 +2,691 @@
   "schema_version": "resume-ir.daemon-health-conformance.v1",
   "cases": [
     {
-      "name": "embedding-off-ocr-off-classifier-off",
+      "name": "embedding-off-ocr-off-classifier-off-pdfium-off",
       "runtime_availability": {
         "embedding": false,
         "ocr": false,
-        "classifier": false
+        "classifier": false,
+        "pdfium": false
       },
       "capabilities": {
-        "keyword_search": { "state": "available", "reason": null },
-        "detail": { "state": "available", "reason": null },
-        "semantic_search": { "state": "unavailable", "reason": "embedding_unavailable" },
-        "hybrid_search": { "state": "degraded", "reason": "embedding_unavailable" },
-        "text_import": { "state": "unavailable", "reason": "classifier_unavailable" },
-        "ocr_import": { "state": "unavailable", "reason": "classifier_unavailable" },
-        "index_publication": { "state": "unavailable", "reason": "embedding_unavailable" }
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "hybrid_search": {
+          "state": "degraded",
+          "reason": "embedding_unavailable"
+        },
+        "text_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "ocr_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "index_publication": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "pdf_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        }
       }
     },
     {
-      "name": "embedding-on-ocr-off-classifier-off",
-      "runtime_availability": {
-        "embedding": true,
-        "ocr": false,
-        "classifier": false
-      },
-      "capabilities": {
-        "keyword_search": { "state": "available", "reason": null },
-        "detail": { "state": "available", "reason": null },
-        "semantic_search": { "state": "available", "reason": null },
-        "hybrid_search": { "state": "available", "reason": null },
-        "text_import": { "state": "unavailable", "reason": "classifier_unavailable" },
-        "ocr_import": { "state": "unavailable", "reason": "classifier_unavailable" },
-        "index_publication": { "state": "available", "reason": null }
-      }
-    },
-    {
-      "name": "embedding-off-ocr-on-classifier-off",
-      "runtime_availability": {
-        "embedding": false,
-        "ocr": true,
-        "classifier": false
-      },
-      "capabilities": {
-        "keyword_search": { "state": "available", "reason": null },
-        "detail": { "state": "available", "reason": null },
-        "semantic_search": { "state": "unavailable", "reason": "embedding_unavailable" },
-        "hybrid_search": { "state": "degraded", "reason": "embedding_unavailable" },
-        "text_import": { "state": "unavailable", "reason": "classifier_unavailable" },
-        "ocr_import": { "state": "unavailable", "reason": "classifier_unavailable" },
-        "index_publication": { "state": "unavailable", "reason": "embedding_unavailable" }
-      }
-    },
-    {
-      "name": "embedding-on-ocr-on-classifier-off",
-      "runtime_availability": {
-        "embedding": true,
-        "ocr": true,
-        "classifier": false
-      },
-      "capabilities": {
-        "keyword_search": { "state": "available", "reason": null },
-        "detail": { "state": "available", "reason": null },
-        "semantic_search": { "state": "available", "reason": null },
-        "hybrid_search": { "state": "available", "reason": null },
-        "text_import": { "state": "unavailable", "reason": "classifier_unavailable" },
-        "ocr_import": { "state": "unavailable", "reason": "classifier_unavailable" },
-        "index_publication": { "state": "available", "reason": null }
-      }
-    },
-    {
-      "name": "embedding-off-ocr-off-classifier-on",
+      "name": "embedding-off-ocr-off-classifier-off-pdfium-on",
       "runtime_availability": {
         "embedding": false,
         "ocr": false,
-        "classifier": true
+        "classifier": false,
+        "pdfium": true
       },
       "capabilities": {
-        "keyword_search": { "state": "available", "reason": null },
-        "detail": { "state": "available", "reason": null },
-        "semantic_search": { "state": "unavailable", "reason": "embedding_unavailable" },
-        "hybrid_search": { "state": "degraded", "reason": "embedding_unavailable" },
-        "text_import": { "state": "unavailable", "reason": "embedding_unavailable" },
-        "ocr_import": { "state": "unavailable", "reason": "embedding_unavailable" },
-        "index_publication": { "state": "unavailable", "reason": "embedding_unavailable" }
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "hybrid_search": {
+          "state": "degraded",
+          "reason": "embedding_unavailable"
+        },
+        "text_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "ocr_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "index_publication": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "pdf_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        }
       }
     },
     {
-      "name": "embedding-on-ocr-off-classifier-on",
+      "name": "embedding-on-ocr-off-classifier-off-pdfium-off",
       "runtime_availability": {
         "embedding": true,
         "ocr": false,
-        "classifier": true
+        "classifier": false,
+        "pdfium": false
       },
       "capabilities": {
-        "keyword_search": { "state": "available", "reason": null },
-        "detail": { "state": "available", "reason": null },
-        "semantic_search": { "state": "available", "reason": null },
-        "hybrid_search": { "state": "available", "reason": null },
-        "text_import": { "state": "available", "reason": null },
-        "ocr_import": { "state": "unavailable", "reason": "ocr_unavailable" },
-        "index_publication": { "state": "available", "reason": null }
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "available",
+          "reason": null
+        },
+        "hybrid_search": {
+          "state": "available",
+          "reason": null
+        },
+        "text_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "ocr_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "index_publication": {
+          "state": "available",
+          "reason": null
+        },
+        "pdf_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        }
       }
     },
     {
-      "name": "embedding-off-ocr-on-classifier-on",
+      "name": "embedding-on-ocr-off-classifier-off-pdfium-on",
+      "runtime_availability": {
+        "embedding": true,
+        "ocr": false,
+        "classifier": false,
+        "pdfium": true
+      },
+      "capabilities": {
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "available",
+          "reason": null
+        },
+        "hybrid_search": {
+          "state": "available",
+          "reason": null
+        },
+        "text_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "ocr_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "index_publication": {
+          "state": "available",
+          "reason": null
+        },
+        "pdf_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        }
+      }
+    },
+    {
+      "name": "embedding-off-ocr-on-classifier-off-pdfium-off",
       "runtime_availability": {
         "embedding": false,
         "ocr": true,
-        "classifier": true
+        "classifier": false,
+        "pdfium": false
       },
       "capabilities": {
-        "keyword_search": { "state": "available", "reason": null },
-        "detail": { "state": "available", "reason": null },
-        "semantic_search": { "state": "unavailable", "reason": "embedding_unavailable" },
-        "hybrid_search": { "state": "degraded", "reason": "embedding_unavailable" },
-        "text_import": { "state": "unavailable", "reason": "embedding_unavailable" },
-        "ocr_import": { "state": "unavailable", "reason": "embedding_unavailable" },
-        "index_publication": { "state": "unavailable", "reason": "embedding_unavailable" }
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "hybrid_search": {
+          "state": "degraded",
+          "reason": "embedding_unavailable"
+        },
+        "text_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "ocr_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "index_publication": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "pdf_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        }
       }
     },
     {
-      "name": "embedding-on-ocr-on-classifier-on",
+      "name": "embedding-off-ocr-on-classifier-off-pdfium-on",
+      "runtime_availability": {
+        "embedding": false,
+        "ocr": true,
+        "classifier": false,
+        "pdfium": true
+      },
+      "capabilities": {
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "hybrid_search": {
+          "state": "degraded",
+          "reason": "embedding_unavailable"
+        },
+        "text_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "ocr_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "index_publication": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "pdf_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        }
+      }
+    },
+    {
+      "name": "embedding-on-ocr-on-classifier-off-pdfium-off",
       "runtime_availability": {
         "embedding": true,
         "ocr": true,
-        "classifier": true
+        "classifier": false,
+        "pdfium": false
       },
       "capabilities": {
-        "keyword_search": { "state": "available", "reason": null },
-        "detail": { "state": "available", "reason": null },
-        "semantic_search": { "state": "available", "reason": null },
-        "hybrid_search": { "state": "available", "reason": null },
-        "text_import": { "state": "available", "reason": null },
-        "ocr_import": { "state": "available", "reason": null },
-        "index_publication": { "state": "available", "reason": null }
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "available",
+          "reason": null
+        },
+        "hybrid_search": {
+          "state": "available",
+          "reason": null
+        },
+        "text_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "ocr_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "index_publication": {
+          "state": "available",
+          "reason": null
+        },
+        "pdf_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        }
+      }
+    },
+    {
+      "name": "embedding-on-ocr-on-classifier-off-pdfium-on",
+      "runtime_availability": {
+        "embedding": true,
+        "ocr": true,
+        "classifier": false,
+        "pdfium": true
+      },
+      "capabilities": {
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "available",
+          "reason": null
+        },
+        "hybrid_search": {
+          "state": "available",
+          "reason": null
+        },
+        "text_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "ocr_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        },
+        "index_publication": {
+          "state": "available",
+          "reason": null
+        },
+        "pdf_import": {
+          "state": "unavailable",
+          "reason": "classifier_unavailable"
+        }
+      }
+    },
+    {
+      "name": "embedding-off-ocr-off-classifier-on-pdfium-off",
+      "runtime_availability": {
+        "embedding": false,
+        "ocr": false,
+        "classifier": true,
+        "pdfium": false
+      },
+      "capabilities": {
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "hybrid_search": {
+          "state": "degraded",
+          "reason": "embedding_unavailable"
+        },
+        "text_import": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "ocr_import": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "index_publication": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "pdf_import": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        }
+      }
+    },
+    {
+      "name": "embedding-off-ocr-off-classifier-on-pdfium-on",
+      "runtime_availability": {
+        "embedding": false,
+        "ocr": false,
+        "classifier": true,
+        "pdfium": true
+      },
+      "capabilities": {
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "hybrid_search": {
+          "state": "degraded",
+          "reason": "embedding_unavailable"
+        },
+        "text_import": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "ocr_import": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "index_publication": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "pdf_import": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        }
+      }
+    },
+    {
+      "name": "embedding-on-ocr-off-classifier-on-pdfium-off",
+      "runtime_availability": {
+        "embedding": true,
+        "ocr": false,
+        "classifier": true,
+        "pdfium": false
+      },
+      "capabilities": {
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "available",
+          "reason": null
+        },
+        "hybrid_search": {
+          "state": "available",
+          "reason": null
+        },
+        "text_import": {
+          "state": "available",
+          "reason": null
+        },
+        "ocr_import": {
+          "state": "unavailable",
+          "reason": "pdfium_unavailable"
+        },
+        "index_publication": {
+          "state": "available",
+          "reason": null
+        },
+        "pdf_import": {
+          "state": "unavailable",
+          "reason": "pdfium_unavailable"
+        }
+      }
+    },
+    {
+      "name": "embedding-on-ocr-off-classifier-on-pdfium-on",
+      "runtime_availability": {
+        "embedding": true,
+        "ocr": false,
+        "classifier": true,
+        "pdfium": true
+      },
+      "capabilities": {
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "available",
+          "reason": null
+        },
+        "hybrid_search": {
+          "state": "available",
+          "reason": null
+        },
+        "text_import": {
+          "state": "available",
+          "reason": null
+        },
+        "ocr_import": {
+          "state": "unavailable",
+          "reason": "ocr_unavailable"
+        },
+        "index_publication": {
+          "state": "available",
+          "reason": null
+        },
+        "pdf_import": {
+          "state": "available",
+          "reason": null
+        }
+      }
+    },
+    {
+      "name": "embedding-off-ocr-on-classifier-on-pdfium-off",
+      "runtime_availability": {
+        "embedding": false,
+        "ocr": true,
+        "classifier": true,
+        "pdfium": false
+      },
+      "capabilities": {
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "hybrid_search": {
+          "state": "degraded",
+          "reason": "embedding_unavailable"
+        },
+        "text_import": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "ocr_import": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "index_publication": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "pdf_import": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        }
+      }
+    },
+    {
+      "name": "embedding-off-ocr-on-classifier-on-pdfium-on",
+      "runtime_availability": {
+        "embedding": false,
+        "ocr": true,
+        "classifier": true,
+        "pdfium": true
+      },
+      "capabilities": {
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "hybrid_search": {
+          "state": "degraded",
+          "reason": "embedding_unavailable"
+        },
+        "text_import": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "ocr_import": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "index_publication": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        },
+        "pdf_import": {
+          "state": "unavailable",
+          "reason": "embedding_unavailable"
+        }
+      }
+    },
+    {
+      "name": "embedding-on-ocr-on-classifier-on-pdfium-off",
+      "runtime_availability": {
+        "embedding": true,
+        "ocr": true,
+        "classifier": true,
+        "pdfium": false
+      },
+      "capabilities": {
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "available",
+          "reason": null
+        },
+        "hybrid_search": {
+          "state": "available",
+          "reason": null
+        },
+        "text_import": {
+          "state": "available",
+          "reason": null
+        },
+        "ocr_import": {
+          "state": "unavailable",
+          "reason": "pdfium_unavailable"
+        },
+        "index_publication": {
+          "state": "available",
+          "reason": null
+        },
+        "pdf_import": {
+          "state": "unavailable",
+          "reason": "pdfium_unavailable"
+        }
+      }
+    },
+    {
+      "name": "embedding-on-ocr-on-classifier-on-pdfium-on",
+      "runtime_availability": {
+        "embedding": true,
+        "ocr": true,
+        "classifier": true,
+        "pdfium": true
+      },
+      "capabilities": {
+        "keyword_search": {
+          "state": "available",
+          "reason": null
+        },
+        "detail": {
+          "state": "available",
+          "reason": null
+        },
+        "semantic_search": {
+          "state": "available",
+          "reason": null
+        },
+        "hybrid_search": {
+          "state": "available",
+          "reason": null
+        },
+        "text_import": {
+          "state": "available",
+          "reason": null
+        },
+        "ocr_import": {
+          "state": "available",
+          "reason": null
+        },
+        "index_publication": {
+          "state": "available",
+          "reason": null
+        },
+        "pdf_import": {
+          "state": "available",
+          "reason": null
+        }
       }
     }
   ]

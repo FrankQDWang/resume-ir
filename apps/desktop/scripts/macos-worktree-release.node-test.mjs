@@ -44,7 +44,7 @@ async function repositoryFixture(context) {
   await writeFile(path.join(repoRoot, "Cargo.toml"), "[workspace]\n");
   await writeFile(
     path.join(frontendRoot, "package.json"),
-    '{"name":"resume-ir-desktop","version":"0.1.2","private":true}\n',
+    '{"name":"resume-ir-desktop","version":"0.1.8","private":true}\n',
   );
   await writeFile(
     path.join(frontendRoot, "package-lock.json"),
@@ -95,7 +95,7 @@ test("builds and publishes a DMG only from the immutable worktree snapshot", asy
       return {
         status: 0,
         stdout: `${JSON.stringify({
-          schema_version: "resume-ir.macos-dmg-composition.v3",
+          schema_version: "resume-ir.macos-dmg-composition.v4",
           target_triple: "aarch64-apple-darwin",
           source,
           dmg_sha256: await sha256(plan.dmg),

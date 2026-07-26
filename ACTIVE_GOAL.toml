@@ -13,7 +13,7 @@ acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩�
 
 [scope.active_slice]
 issue = "#217"
-name = "forward_migration_source_lifecycle_pdf_detail_feature_train_p0"
+name = "v0_1_3_to_v0_1_8_business_feature_train"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = false
@@ -22,8 +22,9 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = true
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = true
-scope_exception_reason = "Issue #217 is the umbrella owner for the approved v0.1.3-v0.1.8 feature train. The train deliberately replaces current-v29-only storage with continuous encrypted COW forward migration beginning at v29, then adds database-owned source roots, path-truth reconciliation, durable root deletion, PDFium plus resumable OCR, selection-bound original-PDF preview and selection-bound native reveal. Each feature crosses metadata, daemon contracts, desktop IPC, UI, packaging and installed acceptance and therefore receives one version-scoped Scope Exception, issue, branch, PR and exact-commit DMG. There is no dual reader, dual write, downgrade read, compatibility flag or request replay. v27/v28/future/corrupt authorities remain fail-closed and byte-preserved. Public evidence is synthetic or bounded redacted aggregate only. Existing launch binding, lifecycle v2, search-selection and atomic publication semantics remain fixed. Final full verification, merged-main installed acceptance and the 120-minute soak run once after v0.1.8; Windows native evidence, signing, updater, scale and stable release are not claimed."
+scope_exception_reason = "Issue #217 is the umbrella owner for the approved v0.1.3-v0.1.8 feature train. The train deliberately replaces current-v29-only storage with continuous encrypted COW forward migration beginning at v29, then adds database-owned source roots, path-truth reconciliation, durable root deletion, PDFium plus resumable OCR, selection-bound original-PDF preview and selection-bound native reveal. The six versions are one atomic business implementation train: production code, contracts, packaging declarations and UI are completed first, without intermediate test, build, installer, Linux or delivery runs. After all business changes are complete, one resumable macOS delivery matrix collects every failure before repair; only failed, invalidated and previously unrun cells are rerun. There is no dual reader, dual write, downgrade read, compatibility flag or request replay. v27/v28/future/corrupt authorities remain fail-closed and byte-preserved. Public evidence is synthetic or bounded redacted aggregate only. Existing launch binding, lifecycle v2, search-selection and atomic publication semantics remain fixed. Windows native evidence, signing, updater, scale and stable release are not claimed."
 allowed_paths = [
+  "AGENTS.md",
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
   "03_next_goal_高性能本地检索GUI闭环/03_数据模型与存储协议.md",
@@ -69,8 +70,14 @@ allowed_paths = [
 
 [contracts]
 query_semantics = "simple_text_required_all_terms_v1"
-ipc_contract = "resume-ir.ipc.v4"
-diagnostics_contract = "resume-ir.diagnostics.v4"
+ipc_contract = "resume-ir.ipc.v6"
+discovery_contract = "resume-ir.daemon-ipc.v5"
+status_contract = "daemon.status.v5"
+diagnostics_contract = "resume-ir.diagnostics.v9"
+error_contract = "resume-ir.error.v3"
+metadata_manifest_contract = "resume-ir.metadata-active.v2"
+metadata_migration_receipt_contract = "resume-ir.metadata-forward-migration-receipt.v1"
+metadata_initialization_receipt_contract = "resume-ir.metadata-initialization-receipt.v1"
 feature_train_contract = "resume-ir.forward-migration-feature-train.v1"
 product_version_source = "apps/desktop/package.json"
 evidence_matrix = "resume-ir.perf.acceptance-matrix.v2"
@@ -84,9 +91,11 @@ versions = ["0.1.3", "0.1.4", "0.1.5", "0.1.6", "0.1.7", "0.1.8"]
 schemas = [30, 31, 32, 33, 33, 33]
 maximum_open_issues = 2
 one_feature_issue_at_a_time = true
-per_version_dmg_required = true
-per_version_installed_acceptance_required = true
-per_version_computer_use_required = true
+per_version_dmg_required = false
+per_version_installed_acceptance_required = false
+per_version_computer_use_required = false
+business_implementation_precedes_validation = true
+collect_all_validation_failures_before_repair = true
 final_full_matrix_after_version = "0.1.8"
 final_merged_main_install_after_version = "0.1.8"
 final_soak_minutes = 120
@@ -105,12 +114,12 @@ contains_model_cache = false
 [platform_lanes]
 macos_m4_can_rank_hotspots = true
 
-[platform_lanes.private_corpus_transfer]
-runner_may_choose_transfer_to_windows = true
-transfer_public_evidence_allowed = false
-raw_private_paths_public_allowed = false
-public_source_name = "$RESUME_IR_PRIVATE_RESUME_ROOT"
-windows_unavailable_starts_reconciliation = true
+[platform_lanes.current_delivery]
+target = "macos_only"
+windows_execution_allowed = false
+linux_execution_allowed = false
+non_macos_failure_blocks_delivery = false
+override_requires_explicit_user_instruction = true
 
 [loop]
 blocked_threshold_count = 3

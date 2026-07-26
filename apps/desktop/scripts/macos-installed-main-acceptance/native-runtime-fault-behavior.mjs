@@ -27,6 +27,7 @@ export function createRuntimeFaultBehaviorCells({
     classifier: false,
     embedding: false,
     ocr: false,
+    pdfium: false,
   };
 
   async function observedFault(session, expectedCell) {
@@ -62,6 +63,21 @@ export function createRuntimeFaultBehaviorCells({
       const fixture = await createOcrFaultFixture(workspace, options.repoRoot);
       await requireMutationAuthority();
       return fixture;
+    },
+    async triggerPdfiumStartFailure(session, fixture) {
+      const before = await pollStatus(
+        session,
+        readyStatus,
+        READY_TIMEOUT_MS,
+        null,
+        signal,
+        runTool,
+      );
+      await submitOcrBacklogImport(
+        before.connection,
+        fixture.request,
+        signal,
+      );
     },
     async validateEmbeddingFaultBehavior(
       session,
@@ -170,6 +186,56 @@ export function createRuntimeFaultBehaviorCells({
       return Object.freeze({
         classifierEpochPreserved: true,
         importRejectedBeforeClaim: true,
+        visibleEpochPreserved: true,
+      });
+    },
+    async validatePdfiumFaultBehavior(
+      session,
+      fixture,
+      expectedCell = "pdfium_missing",
+    ) {
+      const { observed: before, tracked } = await observedFault(
+        session,
+        expectedCell,
+      );
+      await submitOcrBacklogImport(
+        before.connection,
+        fixture.request,
+        signal,
+      );
+      const deferred = await pollStatus(
+        session,
+        (status) =>
+          runtimeFaultStatusMatches(status, tracked.definition) &&
+          status.latest_import_scan?.files_discovered === 1 &&
+          status.latest_import_scan?.searchable_documents === 0 &&
+          status.latest_import_scan?.ocr_required_documents === 0 &&
+          status.latest_import_scan?.failed_documents === 0,
+        READY_TIMEOUT_MS,
+        before.instanceId,
+        signal,
+        runTool,
+      );
+      await wait(GATE_STABILITY_MS);
+      const stable = await requestJson(
+        deferred.connection.urls.status,
+        deferred.connection.token,
+        undefined,
+        signal,
+      );
+      if (
+        !runtimeFaultStatusMatches(stable, tracked.definition) ||
+        stable.visible_epoch !== before.status.visible_epoch ||
+        stable.ocr_jobs_queued !== before.status.ocr_jobs_queued ||
+        stable.ocr_queue_depth !== before.status.ocr_queue_depth
+      ) {
+        fail("optional_runtime_claim_gate_invalid");
+      }
+      tracked.behaviorValidated = true;
+      covered.pdfium = true;
+      return Object.freeze({
+        ocrQueueStable: true,
+        pdfDeferred: true,
         visibleEpochPreserved: true,
       });
     },

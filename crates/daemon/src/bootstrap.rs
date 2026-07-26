@@ -84,6 +84,11 @@ fn run_persistent_ipc_with_hooks(
     control_publisher
         .set_runtimes(runtimes)
         .map_err(DaemonError::from)?;
+    if meta_store::metadata_forward_migration_required(data_dir).is_ok_and(|required| required) {
+        control_publisher
+            .mark_migrating()
+            .map_err(DaemonError::from)?;
+    }
     let initialization: Result<PersistentRuntime> = (|| {
         #[cfg(test)]
         if let Some(before_store_open) = _hooks.before_store_open.as_ref() {
@@ -95,6 +100,10 @@ fn run_persistent_ipc_with_hooks(
             store_opened();
         }
         let processing_contract = import_processing::current_contract(&options)?;
+        crate::source_root_deletion::spawn_pending(data_dir, &store, &processing_contract)
+            .map_err(|_| {
+                DaemonError::recoverable_dependency("source root deletion recovery failed")
+            })?;
         let startup_orphaned_recovered = if options.has_worker_loop() {
             let startup_now = crate::current_timestamp()?;
             let recovered =
@@ -245,31 +254,42 @@ fn resolve_optional_runtimes(
         .ocr_command
         .clone()
         .or_else(|| options.ocr_tesseract_command.clone());
-    let renderer_path = options
-        .ocr_render_command
-        .clone()
-        .or_else(|| options.ocr_pdftoppm_command.clone());
+    let renderer_path = options.pdf_render_command.clone();
+    let pdfium_runtime_dir = std::env::var_os("RESUME_IR_PDFIUM_RUNTIME_DIR").map(PathBuf::from);
+    let pdfium = match (renderer_path.as_deref(), pdfium_runtime_dir.as_deref()) {
+        (None, None) => {
+            ipc::OptionalRuntimeHealth::unavailable(ipc::OptionalRuntimeReason::NotConfigured)
+        }
+        (Some(path), Some(runtime_dir)) => {
+            match crate::runtime_pack::validated_pdf_renderer(path).and_then(|renderer| {
+                crate::runtime_pack::validate_pdfium_with_cancel(runtime_dir, &is_cancelled)?;
+                Ok(renderer)
+            }) {
+                Ok(renderer) => {
+                    options.pdf_render_command = Some(renderer.into_path());
+                    ipc::OptionalRuntimeHealth::available()
+                }
+                Err(reason) => ipc::OptionalRuntimeHealth::unavailable(reason),
+            }
+        }
+        (None, Some(_)) | (Some(_), None) => {
+            ipc::OptionalRuntimeHealth::unavailable(ipc::OptionalRuntimeReason::Invalid)
+        }
+    };
     let tessdata_dir = std::env::var_os("TESSDATA_PREFIX").map(PathBuf::from);
     let ocr = match ocr_path {
         None => ipc::OptionalRuntimeHealth::unavailable(ipc::OptionalRuntimeReason::NotConfigured),
-        Some(path) => match crate::runtime_pack::validated_ocr_runtime_with_cancel(
+        Some(path) => match crate::runtime_pack::validated_ocr_engine_with_cancel(
             &path,
-            renderer_path.as_deref(),
             &options.ocr_lang,
             tessdata_dir.as_deref(),
             &is_cancelled,
         ) {
-            Ok(runtime) => {
-                let (engine, renderer) = runtime.into_paths();
+            Ok(engine) => {
                 if options.ocr_command.is_some() {
                     options.ocr_command = Some(engine.clone());
                 } else {
                     options.ocr_tesseract_command = Some(engine.clone());
-                }
-                if options.ocr_render_command.is_some() {
-                    options.ocr_render_command = Some(renderer);
-                } else {
-                    options.ocr_pdftoppm_command = Some(renderer);
                 }
                 match tessdata_dir.as_deref() {
                     Some(tessdata_dir) => {
@@ -335,6 +355,7 @@ fn resolve_optional_runtimes(
         embedding,
         ocr,
         classifier,
+        pdfium,
     };
     apply_runtime_worker_gates(options, runtimes);
 
@@ -407,6 +428,7 @@ fn cancelled_optional_runtimes(
         embedding: unavailable(),
         ocr: unavailable(),
         classifier: unavailable(),
+        pdfium: unavailable(),
     };
     apply_runtime_worker_gates(options, runtimes);
     (runtimes, None)
@@ -437,17 +459,29 @@ fn classify_embedding_start(
 }
 
 fn apply_runtime_worker_gates(options: &mut RunOptions, runtimes: ipc::OptionalRuntimeMatrix) {
-    if runtimes.classifier.state != ipc::OptionalRuntimeState::Available {
+    let embedding_available = runtimes.embedding.state == ipc::OptionalRuntimeState::Available;
+    let ocr_available = runtimes.ocr.state == ipc::OptionalRuntimeState::Available;
+    let classifier_available = runtimes.classifier.state == ipc::OptionalRuntimeState::Available;
+    let pdfium_available = runtimes.pdfium.state == ipc::OptionalRuntimeState::Available;
+
+    if !classifier_available {
         options.work_imports = false;
         options.work_imports_once = false;
         options.work_ocr = false;
         options.work_ocr_once = false;
     }
-    if runtimes.ocr.state != ipc::OptionalRuntimeState::Available {
+    if !ocr_available {
         options.work_ocr = false;
         options.work_ocr_once = false;
     }
-    if runtimes.embedding.state != ipc::OptionalRuntimeState::Available {
+    if !(embedding_available && classifier_available && pdfium_available) {
+        options.pdf_import = import_pipeline::PdfImportPolicy::Frozen;
+    }
+    if !pdfium_available {
+        options.work_ocr = false;
+        options.work_ocr_once = false;
+    }
+    if !embedding_available {
         options.resident_embedding = None;
         options.search_vectorization = Default::default();
         options.work_imports = false;
@@ -656,7 +690,7 @@ mod tests {
                 !first_ready_business.starts_with("HTTP/1.1 404"),
                 "{first_ready_business}"
             );
-            assert!(first_ready_business.contains("resume-ir.error.v2"));
+            assert!(first_ready_business.contains("resume-ir.error.v3"));
         });
     }
 
@@ -774,7 +808,12 @@ mod tests {
         let (runtimes, owner) = resolve_optional_runtimes(&mut options, Some(&shutdown));
 
         assert!(owner.is_none());
-        for runtime in [runtimes.embedding, runtimes.ocr, runtimes.classifier] {
+        for runtime in [
+            runtimes.embedding,
+            runtimes.ocr,
+            runtimes.classifier,
+            runtimes.pdfium,
+        ] {
             assert_eq!(runtime.state, ipc::OptionalRuntimeState::Unavailable);
             assert_eq!(
                 runtime.reason,
@@ -785,15 +824,16 @@ mod tests {
     }
 
     #[test]
-    fn all_eight_runtime_combinations_gate_capabilities_and_worker_claims() {
+    fn all_sixteen_runtime_combinations_gate_capabilities_and_worker_claims() {
         let core = ipc::CoreHealth {
             state: ipc::CoreState::Ready,
             reason: None,
         };
-        for bits in 0_u8..8 {
-            let embedding = bits & 0b001 != 0;
-            let ocr = bits & 0b010 != 0;
-            let classifier = bits & 0b100 != 0;
+        for bits in 0_u8..16 {
+            let embedding = bits & 0b0001 != 0;
+            let ocr = bits & 0b0010 != 0;
+            let classifier = bits & 0b0100 != 0;
+            let pdfium = bits & 0b1000 != 0;
             let health = |available| {
                 if available {
                     ipc::OptionalRuntimeHealth::available()
@@ -805,13 +845,15 @@ mod tests {
                 embedding: health(embedding),
                 ocr: health(ocr),
                 classifier: health(classifier),
+                pdfium: health(pdfium),
             };
             let capabilities = ipc::CapabilityMatrix::derive(core, runtimes);
             let mut options = all_workers();
             apply_runtime_worker_gates(&mut options, runtimes);
             let import_available = embedding && classifier;
+            let pdf_import_available = import_available && pdfium;
             let index_available = embedding;
-            let ocr_available = import_available && ocr;
+            let ocr_available = pdf_import_available && ocr;
 
             assert_eq!(
                 capabilities.keyword_search.state,
@@ -834,9 +876,14 @@ mod tests {
                 "runtime matrix row {bits:03b}"
             );
             assert_eq!(
+                capabilities.pdf_import.state == ipc::CapabilityState::Available,
+                pdf_import_available,
+                "runtime matrix row {bits:04b}"
+            );
+            assert_eq!(
                 capabilities.ocr_import.state == ipc::CapabilityState::Available,
                 ocr_available,
-                "runtime matrix row {bits:03b}"
+                "runtime matrix row {bits:04b}"
             );
             assert_eq!(
                 capabilities.index_publication.state == ipc::CapabilityState::Available,
@@ -845,6 +892,10 @@ mod tests {
             );
             assert_eq!(options.work_imports, import_available);
             assert_eq!(options.work_imports_once, import_available);
+            assert_eq!(
+                options.pdf_import == import_pipeline::PdfImportPolicy::Enabled,
+                pdf_import_available
+            );
             assert_eq!(options.work_index, index_available);
             assert_eq!(options.work_index_once, index_available);
             assert_eq!(options.work_ocr, ocr_available);

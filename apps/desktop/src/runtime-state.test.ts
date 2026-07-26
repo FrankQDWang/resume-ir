@@ -44,6 +44,7 @@ describe("desktop runtime axes", () => {
   it("keeps lifecycle separate from core service health", () => {
     expect(serviceStateFromStatus({ httpStatus: 200, status: "ready" })).toBe("ready")
     expect(serviceStateFromStatus({ httpStatus: 200, status: "initializing" })).toBe("initializing")
+    expect(serviceStateFromStatus({ httpStatus: 200, status: "migrating" })).toBe("migrating")
     expect(serviceStateFromStatus({ httpStatus: 200, status: "repairing" })).toBe("repairing")
     expect(serviceStateFromStatus({ httpStatus: 503, status: "blocked" })).toBe("blocked")
     expect(serviceStateFromStatus({ httpStatus: 503, status: "unknown" })).toBe("unknown")

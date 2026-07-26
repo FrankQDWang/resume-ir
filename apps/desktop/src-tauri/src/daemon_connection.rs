@@ -11,7 +11,7 @@ use crate::daemon_client::DesktopError;
 
 const ENDPOINT_MANIFEST_FILE: &str = "ipc.endpoints.json";
 const AUTH_MANIFEST_FILE: &str = "ipc.auth";
-const ENDPOINT_SCHEMA: &str = "resume-ir.daemon-ipc.v3";
+const ENDPOINT_SCHEMA: &str = "resume-ir.daemon-ipc.v5";
 const AUTH_SCHEMA: &str = "resume-ir.daemon-auth.v3";
 const MAX_ENDPOINT_MANIFEST_BYTES: u64 = 16 * 1024;
 const MAX_AUTH_MANIFEST_BYTES: u64 = 1024;
@@ -21,11 +21,18 @@ const GENERATION_VALUE_LENGTH: usize = 64;
 pub(crate) enum DaemonRoute {
     Status,
     Diagnostics,
-    Imports,
-    ImportControl,
+    SourceRoots,
+    SourceRootRegister,
+    SourceRootLegacyMigration,
+    SourceRootScan,
+    SourceRootControl,
+    SourceRootDelete,
     Search,
     Details,
     Hydrate,
+    PreviewCreate,
+    PreviewRange,
+    PreviewClose,
     Cancel,
 }
 
@@ -34,11 +41,18 @@ impl DaemonRoute {
         match self {
             Self::Status => "/status",
             Self::Diagnostics => "/diagnostics",
-            Self::Imports => "/imports",
-            Self::ImportControl => "/imports/control",
+            Self::SourceRoots => "/source-roots",
+            Self::SourceRootRegister => "/source-roots/register",
+            Self::SourceRootLegacyMigration => "/source-roots/migrate-legacy",
+            Self::SourceRootScan => "/source-roots/scan",
+            Self::SourceRootControl => "/source-roots/control",
+            Self::SourceRootDelete => "/source-roots/delete",
             Self::Search => "/search",
             Self::Details => "/details",
             Self::Hydrate => "/details/hydrate",
+            Self::PreviewCreate => "/source-preview/create",
+            Self::PreviewRange => "/source-preview/read-range",
+            Self::PreviewClose => "/source-preview/close",
             Self::Cancel => "/search/cancel",
         }
     }
@@ -267,7 +281,21 @@ fn decode_connection_for_launch(
         (&manifest.search, "/search"),
         (&manifest.search_batch, "/search/batch"),
         (&manifest.details, "/details"),
+        (&manifest.hydrate, "/details/hydrate"),
         (&manifest.delete, "/delete"),
+        (&manifest.source_roots, "/source-roots"),
+        (&manifest.source_root_register, "/source-roots/register"),
+        (
+            &manifest.source_root_legacy_migration,
+            "/source-roots/migrate-legacy",
+        ),
+        (&manifest.source_root_scan, "/source-roots/scan"),
+        (&manifest.source_root_control, "/source-roots/control"),
+        (&manifest.source_root_delete, "/source-roots/delete"),
+        (&manifest.preview_create, "/source-preview/create"),
+        (&manifest.preview_range, "/source-preview/read-range"),
+        (&manifest.preview_close, "/source-preview/close"),
+        (&manifest.source_reveal, "/source-reveal/resolve"),
     ];
     let mut addr = None;
     for (endpoint, expected_path) in endpoints {
@@ -412,7 +440,18 @@ struct EndpointManifest {
     search: String,
     search_batch: String,
     details: String,
+    hydrate: String,
     delete: String,
+    source_roots: String,
+    source_root_register: String,
+    source_root_legacy_migration: String,
+    source_root_scan: String,
+    source_root_control: String,
+    source_root_delete: String,
+    preview_create: String,
+    preview_range: String,
+    preview_close: String,
+    source_reveal: String,
 }
 
 #[derive(Clone, Copy, Deserialize, Eq, PartialEq)]
@@ -445,7 +484,7 @@ mod tests {
     const LAUNCH: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 
     #[test]
-    fn strict_v3_pair_accepts_one_canonical_loopback_generation() {
+    fn strict_v5_discovery_v3_auth_pair_accepts_one_canonical_loopback_generation() {
         let manifest = manifest(INSTANCE, "desktop_supervised", "127.0.0.1:4312");
         let auth = auth(INSTANCE, TOKEN);
         let connection =
@@ -457,7 +496,7 @@ mod tests {
     #[test]
     fn legacy_or_unstructured_auth_contracts_are_rejected() {
         let legacy = manifest(INSTANCE, "desktop_supervised", "127.0.0.1:4312")
-            .replace(ENDPOINT_SCHEMA, "resume-ir.daemon-ipc.v1");
+            .replace(ENDPOINT_SCHEMA, "resume-ir.daemon-ipc.v3");
         let current = manifest(INSTANCE, "desktop_supervised", "127.0.0.1:4312");
         assert!(decode_connection(
             legacy.as_bytes(),
@@ -571,10 +610,10 @@ mod tests {
     fn startup_probe_treats_old_malformed_half_written_and_foreign_files_as_stale() {
         let current = manifest(INSTANCE, "desktop_supervised", "127.0.0.1:4312");
         let current_auth = auth(INSTANCE, TOKEN);
-        let old_v2 = current
-            .replace(ENDPOINT_SCHEMA, "resume-ir.daemon-ipc.v2")
+        let old_v3 = current
+            .replace(ENDPOINT_SCHEMA, "resume-ir.daemon-ipc.v3")
             .replace(&format!(r#","launch_id":"{LAUNCH}"#), "");
-        for bytes in [old_v2.as_bytes(), b"{\"schema_version\":", b"{}"] {
+        for bytes in [old_v3.as_bytes(), b"{\"schema_version\":", b"{}"] {
             assert!(ensure_probe_launch(bytes, LAUNCH)
                 .unwrap_err()
                 .is_stale_generation());
@@ -657,7 +696,18 @@ mod tests {
             "search": format!("http://{addr}/search"),
             "search_batch": format!("http://{addr}/search/batch"),
             "details": format!("http://{addr}/details"),
+            "hydrate": format!("http://{addr}/details/hydrate"),
             "delete": format!("http://{addr}/delete"),
+            "source_roots": format!("http://{addr}/source-roots"),
+            "source_root_register": format!("http://{addr}/source-roots/register"),
+            "source_root_legacy_migration": format!("http://{addr}/source-roots/migrate-legacy"),
+            "source_root_scan": format!("http://{addr}/source-roots/scan"),
+            "source_root_control": format!("http://{addr}/source-roots/control"),
+            "source_root_delete": format!("http://{addr}/source-roots/delete"),
+            "preview_create": format!("http://{addr}/source-preview/create"),
+            "preview_range": format!("http://{addr}/source-preview/read-range"),
+            "preview_close": format!("http://{addr}/source-preview/close"),
+            "source_reveal": format!("http://{addr}/source-reveal/resolve"),
         }))
         .unwrap()
     }

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum StatusState {
     Initializing,
+    Migrating,
     Ok,
     Repairing,
     Degraded,
@@ -16,6 +17,7 @@ pub enum StatusState {
 #[serde(rename_all = "snake_case")]
 pub enum CoreState {
     Initializing,
+    Migrating,
     Ready,
     Repairing,
     Degraded,
@@ -27,6 +29,7 @@ pub enum CoreState {
 #[serde(rename_all = "snake_case")]
 pub enum CoreReason {
     MetadataInitializing,
+    MetadataMigrating,
     MigrationRebuild,
     ArtifactUnavailable,
     SourceUnavailable,
@@ -39,6 +42,7 @@ impl CoreReason {
     pub const fn label(self) -> &'static str {
         match self {
             Self::MetadataInitializing => "metadata_initializing",
+            Self::MetadataMigrating => "metadata_migrating",
             Self::MigrationRebuild => "migration_rebuild",
             Self::ArtifactUnavailable => "artifact_unavailable",
             Self::SourceUnavailable => "source_unavailable",
@@ -73,6 +77,13 @@ impl CoreHealth {
         }
     }
 
+    pub const fn migrating() -> Self {
+        Self {
+            state: CoreState::Migrating,
+            reason: Some(CoreReason::MetadataMigrating),
+        }
+    }
+
     pub const fn blocked(reason: CoreReason) -> Self {
         Self {
             state: CoreState::Blocked,
@@ -83,6 +94,7 @@ impl CoreHealth {
     pub const fn status(self) -> StatusState {
         match self.state {
             CoreState::Initializing => StatusState::Initializing,
+            CoreState::Migrating => StatusState::Migrating,
             CoreState::Ready => StatusState::Ok,
             CoreState::Repairing => StatusState::Repairing,
             CoreState::Degraded => StatusState::Degraded,
@@ -164,6 +176,7 @@ pub struct OptionalRuntimeMatrix {
     pub embedding: OptionalRuntimeHealth,
     pub ocr: OptionalRuntimeHealth,
     pub classifier: OptionalRuntimeHealth,
+    pub pdfium: OptionalRuntimeHealth,
 }
 
 impl OptionalRuntimeMatrix {
@@ -172,6 +185,7 @@ impl OptionalRuntimeMatrix {
             embedding: OptionalRuntimeHealth::initializing(),
             ocr: OptionalRuntimeHealth::initializing(),
             classifier: OptionalRuntimeHealth::initializing(),
+            pdfium: OptionalRuntimeHealth::initializing(),
         }
     }
 }
@@ -208,6 +222,7 @@ pub enum CapabilityReason {
     EmbeddingUnavailable,
     OcrUnavailable,
     ClassifierUnavailable,
+    PdfiumUnavailable,
 }
 
 impl CapabilityReason {
@@ -218,6 +233,7 @@ impl CapabilityReason {
             Self::EmbeddingUnavailable => "embedding_unavailable",
             Self::OcrUnavailable => "ocr_unavailable",
             Self::ClassifierUnavailable => "classifier_unavailable",
+            Self::PdfiumUnavailable => "pdfium_unavailable",
         }
     }
 }
@@ -263,6 +279,7 @@ pub struct CapabilityMatrix {
     pub semantic_search: CapabilityHealth,
     pub hybrid_search: CapabilityHealth,
     pub text_import: CapabilityHealth,
+    pub pdf_import: CapabilityHealth,
     pub ocr_import: CapabilityHealth,
     pub index_publication: CapabilityHealth,
 }
@@ -270,7 +287,7 @@ pub struct CapabilityMatrix {
 impl CapabilityMatrix {
     pub fn derive(core: CoreHealth, runtimes: OptionalRuntimeMatrix) -> Self {
         match core.state {
-            CoreState::Initializing | CoreState::Repairing => {
+            CoreState::Initializing | CoreState::Migrating | CoreState::Repairing => {
                 return Self::uniform(
                     CapabilityState::Initializing,
                     CapabilityReason::CoreInitializing,
@@ -285,6 +302,7 @@ impl CapabilityMatrix {
         let embedding = runtimes.embedding.is_available();
         let classifier = runtimes.classifier.is_available();
         let ocr = runtimes.ocr.is_available();
+        let pdfium = runtimes.pdfium.is_available();
         Self {
             keyword_search: CapabilityHealth::available(),
             detail: CapabilityHealth::available(),
@@ -305,10 +323,21 @@ impl CapabilityMatrix {
             } else {
                 CapabilityHealth::available()
             },
+            pdf_import: if !classifier {
+                CapabilityHealth::unavailable(CapabilityReason::ClassifierUnavailable)
+            } else if !embedding {
+                CapabilityHealth::unavailable(CapabilityReason::EmbeddingUnavailable)
+            } else if !pdfium {
+                CapabilityHealth::unavailable(CapabilityReason::PdfiumUnavailable)
+            } else {
+                CapabilityHealth::available()
+            },
             ocr_import: if !classifier {
                 CapabilityHealth::unavailable(CapabilityReason::ClassifierUnavailable)
             } else if !embedding {
                 CapabilityHealth::unavailable(CapabilityReason::EmbeddingUnavailable)
+            } else if !pdfium {
+                CapabilityHealth::unavailable(CapabilityReason::PdfiumUnavailable)
             } else if !ocr {
                 CapabilityHealth::unavailable(CapabilityReason::OcrUnavailable)
             } else {
@@ -333,6 +362,7 @@ impl CapabilityMatrix {
             semantic_search: health,
             hybrid_search: health,
             text_import: health,
+            pdf_import: health,
             ocr_import: health,
             index_publication: health,
         }
@@ -348,6 +378,7 @@ pub enum CapabilityName {
     SemanticSearch,
     HybridSearch,
     TextImport,
+    PdfImport,
     OcrImport,
     IndexPublication,
 }
@@ -382,7 +413,7 @@ impl CoreError {
     pub fn for_core(core: CoreHealth) -> Option<Self> {
         let reason = core.reason?;
         match core.state {
-            CoreState::Initializing | CoreState::Repairing => Some(Self {
+            CoreState::Initializing | CoreState::Migrating | CoreState::Repairing => Some(Self {
                 code: CoreErrorCode::ServiceInitializing,
                 action: CoreErrorAction::WaitForService,
                 capability: None,
@@ -431,6 +462,7 @@ pub fn validate_health_contract(
                 CoreState::Initializing,
                 Some(CoreReason::MetadataInitializing)
             )
+            | (CoreState::Migrating, Some(CoreReason::MetadataMigrating))
             | (
                 CoreState::Repairing,
                 Some(CoreReason::MigrationRebuild | CoreReason::ArtifactUnavailable)
@@ -457,9 +489,14 @@ pub fn validate_health_contract(
     };
     if status != core.status()
         || !valid_core
-        || ![runtimes.embedding, runtimes.ocr, runtimes.classifier]
-            .into_iter()
-            .all(valid_runtime)
+        || ![
+            runtimes.embedding,
+            runtimes.ocr,
+            runtimes.classifier,
+            runtimes.pdfium,
+        ]
+        .into_iter()
+        .all(valid_runtime)
         || capabilities != CapabilityMatrix::derive(core, runtimes)
         || error != CoreError::for_core(core)
     {

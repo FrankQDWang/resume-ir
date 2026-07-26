@@ -1,12 +1,13 @@
 {
-  "schema_version": "daemon.status.v3",
+  "schema_version": "daemon.status.v5",
   "status": "blocked",
   "process_state": "ready",
   "core": { "state": "blocked", "reason": "artifact_unavailable" },
   "optional_runtimes": {
     "embedding": { "state": "available", "reason": null },
     "ocr": { "state": "available", "reason": null },
-    "classifier": { "state": "available", "reason": null }
+    "classifier": { "state": "available", "reason": null },
+    "pdfium": { "state": "available", "reason": null }
   },
   "capabilities": {
     "keyword_search": { "state": "blocked", "reason": "core_blocked" },
@@ -14,6 +15,7 @@
     "semantic_search": { "state": "blocked", "reason": "core_blocked" },
     "hybrid_search": { "state": "blocked", "reason": "core_blocked" },
     "text_import": { "state": "blocked", "reason": "core_blocked" },
+    "pdf_import": { "state": "blocked", "reason": "core_blocked" },
     "ocr_import": { "state": "blocked", "reason": "core_blocked" },
     "index_publication": { "state": "blocked", "reason": "core_blocked" }
   },

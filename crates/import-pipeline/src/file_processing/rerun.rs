@@ -10,7 +10,9 @@ use super::model::{
     ExactRerunDecision, PendingSearchableDocument, PendingSearchablePublicationKind,
 };
 use crate::search_artifacts::index_document_from_resume_version;
-use crate::{ImportPipelineError, Result, OCR_PARSE_VERSION, PARSE_VERSION, SCHEMA_VERSION};
+use crate::{
+    primary_parse_version_for, ImportPipelineError, Result, OCR_PARSE_VERSION, SCHEMA_VERSION,
+};
 
 pub(crate) fn exact_rerun_decision(
     store: &OwnedMetaStore,
@@ -42,6 +44,7 @@ pub(crate) fn exact_rerun_decision(
     let classifier_epoch = linear_promotion
         .classifier_epoch()
         .unwrap_or(meta_store::CLASSIFIER_EPOCH);
+    let expected_primary_parse = primary_parse_version_for(&file.extension);
 
     match document.status {
         DocumentStatus::Searchable | DocumentStatus::IndexedPartial => {
@@ -59,10 +62,8 @@ pub(crate) fn exact_rerun_decision(
             };
             if version.source_revision_id != source_revision.id
                 || version.schema_version != SCHEMA_VERSION
-                || !matches!(
-                    version.parse_version.as_str(),
-                    PARSE_VERSION | OCR_PARSE_VERSION
-                )
+                || !(version.parse_version == expected_primary_parse
+                    || version.parse_version == OCR_PARSE_VERSION)
             {
                 return Ok(None);
             }
@@ -111,6 +112,7 @@ pub(crate) fn exact_rerun_decision(
                     phone_hash: None,
                     index_document,
                     publication_kind: PendingSearchablePublicationKind::MetadataChanged,
+                    source_occurrence: None,
                 }),
             }))
         }
@@ -146,10 +148,8 @@ pub(crate) fn exact_rerun_decision(
                 .into_iter()
                 .filter(|version| {
                     version.source_revision_id == source_revision.id
-                        && matches!(
-                            version.parse_version.as_str(),
-                            PARSE_VERSION | OCR_PARSE_VERSION
-                        )
+                        && (version.parse_version == expected_primary_parse
+                            || version.parse_version == OCR_PARSE_VERSION)
                         && version.schema_version == SCHEMA_VERSION
                 });
             let Some(version) = matching.next() else {

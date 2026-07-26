@@ -34,6 +34,7 @@ function allCapabilities(state, reason) {
     semantic_search: { ...capability },
     hybrid_search: { ...capability },
     text_import: { ...capability },
+    pdf_import: { ...capability },
     ocr_import: { ...capability },
     index_publication: { ...capability },
   };
@@ -41,7 +42,7 @@ function allCapabilities(state, reason) {
 
 function status(overrides = {}) {
   return {
-    schema_version: "daemon.status.v3",
+    schema_version: "daemon.status.v5",
     status: "ok",
     process_state: "ready",
     core: { state: "ready", reason: null },
@@ -49,6 +50,7 @@ function status(overrides = {}) {
       embedding: { state: "available", reason: null },
       ocr: { state: "available", reason: null },
       classifier: { state: "available", reason: null },
+      pdfium: { state: "available", reason: null },
     },
     capabilities: allCapabilities("available", null),
     error: null,
@@ -149,7 +151,7 @@ function missingRuntimeStatus(runtimeName) {
       state: "degraded",
       reason: "embedding_unavailable",
     };
-    for (const name of ["text_import", "ocr_import", "index_publication"]) {
+    for (const name of ["text_import", "pdf_import", "ocr_import", "index_publication"]) {
       capabilities[name] = {
         state: "unavailable",
         reason: "embedding_unavailable",
@@ -160,8 +162,20 @@ function missingRuntimeStatus(runtimeName) {
       state: "unavailable",
       reason: "ocr_unavailable",
     };
+  } else if (runtimeName === "pdfium") {
+    for (const name of ["pdf_import", "ocr_import"]) {
+      capabilities[name] = {
+        state: "unavailable",
+        reason: "pdfium_unavailable",
+      };
+    }
   } else {
-    for (const name of ["text_import", "ocr_import", "index_publication"]) {
+    for (const name of [
+      "text_import",
+      "pdf_import",
+      "ocr_import",
+      "index_publication",
+    ]) {
       capabilities[name] = {
         state: "unavailable",
         reason: "classifier_unavailable",
@@ -181,6 +195,10 @@ function missingRuntimeStatus(runtimeName) {
       classifier: {
         state: runtimeName === "classifier" ? "unavailable" : "available",
         reason: runtimeName === "classifier" ? "missing" : null,
+      },
+      pdfium: {
+        state: runtimeName === "pdfium" ? "unavailable" : "available",
+        reason: runtimeName === "pdfium" ? "missing" : null,
       },
     },
     capabilities,
@@ -211,7 +229,7 @@ function lifecycleEvent(at, state, transitionReason, generation, overrides = {})
   };
 }
 
-test("status v3 distinguishes ready, repairing, and blocked without daemon restart", () => {
+test("status v5 distinguishes ready, repairing, and blocked without daemon restart", () => {
   assert.equal(readyStatus(status()), true);
   assert.equal(validDaemonStatus(status()), true);
   assert.equal(readyStatus({ ...status(), schema_version: "daemon.status.v2" }), false);
@@ -252,7 +270,7 @@ async function serviceResponse(statusCode, body) {
 
 test("service-unavailable POST helper accepts only exact HTTP 503 JSON", async (context) => {
   const expected = {
-    schema_version: "resume-ir.error.v2",
+    schema_version: "resume-ir.error.v3",
     status: "error",
     error: {
       code: "CAPABILITY_UNAVAILABLE",
@@ -303,6 +321,7 @@ test("slow initialization and every missing optional runtime require exact matri
       embedding: { state: "initializing", reason: null },
       ocr: { state: "initializing", reason: null },
       classifier: { state: "initializing", reason: null },
+      pdfium: { state: "initializing", reason: null },
     },
     capabilities: allCapabilities("initializing", "core_initializing"),
     error: {
@@ -313,7 +332,7 @@ test("slow initialization and every missing optional runtime require exact matri
     },
   });
   assert.equal(initializingStatus(initializing), true);
-  for (const runtimeName of ["embedding", "ocr", "classifier"]) {
+  for (const runtimeName of ["embedding", "ocr", "classifier", "pdfium"]) {
     const observed = missingRuntimeStatus(runtimeName);
     assert.equal(optionalRuntimeFaultStatus(observed, runtimeName), true);
     assert.equal(
@@ -332,8 +351,8 @@ test("slow initialization and every missing optional runtime require exact matri
   }
 });
 
-test("diagnostics v4 validates exact health and privacy matrices", () => {
-  assert.equal(validateDaemonDiagnostics(diagnostics()).schema_version, "resume-ir.diagnostics.v4");
+test("diagnostics v9 validates exact health and privacy matrices", () => {
+  assert.equal(validateDaemonDiagnostics(diagnostics()).schema_version, "resume-ir.diagnostics.v9");
   assert.throws(
     () => validateDaemonDiagnostics(diagnostics({ schema_version: "resume-ir.diagnostics.v3" })),
     /diagnostics_contract_invalid/,
@@ -356,7 +375,7 @@ test("diagnostics v4 validates exact health and privacy matrices", () => {
   const embeddingFaultCapabilities = allCapabilities("available", null);
   embeddingFaultCapabilities.semantic_search = { state: "unavailable", reason: "embedding_unavailable" };
   embeddingFaultCapabilities.hybrid_search = { state: "degraded", reason: "embedding_unavailable" };
-  for (const operation of ["text_import", "ocr_import", "index_publication"]) {
+  for (const operation of ["text_import", "pdf_import", "ocr_import", "index_publication"]) {
     embeddingFaultCapabilities[operation] = { state: "unavailable", reason: "embedding_unavailable" };
   }
   const embeddingFault = diagnostics({
@@ -364,6 +383,7 @@ test("diagnostics v4 validates exact health and privacy matrices", () => {
       embedding: { state: "unavailable", reason: "invalid" },
       ocr: { state: "available", reason: null },
       classifier: { state: "available", reason: null },
+      pdfium: { state: "available", reason: null },
     },
     capabilities: embeddingFaultCapabilities,
   });
@@ -434,12 +454,12 @@ test("active store reader accepts only exact private v29 authority", async (cont
   );
 });
 
-test("discovery/auth v3 require one launch, instance, token, and loopback origin", async (context) => {
+test("discovery v5/auth v3 require one launch, instance, token, and loopback origin", async (context) => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "resume-ir-v3-discovery-")));
   context.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(root, { recursive: true });
   const endpoints = {
-    schema_version: "resume-ir.daemon-ipc.v3",
+    schema_version: "resume-ir.daemon-ipc.v5",
     launch_id: LAUNCH,
     instance_id: INSTANCE,
     owner_mode: "desktop_supervised",
@@ -452,7 +472,18 @@ test("discovery/auth v3 require one launch, instance, token, and loopback origin
     search: "http://127.0.0.1:4312/search",
     search_batch: "http://127.0.0.1:4312/search/batch",
     details: "http://127.0.0.1:4312/details",
+    hydrate: "http://127.0.0.1:4312/details/hydrate",
     delete: "http://127.0.0.1:4312/delete",
+    source_roots: "http://127.0.0.1:4312/source-roots",
+    source_root_register: "http://127.0.0.1:4312/source-roots/register",
+    source_root_legacy_migration: "http://127.0.0.1:4312/source-roots/migrate-legacy",
+    source_root_scan: "http://127.0.0.1:4312/source-roots/scan",
+    source_root_control: "http://127.0.0.1:4312/source-roots/control",
+    source_root_delete: "http://127.0.0.1:4312/source-roots/delete",
+    preview_create: "http://127.0.0.1:4312/source-preview/create",
+    preview_range: "http://127.0.0.1:4312/source-preview/read-range",
+    preview_close: "http://127.0.0.1:4312/source-preview/close",
+    source_reveal: "http://127.0.0.1:4312/source-reveal/resolve",
   };
   const auth = {
     schema_version: "resume-ir.daemon-auth.v3",

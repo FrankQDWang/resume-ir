@@ -6,10 +6,11 @@ import {
   executablePayloadSha256,
   sha256,
 } from "./verify-bundled-sidecar.mjs";
+import { readMacosPdfiumSourceContract } from "./macos-pdfium-static-pack.mjs";
 import { validateSourceIdentity } from "./macos-source-identity.mjs";
 
-export const BUNDLE_COMPOSITION_FILE = "resume-ir.bundle-composition.v3.json";
-export const BUNDLE_COMPOSITION_SCHEMA = "resume-ir.macos-bundle-composition.v3";
+export const BUNDLE_COMPOSITION_FILE = "resume-ir.bundle-composition.v4.json";
+export const BUNDLE_COMPOSITION_SCHEMA = "resume-ir.macos-bundle-composition.v4";
 
 const EXPECTED_BUNDLE_ID = "local.resume-ir.desktop";
 const EXPECTED_DISPLAY_NAME = "resume-ir";
@@ -36,14 +37,22 @@ const RUNTIME_MANIFESTS = Object.freeze([
   Object.freeze({
     role: "classifier",
     file: "classifier/runtime-pack/runtime-pack.json",
+    schema: "resume-ir.desktop-classifier-model-pack.v1",
   }),
   Object.freeze({
     role: "embedding",
     file: "embedding/runtime-pack/runtime-pack.json",
+    schema: "resume-ir.embedding-runtime-pack.v1",
   }),
   Object.freeze({
     role: "ocr",
     file: "ocr/runtime-pack/runtime-pack.json",
+    schema: "resume-ir.desktop-ocr-runtime-pack.v1",
+  }),
+  Object.freeze({
+    role: "pdfium",
+    file: "pdfium/runtime-pack/runtime-pack.json",
+    schema: "resume-ir.pdfium-static-runtime-pack.v1",
   }),
 ]);
 const EXECUTABLE_PATHS = new Set(
@@ -346,7 +355,51 @@ async function completeAppFiles(
   return files.sort((left, right) => compareNames(left.file, right.file));
 }
 
-async function verifyRuntimePack(manifestFile) {
+function validatePdfiumRuntimeManifest(manifest, manifestFile) {
+  const expectedFiles = [
+    ["license", "LICENSE"],
+    ["build_arguments", "args.gn"],
+    ["source_contract", "source-contract.json"],
+  ];
+  if (
+    !exactKeys(manifest, [
+      "schema_version",
+      "runtime_pack_id",
+      "target_triple",
+      "link_mode",
+      "source_commit",
+      "source_build_dependency_revision",
+      "product_runtime_network_access",
+      "files",
+    ]) ||
+    manifest.runtime_pack_id !== "pdfium-chromium-7881-static-arm64-v1" ||
+    manifest.target_triple !== SUPPORTED_TARGET ||
+    manifest.link_mode !== "static" ||
+    manifest.product_runtime_network_access !== "disabled" ||
+    manifest.files.length !== expectedFiles.length ||
+    !manifest.files.every(
+      (entry, index) =>
+        entry.role === expectedFiles[index][0] && entry.file === expectedFiles[index][1],
+    )
+  ) {
+    throw evidenceError("bundle composition PDFium runtime manifest is invalid");
+  }
+  const sourceContract = readMacosPdfiumSourceContract(
+    path.join(path.dirname(manifestFile), "source-contract.json"),
+  );
+  if (
+    manifest.source_commit !== sourceContract.pdfium.source_commit ||
+    manifest.source_build_dependency_revision !==
+      sourceContract.pdfium.source_build_dependency_revision ||
+    manifest.files[0].bytes !== sourceContract.pdfium.source_license_file.bytes ||
+    manifest.files[0].sha256 !== sourceContract.pdfium.source_license_file.sha256
+  ) {
+    throw evidenceError("bundle composition PDFium source identity is invalid");
+  }
+  return sourceContract;
+}
+
+async function verifyRuntimePack(manifestFile, expected) {
   await requireBoundFile(
     manifestFile,
     "bundle composition runtime manifest is invalid",
@@ -365,12 +418,17 @@ async function verifyRuntimePack(manifestFile) {
     manifest === null ||
     typeof manifest !== "object" ||
     Array.isArray(manifest) ||
+    manifest.schema_version !== expected.schema ||
     !Array.isArray(manifest.files) ||
     manifest.files.length === 0 ||
     manifest.files.length > MAX_RUNTIME_FILES
   ) {
     throw evidenceError("bundle composition runtime manifest is invalid");
   }
+  const pdfiumContract =
+    expected.role === "pdfium"
+      ? validatePdfiumRuntimeManifest(manifest, manifestFile)
+      : undefined;
   const files = new Set();
   for (const entry of manifest.files) {
     if (
@@ -406,6 +464,20 @@ async function verifyRuntimePack(manifestFile) {
     JSON.stringify(expectedFiles)
   ) {
     throw evidenceError("bundle composition runtime pack is invalid");
+  }
+  if (pdfiumContract) {
+    const argumentsFile = path.join(path.dirname(manifestFile), "args.gn");
+    const argumentsText = await readFile(argumentsFile, "utf8").catch(() => undefined);
+    const argumentsList = argumentsText
+      ?.split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"));
+    if (
+      JSON.stringify(argumentsList) !==
+      JSON.stringify(pdfiumContract.pdfium.gn_arguments)
+    ) {
+      throw evidenceError("bundle composition PDFium build arguments are invalid");
+    }
   }
 }
 
@@ -520,8 +592,12 @@ export async function createBundleComposition({
   const runtimeManifests = [];
   for (const entry of RUNTIME_MANIFESTS) {
     const file = path.join(resources, entry.file);
-    await verifyRuntimePack(file);
-    runtimeManifests.push({ ...entry, sha256: await sha256(file) });
+    await verifyRuntimePack(file, entry);
+    runtimeManifests.push({
+      role: entry.role,
+      file: entry.file,
+      sha256: await sha256(file),
+    });
   }
   const iconPath = path.join(resources, EXPECTED_ICON_FILE);
   await requireBoundFile(iconPath, "bundle composition icon is invalid");

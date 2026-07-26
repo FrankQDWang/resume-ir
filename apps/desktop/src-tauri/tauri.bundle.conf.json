@@ -14,7 +14,8 @@
     "resources": {
       "../../../target/tauri-resources/classifier-model-pack/": "classifier/runtime-pack/",
       "../../../target/tauri-resources/embedding-runtime-pack/": "embedding/runtime-pack/",
-      "../../../target/tauri-resources/ocr-runtime-pack/": "ocr/runtime-pack/"
+      "../../../target/tauri-resources/ocr-runtime-pack/": "ocr/runtime-pack/",
+      "../../../target/tauri-resources/pdfium-static-runtime-pack/": "pdfium/runtime-pack/"
     }
   }
 }

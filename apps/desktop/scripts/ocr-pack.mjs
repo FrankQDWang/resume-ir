@@ -13,16 +13,43 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 
+import { inspectWindowsPeExecutable } from "./windows-pe.mjs";
+
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
-const ROLE_COUNTS = new Map([
-  ["engine_binary", 1],
-  ["engine_library", 15],
-  ["language_eng", 1],
-  ["language_chi_sim", 1],
-  ["engine_config", 1],
-  ["license_text", 10],
-  ["third_party_notice", 1],
+const TARGETS = new Map([
+  [
+    "aarch64-apple-darwin",
+    Object.freeze({
+      runtimePackId: "tesseract-5.5.2-tessdata-fast-4.1.0-macos-arm64-r1",
+      renderer: "macos-pdfium-static",
+      engineFile: "tesseract",
+      libraryCount: 15,
+      licenseCount: 10,
+    }),
+  ],
+  [
+    "x86_64-pc-windows-msvc",
+    Object.freeze({
+      runtimePackId: "tesseract-5.5.2-tessdata-fast-4.1.0-windows-x64-static-r1",
+      renderer: "windows-pdfium-static",
+      engineFile: "tesseract.exe",
+      libraryCount: 0,
+      licenseCount: 3,
+    }),
+  ],
 ]);
+
+function roleCounts(target) {
+  return new Map([
+    ["engine_binary", 1],
+    ["engine_library", target.libraryCount],
+    ["language_eng", 1],
+    ["language_chi_sim", 1],
+    ["engine_config", 1],
+    ["license_text", target.licenseCount],
+    ["third_party_notice", 1],
+  ]);
+}
 
 async function sha256(file) {
   const hash = createHash("sha256");
@@ -42,21 +69,23 @@ function safeRelativePath(value) {
 }
 
 export function validateOcrRuntimePackManifest(manifest) {
+  const target = TARGETS.get(manifest?.target_triple);
+  const expectedRoleCounts = target ? roleCounts(target) : new Map();
   if (
     !manifest ||
+    !target ||
     manifest.schema_version !== "resume-ir.desktop-ocr-runtime-pack.v1" ||
-    manifest.runtime_pack_id !==
-      "tesseract-5.5.2-tessdata-fast-4.1.0-macos-arm64-r1" ||
-    manifest.target_triple !== "aarch64-apple-darwin" ||
+    manifest.runtime_pack_id !== target.runtimePackId ||
     manifest.engine !== "tesseract" ||
     manifest.engine_version !== "5.5.2" ||
-    manifest.renderer !== "macos-pdfkit-coregraphics" ||
+    manifest.renderer !== target.renderer ||
     JSON.stringify(manifest.languages) !== JSON.stringify(["eng", "chi_sim"]) ||
     manifest.network_access !== "disabled" ||
     manifest.license_reviewed !== true ||
     manifest.third_party_notice !== "THIRD-PARTY-NOTICES.json" ||
     !Array.isArray(manifest.files) ||
-    manifest.files.length !== [...ROLE_COUNTS.values()].reduce((sum, count) => sum + count, 0)
+    manifest.files.length !==
+      [...expectedRoleCounts.values()].reduce((sum, count) => sum + count, 0)
   ) {
     throw new Error("OCR runtime manifest contract is invalid");
   }
@@ -65,7 +94,7 @@ export function validateOcrRuntimePackManifest(manifest) {
   for (const entry of manifest.files) {
     if (
       !entry ||
-      !ROLE_COUNTS.has(entry.role) ||
+      !expectedRoleCounts.has(entry.role) ||
       !safeRelativePath(entry.file) ||
       files.has(entry.file) ||
       !Number.isSafeInteger(entry.bytes) ||
@@ -78,13 +107,13 @@ export function validateOcrRuntimePackManifest(manifest) {
     files.add(entry.file);
     roles.set(entry.role, (roles.get(entry.role) ?? 0) + 1);
   }
-  for (const [role, count] of ROLE_COUNTS) {
-    if (roles.get(role) !== count) {
+  for (const [role, count] of expectedRoleCounts) {
+    if ((roles.get(role) ?? 0) !== count) {
       throw new Error("OCR runtime manifest role set is incomplete");
     }
   }
   const exactRoleFiles = new Map([
-    ["engine_binary", "tesseract"],
+    ["engine_binary", target.engineFile],
     ["language_eng", "tessdata/eng.traineddata"],
     ["language_chi_sim", "tessdata/chi_sim.traineddata"],
     ["engine_config", "tessdata/configs/tsv"],
@@ -99,7 +128,10 @@ export function validateOcrRuntimePackManifest(manifest) {
   if (
     manifest.files.some((entry) =>
       entry.role === "engine_library"
-        ? !entry.file.startsWith("lib/") || !entry.file.endsWith(".dylib") || entry.executable
+        ? target.libraryCount === 0 ||
+          !entry.file.startsWith("lib/") ||
+          !entry.file.endsWith(".dylib") ||
+          entry.executable
         : entry.role === "license_text"
           ? !entry.file.startsWith("LICENSES/") || !entry.file.endsWith(".txt") || entry.executable
           : false,
@@ -185,11 +217,15 @@ async function validatedSourcePack(sourceRoot, expectedManifest) {
     if (metadata.size !== entry.bytes || (await sha256(sourceFile)) !== entry.sha256) {
       throw new Error(`OCR resource ${entry.role} does not match manifest`);
     }
-    if (
-      ["engine_binary", "engine_library"].includes(entry.role) &&
-      !(await arm64MachO(sourceFile))
-    ) {
-      throw new Error(`OCR resource ${entry.role} architecture is invalid`);
+    if (expected.target_triple === "aarch64-apple-darwin") {
+      if (
+        ["engine_binary", "engine_library"].includes(entry.role) &&
+        !(await arm64MachO(sourceFile))
+      ) {
+        throw new Error(`OCR resource ${entry.role} architecture is invalid`);
+      }
+    } else if (entry.role === "engine_binary") {
+      inspectWindowsPeExecutable(await readFile(sourceFile));
     }
   }
   return expected;

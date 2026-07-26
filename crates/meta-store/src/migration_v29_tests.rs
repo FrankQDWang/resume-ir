@@ -46,7 +46,7 @@ fn descriptor_contract_rejects_mixed_snapshot_versions() {
 fn fresh_owner_directory_initializes_and_reopens_exact_current_v29() {
     let fixture = OwnedDirectory::new();
 
-    let store = fixture.owner.open_store().unwrap();
+    let store = fixture.open_v29_store().unwrap();
     assert_eq!(store.schema_version().unwrap(), schema_v29::VERSION);
     let manifest = read_manifest(&fixture.data_dir().join(MANIFEST_FILE)).unwrap();
     assert_eq!(manifest.schema_version, schema_v29::VERSION);
@@ -66,7 +66,7 @@ fn fresh_owner_directory_initializes_and_reopens_exact_current_v29() {
     );
     drop(store);
 
-    let reopened = fixture.owner.open_store().unwrap();
+    let reopened = fixture.open_v29_store().unwrap();
     assert_eq!(reopened.schema_version().unwrap(), schema_v29::VERSION);
 
     let published_tree = snapshot_tree(fixture.data_dir());
@@ -84,11 +84,11 @@ fn fresh_owner_directory_initializes_and_reopens_exact_current_v29() {
 fn current_v29_open_preserves_key_manifest_ciphertext_and_business_data() {
     let fixture = OwnedDirectory::new();
     let projection = {
-        let store = fixture.owner.open_store().unwrap();
-        seed_published_v29_projection(&store)
+        let store = fixture.open_v29_store().unwrap();
+        seed_published_v29_projection(store)
     };
     let before_summary = {
-        let store = fixture.owner.open_store().unwrap();
+        let store = fixture.open_v29_store().unwrap();
         preserved_v29_summary(&store, &projection)
     };
     assert_eq!(before_summary.generation, "v29-preservation-generation");
@@ -105,7 +105,7 @@ fn current_v29_open_preserves_key_manifest_ciphertext_and_business_data() {
     let before = snapshot_tree(fixture.data_dir());
 
     {
-        let reopened = fixture.owner.open_store().unwrap();
+        let reopened = fixture.open_v29_store().unwrap();
         assert_eq!(
             preserved_v29_summary(&reopened, &projection),
             before_summary
@@ -118,7 +118,7 @@ fn current_v29_open_preserves_key_manifest_ciphertext_and_business_data() {
 #[test]
 fn current_v29_open_accepts_retained_current_ready_history() {
     let fixture = OwnedDirectory::new();
-    let store = fixture.owner.open_store().unwrap();
+    let store = fixture.open_v29_store().unwrap();
     let contract = ImportProcessingContract::new(
         "v29-history-parser",
         "v29-history-ocr",
@@ -133,7 +133,9 @@ fn current_v29_open_accepts_retained_current_ready_history() {
         .acquire_migration_rebuild_barrier_token(contract.id())
         .unwrap()
         .unwrap();
-    let mut session = store.wait_for_search_publication_session().unwrap();
+    let mut session = store
+        .into_historical_search_publication_session_for_test()
+        .unwrap();
     assert!(matches!(
         session
             .acquire_migration_rebuild_publication_attempt(
@@ -161,10 +163,9 @@ fn current_v29_open_accepts_retained_current_ready_history() {
         UnixTimestamp::from_unix_seconds(13),
     );
     drop(session);
-    drop(store);
     let before = snapshot_tree(fixture.data_dir());
 
-    let reopened = fixture.owner.open_store().unwrap();
+    let reopened = fixture.open_v29_store().unwrap();
     let head = reopened.search_projection_state().unwrap();
     assert_eq!(head.generation.as_deref(), Some("v29-history-second"));
     assert_eq!(head.visible_epoch, 2);
@@ -173,7 +174,11 @@ fn current_v29_open_accepts_retained_current_ready_history() {
         2
     );
     drop(reopened);
-    drop(crate::ReadMetaStore::open_data_dir(fixture.data_dir()).unwrap());
+    let error = match crate::ReadMetaStore::open_data_dir(fixture.data_dir()) {
+        Ok(_) => panic!("historical v29 must not enter the production read path"),
+        Err(error) => error,
+    };
+    assert_eq!(error.class(), MetaStoreErrorClass::UnsupportedStoreSchema);
 
     assert_eq!(snapshot_tree(fixture.data_dir()), before);
 }
@@ -181,11 +186,11 @@ fn current_v29_open_accepts_retained_current_ready_history() {
 #[test]
 fn current_v29_missing_key_fails_without_repair_or_other_writes() {
     let fixture = OwnedDirectory::new();
-    drop(fixture.owner.open_store().unwrap());
+    drop(fixture.open_v29_store().unwrap());
     fs::remove_file(crate::metadata_encryption_key_path(fixture.data_dir())).unwrap();
     let before = snapshot_tree(fixture.data_dir());
 
-    assert!(fixture.owner.open_store().is_err());
+    assert!(fixture.open_v29_store().is_err());
 
     assert_eq!(snapshot_tree(fixture.data_dir()), before);
     assert!(!crate::metadata_encryption_key_path(fixture.data_dir()).exists());
@@ -194,7 +199,7 @@ fn current_v29_missing_key_fails_without_repair_or_other_writes() {
 #[test]
 fn current_v29_manifest_identity_mismatch_is_byte_stable() {
     let fixture = OwnedDirectory::new();
-    drop(fixture.owner.open_store().unwrap());
+    drop(fixture.open_v29_store().unwrap());
     let manifest_path = fixture.data_dir().join(MANIFEST_FILE);
     let manifest = read_manifest(&manifest_path).unwrap();
     fs::write(
@@ -209,7 +214,7 @@ fn current_v29_manifest_identity_mismatch_is_byte_stable() {
     .unwrap();
     let before = snapshot_tree(fixture.data_dir());
 
-    assert!(fixture.owner.open_store().is_err());
+    assert!(fixture.open_v29_store().is_err());
 
     assert_eq!(snapshot_tree(fixture.data_dir()), before);
 }
@@ -217,14 +222,14 @@ fn current_v29_manifest_identity_mismatch_is_byte_stable() {
 #[test]
 fn current_v29_ciphertext_integrity_failure_is_byte_stable() {
     let fixture = OwnedDirectory::new();
-    drop(fixture.owner.open_store().unwrap());
+    drop(fixture.open_v29_store().unwrap());
     let store_path = active_store_path(fixture.data_dir()).unwrap();
     let mut ciphertext = fs::read(&store_path).unwrap();
     ciphertext[0] ^= 0xff;
     fs::write(&store_path, ciphertext).unwrap();
     let before = snapshot_tree(fixture.data_dir());
 
-    assert!(fixture.owner.open_store().is_err());
+    assert!(fixture.open_v29_store().is_err());
 
     assert_eq!(snapshot_tree(fixture.data_dir()), before);
 }
@@ -232,8 +237,8 @@ fn current_v29_ciphertext_integrity_failure_is_byte_stable() {
 #[test]
 fn current_v29_publication_fingerprint_corruption_is_rejected_byte_stably() {
     let fixture = OwnedDirectory::new();
-    let store = fixture.owner.open_store().unwrap();
-    seed_published_v29_projection(&store);
+    seed_published_v29_projection(fixture.open_v29_store().unwrap());
+    let store = fixture.open_v29_store().unwrap();
     {
         let connection = store.connection.borrow();
         connection
@@ -259,7 +264,7 @@ fn current_v29_publication_fingerprint_corruption_is_rejected_byte_stably() {
     sync_validated_store(&store_path).unwrap();
     let before = snapshot_tree(fixture.data_dir());
 
-    assert!(fixture.owner.open_store().is_err());
+    assert!(fixture.open_v29_store().is_err());
     assert!(crate::ReadMetaStore::open_data_dir(fixture.data_dir()).is_err());
 
     assert_eq!(snapshot_tree(fixture.data_dir()), before);
@@ -268,8 +273,8 @@ fn current_v29_publication_fingerprint_corruption_is_rejected_byte_stably() {
 #[test]
 fn current_v29_active_head_epoch_corruption_is_rejected_byte_stably() {
     let fixture = OwnedDirectory::new();
-    let store = fixture.owner.open_store().unwrap();
-    seed_published_v29_projection(&store);
+    seed_published_v29_projection(fixture.open_v29_store().unwrap());
+    let store = fixture.open_v29_store().unwrap();
     {
         let connection = store.connection.borrow();
         let restore = trigger_restore_sql(
@@ -302,7 +307,7 @@ fn current_v29_active_head_epoch_corruption_is_rejected_byte_stably() {
     sync_validated_store(&store_path).unwrap();
     let before = snapshot_tree(fixture.data_dir());
 
-    assert!(fixture.owner.open_store().is_err());
+    assert!(fixture.open_v29_store().is_err());
     assert!(crate::ReadMetaStore::open_data_dir(fixture.data_dir()).is_err());
 
     assert_eq!(snapshot_tree(fixture.data_dir()), before);
@@ -314,7 +319,7 @@ fn current_v29_symlinked_key_directory_is_rejected_without_following_it() {
     use std::os::unix::fs::symlink;
 
     let fixture = OwnedDirectory::new();
-    drop(fixture.owner.open_store().unwrap());
+    drop(fixture.open_v29_store().unwrap());
     let external = tempdir().unwrap();
     let key_directory = fixture.data_dir().join("metadata-secrets");
     let external_key_directory = external.path().join("metadata-secrets");
@@ -323,7 +328,7 @@ fn current_v29_symlinked_key_directory_is_rejected_without_following_it() {
     let before = snapshot_tree(fixture.data_dir());
     let external_before = snapshot_tree(external.path());
 
-    assert!(fixture.owner.open_store().is_err());
+    assert!(fixture.open_v29_store().is_err());
     assert!(crate::ReadMetaStore::open_data_dir(fixture.data_dir()).is_err());
 
     assert_eq!(snapshot_tree(fixture.data_dir()), before);
@@ -336,12 +341,12 @@ fn current_v29_permissive_key_directory_is_rejected_without_chmod_repair() {
     use std::os::unix::fs::PermissionsExt;
 
     let fixture = OwnedDirectory::new();
-    drop(fixture.owner.open_store().unwrap());
+    drop(fixture.open_v29_store().unwrap());
     let key_directory = fixture.data_dir().join("metadata-secrets");
     fs::set_permissions(&key_directory, fs::Permissions::from_mode(0o755)).unwrap();
     let before = snapshot_tree(fixture.data_dir());
 
-    assert!(fixture.owner.open_store().is_err());
+    assert!(fixture.open_v29_store().is_err());
     assert!(crate::ReadMetaStore::open_data_dir(fixture.data_dir()).is_err());
 
     assert_eq!(snapshot_tree(fixture.data_dir()), before);
@@ -361,7 +366,7 @@ fn current_v29_symlinked_database_is_rejected_without_following_it() {
     use std::os::unix::fs::symlink;
 
     let fixture = OwnedDirectory::new();
-    drop(fixture.owner.open_store().unwrap());
+    drop(fixture.open_v29_store().unwrap());
     let store_path = active_store_path(fixture.data_dir()).unwrap();
     let external = tempdir().unwrap();
     let external_store = external.path().join("external.sqlite3");
@@ -370,7 +375,7 @@ fn current_v29_symlinked_database_is_rejected_without_following_it() {
     let before = snapshot_tree(fixture.data_dir());
     let external_before = fs::read(&external_store).unwrap();
 
-    assert!(fixture.owner.open_store().is_err());
+    assert!(fixture.open_v29_store().is_err());
     assert!(crate::ReadMetaStore::open_data_dir(fixture.data_dir()).is_err());
 
     assert_eq!(snapshot_tree(fixture.data_dir()), before);
@@ -384,7 +389,7 @@ fn published_v28_is_rejected_without_mutating_any_authority_or_ciphertext() {
         crate::migration_v28::prepare_active_v28_store(&fixture.owner.shared_guard()).unwrap();
     let before = snapshot_tree(fixture.data_dir());
 
-    let Err(error) = fixture.owner.open_store() else {
+    let Err(error) = fixture.open_v29_store() else {
         panic!("v28 must not enter the production v29 open path");
     };
 
@@ -416,7 +421,7 @@ fn v27_and_unknown_manifests_are_typed_unsupported_and_byte_stable() {
         crate::restrict_private_file_permissions(&manifest_path).unwrap();
         let before = snapshot_tree(fixture.data_dir());
 
-        let Err(error) = fixture.owner.open_store() else {
+        let Err(error) = fixture.open_v29_store() else {
             panic!("schema v{version} must not enter the v29 owner path");
         };
 
@@ -433,7 +438,7 @@ fn legacy_database_authority_is_rejected_without_creating_key_or_manifest() {
     crate::restrict_private_file_permissions(&legacy).unwrap();
     let before = snapshot_tree(fixture.data_dir());
 
-    let Err(error) = fixture.owner.open_store() else {
+    let Err(error) = fixture.open_v29_store() else {
         panic!("legacy authority must not be migrated");
     };
 
@@ -449,7 +454,7 @@ fn key_only_directory_is_not_treated_as_a_fresh_store() {
     crate::load_or_create_metadata_encryption_key(fixture.data_dir()).unwrap();
     let before = snapshot_tree(fixture.data_dir());
 
-    let Err(error) = fixture.owner.open_store() else {
+    let Err(error) = fixture.open_v29_store() else {
         panic!("a key without a current manifest is not an empty directory");
     };
 
@@ -461,7 +466,7 @@ fn key_only_directory_is_not_treated_as_a_fresh_store() {
 #[test]
 fn current_v29_open_never_deletes_a_v28_predecessor_named_file() {
     let fixture = OwnedDirectory::new();
-    drop(fixture.owner.open_store().unwrap());
+    drop(fixture.open_v29_store().unwrap());
     let manifest = read_manifest(&fixture.data_dir().join(MANIFEST_FILE)).unwrap();
     let predecessor = fixture.data_dir().join(format!(
         "metadata-v28-{}.sqlite3",
@@ -471,7 +476,7 @@ fn current_v29_open_never_deletes_a_v28_predecessor_named_file() {
     crate::restrict_private_file_permissions(&predecessor).unwrap();
     let before = fs::read(&predecessor).unwrap();
 
-    drop(fixture.owner.open_store().unwrap());
+    drop(fixture.open_v29_store().unwrap());
 
     assert_eq!(fs::read(predecessor).unwrap(), before);
 }
@@ -484,7 +489,7 @@ fn old_migration_attempt_authority_is_rejected_without_cleanup() {
     crate::restrict_private_file_permissions(&attempt).unwrap();
     let before = snapshot_tree(fixture.data_dir());
 
-    let Err(error) = fixture.owner.open_store() else {
+    let Err(error) = fixture.open_v29_store() else {
         panic!("an old migration authority must not be resumed");
     };
 
@@ -512,7 +517,7 @@ fn orphan_versioned_store_authorities_are_typed_unsupported_and_byte_stable() {
         crate::restrict_private_file_permissions(&orphan).unwrap();
         let before = snapshot_tree(fixture.data_dir());
 
-        let Err(error) = fixture.owner.open_store() else {
+        let Err(error) = fixture.open_v29_store() else {
             panic!("version-shaped orphan {name} must not be replaced by a fresh v29 store");
         };
 
@@ -534,7 +539,7 @@ fn similarly_named_non_authority_file_does_not_block_fresh_v29_creation() {
         fs::write(user_file, b"synthetic non-authority user file").unwrap();
     }
 
-    let store = fixture.owner.open_store().unwrap();
+    let store = fixture.open_v29_store().unwrap();
 
     assert_eq!(store.schema_version().unwrap(), schema_v29::VERSION);
     for user_file in user_files {
@@ -565,7 +570,7 @@ fn unsafe_reserved_authority_objects_are_rejected_without_following_or_deleting_
         let before = snapshot_tree(fixture.data_dir());
         let external_before = snapshot_tree(external.path());
 
-        assert!(fixture.owner.open_store().is_err());
+        assert!(fixture.open_v29_store().is_err());
 
         assert_eq!(snapshot_tree(fixture.data_dir()), before);
         assert_eq!(snapshot_tree(external.path()), external_before);
@@ -637,6 +642,12 @@ impl OwnedDirectory {
 
     fn data_dir(&self) -> &Path {
         self.owner.canonical_data_dir()
+    }
+
+    fn open_v29_store(&self) -> crate::Result<OwnedMetaStore> {
+        let owner = self.owner.shared_guard();
+        let (path, key) = prepare_active_v29_store(&owner)?;
+        OwnedMetaStore::open_owned_encrypted(path, &key, owner)
     }
 }
 
@@ -738,7 +749,7 @@ fn trigger_restore_sql(connection: &rusqlite::Connection, names: &[&str]) -> Str
         .collect()
 }
 
-fn seed_published_v29_projection(store: &OwnedMetaStore) -> ActiveSearchProjection {
+fn seed_published_v29_projection(store: OwnedMetaStore) -> ActiveSearchProjection {
     const GENERATION: &str = "v29-preservation-generation";
     let mut document = synthetic_document("preserved-v29");
     let revision = SourceRevision::for_content(
@@ -810,7 +821,9 @@ fn seed_published_v29_projection(store: &OwnedMetaStore) -> ActiveSearchProjecti
         .acquire_migration_rebuild_barrier_token(contract.id())
         .unwrap()
         .unwrap();
-    let mut session = store.wait_for_search_publication_session().unwrap();
+    let mut session = store
+        .into_historical_search_publication_session_for_test()
+        .unwrap();
     assert!(matches!(
         session
             .acquire_migration_rebuild_publication_attempt(

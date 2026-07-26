@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version, for example v0.1.0"
+        description: "Must equal v plus apps/desktop/package.json version"
         required: true
         type: string
 
@@ -12,151 +12,6 @@ permissions:
   contents: read
 
 jobs:
-  dry-run:
-    name: release dry run
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-
-      - name: Validate version input
-        run: |
-          case "${{ inputs.version }}" in
-            v[0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "version must look like vX.Y.Z" >&2; exit 1 ;;
-          esac
-
-      - name: Verify workspace
-        run: ./scripts/ci/verify-local.sh
-
-      - name: Confirm stable release remains blocked
-        run: ./scripts/ci/check-release-readiness.sh
-
-      - name: Build release binaries
-        run: cargo build --workspace --release --locked
-
-      - name: Create synthetic reviewed runtime bundle dry run
-        run: |
-          runtime_dir="${RUNNER_TEMP}/ci-synthetic-runtime-bundle"
-          mkdir -p "$runtime_dir" release-dry-run
-          printf '%s\n' "synthetic tesseract runtime binary" > "$runtime_dir/tesseract"
-          printf '%s\n' "synthetic English tessdata payload" > "$runtime_dir/eng.traineddata"
-          printf '%s\n' "synthetic PDF renderer runtime binary" > "$runtime_dir/pdftoppm"
-          printf '%s\n' "synthetic source offer archive" > "$runtime_dir/source-offer.tar.gz"
-          scripts/release/create-runtime-bundle-manifest.sh \
-            --version "${{ inputs.version }}" \
-            --runtime-pack-id ci-synthetic-runtime-bundle \
-            --distribution-license GPL-3.0-or-later \
-            --source-offer "$runtime_dir/source-offer.tar.gz" \
-            --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$runtime_dir/tesseract" \
-            --component "eng-tessdata|ocr-language-pack|Apache-2.0|https://github.com/tesseract-ocr/tessdata|$runtime_dir/eng.traineddata" \
-            --component "poppler-pdftoppm|pdf-renderer|GPL-3.0-or-later|https://poppler.freedesktop.org/|$runtime_dir/pdftoppm" \
-            --out-dir release-dry-run \
-            --reviewed
-
-      - name: Create release artifact manifest
-        run: |
-          scripts/release/create-artifact-manifest.sh \
-            --version "${{ inputs.version }}" \
-            --target-dir target/release \
-            --out-dir release-dry-run \
-            --runtime-bundle-manifest release-dry-run/runtime-bundle-manifest.json
-
-      - name: Create blocked signing evidence manifest
-        run: |
-          scripts/release/create-signing-evidence.sh \
-            --version "${{ inputs.version }}" \
-            --artifact-manifest release-dry-run/release-artifacts.json \
-            --out-dir release-dry-run
-
-      - name: Create release SBOM
-        run: |
-          scripts/release/create-sbom.sh \
-            --version "${{ inputs.version }}" \
-            --out-dir release-dry-run \
-            --runtime-bundle-manifest release-dry-run/runtime-bundle-manifest.json
-
-      - name: Create blocked GitHub Release publication evidence manifest
-        run: |
-          scripts/release/create-release-publication-evidence.sh \
-            --version "${{ inputs.version }}" \
-            --artifact-manifest release-dry-run/release-artifacts.json \
-            --out-dir release-dry-run
-
-      - name: Validate GitHub Release publication gate
-        run: |
-          scripts/release/publish-github-release.sh \
-            --dry-run \
-            --version "${{ inputs.version }}" \
-            --repo "${{ github.repository }}" \
-            --artifact-manifest release-dry-run/release-artifacts.json \
-            --publication-evidence release-dry-run/release-publication-evidence.json \
-            --out-dir release-dry-run
-
-      - name: Check public artifact boundary
-        run: |
-          test ! -d local-data
-          test ! -d diagnostics
-          test ! -d model-cache
-          test -f release-dry-run/release-artifacts.json
-          test -f release-dry-run/runtime-bundle-manifest.json
-          test -f release-dry-run/signing-evidence.json
-          test -f release-dry-run/release-sbom.json
-          test -f release-dry-run/release-publication-evidence.json
-          test -f release-dry-run/github-release-publication-gate.json
-          grep -F '"signing_status": "blocked"' release-dry-run/signing-evidence.json
-          grep -F '"runtime_bundle_manifests"' release-dry-run/release-artifacts.json
-          grep -F '"runtime_distribution_mode": "bundled"' release-dry-run/runtime-bundle-manifest.json
-          grep -F '"runtime_distribution_mode=bundled"' release-dry-run/release-sbom.json
-          grep -F '"evidence_boundary": "dry_run_no_signing_material"' release-dry-run/signing-evidence.json
-          grep -F '"publication_status": "blocked"' release-dry-run/release-publication-evidence.json
-          grep -F '"evidence_boundary": "dry_run_no_release_publication"' release-dry-run/release-publication-evidence.json
-          grep -F '"execution_mode": "dry_run"' release-dry-run/github-release-publication-gate.json
-          grep -F '"secret_interface": "GITHUB_TOKEN_or_GH_TOKEN_required_for_execute"' release-dry-run/github-release-publication-gate.json
-          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' release-dry-run/release-artifacts.json; then
-            echo "release artifact manifest leaked a local path or runtime-data marker" >&2
-            exit 1
-          fi
-          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' release-dry-run/runtime-bundle-manifest.json; then
-            echo "runtime bundle manifest leaked a local path or runtime-data marker" >&2
-            exit 1
-          fi
-          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' release-dry-run/signing-evidence.json; then
-            echo "signing evidence manifest leaked a local path or runtime-data marker" >&2
-            exit 1
-          fi
-          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' release-dry-run/release-sbom.json; then
-            echo "release SBOM leaked a local path or runtime-data marker" >&2
-            exit 1
-          fi
-          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' release-dry-run/release-publication-evidence.json; then
-            echo "release publication evidence manifest leaked a local path or runtime-data marker" >&2
-            exit 1
-          fi
-          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' release-dry-run/github-release-publication-gate.json; then
-            echo "GitHub Release publication gate leaked a local path or runtime-data marker" >&2
-            exit 1
-          fi
-
-      - name: Upload release dry-run manifest
-        uses: actions/upload-artifact@v7
-        with:
-          name: release-dry-run
-          path: release-dry-run/*.json
-
-      - name: Release gate
-        run: |
-          echo "Packaging, signing, notarization, and GitHub Release upload are gated until explicit release approval."
-
   macos-package-dry-run:
     name: macOS package dry run
     runs-on: macos-latest
@@ -170,10 +25,22 @@ jobs:
 
       - name: Validate version input
         run: |
-          case "${{ inputs.version }}" in
-            v[0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "version must look like vX.Y.Z" >&2; exit 1 ;;
-          esac
+          expected_version="v$(node -p "require('./apps/desktop/package.json').version")"
+          if [ "${{ inputs.version }}" != "$expected_version" ]; then
+            echo "version must equal desktop product version $expected_version" >&2
+            exit 1
+          fi
+
+      - name: Validate release-readiness contract
+        run: ./scripts/ci/check-release-readiness.sh
+
+      - name: Build reviewed macOS PDFium static pack
+        working-directory: apps/desktop
+        run: npm run build:macos:pdfium
+
+      - name: Build reviewed macOS OCR runtime pack
+        working-directory: apps/desktop
+        run: npm run build:macos:ocr
 
       - name: Build release binaries
         run: cargo build --workspace --release --locked
@@ -184,16 +51,23 @@ jobs:
           mkdir -p "$runtime_dir" macos-package-dry-run
           printf '%s\n' "synthetic tesseract runtime binary" > "$runtime_dir/tesseract"
           printf '%s\n' "synthetic English tessdata payload" > "$runtime_dir/eng.traineddata"
-          printf '%s\n' "synthetic PDF renderer runtime binary" > "$runtime_dir/pdftoppm"
-          printf '%s\n' "synthetic source offer archive" > "$runtime_dir/source-offer.tar.gz"
+          cp target/release/resume-pdf-render-runtime "$runtime_dir/resume-pdf-render-runtime"
+          cp apps/desktop/resources/pdf-renderer/aarch64-apple-darwin/LICENSE.pdfium "$runtime_dir/PDFium-LICENSE"
+          cp apps/desktop/resources/pdf-renderer/aarch64-apple-darwin/source-contract.json "$runtime_dir/pdfium-source-contract.json"
+          printf '%s\n' \
+            'PDFium source: https://pdfium.googlesource.com/pdfium.git' \
+            'commit: 91b9d569b34be4f38eed7b3c49b227356c3aadad' \
+            > "$runtime_dir/PDFium-SOURCE-IDENTITY.txt"
           scripts/release/create-runtime-bundle-manifest.sh \
             --version "${{ inputs.version }}" \
             --runtime-pack-id ci-synthetic-runtime-bundle \
-            --distribution-license GPL-3.0-or-later \
-            --source-offer "$runtime_dir/source-offer.tar.gz" \
+            --distribution-license LicenseRef-resume-ir-mixed-runtime-bundle \
+            --source-offer "$runtime_dir/PDFium-SOURCE-IDENTITY.txt" \
             --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$runtime_dir/tesseract" \
             --component "eng-tessdata|ocr-language-pack|Apache-2.0|https://github.com/tesseract-ocr/tessdata|$runtime_dir/eng.traineddata" \
-            --component "poppler-pdftoppm|pdf-renderer|GPL-3.0-or-later|https://poppler.freedesktop.org/|$runtime_dir/pdftoppm" \
+            --component "resume-pdf-render-runtime|pdf-renderer|LicenseRef-PDFium-Root-LICENSE|https://pdfium.googlesource.com/pdfium.git|$runtime_dir/resume-pdf-render-runtime" \
+            --component "pdfium-source-contract|support-tool|LicenseRef-PDFium-Root-LICENSE|https://pdfium.googlesource.com/pdfium.git|$runtime_dir/pdfium-source-contract.json" \
+            --component "pdfium-license|license-notice|LicenseRef-PDFium-Root-LICENSE|https://pdfium.googlesource.com/pdfium.git|$runtime_dir/PDFium-LICENSE" \
             --out-dir macos-package-dry-run \
             --reviewed
 
@@ -206,6 +80,45 @@ jobs:
             --out-dir macos-package-dry-run \
             --runtime-bundle-manifest macos-package-dry-run/runtime-bundle-manifest.json \
             --runtime-bundle-dir "$runtime_dir"
+
+      - name: Create release artifact manifest
+        run: |
+          scripts/release/create-artifact-manifest.sh \
+            --version "${{ inputs.version }}" \
+            --target-dir target/release \
+            --out-dir macos-package-dry-run \
+            --runtime-bundle-manifest macos-package-dry-run/runtime-bundle-manifest.json
+
+      - name: Create blocked signing evidence manifest
+        run: |
+          scripts/release/create-signing-evidence.sh \
+            --version "${{ inputs.version }}" \
+            --artifact-manifest macos-package-dry-run/release-artifacts.json \
+            --out-dir macos-package-dry-run
+
+      - name: Create release SBOM
+        run: |
+          scripts/release/create-sbom.sh \
+            --version "${{ inputs.version }}" \
+            --out-dir macos-package-dry-run \
+            --runtime-bundle-manifest macos-package-dry-run/runtime-bundle-manifest.json
+
+      - name: Create blocked GitHub Release publication evidence manifest
+        run: |
+          scripts/release/create-release-publication-evidence.sh \
+            --version "${{ inputs.version }}" \
+            --artifact-manifest macos-package-dry-run/release-artifacts.json \
+            --out-dir macos-package-dry-run
+
+      - name: Validate GitHub Release publication gate
+        run: |
+          scripts/release/publish-github-release.sh \
+            --dry-run \
+            --version "${{ inputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --artifact-manifest macos-package-dry-run/release-artifacts.json \
+            --publication-evidence macos-package-dry-run/release-publication-evidence.json \
+            --out-dir macos-package-dry-run
 
       - name: Create blocked macOS installer evidence manifest
         run: |
@@ -236,6 +149,11 @@ jobs:
           test ! -d model-cache
           test -f macos-package-dry-run/macos-package.json
           test -f macos-package-dry-run/runtime-bundle-manifest.json
+          test -f macos-package-dry-run/release-artifacts.json
+          test -f macos-package-dry-run/signing-evidence.json
+          test -f macos-package-dry-run/release-sbom.json
+          test -f macos-package-dry-run/release-publication-evidence.json
+          test -f macos-package-dry-run/github-release-publication-gate.json
           test -f macos-package-dry-run/macos-installer-evidence.json
           test -f macos-package-dry-run/macos-installer-lifecycle-dry-run.json
           test -f macos-package-dry-run/notarization-evidence.json
@@ -245,6 +163,9 @@ jobs:
           grep -F '"packaging_status": "unsigned_dry_run"' macos-package-dry-run/macos-package.json
           grep -F '"schema_version": "release.runtime_package_payload.v1"' macos-package-dry-run/macos-package.json
           grep -F '"runtime_distribution_mode": "bundled"' macos-package-dry-run/runtime-bundle-manifest.json
+          grep -F '"signing_status": "blocked"' macos-package-dry-run/signing-evidence.json
+          grep -F '"publication_status": "blocked"' macos-package-dry-run/release-publication-evidence.json
+          grep -F '"execution_mode": "dry_run"' macos-package-dry-run/github-release-publication-gate.json
           grep -F '"signing_status": "unsigned"' macos-package-dry-run/macos-package.json
           grep -F '"notarization_status": "not_requested"' macos-package-dry-run/macos-package.json
           grep -F '"installer_lifecycle_status": "blocked"' macos-package-dry-run/macos-installer-evidence.json
@@ -275,6 +196,18 @@ jobs:
             echo "macOS notarization evidence manifest leaked a local path or runtime-data marker" >&2
             exit 1
           fi
+          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' macos-package-dry-run/signing-evidence.json; then
+            echo "signing evidence manifest leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
+          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' macos-package-dry-run/release-publication-evidence.json; then
+            echo "release publication evidence manifest leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
+          if grep -Eq 'manifest_path|src_path|license_file|/Users/|target/release|local-data|diagnostics|model-cache' macos-package-dry-run/github-release-publication-gate.json; then
+            echo "GitHub Release publication gate leaked a local path or runtime-data marker" >&2
+            exit 1
+          fi
 
       - name: Upload unsigned macOS package dry run
         uses: actions/upload-artifact@v7
@@ -284,12 +217,12 @@ jobs:
 
       - name: Release gate
         run: |
-          echo "Signing, notarization, installer lifecycle validation, Windows MSI, and GitHub Release upload are gated until explicit release approval."
+          echo "Packaging is complete. Signing, notarization, installer lifecycle validation, Windows MSI, and GitHub Release upload are gated until explicit release approval."
 
   windows-package-dry-run:
     name: Windows package dry run
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -309,10 +242,19 @@ jobs:
       - name: Validate version input
         shell: pwsh
         run: |
-          if ("${{ inputs.version }}" -notmatch '^v[0-9]+[.][0-9]+[.][0-9]+$') {
-            Write-Error "version must look like vX.Y.Z"
+          $expectedVersion = "v$(node -p "require('./apps/desktop/package.json').version")"
+          if ("${{ inputs.version }}" -ne $expectedVersion) {
+            Write-Error "version must equal desktop product version $expectedVersion"
             exit 1
           }
+
+      - name: Build reviewed Windows PDFium static pack
+        working-directory: apps/desktop
+        run: npm run build:windows:pdfium
+
+      - name: Build reviewed Windows OCR runtime pack
+        working-directory: apps/desktop
+        run: npm run build:windows:ocr
 
       - name: Build release binaries
         run: cargo build --workspace --release --locked
@@ -324,16 +266,23 @@ jobs:
           mkdir -p "$runtime_dir" windows-package-dry-run
           printf '%s\n' "synthetic tesseract runtime binary" > "$runtime_dir/tesseract"
           printf '%s\n' "synthetic English tessdata payload" > "$runtime_dir/eng.traineddata"
-          printf '%s\n' "synthetic PDF renderer runtime binary" > "$runtime_dir/pdftoppm"
-          printf '%s\n' "synthetic source offer archive" > "$runtime_dir/source-offer.tar.gz"
+          cp target/release/resume-pdf-render-runtime.exe "$runtime_dir/resume-pdf-render-runtime.exe"
+          cp apps/desktop/resources/pdf-renderer/aarch64-apple-darwin/LICENSE.pdfium "$runtime_dir/PDFium-LICENSE"
+          cp apps/desktop/resources/pdf-renderer/x86_64-pc-windows-msvc/source-contract.json "$runtime_dir/pdfium-source-contract.json"
+          printf '%s\n' \
+            'PDFium source: https://pdfium.googlesource.com/pdfium.git' \
+            'commit: 91b9d569b34be4f38eed7b3c49b227356c3aadad' \
+            > "$runtime_dir/PDFium-SOURCE-IDENTITY.txt"
           scripts/release/create-runtime-bundle-manifest.sh \
             --version "${{ inputs.version }}" \
             --runtime-pack-id ci-synthetic-runtime-bundle \
-            --distribution-license GPL-3.0-or-later \
-            --source-offer "$runtime_dir/source-offer.tar.gz" \
+            --distribution-license LicenseRef-resume-ir-mixed-runtime-bundle \
+            --source-offer "$runtime_dir/PDFium-SOURCE-IDENTITY.txt" \
             --component "tesseract|ocr-engine|Apache-2.0|https://github.com/tesseract-ocr/tesseract|$runtime_dir/tesseract" \
             --component "eng-tessdata|ocr-language-pack|Apache-2.0|https://github.com/tesseract-ocr/tessdata|$runtime_dir/eng.traineddata" \
-            --component "poppler-pdftoppm|pdf-renderer|GPL-3.0-or-later|https://poppler.freedesktop.org/|$runtime_dir/pdftoppm" \
+            --component "resume-pdf-render-runtime|pdf-renderer|LicenseRef-PDFium-Root-LICENSE|https://pdfium.googlesource.com/pdfium.git|$runtime_dir/resume-pdf-render-runtime.exe" \
+            --component "pdfium-source-contract|support-tool|LicenseRef-PDFium-Root-LICENSE|https://pdfium.googlesource.com/pdfium.git|$runtime_dir/pdfium-source-contract.json" \
+            --component "pdfium-license|license-notice|LicenseRef-PDFium-Root-LICENSE|https://pdfium.googlesource.com/pdfium.git|$runtime_dir/PDFium-LICENSE" \
             --out-dir windows-package-dry-run \
             --reviewed
 

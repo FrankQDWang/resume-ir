@@ -253,8 +253,8 @@ class GovernanceContractMutationTests(unittest.TestCase):
 
     def test_each_bootstrap_contract_field_is_required_and_exact(self) -> None:
         sections = {
-            "daemon_bootstrap_v1": (
-                self.performance_checker.DAEMON_BOOTSTRAP_V1_REQUIRED_FIELDS
+            "daemon_bootstrap_v2": (
+                self.performance_checker.DAEMON_BOOTSTRAP_V2_REQUIRED_FIELDS
             ),
             "desktop_supervisor_v2": (
                 self.performance_checker.DESKTOP_SUPERVISOR_V2_REQUIRED_FIELDS

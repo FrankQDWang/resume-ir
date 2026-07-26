@@ -18,7 +18,7 @@ const epoch = 12;
 
 function readyStatus(overrides = {}) {
   return {
-    schema_version: "daemon.status.v3",
+    schema_version: "daemon.status.v5",
     status: "ok",
     visible_epoch: epoch,
     process_state: "ready",
@@ -27,6 +27,7 @@ function readyStatus(overrides = {}) {
       embedding: { state: "available", reason: null },
       ocr: { state: "available", reason: null },
       classifier: { state: "available", reason: null },
+      pdfium: { state: "available", reason: null },
     },
     capabilities: {
       keyword_search: { state: "available", reason: null },
@@ -34,6 +35,7 @@ function readyStatus(overrides = {}) {
       semantic_search: { state: "available", reason: null },
       hybrid_search: { state: "available", reason: null },
       text_import: { state: "available", reason: null },
+      pdf_import: { state: "available", reason: null },
       ocr_import: { state: "available", reason: null },
       index_publication: { state: "available", reason: null },
     },

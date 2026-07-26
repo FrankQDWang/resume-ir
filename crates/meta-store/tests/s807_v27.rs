@@ -24,7 +24,8 @@ use meta_store::{
     SearchSelectionDetailsResolution, SearchSelectionResolution, SearchTextBytePageRequest,
     SearchTextBytePageResolution, SearchTextPageCursor, SearchTextPageRequest,
     SearchTextPageResolution, SourceRevisionTriage, TerminalDocumentUpdate,
-    VectorSnapshotDescriptor, MAX_BOUNDED_FILTER_SELECTION, MAX_SEARCH_TEXT_PAGE_CODE_POINTS,
+    VectorSnapshotDescriptor, CURRENT_SCHEMA_VERSION, MAX_BOUNDED_FILTER_SELECTION,
+    MAX_SEARCH_TEXT_PAGE_CODE_POINTS,
 };
 use tempfile::TempDir;
 
@@ -2258,9 +2259,9 @@ fn same_version_metadata_change_requires_exact_snapshot_and_advances_head_atomic
 }
 
 #[test]
-fn v29_identity_and_derived_rows_are_insert_once() {
+fn current_schema_identity_and_derived_rows_are_insert_once() {
     let (_directory, store) = owned_store();
-    assert_eq!(store.schema_version().unwrap(), 29);
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
     assert_eq!(
         store.search_projection_state().unwrap().service_state,
         SearchProjectionServiceState::Repairing

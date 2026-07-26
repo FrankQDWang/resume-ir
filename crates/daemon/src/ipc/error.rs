@@ -20,6 +20,7 @@ pub(crate) enum RuntimeEvent {
     ImportWorkerStopped,
     ImportWorkerFailed(DaemonFatalError),
     QueryWorkerStopped,
+    SourceFileWorkerStopped,
     StatusUpdaterStopped,
 }
 

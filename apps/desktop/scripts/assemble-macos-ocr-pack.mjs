@@ -118,7 +118,7 @@ function validateReviewedManifest(manifest) {
   if (
     !manifest ||
     manifest.schema_version !== "resume-ir.ocr-runtime-manifest.v1" ||
-    manifest.runtime_pack_id !== "local-tesseract-poppler-eng-chi-sim" ||
+    manifest.runtime_pack_id !== "local-tesseract-5.5.2-eng-chi-sim" ||
     !Array.isArray(manifest.components) ||
     !Array.isArray(manifest.languages)
   ) {
@@ -301,7 +301,7 @@ function roleFor(file) {
   fail("assembled pack contains an undeclared file");
 }
 
-async function assemble({ expectedManifest, manifest, out, runner = defaultRunner }) {
+export async function assemble({ expectedManifest, manifest, out, runner = defaultRunner }) {
   const sourceManifest = validateReviewedManifest(
     JSON.parse(await readFile(manifest, "utf8")),
   );
@@ -369,7 +369,7 @@ async function assemble({ expectedManifest, manifest, out, runner = defaultRunne
       target_triple: TARGET_TRIPLE,
       engine: "tesseract",
       engine_version: "5.5.2",
-      renderer: "macos-pdfkit-coregraphics",
+      renderer: "macos-pdfium-static",
       languages: ["eng", "chi_sim"],
       network_access: "disabled",
       license_reviewed: true,
@@ -377,9 +377,11 @@ async function assemble({ expectedManifest, manifest, out, runner = defaultRunne
       files,
     };
     const manifestBody = `${JSON.stringify(runtimeManifest, null, 2)}\n`;
+    const reviewedManifest = JSON.parse(await readFile(expectedManifest, "utf8"));
+    if (JSON.stringify(reviewedManifest) !== JSON.stringify(runtimeManifest)) {
+      fail("assembled pack does not match the reviewed manifest");
+    }
     await writeFile(path.join(temporary, "runtime-pack.json"), manifestBody);
-    await mkdir(path.dirname(expectedManifest), { recursive: true });
-    await writeFile(expectedManifest, manifestBody);
     let previous = false;
     try {
       await rename(out, backup);

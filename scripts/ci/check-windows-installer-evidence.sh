@@ -92,13 +92,13 @@ cat > "$package_manifest" <<'EOF'
         "source": "synthetic-reviewed-source"
       },
       {
-        "id": "synthetic-pdftoppm",
+        "id": "resume-pdf-render-runtime",
         "kind": "pdf-renderer",
-        "file": "pdftoppm.exe",
+        "file": "resume-pdf-render-runtime.exe",
         "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "bytes": 202,
-        "license": "GPL-compatible-reviewed",
-        "source": "synthetic-reviewed-source"
+        "license": "LicenseRef-PDFium-Root-LICENSE",
+        "source": "https://pdfium.googlesource.com/pdfium.git"
       },
       {
         "id": "synthetic-tessdata-eng",

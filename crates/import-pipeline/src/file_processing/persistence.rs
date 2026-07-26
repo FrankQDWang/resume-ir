@@ -89,6 +89,7 @@ pub(crate) fn prepare_pending_searchable_document(
             phone_hash,
             index_document,
             publication_kind: PendingSearchablePublicationKind::Replacement,
+            source_occurrence: None,
         }),
     })
 }

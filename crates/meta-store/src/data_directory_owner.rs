@@ -168,9 +168,10 @@ impl DataDirectoryOwnerLease {
         }
     }
 
-    /// Opens an exact current v29 store or initializes v29 in a directory with
-    /// no prior metadata authority. Older schemas are never migrated here. The
-    /// bound canonical directory cannot be substituted by the caller.
+    /// Opens exact current storage, migrates the supported predecessor through
+    /// encrypted COW staging, or initializes current storage in an
+    /// authority-free directory. The bound canonical directory cannot be
+    /// substituted by the caller.
     pub fn open_store(&self) -> StoreResult<OwnedMetaStore> {
         OwnedMetaStore::open_data_dir_for_owner(self)
     }

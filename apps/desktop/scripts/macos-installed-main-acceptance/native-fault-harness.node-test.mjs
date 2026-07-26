@@ -134,7 +134,7 @@ test("prepare is declarative and each missing cell atomically moves then restore
   });
   const cases = [
     ["embedding_missing", fixture.executablePaths.embedding_runtime],
-    ["ocr_missing", fixture.executablePaths.pdf_renderer],
+    ["ocr_missing", fixture.ocrEngine],
     ["classifier_missing", fixture.classifierModel],
   ];
 
@@ -168,7 +168,7 @@ test("invalid cells install a deterministic replacement and restore exact origin
   });
   const cases = [
     ["embedding_invalid", fixture.executablePaths.embedding_runtime],
-    ["ocr_invalid", fixture.executablePaths.pdf_renderer],
+    ["ocr_invalid", fixture.ocrEngine],
     ["classifier_invalid", fixture.classifierModel],
   ];
 
@@ -225,6 +225,7 @@ test("representative combined cells mutate and restore every declared target", a
       [
         fixture.executablePaths.embedding_runtime,
         fixture.executablePaths.pdf_renderer,
+        fixture.ocrEngine,
         fixture.classifierModel,
       ].map(async (file) => [file, await readFile(file)]),
     ),
@@ -360,18 +361,24 @@ test("a deterministic backup is crash-recoverable and restore remains idempotent
   const first = createNativeFaultHarnessForTesting({
     appBundle: fixture.appBundle,
   });
-  const original = await readFile(fixture.executablePaths.pdf_renderer);
+  const original = await readFile(fixture.ocrEngine);
   const handle = await first.prepare(declaration(fixture, "ocr_missing"));
   await first.activate(handle);
-  assert.equal((await acceptanceBackups(fixture.macos)).length, 1);
+  assert.equal(
+    (await acceptanceBackups(path.dirname(fixture.ocrEngine))).length,
+    1,
+  );
 
   const recovered = createNativeFaultHarnessForTesting({
     appBundle: fixture.appBundle,
     loadRecoveryAuthority: async () => recoveryAuthority,
   });
   await recovered.recover();
-  assert.deepEqual(await readFile(fixture.executablePaths.pdf_renderer), original);
-  assert.deepEqual(await acceptanceBackups(fixture.macos), []);
+  assert.deepEqual(await readFile(fixture.ocrEngine), original);
+  assert.deepEqual(
+    await acceptanceBackups(path.dirname(fixture.ocrEngine)),
+    [],
+  );
   await recovered.recover();
   await first.restore(handle);
   await first.restore(handle);

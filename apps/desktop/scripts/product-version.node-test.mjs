@@ -10,7 +10,7 @@ import {
 } from "./product-version.mjs";
 
 test("package manifest is the single product version authority", () => {
-  assert.equal(PRODUCT_VERSION, "0.1.2");
+  assert.equal(PRODUCT_VERSION, "0.1.8");
   assert.equal(PRODUCT_VERSION_SOURCE, "../package.json");
   const tauriConfig = JSON.parse(
     readFileSync(
@@ -32,6 +32,7 @@ test("package manifest is the single product version authority", () => {
     "macos-reinstall-core.mjs",
     "macos-lifecycle-journal.mjs",
     "macos-test-release.mjs",
+    "macos-worktree-install.mjs",
     "macos-worktree-release.mjs",
     "macos-installed-main-acceptance/source-bindings.mjs",
     "macos-installed-main-acceptance/release-deployment.mjs",
@@ -48,8 +49,8 @@ test("package manifest is the single product version authority", () => {
 test("product version authority rejects malformed or unrelated manifests", () => {
   for (const source of [
     "{}",
-    '{"name":"other","version":"0.1.2"}',
-    '{"name":"resume-ir-desktop","version":"v0.1.2"}',
+    '{"name":"other","version":"0.1.8"}',
+    '{"name":"resume-ir-desktop","version":"v0.1.8"}',
     '{"name":"resume-ir-desktop","version":"01.2.3"}',
     "not-json",
   ]) {

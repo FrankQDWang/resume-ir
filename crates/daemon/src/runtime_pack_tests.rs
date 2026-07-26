@@ -149,7 +149,7 @@ fn configured_ocr_and_classifier_candidates_require_manifests() {
 
     assert_eq!(
         validate_ocr(&engine, None, "eng+chi_sim", None),
-        Err(OptionalRuntimeReason::Missing)
+        Err(OptionalRuntimeReason::Invalid)
     );
     assert_eq!(
         validate_classifier(&model),

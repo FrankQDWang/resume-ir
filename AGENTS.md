@@ -50,6 +50,21 @@
 - For current-state, release-readiness, blocker, or gap questions, start with a
   read-only pass and report fresh evidence before proposing remediation.
 
+## Current Platform Delivery Boundary
+
+- The current product delivery target is macOS only. Do not run, rerun,
+  investigate, repair, package, or wait on Windows or Linux builds, tests,
+  workflows, native evidence, or release gates.
+- A Windows or Linux failure, cancellation, timeout, missing runner, or missing
+  artifact is out of scope and must not block the current macOS delivery.
+- The active macOS lane includes focused affected tests, exact-commit DMG
+  construction, installation, Computer Use acceptance, and the final macOS
+  soak. Reuse every still-valid pass; do not replay a completed test merely
+  because another platform has no evidence.
+- This boundary remains in force across context compaction, clean tasks, and
+  agent handoffs. Only a later explicit user instruction may re-enable Windows
+  or Linux work.
+
 ## Workspace and Git Safety
 
 - The worktree may contain user or generated changes. Never revert, overwrite,

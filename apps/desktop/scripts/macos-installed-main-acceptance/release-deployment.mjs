@@ -153,7 +153,7 @@ async function defaultBuildVerifiedDmg({
     fail("release_build_failed");
   }
   if (
-    receipt?.schema_version !== "resume-ir.macos-dmg-composition.v3" ||
+    receipt?.schema_version !== "resume-ir.macos-dmg-composition.v4" ||
     JSON.stringify(builtSource) !== JSON.stringify(source.source) ||
     !/^[a-f0-9]{64}$/.test(receipt.dmg_sha256 ?? "") ||
     !/^[a-f0-9]{64}$/.test(receipt.app_composition_digest ?? "")

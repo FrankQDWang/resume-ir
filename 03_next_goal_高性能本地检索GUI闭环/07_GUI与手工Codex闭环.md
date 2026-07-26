@@ -553,3 +553,24 @@ Combined diagnostics remain exportable when the daemon is unavailable. They
 contain only the bounded lifecycle receipt, daemon-diagnostics availability,
 and redacted aggregates. They do not contain raw bridge errors, paths, tokens,
 manifests, runtime payloads, queries, results, or private data.
+
+## 16. v0.1.4-v0.1.8 source and detail UX
+
+The source panel has one global summary plus one card per authorized root.
+Adding a directory only grants authority; the card's one scan button reads
+“开始扫描”, then “重新扫描”, and “扫描中” while active. Watcher monitoring,
+750 ms debounce and the 300-second safety scan remain enabled; pause/resume and
+manual rescan use the same per-root coordinator. Each card shows bounded counts,
+phase, trustworthy progress, evidence-backed ETA, last sync and monitoring
+state. Current counts remain visible independently of scan history, including
+immediately after a source-root migration. A never-scanned root shows zero
+progress rather than a false 100%; failed and partial outcomes remain explicit.
+`deleting` remains visible until durable privacy cleanup completes.
+
+PDF detail defaults to a bundled PDF.js original-document view backed by a
+generation-local 64 KiB range lease. The drawer's left edge supports pointer and
+keyboard resizing plus reset. Structured confidence fields remain a separate
+filter/explanation view and do not affect ordinary keyword or hybrid ranking.
+Every supported source format also offers the native, selection-bound
+“在访达中显示”/“在文件资源管理器中显示” action. The WebView never receives a
+general path-opening capability.

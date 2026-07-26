@@ -327,7 +327,15 @@ impl LocalPdfRenderCommandClient {
             }
         };
         let (page_bytes, _stderr) = collect_child_outputs_after_exit(stdout_reader, stderr_reader)?;
-        if !status.success() || page_bytes.is_empty() {
+        if !status.success() {
+            let kind = match status.code() {
+                Some(1) => OcrErrorKind::WorkerUnavailable,
+                Some(2) | Some(3) => OcrErrorKind::InvalidRequest,
+                _ => OcrErrorKind::EngineFailed,
+            };
+            return Err(OcrError::new(kind));
+        }
+        if page_bytes.is_empty() {
             return Err(OcrError::new(OcrErrorKind::EngineFailed));
         }
 

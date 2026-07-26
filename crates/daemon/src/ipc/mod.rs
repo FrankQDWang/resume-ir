@@ -13,6 +13,7 @@ mod runtime_state;
 pub(crate) mod search_service;
 pub(crate) mod server;
 mod service;
+mod source_file_service;
 mod status_updater;
 
 pub(crate) use capability::{

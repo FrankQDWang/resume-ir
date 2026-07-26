@@ -110,6 +110,14 @@ impl ControlPlanePublisher {
         self.publish(snapshot_without_store(self.current.core, runtimes))
     }
 
+    pub(crate) fn mark_migrating(&mut self) -> Result<(), DaemonFatalError> {
+        debug_assert_eq!(self.stage, RuntimeOwnerStage::Initializing);
+        self.publish(snapshot_without_store(
+            CoreHealth::migrating(),
+            self.current.runtimes,
+        ))
+    }
+
     pub(crate) fn mark_blocked(&mut self, reason: CoreReason) -> Result<(), DaemonFatalError> {
         self.mark_blocked_with_runtimes(reason, self.current.runtimes)
     }
@@ -187,7 +195,9 @@ impl ControlPlanePublisher {
 fn owner_stage(core: CoreHealth) -> RuntimeOwnerStage {
     match core.state {
         CoreState::Ready => RuntimeOwnerStage::Serving,
-        CoreState::Initializing | CoreState::Repairing => RuntimeOwnerStage::Initializing,
+        CoreState::Initializing | CoreState::Migrating | CoreState::Repairing => {
+            RuntimeOwnerStage::Initializing
+        }
         CoreState::Degraded | CoreState::Blocked => RuntimeOwnerStage::Blocked,
     }
 }
@@ -308,12 +318,13 @@ mod tests {
                 embedding: OptionalRuntimeHealth::unavailable(OptionalRuntimeReason::Missing),
                 ocr: OptionalRuntimeHealth::available(),
                 classifier: OptionalRuntimeHealth::available(),
+                pdfium: OptionalRuntimeHealth::available(),
             })
             .unwrap();
         let snapshot = state.snapshot();
         let status = snapshot.status;
 
-        assert_eq!(status["schema_version"], "daemon.status.v3");
+        assert_eq!(status["schema_version"], "daemon.status.v5");
         assert_eq!(snapshot.core.state, CoreState::Initializing);
         assert_eq!(
             status["optional_runtimes"]["embedding"]["reason"],
@@ -336,6 +347,7 @@ mod tests {
             embedding: OptionalRuntimeHealth::available(),
             ocr: OptionalRuntimeHealth::available(),
             classifier: OptionalRuntimeHealth::available(),
+            pdfium: OptionalRuntimeHealth::available(),
         };
         publisher
             .publish_without_store_for_test(ready_core, ready_runtimes)
@@ -393,6 +405,7 @@ mod tests {
             embedding: OptionalRuntimeHealth::available(),
             ocr: OptionalRuntimeHealth::unavailable(OptionalRuntimeReason::Invalid),
             classifier: OptionalRuntimeHealth::unavailable(OptionalRuntimeReason::Missing),
+            pdfium: OptionalRuntimeHealth::available(),
         };
         let snapshot = snapshot_from_fallible_source(
             runtimes,

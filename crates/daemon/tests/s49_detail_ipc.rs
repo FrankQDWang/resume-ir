@@ -159,7 +159,7 @@ fn detail_distinguishes_stale_from_unpublished_or_invalid_selections() {
     );
     assert_status(&stale, "HTTP/1.1 409 Conflict");
     let stale_payload = response_json(&stale);
-    assert_eq!(stale_payload["schema_version"], "resume-ir.error.v2");
+    assert_eq!(stale_payload["schema_version"], "resume-ir.error.v3");
     assert_eq!(stale_payload["request_id"], "detail-stale");
     assert_eq!(stale_payload["error"]["code"], "STALE_SELECTION");
     assert_eq!(stale_payload["error"]["action"], "refresh_search");
@@ -331,7 +331,7 @@ fn assert_not_found_without_selection(
 fn assert_error(response: &str, status: &str, code: &str, request_id: Option<&str>) {
     assert_status(response, status);
     let payload = response_json(response);
-    assert_eq!(payload["schema_version"], "resume-ir.error.v2");
+    assert_eq!(payload["schema_version"], "resume-ir.error.v3");
     assert_eq!(payload["status"], "error");
     assert_eq!(payload["error"]["code"], code);
     assert_eq!(
@@ -922,7 +922,7 @@ impl Daemon {
             let response = http_get_status(&self.endpoint, &self.token);
             assert_status(&response, "HTTP/1.1 200 OK");
             let payload = response_json(&response);
-            assert_eq!(payload["schema_version"], "daemon.status.v3");
+            assert_eq!(payload["schema_version"], "daemon.status.v5");
             assert_eq!(payload["process_state"], "ready");
             match payload["capabilities"]["detail"]["state"].as_str() {
                 Some("available") => return,

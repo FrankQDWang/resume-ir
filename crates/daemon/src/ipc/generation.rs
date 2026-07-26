@@ -9,7 +9,7 @@ use meta_store::DataDirectoryOwnerLease;
 const AUTH_FILE: &str = "ipc.auth";
 const ENDPOINT_FILE: &str = "ipc.endpoints.json";
 const AUTH_SCHEMA_VERSION: &str = "resume-ir.daemon-auth.v3";
-pub(crate) const IPC_PROTOCOL_VERSION: &str = "resume-ir.daemon-ipc.v3";
+pub(crate) const IPC_PROTOCOL_VERSION: &str = "resume-ir.daemon-ipc.v5";
 const GENERATION_ID_BYTES: usize = 32;
 const OWNER_FILE_MAX_BYTES: u64 = 16 * 1024;
 
@@ -104,7 +104,18 @@ impl DaemonGenerationOwner {
             "search": format!("http://{addr}/search"),
             "search_batch": format!("http://{addr}/search/batch"),
             "details": format!("http://{addr}/details"),
+            "hydrate": format!("http://{addr}/details/hydrate"),
             "delete": format!("http://{addr}/delete"),
+            "source_roots": format!("http://{addr}/source-roots"),
+            "source_root_register": format!("http://{addr}/source-roots/register"),
+            "source_root_legacy_migration": format!("http://{addr}/source-roots/migrate-legacy"),
+            "source_root_scan": format!("http://{addr}/source-roots/scan"),
+            "source_root_control": format!("http://{addr}/source-roots/control"),
+            "source_root_delete": format!("http://{addr}/source-roots/delete"),
+            "preview_create": format!("http://{addr}/source-preview/create"),
+            "preview_range": format!("http://{addr}/source-preview/read-range"),
+            "preview_close": format!("http://{addr}/source-preview/close"),
+            "source_reveal": format!("http://{addr}/source-reveal/resolve"),
         })
         .to_string();
 
@@ -303,7 +314,7 @@ mod tests {
         let manifest = read_json(data_dir.join("ipc.endpoints.json"));
         assert_eq!(auth["instance_id"], manifest["instance_id"]);
         assert_eq!(auth["schema_version"], "resume-ir.daemon-auth.v3");
-        assert_eq!(manifest["schema_version"], "resume-ir.daemon-ipc.v3");
+        assert_eq!(manifest["schema_version"], "resume-ir.daemon-ipc.v5");
         assert_eq!(auth["launch_id"], "a".repeat(64));
         assert_eq!(manifest["launch_id"], auth["launch_id"]);
         assert_eq!(manifest["owner_mode"], "desktop_supervised");

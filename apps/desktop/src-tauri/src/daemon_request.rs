@@ -15,6 +15,7 @@ const MAX_ROOT_PATH_BYTES: usize = 32 * 1024;
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 const MAX_DETAIL_BODY_PAGE_BYTES: u64 = 32 * 1024;
 const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(3);
+const SOURCE_FILE_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(15);
 const SEARCH_RESPONSE_GRACE_MS: u64 = 1_000;
 const SEARCH_RESPONSE_TIMEOUT_MAX_MS: u64 = 61_000;
 
@@ -31,6 +32,9 @@ pub(crate) enum DesktopRequest {
     Search(SearchRequest),
     Detail(DetailRequest),
     Hydrate(HydrateRequest),
+    PreviewCreate(PreviewCreateRequest),
+    PreviewRange(PreviewRangeRequest),
+    PreviewClose(PreviewCloseRequest),
     Cancel(CancelRequest),
     RootControl(RootControlRequest),
 }
@@ -39,25 +43,28 @@ pub(crate) enum DesktopRequest {
 pub(crate) enum Operation {
     Status,
     Diagnostics,
-    Import,
     Search,
     Detail,
     Hydrate,
+    PreviewCreate,
+    PreviewRange,
+    PreviewClose,
     Cancel,
     RootControl,
+    SourceRoots,
+    RootDeletion,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RootControlRequest {
-    root_handle: String,
+    root_id: String,
     action: RootControlAction,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RootControlAction {
-    Inspect,
     Pause,
     Resume,
 }
@@ -139,17 +146,30 @@ pub(crate) struct CancelRequest {
     cancel_token: String,
 }
 
-#[derive(Serialize)]
-struct ImportRequest<'a> {
-    roots: [&'a str; 1],
-    profile: &'static str,
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PreviewCreateRequest {
+    schema_version: String,
+    request_id: String,
+    selection: SearchSelection,
 }
 
-#[derive(Serialize)]
-struct RootControlDaemonRequest<'a> {
-    schema_version: &'static str,
-    root_path: &'a str,
-    action: RootControlAction,
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PreviewRangeRequest {
+    schema_version: String,
+    request_id: String,
+    lease_id: String,
+    offset: u64,
+    length: usize,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PreviewCloseRequest {
+    schema_version: String,
+    request_id: String,
+    lease_id: String,
 }
 
 impl DesktopRequest {
@@ -160,6 +180,9 @@ impl DesktopRequest {
             Self::Search(_) => Operation::Search,
             Self::Detail(_) => Operation::Detail,
             Self::Hydrate(_) => Operation::Hydrate,
+            Self::PreviewCreate(_) => Operation::PreviewCreate,
+            Self::PreviewRange(_) => Operation::PreviewRange,
+            Self::PreviewClose(_) => Operation::PreviewClose,
             Self::Cancel(_) => Operation::Cancel,
             Self::RootControl(_) => Operation::RootControl,
         }
@@ -242,6 +265,58 @@ impl DesktopRequest {
                     DEFAULT_RESPONSE_TIMEOUT,
                 )
             }
+            Self::PreviewCreate(request) => {
+                if request.schema_version != "resume-ir.source-preview-create-request.v1"
+                    || !valid_opaque_id(&request.request_id)
+                    || !request.selection.is_valid()
+                {
+                    return Err(invalid_request());
+                }
+                let expected = ExpectedResponse::PreviewCreate {
+                    request_id: request.request_id.clone(),
+                };
+                PreparedDaemonRequest::new(
+                    serialize_body(&request)?,
+                    expected,
+                    SOURCE_FILE_VERIFICATION_TIMEOUT,
+                )
+            }
+            Self::PreviewRange(request) => {
+                if request.schema_version != "resume-ir.source-preview-range-request.v1"
+                    || !valid_opaque_id(&request.request_id)
+                    || !valid_lease_id(&request.lease_id)
+                    || request.offset > MAX_SAFE_INTEGER
+                    || !(1..=64 * 1024).contains(&request.length)
+                {
+                    return Err(invalid_request());
+                }
+                let expected = ExpectedResponse::PreviewRange {
+                    request_id: request.request_id.clone(),
+                    offset: request.offset,
+                    max_bytes: request.length,
+                };
+                PreparedDaemonRequest::new(
+                    serialize_body(&request)?,
+                    expected,
+                    DEFAULT_RESPONSE_TIMEOUT,
+                )
+            }
+            Self::PreviewClose(request) => {
+                if request.schema_version != "resume-ir.source-preview-close-request.v1"
+                    || !valid_opaque_id(&request.request_id)
+                    || !valid_lease_id(&request.lease_id)
+                {
+                    return Err(invalid_request());
+                }
+                let expected = ExpectedResponse::PreviewClose {
+                    request_id: request.request_id.clone(),
+                };
+                PreparedDaemonRequest::new(
+                    serialize_body(&request)?,
+                    expected,
+                    DEFAULT_RESPONSE_TIMEOUT,
+                )
+            }
             Self::Cancel(request) => {
                 if request.schema_version != "resume-ir.search-cancel-request.v1"
                     || !valid_opaque_id(&request.request_id)
@@ -266,25 +341,152 @@ impl DesktopRequest {
         let Self::RootControl(request) = self else {
             return Ok(None);
         };
-        if !valid_stable_id(&request.root_handle, "root-") {
+        if !valid_stable_id(&request.root_id, "root-") {
             return Err(invalid_request());
         }
-        Ok(Some((&request.root_handle, request.action)))
+        Ok(Some((&request.root_id, request.action)))
     }
 }
 
-pub(crate) fn prepare_import_request(root: &str) -> Result<PreparedDaemonRequest, DesktopError> {
-    let body = serialize_body(&ImportRequest {
-        roots: [root],
-        profile: "explicit",
-    })?;
-    PreparedDaemonRequest::new(body, ExpectedResponse::Import, DEFAULT_RESPONSE_TIMEOUT)
+fn valid_lease_id(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-pub(crate) fn prepare_root_control_request(
+#[derive(Serialize)]
+struct SourceRootRegisterRequest<'a> {
+    schema_version: &'static str,
+    requested_path: &'a str,
+    display_label: &'a str,
+}
+
+#[derive(Serialize)]
+struct LegacySourceRootMigrationRequest<'a> {
+    schema_version: &'static str,
+    roots: Vec<LegacySourceRootRegistration<'a>>,
+}
+
+#[derive(Serialize)]
+struct LegacySourceRootRegistration<'a> {
+    requested_path: &'a str,
+    display_label: &'a str,
+}
+
+#[derive(Serialize)]
+struct SourceRootRequest<'a> {
+    schema_version: &'static str,
+    root_id: &'a str,
+}
+
+#[derive(Serialize)]
+struct SourceRootControlRequest<'a> {
+    schema_version: &'static str,
+    root_id: &'a str,
+    action: RootControlAction,
+}
+
+pub(crate) fn prepare_source_root_register_request(
     root: &Path,
+    display_label: &str,
+) -> Result<PreparedDaemonRequest, DesktopError> {
+    let root = validated_root_path(root)?;
+    if display_label.is_empty()
+        || display_label.chars().count() > 80
+        || display_label.chars().any(char::is_control)
+    {
+        return Err(invalid_request());
+    }
+    PreparedDaemonRequest::new(
+        serialize_body(&SourceRootRegisterRequest {
+            schema_version: "resume-ir.source-root-register-request.v1",
+            requested_path: root,
+            display_label,
+        })?,
+        ExpectedResponse::SourceRoots,
+        DEFAULT_RESPONSE_TIMEOUT,
+    )
+}
+
+pub(crate) fn prepare_legacy_source_root_migration_request(
+    roots: &[(&Path, &str)],
+) -> Result<PreparedDaemonRequest, DesktopError> {
+    if roots.is_empty() || roots.len() > 16 {
+        return Err(invalid_request());
+    }
+    let mut registrations = Vec::with_capacity(roots.len());
+    for (root, display_label) in roots {
+        let requested_path = validated_root_path(root)?;
+        if display_label.is_empty()
+            || display_label.chars().count() > 80
+            || display_label.chars().any(char::is_control)
+        {
+            return Err(invalid_request());
+        }
+        registrations.push(LegacySourceRootRegistration {
+            requested_path,
+            display_label,
+        });
+    }
+    PreparedDaemonRequest::new(
+        serialize_body(&LegacySourceRootMigrationRequest {
+            schema_version: "resume-ir.source-root-legacy-migration-request.v1",
+            roots: registrations,
+        })?,
+        ExpectedResponse::SourceRoots,
+        DEFAULT_RESPONSE_TIMEOUT,
+    )
+}
+
+pub(crate) fn prepare_source_root_scan_request(
+    root_id: &str,
+) -> Result<PreparedDaemonRequest, DesktopError> {
+    if !valid_stable_id(root_id, "root-") {
+        return Err(invalid_request());
+    }
+    PreparedDaemonRequest::new(
+        serialize_body(&SourceRootRequest {
+            schema_version: "resume-ir.source-root-scan-request.v1",
+            root_id,
+        })?,
+        ExpectedResponse::SourceRoots,
+        DEFAULT_RESPONSE_TIMEOUT,
+    )
+}
+
+pub(crate) fn prepare_source_root_control_request(
+    root_id: &str,
     action: RootControlAction,
 ) -> Result<PreparedDaemonRequest, DesktopError> {
+    if !valid_stable_id(root_id, "root-") {
+        return Err(invalid_request());
+    }
+    PreparedDaemonRequest::new(
+        serialize_body(&SourceRootControlRequest {
+            schema_version: "resume-ir.source-root-control-request.v1",
+            root_id,
+            action,
+        })?,
+        ExpectedResponse::SourceRoots,
+        DEFAULT_RESPONSE_TIMEOUT,
+    )
+}
+
+pub(crate) fn prepare_source_root_delete_request(
+    root_id: &str,
+) -> Result<PreparedDaemonRequest, DesktopError> {
+    if !valid_stable_id(root_id, "root-") {
+        return Err(invalid_request());
+    }
+    PreparedDaemonRequest::new(
+        serialize_body(&SourceRootRequest {
+            schema_version: "resume-ir.source-root-delete-request.v1",
+            root_id,
+        })?,
+        ExpectedResponse::RootDeletion,
+        DEFAULT_RESPONSE_TIMEOUT,
+    )
+}
+
+fn validated_root_path(root: &Path) -> Result<&str, DesktopError> {
     let root = root.to_str().ok_or_else(invalid_request)?;
     let path = Path::new(root);
     if !path.is_absolute()
@@ -297,16 +499,7 @@ pub(crate) fn prepare_root_control_request(
     {
         return Err(invalid_request());
     }
-    let body = serialize_body(&RootControlDaemonRequest {
-        schema_version: "daemon.import_root_control_request.v1",
-        root_path: root,
-        action,
-    })?;
-    PreparedDaemonRequest::new(
-        body,
-        ExpectedResponse::RootControl,
-        DEFAULT_RESPONSE_TIMEOUT,
-    )
+    Ok(root)
 }
 
 fn serialize_body<T: Serialize>(body: &T) -> Result<Vec<u8>, DesktopError> {
@@ -392,7 +585,7 @@ mod tests {
     #[test]
     fn root_control_accepts_only_one_authorized_handle_shape_and_closed_action() {
         let valid: DesktopRequest = serde_json::from_str(
-            r#"{"operation":"root_control","body":{"root_handle":"root-00000000000000000000000000000000","action":"pause"}}"#,
+            r#"{"operation":"root_control","body":{"root_id":"root-00000000000000000000000000000000","action":"pause"}}"#,
         )
         .unwrap();
         assert!(matches!(valid.operation(), Operation::RootControl));
@@ -404,9 +597,9 @@ mod tests {
         );
 
         for invalid in [
-            r#"{"operation":"root_control","body":{"root_handle":"/private/synthetic","action":"pause"}}"#,
-            r#"{"operation":"root_control","body":{"root_handle":"root-00000000000000000000000000000000","action":"remove"}}"#,
-            r#"{"operation":"root_control","body":{"root_handle":"root-00000000000000000000000000000000","action":"pause","extra":true}}"#,
+            r#"{"operation":"root_control","body":{"root_id":"/private/synthetic","action":"pause"}}"#,
+            r#"{"operation":"root_control","body":{"root_id":"root-00000000000000000000000000000000","action":"remove"}}"#,
+            r#"{"operation":"root_control","body":{"root_id":"root-00000000000000000000000000000000","action":"pause","extra":true}}"#,
         ] {
             let request = serde_json::from_str::<DesktopRequest>(invalid);
             assert!(request.is_err() || request.unwrap().root_control().is_err());

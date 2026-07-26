@@ -23,10 +23,19 @@ import os from "node:os";
 import path from "node:path";
 
 import { stageClassifierResourcePack } from "./classifier-pack.mjs";
+import {
+  readMacosPdfiumSourceContract,
+  stageMacosPdfiumRuntimePack,
+  verifyMacosPdfiumStaticPack,
+} from "./macos-pdfium-static-pack.mjs";
 import { stageOcrResourcePack } from "./ocr-pack.mjs";
 import { readWindowsEmbeddingSourceContract } from "./windows-embedding-pack.mjs";
 import { readWindowsOcrSourceContract } from "./windows-ocr-pack.mjs";
-import { readWindowsPdfRendererSourceContract } from "./windows-pdf-renderer.mjs";
+import {
+  readWindowsPdfRendererSourceContract,
+  stageWindowsPdfiumRuntimePack,
+  verifyWindowsPdfiumStaticPack,
+} from "./windows-pdf-renderer.mjs";
 import { stageRuntimeExecutableAttestation } from "./runtime-executable-attestation.mjs";
 
 const SUPPORTED_TARGET_TRIPLES = new Set([
@@ -35,6 +44,7 @@ const SUPPORTED_TARGET_TRIPLES = new Set([
   "x86_64-pc-windows-msvc",
 ]);
 const WINDOWS_TARGET_TRIPLE = "x86_64-pc-windows-msvc";
+const WINDOWS_STATIC_CRT_RUSTFLAGS = "-C\u001ftarget-feature=+crt-static";
 const EMBEDDING_RESOURCE_TARGETS = new Set(["aarch64-apple-darwin"]);
 const EXPECTED_PACK_ROLES = new Set([
   "runtime_library",
@@ -47,6 +57,16 @@ const EXPECTED_PACK_ROLES = new Set([
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const RUNTIME_ATTESTATION_ENV =
   "RESUME_IR_RUNTIME_EXECUTABLE_ATTESTATION";
+const PDFIUM_STATIC_LIB_ENVS = new Map([
+  [
+    "aarch64-apple-darwin",
+    "PDFIUM_STATIC_LIB_PATH_aarch64_apple_darwin",
+  ],
+  [
+    WINDOWS_TARGET_TRIPLE,
+    "PDFIUM_STATIC_LIB_PATH_x86_64_pc_windows_msvc",
+  ],
+]);
 const RUNTIME_EXECUTABLE_ROLES = Object.freeze([
   Object.freeze({ role: "embedding_runtime", binaryName: "resume-embedding-runtime" }),
   Object.freeze({ role: "pdf_renderer", binaryName: "resume-pdf-render-runtime" }),
@@ -57,8 +77,7 @@ const WINDOWS_PROCESS_OWNERS = Object.freeze([
   "embedding_resident",
   "ocr_custom_engine",
   "ocr_tesseract",
-  "pdf_custom_renderer",
-  "pdf_pdftoppm",
+  "pdfium",
 ]);
 
 export function defaultSidecarBuildTargetDir() {
@@ -74,6 +93,7 @@ export function createSidecarPlan({
   debug,
   packageName = "resume-daemon",
   binaryName = "resume-daemon",
+  buildEnvironment = {},
 }) {
   if (typeof targetTriple !== "string" || targetTriple.length === 0) {
     throw new Error("target triple is required");
@@ -89,6 +109,21 @@ export function createSidecarPlan({
   }
   if (![packageName, binaryName].every((value) => /^[a-z0-9-]+$/.test(value))) {
     throw new Error("sidecar package and binary names are invalid");
+  }
+  if (
+    !buildEnvironment ||
+    typeof buildEnvironment !== "object" ||
+    Array.isArray(buildEnvironment) ||
+    Object.entries(buildEnvironment).some(
+      ([name, value]) =>
+        ![PDFIUM_STATIC_LIB_ENVS.get(targetTriple), "CARGO_ENCODED_RUSTFLAGS"].includes(name) ||
+        typeof value !== "string" ||
+        (name === PDFIUM_STATIC_LIB_ENVS.get(targetTriple)
+          ? !path.isAbsolute(value)
+          : value !== WINDOWS_STATIC_CRT_RUSTFLAGS),
+    )
+  ) {
+    throw new Error("sidecar build environment is invalid");
   }
 
   const windows = targetTriple.endsWith("-windows-msvc");
@@ -121,6 +156,7 @@ export function createSidecarPlan({
       `${binaryName}-${targetTriple}${extension}`,
     ),
     binaryName,
+    buildEnvironment: Object.freeze({ ...buildEnvironment }),
     packageName,
     profile,
     repoRoot,
@@ -135,55 +171,24 @@ export function createSidecarPlan({
   });
 }
 
-export function createPdfRendererPlan({ repoRoot, buildTargetDir, targetTriple, debug }) {
-  if (targetTriple !== "aarch64-apple-darwin") {
+export function createPdfRendererPlan({
+  repoRoot,
+  buildTargetDir,
+  targetTriple,
+  debug,
+  buildEnvironment = {},
+}) {
+  if (!PDFIUM_STATIC_LIB_ENVS.has(targetTriple)) {
     throw new Error("PDF renderer target is not supported");
   }
-  if (![repoRoot, buildTargetDir].every(path.isAbsolute)) {
-    throw new Error("PDF renderer build paths must be absolute");
-  }
-  const profile = debug ? "debug" : "release";
-  const binaryName = "resume-pdf-render-runtime";
-  const sourceFile = path.join(
+  return createSidecarPlan({
     repoRoot,
-    "apps",
-    "desktop",
-    "native",
-    "macos",
-    "pdf_render_runtime.m",
-  );
-  const source = path.join(buildTargetDir, targetTriple, profile, binaryName);
-  return Object.freeze({
-    binaryName,
-    buildKind: "clang",
     buildTargetDir,
-    clangArgs: Object.freeze([
-      "clang",
-      debug ? "-O0" : "-O2",
-      "-fobjc-arc",
-      "-arch",
-      "arm64",
-      "-mmacosx-version-min=13.0",
-      "-framework",
-      "Foundation",
-      "-framework",
-      "CoreGraphics",
-      sourceFile,
-      "-o",
-      source,
-    ]),
-    destination: path.join(
-      repoRoot,
-      "target",
-      "tauri-sidecars",
-      `${binaryName}-${targetTriple}`,
-    ),
-    profile,
-    repoRoot,
-    source,
-    sourceFile,
     targetTriple,
-    windows: false,
+    debug,
+    buildEnvironment,
+    packageName: "resume-pdf-render-runtime",
+    binaryName: "resume-pdf-render-runtime",
   });
 }
 
@@ -198,6 +203,26 @@ export function createDesktopCompositionPlan({
     repoRoot,
     ".cache",
     "resume-ir-classifier-model-pack",
+  ),
+  sourcePdfiumPackRoot = path.join(
+    repoRoot,
+    ".cache",
+    "resume-ir-macos-pdfium-static-pack",
+  ),
+  sourceWindowsPackRoot = path.join(
+    repoRoot,
+    ".cache",
+    "resume-ir-windows-embedding-runtime-pack",
+  ),
+  sourceWindowsOcrPackRoot = path.join(
+    repoRoot,
+    ".cache",
+    "resume-ir-windows-ocr-runtime-pack",
+  ),
+  sourceWindowsPdfiumPackRoot = path.join(
+    repoRoot,
+    ".cache",
+    "resume-ir-windows-pdfium-static-pack",
   ),
   expectedManifest = path.join(
     repoRoot,
@@ -225,6 +250,15 @@ export function createDesktopCompositionPlan({
     "classifier",
     targetTriple ?? "missing-target",
     "runtime-pack.json",
+  ),
+  macosPdfiumSourceContract = path.join(
+    repoRoot,
+    "apps",
+    "desktop",
+    "resources",
+    "pdf-renderer",
+    "aarch64-apple-darwin",
+    "source-contract.json",
   ),
   processContainmentContract = path.join(
     repoRoot,
@@ -262,19 +296,54 @@ export function createDesktopCompositionPlan({
     WINDOWS_TARGET_TRIPLE,
     "source-contract.json",
   ),
+  windowsClassifierManifest = path.join(
+    repoRoot,
+    "apps",
+    "desktop",
+    "resources",
+    "classifier",
+    WINDOWS_TARGET_TRIPLE,
+    "runtime-pack.json",
+  ),
 }) {
   if (targetTriple === WINDOWS_TARGET_TRIPLE) {
     readWindowsProcessContainmentContract(processContainmentContract);
     readWindowsEmbeddingSourceContract(windowsEmbeddingSourceContract);
     readWindowsOcrSourceContract(windowsOcrSourceContract);
     readWindowsPdfRendererSourceContract(windowsPdfRendererSourceContract);
-    throw new Error(
-      "Windows desktop composition is incomplete: reviewed static-CRT x64 embedding, static Tesseract OCR, static PDFium renderer, and process-containment contracts are present; real reviewed embedding/Tesseract/PDFium artifacts, expected pack manifests, final PE dependency closure, and native evidence are required; refusing a partial NSIS build",
-    );
+    if (
+      ![
+        sourceWindowsPackRoot,
+        sourceWindowsOcrPackRoot,
+        sourceClassifierPackRoot,
+        sourceWindowsPdfiumPackRoot,
+        windowsClassifierManifest,
+      ].every(path.isAbsolute)
+    ) {
+      throw new Error("Windows desktop resource paths must be absolute");
+    }
+    const buildEnvironment = {
+      CARGO_ENCODED_RUSTFLAGS: WINDOWS_STATIC_CRT_RUSTFLAGS,
+      [PDFIUM_STATIC_LIB_ENVS.get(targetTriple)]: sourceWindowsPdfiumPackRoot,
+    };
+    const sidecarOptions = { repoRoot, buildTargetDir, targetTriple, debug };
+    return createCompositionPlan({
+      ...sidecarOptions,
+      buildEnvironment,
+      sourcePackRoot: sourceWindowsPackRoot,
+      expectedManifest: path.join(sourceWindowsPackRoot, "runtime-pack.json"),
+      sourceOcrPackRoot: sourceWindowsOcrPackRoot,
+      expectedOcrManifest: path.join(sourceWindowsOcrPackRoot, "runtime-pack.json"),
+      sourceClassifierPackRoot,
+      expectedClassifierManifest: windowsClassifierManifest,
+      sourcePdfiumPackRoot: sourceWindowsPdfiumPackRoot,
+      pdfiumSourceContract: windowsPdfRendererSourceContract,
+    });
   }
   if (!EMBEDDING_RESOURCE_TARGETS.has(targetTriple)) {
     throw new Error("embedding resource target is not supported");
   }
+  readMacosPdfiumSourceContract(macosPdfiumSourceContract);
   if (
     ![
       sourcePackRoot,
@@ -283,21 +352,82 @@ export function createDesktopCompositionPlan({
       expectedOcrManifest,
       sourceClassifierPackRoot,
       expectedClassifierManifest,
+      sourcePdfiumPackRoot,
+      macosPdfiumSourceContract,
     ].every(path.isAbsolute)
   ) {
     throw new Error("desktop resource paths must be absolute");
   }
+  const buildEnvironment = {
+    [PDFIUM_STATIC_LIB_ENVS.get(targetTriple)]: sourcePdfiumPackRoot,
+  };
+  return createCompositionPlan({
+    repoRoot,
+    buildTargetDir,
+    targetTriple,
+    debug,
+    buildEnvironment,
+    sourcePackRoot,
+    expectedManifest,
+    sourceOcrPackRoot,
+    expectedOcrManifest,
+    sourceClassifierPackRoot,
+    expectedClassifierManifest,
+    sourcePdfiumPackRoot,
+    pdfiumSourceContract: macosPdfiumSourceContract,
+  });
+}
+
+function createCompositionPlan({
+  repoRoot,
+  buildTargetDir,
+  targetTriple,
+  debug,
+  buildEnvironment,
+  sourcePackRoot,
+  expectedManifest,
+  sourceOcrPackRoot,
+  expectedOcrManifest,
+  sourceClassifierPackRoot,
+  expectedClassifierManifest,
+  sourcePdfiumPackRoot,
+  pdfiumSourceContract,
+}) {
   const sidecarOptions = { repoRoot, buildTargetDir, targetTriple, debug };
   return Object.freeze({
     sidecars: Object.freeze([
-      createSidecarPlan(sidecarOptions),
       createSidecarPlan({
         ...sidecarOptions,
+        buildEnvironment,
+      }),
+      createSidecarPlan({
+        ...sidecarOptions,
+        buildEnvironment:
+          targetTriple === WINDOWS_TARGET_TRIPLE
+            ? { CARGO_ENCODED_RUSTFLAGS: WINDOWS_STATIC_CRT_RUSTFLAGS }
+            : {},
         packageName: "resume-embedding-runtime",
         binaryName: "resume-embedding-runtime",
       }),
-      createPdfRendererPlan(sidecarOptions),
+      createPdfRendererPlan({
+        ...sidecarOptions,
+        buildEnvironment,
+      }),
     ]),
+    pdfiumStaticPack: Object.freeze({
+      directory: sourcePdfiumPackRoot,
+      sourceContract: pdfiumSourceContract,
+    }),
+    pdfiumResourcePack: Object.freeze({
+      destination: path.join(
+        repoRoot,
+        "target",
+        "tauri-resources",
+        "pdfium-static-runtime-pack",
+      ),
+      directory: sourcePdfiumPackRoot,
+      sourceContract: pdfiumSourceContract,
+    }),
     ocrResourcePack: Object.freeze({
       destination: path.join(repoRoot, "target", "tauri-resources", "ocr-runtime-pack"),
       expectedManifest: expectedOcrManifest,
@@ -630,7 +760,11 @@ export function runSidecarBuild(plan, runner = spawnSync, environment = process.
     stdio: "inherit",
   });
   if (result.error || result.status !== 0) {
-    const label = plan.binaryName === "resume-daemon" ? "daemon" : "embedding runtime";
+    const label = plan.binaryName === "resume-daemon"
+      ? "daemon"
+      : plan.binaryName === "resume-embedding-runtime"
+        ? "embedding runtime"
+        : "PDFium renderer runtime";
     throw new Error(`${label} sidecar build failed`);
   }
 }
@@ -643,26 +777,20 @@ function environmentForSidecarBuild(plan, environment) {
   ) {
     throw new Error("sidecar build environment is invalid");
   }
-  const { [RUNTIME_ATTESTATION_ENV]: inheritedAttestation, ...cleanEnvironment } =
-    environment;
+  const cleanEnvironment = { ...environment };
+  const inheritedAttestation = cleanEnvironment[RUNTIME_ATTESTATION_ENV];
+  delete cleanEnvironment[RUNTIME_ATTESTATION_ENV];
+  delete cleanEnvironment.PDFIUM_STATIC_LIB_PATH;
+  delete cleanEnvironment.PDFIUM_DYNAMIC_LIB_PATH;
+  for (const name of Object.keys(cleanEnvironment)) {
+    if (name.startsWith("PDFIUM_STATIC_LIB_PATH_")) delete cleanEnvironment[name];
+  }
+  Object.assign(cleanEnvironment, plan.buildEnvironment);
   if (plan.binaryName !== "resume-daemon") return cleanEnvironment;
   if (typeof inheritedAttestation !== "string" || !path.isAbsolute(inheritedAttestation)) {
     throw new Error("daemon sidecar build requires an absolute runtime executable attestation");
   }
   return { ...cleanEnvironment, [RUNTIME_ATTESTATION_ENV]: inheritedAttestation };
-}
-
-export function runPdfRendererBuild(plan, runner = spawnSync) {
-  prepareBuildTargetDirectory(plan);
-  mkdirSync(path.dirname(plan.source), { mode: 0o700, recursive: true });
-  const result = runner("xcrun", plan.clangArgs, {
-    cwd: plan.repoRoot,
-    shell: false,
-    stdio: "inherit",
-  });
-  if (result.error || result.status !== 0) {
-    throw new Error("PDF renderer sidecar build failed");
-  }
 }
 
 function prepareBuildTargetDirectory(plan) {
@@ -718,16 +846,16 @@ export async function buildAttestedSidecars(
   {
     cargoRunner = spawnSync,
     environment = process.env,
-    pdfRunner = spawnSync,
   } = {},
 ) {
+  if (plan.targetTriple === WINDOWS_TARGET_TRIPLE) {
+    await verifyWindowsPdfiumStaticPack(plan.pdfiumStaticPack);
+  } else {
+    await verifyMacosPdfiumStaticPack(plan.pdfiumStaticPack);
+  }
   const { daemon, runtimeSidecars } = sidecarsInAttestedBuildOrder(plan);
   for (const sidecar of runtimeSidecars) {
-    if (sidecar.buildKind === "cargo") {
-      runSidecarBuild(sidecar, cargoRunner, environment);
-    } else {
-      runPdfRendererBuild(sidecar, pdfRunner);
-    }
+    runSidecarBuild(sidecar, cargoRunner, environment);
     await stageBuiltSidecar(sidecar);
   }
   const attestationPath = await stageRuntimeExecutableAttestation(
@@ -757,6 +885,11 @@ async function main() {
   await stageEmbeddingResourcePack(plan.resourcePack);
   await stageOcrResourcePack(plan.ocrResourcePack);
   await stageClassifierResourcePack(plan.classifierResourcePack);
+  if (plan.targetTriple === WINDOWS_TARGET_TRIPLE) {
+    await stageWindowsPdfiumRuntimePack(plan.pdfiumResourcePack);
+  } else {
+    await stageMacosPdfiumRuntimePack(plan.pdfiumResourcePack);
+  }
   console.log(
     `prepared bundled desktop runtime composition for ${plan.targetTriple}`,
   );

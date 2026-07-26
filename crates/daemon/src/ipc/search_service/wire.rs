@@ -374,7 +374,7 @@ fn error_contract_body(
     reason: Option<&str>,
 ) -> String {
     serde_json::json!({
-        "schema_version": "resume-ir.error.v2",
+        "schema_version": "resume-ir.error.v3",
         "request_id": request_id,
         "status": "error",
         "error": {
@@ -389,7 +389,7 @@ fn error_contract_body(
 
 pub(crate) fn overload_body(request_id: &str) -> String {
     serde_json::json!({
-        "schema_version": "resume-ir.error.v2",
+        "schema_version": "resume-ir.error.v3",
         "request_id": request_id,
         "status": "error",
         "error": {

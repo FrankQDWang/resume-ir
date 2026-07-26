@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   buildAttestedSidecars,
-  createDesktopCompositionPlan,
+  createDesktopCompositionPlan as createProductionDesktopCompositionPlan,
   createPdfRendererPlan,
   createSidecarPlan,
   defaultSidecarBuildTargetDir,
@@ -49,6 +49,18 @@ import {
   defaultBuildMachineIdentityPrefixes,
   verifyBundledSidecar,
 } from "./verify-bundled-sidecar.mjs";
+
+function createDesktopCompositionPlan(options) {
+  return createProductionDesktopCompositionPlan({
+    ...options,
+    macosPdfiumSourceContract: fileURLToPath(
+      new URL(
+        "../resources/pdf-renderer/aarch64-apple-darwin/source-contract.json",
+        import.meta.url,
+      ),
+    ),
+  });
+}
 
 function syntheticMachO(payload) {
   const suffix = Buffer.from(payload);
@@ -99,8 +111,7 @@ function syntheticWindowsProcessContainmentContract() {
       "embedding_resident",
       "ocr_custom_engine",
       "ocr_tesseract",
-      "pdf_custom_renderer",
-      "pdf_pdftoppm",
+      "pdfium",
     ],
   };
 }
@@ -223,7 +234,7 @@ async function createSyntheticOcrPack(root) {
     target_triple: "aarch64-apple-darwin",
     engine: "tesseract",
     engine_version: "5.5.2",
-    renderer: "macos-pdfkit-coregraphics",
+    renderer: "macos-pdfium-static",
     languages: ["eng", "chi_sim"],
     network_access: "disabled",
     license_reviewed: true,
@@ -250,6 +261,132 @@ async function copyTree(source, destination) {
     if (entry.isDirectory()) await copyTree(from, to);
     else await copyFile(from, to);
   }
+}
+
+async function createSyntheticInstalledPdfiumPack(repoRoot, appBundle) {
+  const sourceContractBody = await readFile(
+    new URL(
+      "../resources/pdf-renderer/aarch64-apple-darwin/source-contract.json",
+      import.meta.url,
+    ),
+  );
+  const sourceContract = JSON.parse(sourceContractBody);
+  const licenseBody = await readFile(
+    new URL(
+      "../resources/pdf-renderer/aarch64-apple-darwin/LICENSE.pdfium",
+      import.meta.url,
+    ),
+  );
+  const argumentsBody = Buffer.from(
+    `${sourceContract.pdfium.gn_arguments.join("\n")}\n`,
+  );
+  const expectedContract = path.join(
+    repoRoot,
+    "apps",
+    "desktop",
+    "resources",
+    "pdf-renderer",
+    "aarch64-apple-darwin",
+    "source-contract.json",
+  );
+  await mkdir(path.dirname(expectedContract), { recursive: true });
+  await writeFile(expectedContract, sourceContractBody);
+
+  const destination = path.join(
+    appBundle,
+    "Contents",
+    "Resources",
+    "pdfium",
+    "runtime-pack",
+  );
+  await mkdir(destination, { recursive: true });
+  const payloads = [
+    ["license", "LICENSE", licenseBody],
+    ["build_arguments", "args.gn", argumentsBody],
+    ["source_contract", "source-contract.json", sourceContractBody],
+  ];
+  for (const [, file, body] of payloads) {
+    await writeFile(path.join(destination, file), body);
+  }
+  await writeFile(
+    path.join(destination, "runtime-pack.json"),
+    `${JSON.stringify(
+      {
+        schema_version: "resume-ir.pdfium-static-runtime-pack.v1",
+        runtime_pack_id: "pdfium-chromium-7881-static-arm64-v1",
+        target_triple: "aarch64-apple-darwin",
+        link_mode: "static",
+        source_commit: sourceContract.pdfium.source_commit,
+        source_build_dependency_revision:
+          sourceContract.pdfium.source_build_dependency_revision,
+        product_runtime_network_access: "disabled",
+        files: payloads.map(([role, file, body]) => ({
+          role,
+          file,
+          bytes: body.length,
+          sha256: sha256(body),
+        })),
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
+async function createSyntheticMacosPdfiumStaticPack(repoRoot) {
+  const sourceContractBody = await readFile(
+    new URL(
+      "../resources/pdf-renderer/aarch64-apple-darwin/source-contract.json",
+      import.meta.url,
+    ),
+  );
+  const sourceContract = JSON.parse(sourceContractBody);
+  const directory = path.join(
+    repoRoot,
+    ".cache",
+    "resume-ir-macos-pdfium-static-pack",
+  );
+  const libraryBody = Buffer.from("!<arch>\nsynthetic-pdfium");
+  const licenseBody = await readFile(
+    new URL(
+      "../resources/pdf-renderer/aarch64-apple-darwin/LICENSE.pdfium",
+      import.meta.url,
+    ),
+  );
+  const argumentsBody = Buffer.from(
+    `${sourceContract.pdfium.gn_arguments.join("\n")}\n`,
+  );
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, "libpdfium.a"), libraryBody);
+  await writeFile(path.join(directory, "LICENSE"), licenseBody);
+  await writeFile(path.join(directory, "args.gn"), argumentsBody);
+  await writeFile(
+    path.join(directory, "runtime-pack.json"),
+    `${JSON.stringify({
+      schema_version: "resume-ir.pdfium-static-build-pack.v1",
+      target_triple: "aarch64-apple-darwin",
+      source_commit: sourceContract.pdfium.source_commit,
+      source_build_dependency_revision:
+        sourceContract.pdfium.source_build_dependency_revision,
+      gn_arguments: sourceContract.pdfium.gn_arguments,
+      library: {
+        file: "libpdfium.a",
+        bytes: libraryBody.length,
+        sha256: sha256(libraryBody),
+      },
+      license: {
+        file: "LICENSE",
+        bytes: licenseBody.length,
+        sha256: sha256(licenseBody),
+      },
+      args: {
+        file: "args.gn",
+        bytes: argumentsBody.length,
+        sha256: sha256(argumentsBody),
+      },
+    })}\n`,
+  );
+  return directory;
 }
 
 async function prepareSyntheticBundleComposition(
@@ -351,6 +488,7 @@ async function prepareSyntheticBundleComposition(
     "runtime-pack",
   );
   await copyTree(plan.classifierResourcePack.destination, bundledClassifierPack);
+  await createSyntheticInstalledPdfiumPack(repoRoot, appBundle);
   return {
     expectedClassifierManifest: classifierPack.expectedManifest,
     expectedManifest: pack.expectedManifest,
@@ -524,7 +662,7 @@ test("plans target-triple sidecars without depending on the working directory", 
   assert.ok(!windows.cargoArgs.includes("--release"));
 });
 
-test("accepts reviewed Windows containment but refuses partial runtime composition", async (context) => {
+test("accepts reviewed Windows contracts and plans the complete runtime composition", async (context) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "resume-ir-windows-plan-"));
   context.after(() => rm(repoRoot, { recursive: true, force: true }));
   const processContainmentContract = path.join(repoRoot, "containment.json");
@@ -550,19 +688,22 @@ test("accepts reviewed Windows containment but refuses partial runtime compositi
       import.meta.url,
     ),
   );
-  assert.throws(
-    () =>
-      createDesktopCompositionPlan({
-        repoRoot,
-        targetTriple: "x86_64-pc-windows-msvc",
-        debug: false,
-        processContainmentContract,
-        windowsEmbeddingSourceContract,
-        windowsPdfRendererSourceContract,
-        windowsOcrSourceContract,
-      }),
-    /reviewed static-CRT x64 embedding, static Tesseract OCR, static PDFium renderer, and process-containment contracts are present; real reviewed embedding\/Tesseract\/PDFium artifacts, expected pack manifests, final PE dependency closure, and native evidence are required; refusing a partial NSIS build/,
+  const plan = createDesktopCompositionPlan({
+    repoRoot,
+    targetTriple: "x86_64-pc-windows-msvc",
+    debug: false,
+    processContainmentContract,
+    windowsEmbeddingSourceContract,
+    windowsPdfRendererSourceContract,
+    windowsOcrSourceContract,
+  });
+  assert.deepEqual(
+    plan.sidecars.map(({ binaryName }) => binaryName),
+    ["resume-daemon", "resume-embedding-runtime", "resume-pdf-render-runtime"],
   );
+  assert.equal(plan.pdfiumStaticPack.sourceContract, windowsPdfRendererSourceContract);
+  assert.equal(plan.ocrResourcePack.targetTriple, "x86_64-pc-windows-msvc");
+  assert.equal(plan.resourcePack.targetTriple, "x86_64-pc-windows-msvc");
 });
 
 test("rejects breakaway or incomplete Windows process containment", () => {
@@ -597,7 +738,7 @@ test("fails closed for an unsupported or missing target triple", () => {
   );
 });
 
-test("plans three sidecars and immutable arm64 runtime packs", async (context) => {
+test("plans three sidecars and four immutable arm64 runtime packs", async (context) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "resume-ir-composition-plan-"));
   context.after(async () => {
     const { rm } = await import("node:fs/promises");
@@ -628,14 +769,18 @@ test("plans three sidecars and immutable arm64 runtime packs", async (context) =
     plan.classifierResourcePack.destination,
     path.join(repoRoot, "target", "tauri-resources", "classifier-model-pack"),
   );
+  assert.equal(
+    plan.pdfiumResourcePack.destination,
+    path.join(repoRoot, "target", "tauri-resources", "pdfium-static-runtime-pack"),
+  );
   const renderer = createPdfRendererPlan({
     repoRoot,
     buildTargetDir: path.join(repoRoot, "target"),
     targetTriple: "aarch64-apple-darwin",
     debug: false,
   });
-  assert.equal(renderer.buildKind, "clang");
-  assert.ok(renderer.clangArgs.includes("CoreGraphics"));
+  assert.equal(renderer.buildKind, "cargo");
+  assert.ok(renderer.cargoArgs.includes("resume-pdf-render-runtime"));
   assert.throws(
     () =>
       createDesktopCompositionPlan({
@@ -867,6 +1012,7 @@ test("runtime executable identity ignores only a signature blob and detects payl
 test("attested sidecar build stages runtimes before the daemon and injects the contract only there", async (context) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "resume-ir-attested-sidecar-build-"));
   context.after(() => rm(repoRoot, { recursive: true, force: true }));
+  await createSyntheticMacosPdfiumStaticPack(repoRoot);
   const plan = createDesktopCompositionPlan({
     repoRoot,
     targetTriple: "aarch64-apple-darwin",
@@ -886,16 +1032,9 @@ test("attested sidecar build stages runtimes before the daemon and injects the c
     writeBuiltExecutable(binaryName);
     return { status: 0 };
   };
-  const pdfRunner = (_command, _args, options) => {
-    calls.push({ binaryName: "resume-pdf-render-runtime", environment: options.env });
-    writeBuiltExecutable("resume-pdf-render-runtime");
-    return { status: 0 };
-  };
-
   const attestationPath = await buildAttestedSidecars(plan, {
     cargoRunner,
     environment: { RESUME_IR_RUNTIME_EXECUTABLE_ATTESTATION: "/stale/forbidden.json" },
-    pdfRunner,
   });
 
   assert.ok(path.isAbsolute(attestationPath));
@@ -905,7 +1044,14 @@ test("attested sidecar build stages runtimes before the daemon and injects the c
     "resume-daemon",
   ]);
   assert.equal(calls[0].environment.RESUME_IR_RUNTIME_EXECUTABLE_ATTESTATION, undefined);
-  assert.equal(calls[1].environment, undefined);
+  assert.equal(
+    calls[1].environment.PDFIUM_STATIC_LIB_PATH_aarch64_apple_darwin,
+    path.join(repoRoot, ".cache", "resume-ir-macos-pdfium-static-pack"),
+  );
+  assert.equal(
+    calls[1].environment.RESUME_IR_RUNTIME_EXECUTABLE_ATTESTATION,
+    undefined,
+  );
   assert.equal(
     calls[2].environment.RESUME_IR_RUNTIME_EXECUTABLE_ATTESTATION,
     attestationPath,
@@ -1027,7 +1173,7 @@ test("a failed Cargo build cannot replace a previously staged daemon", async (co
   assert.equal(await readFile(plan.destination, "utf8"), "previous-daemon");
 });
 
-test("desktop config prepares three sidecars and three resource packs", async () => {
+test("desktop config prepares three sidecars and four resource packs", async () => {
   const configPath = new URL("../src-tauri/tauri.conf.json", import.meta.url);
   const bundleConfigPath = new URL(
     "../src-tauri/tauri.bundle.conf.json",
@@ -1049,7 +1195,7 @@ test("desktop config prepares three sidecars and three resource packs", async ()
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
 
   assert.equal(config.version, "../package.json");
-  assert.equal(packageJson.version, "0.1.2");
+  assert.equal(packageJson.version, "0.1.8");
   assert.equal(config.build.beforeBuildCommand, "npm run build");
   assert.equal(config.bundle.active, false);
   assert.equal(config.bundle.externalBin, undefined);
@@ -1073,6 +1219,8 @@ test("desktop config prepares three sidecars and three resource packs", async ()
     "../../../target/tauri-resources/embedding-runtime-pack/":
       "embedding/runtime-pack/",
     "../../../target/tauri-resources/ocr-runtime-pack/": "ocr/runtime-pack/",
+    "../../../target/tauri-resources/pdfium-static-runtime-pack/":
+      "pdfium/runtime-pack/",
   });
   assert.equal(windowsConfig.$schema, "https://schema.tauri.app/config/2");
   assert.deepEqual(windowsConfig.bundle.targets, ["nsis"]);
@@ -1158,6 +1306,8 @@ test("verifies exact native sidecars and embedding resources in a macOS app", as
   assert.equal(receipt.embedding_resource_file_count, 7);
   assert.equal(receipt.classifier_resource_file_count, 2);
   assert.equal(receipt.ocr_resource_file_count, 31);
+  assert.equal(receipt.pdfium_resource_file_count, 4);
+  assert.ok(receipt.pdfium_resource_bytes > 12_896);
   assert.equal(receipt.digest_match, true);
   assert.equal(receipt.architecture, "arm64");
   assert.equal(receipt.path_scan_scope, "repo_root_and_builder_home");

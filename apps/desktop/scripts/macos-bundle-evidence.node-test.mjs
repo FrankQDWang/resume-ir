@@ -37,7 +37,7 @@ import {
 } from "./macos-installed-main-acceptance/native-fault-recovery-authority.mjs";
 
 const TARGET = "aarch64-apple-darwin";
-const VERSION = "0.1.2";
+const VERSION = "0.1.8";
 const SOURCE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
 const SOURCE = Object.freeze({
   authority: "worktree_snapshot",
@@ -83,6 +83,7 @@ async function bundleFixture(
     "classifier/runtime-pack",
     "embedding/runtime-pack",
     "ocr/runtime-pack",
+    "pdfium/runtime-pack",
   ]) {
     await mkdir(path.join(resources, directory), { recursive: true });
   }
@@ -147,11 +148,72 @@ async function bundleFixture(
     await writeFile(
       path.join(packDirectory, "runtime-pack.json"),
       `${JSON.stringify({
-        schema_version: `synthetic.${pack}.v1`,
+        schema_version:
+          pack === "classifier"
+            ? "resume-ir.desktop-classifier-model-pack.v1"
+            : pack === "embedding"
+              ? "resume-ir.embedding-runtime-pack.v1"
+              : "resume-ir.desktop-ocr-runtime-pack.v1",
         files,
       })}\n`,
     );
   }
+  const pdfiumDirectory = path.join(resources, "pdfium", "runtime-pack");
+  const sourceContract = JSON.parse(
+    await readFile(
+      new URL(
+        "../resources/pdf-renderer/aarch64-apple-darwin/source-contract.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const pdfiumPayloads = [
+    {
+      role: "license",
+      file: "LICENSE",
+      body: await readFile(
+        new URL(
+          "../resources/pdf-renderer/aarch64-apple-darwin/LICENSE.pdfium",
+          import.meta.url,
+        ),
+      ),
+    },
+    {
+      role: "build_arguments",
+      file: "args.gn",
+      body: Buffer.from(`${sourceContract.pdfium.gn_arguments.join("\n")}\n`),
+    },
+    {
+      role: "source_contract",
+      file: "source-contract.json",
+      body: Buffer.from(`${JSON.stringify(sourceContract)}\n`),
+    },
+  ];
+  const pdfiumFiles = [];
+  for (const payload of pdfiumPayloads) {
+    await writeFile(path.join(pdfiumDirectory, payload.file), payload.body);
+    pdfiumFiles.push({
+      role: payload.role,
+      file: payload.file,
+      bytes: payload.body.length,
+      sha256: sha256(payload.body),
+    });
+  }
+  await writeFile(
+    path.join(pdfiumDirectory, "runtime-pack.json"),
+    `${JSON.stringify({
+      schema_version: "resume-ir.pdfium-static-runtime-pack.v1",
+      runtime_pack_id: "pdfium-chromium-7881-static-arm64-v1",
+      target_triple: TARGET,
+      link_mode: "static",
+      source_commit: sourceContract.pdfium.source_commit,
+      source_build_dependency_revision:
+        sourceContract.pdfium.source_build_dependency_revision,
+      product_runtime_network_access: "disabled",
+      files: pdfiumFiles,
+    })}\n`,
+  );
   await writeFile(path.join(resources, "icon.icns"), "synthetic-approved-icon");
   return { appBundle, resources, root };
 }
@@ -185,8 +247,8 @@ test("writes and verifies one canonical version-bound bundle composition", async
 
   assert.deepEqual(verified, expected);
   assert.equal(verified.executables.length, 4);
-  assert.equal(verified.runtime_manifests.length, 3);
-  assert.equal(verified.app_files.length, 14);
+  assert.equal(verified.runtime_manifests.length, 4);
+  assert.equal(verified.app_files.length, 18);
   assert.equal(
     verified.app_files.some(({ file }) => file === "Contents/Info.plist"),
     true,
@@ -206,7 +268,7 @@ test("writes and verifies one canonical version-bound bundle composition", async
   assert.equal(manifestBody, `${JSON.stringify(verified)}\n`);
 });
 
-test("binds v3 composition verification to the exact signature policy", async (context) => {
+test("binds v4 composition verification to the exact signature policy", async (context) => {
   const fixture = await bundleFixture(context);
   await writeBundleComposition({
     appBundle: fixture.appBundle,

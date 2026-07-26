@@ -116,7 +116,7 @@ fn post_admission_semantic_runtime_loss_is_a_typed_capability_error() {
     assert!(response.starts_with("HTTP/1.1 503 Service Unavailable"));
     let body: serde_json::Value =
         serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
-    assert_eq!(body["schema_version"], "resume-ir.error.v2");
+    assert_eq!(body["schema_version"], "resume-ir.error.v3");
     assert_eq!(body["error"]["code"], "CAPABILITY_UNAVAILABLE");
     assert_eq!(body["error"]["action"], "select_supported_mode");
     assert_eq!(body["error"]["capability"], "semantic_search");

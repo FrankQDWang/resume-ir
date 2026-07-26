@@ -146,7 +146,7 @@ pub fn write_daemon_auth(path: &Path, token: &str) {
 pub fn write_daemon_discovery(data_dir: &Path, addr: SocketAddr, token: &str) {
     fs::create_dir_all(data_dir).expect("create daemon discovery fixture directory");
     let manifest = serde_json::json!({
-        "schema_version": "resume-ir.daemon-ipc.v3",
+        "schema_version": "resume-ir.daemon-ipc.v5",
         "launch_id": TEST_DAEMON_LAUNCH_ID,
         "instance_id": TEST_DAEMON_INSTANCE_ID,
         "owner_mode": "standalone",
@@ -159,7 +159,18 @@ pub fn write_daemon_discovery(data_dir: &Path, addr: SocketAddr, token: &str) {
         "search": format!("http://{addr}/search"),
         "search_batch": format!("http://{addr}/search/batch"),
         "details": format!("http://{addr}/details"),
+        "hydrate": format!("http://{addr}/details/hydrate"),
         "delete": format!("http://{addr}/delete"),
+        "source_roots": format!("http://{addr}/source-roots"),
+        "source_root_register": format!("http://{addr}/source-roots/register"),
+        "source_root_legacy_migration": format!("http://{addr}/source-roots/migrate-legacy"),
+        "source_root_scan": format!("http://{addr}/source-roots/scan"),
+        "source_root_control": format!("http://{addr}/source-roots/control"),
+        "source_root_delete": format!("http://{addr}/source-roots/delete"),
+        "preview_create": format!("http://{addr}/source-preview/create"),
+        "preview_range": format!("http://{addr}/source-preview/read-range"),
+        "preview_close": format!("http://{addr}/source-preview/close"),
+        "source_reveal": format!("http://{addr}/source-reveal/resolve"),
     });
     fs::write(data_dir.join("ipc.endpoints.json"), manifest.to_string())
         .expect("write daemon discovery manifest fixture");
@@ -168,14 +179,15 @@ pub fn write_daemon_discovery(data_dir: &Path, addr: SocketAddr, token: &str) {
 
 pub fn ready_daemon_status_body() -> &'static str {
     r#"{
-        "schema_version":"daemon.status.v3",
+        "schema_version":"daemon.status.v5",
         "status":"ok",
         "process_state":"ready",
         "core":{"state":"ready","reason":null},
         "optional_runtimes":{
             "embedding":{"state":"available","reason":null},
             "ocr":{"state":"available","reason":null},
-            "classifier":{"state":"available","reason":null}
+            "classifier":{"state":"available","reason":null},
+            "pdfium":{"state":"available","reason":null}
         },
         "capabilities":{
             "keyword_search":{"state":"available","reason":null},
@@ -183,6 +195,7 @@ pub fn ready_daemon_status_body() -> &'static str {
             "semantic_search":{"state":"available","reason":null},
             "hybrid_search":{"state":"available","reason":null},
             "text_import":{"state":"available","reason":null},
+            "pdf_import":{"state":"available","reason":null},
             "ocr_import":{"state":"available","reason":null},
             "index_publication":{"state":"available","reason":null}
         },

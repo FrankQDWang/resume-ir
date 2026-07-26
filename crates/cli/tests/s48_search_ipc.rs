@@ -846,7 +846,7 @@ fn write_auth_file(path: &Path, token: &str) {
 
 fn discovery_manifest(addr: SocketAddr) -> String {
     serde_json::json!({
-        "schema_version": "resume-ir.daemon-ipc.v3",
+        "schema_version": "resume-ir.daemon-ipc.v5",
         "launch_id": TEST_LAUNCH_ID,
         "instance_id": TEST_INSTANCE_ID,
         "owner_mode": "standalone",
@@ -859,7 +859,18 @@ fn discovery_manifest(addr: SocketAddr) -> String {
         "search": format!("http://{addr}/search"),
         "search_batch": format!("http://{addr}/search/batch"),
         "details": format!("http://{addr}/details"),
+        "hydrate": format!("http://{addr}/details/hydrate"),
         "delete": format!("http://{addr}/delete"),
+        "source_roots": format!("http://{addr}/source-roots"),
+        "source_root_register": format!("http://{addr}/source-roots/register"),
+        "source_root_legacy_migration": format!("http://{addr}/source-roots/migrate-legacy"),
+        "source_root_scan": format!("http://{addr}/source-roots/scan"),
+        "source_root_control": format!("http://{addr}/source-roots/control"),
+        "source_root_delete": format!("http://{addr}/source-roots/delete"),
+        "preview_create": format!("http://{addr}/source-preview/create"),
+        "preview_range": format!("http://{addr}/source-preview/read-range"),
+        "preview_close": format!("http://{addr}/source-preview/close"),
+        "source_reveal": format!("http://{addr}/source-reveal/resolve"),
     })
     .to_string()
 }

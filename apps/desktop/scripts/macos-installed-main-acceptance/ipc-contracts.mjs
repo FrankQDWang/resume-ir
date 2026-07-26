@@ -20,6 +20,7 @@ import { readPrivateJson } from "./filesystem-cow.mjs";
 
 const CORE_REASONS = [
   "metadata_initializing",
+  "metadata_migrating",
   "migration_rebuild",
   "artifact_unavailable",
   "source_unavailable",
@@ -27,13 +28,14 @@ const CORE_REASONS = [
   "unsupported_store_schema",
   "metadata_unavailable",
 ];
-const RUNTIME_NAMES = ["embedding", "ocr", "classifier"];
+const RUNTIME_NAMES = ["embedding", "ocr", "classifier", "pdfium"];
 const CAPABILITY_NAMES = [
   "keyword_search",
   "detail",
   "semantic_search",
   "hybrid_search",
   "text_import",
+  "pdf_import",
   "ocr_import",
   "index_publication",
 ];
@@ -85,12 +87,15 @@ export async function readDaemonConnection(dataDir) {
   const endpointKeys = [
     "schema_version", "launch_id", "instance_id", "owner_mode", "status",
     "diagnostics", "imports", "import_cancel", "import_control",
-    "import_progress", "search", "search_batch", "details", "delete",
+    "import_progress", "search", "search_batch", "details", "hydrate", "delete",
+    "source_roots", "source_root_register", "source_root_legacy_migration",
+    "source_root_scan", "source_root_control", "source_root_delete",
+    "preview_create", "preview_range", "preview_close", "source_reveal",
   ];
   if (
     before.source !== after.source || !exactKeys(before.value, endpointKeys) ||
     !exactKeys(auth.value, ["schema_version", "launch_id", "instance_id", "token"]) ||
-    before.value.schema_version !== "resume-ir.daemon-ipc.v3" ||
+    before.value.schema_version !== "resume-ir.daemon-ipc.v5" ||
     auth.value.schema_version !== "resume-ir.daemon-auth.v3" ||
     before.value.owner_mode !== "desktop_supervised" ||
     !DIGEST.test(before.value.launch_id ?? "") ||
@@ -107,7 +112,18 @@ export async function readDaemonConnection(dataDir) {
     ["import_control", "/imports/control"],
     ["import_progress", "/imports/progress"], ["search", "/search"],
     ["search_batch", "/search/batch"], ["details", "/details"],
+    ["hydrate", "/details/hydrate"],
     ["delete", "/delete"],
+    ["source_roots", "/source-roots"],
+    ["source_root_register", "/source-roots/register"],
+    ["source_root_legacy_migration", "/source-roots/migrate-legacy"],
+    ["source_root_scan", "/source-roots/scan"],
+    ["source_root_control", "/source-roots/control"],
+    ["source_root_delete", "/source-roots/delete"],
+    ["preview_create", "/source-preview/create"],
+    ["preview_range", "/source-preview/read-range"],
+    ["preview_close", "/source-preview/close"],
+    ["source_reveal", "/source-reveal/resolve"],
   ];
   const urls = Object.fromEntries(
     routes.map(([key, expected]) => [key, endpointPath(before.value[key], expected)]),
@@ -241,6 +257,7 @@ function validCore(core) {
   if (!exactKeys(core, ["state", "reason"])) return false;
   if (core.state === "ready") return core.reason === null;
   if (core.state === "initializing") return core.reason === "metadata_initializing";
+  if (core.state === "migrating") return core.reason === "metadata_migrating";
   if (core.state === "repairing") {
     return ["migration_rebuild", "artifact_unavailable"].includes(core.reason);
   }
@@ -260,7 +277,8 @@ function validCapability(capability) {
     ((capability.state === "available" && capability.reason === null) ||
       (capability.state === "initializing" && capability.reason === "core_initializing") ||
       (["degraded", "unavailable", "blocked"].includes(capability.state) &&
-        ["core_blocked", "embedding_unavailable", "ocr_unavailable", "classifier_unavailable"].includes(capability.reason)));
+        ["core_blocked", "embedding_unavailable", "ocr_unavailable",
+          "classifier_unavailable", "pdfium_unavailable"].includes(capability.reason)));
 }
 
 function validHealth(value) {
@@ -277,7 +295,7 @@ function capabilityIs(value, state, reason) {
 }
 
 function capabilityMatrixMatches(core, runtimes, capabilities) {
-  if (["initializing", "repairing"].includes(core.state)) {
+  if (["initializing", "migrating", "repairing"].includes(core.state)) {
     return CAPABILITY_NAMES.every((name) =>
       capabilityIs(capabilities[name], "initializing", "core_initializing"));
   }
@@ -290,6 +308,7 @@ function capabilityMatrixMatches(core, runtimes, capabilities) {
   const embedding = runtimes.embedding.state === "available";
   const classifier = runtimes.classifier.state === "available";
   const ocr = runtimes.ocr.state === "available";
+  const pdfium = runtimes.pdfium.state === "available";
   return capabilityIs(capabilities.semantic_search,
     embedding ? "available" : "unavailable",
     embedding ? null : "embedding_unavailable") &&
@@ -299,9 +318,14 @@ function capabilityMatrixMatches(core, runtimes, capabilities) {
     capabilityIs(capabilities.text_import,
       classifier && embedding ? "available" : "unavailable",
       !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" : null) &&
+    capabilityIs(capabilities.pdf_import,
+      classifier && embedding && pdfium ? "available" : "unavailable",
+      !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" :
+        !pdfium ? "pdfium_unavailable" : null) &&
     capabilityIs(capabilities.ocr_import,
-      classifier && embedding && ocr ? "available" : "unavailable",
-      !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" : !ocr ? "ocr_unavailable" : null) &&
+      classifier && embedding && pdfium && ocr ? "available" : "unavailable",
+      !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" :
+        !pdfium ? "pdfium_unavailable" : !ocr ? "ocr_unavailable" : null) &&
     capabilityIs(capabilities.index_publication,
       classifier && embedding ? "available" : "unavailable",
       !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" : null);
@@ -330,13 +354,13 @@ function validRepairProgress(progress, coreState) {
 }
 
 function validStatusShape(value) {
-  if (!exactKeys(value, STATUS_KEYS) || value.schema_version !== "daemon.status.v3" ||
+  if (!exactKeys(value, STATUS_KEYS) || value.schema_version !== "daemon.status.v5" ||
       !validHealth(value) || !validServiceError(value.error, value.core) ||
       !validRepairProgress(value.repair_progress, value.core.state) || !validIpc(value.ipc)) {
     return false;
   }
   const expectedStatus = {
-    initializing: "initializing", ready: "ok", repairing: "repairing",
+    initializing: "initializing", migrating: "migrating", ready: "ok", repairing: "repairing",
     degraded: "degraded", blocked: "blocked",
   }[value.core.state];
   return value.status === expectedStatus;
@@ -453,6 +477,8 @@ export function validateDaemonDiagnostics(
     "ipc", "indexed_documents", "searchable_documents", "partial_documents",
     "ocr_queue_depth", "embedding_queue_depth", "recovery_queue_depth",
     "import_tasks_queued", "import_tasks_recoverable", "import_tasks_cancelled",
+    "source_roots_total", "source_roots_active", "source_roots_offline",
+    "source_root_deletions_in_progress",
     "query_latency",
   ];
   const errorKeys = [
@@ -469,7 +495,7 @@ export function validateDaemonDiagnostics(
       "contains_snippet_text", "visible_epoch", "evidence_lane", "evidence_status",
       "process_state", "core", "optional_runtimes", "capabilities",
       "repair_progress", "error", "metrics", "error_counts", "benchmark_refs",
-    ]) || value.schema_version !== "resume-ir.diagnostics.v4" ||
+    ]) || value.schema_version !== "resume-ir.diagnostics.v9" ||
     value.privacy_boundary !== "redacted_local_aggregate" ||
     [value.contains_raw_resume_text, value.contains_queries, value.contains_resume_paths,
       value.contains_candidate_results, value.contains_snippet_text].some(Boolean) ||
@@ -481,6 +507,10 @@ export function validateDaemonDiagnostics(
     !validIpc(value.metrics.ipc) ||
     !metricsKeys.filter((key) => !["ipc", "query_latency"].includes(key))
       .every((key) => boundedCount(value.metrics[key])) ||
+    value.metrics.source_roots_total > 16 ||
+    value.metrics.source_roots_active + value.metrics.source_roots_offline >
+      value.metrics.source_roots_total ||
+    value.metrics.source_root_deletions_in_progress > value.metrics.source_roots_total ||
     !exactKeys(latency, ["sample_count", "p50_ms", "p95_ms", "p99_ms", "last_result_count"]) ||
     !boundedCount(latency.sample_count) ||
     ![latency.p50_ms, latency.p95_ms, latency.p99_ms].every((entry) =>

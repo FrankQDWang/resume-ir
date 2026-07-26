@@ -30488,6 +30488,44 @@ Output summary:
 - `cargo fmt --check`: exit 0.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
 
+### v0.1.8 final fail-late workspace repair F14
+
+- macOS PR run `30206651549` exercised the workspace with `--no-fail-fast`,
+  proved the F13 repair, continued through every later target, and collected
+  all 21 remaining failures across seven test targets in one run.
+- The shared causes were repaired without weakening production validation:
+  OCR fixtures now establish current root/scan/occurrence authority; PDF and
+  release fixtures match PDFium; explicit rescans replace terminal retryable
+  tasks; runtime worker gates match the published capability conjunction; and
+  historical v28/v29 tests use a feature-gated synthetic setup seam rather
+  than invoking the current migration entrypoint during fixture creation.
+- Only the 21 failed or directly invalidated cases were rerun locally. CLI
+  exact results are 14/14 and daemon exact results are 7/7. Previously valid
+  workspace results were not repeated.
+- macOS held first launches of newly linked test binaries in `_dyld_start`
+  while `syspolicyd` validated them. Serial first launch followed by
+  same-binary parallel execution completed; cancelled multi-binary
+  enumerations executed no test bodies and are recorded as `not_run`.
+- The authoritative command/run mapping is in
+  `docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26`.
+
+### v0.1.8 direct CLI managed-root scan coordination repair F15
+
+- macOS PR run `30210820223` passed every F14 regression except one previously
+  valid repeated-import case, then completed all later workspace targets and
+  independent checks successfully.
+- The remaining defect was a split responsibility boundary: direct CLI import
+  could see a managed source root but created only a legacy task/scope head,
+  leaving occurrence writes without the task-keyed scan snapshot required by
+  current source truth.
+- Managed-root CLI imports now use the same task/snapshot coordinator as daemon
+  scans. Shared success/failure completion lives in import-pipeline, and both
+  execution owners now close scan progress, missing-file truth and PDF
+  reprocessing consistently.
+- The sole failed exact case passed locally. Focused Clippy for
+  import-pipeline, resume-cli and resume-daemon also passed; no unrelated test
+  target was replayed.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2
@@ -30755,10 +30793,11 @@ Output summary:
   with continuous encrypted COW forward migration beginning at v29, followed
   by database-owned source roots, path-truth reconciliation, durable root
   deletion, PDFium/resumable OCR, original-PDF preview and native reveal.
-- #217 remains the umbrella issue. At most it and the current version feature
-  issue may be open. Each v0.1.3–v0.1.8 release requires focused tests,
-  exact-commit DMG, native installed Computer Use acceptance and issue
-  reconciliation before the next version starts.
+- #217 remains the umbrella issue and the execution owner for the atomic
+  v0.1.3–v0.1.8 business train. Production code, contracts, packaging
+  declarations and UI are completed before validation. Per-version DMGs and
+  installed acceptance are not intermediate gates; the exact v0.1.8 tree owns
+  the single final macOS delivery matrix and installed acceptance.
 - `apps/desktop/package.json.version` is now the single product version
   authority. Tauri references `../package.json`; DMG planning, worktree
   release, install/reinstall and installed-main source binding derive the same
@@ -30769,10 +30808,10 @@ Output summary:
   command, behavior boundary, input fingerprint, result, invalidating changes
   and installed evidence. Passing rows remain reusable until their inputs or
   behavior boundary change.
-- Final full parallel verification, merged-main installed acceptance and the
-  120-minute soak are intentionally deferred until v0.1.8. Their absence
-  blocks #217/release-ready, not the closure of an individually installed and
-  accepted feature issue.
+- Final full parallel verification, installed acceptance and the 120-minute
+  soak are intentionally deferred until the complete v0.1.8 business tree is
+  frozen. The matrix must run fail-late, collect every failure before repair,
+  and retain unaffected passes across repair rounds.
 - The first hosted Linux Clippy run for PR #235 exposed a target-ownership
   error in the OCR runtime pack: macOS-only production identity constants were
   also compiled by `cfg(test)` on Linux and rejected as dead code under
@@ -31046,6 +31085,283 @@ Output summary:
   `0a3c9514-d110-4eac-a585-1ae6f9387a1c`). Previously passed business and
   integration rows remain valid; hosted replay must continue the targets that
   Windows did not reach after the former hang.
+- v0.1.3 production implementation is now present on
+  `codex/v0.1.3-cow-migrations`. Metadata schema v30 introduces a contiguous
+  checksum registry and bounded migration receipt. Exact v29 authorities
+  migrate only under the data-directory owner through same-key encrypted COW
+  staging; v27/v28/future/corrupt authorities remain fail-closed. Preparing,
+  ready and post-publication recovery paths preserve the predecessor
+  ciphertext and retain one explicit v29 predecessor.
+- The daemon now publishes discovery v4 before store open and projects
+  `core=migrating`, status v4 and diagnostics v5 while the COW operation owns
+  no serving store. Business routes remain typed initializing. CLI, native
+  desktop, TypeScript validators, installed-acceptance contracts and visible
+  Chinese migration state were versioned in the same slice; aggregate IPC is
+  v5 and bootstrap machine authority is v2.
+- Focused v30 evidence is recorded as V13-01 through V13-09 in the
+  feature-train ledger. Seven migration/negative cases passed, including
+  source-ciphertext preservation, receipt recovery, missing-key zero-write and
+  tampered-history rejection. Four native desktop contract cases and the exact
+  WebView migrating projection passed. The affected Rust production packages,
+  frontend type contract, governance mutation and performance contract checker
+  passed. Focused root and desktop production Clippy also passed with warnings
+  denied; test targets were intentionally excluded.
+- Two root-workspace pure contract test binaries compiled but did not enter
+  their test output and remained at zero CPU; they are truthfully `not_run`,
+  not failures or passes. An over-broad Nextest discovery attempt was cancelled
+  before selected tests executed. One unrelated privacy receipt case was
+  accidentally selected by a broad filter and is explicitly excluded from
+  v0.1.3 evidence. No Linux run or full repository suite is part of this
+  version round.
+- v0.1.3 production and native acceptance are complete on the feature branch.
+  Commit `8699e1c` supplied the schema-v30/COW implementation and its installed
+  v29→v30 witness. A missing pre-merge installation boundary was then found:
+  the exact-main installer correctly rejected a worktree artifact, while the
+  generic bundle verifier incorrectly compared snapshot bytes to an unrelated
+  current build directory. Commit `5b2ed81` adds a strict worktree installer
+  that binds the emitted manifest, recomputed DMG digest, mounted and installed
+  composition, source identity and signature without weakening main
+  provenance. Its three exact tests passed.
+- The product-version test still expected v0.1.2 and was corrected to the
+  canonical v0.1.3 manifest; both exact version-authority cases passed.
+  Installed clean-v30 UX also exposed schema-specific startup copy. Commit
+  `2175fa7` now says “正在打开当前本地数据” and explains that unsupported stores
+  must be v29-upgradable or exact v30. The two affected Vitest cases passed;
+  one root-launched command that discovered a cached worktree is recorded as
+  an invalid invocation and excluded.
+- Exact commit `2175fa7958a435b96828ee51b12fdc793d2e23ae` produced DMG SHA-256
+  `8cdfd7771777b6079c3064a6c42c45dbcac0fcb338f9b0adf2981f5948d9dd6c`.
+  The receipt-bound install verified arm64 runtime composition, ad-hoc
+  signature and hardened runtime and reported `user_data_removed=false`.
+  Computer Use confirmed current-data initialization, fail-closed transient
+  status loss, automatic recovery to daemon ready, one restored source root,
+  8,720 discovered and 7,607 searchable documents. The prior installed
+  migration witness remains valid because later commits did not touch storage,
+  migration, bootstrap or the migrating projection.
+- Draft PR #237 is stacked on the S810 checkpoint PR #235 and contains only
+  the five v0.1.3 feature/evidence commits. The bounded evidence comment is on
+  #236. Remaining work is review/merge ordering (#235 before #237) and issue
+  closure after that decision. No Linux or full-workspace test is part of this
+  version round.
+
+### Atomic v0.1.3–v0.1.8 business implementation freeze
+
+- The working tree now contains the complete approved business train with
+  product version `0.1.8` and metadata schema v33. This supersedes the former
+  per-version stop-and-validate sequence; the historical v0.1.3 evidence above
+  remains evidence for its exact old inputs only.
+- Storage uses one contiguous checksum registry for v29→v30→v31→v32→v33,
+  encrypted same-key COW staging, bounded recovery receipts and one retained
+  predecessor. v27/v28, future and damaged authorities remain fail-closed;
+  there is no dual reader, dual write, downgrade read or compatibility flag.
+- The daemon-owned source-root model gives each authorized directory a stable
+  opaque identity, path-scoped occurrences, revisions and scan snapshots.
+  Watcher events, 750 ms debounce, the 300-second fallback and manual scans
+  share one per-root coordinator. Only a complete, error-free, unbounded scan
+  can remove missing paths; offline, permission-denied and partial scans never
+  clear the index. Rename and move are represented as old-path removal plus
+  new-path import.
+- The source panel keeps global totals and adds per-root counts, truthful
+  progress and nullable ETA, last synchronization, watcher state, one
+  start/rescan action, pause/resume monitoring and durable delete. Root
+  deletion first quiesces scans/import/OCR, atomically publishes search
+  removal, purges all unreferenced application-derived data and migration
+  predecessor material, verifies zero residual state and never modifies source
+  files. Incomplete receipts resume after daemon restart.
+- PDF import now uses the same statically linked PDFium contract on macOS and
+  Windows for text-object interpretation and page rendering. CropBox,
+  render-mode, alpha, Unicode, repetition, entropy and invisible-overlay
+  quality gates prevent corrupt text from reaching classification. Failed
+  pages enter the resumable single-concurrency OCR queue; page checkpoints,
+  source replacement, root deletion, reclassification and publication fences
+  are durable.
+- Detail defaults to a local original-PDF reader with a resizable and
+  keyboard-adjustable drawer. The daemon validates the current
+  `{doc_id, version_id, visible_epoch}` selection and exact active source
+  revision, creates a generation-bound 120-second opaque lease, and serves
+  bounded 64 KiB ranges verified against the open file handle. PDF.js is
+  bundled locally, renders the current page and disables automatic stream
+  prefetch. Structured fields and extracted text remain explicit auxiliary
+  views.
+- “在访达中显示”/“在文件资源管理器中显示” accepts only a selection.
+  Rust revalidates the authorized root, relative path, ordinary-file identity,
+  symlink/reparse boundary, size and SHA-256 before invoking the native reveal
+  API. Paths, tokens, hashes and file bytes never enter WebView state,
+  diagnostics or logs.
+- Discovery/status/diagnostics/error contracts are now v5/v5/v9/v3, aggregate
+  IPC is v6, and optional runtime reporting includes independent PDFium and
+  OCR health. Packaging owns four immutable runtime packs and native macOS and
+  Windows builders; the release workflow has no Linux product lane and cannot
+  package Poppler/pdftoppm as a desktop runtime.
+- At the business implementation freeze, no final validation command, build,
+  DMG, installation, Computer Use step or soak had run against the v0.1.8
+  tree. The following F01 section records the later final-matrix execution;
+  earlier passes whose declared inputs changed remain invalidated rather than
+  silently reused.
+
+### v0.1.8 final matrix F01 and native build prerequisite
+
+- The resumable fail-late final matrix started on the frozen v0.1.8 business
+  tree. It did not run a Linux product lane. Workspace Clippy, embedder,
+  benchmark runner, licenses, quality evidence, release SBOM, desktop Tauri
+  tests, desktop Tauri Clippy, runbooks and changed-file whitespace produced
+  passing receipts. Exact run ids and reuse boundaries are recorded in
+  `docs/reports/2026-07-24-feature-train-verification-ledger.md`.
+- The first full remaining batch correctly collected every failure before
+  repair. Ten native Rust/closed-loop/evidence/bundle cells shared one cause:
+  the reviewed macOS PDFium static pack had not been built. Desktop contract
+  failures and runbook drift were repaired independently and only their
+  invalidated cells were rerun.
+- The macOS PDFium source builder now pins a real depot_tools commit, uses the
+  upstream minimal checkout mode, bootstraps official depot_tools and performs
+  a complete-Xcode capability check before network synchronization. The
+  current machine has only Apple Command Line Tools 16.4 and no Xcode
+  installation, so the official macOS SDK probe cannot build `libpdfium.a`.
+  The builder fails immediately with a bounded prerequisite error, never
+  spoofs Xcode, never patches the upstream source checkout and does not change
+  the global developer-directory selection.
+- Focused Xcode-preflight tests pass 5/5, including command-scoped
+  `DEVELOPER_DIR` selection without a global configuration change; the updated
+  runbook and whitespace checks pass. The daemon/PDFium source-identity Clippy
+  boundary also passes with one build job and incremental compilation
+  disabled, replacing only the narrow daemon input invalidated after the
+  earlier workspace Clippy receipt; the current public repository privacy
+  boundary also passes. The ten PDFium-linked cells, exact-tree DMG,
+  installation, Computer Use acceptance and soak remain blocked/not-run until
+  complete Xcode is available. Previously valid matrix rows remain reusable
+  and must not be replayed when that host prerequisite is supplied.
+
+### v0.1.8 final repair, DMG and synthetic installed acceptance
+
+- Complete Xcode 16.4 and the reviewed local PDFium pack unblocked the ten
+  native cells. Fail-late receipt `20260726T091240Z-183931d2` retained eight
+  passes and isolated two failures: three legacy lopdf-based import fixtures
+  and two stale schema literals in CLI key tests.
+- The production PDF quality gate was not relaxed. A Type1 UTF-16BE literal
+  without `ToUnicode` now correctly requires OCR; the valid `ToUnicode`
+  fixture has explicit visible line leading and remains searchable. Removed
+  lopdf timing names were hard-cut to PDFium document/page/character/quality
+  metrics. CLI key backup/restore and rotation use
+  `CURRENT_SCHEMA_VERSION`.
+- The three exact import/PDFium regressions, s146, the previously unreached
+  s147 and the invalidated CLI closed-loop cell passed. Focused
+  deny-warnings Clippy for `parser-pdf`, `import-pipeline` and `resume-cli`
+  passed. The Clippy `--all-targets` invocation was broader than required and
+  is recorded as valid but must not be repeated.
+- Worktree receipt `20260726T103209Z-3ba42dfb` produced
+  `resume-ir_0.1.8_aarch64_f161c5b820ad.dmg` with DMG SHA-256
+  `caabc8890fe699f0f0a074b5f791c1617afed38175f6bfb09fa910f235315897`.
+  The receipt-bound installation verified version 0.1.8 and reported
+  `user_data_removed=false`. The old 0.1.3 App and incompatible pre-release
+  install receipt were archived without moving metadata, keys, indexes,
+  authorized roots or source files.
+- Computer Use acceptance used an isolated synthetic HOME. It proved current
+  schema v33 initialization, per-root progress, start-to-rescan transition,
+  zero-change stability, watcher-driven PDF import, keyword search, resizable
+  detail, Finder reveal, in-app original-PDF rendering, durable root deletion,
+  zero residual search results, unchanged source PDF digest and clean normal
+  shutdown. Exact local screenshot digests and the full no-repeat ledger are
+  recorded in
+  `docs/reports/2026-07-24-feature-train-verification-ledger.md`.
+- No 120-minute soak is claimed. It must start only after PR reconciliation,
+  exact merged-main build and installed-main acceptance, and must remain bound
+  to that same final commit.
+
+### macOS-only PR PDFium prerequisite repair
+
+- PR #238 macOS run `30202037705` passed metadata, search-boundary, format and
+  workspace Clippy, then failed before test execution because the PR workflow
+  had not prepared the reviewed static `libpdfium.a` required by Cargo.
+- The PR workflow now caches the exact reviewed macOS PDFium build pack, builds
+  it from the pinned source contract on cache miss, and always verifies the
+  restored pack before Cargo. It does not disable static linking or skip PDF
+  behavior.
+- Independent checks after the workspace test step now continue when an earlier
+  test fails, unless the run was cancelled, so the final matrix collects all
+  failures before repair.
+- Focused workflow policy, PDFium pack verification and PDF renderer test-link
+  checks passed. No previously valid feature or workspace test was rerun.
+- The first clean CI cache miss then exposed that the builder's `minimal`
+  PDFium checkout excluded `third_party/simdutf`, even though GN loads it while
+  generating the complete static library. A stale broader local source cache
+  had masked this. The builder now uses PDFium's documented `small` checkout
+  while retaining `pdf_enable_v8=false` in production GN arguments.
+- Fail-late Cargo-dependent CLI, daemon and benchmark checks now run only after
+  the PDFium prerequisite verifies; independent policy checks still continue.
+  The exact checkout regression failed before the fix and passed after it,
+  together with the focused workflow and pack-verification checks.
+- The next macOS run built and verified PDFium and isolated one real workspace
+  failure: the frozen public synthetic PDF helper used `T*` without text
+  leading, so two multiline samples visually overlapped and became
+  `needs_review`. The helper now defines visible 14-point leading; production
+  PDF quality and classification remain unchanged.
+- PDFium cache restore/save are now explicit, with save immediately after pack
+  verification. Later test failures cannot throw away a successful first
+  build. The workflow and formatting checks pass; the repaired exact synthetic
+  admission case passed in macOS run `30203505154`.
+- That fail-late run completed every later check and isolated eight meta-store
+  failures after 133 passes. One was a real recovery defect: a ready v33
+  migration target was sent through the v29–v32 predecessor validator. The
+  recovery path now validates current targets with the current-store validator.
+- Four failures came from historical v29 publication fixtures opening a
+  production sibling, which correctly migrated the authority to v33. A
+  consuming test-only session seam now keeps synthetic historical stores behind
+  the migration boundary. Two stale current-schema literals now use
+  `CURRENT_SCHEMA_VERSION`; explicit rescans after terminal retryable failures
+  now assert a new queued attempt instead of retaining an unusable failed head.
+- The active goal no longer contains the obsolete Windows private-corpus
+  transfer policy, and its checker rejects that section. Current delivery,
+  testing, packaging and acceptance remain macOS-only across compaction and
+  handoff.
+- Focused format, autonomous-goal, governance-mutation and
+  `migration-test-support` compilation checks passed. The local exact Rust test
+  binary compiled but stayed in macOS `_dyld_start` before the harness entered;
+  it was terminated and recorded as `not_run`. The cached macOS PR runner is the
+  authoritative assertion loop for the eight affected cases; unrelated valid
+  passes remain reused.
+- macOS PR run `30204531887` then proved all eight repairs and the complete
+  meta-store library (`141 passed`). Clippy and every fail-late CLI, daemon,
+  license, runbook, handoff, workflow and benchmark check also passed.
+- The only remaining workspace failure was an independent
+  `excluded_document_status` integration assertion that called the current v33
+  ephemeral migration API but still named and expected v29. It now uses
+  `CURRENT_SCHEMA_VERSION`; its exact target compiles and target-specific
+  deny-warnings Clippy passes. macOS PR run `30204933297` proved both target
+  cases.
+- That run next exposed one s26 fixture gap: periodic requeue now correctly
+  requires active `source_root` authority, while the old test created only
+  legacy task/scope control rows. The fixture now registers both roots before
+  testing pause/requeue/claim/resume; production authority filters remain
+  strict.
+- Cargo stopped after s26, so a bounded audit of the later unrun meta-store
+  integration targets was performed before another push. Five current-API
+  assertions in s3/s807 still hard-coded schema 29; they now use
+  `CURRENT_SCHEMA_VERSION`, assert the complete contiguous migration range and
+  include v30–v33 tables. Historical v29 migration fixtures were not changed.
+  Target-specific compile and deny-warnings Clippy passed for all three affected
+  targets.
+- macOS PR run `30205337013` proved the repaired s26 authority fixture and the
+  current-schema assertions, then isolated two s3 OCR cache fixtures after 56
+  passes. Production correctly rejects cache writes without a present
+  source-occurrence authority. The tests now seed an active root, document,
+  source revision and occurrence for their content hash; the production privacy
+  guard remains strict. Only the affected s3 target was compiled and linted
+  with deny-warnings locally; exact assertions continue in the next macOS PR
+  run, while earlier valid results remain reused.
+- macOS PR run `30205798442` showed both OCR fixtures reaching the occurrence
+  insertion together, where the current schema correctly requires a referenced
+  scan snapshot. The completed fixture now starts that scan through the public
+  coordinator API before observing the source. No foreign key or production
+  guard was relaxed. Clippy and every independent fail-late check passed; only
+  this affected s3 target awaits the next macOS assertion run.
+- macOS PR run `30206076466` proved all 58 s3 and all 38 s807_v27 cases, then
+  reached one later CLI deleted-data purge failure. That fixture assumed an OCR
+  cache insert without current root/scan/occurrence authority, so the guarded
+  insert was a no-op. It now establishes that authority through public APIs and
+  reads the cache row back before delete/purge. The same run exposed that plain
+  `cargo test --workspace` stopped at the first failed test binary; the macOS PR
+  workflow now uses Cargo `--no-fail-fast`, pinned by the workflow checker, so
+  later targets always run and failures can be repaired as one batch.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

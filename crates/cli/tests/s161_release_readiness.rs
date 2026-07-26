@@ -82,10 +82,12 @@ fn release_readiness_reports_blocked_evidence_without_local_path_leaks() {
     assert!(stdout.contains("reviewed Tesseract/tessdata"));
     assert!(stdout.contains("Tesseract/tessdata"));
     assert!(stdout.contains("Apache-2.0"));
-    assert!(stdout.contains("Poppler/pdftoppm"));
-    assert!(stdout.contains("bundled-first packaging"));
-    assert!(stdout.contains("source-offer"));
-    assert!(stdout.contains("dependency detection"));
+    assert!(stdout.contains("statically linked PDFium"));
+    assert!(stdout.contains("source/build identity"));
+    assert!(stdout.contains("root license and notices"));
+    assert!(stdout.contains("final dependency closure"));
+    assert!(stdout.contains("installer composition"));
+    assert!(stdout.contains("fail-closed runtime validation"));
     assert!(stdout.contains("embedding model license/distribution: blocked"));
     assert!(stdout.contains("reviewed licensed embedding model"));
     assert!(stdout.contains("model manifest"));
@@ -348,13 +350,14 @@ fn release_readiness_json_reports_blockers_without_local_path_leaks() {
         .find(|blocker| blocker["label"] == "OCR runtime manifest/dependency evidence")
         .expect("OCR license blocker");
     let ocr_license_detail = ocr_license_blocker["detail"].as_str().unwrap();
-    assert!(ocr_license_detail.contains("GPL-3.0-or-later"));
-    assert!(ocr_license_detail.contains("source-offer"));
     assert!(ocr_license_detail.contains("Tesseract/tessdata"));
     assert!(ocr_license_detail.contains("Apache-2.0"));
-    assert!(ocr_license_detail.contains("Poppler/pdftoppm"));
-    assert!(ocr_license_detail.contains("bundled-first packaging"));
-    assert!(ocr_license_detail.contains("dependency detection"));
+    assert!(ocr_license_detail.contains("statically linked PDFium"));
+    assert!(ocr_license_detail.contains("source/build identity"));
+    assert!(ocr_license_detail.contains("root license and notices"));
+    assert!(ocr_license_detail.contains("final dependency closure"));
+    assert!(ocr_license_detail.contains("installer composition"));
+    assert!(ocr_license_detail.contains("fail-closed runtime validation"));
 
     let model_license_blocker = blockers
         .iter()

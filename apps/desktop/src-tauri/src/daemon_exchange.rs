@@ -38,8 +38,8 @@ impl SearchSelection {
 pub(crate) enum ExpectedResponse {
     Status,
     Diagnostics,
-    Import,
-    RootControl,
+    SourceRoots,
+    RootDeletion,
     Search {
         request_id: String,
         max_results: usize,
@@ -54,6 +54,17 @@ pub(crate) enum ExpectedResponse {
         body_offset_bytes: u64,
         body_limit_bytes: u32,
     },
+    PreviewCreate {
+        request_id: String,
+    },
+    PreviewRange {
+        request_id: String,
+        offset: u64,
+        max_bytes: usize,
+    },
+    PreviewClose {
+        request_id: String,
+    },
     Cancel {
         request_id: String,
     },
@@ -64,11 +75,14 @@ impl ExpectedResponse {
         match self {
             Self::Status => Operation::Status,
             Self::Diagnostics => Operation::Diagnostics,
-            Self::Import => Operation::Import,
-            Self::RootControl => Operation::RootControl,
+            Self::SourceRoots => Operation::SourceRoots,
+            Self::RootDeletion => Operation::RootDeletion,
             Self::Search { .. } => Operation::Search,
             Self::Detail { .. } => Operation::Detail,
             Self::Hydrate { .. } => Operation::Hydrate,
+            Self::PreviewCreate { .. } => Operation::PreviewCreate,
+            Self::PreviewRange { .. } => Operation::PreviewRange,
+            Self::PreviewClose { .. } => Operation::PreviewClose,
             Self::Cancel { .. } => Operation::Cancel,
         }
     }

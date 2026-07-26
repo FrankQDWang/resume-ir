@@ -7,6 +7,10 @@ use parser_common::{
 use parser_pdf::PdfParser;
 use std::io::Write;
 
+fn test_budget() -> ResourceBudget {
+    ResourceBudget::default().with_timeout(std::time::Duration::from_secs(300))
+}
+
 #[test]
 fn exposes_parser_pdf_crate_identity() {
     assert_eq!(parser_pdf::crate_name(), "parser-pdf");
@@ -20,7 +24,7 @@ fn text_layer_pdf_returns_text_layer_status_and_extracted_signal() {
 
     assert_eq!(parser.supports(input.probe()), SupportLevel::Supported);
 
-    let output = parser.parse(input, ResourceBudget::default()).unwrap();
+    let output = parser.parse(input, test_budget()).unwrap();
 
     assert_eq!(output.status(), ParseStatus::TextLayer);
     assert_eq!(output.document_status(), DocumentStatus::TextExtracted);
@@ -34,52 +38,43 @@ fn text_layer_pdf_returns_text_layer_status_and_extracted_signal() {
 }
 
 #[test]
-fn utf16be_hex_text_layer_pdf_returns_text_layer_status_and_extracted_signal() {
+fn utf16be_hex_text_layer_without_tounicode_requires_ocr() {
     let parser = PdfParser;
     let bytes = utf16be_hex_text_layer_pdf_bytes();
     let input = ParseInput::from_bytes(Some("pdf"), &bytes);
 
-    let output = parser.parse(input, ResourceBudget::default()).unwrap();
+    let output = parser.parse(input, test_budget()).unwrap();
 
-    let expected = "\u{4E2D}\u{6587}\u{7B80}\u{5386}";
-    assert_eq!(output.status(), ParseStatus::TextLayer);
-    assert_eq!(output.document_status(), DocumentStatus::TextExtracted);
-    assert!(output.text().contains(expected));
+    assert_eq!(output.status(), ParseStatus::OcrRequired);
+    assert_eq!(output.document_status(), DocumentStatus::OcrRequired);
+    assert_eq!(output.text(), "");
     assert_eq!(output.page_count(), Some(1));
-    assert!(!format!("{output:?}").contains(expected));
 }
 
 #[test]
-fn utf16be_hex_text_layer_pdf_with_odd_utf16_length_returns_corrupted_error() {
+fn utf16be_hex_text_layer_pdf_with_odd_utf16_length_requires_ocr() {
     let parser = PdfParser;
     let bytes = utf16be_hex_text_layer_pdf_with_odd_utf16_length_bytes();
-    let error = parser
-        .parse(
-            ParseInput::from_bytes(Some("pdf"), &bytes),
-            ResourceBudget::default(),
-        )
-        .unwrap_err();
+    let output = parser
+        .parse(ParseInput::from_bytes(Some("pdf"), &bytes), test_budget())
+        .unwrap();
 
-    assert_eq!(error.kind(), ParserErrorKind::Corrupted);
-    assert_eq!(
-        error.diagnostic_message(),
-        "pdf utf-16 text run has odd byte length"
-    );
+    assert_eq!(output.status(), ParseStatus::OcrRequired);
+    assert_eq!(output.document_status(), DocumentStatus::OcrRequired);
+    assert_eq!(output.text(), "");
 }
 
 #[test]
-fn utf16be_hex_text_layer_pdf_with_invalid_utf16_surrogate_returns_corrupted_error() {
+fn utf16be_hex_text_layer_pdf_with_invalid_utf16_surrogate_requires_ocr() {
     let parser = PdfParser;
     let bytes = utf16be_hex_text_layer_pdf_with_invalid_utf16_surrogate_bytes();
-    let error = parser
-        .parse(
-            ParseInput::from_bytes(Some("pdf"), &bytes),
-            ResourceBudget::default(),
-        )
-        .unwrap_err();
+    let output = parser
+        .parse(ParseInput::from_bytes(Some("pdf"), &bytes), test_budget())
+        .unwrap();
 
-    assert_eq!(error.kind(), ParserErrorKind::Corrupted);
-    assert_eq!(error.diagnostic_message(), "pdf utf-16 text run is invalid");
+    assert_eq!(output.status(), ParseStatus::OcrRequired);
+    assert_eq!(output.document_status(), DocumentStatus::OcrRequired);
+    assert_eq!(output.text(), "");
 }
 
 #[test]
@@ -87,10 +82,7 @@ fn scanned_image_pdf_returns_ocr_required_without_running_ocr() {
     let parser = PdfParser;
     let bytes = scanned_pdf_bytes();
     let output = parser
-        .parse(
-            ParseInput::from_bytes(Some("pdf"), &bytes),
-            ResourceBudget::default(),
-        )
+        .parse(ParseInput::from_bytes(Some("pdf"), &bytes), test_budget())
         .unwrap();
 
     assert_eq!(output.status(), ParseStatus::OcrRequired);
@@ -106,7 +98,7 @@ fn unreferenced_bt_et_bytes_do_not_count_as_page_text_layer() {
     let bytes = scanned_pdf_with_unreferenced_text_object_bytes();
     let input = ParseInput::from_bytes(Some("pdf"), &bytes);
 
-    let output = parser.parse(input, ResourceBudget::default()).unwrap();
+    let output = parser.parse(input, test_budget()).unwrap();
 
     assert_eq!(output.status(), ParseStatus::OcrRequired);
     assert_eq!(output.document_status(), DocumentStatus::OcrRequired);
@@ -120,7 +112,7 @@ fn compressed_text_stream_pdf_returns_text_layer_status_and_extracted_signal() {
     let bytes = compressed_text_stream_pdf_bytes();
     let input = ParseInput::from_bytes(Some("pdf"), &bytes);
 
-    let output = parser.parse(input, ResourceBudget::default()).unwrap();
+    let output = parser.parse(input, test_budget()).unwrap();
 
     assert_eq!(output.status(), ParseStatus::TextLayer);
     assert_eq!(output.document_status(), DocumentStatus::TextExtracted);
@@ -134,7 +126,7 @@ fn tounicode_cmap_pdf_returns_text_layer_status_and_extracted_signal() {
     let bytes = tounicode_cmap_pdf_bytes();
     let input = ParseInput::from_bytes(Some("pdf"), &bytes);
 
-    let output = parser.parse(input, ResourceBudget::default()).unwrap();
+    let output = parser.parse(input, test_budget()).unwrap();
 
     assert_eq!(output.status(), ParseStatus::TextLayer);
     assert_eq!(output.document_status(), DocumentStatus::TextExtracted);
@@ -148,11 +140,25 @@ fn corrupted_pdf_returns_corrupted_error() {
     let error = parser
         .parse(
             ParseInput::from_bytes(Some("pdf"), b"%PDF-1.4\nmissing eof"),
-            ResourceBudget::default(),
+            test_budget(),
         )
         .unwrap_err();
 
     assert_eq!(error.kind(), ParserErrorKind::Corrupted);
+}
+
+#[test]
+fn process_pdfium_runtime_is_reused_across_documents() {
+    let parser = PdfParser;
+    for _ in 0..2 {
+        let error = parser
+            .parse(
+                ParseInput::from_bytes(Some("pdf"), b"%PDF-1.4\nmissing eof"),
+                test_budget(),
+            )
+            .unwrap_err();
+        assert_eq!(error.kind(), ParserErrorKind::Corrupted);
+    }
 }
 
 #[test]
@@ -198,11 +204,15 @@ fn pdf_parser_enforces_runtime_timeout_without_text_layer_operator() {
 }
 
 fn text_layer_pdf_bytes() -> Vec<u8> {
-    simple_font_text_pdf_bytes(b"BT /F1 12 Tf 72 720 Td (Synthetic PDF Text Layer) Tj ET\n")
+    simple_font_text_pdf_bytes(
+        b"BT /F1 12 Tf 72 720 Td (Synthetic PDF Text Layer With Enough Visible Resume Signal) Tj ET\n",
+    )
 }
 
 fn utf16be_hex_text_layer_pdf_bytes() -> Vec<u8> {
-    simple_font_text_pdf_bytes(b"BT /F1 12 Tf 72 720 Td <FEFF4E2D65877B805386> Tj ET\n")
+    simple_font_text_pdf_bytes(
+        b"BT /F1 12 Tf 72 720 Td <FEFF4E2D65877B8053864E2D65877B8053864E2D65877B8053864E2D65877B8053864E2D65877B8053864E2D65877B8053864E2D65877B8053864E2D65877B8053864E2D65877B8053864E2D65877B805386> Tj ET\n",
+    )
 }
 
 fn utf16be_hex_text_layer_pdf_with_odd_utf16_length_bytes() -> Vec<u8> {
@@ -265,7 +275,8 @@ endstream endobj\n\
 }
 
 fn compressed_text_stream_pdf_bytes() -> Vec<u8> {
-    let plain_text = b"BT /F1 12 Tf 72 720 Td (Compressed PDF Text Layer) Tj ET\n";
+    let plain_text =
+        b"BT /F1 12 Tf 72 720 Td (Compressed PDF Text Layer With Enough Visible Resume Signal) Tj ET\n";
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(plain_text).unwrap();
     let compressed = encoder.finish().unwrap();
@@ -335,7 +346,7 @@ CMapName currentdict /CMap defineresource pop
 end
 end
 ";
-    let content = b"BT /F1 12 Tf 72 720 Td <0001000200030004> Tj ET\n";
+    let content = b"BT /F1 12 Tf 72 720 Td <0001000200030004000100020003000400010002000300040001000200030004000100020003000400010002000300040001000200030004000100020003000400010002000300040001000200030004> Tj ET\n";
 
     build_valid_pdf(vec![
         b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),

@@ -9,7 +9,7 @@ use sectionizer::Sectionizer;
 use super::orchestrator::publish_import_progress;
 use crate::file_processing::{
     commit_parse_work_result, process_file, ImportFileResult, ParseWorkerClock,
-    PendingSearchableDocument,
+    PendingSearchableDocument, PendingSourceOccurrence,
 };
 use crate::publication_coordinator::{
     flush_pending_searchable_documents, PendingProjectionRemovals,
@@ -234,8 +234,27 @@ pub(crate) fn finish_import_file(
     let disposition = (!source_read_failed)
         .then(|| processed.source_disposition(index, &file.document_id))
         .transpose()?;
+    summary.processed_documents = summary.processed_documents.saturating_add(1);
+    if !matches!(&processed, ProcessedFile::Searchable { .. }) {
+        if let Some(disposition) = &disposition {
+            store
+                .observe_import_task_source_occurrence(
+                    task_id,
+                    file.normalized_path.as_str(),
+                    &file.document_id,
+                    &disposition.source_revision_id,
+                    now,
+                )
+                .map_err(ImportPipelineError::store)?;
+        }
+    }
     match processed {
-        ProcessedFile::Searchable { pending } => {
+        ProcessedFile::Searchable { mut pending } => {
+            pending.source_occurrence = Some(PendingSourceOccurrence {
+                task_id: task_id.clone(),
+                normalized_path: file.normalized_path.as_str().to_string(),
+                observed_at: now,
+            });
             pending_index_documents.push(*pending);
         }
         ProcessedFile::OcrRequired { ocr_job_queued, .. } => {

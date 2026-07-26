@@ -250,20 +250,8 @@ fn process_file(
     let mtime = unix_timestamp(metadata.modified);
     let byte_size = metadata.len;
     let stable_file_id = metadata.stable_file_id;
-    let document_id = stable_file_id.as_ref().map_or_else(
-        || {
-            DocumentId::from_non_secret_parts(&[
-                "legacy-path-identity-v1",
-                normalized_path.as_str(),
-                fingerprint.value.as_str(),
-                byte_size.to_string().as_str(),
-                mtime.as_unix_seconds().to_string().as_str(),
-            ])
-        },
-        |stable_file_id| {
-            DocumentId::from_non_secret_parts(&["stable-file-identity-v1", stable_file_id.as_str()])
-        },
-    );
+    let document_id =
+        DocumentId::from_non_secret_parts(&["source-occurrence-path-v2", normalized_path.as_str()]);
 
     report.files.push(DiscoveredFile {
         document_id,

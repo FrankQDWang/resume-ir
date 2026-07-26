@@ -57,6 +57,6 @@ Do not import real resumes, upload data, push, release, sign binaries, or run he
 ## License
 
 Current source code is licensed under GNU GPL v3 or later. See `LICENSE` and
-`LICENSES/README.md`. Bundled runtime releases use this GPL-compatible distribution
-boundary and still must include reviewed third-party license notices,
-source-offer material, checksums, and SBOM evidence.
+`LICENSES/README.md`. Bundled runtime releases record every third-party
+component's reviewed license, exact source/build identity, notices, checksums,
+dependency closure, installer composition, and SBOM evidence independently.

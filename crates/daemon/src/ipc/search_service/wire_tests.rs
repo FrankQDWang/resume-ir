@@ -48,15 +48,15 @@ fn cancel_request_requires_bounded_identity() {
 }
 
 #[test]
-fn error_v2_shared_fixtures_match_real_search_producers() {
+fn error_v3_shared_fixtures_match_real_search_producers() {
     let overloaded: serde_json::Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../apps/desktop/src-tauri/tests/fixtures/daemon-error-v2-overloaded.json"
+        "/../../apps/desktop/src-tauri/tests/fixtures/daemon-error-v3-overloaded.json"
     )))
     .unwrap();
     let query_unavailable: serde_json::Value = serde_json::from_str(include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../apps/desktop/src-tauri/tests/fixtures/daemon-error-v2-query-service-unavailable.json"
+        "/../../apps/desktop/src-tauri/tests/fixtures/daemon-error-v3-query-service-unavailable.json"
     )))
     .unwrap();
 

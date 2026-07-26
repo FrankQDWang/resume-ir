@@ -8,13 +8,13 @@ import type {
   StatusBody,
 } from "./daemon"
 
-const coreStates = ["initializing", "ready", "repairing", "degraded", "blocked"] as const
-const coreReasons = ["metadata_initializing", "migration_rebuild", "artifact_unavailable", "source_unavailable", "runtime_invariant", "unsupported_store_schema", "metadata_unavailable"] as const
+const coreStates = ["initializing", "migrating", "ready", "repairing", "degraded", "blocked"] as const
+const coreReasons = ["metadata_initializing", "metadata_migrating", "migration_rebuild", "artifact_unavailable", "source_unavailable", "runtime_invariant", "unsupported_store_schema", "metadata_unavailable"] as const
 const runtimeStates = ["initializing", "available", "unavailable"] as const
 const runtimeReasons = ["missing", "invalid", "start_failed", "not_configured"] as const
 const capabilityStates = ["initializing", "available", "degraded", "unavailable", "blocked"] as const
-const capabilityReasons = ["core_initializing", "core_blocked", "embedding_unavailable", "ocr_unavailable", "classifier_unavailable"] as const
-const capabilityNames = ["keyword_search", "detail", "semantic_search", "hybrid_search", "text_import", "ocr_import", "index_publication"] as const
+const capabilityReasons = ["core_initializing", "core_blocked", "embedding_unavailable", "ocr_unavailable", "classifier_unavailable", "pdfium_unavailable"] as const
+const capabilityNames = ["keyword_search", "detail", "semantic_search", "hybrid_search", "text_import", "pdf_import", "ocr_import", "index_publication"] as const
 
 const statusKeys = [
   "schema_version", "status", "process_state", "core", "optional_runtimes", "capabilities", "error", "repair_progress",
@@ -35,8 +35,8 @@ export function isDiagnosticsReply(value: unknown): value is DaemonReply<Diagnos
 
 export function isStatusBody(value: unknown): value is StatusBody {
   if (!isRecord(value) || !hasExactKeys(value, statusKeys)) return false
-  if (value.schema_version !== "daemon.status.v3" || value.process_state !== "ready") return false
-  if (!["initializing", "ok", "repairing", "degraded", "blocked"].includes(String(value.status))) return false
+  if (value.schema_version !== "daemon.status.v5" || value.process_state !== "ready") return false
+  if (!["initializing", "migrating", "ok", "repairing", "degraded", "blocked"].includes(String(value.status))) return false
   if (!isCore(value.core) || !isRuntimes(value.optional_runtimes) || !isCapabilities(value.capabilities)) return false
   if (!healthStateMatches(value as unknown as StatusBody) || !capabilityMatrixMatches(value.core, value.optional_runtimes, value.capabilities)) return false
   if (!isServiceError(value.error, value.core)) return false
@@ -68,7 +68,7 @@ export function isDiagnosticsBody(value: unknown): value is DiagnosticsBody {
     "contains_candidate_results", "contains_snippet_text", "visible_epoch", "evidence_lane", "evidence_status",
     "process_state", "core", "optional_runtimes", "capabilities", "repair_progress", "error", "metrics", "error_counts",
   ])) return false
-  if (value.schema_version !== "resume-ir.diagnostics.v4" || value.privacy_boundary !== "redacted_local_aggregate" || value.evidence_lane !== "gui_manual" || value.evidence_status !== "unaccepted" || value.process_state !== "ready") return false
+  if (value.schema_version !== "resume-ir.diagnostics.v9" || value.privacy_boundary !== "redacted_local_aggregate" || value.evidence_lane !== "gui_manual" || value.evidence_status !== "unaccepted" || value.process_state !== "ready") return false
   if (![value.contains_raw_resume_text, value.contains_queries, value.contains_resume_paths, value.contains_candidate_results, value.contains_snippet_text].every((flag) => flag === false)) return false
   if (!nullableSafeCount(value.visible_epoch) || !isCore(value.core) || !isRuntimes(value.optional_runtimes) || !isCapabilities(value.capabilities)) return false
   if (!capabilityMatrixMatches(value.core, value.optional_runtimes, value.capabilities) || !isServiceError(value.error, value.core) || !isRepairProgress(value.repair_progress, value.core.state)) return false
@@ -80,6 +80,7 @@ function isCore(value: unknown): value is StatusBody["core"] {
   if (!isRecord(value) || !hasExactKeys(value, ["state", "reason"]) || !coreStates.includes(value.state as typeof coreStates[number])) return false
   if (value.state === "ready") return value.reason === null
   if (value.state === "initializing") return value.reason === "metadata_initializing"
+  if (value.state === "migrating") return value.reason === "metadata_migrating"
   if (value.state === "repairing") return value.reason === "migration_rebuild" || value.reason === "artifact_unavailable"
   return ["artifact_unavailable", "source_unavailable", "runtime_invariant", "unsupported_store_schema", "metadata_unavailable"].includes(String(value.reason))
 }
@@ -92,8 +93,8 @@ function isRuntime(value: unknown): value is OptionalRuntimeStatus {
 }
 
 function isRuntimes(value: unknown): value is StatusBody["optional_runtimes"] {
-  return isRecord(value) && hasExactKeys(value, ["embedding", "ocr", "classifier"])
-    && isRuntime(value.embedding) && isRuntime(value.ocr) && isRuntime(value.classifier)
+  return isRecord(value) && hasExactKeys(value, ["embedding", "ocr", "classifier", "pdfium"])
+    && isRuntime(value.embedding) && isRuntime(value.ocr) && isRuntime(value.classifier) && isRuntime(value.pdfium)
 }
 
 function isCapabilities(value: unknown): value is StatusBody["capabilities"] {
@@ -109,16 +110,18 @@ function isCapability(value: unknown): value is CapabilityStatus {
 }
 
 function capabilityMatrixMatches(core: StatusBody["core"], runtimes: StatusBody["optional_runtimes"], capabilities: StatusBody["capabilities"]): boolean {
-  if (core.state === "initializing" || core.state === "repairing") return capabilityNames.every((name) => capabilityIs(capabilities[name], "initializing", "core_initializing"))
+  if (core.state === "initializing" || core.state === "migrating" || core.state === "repairing") return capabilityNames.every((name) => capabilityIs(capabilities[name], "initializing", "core_initializing"))
   if (core.state === "degraded" || core.state === "blocked") return capabilityNames.every((name) => capabilityIs(capabilities[name], "blocked", "core_blocked"))
   if (!capabilityIs(capabilities.keyword_search, "available", null) || !capabilityIs(capabilities.detail, "available", null)) return false
   const embedding = runtimes.embedding.state === "available"
   const classifier = runtimes.classifier.state === "available"
   const ocr = runtimes.ocr.state === "available"
+  const pdfium = runtimes.pdfium.state === "available"
   return capabilityIs(capabilities.semantic_search, embedding ? "available" : "unavailable", embedding ? null : "embedding_unavailable")
     && capabilityIs(capabilities.hybrid_search, embedding ? "available" : "degraded", embedding ? null : "embedding_unavailable")
     && capabilityIs(capabilities.text_import, classifier && embedding ? "available" : "unavailable", !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" : null)
-    && capabilityIs(capabilities.ocr_import, classifier && embedding && ocr ? "available" : "unavailable", !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" : !ocr ? "ocr_unavailable" : null)
+    && capabilityIs(capabilities.pdf_import, classifier && embedding && pdfium ? "available" : "unavailable", !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" : !pdfium ? "pdfium_unavailable" : null)
+    && capabilityIs(capabilities.ocr_import, classifier && embedding && pdfium && ocr ? "available" : "unavailable", !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" : !pdfium ? "pdfium_unavailable" : !ocr ? "ocr_unavailable" : null)
     && capabilityIs(capabilities.index_publication, embedding ? "available" : "unavailable", embedding ? null : "embedding_unavailable")
 }
 
@@ -129,12 +132,12 @@ function capabilityIs(value: CapabilityStatus, state: CapabilityStatus["state"],
 function isServiceError(value: unknown, core: StatusBody["core"]): boolean {
   if (core.state === "ready") return value === null
   if (!isRecord(value) || !hasExactKeys(value, ["code", "action", "capability", "reason"]) || value.capability !== null || value.reason !== core.reason) return false
-  if (core.state === "initializing" || core.state === "repairing") return value.code === "SERVICE_INITIALIZING" && value.action === "wait_for_service"
+  if (core.state === "initializing" || core.state === "migrating" || core.state === "repairing") return value.code === "SERVICE_INITIALIZING" && value.action === "wait_for_service"
   return value.code === "SERVICE_BLOCKED" && value.action === (core.state === "degraded" ? "retry" : "repair_required")
 }
 
 function healthStateMatches(value: StatusBody): boolean {
-  const expected = { initializing: "initializing", ready: "ok", repairing: "repairing", degraded: "degraded", blocked: "blocked" }[value.core.state]
+  const expected = { initializing: "initializing", migrating: "migrating", ready: "ok", repairing: "repairing", degraded: "degraded", blocked: "blocked" }[value.core.state]
   return value.status === expected
 }
 
@@ -168,9 +171,14 @@ function isIpc(value: unknown): boolean {
 }
 
 function isDiagnosticsMetrics(value: unknown, storeReady: boolean): boolean {
-  if (!isRecord(value) || !hasExactKeys(value, ["ipc", "indexed_documents", "searchable_documents", "partial_documents", "ocr_queue_depth", "embedding_queue_depth", "recovery_queue_depth", "import_tasks_queued", "import_tasks_recoverable", "import_tasks_cancelled", "query_latency"]) || !isIpc(value.ipc)) return false
-  const counts = ["indexed_documents", "searchable_documents", "partial_documents", "ocr_queue_depth", "embedding_queue_depth", "recovery_queue_depth", "import_tasks_queued", "import_tasks_recoverable", "import_tasks_cancelled"]
+  if (!isRecord(value) || !hasExactKeys(value, ["ipc", "indexed_documents", "searchable_documents", "partial_documents", "ocr_queue_depth", "embedding_queue_depth", "recovery_queue_depth", "import_tasks_queued", "import_tasks_recoverable", "import_tasks_cancelled", "source_roots_total", "source_roots_active", "source_roots_offline", "source_root_deletions_in_progress", "query_latency"]) || !isIpc(value.ipc)) return false
+  const counts = ["indexed_documents", "searchable_documents", "partial_documents", "ocr_queue_depth", "embedding_queue_depth", "recovery_queue_depth", "import_tasks_queued", "import_tasks_recoverable", "import_tasks_cancelled", "source_roots_total", "source_roots_active", "source_roots_offline", "source_root_deletions_in_progress"]
   if (!counts.every((key) => nullableSafeCount(value[key]) && (value[key] !== null) === storeReady)) return false
+  if (storeReady && (
+    Number(value.source_roots_total) > 16
+    || Number(value.source_roots_active) + Number(value.source_roots_offline) > Number(value.source_roots_total)
+    || Number(value.source_root_deletions_in_progress) > Number(value.source_roots_total)
+  )) return false
   if (!isRecord(value.query_latency) || !hasExactKeys(value.query_latency, ["sample_count", "p50_ms", "p95_ms", "p99_ms", "last_result_count"])) return false
   const latency = value.query_latency
   if (!nullableSafeCount(latency.sample_count) || (latency.sample_count !== null) !== storeReady || !nullableSafeCount(latency.last_result_count)) return false

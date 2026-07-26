@@ -16,29 +16,25 @@ use meta_store::{
     MetaStoreErrorClass, MetadataEncryptionState, MigrationRebuildBarrierToken,
     MigrationRebuildPublicationAttemptAcquire, OcrPageCacheEntry, OcrPageCacheKey,
     OcrPageCacheStatus, OcrWordBox, OwnedMetaStore, ReadMetaStore, ReasonCode, ResumeVersion,
-    ResumeVersionClassification, ResumeVersionId, ReviewDisposition, SearchProjectionDigest,
-    SearchPublicationCommit, SearchPublicationDraft, SearchPublicationOutcome,
-    SearchPublicationSession, SearchPublicationState, SearchPublicationValidation,
-    SearchRepairReason, SourceRevision, TerminalDocumentUpdate, UnixTimestamp,
-    VectorSnapshotDescriptor, WorkerTaskControl, WorkerTaskKind, CLASSIFIER_EPOCH,
+    ResumeVersionClassification, ResumeVersionId, ReviewDisposition, ScanTrigger,
+    SearchProjectionDigest, SearchPublicationCommit, SearchPublicationDraft,
+    SearchPublicationOutcome, SearchPublicationSession, SearchPublicationState,
+    SearchPublicationValidation, SearchRepairReason, SourceRevision, TerminalDocumentUpdate,
+    UnixTimestamp, VectorSnapshotDescriptor, WorkerTaskControl, WorkerTaskKind, CLASSIFIER_EPOCH,
+    CURRENT_SCHEMA_VERSION,
 };
 mod support;
 
 #[test]
-fn migrations_are_idempotent_and_schema_v29_is_queryable() {
+fn migrations_are_idempotent_and_current_schema_is_queryable() {
     let store = EphemeralMetaStore::open_in_memory().unwrap();
 
     assert!(store.foreign_keys_enabled().unwrap());
 
     let first = store.run_migrations().unwrap();
-    assert_eq!(
-        first.applied_versions(),
-        &[
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25, 26, 27, 28, 29,
-        ]
-    );
-    assert_eq!(store.schema_version().unwrap(), 29);
+    let expected_versions = (1..=CURRENT_SCHEMA_VERSION).collect::<Vec<_>>();
+    assert_eq!(first.applied_versions(), expected_versions.as_slice());
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
     for table_name in [
         "candidate",
@@ -71,13 +67,21 @@ fn migrations_are_idempotent_and_schema_v29_is_queryable() {
         "import_task_completion",
         "artifact_repair_context",
         "artifact_repair_attempt",
+        "forward_migration_history",
+        "source_root",
+        "source_occurrence",
+        "source_occurrence_revision",
+        "scan_snapshot",
+        "source_root_deletion",
+        "source_root_deletion_document",
+        "pdf_reprocess_job",
     ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 29);
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 }
 
 #[test]
@@ -108,7 +112,7 @@ fn owner_created_metadata_store_survives_read_reopen_without_plaintext_header() 
         );
         assert_eq!(store.metadata_encryption_state().label(), "sqlcipher");
         store.upsert_document(&document).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 29);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
     }
 
     let db_path = meta_store::metadata_store_path(&data_dir).unwrap();
@@ -134,7 +138,7 @@ fn owner_created_metadata_store_survives_read_reopen_without_plaintext_header() 
 
 #[test]
 fn read_open_rejects_an_unpublished_plaintext_database() {
-    let data_dir = temp_data_dir("unowned-plaintext-v29");
+    let data_dir = temp_data_dir("unowned-plaintext");
     let db_path = data_dir.join("unpublished.sqlite3");
 
     fs::write(&db_path, b"SQLite format 3\0synthetic unpublished fixture").unwrap();
@@ -1286,14 +1290,9 @@ fn completed_embedding_update_jobs_can_be_requeued_for_vector_snapshot_rebuild()
 #[test]
 fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
     let store = migrated_store();
-    let key = OcrPageCacheKey::new(
-        "synthetic-content-hash-for-ocr-cache",
-        2,
-        300,
-        "eng+chi_sim",
-        "balanced",
-    )
-    .unwrap();
+    let content_hash = seed_active_ocr_cache_source(&store, "ocr-cache-success");
+    let key =
+        OcrPageCacheKey::new(content_hash.as_str(), 2, 300, "eng+chi_sim", "balanced").unwrap();
     let success = OcrPageCacheEntry::succeeded(
         key.clone(),
         "Synthetic OCR text that must stay out of debug",
@@ -1311,7 +1310,7 @@ fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
         Some(success.clone())
     );
     let debug = format!("{success:?} {key:?}");
-    assert!(!debug.contains("synthetic-content-hash-for-ocr-cache"));
+    assert!(!debug.contains(content_hash.as_str()));
     assert!(!debug.contains("Synthetic OCR text"));
     assert_eq!(
         success.text(),
@@ -1340,8 +1339,8 @@ fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
 #[test]
 fn ocr_page_cache_persists_word_boxes_without_debug_payload_leak() {
     let store = migrated_store();
-    let key =
-        OcrPageCacheKey::new("synthetic-bbox-content-hash", 1, 300, "eng", "balanced").unwrap();
+    let content_hash = seed_active_ocr_cache_source(&store, "ocr-cache-word-boxes");
+    let key = OcrPageCacheKey::new(content_hash.as_str(), 1, 300, "eng", "balanced").unwrap();
     let word_boxes = vec![
         OcrWordBox::new("SecretName", 12, 34, 56, 18, 0.92).unwrap(),
         OcrWordBox::new("Rust", 72, 34, 40, 18, 0.88).unwrap(),
@@ -1373,7 +1372,7 @@ fn ocr_page_cache_persists_word_boxes_without_debug_payload_leak() {
 
     let debug = format!("{loaded:?} {:?}", loaded.word_boxes());
     assert!(!debug.contains("SecretName"));
-    assert!(!debug.contains("synthetic-bbox-content-hash"));
+    assert!(!debug.contains(content_hash.as_str()));
 }
 
 #[test]
@@ -2069,7 +2068,7 @@ fn import_tasks_persist_without_document_foreign_key() {
 
     {
         let reopened = ReadMetaStore::open_data_dir(&data_dir).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 29);
+        assert_eq!(reopened.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
@@ -3232,6 +3231,38 @@ fn source_revision(document_id: &DocumentId) -> SourceRevision {
         ContentDigest::from_bytes(document_id.as_str().as_bytes()),
         128,
     )
+}
+
+fn seed_active_ocr_cache_source(store: &EphemeralMetaStore, label: &str) -> ContentDigest {
+    let now = UnixTimestamp::from_unix_seconds(1_800_000_790);
+    let document = document(label, false, DocumentStatus::Searchable);
+    let revision = source_revision(&document.id);
+    let root_path = format!("/synthetic/ocr-cache/{label}");
+    let root = store
+        .register_source_root(&root_path, &root_path, label, now)
+        .unwrap();
+    let scan_id = format!("ocr-cache-{label}");
+
+    store.upsert_document(&document).unwrap();
+    assert_eq!(
+        store.insert_source_revision(&revision).unwrap(),
+        IdentityInsertOutcome::Inserted
+    );
+    store
+        .begin_scan(&root.id, &scan_id, ScanTrigger::Manual, now)
+        .unwrap();
+    store
+        .observe_source_occurrence(
+            &root.id,
+            &format!("{label}.pdf"),
+            &document.id,
+            &revision.id,
+            &scan_id,
+            now,
+        )
+        .unwrap();
+
+    revision.content_hash
 }
 
 fn insert_resume_version(store: &EphemeralMetaStore, version: &ResumeVersion) {

@@ -1,9 +1,9 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const ACCEPTANCE_SCHEMA = "resume-ir.macos-installed-main-acceptance.v2";
-export const LEGACY_ACCEPTANCE_SCHEMA =
-  "resume-ir.macos-installed-main-acceptance.v1";
+export const ACCEPTANCE_SCHEMA = "resume-ir.macos-installed-main-acceptance.v3";
+export const AUTHORIZED_SOURCE_SCHEMA = 29;
+export const INSTALLED_TARGET_SCHEMA = 33;
 export const INSTALLED_APP_BUNDLE = "/Applications/resume-ir.app";
 export const TARGET_TRIPLE = "aarch64-apple-darwin";
 export const APP_DATA_DIRECTORY = "local.resume-ir.desktop";

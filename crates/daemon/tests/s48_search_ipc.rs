@@ -297,7 +297,7 @@ fn product_disabled_semantic_contract_returns_semantic_disabled() {
         }),
     );
     assert_eq!(semantic.status_code, 503, "{}", semantic.raw);
-    assert_eq!(semantic.body["schema_version"], "resume-ir.error.v2");
+    assert_eq!(semantic.body["schema_version"], "resume-ir.error.v3");
     assert_eq!(semantic.body["request_id"], "product-disabled-semantic");
     assert_eq!(semantic.body["error"]["code"], "SEMANTIC_DISABLED");
     assert_eq!(semantic.body["error"]["action"], "select_supported_mode");
@@ -339,7 +339,7 @@ fn invalid_filter_and_unavailable_semantic_runtime_fail_closed() {
         }),
     );
     assert_eq!(semantic.status_code, 503, "{}", semantic.raw);
-    assert_eq!(semantic.body["schema_version"], "resume-ir.error.v2");
+    assert_eq!(semantic.body["schema_version"], "resume-ir.error.v3");
     assert_eq!(semantic.body["request_id"], "unavailable-semantic");
     assert_eq!(semantic.body["error"]["code"], "CAPABILITY_UNAVAILABLE");
     assert_eq!(semantic.body["error"]["action"], "select_supported_mode");
@@ -641,7 +641,7 @@ fn closed_bootstrap_stdout_does_not_interrupt_query_fault_repair_or_final_accept
         serde_json::json!({"query": "queryfaultsentry", "mode": "fulltext"}),
     );
     assert_eq!(failed.status_code, 503, "{}", failed.raw);
-    assert_eq!(failed.body["schema_version"], "resume-ir.error.v2");
+    assert_eq!(failed.body["schema_version"], "resume-ir.error.v3");
     assert_eq!(failed.body["request_id"], "query-fault-first");
     assert_eq!(failed.body["error"]["code"], "QUERY_SERVICE_UNAVAILABLE");
     assert_eq!(failed.body["error"]["action"], "repair_required");
@@ -683,7 +683,7 @@ fn generation_local_key_fault_is_repaired_without_restarting_daemon() {
         serde_json::json!({"query": "querykeyfaultsentry", "mode": "fulltext"}),
     );
     assert_eq!(failed.status_code, 503, "{}", failed.raw);
-    assert_eq!(failed.body["schema_version"], "resume-ir.error.v2");
+    assert_eq!(failed.body["schema_version"], "resume-ir.error.v3");
     assert_eq!(failed.body["request_id"], "query-key-fault-first");
     assert_eq!(failed.body["error"]["code"], "QUERY_SERVICE_UNAVAILABLE");
     assert_eq!(failed.body["error"]["action"], "repair_required");
@@ -728,7 +728,7 @@ fn unsafe_artifact_root_blocks_services_without_exiting_daemon() {
 
     let status = daemon.wait_for_core_state("blocked");
     assert_eq!(status.status_code, 200, "{}", status.raw);
-    assert_eq!(status.body["schema_version"], "daemon.status.v3");
+    assert_eq!(status.body["schema_version"], "daemon.status.v5");
     assert_eq!(status.body["status"], "blocked");
     assert_eq!(status.body["process_state"], "ready");
     assert_eq!(status.body["core"]["state"], "blocked");
@@ -750,7 +750,7 @@ fn unsafe_artifact_root_blocks_services_without_exiting_daemon() {
     });
     let detail = daemon.detail("unsafe-root-detail", &selection);
     assert_eq!(detail.status_code, 503, "{}", detail.raw);
-    assert_eq!(detail.body["schema_version"], "resume-ir.error.v2");
+    assert_eq!(detail.body["schema_version"], "resume-ir.error.v3");
     assert_eq!(detail.body["request_id"], "unsafe-root-detail");
     assert_eq!(detail.body["error"]["code"], "SERVICE_BLOCKED");
     assert_eq!(detail.body["error"]["action"], "repair_required");
@@ -762,7 +762,7 @@ fn unsafe_artifact_root_blocks_services_without_exiting_daemon() {
         serde_json::json!({"query": "unsaferootsentry", "mode": "fulltext"}),
     );
     assert_eq!(search.status_code, 503, "{}", search.raw);
-    assert_eq!(search.body["schema_version"], "resume-ir.error.v2");
+    assert_eq!(search.body["schema_version"], "resume-ir.error.v3");
     assert_eq!(search.body["request_id"], "unsafe-root-search");
     assert_eq!(search.body["error"]["code"], "SERVICE_BLOCKED");
     assert_eq!(search.body["error"]["action"], "repair_required");
@@ -772,7 +772,7 @@ fn unsafe_artifact_root_blocks_services_without_exiting_daemon() {
     daemon.assert_running("after unsafe-root detail and search requests");
     let next_status = daemon.status();
     assert_eq!(next_status.status_code, 200, "{}", next_status.raw);
-    assert_eq!(next_status.body["schema_version"], "daemon.status.v3");
+    assert_eq!(next_status.body["schema_version"], "daemon.status.v5");
     assert_eq!(next_status.body["status"], "blocked");
     assert_eq!(next_status.body["process_state"], "ready");
     assert_eq!(next_status.body["core"]["state"], "blocked");
@@ -1320,7 +1320,7 @@ impl DaemonHarness {
         while Instant::now() < deadline {
             let response = self.status();
             assert_eq!(response.status_code, 200, "{}", response.raw);
-            if response.body["schema_version"] == "daemon.status.v3"
+            if response.body["schema_version"] == "daemon.status.v5"
                 && response.body["process_state"] == "ready"
                 && response.body["core"]["state"]
                     .as_str()

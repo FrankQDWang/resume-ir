@@ -29,6 +29,7 @@ path = "tests/s82_classifier_model.rs"
 required-features = ["native-runtime-tests"]
 
 [dependencies]
+base64 = "0.22"
 daemon-contract = { path = "../daemon-contract" }
 embedder = { path = "../embedder" }
 embedding-protocol = { path = "../embedding-protocol" }

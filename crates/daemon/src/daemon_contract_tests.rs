@@ -94,7 +94,7 @@ fn durable_user_cancellation_is_never_requeued_as_lifecycle_interruption() {
 fn metadata_unavailable_status_keeps_process_and_service_health() {
     let body = unavailable_status_json();
     let value: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(value["schema_version"], "daemon.status.v3");
+    assert_eq!(value["schema_version"], "daemon.status.v5");
     assert_eq!(value["process_state"], "ready");
     assert_eq!(value["core"]["state"], "degraded");
     assert_eq!(value["core"]["reason"], "metadata_unavailable");
@@ -277,7 +277,7 @@ fn import_capability_loss_between_candidate_and_claim_preserves_task_and_project
 }
 
 #[test]
-fn runtime_metadata_read_failure_returns_status_v3_with_blocked_capabilities() {
+fn runtime_metadata_read_failure_returns_status_v5_with_blocked_capabilities() {
     let mut attempts = 0;
     let body = status_json_with(|| {
         attempts += 1;
@@ -286,7 +286,7 @@ fn runtime_metadata_read_failure_returns_status_v3_with_blocked_capabilities() {
     let value: serde_json::Value = serde_json::from_str(&body).unwrap();
 
     assert_eq!(attempts, IPC_METADATA_READ_ATTEMPTS);
-    assert_eq!(value["schema_version"], "daemon.status.v3");
+    assert_eq!(value["schema_version"], "daemon.status.v5");
     assert_eq!(value["process_state"], "ready");
     assert_eq!(value["core"]["state"], "degraded");
     assert_eq!(value["core"]["reason"], "metadata_unavailable");
@@ -315,7 +315,7 @@ fn projection_state_gates_query_routes_with_fixed_codes() {
 }
 
 #[test]
-fn ocr_claim_requires_both_ready_projection_and_an_attested_runtime() {
+fn ocr_claim_requires_ready_projection_and_all_attested_runtimes() {
     let data_dir = std::env::temp_dir().join(format!(
         "resume-ir-daemon-ocr-migration-gate-{}-{}",
         std::process::id(),
@@ -357,9 +357,10 @@ fn ocr_claim_requires_both_ready_projection_and_an_attested_runtime() {
     );
 
     let ready_summary = run_ocr_worker_once(&data_dir, &store, &options, || true).unwrap();
+    assert_eq!(ready_summary.runtime_unavailable, None);
     assert_eq!(
-        ready_summary.runtime_unavailable,
-        Some(ipc::OptionalRuntimeReason::Missing)
+        ready_summary.pdfium_unavailable,
+        Some(ipc::OptionalRuntimeReason::NotConfigured)
     );
     let still_queued = store.ingest_job_by_id(&job_id).unwrap().unwrap();
     assert_eq!(still_queued.status, IngestJobStatus::Queued);

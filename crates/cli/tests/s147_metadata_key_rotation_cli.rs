@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use meta_store::{metadata_encryption_key_path, metadata_store_path, ReadMetaStore};
+use meta_store::{
+    metadata_encryption_key_path, metadata_store_path, ReadMetaStore, CURRENT_SCHEMA_VERSION,
+};
 use rusqlite::{Connection, OpenFlags};
 
 mod support;
@@ -52,7 +54,7 @@ fn privacy_cli_rotates_metadata_sqlcipher_key_without_output_leaks() {
     assert!(!can_read_schema_with_key(&db_path, &old_key));
     assert!(can_read_schema_with_key(&db_path, &new_key));
     let reopened = ReadMetaStore::open_data_dir(&data_dir).unwrap();
-    assert_eq!(reopened.schema_version().unwrap(), 29);
+    assert_eq!(reopened.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
     let doctor = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
         .args(["--data-dir", path_str(&data_dir), "doctor"])

@@ -8,6 +8,7 @@ import path from "node:path";
 import { validateClassifierPackManifest } from "./classifier-pack.mjs";
 import { validateRuntimePackManifest } from "./prepare-sidecar.mjs";
 import { verifyOcrResourcePack } from "./ocr-pack.mjs";
+import { verifyMacosPdfiumRuntimePack } from "./macos-pdfium-static-pack.mjs";
 
 const APPLE_TARGETS = new Set(["aarch64-apple-darwin"]);
 const SIDECARS = [
@@ -177,6 +178,15 @@ export async function verifyBundledSidecar({
     "classifier",
     targetTriple,
     "runtime-pack.json",
+  ),
+  expectedPdfiumSourceContract = path.join(
+    repoRoot,
+    "apps",
+    "desktop",
+    "resources",
+    "pdf-renderer",
+    targetTriple,
+    "source-contract.json",
   ),
   expectedDesktop = path.join(
     repoRoot,
@@ -566,9 +576,35 @@ export async function verifyBundledSidecar({
   ) {
     throw new Error("OCR resource manifest contains a build-machine identity path marker");
   }
+  const bundledPdfiumPack = path.join(
+    appBundle,
+    "Contents",
+    "Resources",
+    "pdfium",
+    "runtime-pack",
+  );
+  let pdfiumPack;
+  try {
+    pdfiumPack = await verifyMacosPdfiumRuntimePack({
+      directory: bundledPdfiumPack,
+      sourceContract: expectedPdfiumSourceContract,
+    });
+  } catch {
+    throw new Error("required PDFium resource pack is missing or invalid");
+  }
+  for (const entry of pdfiumPack.manifest.files) {
+    if (
+      await containsAnyMarker(
+        path.join(bundledPdfiumPack, entry.file),
+        buildMachineIdentityPrefixes,
+      )
+    ) {
+      throw new Error(`PDFium resource ${entry.role} contains a build-machine identity path marker`);
+    }
+  }
 
   return {
-    schema_version: "resume-ir.desktop-bundle-composition.v1",
+    schema_version: "resume-ir.desktop-bundle-composition.v2",
     target_triple: targetTriple,
     desktop_executable_count: 1,
     icon_file_count: 1,
@@ -581,6 +617,8 @@ export async function verifyBundledSidecar({
     classifier_resource_bytes: classifierResourceBytes,
     ocr_resource_file_count: bundledOcrManifest.files.length + 1,
     ocr_resource_bytes: ocrResourceBytes,
+    pdfium_resource_file_count: pdfiumPack.resourceFileCount,
+    pdfium_resource_bytes: pdfiumPack.resourceBytes,
     digest_match: true,
     executable: true,
     architecture: expectedArchitecture,

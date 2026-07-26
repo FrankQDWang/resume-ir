@@ -1,19 +1,24 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
+  "workflow_state": "pr_opened",
   "experiment_state": "contract_locked",
-  "evidence_lane": "smoke",
+  "evidence_lane": "gui_manual",
   "contract_pins": {
-    "active_goal_sha256": "45e1757d53f885b1de7215ff8e3d50d5ded69bc470fb0a7ebaeffc16f956a036",
-    "acceptance_matrix_sha256": "73539c980eab72cd3ef14989a4dd98abc4c5c2c9b1fbd486bcc5d42444269eaa",
+    "active_goal_sha256": "e5d57102184b33586cc83487779292955e28693137fbddf41ce86c86706d48ea",
+    "acceptance_matrix_sha256": "4f93b6cc49d11bc039f001a878d78f431a2ce67eb509a5b9736529d755f82d91",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "30868881838b8785fb7f1ccf574cb8bb34c51d00"
   },
-  "current_slice": "#217 P0 v0.1.3-v0.1.8 forward-migration and source-lifecycle feature-train foundation",
+  "current_slice": "#217 atomic v0.1.3-v0.1.8 business feature train",
   "transition_history": [
+    {
+      "from": "slice_selected",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/236"
+    },
     {
       "from": "evidence_review",
       "to": "next_issue_or_goal_complete",
@@ -676,7 +681,12 @@
     {"from":"slice_active","to":"red_check_written","evidence_ref":"PROGRESS.md#s810"},
     {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s810"},
     {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s810"},
-    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s810"}
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s810"},
+    {"from":"evidence_review","to":"blocked_needs_external_input","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"},
+    {"from":"blocked_needs_external_input","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-repair-round-f02--2026-07-26"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-native-manual-round-f04--2026-07-26"},
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/238"},
+    {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"}
   ],
   "verification": {
     "commands": [
@@ -2832,7 +2842,56 @@
       {"command":"P0 exact product-version, DMG-plan, worktree-release and Tauri config-resolution checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#p0-contractversion-round"},
       {"command":"P0 exact install, reinstall, journal, source-binding and release-deployment checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#p0-contractversion-round"},
       {"command":"P0 governance mutation, performance contract, autonomous-goal, loop-state and runner checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#p0-contractversion-round"},
-      {"command":"P0 public repo guard and git diff check","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#p0-contractversion-round"}
+      {"command":"P0 public repo guard and git diff check","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#p0-contractversion-round"},
+      {"command":"CARGO_INCREMENTAL=0 cargo test -p meta-store --lib migration_v30::tests:: --locked --jobs 4 -- --test-threads=5","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"exact missing-v29-key and tampered-forward-history meta-store cases","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"resume-desktop Nextest v4/v5 native contract selection","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"exact Vitest migrating control-plane projection","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"locked affected production Cargo check plus frontend TypeScript no-emit","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"exact bootstrap governance mutation plus performance contract checker","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"root-workspace exact pure status v4 test binaries","exit_code":130,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round-not-run-zero-cpu-stall"},
+      {"command":"cargo fmt --all -- --check and git diff --check","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"focused production Clippy for meta-store, daemon-contract, resume-daemon, resume-cli and resume-desktop with -D warnings","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"node --test apps/desktop/scripts/macos-worktree-install.node-test.mjs","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"node --test apps/desktop/scripts/product-version.node-test.mjs","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"desktop-root exact Vitest unsupported-schema and schema-neutral initializing copy","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"exact-commit macOS worktree DMG build, receipt-bound install and Computer Use v29 migration/clean-v30 acceptance","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#v013-schema-v30-implementation-round"},
+      {"command":"final matrix run 20260725T172451Z-2dad7880 workspace Clippy","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"},
+      {"command":"final matrix run 20260725T173724Z-56c66437 fail-late remaining cells","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"},
+      {"command":"focused desktop Tauri test and Clippy repairs plus runbook checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"},
+      {"command":"CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 cargo clippy -p resume-daemon --bin resume-daemon --locked -- -D warnings","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"},
+      {"command":"macOS PDFium Xcode preflight exact Node tests","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"},
+      {"command":"npm run build:macos:pdfium --prefix apps/desktop","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"},
+      {"command":"current-tree runbooks, public repository guard and git diff checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"},
+      {"command":"final fail-late repair runner receipt 20260726T091240Z-183931d2","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-fail-late-round-f02-b--2026-07-26"},
+      {"command":"three exact PDFium import and metrics regression cases","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-repair-round-f03--2026-07-26"},
+      {"command":"cargo test -p resume-cli --locked --test s146_metadata_key_cli --test s147_metadata_key_rotation_cli -- --test-threads=1 --nocapture","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-repair-round-f03--2026-07-26"},
+      {"command":"verify-local-parallel cli-closed-loop receipt 20260726T103040Z-3f02d3f5","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-repair-round-f03--2026-07-26"},
+      {"command":"CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 cargo clippy -p parser-pdf -p import-pipeline -p resume-cli --all-targets --locked -- -D warnings","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-native-manual-round-f04--2026-07-26"},
+      {"command":"verify-local-parallel desktop-macos-worktree-bundle receipt 20260726T103209Z-3ba42dfb","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-native-manual-round-f04--2026-07-26"},
+      {"command":"receipt-bound v0.1.8 install and isolated-synthetic Computer Use acceptance","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-native-manual-round-f04--2026-07-26"},
+      {"command":"macOS PR run 30203505154 fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#current-schema-and-migration-recovery-repair-f09--2026-07-26"},
+      {"command":"cargo check -p meta-store --features migration-test-support --locked","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#current-schema-and-migration-recovery-repair-f09--2026-07-26"},
+      {"command":"current-tree format, autonomous-goal and governance mutation checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#current-schema-and-migration-recovery-repair-f09--2026-07-26"},
+      {"command":"exact F09-01 local Rust test launch","exit_code":130,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#current-schema-and-migration-recovery-repair-f09--2026-07-26"},
+      {"command":"macOS PR run 30204531887 fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-stale-schema-assertion-repair-f10--2026-07-26"},
+      {"command":"cargo clippy -p meta-store --test excluded_document_status --features migration-test-support --locked -- -D warnings","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-stale-schema-assertion-repair-f10--2026-07-26"},
+      {"command":"exact F10-01 local Rust test launch","exit_code":130,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-stale-schema-assertion-repair-f10--2026-07-26"},
+      {"command":"macOS PR run 30204933297 fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#source-root-authority-and-remaining-current-schema-repair-f11--2026-07-26"},
+      {"command":"cargo clippy -p meta-store --features migration-test-support --test s26_import_root_control --test s3_sqlite --test s807_v27 --locked -- -D warnings","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#source-root-authority-and-remaining-current-schema-repair-f11--2026-07-26"},
+      {"command":"macOS PR run 30205337013 fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ocr-cache-source-authority-fixture-repair-f12--2026-07-26"},
+      {"command":"cargo clippy -p meta-store --features migration-test-support --test s3_sqlite --locked -- -D warnings","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ocr-cache-source-authority-fixture-repair-f12--2026-07-26"},
+      {"command":"macOS PR run 30205798442 fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ocr-cache-source-authority-fixture-repair-f12--2026-07-26"},
+      {"command":"macOS PR run 30206076466 fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#deleted-data-ocr-authority-and-workspace-fail-late-repair-f13--2026-07-26"},
+      {"command":"./scripts/ci/check-workflows.sh","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#deleted-data-ocr-authority-and-workspace-fail-late-repair-f13--2026-07-26"},
+      {"command":"focused resume-cli s14 Clippy launch","exit_code":130,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#deleted-data-ocr-authority-and-workspace-fail-late-repair-f13--2026-07-26"},
+      {"command":"macOS PR run 30206651549 complete fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"},
+      {"command":"F14 exact resume-cli previously failed cases: 14 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"},
+      {"command":"F14 exact resume-daemon previously failed cases: 7 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"},
+      {"command":"F14 focused production/test-seam Clippy and governance/public-boundary checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"},
+      {"command":"macOS PR run 30210820223 complete fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#direct-cli-managed-root-scan-coordination-repair-f15--2026-07-26"},
+      {"command":"F15 exact repeated managed-root CLI import regression and focused three-crate Clippy","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#direct-cli-managed-root-scan-coordination-repair-f15--2026-07-26"},
+      {"command":"performance, autonomous-goal, loop-state, public-repository and diff checks after final repair","exit_code":0,"evidence_ref":"PROGRESS.md#v0.1.8-final-repair-dmg-and-synthetic-installed-acceptance"}
     ],
     "all_required_commands_ran": false,
     "claim": "partial"
@@ -2847,9 +2906,9 @@
   },
   "github_ledger": {
     "primary_issue": "#217",
-    "active_prs": [],
-    "open_blockers": [
-      "#53"
-    ]
+    "active_prs": [
+      "#238"
+    ],
+    "open_blockers": []
   }
 }

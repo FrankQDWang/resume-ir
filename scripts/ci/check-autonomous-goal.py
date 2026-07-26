@@ -498,6 +498,30 @@ def main() -> int:
     if not isinstance(platform_lanes, dict):
         fail("ACTIVE_GOAL.toml: missing [platform_lanes]")
 
+    current_delivery = platform_lanes.get("current_delivery")
+    if not isinstance(current_delivery, dict):
+        fail("ACTIVE_GOAL.toml: missing [platform_lanes.current_delivery]")
+    require_string(
+        current_delivery.get("target"),
+        "macos_only",
+        "platform_lanes.current_delivery.target",
+    )
+    for key in (
+        "windows_execution_allowed",
+        "linux_execution_allowed",
+        "non_macos_failure_blocks_delivery",
+    ):
+        require_bool(
+            current_delivery.get(key),
+            False,
+            f"platform_lanes.current_delivery.{key}",
+        )
+    require_bool(
+        current_delivery.get("override_requires_explicit_user_instruction"),
+        True,
+        "platform_lanes.current_delivery.override_requires_explicit_user_instruction",
+    )
+
     matrix_platform_lanes = matrix.get("platform_lanes")
     if not isinstance(matrix_platform_lanes, dict):
         fail("perf/acceptance-matrix.toml: missing [platform_lanes]")
@@ -517,34 +541,11 @@ def main() -> int:
         "matrix.platform_lanes.cross_os_ci_smoke_can_replace_weak_host_perf",
     )
 
-    private_corpus_transfer = platform_lanes.get("private_corpus_transfer")
-    if not isinstance(private_corpus_transfer, dict):
-        fail("ACTIVE_GOAL.toml: missing [platform_lanes.private_corpus_transfer]")
-    require_bool(
-        private_corpus_transfer.get("runner_may_choose_transfer_to_windows"),
-        True,
-        "platform_lanes.private_corpus_transfer.runner_may_choose_transfer_to_windows",
-    )
-    require_bool(
-        private_corpus_transfer.get("transfer_public_evidence_allowed"),
-        False,
-        "platform_lanes.private_corpus_transfer.transfer_public_evidence_allowed",
-    )
-    require_bool(
-        private_corpus_transfer.get("raw_private_paths_public_allowed"),
-        False,
-        "platform_lanes.private_corpus_transfer.raw_private_paths_public_allowed",
-    )
-    require_string(
-        private_corpus_transfer.get("public_source_name"),
-        "$RESUME_IR_PRIVATE_RESUME_ROOT",
-        "platform_lanes.private_corpus_transfer.public_source_name",
-    )
-    require_bool(
-        private_corpus_transfer.get("windows_unavailable_starts_reconciliation"),
-        True,
-        "platform_lanes.private_corpus_transfer.windows_unavailable_starts_reconciliation",
-    )
+    if "private_corpus_transfer" in platform_lanes:
+        fail(
+            "ACTIVE_GOAL.toml: [platform_lanes.private_corpus_transfer] is "
+            "forbidden by the current macOS-only delivery boundary"
+        )
 
     activation = autonomous.get("activation")
     if not isinstance(activation, dict):

@@ -86,7 +86,7 @@ pub(crate) fn render_without_store(
 ) -> serde_json::Value {
     let metrics = super::super::process_metrics().snapshot();
     let mut body = serde_json::json!({
-        "schema_version": "daemon.status.v3",
+        "schema_version": "daemon.status.v5",
         "status": status_label(core.state),
         "error": super::super::capability::service_error_json(core),
         "repair_progress": serde_json::Value::Null,
@@ -150,7 +150,7 @@ fn status_json_once(
         .map_err(|error| error.class())?;
     let metrics = super::super::process_metrics().snapshot();
     let mut body = serde_json::json!({
-        "schema_version": "daemon.status.v3",
+        "schema_version": "daemon.status.v5",
         "status": status_label(core.state),
         "repair_progress": repair_progress_json(
             &projection,
@@ -220,6 +220,7 @@ fn merge_health(
 fn status_label(state: CoreState) -> &'static str {
     match state {
         CoreState::Initializing => "initializing",
+        CoreState::Migrating => "migrating",
         CoreState::Ready => "ok",
         CoreState::Repairing => "repairing",
         CoreState::Degraded => "degraded",
@@ -233,6 +234,7 @@ fn unavailable_runtimes(reason: OptionalRuntimeReason) -> OptionalRuntimeMatrix 
         embedding: OptionalRuntimeHealth::unavailable(reason),
         ocr: OptionalRuntimeHealth::unavailable(reason),
         classifier: OptionalRuntimeHealth::unavailable(reason),
+        pdfium: OptionalRuntimeHealth::unavailable(reason),
     }
 }
 
@@ -308,10 +310,10 @@ mod contract_tests {
     };
 
     #[test]
-    fn daemon_status_v3_ready_fixture_matches_producer_contract() {
+    fn daemon_status_v5_ready_fixture_matches_producer_contract() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/desktop/src-tauri/tests/fixtures/daemon-status-v3-ready.json"
+            "/../../apps/desktop/src-tauri/tests/fixtures/daemon-status-v5-ready.json"
         )))
         .unwrap();
         let core = CoreHealth {
@@ -322,6 +324,7 @@ mod contract_tests {
             embedding: OptionalRuntimeHealth::available(),
             ocr: OptionalRuntimeHealth::available(),
             classifier: OptionalRuntimeHealth::available(),
+            pdfium: OptionalRuntimeHealth::available(),
         };
         let capabilities = CapabilityMatrix::derive(core, runtimes);
         let rendered = render_without_store(core, runtimes, capabilities);

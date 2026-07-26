@@ -402,11 +402,11 @@ fn owner_capability_creates_and_reopens_only_its_bound_store() {
 
     assert_eq!(
         first_store.schema_version().unwrap(),
-        crate::schema_v29::VERSION
+        crate::CURRENT_SCHEMA_VERSION
     );
     assert_eq!(
         second_store.schema_version().unwrap(),
-        crate::schema_v29::VERSION
+        crate::CURRENT_SCHEMA_VERSION
     );
     assert!(first_store.open_sibling().is_ok());
     assert!(second_store.open_sibling().is_ok());

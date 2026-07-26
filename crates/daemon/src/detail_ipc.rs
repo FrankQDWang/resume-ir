@@ -128,9 +128,9 @@ impl DetailRequest {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WireSearchSelection {
-    doc_id: String,
-    version_id: String,
-    visible_epoch: u64,
+    pub(crate) doc_id: String,
+    pub(crate) version_id: String,
+    pub(crate) visible_epoch: u64,
 }
 
 #[derive(Clone)]

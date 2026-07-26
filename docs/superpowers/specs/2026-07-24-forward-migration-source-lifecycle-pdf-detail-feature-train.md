@@ -8,11 +8,14 @@ bootstrap hard cut. The daemon bootstrap, launch binding, lifecycle v2,
 selection tuple, atomic publication and privacy invariants remain authoritative
 unless this document explicitly versions them.
 
-The train has six ordered product releases. Each release owns one feature issue,
-branch, PR, exact-commit DMG and native installed acceptance. A release may
-close only after its installed acceptance passes. The final full repository
-matrix, merged-main installed acceptance and 120-minute soak run once after
-v0.1.8.
+The train has six ordered product versions delivered as one business
+implementation. All production code, schemas, contracts, packaging declarations
+and UI work are completed before any test, build, installer or native acceptance
+run begins. The train does not run a Linux lane. After v0.1.8 business work is
+complete, one resumable macOS matrix runs through every cell without stopping at
+the first failure, then repairs the failures as one system and reruns only
+failed, invalidated and previously unrun cells. The final merged-main installed
+acceptance and 120-minute soak run after that matrix.
 
 ## Shared invariants
 
@@ -54,7 +57,15 @@ every failed or interrupted point. Once the new current store receives writes,
 the predecessor is explicit recovery material only and is never selected
 automatically.
 
-Discovery v4, status v4, diagnostics v5 and aggregate IPC v5 expose a bounded
+Creating the first empty current store uses the separate bounded
+`resume-ir.metadata-initialization-receipt.v1`. It publishes neither key nor
+manifest until that binary's current encrypted target has been fully
+initialized, synced and validated (v30 in v0.1.3 and v33 after the complete
+train). A crash can therefore only resume publication of that exact target or
+remove the exact unpublished staging/key files; it cannot leave a partial
+authority that permanently blocks first launch.
+
+Discovery v5, status v5, diagnostics v9 and aggregate IPC v6 expose a bounded
 `core=migrating` state after early control-plane publication. Business routes
 return typed initializing responses and do not touch the unready store.
 
@@ -80,16 +91,23 @@ epoch.
 
 Watcher events, debounce, the 300-second safety scan and manual scan share one
 per-root coordinator. A root has at most one active scan and duplicate requests
-coalesce. Absence may delete indexed occurrences only after a complete,
-error-free, in-budget scan while the root is online. Offline, permission-denied
-or partial scans report unknown and retain the last trusted projection.
+coalesce. The canonical import-task head and its scan snapshot are committed in
+one SQLite transaction, so a worker can never complete an unobservable scan;
+orphaned active snapshots are closed before a replacement starts. Absence may
+delete indexed occurrences only after a complete, in-budget directory
+enumeration while the root is online. A per-file parse/classification failure
+is counted but does not make the observed directory listing untrustworthy.
+Offline, permission-denied, enumeration-error or partial scans report unknown
+and retain the last trusted projection.
 
-`source-roots.v1`, discovery v5, diagnostics v6 and aggregate IPC v6 expose
-bounded per-root progress. The UI retains global totals and gives each root a
-single button: “开始扫描”, then “重新扫描”, and “扫描中” while active. It retains
-pause/resume monitoring and shows discovered, searchable, non-resume,
-needs-review, OCR, failed, ignored, phase, progress, last sync, watcher state
-and evidence-backed ETA.
+The final `source-roots.v2` projection separates current root counts from the
+last scan's historical progress, so migrated data remains visible before its
+first post-migration scan. Discovery v5, diagnostics v9 and aggregate IPC v6
+expose the bounded endpoints and aggregates. The UI retains global totals and
+gives each root a single button: “开始扫描”, then “重新扫描”, and “扫描中” while
+active. It retains pause/resume monitoring and shows discovered, searchable,
+non-resume, needs-review, OCR, failed, ignored, phase, progress, last sync,
+watcher state and evidence-backed ETA.
 
 ## v0.1.5 — schema v32 root deletion
 
@@ -128,7 +146,11 @@ Parser-contract changes enqueue old PDFs for low-priority reprocessing without
 blocking startup or existing search. Status v5, diagnostics v8 and error v3 add
 the `pdfium` runtime and `pdf_import` capability. Release packaging must contain
 the reviewed fourth runtime pack even though runtime degradation remains
-observable.
+observable. The installed pack contains the exact reviewed PDFium source
+contract, Chromium license and GN arguments; the static archive is linked into
+the daemon and renderer rather than duplicated in Resources. Bundle composition
+v4 and DMG composition v4 both fail closed unless all four pack manifests and
+their bound payloads are present.
 
 ## v0.1.7 — original PDF detail
 
@@ -161,19 +183,18 @@ selection exists.
 
 ## GitHub and acceptance
 
-At most #217 and one feature issue are open for this train. Each feature issue
-records version, contracts, focused tests, native installed states, privacy
-boundary and rollback. Its completion comment records commit, test run id, DMG
-digest, install receipt, screenshot digest, privacy declaration and residual
-risk.
+#217 remains the durable umbrella record for the train. Version boundaries,
+contracts, privacy boundaries and rollback policy remain explicit in the
+history, but issue/PR delivery must not interrupt the atomic business
+implementation or trigger remote Linux workflows before the product work is
+complete.
 
-Each version runs only focused direct tests and invalidated verification cells,
-then exact-commit DMG build and native Computer Use acceptance on public
-synthetic data. A discovered bug opens a repair sub-round; only failed and
-newly invalidated cells rerun.
-
-After v0.1.8 merges, main freezes for one resumable parallel full matrix,
-public guard, release Tauri build, exact merged-main DMG, APFS/COW installed
-acceptance, final Computer Use pass and a 120-minute fault soak. Windows
-compile, contract and package evidence remains non-native. #217 closes only
-after this final evidence is reconciled.
+After the complete v0.1.8 business tree is frozen, one resumable parallel
+macOS matrix runs all required focused and delivery cells and records every
+failure before repair begins. A repair invalidates only the cells whose input
+or behavior boundary changed; all other passing evidence remains reusable.
+Then run the public guard, release Tauri build, exact DMG, APFS/COW installed
+acceptance, final Computer Use pass and a 120-minute fault soak. Windows remains
+compile/contract/package scope only and is not native release evidence. No Linux
+lane is part of this product train. #217 closes only after the final evidence is
+reconciled.

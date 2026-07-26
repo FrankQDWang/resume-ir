@@ -6,11 +6,18 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-default = []
-windows-static-pdfium = ["dep:pdfium-render"]
+default = ["static-pdfium"]
+static-pdfium = ["dep:pdfium-render"]
+windows-static-pdfium = ["static-pdfium"]
 
-[target.'cfg(windows)'.dependencies]
+[dependencies]
 pdfium-render = { version = "=0.9.3", default-features = false, features = ["pdfium_7881", "static"], optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+pdfium-render = { version = "=0.9.3", default-features = false, features = ["pdfium_7881", "static", "libc++", "core_graphics"], optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+pdfium-render = { version = "=0.9.3", default-features = false, features = ["pdfium_7881", "static", "pdfium_use_win32"], optional = true }
 
 [lints]
 workspace = true

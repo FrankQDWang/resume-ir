@@ -1,0 +1,305 @@
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
+
+use sha2::{Digest, Sha256};
+use tempfile::TempDir;
+
+use super::*;
+use crate::{
+    active_store_manifest::{read_manifest, read_manifest_format_version},
+    DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, Document, DocumentId, DocumentStatus,
+    FileExtension, MetaStoreErrorClass, OwnedMetaStore, UnixTimestamp,
+};
+
+#[test]
+fn authority_free_directory_initializes_exact_v33_and_reopens_without_writes() {
+    let fixture = OwnedDirectory::new();
+    let store = fixture.owner.open_store().unwrap();
+    assert_eq!(store.schema_version().unwrap(), schema_v33::VERSION);
+    assert_eq!(
+        store
+            .connection
+            .borrow()
+            .query_row(
+                "SELECT COUNT(*) FROM forward_migration_history",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        4
+    );
+    drop(store);
+
+    let manifest_path = fixture.data_dir().join(MANIFEST_FILE);
+    assert_eq!(read_manifest_format_version(&manifest_path).unwrap(), 2);
+    let before = snapshot_tree(fixture.data_dir());
+    drop(crate::ReadMetaStore::open_data_dir(fixture.data_dir()).unwrap());
+    assert_eq!(snapshot_tree(fixture.data_dir()), before);
+}
+
+#[test]
+fn exact_v29_migrates_through_cow_without_mutating_predecessor() {
+    let fixture = OwnedDirectory::new();
+    let source_store = fixture.open_historical_v29();
+    let document = synthetic_document();
+    source_store.upsert_document(&document).unwrap();
+    let source_manifest = read_manifest(&fixture.data_dir().join(MANIFEST_FILE)).unwrap();
+    assert_eq!(source_manifest.schema_version, schema_v29::VERSION);
+    assert_eq!(
+        read_manifest_format_version(&fixture.data_dir().join(MANIFEST_FILE)).unwrap(),
+        1
+    );
+    let source_path = fixture.data_dir().join(&source_manifest.file_name);
+    drop(source_store);
+    let source_ciphertext = sha256_file(&source_path);
+
+    let migrated = fixture.owner.open_store().unwrap();
+    assert_eq!(migrated.schema_version().unwrap(), schema_v33::VERSION);
+    assert_eq!(
+        migrated.document_by_id(&document.id).unwrap(),
+        Some(document)
+    );
+    let target_manifest = read_manifest(&fixture.data_dir().join(MANIFEST_FILE)).unwrap();
+    assert_eq!(target_manifest.schema_version, schema_v33::VERSION);
+    assert_eq!(
+        target_manifest.store_id_digest,
+        source_manifest.store_id_digest
+    );
+    assert_ne!(target_manifest.file_name, source_manifest.file_name);
+    assert_eq!(
+        read_manifest_format_version(&fixture.data_dir().join(MANIFEST_FILE)).unwrap(),
+        2
+    );
+    assert_eq!(sha256_file(&source_path), source_ciphertext);
+    assert!(source_path.exists());
+    let migration_receipt = receipt::read(&receipt::path(fixture.data_dir())).unwrap();
+    assert_eq!(migration_receipt.phase, ReceiptPhase::Published);
+    assert_eq!(migration_receipt.source, source_manifest);
+    assert_eq!(migration_receipt.target, target_manifest);
+}
+
+#[test]
+fn future_manifest_fails_closed_without_mutating_authority() {
+    let fixture = OwnedDirectory::new();
+    drop(fixture.owner.open_store().unwrap());
+    let manifest_path = fixture.data_dir().join(MANIFEST_FILE);
+    let current = read_manifest(&manifest_path).unwrap();
+    fs::write(
+        &manifest_path,
+        format!(
+            "resume-ir.metadata-active.v2\nfile=metadata-v34-{}.sqlite3\nschema=34\ndigest={}\n",
+            &current.store_id_digest[..16],
+            current.store_id_digest,
+        ),
+    )
+    .unwrap();
+    crate::restrict_private_file_permissions(&manifest_path).unwrap();
+    let before = snapshot_tree(fixture.data_dir());
+
+    let error = fixture.owner.open_store().unwrap_err();
+
+    assert_eq!(error.class(), MetaStoreErrorClass::UnsupportedStoreSchema);
+    assert_eq!(snapshot_tree(fixture.data_dir()), before);
+}
+
+#[test]
+fn preparing_receipt_discards_only_recorded_unpublished_files_then_retries() {
+    let fixture = OwnedDirectory::new();
+    drop(fixture.open_historical_v29());
+    let source = read_manifest(&fixture.data_dir().join(MANIFEST_FILE)).unwrap();
+    let interrupted = migration_receipt(&source, "a".repeat(64), ReceiptPhase::Preparing);
+    for file_name in [
+        interrupted.staging_file.as_str(),
+        interrupted.target.file_name.as_str(),
+    ] {
+        let path = fixture.data_dir().join(file_name);
+        fs::write(&path, b"interrupted unpublished bytes").unwrap();
+        crate::restrict_private_file_permissions(&path).unwrap();
+    }
+    receipt::persist(fixture.data_dir(), &interrupted).unwrap();
+
+    let migrated = fixture.owner.open_store().unwrap();
+
+    assert_eq!(migrated.schema_version().unwrap(), schema_v33::VERSION);
+    assert!(!fixture.data_dir().join(interrupted.staging_file).exists());
+    assert!(!fixture
+        .data_dir()
+        .join(interrupted.target.file_name)
+        .exists());
+    let completed = receipt::read(&receipt::path(fixture.data_dir())).unwrap();
+    assert_eq!(completed.phase, ReceiptPhase::Published);
+    assert_ne!(completed.migration_id, interrupted.migration_id);
+}
+
+#[test]
+fn ready_receipt_atomically_publishes_the_prevalidated_target() {
+    let fixture = OwnedDirectory::new();
+    let source_store = fixture.open_historical_v29();
+    let document = synthetic_document();
+    source_store.upsert_document(&document).unwrap();
+    drop(source_store);
+    let source_manifest = read_manifest(&fixture.data_dir().join(MANIFEST_FILE)).unwrap();
+    let source_path = fixture.data_dir().join(&source_manifest.file_name);
+    let source_ciphertext = sha256_file(&source_path);
+    let key = read_key(fixture.data_dir()).unwrap();
+    let source = open_encrypted_read_connection(&source_path, &key).unwrap();
+    let mut interrupted = migration_receipt(&source_manifest, "b".repeat(64), ReceiptPhase::Ready);
+    let staging_path = fixture.data_dir().join(&interrupted.staging_file);
+    copy_encrypted_store(&source, &staging_path, &key).unwrap();
+    let mut staging = open_existing_encrypted_writer(&staging_path, &key).unwrap();
+    forward_migration::apply_current_schema(&mut staging, schema_v29::VERSION).unwrap();
+    validate_current_connection(&staging, &source_manifest.store_id_digest).unwrap();
+    drop(staging);
+    let target_path = fixture.data_dir().join(&interrupted.target.file_name);
+    fs::rename(&staging_path, &target_path).unwrap();
+    sync_parent_directory(fixture.data_dir()).unwrap();
+    validate_current_store(&target_path, &key, &source_manifest.store_id_digest).unwrap();
+    receipt::persist(fixture.data_dir(), &interrupted).unwrap();
+
+    let recovered = fixture.owner.open_store().unwrap();
+
+    assert_eq!(recovered.schema_version().unwrap(), schema_v33::VERSION);
+    assert_eq!(
+        recovered.document_by_id(&document.id).unwrap(),
+        Some(document)
+    );
+    assert_eq!(
+        read_manifest(&fixture.data_dir().join(MANIFEST_FILE)).unwrap(),
+        interrupted.target
+    );
+    interrupted.phase = ReceiptPhase::Published;
+    assert_eq!(
+        receipt::read(&receipt::path(fixture.data_dir())).unwrap(),
+        interrupted
+    );
+    assert_eq!(sha256_file(&source_path), source_ciphertext);
+}
+
+#[test]
+fn missing_v29_key_fails_without_touching_the_source_ciphertext() {
+    let fixture = OwnedDirectory::new();
+    drop(fixture.open_historical_v29());
+    fs::remove_file(crate::metadata_encryption_key_path(fixture.data_dir())).unwrap();
+    let before = snapshot_tree(fixture.data_dir());
+
+    let error = fixture.owner.open_store().unwrap_err();
+
+    assert_eq!(error.class(), MetaStoreErrorClass::Storage);
+    assert_eq!(snapshot_tree(fixture.data_dir()), before);
+}
+
+#[test]
+fn tampered_forward_history_fails_closed_without_repair() {
+    let fixture = OwnedDirectory::new();
+    let store = fixture.owner.open_store().unwrap();
+    store
+        .connection
+        .borrow()
+        .execute(
+            "UPDATE forward_migration_history
+             SET migration_checksum = ?1
+             WHERE to_version = ?2",
+            rusqlite::params!["0".repeat(64), i64::from(schema_v33::VERSION)],
+        )
+        .unwrap();
+    drop(store);
+    let before = snapshot_tree(fixture.data_dir());
+
+    let error = fixture.owner.open_store().unwrap_err();
+
+    assert_eq!(error.class(), MetaStoreErrorClass::StorageInvariant);
+    assert_eq!(snapshot_tree(fixture.data_dir()), before);
+}
+
+struct OwnedDirectory {
+    _directory: TempDir,
+    owner: DataDirectoryOwnerLease,
+}
+
+impl OwnedDirectory {
+    fn new() -> Self {
+        let directory = tempfile::tempdir().unwrap();
+        let data_dir = directory.path().join("data");
+        let owner = match DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap() {
+            DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+            DataDirectoryOwnerAcquisition::Contended => panic!("synthetic owner contended"),
+        };
+        Self {
+            _directory: directory,
+            owner,
+        }
+    }
+
+    fn data_dir(&self) -> &Path {
+        self.owner.canonical_data_dir()
+    }
+
+    fn open_historical_v29(&self) -> OwnedMetaStore {
+        let owner = self.owner.shared_guard();
+        let (path, key) = migration_v29::prepare_active_v29_store(&owner).unwrap();
+        OwnedMetaStore::open_owned_encrypted(path, &key, owner).unwrap()
+    }
+}
+
+fn migration_receipt(
+    source: &ActiveStoreManifest,
+    migration_id: String,
+    phase: ReceiptPhase,
+) -> MigrationReceipt {
+    MigrationReceipt {
+        phase,
+        staging_file: format!("{STAGING_PREFIX}{}.sqlite3", &migration_id[..16]),
+        target: ActiveStoreManifest {
+            file_name: format!("metadata-v33-{}.sqlite3", &migration_id[..16]),
+            schema_version: schema_v33::VERSION,
+            store_id_digest: source.store_id_digest.clone(),
+        },
+        source: source.clone(),
+        migration_id,
+    }
+}
+
+fn synthetic_document() -> Document {
+    let now = UnixTimestamp::from_unix_seconds(1_800_000_000);
+    Document {
+        id: DocumentId::from_non_secret_parts(&["v33-cow-migration", "preserved"]),
+        source_uri: "synthetic://v33-cow-migration/preserved".to_string(),
+        normalized_path: "synthetic/v33-cow-migration/preserved.txt".to_string(),
+        file_name: "preserved.txt".to_string(),
+        extension: FileExtension::Txt,
+        byte_size: 128,
+        mtime: now,
+        content_hash: None,
+        text_hash: None,
+        is_deleted: false,
+        created_at: now,
+        updated_at: now,
+        status: DocumentStatus::Searchable,
+    }
+}
+
+fn sha256_file(path: &Path) -> String {
+    format!("{:x}", Sha256::digest(fs::read(path).unwrap()))
+}
+
+fn snapshot_tree(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    fn walk(root: &Path, current: &Path, snapshot: &mut BTreeMap<PathBuf, Vec<u8>>) {
+        for entry in fs::read_dir(current).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let relative = path.strip_prefix(root).unwrap().to_path_buf();
+            if entry.file_type().unwrap().is_dir() {
+                walk(root, &path, snapshot);
+            } else {
+                snapshot.insert(relative, fs::read(path).unwrap());
+            }
+        }
+    }
+
+    let mut snapshot = BTreeMap::new();
+    walk(root, root, &mut snapshot);
+    snapshot
+}

@@ -159,7 +159,7 @@ fn valid_correlated_overload(payload: &serde_json::Value, request_id: &str) -> b
     ) && envelope
         .get("schema_version")
         .and_then(serde_json::Value::as_str)
-        == Some("resume-ir.error.v2")
+        == Some("resume-ir.error.v3")
         && envelope
             .get("request_id")
             .and_then(serde_json::Value::as_str)
@@ -344,7 +344,7 @@ mod tests {
             let envelope: serde_json::Value = serde_json::from_str(body).unwrap();
             let request_id = envelope["request_id"].as_str().unwrap();
             let response = serde_json::json!({
-                "schema_version": "resume-ir.error.v2",
+                "schema_version": "resume-ir.error.v3",
                 "request_id": request_id,
                 "status": "error",
                 "error": {
@@ -382,7 +382,7 @@ mod tests {
     fn overload_contract_rejects_legacy_missing_and_uncorrelated_payloads() {
         let request_id = "resident-benchmark-1-1";
         let valid = serde_json::json!({
-            "schema_version": "resume-ir.error.v2",
+            "schema_version": "resume-ir.error.v3",
             "request_id": request_id,
             "status": "error",
             "error": {

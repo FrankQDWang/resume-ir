@@ -275,7 +275,7 @@ fn pdf_resume_body(
     email: Option<&str>,
     phone: Option<&str>,
 ) -> Vec<u8> {
-    let mut content = String::from("BT\n/F1 12 Tf\n72 720 Td\n");
+    let mut content = String::from("BT\n/F1 12 Tf\n14 TL\n72 720 Td\n");
     for line in [
         heading.to_string(),
         "SUMMARY".to_string(),

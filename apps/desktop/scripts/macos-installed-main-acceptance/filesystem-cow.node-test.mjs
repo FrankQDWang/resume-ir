@@ -243,7 +243,7 @@ test("creates the test HOME with forced per-file COW while leaving the source un
     `${JSON.stringify({
       schema_version: "resume-ir.macos-install-receipt.v3",
       bundle_id: "local.resume-ir.desktop",
-      version: "0.1.2",
+      version: "0.1.8",
       target_triple: "aarch64-apple-darwin",
       source: SOURCE,
       composition_digest: COMPOSITION,
@@ -277,7 +277,7 @@ test("creates the test HOME with forced per-file COW while leaving the source un
     temporaryParent,
     expectedComposition: {
       bundle_id: "local.resume-ir.desktop",
-      version: "0.1.2",
+      version: "0.1.8",
       target_triple: "aarch64-apple-darwin",
       source: SOURCE,
       composition_digest: COMPOSITION,
@@ -342,7 +342,7 @@ test("requires the exact APFS statfs type", async () => {
   await requireApfsDirectory("/synthetic/apfs", {
     statfsTool: async (...args) => {
       calls.push(args);
-      return { type: 0x1an };
+      return { type: 0x19n };
     },
   });
   assert.deepEqual(calls, [["/synthetic/apfs", { bigint: true }]]);

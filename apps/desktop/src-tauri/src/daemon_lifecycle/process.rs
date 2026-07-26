@@ -10,7 +10,7 @@ use process_containment::ContainedChild;
 use super::configured_daemon_binary;
 use super::runtime_candidates::{
     configured_classifier_runtime, configured_embedding_runtime, configured_ocr_runtime,
-    daemon_arguments,
+    configured_pdfium_runtime, daemon_arguments,
 };
 use super::supervisor::{
     ChildExitOutcome, DaemonBlockedReason, DaemonProbe, DaemonRuntime, RuntimeFailure,
@@ -84,6 +84,7 @@ pub(super) struct ProductionDaemonRuntime {
     embedding_resource_dir: PathBuf,
     ocr_resource_dir: PathBuf,
     classifier_resource_dir: PathBuf,
+    pdfium_resource_dir: PathBuf,
 }
 
 impl ProductionDaemonRuntime {
@@ -93,6 +94,7 @@ impl ProductionDaemonRuntime {
         embedding_resource_dir: &Path,
         ocr_resource_dir: &Path,
         classifier_resource_dir: &Path,
+        pdfium_resource_dir: &Path,
     ) -> Self {
         Self {
             data_dir: data_dir.to_path_buf(),
@@ -100,6 +102,7 @@ impl ProductionDaemonRuntime {
             embedding_resource_dir: embedding_resource_dir.to_path_buf(),
             ocr_resource_dir: ocr_resource_dir.to_path_buf(),
             classifier_resource_dir: classifier_resource_dir.to_path_buf(),
+            pdfium_resource_dir: pdfium_resource_dir.to_path_buf(),
         }
     }
 }
@@ -114,6 +117,7 @@ impl DaemonRuntime for ProductionDaemonRuntime {
             configured_embedding_runtime(&self.current_exe, &self.embedding_resource_dir);
         let ocr = configured_ocr_runtime(&self.current_exe, &self.ocr_resource_dir);
         let classifier = configured_classifier_runtime(&self.classifier_resource_dir);
+        let pdfium = configured_pdfium_runtime(&self.current_exe, &self.pdfium_resource_dir);
         let launch_id = new_launch_id()?;
         let mut command = Command::new(binary);
         command
@@ -123,6 +127,7 @@ impl DaemonRuntime for ProductionDaemonRuntime {
                 embedding.as_ref(),
                 ocr.as_ref(),
                 classifier.as_ref(),
+                pdfium.as_ref(),
             ))
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -132,6 +137,9 @@ impl DaemonRuntime for ProductionDaemonRuntime {
         }
         if let Some(ocr) = &ocr {
             ocr.configure_command(&mut command);
+        }
+        if let Some(pdfium) = &pdfium {
+            pdfium.configure_command(&mut command);
         }
         let mut process =
             ContainedChild::spawn(&mut command).map_err(|_| RuntimeFailure::Transient)?;

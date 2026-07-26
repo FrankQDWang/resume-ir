@@ -1,22 +1,26 @@
 use std::net::TcpStream;
+use std::path::Path;
 use std::time::Duration;
 
 use meta_store::{ImportProcessingContract, OwnedMetaStore, ReadMetaStore};
 
 use super::protocol::ReadOutcome;
 use super::search_service::SearchService;
+use super::source_file_service::SourceFileService;
 use super::{
     response, routes, ConnectionCompletion, ConnectionOutcome, ControlPlaneState, RequestFailure,
     ResponseSinkError,
 };
 
 pub(crate) struct Context<'a> {
+    pub(crate) data_dir: &'a Path,
     pub(crate) store: &'a ReadMetaStore,
     pub(crate) owned_store: &'a OwnedMetaStore,
     pub(crate) query_service: &'a SearchService,
     pub(crate) processing_contract: &'a ImportProcessingContract,
     pub(crate) auth_token: &'a str,
     pub(crate) control_state: &'a ControlPlaneState,
+    pub(crate) source_file_service: &'a SourceFileService,
 }
 
 /// Handles one accepted connection and returns its exactly-once completion
@@ -111,12 +115,14 @@ fn handle_request(
 
     routes::dispatch(
         routes::Context {
+            data_dir: context.data_dir,
             store: context.store,
             owned_store: context.owned_store,
             query_service: context.query_service,
             processing_contract: context.processing_contract,
             auth_token: context.auth_token,
             control_state: context.control_state,
+            source_file_service: context.source_file_service,
         },
         request,
         stream,

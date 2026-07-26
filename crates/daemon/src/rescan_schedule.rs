@@ -1,9 +1,9 @@
 use meta_store::{
-    ImportProcessingContract, ImportRootTaskHeadOutcome, ImportRootTaskHeadRequest,
-    ImportScanScope, ImportTask, ImportTaskStatus, OwnedMetaStore, UnixTimestamp,
+    ImportProcessingContract, OwnedMetaStore, ScanTrigger, SourceRootState, SourceWatcherState,
+    UnixTimestamp,
 };
 
-use crate::{import_command, DaemonError, Result};
+use crate::{DaemonError, Result};
 
 /// Time-based policy for scheduling another scan of a completed import root.
 ///
@@ -38,82 +38,42 @@ impl CompletedRootRescanSchedule {
         let finished_at_or_before = UnixTimestamp::from_unix_seconds(
             now.as_unix_seconds().saturating_sub(self.interval_seconds),
         );
-        let scopes = store
-            .completed_import_scan_scopes_due_for_requeue(finished_at_or_before)
-            .map_err(DaemonError::store)?;
         let mut requeued = 0_usize;
-
-        for (index, scope) in scopes.into_iter().enumerate() {
-            let task_id = import_command::new_task_id(index)
-                .map_err(|_| DaemonError::user("system clock is before unix epoch"))?;
-            requeued += usize::from(enqueue_import_from_completed_scope(
+        for root in store.source_roots().map_err(DaemonError::store)? {
+            if root.state != SourceRootState::Active
+                || root.watcher_state == SourceWatcherState::Paused
+                || store
+                    .source_root_deletion_in_progress(&root.id)
+                    .map_err(DaemonError::store)?
+            {
+                continue;
+            }
+            let due = store
+                .latest_scan_snapshot(&root.id)
+                .map_err(DaemonError::store)?
+                .is_some_and(|snapshot| {
+                    !snapshot.phase.is_active()
+                        && snapshot
+                            .completed_at
+                            .is_some_and(|completed| completed <= finished_at_or_before)
+                });
+            if !due {
+                continue;
+            }
+            crate::source_scan_coordinator::enqueue(
                 store,
                 processing_contract,
-                scope,
-                task_id,
+                &root,
+                ScanTrigger::Periodic,
                 now,
-            )?);
+            )
+            .map_err(|_| {
+                DaemonError::recoverable_dependency("periodic source scan enqueue failed")
+            })?;
+            requeued += 1;
         }
 
         Ok(requeued)
-    }
-}
-
-pub(crate) fn enqueue_import_from_completed_scope(
-    store: &OwnedMetaStore,
-    processing_contract: &ImportProcessingContract,
-    scope: ImportScanScope,
-    task_id: meta_store::ImportTaskId,
-    now: UnixTimestamp,
-) -> Result<bool> {
-    let task = ImportTask {
-        id: task_id.clone(),
-        root_path: scope.canonical_root_path.clone(),
-        status: ImportTaskStatus::Queued,
-        queued_at: now,
-        started_at: None,
-        finished_at: None,
-        updated_at: now,
-    };
-    let next_scope = pending_scope_from_completed(scope, task_id, now);
-    let outcome = store
-        .coordinate_import_root_task_head(ImportRootTaskHeadRequest::Configured {
-            task: &task,
-            scope: &next_scope,
-            processing_contract,
-        })
-        .map_err(DaemonError::store)?;
-    Ok(matches!(
-        outcome,
-        ImportRootTaskHeadOutcome::HeadInserted { .. }
-    ))
-}
-
-fn pending_scope_from_completed(
-    scope: ImportScanScope,
-    import_task_id: meta_store::ImportTaskId,
-    now: UnixTimestamp,
-) -> ImportScanScope {
-    ImportScanScope {
-        import_task_id,
-        root_kind: scope.root_kind,
-        root_preset: scope.root_preset,
-        scan_profile: scope.scan_profile,
-        requested_root_path: scope.requested_root_path,
-        canonical_root_path: scope.canonical_root_path,
-        files_discovered: 0,
-        ignored_entries: 0,
-        scan_errors: 0,
-        searchable_documents: 0,
-        ocr_required_documents: 0,
-        ocr_jobs_queued: 0,
-        failed_documents: 0,
-        deleted_documents: 0,
-        scan_budget_kind: scope.scan_budget_kind,
-        scan_budget_limit: scope.scan_budget_limit,
-        scan_budget_observed: scope.scan_budget_limit.map(|_| 0),
-        scan_budget_exhausted: false,
-        updated_at: now,
     }
 }
 
@@ -125,7 +85,7 @@ mod tests {
     };
     use meta_store::{
         DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, ImportRootKind, ImportScanProfile,
-        ImportTaskId,
+        ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, ScanCounts,
     };
     use tempfile::TempDir;
 
@@ -239,6 +199,9 @@ mod tests {
 
         let root = "/synthetic/completed-rescan-root";
         let queued_at = UnixTimestamp::from_unix_seconds(90);
+        let source_root = store
+            .register_source_root(root, root, "completed rescan fixture", queued_at)
+            .unwrap();
         let task = ImportTask {
             id: ImportTaskId::from_non_secret_parts(&["completed-root-rescan-fixture"]),
             root_path: root.to_string(),
@@ -272,6 +235,14 @@ mod tests {
         store
             .insert_import_task_with_scan_scope(&task, &scope, &processing_contract)
             .unwrap();
+        store
+            .begin_scan(
+                &source_root.id,
+                task.id.as_str(),
+                ScanTrigger::Manual,
+                queued_at,
+            )
+            .unwrap();
         let running = store
             .claim_observed_import_task_for_worker(&task, UnixTimestamp::from_unix_seconds(99))
             .unwrap()
@@ -279,6 +250,15 @@ mod tests {
         scope.updated_at = finished_at;
         store
             .complete_import_task(&running.id, processing_contract.id(), &scope, finished_at)
+            .unwrap();
+        store
+            .reconcile_complete_source_scan(
+                &source_root.id,
+                task.id.as_str(),
+                ScanCounts::default(),
+                None,
+                finished_at,
+            )
             .unwrap();
 
         CompletedRootFixture {

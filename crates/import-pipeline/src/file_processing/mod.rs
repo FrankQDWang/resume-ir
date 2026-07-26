@@ -13,7 +13,7 @@ pub(super) use formatting::{language_set, sections_to_index};
 pub(crate) use model::ParseWorkOutcome;
 pub(crate) use model::{
     ImportFileResult, ParseWorkItem, ParseWorkResult, ParseWorkerClock, PendingSearchableDocument,
-    PendingSearchablePublicationKind, PreparedFile,
+    PendingSearchablePublicationKind, PendingSourceOccurrence, PreparedFile,
 };
 #[cfg(test)]
 pub(super) use persistence::persist_source_revision_failure;

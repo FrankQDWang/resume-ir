@@ -4,24 +4,21 @@ use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
-#[cfg(all(windows, feature = "windows-static-pdfium"))]
-const INPUT_MAX_BYTES: u64 = 64 * 1024 * 1024;
-#[cfg(any(all(windows, feature = "windows-static-pdfium"), test))]
+#[cfg(feature = "static-pdfium")]
+const INPUT_MAX_BYTES: u64 = 256 * 1024 * 1024;
+#[cfg(any(feature = "static-pdfium", test))]
 const OUTPUT_MAX_BYTES: usize = 32 * 1024 * 1024;
 const PATH_MAX_UTF16_UNITS: usize = 32_767;
 const PAGE_MAX: u32 = 512;
 const DPI_MIN: u32 = 72;
 const DPI_MAX: u32 = 600;
-#[cfg(any(all(windows, feature = "windows-static-pdfium"), test))]
+#[cfg(any(feature = "static-pdfium", test))]
 const DIMENSION_MAX: u32 = 10_000;
-#[cfg(any(all(windows, feature = "windows-static-pdfium"), test))]
+#[cfg(any(feature = "static-pdfium", test))]
 const PIXEL_MAX: u64 = 10_000_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(
-    not(any(all(windows, feature = "windows-static-pdfium"), test)),
-    allow(dead_code)
-)]
+#[cfg_attr(not(any(feature = "static-pdfium", test)), allow(dead_code))]
 enum RenderFailure {
     Unavailable,
     Invalid,
@@ -93,7 +90,7 @@ fn parse_request(
     })
 }
 
-#[cfg(any(all(windows, feature = "windows-static-pdfium"), test))]
+#[cfg(any(feature = "static-pdfium", test))]
 fn render_dimensions(
     width_points: f32,
     height_points: f32,
@@ -143,7 +140,7 @@ fn render_dimensions(
     Ok((width, height))
 }
 
-#[cfg(any(all(windows, feature = "windows-static-pdfium"), test))]
+#[cfg(any(feature = "static-pdfium", test))]
 fn write_ppm(
     writer: &mut impl Write,
     width: u32,
@@ -176,7 +173,7 @@ fn write_ppm(
     Ok(())
 }
 
-#[cfg(all(windows, feature = "windows-static-pdfium"))]
+#[cfg(feature = "static-pdfium")]
 fn render(request: RenderRequest, output: &mut impl Write) -> Result<(), RenderFailure> {
     use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
     use std::fs::{self, File};
@@ -222,7 +219,7 @@ fn render(request: RenderRequest, output: &mut impl Write) -> Result<(), RenderF
     write_ppm(output, width, height, &bitmap.as_rgba_bytes())
 }
 
-#[cfg(not(all(windows, feature = "windows-static-pdfium")))]
+#[cfg(not(feature = "static-pdfium"))]
 fn render(_request: RenderRequest, _output: &mut impl Write) -> Result<(), RenderFailure> {
     Err(RenderFailure::Unavailable)
 }

@@ -25,6 +25,7 @@ mod search_publication_vector;
 mod search_vectorizer;
 mod source_digest;
 mod source_dispositions;
+mod source_scan;
 mod timing;
 
 use std::collections::BTreeMap;
@@ -44,7 +45,7 @@ use index_fulltext::SnapshotPublishPhase;
 use index_fulltext::{IndexDocument, IndexSection};
 use meta_store::{DocumentId, FileExtension};
 use parser_common::{ParseInput, Parser, ParserErrorKind, ResourceBudget};
-use parser_pdf::{PdfParser, PdfTextExtractionTimings};
+use parser_pdf::{PdfParser, PdfTextExtractionMetrics};
 pub use resume_classifier::LinearPromotionPolicy;
 #[cfg(test)]
 use sectionizer::Sectionizer;
@@ -109,15 +110,26 @@ pub use search_vectorizer::{
 };
 #[cfg(test)]
 use source_dispositions::{ImportDispositionBatches, ProcessedFile};
+pub use source_scan::{finish_source_scan_failure, finish_source_scan_success};
 pub(crate) use timing::measure_result_stage;
 
-pub(crate) const PARSE_VERSION: &str = "parser-v1";
+pub(crate) const PARSE_VERSION: &str = "parser-pdfium-v2";
 pub(crate) const OCR_PARSE_VERSION: &str = "ocr-v1";
 pub(crate) const SCHEMA_VERSION: &str = "resume-ir-s9-v2";
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 const MAX_IMPORT_PARSE_WORKERS: usize = 3;
 const IMPORT_CANCEL_POLL_INTERVAL_MS: u64 = 25;
 const PARSE_RESULT_CANCEL_POLL_INTERVAL_MS: u64 = 50;
+
+pub(crate) const fn primary_parse_version_for(extension: &FileExtension) -> &'static str {
+    match extension {
+        FileExtension::Pdf => PARSE_VERSION,
+        FileExtension::Doc | FileExtension::Docx | FileExtension::Txt => {
+            meta_store::NON_PDF_PARSE_VERSION
+        }
+        FileExtension::Image | FileExtension::Other(_) => PARSE_VERSION,
+    }
+}
 const H0_MAX_PRIVATE_OR_ANONYMOUS_MB: u16 = 512;
 const H1_MAX_PRIVATE_OR_ANONYMOUS_MB: u16 = 1024;
 const H2_MAX_PRIVATE_OR_ANONYMOUS_MB: u16 = 1536;
@@ -187,6 +199,7 @@ pub struct SearchProjectionRemoval {
 pub struct ImportOptions {
     pub scan_profile: ScanProfile,
     pub max_files: Option<usize>,
+    pub pdf_import: PdfImportPolicy,
     pub parse_workers: ImportParseWorkers,
     pub index_writer_heap_bytes: usize,
     pub linear_promotion: LinearPromotionPolicy,
@@ -204,6 +217,7 @@ impl ImportOptions {
         Self {
             scan_profile: ScanProfile::default(),
             max_files: None,
+            pdf_import: PdfImportPolicy::Enabled,
             parse_workers: resource_policy.parse_workers,
             index_writer_heap_bytes: resource_policy.index_writer_heap_bytes,
             linear_promotion: LinearPromotionPolicy::default(),
@@ -219,6 +233,7 @@ impl ImportOptions {
         Self {
             scan_profile: ScanProfile::default(),
             max_files: None,
+            pdf_import: PdfImportPolicy::Enabled,
             parse_workers: ImportParseWorkers::low_memory_default_for_available_parallelism(
                 available_parallelism,
             ),
@@ -227,6 +242,16 @@ impl ImportOptions {
             search_vectorization: SearchPublicationVectorization::default(),
         }
     }
+}
+
+/// Controls whether discovered PDF files may enter the parser and OCR
+/// pipeline. `Frozen` preserves existing indexed data and leaves the source
+/// occurrence untouched until the validated PDFium runtime becomes available.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum PdfImportPolicy {
+    #[default]
+    Enabled,
+    Frozen,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -394,6 +419,11 @@ pub fn detect_ocr_page_count(extension: &FileExtension, bytes: &[u8]) -> Result<
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ImportSummary {
     pub files_discovered: usize,
+    pub processed_documents: usize,
+    /// PDF files deliberately left on their current published revision
+    /// because the PDFium runtime was unavailable for this scan.
+    pub deferred_pdf_documents: usize,
+    pub source_truth_complete: bool,
     pub scan_errors: usize,
     pub ignored_entries: usize,
     pub content_bytes_read: u64,
@@ -513,7 +543,7 @@ pub struct ImportWorkerMetrics {
     pub cancel_check_max_gap: Duration,
     pub cancel_check_max_gap_phase: ImportCancelCheckPhase,
     pub index_publication_timings: ImportIndexPublicationTimings,
-    pub pdf_parse_timings: PdfTextExtractionTimings,
+    pub pdf_parse_metrics: PdfTextExtractionMetrics,
     pub post_parser_timings: ImportPostParserTimings,
 }
 
@@ -534,7 +564,7 @@ impl ImportWorkerMetrics {
         }
         self.index_publication_timings
             .add_assign(&next.index_publication_timings);
-        self.pdf_parse_timings.add_assign(&next.pdf_parse_timings);
+        self.pdf_parse_metrics.add_assign(&next.pdf_parse_metrics);
         self.post_parser_timings
             .add_assign(&next.post_parser_timings);
     }
@@ -3309,7 +3339,7 @@ mod tests {
     }
 
     #[test]
-    fn parallel_parse_workers_record_pdf_and_post_parser_phase_timings() {
+    fn parallel_parse_workers_record_pdfium_and_post_parser_metrics() {
         let temp = TestDir::new("import-pipeline-parse-phase-evidence");
         let data_dir = temp.path().join("data");
         let root = temp.path().join("resumes");
@@ -3352,45 +3382,19 @@ mod tests {
         for (label, elapsed) in [
             (
                 "document_load",
-                summary.worker_metrics.pdf_parse_timings.document_load,
+                summary.worker_metrics.pdf_parse_metrics.document_load,
             ),
             (
-                "page_content_fetch",
-                summary.worker_metrics.pdf_parse_timings.page_content_fetch,
+                "page_text_load",
+                summary.worker_metrics.pdf_parse_metrics.page_text_load,
             ),
             (
-                "text_operator_prefilter",
-                summary
-                    .worker_metrics
-                    .pdf_parse_timings
-                    .text_operator_prefilter,
+                "character_iteration",
+                summary.worker_metrics.pdf_parse_metrics.character_iteration,
             ),
             (
-                "font_encoding",
-                summary.worker_metrics.pdf_parse_timings.font_encoding,
-            ),
-            (
-                "content_decode",
-                summary.worker_metrics.pdf_parse_timings.content_decode,
-            ),
-            (
-                "content_string_parse",
-                summary
-                    .worker_metrics
-                    .pdf_parse_timings
-                    .content_string_parse,
-            ),
-            (
-                "text_collection",
-                summary.worker_metrics.pdf_parse_timings.text_collection,
-            ),
-            (
-                "text_byte_decode",
-                summary.worker_metrics.pdf_parse_timings.text_byte_decode,
-            ),
-            (
-                "text_accumulation",
-                summary.worker_metrics.pdf_parse_timings.text_accumulation,
+                "quality_evaluation",
+                summary.worker_metrics.pdf_parse_metrics.quality_evaluation,
             ),
             (
                 "normalization",
@@ -3408,29 +3412,24 @@ mod tests {
         }
         for (label, count) in [
             (
-                "content_string_operands",
-                summary
-                    .worker_metrics
-                    .pdf_parse_timings
-                    .content_string_operands,
+                "pages_loaded",
+                summary.worker_metrics.pdf_parse_metrics.pages_loaded,
             ),
             (
-                "content_string_bytes",
-                summary
-                    .worker_metrics
-                    .pdf_parse_timings
-                    .content_string_bytes,
+                "characters_seen",
+                summary.worker_metrics.pdf_parse_metrics.characters_seen,
             ),
             (
-                "text_decode_runs",
-                summary.worker_metrics.pdf_parse_timings.text_decode_runs,
+                "characters_emitted",
+                summary.worker_metrics.pdf_parse_metrics.characters_emitted,
             ),
             (
-                "text_decode_input_bytes",
-                summary
-                    .worker_metrics
-                    .pdf_parse_timings
-                    .text_decode_input_bytes,
+                "source_bytes",
+                summary.worker_metrics.pdf_parse_metrics.source_bytes,
+            ),
+            (
+                "output_bytes",
+                summary.worker_metrics.pdf_parse_metrics.output_bytes,
             ),
         ] {
             assert!(count > 0, "{label} counter should be recorded: {summary:?}");
@@ -3462,7 +3461,7 @@ mod tests {
             parse_elapsed: Duration::from_millis(100),
             parse_started: started,
             parse_finished: started + Duration::from_millis(100),
-            pdf_parse_timings: parser_pdf::PdfTextExtractionTimings::default(),
+            pdf_parse_metrics: parser_pdf::PdfTextExtractionMetrics::default(),
             post_parser_timings: crate::ImportPostParserTimings::default(),
             outcome: ParseWorkOutcome::OcrRequired,
         });
@@ -3474,7 +3473,7 @@ mod tests {
             parse_elapsed: Duration::from_millis(100),
             parse_started: started + Duration::from_millis(10),
             parse_finished: started + Duration::from_millis(110),
-            pdf_parse_timings: parser_pdf::PdfTextExtractionTimings::default(),
+            pdf_parse_metrics: parser_pdf::PdfTextExtractionMetrics::default(),
             post_parser_timings: crate::ImportPostParserTimings::default(),
             outcome: ParseWorkOutcome::OcrRequired,
         });
@@ -3577,7 +3576,7 @@ mod tests {
                     parse_elapsed: Duration::from_millis(1),
                     parse_started,
                     parse_finished: parse_started + Duration::from_millis(1),
-                    pdf_parse_timings: parser_pdf::PdfTextExtractionTimings::default(),
+                    pdf_parse_metrics: parser_pdf::PdfTextExtractionMetrics::default(),
                     post_parser_timings: crate::ImportPostParserTimings::default(),
                     outcome: ParseWorkOutcome::OcrRequired,
                 })
@@ -3969,6 +3968,7 @@ mod tests {
             phone_hash: None,
             index_document,
             publication_kind: PendingSearchablePublicationKind::Replacement,
+            source_occurrence: None,
         }
     }
 
@@ -4727,7 +4727,7 @@ mod tests {
     }
 
     #[test]
-    fn import_root_keeps_utf16be_literal_pdf_text_layer_searchable_without_ocr() {
+    fn import_root_routes_utf16be_literal_without_tounicode_to_ocr() {
         let temp = TestDir::new("import-pipeline-utf16be-literal-pdf");
         let data_dir = temp.path().join("data");
         let root = temp.path().join("resumes");
@@ -4735,7 +4735,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         fs::write(
             root.join("utf16-literal-resume.pdf"),
-            utf16be_literal_text_layer_pdf_bytes(),
+            utf16be_literal_without_tounicode_pdf_bytes(),
         )
         .unwrap();
 
@@ -4755,19 +4755,14 @@ mod tests {
         )
         .unwrap();
 
-        let expected = "\u{4E2D}\u{6587}\u{7B80}\u{5386}";
         assert_eq!(summary.files_discovered, 1);
-        assert_eq!(summary.searchable_documents, 1);
-        assert_eq!(summary.ocr_required_documents, 0);
+        assert_eq!(summary.searchable_documents, 0);
+        assert_eq!(summary.ocr_required_documents, 1);
         assert_eq!(summary.failed_documents, 0);
         let document = store.visible_documents().unwrap().remove(0);
+        assert_eq!(document.status, meta_store::DocumentStatus::OcrRequired);
         let versions = store.resume_versions_for_document(&document.id).unwrap();
-        assert_eq!(versions.len(), 1);
-        assert!(versions[0]
-            .clean_text
-            .as_deref()
-            .unwrap()
-            .contains(expected));
+        assert!(versions.is_empty());
         assert!(!format!("{summary:?}").contains(root.to_str().unwrap()));
     }
 
@@ -4911,7 +4906,7 @@ mod tests {
     }
 
     #[test]
-    fn import_root_rename_publishes_same_version_with_new_metadata_and_artifacts() {
+    fn import_root_rename_removes_old_occurrence_and_publishes_new_occurrence() {
         let temp = TestDir::new("import-pipeline-rename-rerun");
         let data_dir = temp.path().join("data");
         let root = temp.path().join("resumes");
@@ -4984,9 +4979,20 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(summary.deleted_documents, 0);
-        assert_eq!(first_document.id, second_document.id);
-        assert_eq!(first_projection, second_projection);
+        assert_eq!(summary.deleted_documents, 1);
+        assert_ne!(first_document.id, second_document.id);
+        assert_ne!(first_projection, second_projection);
+        assert!(
+            store
+                .document_by_id(&first_document.id)
+                .unwrap()
+                .unwrap()
+                .is_deleted
+        );
+        assert!(store
+            .active_search_projection_for_document(&first_document.id)
+            .unwrap()
+            .is_none());
         assert!(second_document
             .normalized_path
             .ends_with("after/renamed-resume.txt"));
@@ -5679,8 +5685,8 @@ mod tests {
         bytes
     }
 
-    fn utf16be_literal_text_layer_pdf_bytes() -> Vec<u8> {
-        let mut content = b"BT /F1 12 Tf 72 720 Td (SUMMARY) Tj T* (EXPERIENCE) Tj T* (Built systems) Tj T* (SKILLS) Tj T* (".to_vec();
+    fn utf16be_literal_without_tounicode_pdf_bytes() -> Vec<u8> {
+        let mut content = b"BT /F1 12 Tf 72 720 Td (SUMMARY) Tj T* (EXPERIENCE) Tj T* (Built systems) Tj T* (SKILLS) Tj T* (PROFILE) Tj T* (".to_vec();
         content.extend_from_slice(b"\xFE\xFF\x4E\x2D\x65\x87\x7B\x80\x53\x86");
         content.extend_from_slice(b") Tj ET\n");
 
@@ -5719,7 +5725,7 @@ CMapName currentdict /CMap defineresource pop
 end
 end
 ";
-        let content = b"BT /F2 12 Tf 72 720 Td (SUMMARY) Tj T* (EXPERIENCE) Tj T* (Built systems) Tj T* (SKILLS) Tj T* /F1 12 Tf <0001000200030004> Tj ET\n";
+        let content = b"BT /F2 12 Tf 14 TL 72 720 Td (SUMMARY) Tj T* (EXPERIENCE) Tj T* (Built systems) Tj T* (SKILLS) Tj T* (PROFILE) Tj T* /F1 12 Tf <0001000200030004> Tj ET\n";
 
         build_valid_pdf(vec![
             b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),

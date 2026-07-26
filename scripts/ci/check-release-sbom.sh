@@ -132,8 +132,8 @@ fi
 
 require_text "$workflow" "scripts/release/create-sbom.sh"
 require_text "$workflow" "release-sbom.json"
-require_text "$workflow" "release-dry-run/*.json"
-require_text "$workflow" "Packaging, signing, notarization"
+require_text "$workflow" "macos-package-dry-run/release-sbom.json"
+require_text "$workflow" "Signing, notarization, installer lifecycle validation"
 require_text "$verify_script" "./scripts/ci/check-release-sbom.sh"
 require_text "$workflow_guard" "check-release-sbom.sh"
 

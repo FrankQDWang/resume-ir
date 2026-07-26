@@ -246,14 +246,15 @@ fn configured_budget_changes_replace_queued_and_retryable_heads() {
                 processing_contract: &contract,
             })
             .unwrap(),
-        ImportRootTaskHeadOutcome::HeadRetained {
+        ImportRootTaskHeadOutcome::HeadInserted {
             task,
             scope,
             ..
-        } if task.id == finite_retry.id
-            && task.status == ImportTaskStatus::FailedRetryable
+        } if task.id == same_budget.id
+            && task.status == ImportTaskStatus::Queued
             && scope.scan_budget_limit == Some(5)
     ));
+    assert!(store.is_import_task_cancelled(&finite_retry.id).unwrap());
 }
 
 #[test]

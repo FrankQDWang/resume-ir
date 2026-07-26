@@ -1,6 +1,6 @@
 {
   "name": "resume-ir-desktop",
-  "version": "0.1.2",
+  "version": "0.1.8",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,19 +8,26 @@
     "dev:bundle": "node scripts/prepare-sidecar.mjs --debug && npm run dev",
     "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build",
     "build:bundle": "node scripts/prepare-sidecar.mjs && npm run build",
+    "build:macos:ocr": "node scripts/build-macos-ocr-pack.mjs",
+    "build:macos:pdfium": "node scripts/build-macos-pdfium-static-pack.mjs",
+    "verify:macos:pdfium": "node scripts/verify-macos-pdfium-static-pack.mjs",
+    "build:windows:ocr": "node scripts/build-windows-ocr-pack.mjs",
+    "build:windows:pdfium": "node scripts/build-windows-pdfium-static-pack.mjs",
     "acceptance:macos:installed-main": "node scripts/macos-installed-main-acceptance.mjs",
     "bundle:macos:test": "node scripts/macos-test-release.mjs",
     "bundle:macos:worktree": "node scripts/macos-worktree-release.mjs",
+    "install:macos:worktree": "node scripts/macos-worktree-install.mjs",
     "bundle:windows:daemon-sidecar": "node scripts/windows-daemon-sidecar.mjs",
     "bundle:windows:embedding-sidecar": "node scripts/windows-embedding-sidecar.mjs",
     "build:windows:onnxruntime": "node scripts/windows-onnxruntime-builder.mjs",
     "test:product-version": "node --test scripts/product-version.node-test.mjs",
-    "test": "vitest run && node --test scripts/assemble-macos-ocr-pack.node-test.mjs scripts/macos-bundle-evidence.node-test.mjs scripts/macos-dmg.node-test.mjs scripts/macos-icon.node-test.mjs scripts/macos-install-lifecycle.node-test.mjs scripts/macos-installed-main-acceptance/app-guardian.node-test.mjs scripts/macos-installed-main-acceptance/acceptance-evidence.node-test.mjs scripts/macos-installed-main-acceptance/diagnostics-export-acceptance.node-test.mjs scripts/macos-installed-main-acceptance/filesystem-cow.node-test.mjs scripts/macos-installed-main-acceptance/immutable-build-source.node-test.mjs scripts/macos-installed-main-acceptance/ipc-contracts.node-test.mjs scripts/macos-installed-main-acceptance/native-control-cells.node-test.mjs scripts/macos-installed-main-acceptance/native-fault-harness.node-test.mjs scripts/macos-installed-main-acceptance/native-runtime-fault-evidence.node-test.mjs scripts/macos-installed-main-acceptance/native-runtime-fault-plan.node-test.mjs scripts/macos-installed-main-acceptance/orchestrator-options.node-test.mjs scripts/macos-installed-main-acceptance/process-bounded-tool.node-test.mjs scripts/macos-installed-main-acceptance/release-deployment.node-test.mjs scripts/macos-installed-main-acceptance/source-bindings.node-test.mjs scripts/macos-installed-main-acceptance/synthetic-canary.node-test.mjs scripts/macos-lifecycle-journal.node-test.mjs scripts/macos-lifecycle-lock.node-test.mjs scripts/macos-lifecycle-recovery.node-test.mjs scripts/macos-owner-evidence-store.node-test.mjs scripts/macos-reinstall-core.node-test.mjs scripts/macos-source-identity.node-test.mjs scripts/macos-source-provenance.node-test.mjs scripts/macos-system-tools.node-test.mjs scripts/macos-worktree-build-source.node-test.mjs scripts/macos-worktree-release.node-test.mjs scripts/prepare-sidecar.node-test.mjs scripts/windows-daemon-sidecar.node-test.mjs scripts/windows-embedding-pack.node-test.mjs scripts/windows-embedding-sidecar.node-test.mjs scripts/windows-ocr-artifact.node-test.mjs scripts/windows-ocr-builder.node-test.mjs scripts/windows-ocr-pack.node-test.mjs scripts/windows-onnxruntime-builder.node-test.mjs scripts/windows-pdf-renderer.node-test.mjs",
+    "test": "vitest run && node --test scripts/assemble-macos-ocr-pack.node-test.mjs scripts/macos-bundle-evidence.node-test.mjs scripts/macos-dmg.node-test.mjs scripts/macos-icon.node-test.mjs scripts/macos-install-lifecycle.node-test.mjs scripts/macos-installed-main-acceptance/app-guardian.node-test.mjs scripts/macos-installed-main-acceptance/acceptance-evidence.node-test.mjs scripts/macos-installed-main-acceptance/diagnostics-export-acceptance.node-test.mjs scripts/macos-installed-main-acceptance/filesystem-cow.node-test.mjs scripts/macos-installed-main-acceptance/immutable-build-source.node-test.mjs scripts/macos-installed-main-acceptance/ipc-contracts.node-test.mjs scripts/macos-installed-main-acceptance/native-control-cells.node-test.mjs scripts/macos-installed-main-acceptance/native-fault-harness.node-test.mjs scripts/macos-installed-main-acceptance/native-runtime-fault-evidence.node-test.mjs scripts/macos-installed-main-acceptance/native-runtime-fault-plan.node-test.mjs scripts/macos-installed-main-acceptance/orchestrator-options.node-test.mjs scripts/macos-installed-main-acceptance/process-bounded-tool.node-test.mjs scripts/macos-installed-main-acceptance/release-deployment.node-test.mjs scripts/macos-installed-main-acceptance/source-bindings.node-test.mjs scripts/macos-installed-main-acceptance/synthetic-canary.node-test.mjs scripts/macos-lifecycle-journal.node-test.mjs scripts/macos-lifecycle-lock.node-test.mjs scripts/macos-lifecycle-recovery.node-test.mjs scripts/macos-owner-evidence-store.node-test.mjs scripts/macos-reinstall-core.node-test.mjs scripts/macos-source-identity.node-test.mjs scripts/macos-source-provenance.node-test.mjs scripts/macos-system-tools.node-test.mjs scripts/macos-worktree-build-source.node-test.mjs scripts/macos-worktree-install.node-test.mjs scripts/macos-worktree-release.node-test.mjs scripts/prepare-sidecar.node-test.mjs scripts/windows-daemon-sidecar.node-test.mjs scripts/windows-embedding-pack.node-test.mjs scripts/windows-embedding-sidecar.node-test.mjs scripts/windows-ocr-artifact.node-test.mjs scripts/windows-ocr-builder.node-test.mjs scripts/windows-ocr-pack.node-test.mjs scripts/windows-onnxruntime-builder.node-test.mjs scripts/windows-pdf-renderer.node-test.mjs",
     "tauri": "node scripts/run-tauri.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "2.11.1",
     "lucide-react": "1.16.0",
+    "pdfjs-dist": "5.4.624",
     "react": "19.2.7",
     "react-dom": "19.2.7"
   },

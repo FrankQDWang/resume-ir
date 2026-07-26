@@ -7,10 +7,9 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use import_pipeline::{current_import_processing_contract, ImportOptions};
 use meta_store::{
     migration_test_support::{
-        seed_v27_repairing_fixture, seed_v28_blocked_processing_contract_fixture,
+        seed_v27_repairing_fixture, seed_v28_legacy_artifact_repair_fixture, V28ArtifactRepairHead,
     },
     DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, MetaStoreErrorClass, ReadMetaStore,
 };
@@ -58,13 +57,7 @@ fn standalone_daemon_rejects_v27_without_migrating_or_rewriting_existing_files()
 fn standalone_daemon_rejects_v28_without_migrating_or_rewriting_existing_files() {
     let workspace = tempdir().unwrap();
     let data_dir = workspace.path().join("data");
-    let source_root = workspace.path().join("resume-ir-synthetic-v28-hard-cut");
-    fs::create_dir_all(&source_root).unwrap();
-    fs::write(source_root.join("synthetic.txt"), "synthetic v28 fixture").unwrap();
-    let canonical_root = fs::canonicalize(&source_root).unwrap();
-    let contract = current_import_processing_contract(&ImportOptions::default()).unwrap();
-    seed_v28_blocked_processing_contract_fixture(&data_dir, &canonical_root, 41, &contract)
-        .unwrap();
+    seed_v28_legacy_artifact_repair_fixture(&data_dir, V28ArtifactRepairHead::Ready).unwrap();
     assert_unsupported_store(&data_dir);
     let before = snapshot_existing_files(&data_dir);
 
@@ -88,10 +81,13 @@ fn standalone_daemon_rejects_unknown_manifest_authority_without_rewriting_existi
     drop(owner);
     let manifest_path = data_dir.join("metadata-active.v1");
     let manifest = fs::read_to_string(&manifest_path).unwrap();
-    assert!(manifest.contains("\nschema=29\n"));
+    assert!(manifest.starts_with("resume-ir.metadata-active.v2\n"));
+    assert!(manifest.contains("\nschema=33\n"));
     fs::write(
         &manifest_path,
-        manifest.replace("\nschema=29\n", "\nschema=30\n"),
+        manifest
+            .replace("file=metadata-v33-", "file=metadata-v34-")
+            .replace("\nschema=33\n", "\nschema=34\n"),
     )
     .unwrap();
     assert_unsupported_store(&data_dir);
@@ -109,14 +105,7 @@ fn standalone_daemon_rejects_unknown_manifest_authority_without_rewriting_existi
 fn repeated_v28_control_plane_generations_remain_blocked_and_never_consume_old_bytes() {
     let workspace = tempdir().unwrap();
     let data_dir = workspace.path().join("data");
-    let source_root = workspace
-        .path()
-        .join("resume-ir-synthetic-v28-restart-hard-cut");
-    fs::create_dir_all(&source_root).unwrap();
-    let canonical_root = fs::canonicalize(&source_root).unwrap();
-    let contract = current_import_processing_contract(&ImportOptions::default()).unwrap();
-    seed_v28_blocked_processing_contract_fixture(&data_dir, &canonical_root, 41, &contract)
-        .unwrap();
+    seed_v28_legacy_artifact_repair_fixture(&data_dir, V28ArtifactRepairHead::Blocked).unwrap();
     let before = snapshot_existing_files(&data_dir);
     let mut prior_instance_id = None;
 
@@ -223,7 +212,7 @@ fn wait_for_generation(
             .ok()
             .and_then(|body| serde_json::from_slice::<serde_json::Value>(&body).ok());
         if let (Some(endpoints), Some(auth)) = (endpoints, auth) {
-            if endpoints["schema_version"] == "resume-ir.daemon-ipc.v3"
+            if endpoints["schema_version"] == "resume-ir.daemon-ipc.v5"
                 && auth["schema_version"] == "resume-ir.daemon-auth.v3"
                 && endpoints["launch_id"] == auth["launch_id"]
                 && endpoints["instance_id"] == auth["instance_id"]
@@ -238,11 +227,11 @@ fn wait_for_generation(
             }
         }
         if let Some(status) = child.try_wait().unwrap() {
-            panic!("daemon exited before v3 control publication: {status}");
+            panic!("daemon exited before v5 control publication: {status}");
         }
         assert!(
             Instant::now() < deadline,
-            "v3 control publication timed out"
+            "v5 control publication timed out"
         );
         thread::sleep(Duration::from_millis(20));
     }
@@ -258,7 +247,7 @@ fn wait_for_blocked_status(
         assert!(status.starts_with("HTTP/1.1 200"), "{status}");
         let payload: serde_json::Value =
             serde_json::from_str(status.split_once("\r\n\r\n").unwrap().1).unwrap();
-        assert_eq!(payload["schema_version"], "daemon.status.v3");
+        assert_eq!(payload["schema_version"], "daemon.status.v5");
         assert_eq!(payload["process_state"], "ready");
         if payload["core"]["state"] == "blocked" {
             return payload;
@@ -294,7 +283,18 @@ fn assert_control_file_contract(
             "search",
             "search_batch",
             "details",
+            "hydrate",
             "delete",
+            "source_roots",
+            "source_root_register",
+            "source_root_legacy_migration",
+            "source_root_scan",
+            "source_root_control",
+            "source_root_delete",
+            "preview_create",
+            "preview_range",
+            "preview_close",
+            "source_reveal",
         ])
     );
     assert_eq!(

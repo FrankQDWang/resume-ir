@@ -620,7 +620,7 @@ async function consumeVerifiedMacosDmg({
       appBundle,
     ]);
     const receipt = Object.freeze({
-      schema_version: "resume-ir.macos-dmg-composition.v3",
+      schema_version: "resume-ir.macos-dmg-composition.v4",
       target_triple: targetTriple,
       source,
       dmg_count: 1,
@@ -641,6 +641,8 @@ async function consumeVerifiedMacosDmg({
       classifier_resource_bytes: appReceipt.classifier_resource_bytes,
       ocr_resource_file_count: appReceipt.ocr_resource_file_count,
       ocr_resource_bytes: appReceipt.ocr_resource_bytes,
+      pdfium_resource_file_count: appReceipt.pdfium_resource_file_count,
+      pdfium_resource_bytes: appReceipt.pdfium_resource_bytes,
       digest_match: appReceipt.digest_match,
       executable: appReceipt.executable,
       architecture: appReceipt.architecture,

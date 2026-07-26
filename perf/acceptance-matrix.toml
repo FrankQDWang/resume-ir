@@ -182,6 +182,15 @@ contract = "resume-ir.forward-migration-feature-train.v1"
 schema_migration = "continuous_encrypted_cow_from_v29"
 train_base_schema = 29
 train_final_schema = 33
+current_product_version = "0.1.8"
+current_metadata_schema = 33
+current_manifest_contract = "resume-ir.metadata-active.v2"
+current_migration_receipt_contract = "resume-ir.metadata-forward-migration-receipt.v1"
+current_initialization_receipt_contract = "resume-ir.metadata-initialization-receipt.v1"
+current_discovery_contract = "resume-ir.daemon-ipc.v5"
+current_status_contract = "daemon.status.v5"
+current_diagnostics_contract = "resume-ir.diagnostics.v9"
+current_aggregate_ipc_contract = "resume-ir.ipc.v6"
 pre_v29_runtime_migration_allowed = false
 future_schema_read_allowed = false
 migration_dual_reader_allowed = false
@@ -192,7 +201,9 @@ migration_predecessor_retention_count = 1
 product_version_source = "apps/desktop/package.json"
 feature_versions = ["0.1.3", "0.1.4", "0.1.5", "0.1.6", "0.1.7", "0.1.8"]
 feature_schemas = [30, 31, 32, 33, 33, 33]
-per_feature_installed_acceptance_required = true
+per_feature_installed_acceptance_required = false
+business_implementation_precedes_validation = true
+collect_all_validation_failures_before_repair = true
 final_full_matrix_after_version = "0.1.8"
 final_soak_minutes = 120
 fulltext_snapshot_schema = "fulltext.snapshot.v3"
@@ -270,7 +281,7 @@ artifact_repair_error_kinds = [
   "metadata_failure",
   "interrupted",
 ]
-macos_bundle_composition_schema = "resume-ir.macos-bundle-composition.v2"
+macos_bundle_composition_schema = "resume-ir.macos-bundle-composition.v4"
 macos_dmg_composition_schema = "resume-ir.macos-dmg-composition.v2"
 macos_install_receipt_schema = "resume-ir.macos-install-receipt.v2"
 macos_source_commit_provenance_required = true
@@ -321,14 +332,14 @@ macos_native_recovery_required = true
 windows_native_recovery_required = true
 windows_compile_only_cannot_close_native_gate = true
 
-[daemon_bootstrap_v1]
-contract = "resume-ir.daemon-bootstrap.v1"
-aggregate_ipc_contract = "resume-ir.ipc.v4"
-discovery_contract = "resume-ir.daemon-ipc.v3"
+[daemon_bootstrap_v2]
+contract = "resume-ir.daemon-bootstrap.v2"
+aggregate_ipc_contract = "resume-ir.ipc.v6"
+discovery_contract = "resume-ir.daemon-ipc.v5"
 auth_contract = "resume-ir.daemon-auth.v3"
-status_contract = "daemon.status.v3"
-diagnostics_contract = "resume-ir.diagnostics.v4"
-error_contract = "resume-ir.error.v2"
+status_contract = "daemon.status.v5"
+diagnostics_contract = "resume-ir.diagnostics.v9"
+error_contract = "resume-ir.error.v3"
 launch_id_bytes = 32
 pre_spawn_discovery_probe_allowed = false
 foreign_launch_adoption_allowed = false
@@ -339,6 +350,8 @@ control_plane_publish_precedes_runtime_validation = true
 status_reads_metadata_on_heartbeat = false
 initializing_business_route_status = 503
 initializing_business_route_code = "SERVICE_INITIALIZING"
+migration_core_state = "migrating"
+migration_core_reason = "metadata_migrating"
 automatic_business_request_replay_allowed = false
 
 [desktop_supervisor_v2]
@@ -363,13 +376,14 @@ retry_outside_allowed_state = "typed_retry_not_allowed"
 
 [runtime_capability_degradation_v1]
 contract = "resume-ir.runtime-capabilities.v1"
-optional_runtimes = ["embedding", "ocr", "classifier"]
+optional_runtimes = ["embedding", "ocr", "classifier", "pdfium"]
 operation_capabilities = [
   "keyword_search",
   "detail",
   "semantic_search",
   "hybrid_search",
   "text_import",
+  "pdf_import",
   "ocr_import",
   "index_publication",
 ]

@@ -5,8 +5,10 @@ import {
   exactKeys,
   fail,
 } from "./core.mjs";
-import { SYNTHETIC_CANARY_TOKEN } from "./acceptance-evidence.mjs";
-import { readActiveStoreManifest } from "./filesystem-cow.mjs";
+import {
+  SYNTHETIC_CANARY_TOKEN,
+  validateRetainedV29Predecessor,
+} from "./acceptance-evidence.mjs";
 import {
   initializingStatus,
   readyStatus,
@@ -55,13 +57,9 @@ function requireFaultHarness(harness) {
 }
 
 async function v29AuthorityPreserved(session) {
-  const preserved = await readActiveStoreManifest(session.dataDir);
   const authority = session.workspace?.v29Authority;
-  return (
-    preserved.schema === 29 &&
-    authority?.schema === 29 &&
-    preserved.fileName === authority.fileName &&
-    preserved.digest === authority.digest
+  return validateRetainedV29Predecessor(session.dataDir, authority).catch(
+    () => false,
   );
 }
 
@@ -73,6 +71,7 @@ function capabilityEvidence(status) {
       "semantic_search",
       "hybrid_search",
       "text_import",
+      "pdf_import",
       "ocr_import",
       "index_publication",
     ].map((name) => [name, { ...status.capabilities[name] }]),

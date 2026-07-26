@@ -17,9 +17,6 @@ mod enums {
     snake_enum!(pub(super) enum ScanErrorClass { PermissionDenied, SourceUnavailable, LockedOrUnreadable, Io });
     snake_enum!(pub(super) enum ScanErrorOperation { NormalizePath, ReadDirectory, ReadMetadata, Fingerprint });
     snake_enum!(pub(super) enum DetailFieldType { Name, Email, Phone, Wechat, School, SchoolTier, Degree, Major, Company, Title, Education, Skills, Skill, Certificate, Date, DateRange, YearsExperience, Location, Other });
-    snake_enum!(pub(super) enum AcceptedStatus { Accepted });
-    snake_enum!(pub(super) enum ImportProfile { Explicit });
-    snake_enum!(#[derive(PartialEq, Eq)] pub(super) enum RootControlStatus { Active, Paused });
     snake_enum!(pub(super) enum CancelStatus { Cancelled, CancelRequested, Complete });
     snake_enum!(#[derive(PartialEq, Eq)] pub(super) enum SearchStatus { Ok, Cancelled });
     snake_enum!(pub(super) enum QueryMode { Keyword, FieldFilter, Hybrid, Semantic });
@@ -31,14 +28,15 @@ mod detail;
 mod diagnostics;
 mod error;
 mod health_contract;
+mod preview;
 mod search;
+mod source_roots;
 mod status;
 
 use serde::{Deserialize, Serialize};
 
-use self::detail::{CancelBody, DetailBody, HydrateBody, ImportBody};
+use self::detail::{CancelBody, DetailBody, HydrateBody};
 pub(crate) use self::diagnostics::DiagnosticsBody;
-use self::enums::RootControlStatus;
 use self::search::SearchBody;
 use self::status::StatusBody;
 use crate::daemon_client::DesktopError;
@@ -89,22 +87,14 @@ impl DesktopResponse {
 enum DesktopBody {
     Status(Box<StatusBody>),
     Diagnostics(Box<DiagnosticsBody>),
-    Import(ImportBody),
-    RootControl(RootControlBody),
+    SourceRoots(serde_json::Value),
+    RootDeletion(serde_json::Value),
     Search(SearchBody),
     Detail(DetailBody),
     Hydrate(HydrateBody),
+    Preview(serde_json::Value),
     Cancel(CancelBody),
     Error(error::ErrorBody),
-}
-
-#[derive(Deserialize, Serialize)]
-struct RootControlBody {
-    schema_version: String,
-    status: RootControlStatus,
-    changed: bool,
-    task_cancel_requested: bool,
-    catch_up_queued: bool,
 }
 
 pub(crate) fn project_response(
@@ -131,24 +121,23 @@ fn project_success(body: &[u8], expected: &ExpectedResponse) -> Result<DesktopBo
         Operation::Diagnostics => diagnostics::project_diagnostics(body)
             .map(Box::new)
             .map(DesktopBody::Diagnostics),
-        Operation::Import => detail::project_import(body).map(DesktopBody::Import),
-        Operation::RootControl => project_root_control(body).map(DesktopBody::RootControl),
+        Operation::RootControl => Err(protocol_error()),
+        Operation::SourceRoots => {
+            source_roots::project_source_roots(body).map(DesktopBody::SourceRoots)
+        }
+        Operation::RootDeletion => {
+            source_roots::project_root_deletion(body).map(DesktopBody::RootDeletion)
+        }
         Operation::Search => search::project_search(body, expected).map(DesktopBody::Search),
         Operation::Detail => detail::project_detail(body, expected).map(DesktopBody::Detail),
         Operation::Hydrate => {
             detail::project_hydrate(body, body.len(), expected).map(DesktopBody::Hydrate)
         }
+        Operation::PreviewCreate | Operation::PreviewRange | Operation::PreviewClose => {
+            preview::project_preview(body, expected).map(DesktopBody::Preview)
+        }
         Operation::Cancel => detail::project_cancel(body, expected).map(DesktopBody::Cancel),
     }
-}
-
-fn project_root_control(body: &[u8]) -> Result<RootControlBody, DesktopError> {
-    let value: RootControlBody = decode(body)?;
-    ensure_schema(&value.schema_version, "daemon.import_root_control.v1")?;
-    ensure(!value.task_cancel_requested || value.status == RootControlStatus::Paused)?;
-    ensure(!value.catch_up_queued || value.status == RootControlStatus::Active)?;
-    ensure(!(value.task_cancel_requested && value.catch_up_queued))?;
-    Ok(value)
 }
 
 fn decode<T: for<'de> Deserialize<'de>>(body: &[u8]) -> Result<T, DesktopError> {
@@ -173,22 +162,4 @@ fn bounded_chars(value: &str, max_chars: usize, max_bytes: usize) -> bool {
 
 fn protocol_error() -> DesktopError {
     DesktopError::new("daemon_protocol", "daemon 响应合同无效")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn root_control_projection_rejects_state_confusion_and_drops_extra_fields() {
-        let body = br#"{"schema_version":"daemon.import_root_control.v1","status":"paused","changed":true,"task_cancel_requested":true,"catch_up_queued":false,"root_path":"synthetic-private-root","private_debug":true}"#;
-        let projected = project_root_control(body).unwrap();
-        let exposed = serde_json::to_string(&projected).unwrap();
-        assert!(!exposed.contains("root_path"));
-        assert!(!exposed.contains("synthetic-private-root"));
-        assert!(!exposed.contains("private_debug"));
-
-        let confused = br#"{"schema_version":"daemon.import_root_control.v1","status":"active","changed":true,"task_cancel_requested":true,"catch_up_queued":false}"#;
-        assert!(project_root_control(confused).is_err());
-    }
 }

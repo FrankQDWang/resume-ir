@@ -4,7 +4,7 @@
   "target_triple": "aarch64-apple-darwin",
   "engine": "tesseract",
   "engine_version": "5.5.2",
-  "renderer": "macos-pdfkit-coregraphics",
+  "renderer": "macos-pdfium-static",
   "languages": [
     "eng",
     "chi_sim"

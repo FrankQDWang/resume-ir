@@ -83,9 +83,15 @@ pub(crate) fn lane_for_operation(operation: Operation) -> BridgeLane {
     match operation {
         Operation::Status => BridgeLane::Status,
         Operation::Diagnostics => BridgeLane::Diagnostics,
-        Operation::Import => BridgeLane::Import,
         Operation::RootControl => BridgeLane::Control,
-        Operation::Search | Operation::Detail | Operation::Hydrate => BridgeLane::Interactive,
+        Operation::SourceRoots => BridgeLane::Import,
+        Operation::RootDeletion => BridgeLane::Import,
+        Operation::Search
+        | Operation::Detail
+        | Operation::Hydrate
+        | Operation::PreviewCreate
+        | Operation::PreviewRange
+        | Operation::PreviewClose => BridgeLane::Interactive,
         Operation::Cancel => BridgeLane::Cancel,
     }
 }
@@ -154,7 +160,10 @@ mod tests {
         for operation in [Operation::Search, Operation::Detail, Operation::Hydrate] {
             assert_eq!(lane_for_operation(operation), BridgeLane::Interactive);
         }
-        assert_eq!(lane_for_operation(Operation::Import), BridgeLane::Import);
+        assert_eq!(
+            lane_for_operation(Operation::SourceRoots),
+            BridgeLane::Import
+        );
         assert_eq!(
             lane_for_operation(Operation::RootControl),
             BridgeLane::Control

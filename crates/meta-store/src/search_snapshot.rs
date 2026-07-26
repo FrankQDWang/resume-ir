@@ -21,7 +21,8 @@ pub use filter::{
 pub use head::SearchMetadataHead;
 pub use selection::{
     SearchSelectionDetails, SearchSelectionDetailsResolution, SearchSelectionLimit,
-    SearchSelectionVersion, MAX_SEARCH_SELECTION_MENTIONS,
+    SearchSelectionVersion, SearchSourceFileReference, SearchSourceFileResolution,
+    MAX_SEARCH_SELECTION_MENTIONS,
 };
 pub(crate) use selection::{MAX_MENTION_EXTRACTOR_BYTES, MAX_MENTION_VALUE_BYTES};
 pub use text_page::{
@@ -64,6 +65,15 @@ impl SearchMetadataSnapshot<'_> {
 }
 
 impl<Access: MetadataStoreAccess> MetadataStore<Access> {
+    pub fn search_source_file(
+        &self,
+        selection: &crate::SearchSelection,
+    ) -> std::result::Result<SearchSourceFileResolution, SearchMetadataReadError> {
+        flatten_read_result(
+            self.with_search_metadata_snapshot(|snapshot| snapshot.source_file(selection)),
+        )
+    }
+
     /// Resolves exact-version detail metadata and a bounded text page in one
     /// SQLite snapshot. This is the application boundary for detail requests;
     /// callers cannot accidentally split the two reads across publications.

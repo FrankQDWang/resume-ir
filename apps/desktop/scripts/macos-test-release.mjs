@@ -856,7 +856,7 @@ export async function buildMacosInternalTestRelease({
       expectedDesktop: plan.desktopExecutable,
     });
     if (
-      receipt?.schema_version !== "resume-ir.macos-dmg-composition.v3" ||
+      receipt?.schema_version !== "resume-ir.macos-dmg-composition.v4" ||
       JSON.stringify(receipt?.source) !== JSON.stringify(source) ||
       receipt?.distribution_signature !== "accepted" ||
       receipt?.distribution_profile !== "internal_test" ||

@@ -2,9 +2,9 @@
   "schema_version": "resume-ir.ocr-third-party-components.v1",
   "target_triple": "aarch64-apple-darwin",
   "renderer": {
-    "id": "macos-pdfkit-coregraphics",
-    "distribution": "operating_system_frameworks",
-    "bundled": false
+    "id": "macos-pdfium-static",
+    "distribution": "separate_signed_runtime_sidecar",
+    "bundled": true
   },
   "components": [
     {

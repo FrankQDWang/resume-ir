@@ -149,6 +149,7 @@ pub(crate) struct OcrWorkerSummary {
     pub(crate) stale_recovered: usize,
     pub(crate) paused: bool,
     pub(crate) runtime_unavailable: Option<crate::ipc::OptionalRuntimeReason>,
+    pub(crate) pdfium_unavailable: Option<crate::ipc::OptionalRuntimeReason>,
     pub(crate) processed: usize,
     pub(crate) failed: usize,
     pub(crate) cache_writes: usize,
@@ -160,6 +161,7 @@ impl OcrWorkerSummary {
         self.stale_recovered > 0
             || self.paused
             || self.runtime_unavailable.is_some()
+            || self.pdfium_unavailable.is_some()
             || self.processed > 0
             || self.failed > 0
             || self.cache_writes > 0
@@ -171,6 +173,9 @@ impl OcrWorkerSummary {
         self.paused = self.paused || other.paused;
         if other.runtime_unavailable.is_some() {
             self.runtime_unavailable = other.runtime_unavailable;
+        }
+        if other.pdfium_unavailable.is_some() {
+            self.pdfium_unavailable = other.pdfium_unavailable;
         }
         self.processed += other.processed;
         self.failed += other.failed;
@@ -187,6 +192,9 @@ pub(crate) fn print_ocr_worker_summary(summary: &OcrWorkerSummary) -> Result<()>
     println!("ocr worker paused: {}", summary.paused);
     if let Some(reason) = summary.runtime_unavailable {
         println!("ocr worker runtime unavailable: {}", reason.label());
+    }
+    if let Some(reason) = summary.pdfium_unavailable {
+        println!("pdfium runtime unavailable: {}", reason.label());
     }
     println!("ocr worker processed: {}", summary.processed);
     println!("ocr worker cache writes: {}", summary.cache_writes);

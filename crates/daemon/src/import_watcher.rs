@@ -1,24 +1,53 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
-use meta_store::{ImportProcessingContract, ImportScanScope, OwnedMetaStore, UnixTimestamp};
+use meta_store::{
+    ImportProcessingContract, OwnedMetaStore, ScanTrigger, SourceRoot, SourceRootState,
+    SourceWatcherState, UnixTimestamp,
+};
 use notify::{
     event::EventKind as NotifyEventKind, Config as NotifyConfig, Event as NotifyEvent,
     RecommendedWatcher, RecursiveMode, Watcher,
 };
 
 use crate::daemon_error::{DaemonError, Result};
-use crate::{import_command, rescan_schedule};
+
+const WATCH_EVENT_DEBOUNCE: Duration = Duration::from_millis(750);
+const WATCH_EVENT_MAX_DELAY: Duration = Duration::from_secs(2);
+const WATCH_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Copy)]
+struct PendingRoot {
+    quiet_due: Instant,
+    max_due: Instant,
+}
+
+impl PendingRoot {
+    fn new(observed_at: Instant) -> Self {
+        Self {
+            quiet_due: observed_at + WATCH_EVENT_DEBOUNCE,
+            max_due: observed_at + WATCH_EVENT_MAX_DELAY,
+        }
+    }
+
+    fn observe_again(&mut self, observed_at: Instant) {
+        self.quiet_due = observed_at + WATCH_EVENT_DEBOUNCE;
+    }
+
+    fn is_due(self, now: Instant) -> bool {
+        self.quiet_due <= now || self.max_due <= now
+    }
+}
 
 pub(crate) struct ImportWatcher {
     watcher: RecommendedWatcher,
     receiver: Receiver<notify::Result<NotifyEvent>>,
     watched_roots: BTreeSet<String>,
     watched_root_mtimes: BTreeMap<String, Option<u128>>,
-    pending_roots: BTreeSet<String>,
+    watch_retry_due: BTreeMap<String, Instant>,
+    pending_roots: BTreeMap<String, PendingRoot>,
 }
 
 impl ImportWatcher {
@@ -39,7 +68,8 @@ impl ImportWatcher {
             receiver,
             watched_roots: BTreeSet::new(),
             watched_root_mtimes: BTreeMap::new(),
-            pending_roots: BTreeSet::new(),
+            watch_retry_due: BTreeMap::new(),
+            pending_roots: BTreeMap::new(),
         })
     }
 
@@ -49,84 +79,140 @@ impl ImportWatcher {
         processing_contract: &ImportProcessingContract,
         now: UnixTimestamp,
     ) -> Result<ImportWatcherSummary> {
-        let scopes = store
-            .completed_import_scan_scopes_due_for_requeue(now)
-            .map_err(DaemonError::store)?;
-        let scopes_by_root = scopes
-            .into_iter()
-            .map(|scope| (scope.canonical_root_path.clone(), scope))
-            .collect::<BTreeMap<_, _>>();
-        let roots = scopes_by_root.keys().cloned().collect::<BTreeSet<_>>();
-        let mut summary = self.sync_watched_roots(&roots);
-        self.drain_events(&scopes_by_root, &mut summary);
-        self.poll_changed_roots(&roots, &mut summary);
-        let pending_roots = std::mem::take(&mut self.pending_roots);
+        let (roots, mut summary) = reconcile_root_availability(store, processing_contract, now)?;
+        let mut roots_by_path = BTreeMap::new();
+        for root in roots {
+            if root.state != SourceRootState::Active
+                || root.watcher_state == SourceWatcherState::Paused
+                || store
+                    .latest_scan_snapshot(&root.id)
+                    .map_err(DaemonError::store)?
+                    .is_none()
+            {
+                continue;
+            }
+            roots_by_path.insert(root.canonical_path.clone(), root);
+        }
+        summary.extend(self.sync_watched_roots(store, &roots_by_path, now)?);
+        self.drain_events(&roots_by_path, &mut summary);
+        self.poll_changed_roots(&roots_by_path, &mut summary);
+        let debounce_cutoff = Instant::now();
+        let pending_roots = self
+            .pending_roots
+            .iter()
+            .filter_map(|(root, pending)| pending.is_due(debounce_cutoff).then_some(root.clone()))
+            .collect::<Vec<_>>();
 
-        for (index, root) in pending_roots.into_iter().enumerate() {
-            let Some(scope) = scopes_by_root.get(&root).cloned() else {
+        for root_path in pending_roots {
+            self.pending_roots.remove(&root_path);
+            let Some(root) = roots_by_path.get(&root_path) else {
                 continue;
             };
-            if rescan_schedule::enqueue_import_from_completed_scope(
+            match crate::source_scan_coordinator::enqueue(
                 store,
                 processing_contract,
-                scope,
-                import_command::new_task_id(index)
-                    .map_err(|_| DaemonError::user("system clock is before unix epoch"))?,
+                root,
+                ScanTrigger::Watcher,
                 now,
-            )? {
-                summary.requeued += 1;
+            ) {
+                Ok(_) => summary.requeued += 1,
+                Err(_) => summary.event_errors += 1,
             }
         }
 
         Ok(summary)
     }
 
-    fn sync_watched_roots(&mut self, roots: &BTreeSet<String>) -> ImportWatcherSummary {
+    fn sync_watched_roots(
+        &mut self,
+        store: &OwnedMetaStore,
+        roots: &BTreeMap<String, SourceRoot>,
+        now: UnixTimestamp,
+    ) -> Result<ImportWatcherSummary> {
+        let requested_roots = roots.keys().cloned().collect::<BTreeSet<_>>();
         let previous_roots = self.watched_roots.clone();
         let mut next_roots = BTreeSet::new();
-        let mut event_errors = 0_usize;
+        let mut summary = ImportWatcherSummary::default();
+        self.watch_retry_due
+            .retain(|root, _| requested_roots.contains(root));
 
-        for root in previous_roots.difference(roots) {
+        for root in previous_roots.difference(&requested_roots) {
             if self.watcher.unwatch(Path::new(root)).is_err() {
-                event_errors += 1;
+                summary.event_errors += 1;
             }
             self.watched_root_mtimes.remove(root);
+            self.watch_retry_due.remove(root);
+            self.pending_roots.remove(root);
         }
 
-        for root in roots {
-            if previous_roots.contains(root) {
-                next_roots.insert(root.clone());
+        for (root_path, root) in roots {
+            if previous_roots.contains(root_path) {
+                next_roots.insert(root_path.clone());
+                self.watch_retry_due.remove(root_path);
+                if root.watcher_state != SourceWatcherState::Active {
+                    store
+                        .set_source_root_state(
+                            &root.id,
+                            SourceRootState::Active,
+                            SourceWatcherState::Active,
+                            now,
+                        )
+                        .map_err(DaemonError::store)?;
+                }
                 continue;
             }
-            if !Path::new(root).exists() {
-                event_errors += 1;
+            if self
+                .watch_retry_due
+                .get(root_path)
+                .is_some_and(|due| *due > Instant::now())
+            {
                 continue;
             }
             if self
                 .watcher
-                .watch(Path::new(root), RecursiveMode::Recursive)
+                .watch(Path::new(root_path), RecursiveMode::Recursive)
                 .is_ok()
             {
                 self.watched_root_mtimes
-                    .insert(root.clone(), import_watcher_root_mtime(root));
-                next_roots.insert(root.clone());
+                    .insert(root_path.clone(), import_watcher_root_mtime(root_path));
+                self.watch_retry_due.remove(root_path);
+                next_roots.insert(root_path.clone());
+                if root.watcher_state != SourceWatcherState::Active {
+                    store
+                        .set_source_root_state(
+                            &root.id,
+                            SourceRootState::Active,
+                            SourceWatcherState::Active,
+                            now,
+                        )
+                        .map_err(DaemonError::store)?;
+                }
             } else {
-                event_errors += 1;
+                summary.event_errors += 1;
+                self.watch_retry_due
+                    .insert(root_path.clone(), Instant::now() + WATCH_RETRY_INTERVAL);
+                if root.watcher_state != SourceWatcherState::Unavailable {
+                    store
+                        .set_source_root_state(
+                            &root.id,
+                            SourceRootState::Active,
+                            SourceWatcherState::Unavailable,
+                            now,
+                        )
+                        .map_err(DaemonError::store)?;
+                }
             }
         }
 
         self.watched_roots = next_roots;
-        ImportWatcherSummary {
-            active_roots: (self.watched_roots != previous_roots)
-                .then_some(self.watched_roots.len()),
-            event_errors,
-            ..ImportWatcherSummary::default()
-        }
+        summary.active_roots =
+            (self.watched_roots != previous_roots).then_some(self.watched_roots.len());
+        Ok(summary)
     }
 
     fn drain_events(
         &mut self,
-        scopes_by_root: &BTreeMap<String, ImportScanScope>,
+        roots_by_path: &BTreeMap<String, SourceRoot>,
         summary: &mut ImportWatcherSummary,
     ) {
         loop {
@@ -137,14 +223,12 @@ impl ImportWatcher {
                     }
                     summary.events += 1;
                     for path in event.paths {
-                        if let Some(root) = import_watcher_root_for_path(scopes_by_root, &path) {
-                            self.pending_roots.insert(root.to_string());
+                        if let Some(root) = import_watcher_root_for_path(roots_by_path, &path) {
+                            self.schedule_pending_root(root.to_string(), Instant::now());
                         }
                     }
                 }
-                Ok(Err(_)) => {
-                    summary.event_errors += 1;
-                }
+                Ok(Err(_)) => summary.event_errors += 1,
                 Err(TryRecvError::Empty) => return,
                 Err(TryRecvError::Disconnected) => {
                     summary.event_errors += 1;
@@ -154,8 +238,12 @@ impl ImportWatcher {
         }
     }
 
-    fn poll_changed_roots(&mut self, roots: &BTreeSet<String>, summary: &mut ImportWatcherSummary) {
-        for root in roots {
+    fn poll_changed_roots(
+        &mut self,
+        roots: &BTreeMap<String, SourceRoot>,
+        summary: &mut ImportWatcherSummary,
+    ) {
+        for root in roots.keys() {
             if !self.watched_roots.contains(root) {
                 continue;
             }
@@ -164,10 +252,100 @@ impl ImportWatcher {
             self.watched_root_mtimes.insert(root.clone(), current_mtime);
             if previous_mtime.is_some() && current_mtime != previous_mtime {
                 summary.events += 1;
-                self.pending_roots.insert(root.clone());
+                self.schedule_pending_root(root.clone(), Instant::now());
             }
         }
     }
+
+    fn schedule_pending_root(&mut self, root: String, observed_at: Instant) {
+        self.pending_roots
+            .entry(root)
+            .and_modify(|pending| pending.observe_again(observed_at))
+            .or_insert_with(|| PendingRoot::new(observed_at));
+    }
+}
+
+pub(crate) fn mark_watchers_unavailable(
+    store: &OwnedMetaStore,
+    now: UnixTimestamp,
+) -> Result<usize> {
+    let mut changed = 0;
+    for root in store.source_roots().map_err(DaemonError::store)? {
+        if root.watcher_state != SourceWatcherState::Active {
+            continue;
+        }
+        store
+            .set_source_root_state(&root.id, root.state, SourceWatcherState::Unavailable, now)
+            .map_err(DaemonError::store)?;
+        changed += 1;
+    }
+    Ok(changed)
+}
+
+fn reconcile_root_availability(
+    store: &OwnedMetaStore,
+    processing_contract: &ImportProcessingContract,
+    now: UnixTimestamp,
+) -> Result<(Vec<SourceRoot>, ImportWatcherSummary)> {
+    let mut roots = Vec::new();
+    let mut summary = ImportWatcherSummary::default();
+    for root in store.source_roots().map_err(DaemonError::store)? {
+        if store
+            .source_root_deletion_in_progress(&root.id)
+            .map_err(DaemonError::store)?
+        {
+            continue;
+        }
+        let available = crate::source_root_path::is_available(&root.canonical_path);
+        match (root.state, available) {
+            (state, false) if state != SourceRootState::Offline => {
+                let watcher_state = if root.watcher_state == SourceWatcherState::Paused {
+                    SourceWatcherState::Paused
+                } else {
+                    SourceWatcherState::Unavailable
+                };
+                roots.push(
+                    store
+                        .set_source_root_state(
+                            &root.id,
+                            SourceRootState::Offline,
+                            watcher_state,
+                            now,
+                        )
+                        .map_err(DaemonError::store)?,
+                );
+            }
+            (SourceRootState::Offline, true) => {
+                let watcher_state = if root.watcher_state == SourceWatcherState::Paused {
+                    SourceWatcherState::Paused
+                } else {
+                    SourceWatcherState::Active
+                };
+                let recovered = store
+                    .set_source_root_state(&root.id, SourceRootState::Active, watcher_state, now)
+                    .map_err(DaemonError::store)?;
+                let has_scan_history = store
+                    .latest_scan_snapshot(&recovered.id)
+                    .map_err(DaemonError::store)?
+                    .is_some();
+                if watcher_state == SourceWatcherState::Active && has_scan_history {
+                    match crate::source_scan_coordinator::enqueue(
+                        store,
+                        processing_contract,
+                        &recovered,
+                        ScanTrigger::Recovery,
+                        now,
+                    ) {
+                        Ok(_) => summary.requeued += 1,
+                        Err(_) => summary.event_errors += 1,
+                    }
+                }
+                roots.push(recovered);
+            }
+            _ => roots.push(root),
+        }
+    }
+    Ok((roots, summary))
 }
 
 #[derive(Default)]
@@ -176,6 +354,17 @@ pub(crate) struct ImportWatcherSummary {
     pub(crate) events: usize,
     pub(crate) requeued: usize,
     pub(crate) event_errors: usize,
+}
+
+impl ImportWatcherSummary {
+    fn extend(&mut self, other: Self) {
+        if other.active_roots.is_some() {
+            self.active_roots = other.active_roots;
+        }
+        self.events += other.events;
+        self.requeued += other.requeued;
+        self.event_errors += other.event_errors;
+    }
 }
 
 fn import_watcher_event_is_relevant(event: &NotifyEvent) -> bool {
@@ -189,19 +378,36 @@ fn import_watcher_event_is_relevant(event: &NotifyEvent) -> bool {
 }
 
 fn import_watcher_root_for_path<'a>(
-    scopes_by_root: &'a BTreeMap<String, ImportScanScope>,
+    roots_by_path: &'a BTreeMap<String, SourceRoot>,
     event_path: &Path,
 ) -> Option<&'a str> {
-    scopes_by_root
+    roots_by_path
         .keys()
         .find(|root| event_path.starts_with(Path::new(root.as_str())))
         .map(String::as_str)
 }
 
 fn import_watcher_root_mtime(root: &str) -> Option<u128> {
-    fs::metadata(root)
+    std::fs::metadata(root)
         .and_then(|metadata| metadata.modified())
         .ok()
         .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
         .map(|duration| duration.as_nanos())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_events_preserve_a_bounded_maximum_debounce_delay() {
+        let first = Instant::now();
+        let mut pending = PendingRoot::new(first);
+        assert!(!pending.is_due(first + WATCH_EVENT_DEBOUNCE / 2));
+        assert!(pending.is_due(first + WATCH_EVENT_DEBOUNCE));
+
+        pending.observe_again(first + WATCH_EVENT_MAX_DELAY - WATCH_EVENT_DEBOUNCE / 2);
+        assert!(!pending.is_due(first + WATCH_EVENT_MAX_DELAY - Duration::from_millis(1)));
+        assert!(pending.is_due(first + WATCH_EVENT_MAX_DELAY));
+    }
 }

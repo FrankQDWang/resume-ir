@@ -22,6 +22,7 @@ struct RuntimeAvailability {
     embedding: bool,
     ocr: bool,
     classifier: bool,
+    pdfium: bool,
 }
 
 fn runtime(available: bool) -> OptionalRuntimeHealth {
@@ -34,11 +35,12 @@ fn runtime(available: bool) -> OptionalRuntimeHealth {
 
 #[test]
 fn all_ready_runtime_combinations_have_one_deterministic_capability_matrix() {
-    for bits in 0_u8..8 {
+    for bits in 0_u8..16 {
         let runtimes = OptionalRuntimeMatrix {
             embedding: runtime(bits & 1 != 0),
             ocr: runtime(bits & 2 != 0),
             classifier: runtime(bits & 4 != 0),
+            pdfium: runtime(bits & 8 != 0),
         };
         let core = CoreHealth::ready();
         let capabilities = CapabilityMatrix::derive(core, runtimes);
@@ -69,6 +71,7 @@ fn all_ready_runtime_combinations_have_one_deterministic_capability_matrix() {
 fn non_serving_core_states_never_authorize_store_access() {
     for core in [
         CoreHealth::initializing(),
+        CoreHealth::migrating(),
         CoreHealth {
             state: CoreState::Repairing,
             reason: Some(CoreReason::ArtifactUnavailable),
@@ -119,13 +122,14 @@ fn shared_conformance_fixture_covers_every_ready_runtime_combination() {
         fixture.schema_version,
         "resume-ir.daemon-health-conformance.v1"
     );
-    assert_eq!(fixture.cases.len(), 8);
+    assert_eq!(fixture.cases.len(), 16);
 
     for case in fixture.cases {
         let runtimes = OptionalRuntimeMatrix {
             embedding: runtime(case.runtime_availability.embedding),
             ocr: runtime(case.runtime_availability.ocr),
             classifier: runtime(case.runtime_availability.classifier),
+            pdfium: runtime(case.runtime_availability.pdfium),
         };
         assert_eq!(
             CapabilityMatrix::derive(CoreHealth::ready(), runtimes),

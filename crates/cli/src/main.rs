@@ -27,23 +27,22 @@ use import_pipeline::{
     publish_search_projection_removals, rebuild_search_artifacts, reconcile_search_artifacts,
     reconcile_search_artifacts_for_offline_mutation, ImportFailureKind, ImportHardwareTier,
     ImportMilestoneTimings, ImportOptions, ImportParseWorkers, ImportResourcePolicy, ImportSummary,
-    ImportTaskOwnerLock, LinearPromotionPolicy, OcrPreclaimDecision, ReportedArtifactRepairOutcome,
-    ScanProfile, SearchProjectionRemoval, SearchProjectionRemovalReason,
-    SearchPublicationVectorization,
+    ImportTaskOwnerLock, LinearPromotionPolicy, OcrPreclaimDecision, PdfImportPolicy,
+    ReportedArtifactRepairOutcome, ScanProfile, SearchProjectionRemoval,
+    SearchProjectionRemovalReason, SearchPublicationVectorization,
 };
 use meta_store::{
     backup_metadata_encryption_key, restore_metadata_encryption_key, CandidateId, ContactHash,
     Document, DocumentId, DocumentStatus, EntityMention, EntityType, FileExtension,
     ImportRootKind as StoreImportRootKind, ImportRootPreset as StoreImportRootPreset,
-    ImportRootTaskHeadBatchOutcome, ImportRootTaskHeadBatchRejection, ImportRootTaskHeadOutcome,
-    ImportRootTaskHeadRequest, ImportScanBudgetKind as StoreImportScanBudgetKind,
-    ImportScanErrorSummary, ImportScanProfile as StoreImportScanProfile, ImportScanScope,
-    ImportTask, ImportTaskId, ImportTaskStatus, IndexStateStatus, IngestJobFailureKind,
-    IngestJobKind, IngestJobStatus, MetadataEncryptionState, OcrAttemptFailure, OcrPageCacheEntry,
-    OcrPageCacheKey, OwnedMetaStore, PendingImportTaskByRootDiagnostic, QueryLatencySummary,
-    ReadMetaStore, ResumeVersion, ResumeVersionId, SearchFilterCase, SearchProjectionFilter,
-    SearchProjectionPredicate, SearchSelection, SearchSelectionDetailResolution,
-    SearchTextBytePageRequest, UnixTimestamp, VectorSnapshotMode, WorkerTaskKind,
+    ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanErrorSummary,
+    ImportScanProfile as StoreImportScanProfile, ImportScanScope, ImportTask, ImportTaskId,
+    ImportTaskStatus, IndexStateStatus, IngestJobFailureKind, IngestJobKind, IngestJobStatus,
+    MetadataEncryptionState, OcrAttemptFailure, OcrPageCacheEntry, OcrPageCacheKey, OwnedMetaStore,
+    PendingImportTaskByRootDiagnostic, QueryLatencySummary, ReadMetaStore, ResumeVersion,
+    ResumeVersionId, SearchFilterCase, SearchProjectionFilter, SearchProjectionPredicate,
+    SearchSelection, SearchSelectionDetailResolution, SearchTextBytePageRequest, UnixTimestamp,
+    VectorSnapshotMode, WorkerTaskKind,
 };
 use ocr_client::{
     inspect_tesseract_language_availability, CancellationToken, LocalOcrCommandClient,
@@ -74,6 +73,7 @@ use sysinfo::{
 
 mod daemon_ipc_contract;
 mod import_processing;
+mod import_source_scan;
 mod purge_residual;
 mod release_readiness_matrix;
 
@@ -357,11 +357,11 @@ const RELEASE_READINESS_BLOCKERS: &[ReleaseReadinessBlocker] = &[
     },
     ReleaseReadinessBlocker {
         label: RELEASE_READINESS_OCR_LICENSE_LABEL,
-        detail: "Tesseract/tessdata is the accepted Apache-2.0 OCR runtime direction, and the PDF renderer must follow bundled-first packaging with external override; if Poppler/pdftoppm is bundled, release evidence requires GPL-3.0-or-later-compatible distribution review, source-offer obligations, checksums/licenses, dependency detection, and fail-closed operator guidance",
+        detail: "Tesseract/tessdata is the accepted Apache-2.0 OCR runtime, and the production PDF renderer is the pinned statically linked PDFium pack on macOS and Windows; release evidence requires exact source/build identity, root license and notices, checksums, final dependency closure, installer composition, and fail-closed runtime validation",
         dependency_kind: "reviewed_runtime_manifest",
         needed_from: "local_runtime_review",
-        dependency_summary: "reviewed Tesseract/tessdata and PDF renderer runtime manifest with distribution mode, checksums, licenses, source-offer obligations, and dependency detection evidence",
-        next_action: "generate and review the OCR runtime manifest, then pass it to release-readiness",
+        dependency_summary: "reviewed Tesseract/tessdata and PDFium runtime manifests with distribution mode, source/build identity, checksums, licenses, notices, dependency closure, and installer composition evidence",
+        next_action: "assemble and validate all reviewed OCR and PDFium runtime packs, then pass their bounded receipts to release-readiness",
     },
     ReleaseReadinessBlocker {
         label: RELEASE_READINESS_MODEL_LICENSE_LABEL,
@@ -9652,6 +9652,7 @@ fn simulate_index_snapshot_corrupt_probe_dir(
     let import_options = ImportOptions {
         scan_profile: ScanProfile::Explicit,
         max_files: None,
+        pdf_import: PdfImportPolicy::Enabled,
         parse_workers: ImportParseWorkers::sequential(),
         index_writer_heap_bytes: ImportResourcePolicy::detect().index_writer_heap_bytes,
         linear_promotion: LinearPromotionPolicy::default(),
@@ -10736,6 +10737,7 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let import_options = ImportOptions {
         scan_profile: import_args.profile,
         max_files: import_args.max_files,
+        pdf_import: PdfImportPolicy::Enabled,
         parse_workers: import_args.parse_workers,
         index_writer_heap_bytes: import_args.index_writer_heap_bytes,
         linear_promotion: linear_promotion.clone(),
@@ -10785,46 +10787,12 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
             Ok((task, scope))
         })
         .collect::<Result<Vec<_>>>()?;
-    let requests = requested_heads
-        .iter()
-        .map(|(task, scope)| ImportRootTaskHeadRequest::Configured {
-            task,
-            scope,
-            processing_contract: &processing_contract,
-        })
-        .collect::<Vec<_>>();
-    let outcomes = match store
-        .coordinate_import_root_task_heads(&requests)
-        .map_err(CliError::store)?
-    {
-        ImportRootTaskHeadBatchOutcome::Committed { outcomes } => outcomes,
-        ImportRootTaskHeadBatchOutcome::Rejected(
-            ImportRootTaskHeadBatchRejection::RunningTaskConflict,
-        ) => return Err(CliError::user("import task is already running")),
-        ImportRootTaskHeadBatchOutcome::Rejected(ImportRootTaskHeadBatchRejection::RootPaused) => {
-            return Err(CliError::user("managed root is paused"));
-        }
-        ImportRootTaskHeadBatchOutcome::Rejected(
-            ImportRootTaskHeadBatchRejection::MigrationRebuildSuperseded,
-        ) => {
-            return Err(CliError::user(
-                "offline import is blocked until migration rebuild completes",
-            ));
-        }
-    };
-    let tasks = outcomes
-        .into_iter()
-        .map(|outcome| match outcome {
-            ImportRootTaskHeadOutcome::HeadInserted { task, .. }
-            | ImportRootTaskHeadOutcome::HeadPromoted { task, .. }
-            | ImportRootTaskHeadOutcome::HeadRetained { task, .. } => Ok(task),
-            ImportRootTaskHeadOutcome::RunningTaskConflict
-            | ImportRootTaskHeadOutcome::RootPaused
-            | ImportRootTaskHeadOutcome::MigrationRebuildSuperseded => {
-                Err(CliError::user("import root coordination failed"))
-            }
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let tasks = import_source_scan::coordinate_direct_import_tasks(
+        &store,
+        &requested_heads,
+        &processing_contract,
+        now,
+    )?;
 
     let mut summary = ImportSummary::default();
 
@@ -10873,15 +10841,37 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
         let claimed_task =
             import_processing::claim_task_for_local_execution(&store, task, current_timestamp()?)?;
         let root_offset = import_started.elapsed();
-        let root_summary = import_root_with_options(
+        let import_result = import_root_with_options(
             data_dir,
             &store,
             &claimed_task,
             &root.canonical,
             now,
             import_options.clone(),
+        );
+        let root_summary = match import_result {
+            Ok(summary) => summary,
+            Err(error) => {
+                import_pipeline::finish_source_scan_failure(
+                    &store,
+                    &task.root_path,
+                    &task.id,
+                    &processing_contract,
+                    current_timestamp()?,
+                )
+                .map_err(CliError::store)?;
+                return Err(CliError::import(error));
+            }
+        };
+        import_pipeline::finish_source_scan_success(
+            &store,
+            &task.root_path,
+            &task.id,
+            &processing_contract,
+            &root_summary,
+            current_timestamp()?,
         )
-        .map_err(CliError::import)?;
+        .map_err(CliError::store)?;
         merge_import_summary(&mut summary, root_summary, root_offset);
     }
 
@@ -10979,6 +10969,7 @@ fn witness_command(args: &[String]) -> Result<()> {
         let import_options = ImportOptions {
             scan_profile,
             max_files: None,
+            pdf_import: PdfImportPolicy::Enabled,
             parse_workers: ImportParseWorkers::default(),
             index_writer_heap_bytes: ImportResourcePolicy::detect().index_writer_heap_bytes,
             linear_promotion: LinearPromotionPolicy::default(),
@@ -12487,74 +12478,39 @@ fn print_import_worker_metrics(summary: &ImportSummary) {
     );
     println!(
         "pdf parse document load ms: {:.3}",
-        duration_millis(summary.worker_metrics.pdf_parse_timings.document_load)
+        duration_millis(summary.worker_metrics.pdf_parse_metrics.document_load)
     );
     println!(
-        "pdf parse page content fetch ms: {:.3}",
-        duration_millis(summary.worker_metrics.pdf_parse_timings.page_content_fetch)
+        "pdf parse page text load ms: {:.3}",
+        duration_millis(summary.worker_metrics.pdf_parse_metrics.page_text_load)
     );
     println!(
-        "pdf parse text operator prefilter ms: {:.3}",
-        duration_millis(
-            summary
-                .worker_metrics
-                .pdf_parse_timings
-                .text_operator_prefilter
-        )
+        "pdf parse character iteration ms: {:.3}",
+        duration_millis(summary.worker_metrics.pdf_parse_metrics.character_iteration)
     );
     println!(
-        "pdf parse font encoding ms: {:.3}",
-        duration_millis(summary.worker_metrics.pdf_parse_timings.font_encoding)
+        "pdf parse quality evaluation ms: {:.3}",
+        duration_millis(summary.worker_metrics.pdf_parse_metrics.quality_evaluation)
     );
     println!(
-        "pdf parse content decode ms: {:.3}",
-        duration_millis(summary.worker_metrics.pdf_parse_timings.content_decode)
+        "pdf parse pages loaded: {}",
+        summary.worker_metrics.pdf_parse_metrics.pages_loaded
     );
     println!(
-        "pdf parse content string parse sampled ms: {:.3}",
-        duration_millis(
-            summary
-                .worker_metrics
-                .pdf_parse_timings
-                .content_string_parse
-        )
+        "pdf parse characters seen: {}",
+        summary.worker_metrics.pdf_parse_metrics.characters_seen
     );
     println!(
-        "pdf parse text collection ms: {:.3}",
-        duration_millis(summary.worker_metrics.pdf_parse_timings.text_collection)
+        "pdf parse characters emitted: {}",
+        summary.worker_metrics.pdf_parse_metrics.characters_emitted
     );
     println!(
-        "pdf parse text byte decode sampled ms: {:.3}",
-        duration_millis(summary.worker_metrics.pdf_parse_timings.text_byte_decode)
+        "pdf parse source bytes: {}",
+        summary.worker_metrics.pdf_parse_metrics.source_bytes
     );
     println!(
-        "pdf parse text accumulation sampled ms: {:.3}",
-        duration_millis(summary.worker_metrics.pdf_parse_timings.text_accumulation)
-    );
-    println!(
-        "pdf parse content string operands: {}",
-        summary
-            .worker_metrics
-            .pdf_parse_timings
-            .content_string_operands
-    );
-    println!(
-        "pdf parse content string bytes: {}",
-        summary
-            .worker_metrics
-            .pdf_parse_timings
-            .content_string_bytes
-    );
-    println!(
-        "pdf parse text decode runs: {}",
-        summary.worker_metrics.pdf_parse_timings.text_decode_runs
-    );
-    println!(
-        "pdf parse text decode input bytes: {}",
-        summary
-            .worker_metrics
-            .pdf_parse_timings
-            .text_decode_input_bytes
+        "pdf parse output bytes: {}",
+        summary.worker_metrics.pdf_parse_metrics.output_bytes
     );
     println!(
         "import post-parser normalization ms: {:.3}",

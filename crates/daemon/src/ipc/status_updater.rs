@@ -90,6 +90,7 @@ fn merge_runtime_health_updates(
     while let Ok(Some(update)) = receiver.try_recv() {
         match update {
             RuntimeHealthUpdate::Ocr(health) => runtimes.ocr = health,
+            RuntimeHealthUpdate::Pdfium(health) => runtimes.pdfium = health,
         }
     }
 }
@@ -145,6 +146,7 @@ mod tests {
             embedding: available,
             ocr: available,
             classifier: available,
+            pdfium: available,
         };
         reporter
             .ocr_unavailable(OptionalRuntimeReason::Invalid)
@@ -166,6 +168,7 @@ mod tests {
             embedding: available,
             ocr: OptionalRuntimeHealth::unavailable(OptionalRuntimeReason::Invalid),
             classifier: available,
+            pdfium: available,
         };
         let (state, mut publisher) = ControlPlaneState::initializing();
         publisher.set_runtimes(runtimes).unwrap();

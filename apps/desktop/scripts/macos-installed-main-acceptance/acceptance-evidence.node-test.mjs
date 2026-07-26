@@ -30,7 +30,7 @@ const SNAPSHOT_ARTIFACT_DIGEST = `sha256:${createHash("sha256")
 
 function readyStatus(overrides = {}) {
   return {
-    schema_version: "daemon.status.v3",
+    schema_version: "daemon.status.v5",
     status: "ok",
     process_state: "ready",
     core: { state: "ready", reason: null },
@@ -38,6 +38,7 @@ function readyStatus(overrides = {}) {
       embedding: { state: "available", reason: null },
       ocr: { state: "available", reason: null },
       classifier: { state: "available", reason: null },
+      pdfium: { state: "available", reason: null },
     },
     capabilities: {
       keyword_search: { state: "available", reason: null },
@@ -45,6 +46,7 @@ function readyStatus(overrides = {}) {
       semantic_search: { state: "available", reason: null },
       hybrid_search: { state: "available", reason: null },
       text_import: { state: "available", reason: null },
+      pdf_import: { state: "available", reason: null },
       ocr_import: { state: "available", reason: null },
       index_publication: { state: "available", reason: null },
     },
@@ -228,30 +230,38 @@ async function writeGeneration(root, kind, generation = GENERATION, overrides = 
   await writePrivate(path.join(directory, "vector.snapshot.key-v4"), "a".repeat(64));
 }
 
-async function fixture(context) {
+async function writeActiveManifest(dataDir, schema) {
+  const metadataFile = `metadata-v${schema}-${STORE_DIGEST.slice(0, 16)}.sqlite3`;
+  await writePrivate(
+    path.join(dataDir, "metadata-active.v1"),
+    [
+      `resume-ir.metadata-active.v${schema === 29 ? 1 : 2}`,
+      `file=${metadataFile}`,
+      `schema=${schema}`,
+      `digest=${STORE_DIGEST}`,
+      "",
+    ].join("\n"),
+  );
+  await writePrivate(
+    path.join(dataDir, metadataFile),
+    `SQLite format 3\0synthetic-v${schema}`,
+  );
+  return metadataFile;
+}
+
+async function fixture(context, { schema = 33 } = {}) {
   const dataDir = await realpath(
     await mkdtemp(path.join(os.tmpdir(), "resume-ir-ready-evidence-")),
   );
   context.after(() => rm(dataDir, { recursive: true, force: true }));
   await chmod(dataDir, 0o700);
-  const metadataFile = `metadata-v29-${STORE_DIGEST.slice(0, 16)}.sqlite3`;
-  await writePrivate(
-    path.join(dataDir, "metadata-active.v1"),
-    [
-      "resume-ir.metadata-active.v1",
-      `file=${metadataFile}`,
-      "schema=29",
-      `digest=${STORE_DIGEST}`,
-      "",
-    ].join("\n"),
-  );
-  await writePrivate(path.join(dataDir, metadataFile), "SQLite format 3\0synthetic");
+  const metadataFile = await writeActiveManifest(dataDir, schema);
   await writeGeneration(path.join(dataDir, "search-index"), "fulltext");
   await writeGeneration(path.join(dataDir, "vector-index"), "vector");
   return { dataDir, metadataFile };
 }
 
-test("binds the active v29 metadata file, one exact generation pair, and a bounded search witness", async (context) => {
+test("binds the active v33 metadata file, one exact generation pair, and a bounded search witness", async (context) => {
   const { dataDir } = await fixture(context);
   assert.deepEqual(
     await validateInstalledRecoveryEvidence({
@@ -285,11 +295,12 @@ test("binds the active v29 metadata file, one exact generation pair, and a bound
 });
 
 test("validates cold Ready and artifact evidence without a search witness", async (context) => {
-  const { dataDir } = await fixture(context);
+  const { dataDir } = await fixture(context, { schema: 29 });
   const expectedV29Authority = await captureV29LogicalAuthority({
     dataDir,
     runTool: metadataAuthority(),
   });
+  await writeActiveManifest(dataDir, 33);
   assert.deepEqual(
     await validateInstalledReadyArtifacts({
       dataDir,

@@ -35,7 +35,7 @@ pub(crate) fn parse_import_service_error(
     }
     let body: Value = serde_json::from_str(body).ok()?;
     if !has_exact_keys(&body, &["schema_version", "status", "error"])
-        || string(&body, "schema_version") != Some("resume-ir.error.v2")
+        || string(&body, "schema_version") != Some("resume-ir.error.v3")
         || string(&body, "status") != Some("error")
     {
         return None;
@@ -54,7 +54,12 @@ pub(crate) fn parse_import_service_error(
             "SERVICE_INITIALIZING",
             "wait_for_service",
             None,
-            Some("metadata_initializing" | "migration_rebuild" | "artifact_unavailable"),
+            Some(
+                "metadata_initializing"
+                | "metadata_migrating"
+                | "migration_rebuild"
+                | "artifact_unavailable",
+            ),
         ) => Some(ImportServiceError::Initializing),
         (
             "SERVICE_BLOCKED",

@@ -40,7 +40,9 @@ test("stages only manifest-reviewed runtime inputs into the exact build clone", 
   const calls = [];
   const resource = (kind) => ({
     destination: `/ignored/${kind}`,
+    directory: `/reviewed/${kind}`,
     expectedManifest: `/exact/${kind}.json`,
+    sourceContract: `/exact/${kind}-source-contract.json`,
     sourcePackRoot: `/reviewed/${kind}`,
     targetTriple: "aarch64-apple-darwin",
   });
@@ -57,12 +59,14 @@ test("stages only manifest-reviewed runtime inputs into the exact build clone", 
         return {
           classifierResourcePack: resource("classifier"),
           ocrResourcePack: resource("ocr"),
+          pdfiumResourcePack: resource("pdfium"),
           resourcePack: resource("embedding"),
         };
       },
       stageClassifier: async (plan) => calls.push(["classifier", plan]),
       stageEmbedding: async (plan) => calls.push(["embedding", plan]),
       stageOcr: async (plan) => calls.push(["ocr", plan]),
+      stagePdfium: async (plan) => calls.push(["pdfium", plan]),
     },
   );
   assert.deepEqual(
@@ -74,12 +78,14 @@ test("stages only manifest-reviewed runtime inputs into the exact build clone", 
       ["embedding", ".cache/resume-ir-native-e5-qint8-pack"],
       ["ocr", ".cache/resume-ir-macos-ocr-runtime-pack"],
       ["classifier", ".cache/resume-ir-classifier-model-pack"],
+      ["pdfium", ".cache/resume-ir-macos-pdfium-static-pack"],
     ],
   );
   assert.deepEqual(
-    calls.map(([, plan]) => plan.expectedManifest),
+    calls.slice(0, 3).map(([, plan]) => plan.expectedManifest),
     ["/exact/embedding.json", "/exact/ocr.json", "/exact/classifier.json"],
   );
+  assert.equal(calls[3][1].sourceContract, "/exact/pdfium-source-contract.json");
 });
 
 test("creates and removes an inode-bound exact-commit build clone", async (context) => {

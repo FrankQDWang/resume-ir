@@ -7,8 +7,8 @@ use fs_crawler::{
     crawl_directory_with_options_and_control, CrawlErrorKind, ScanControl, ScanOptions,
 };
 use meta_store::{
-    ImportProcessingContract, ImportScanBudgetKind as StoreImportScanBudgetKind, ImportTask,
-    ImportTaskId, OwnedMetaStore, UnixTimestamp,
+    FileExtension, ImportProcessingContract, ImportScanBudgetKind as StoreImportScanBudgetKind,
+    ImportTask, ImportTaskId, OwnedMetaStore, UnixTimestamp,
 };
 use sectionizer::Sectionizer;
 
@@ -26,7 +26,8 @@ use crate::PipelineRunControl;
 use crate::{
     ImportCancelCheckPhase, ImportFailureCounts, ImportMilestoneTimings, ImportOptions,
     ImportPipelineError, ImportScanBudget, ImportScanBudgetKind, ImportStageTimings, ImportSummary,
-    ImportWorkerMetrics, Result, SearchProjectionRemovalReason, IMPORT_CANCEL_POLL_INTERVAL_MS,
+    ImportWorkerMetrics, PdfImportPolicy, Result, SearchProjectionRemovalReason,
+    IMPORT_CANCEL_POLL_INTERVAL_MS,
 };
 
 pub(super) fn run_import(
@@ -80,7 +81,7 @@ pub(super) fn run_import(
         },
         ScanControl::from_cancel_check(&cancel_check),
     );
-    let report = match report {
+    let mut report = match report {
         Ok(report) => report,
         Err(error) if error.kind == CrawlErrorKind::Cancelled => {
             ensure_not_cancelled()?;
@@ -88,6 +89,21 @@ pub(super) fn run_import(
         }
         Err(error) => return Err(ImportPipelineError::crawl(error)),
     };
+    let existing_occurrences = store
+        .source_occurrence_documents_for_import_task(&task.id)
+        .map_err(ImportPipelineError::store)?;
+    if !existing_occurrences.is_empty() {
+        for file in &mut report.files {
+            let relative_path = Path::new(file.normalized_path.as_str())
+                .strip_prefix(root)
+                .map_err(|_| ImportPipelineError::store_invariant())?
+                .to_string_lossy()
+                .replace('\\', "/");
+            if let Some(existing_document_id) = existing_occurrences.get(&relative_path) {
+                file.document_id = existing_document_id.clone();
+            }
+        }
+    }
     let scan_elapsed = scan_started.elapsed();
     ensure_not_cancelled()?;
     let scanned_directories = report.scanned_directories.clone();
@@ -102,6 +118,9 @@ pub(super) fn run_import(
     });
     let mut summary = ImportSummary {
         files_discovered: report.files.len(),
+        processed_documents: 0,
+        deferred_pdf_documents: 0,
+        source_truth_complete: false,
         scan_errors: report.errors.len(),
         ignored_entries: report.ignored_count,
         content_bytes_read: 0,
@@ -145,14 +164,37 @@ pub(super) fn run_import(
         .collect::<BTreeSet<_>>();
     let mut pending_excluded_doc_ids = PendingProjectionRemovals::default();
 
-    let total_files = report.files.len();
+    let (files_to_process, frozen_pdf_count) = match options.pdf_import {
+        PdfImportPolicy::Enabled => (report.files, 0),
+        PdfImportPolicy::Frozen => {
+            let (pdfs, other): (Vec<_>, Vec<_>) = report
+                .files
+                .into_iter()
+                .partition(|file| file.extension == FileExtension::Pdf);
+            for pdf in &pdfs {
+                store
+                    .observe_existing_import_task_source_occurrence(
+                        &task.id,
+                        pdf.normalized_path.as_str(),
+                        now,
+                    )
+                    .map_err(ImportPipelineError::store)?;
+            }
+            (other, pdfs.len())
+        }
+    };
+    summary.ignored_entries = summary.ignored_entries.saturating_add(frozen_pdf_count);
+    summary.processed_documents = summary.processed_documents.saturating_add(frozen_pdf_count);
+    summary.deferred_pdf_documents = frozen_pdf_count;
+    summary.source_truth_complete = can_propagate_deletions;
+    let total_files = files_to_process.len();
     let mut current_import_index_documents = CurrentImportDocumentCache::default();
     if options.parse_workers.get() > 1 && total_files > 1 {
         process_files_with_parse_workers(
             data_dir,
             store,
             &task.id,
-            report.files,
+            files_to_process,
             now,
             &ensure_not_cancelled,
             &mut summary,
@@ -172,7 +214,7 @@ pub(super) fn run_import(
             data_dir,
             store,
             &task.id,
-            report.files,
+            files_to_process,
             &sectionizer,
             now,
             &ensure_not_cancelled,
@@ -189,7 +231,7 @@ pub(super) fn run_import(
         )?;
     }
 
-    if can_propagate_deletions {
+    if summary.source_truth_complete {
         set_cancel_phase(ImportCancelCheckPhase::DbWrite);
         ensure_not_cancelled()?;
         let deleted_documents = measure_result_stage(&mut summary.stage_timings.db, || {
@@ -267,6 +309,21 @@ pub(super) fn publish_import_progress(
 
     store
         .upsert_import_scan_scope(&scope)
+        .and_then(|()| {
+            store.update_source_scan_progress_for_import_task(
+                task_id,
+                meta_store::SourceScanProgress {
+                    discovered: summary.files_discovered as u64,
+                    searchable: summary.searchable_documents as u64,
+                    ocr: summary.ocr_required_documents as u64,
+                    failed: summary.failed_documents as u64,
+                    ignored: summary.ignored_entries as u64,
+                    processed: summary.processed_documents as u64,
+                    errors: summary.scan_errors as u64,
+                },
+                scope.updated_at,
+            )
+        })
         .map_err(ImportPipelineError::store)
 }
 
@@ -283,7 +340,11 @@ pub(super) fn import_scan_scope_from_summary(
         return Ok(None);
     };
 
-    scope.files_discovered = summary.files_discovered as u64;
+    // A frozen PDF remains part of the authoritative directory scan and is
+    // reported through ScanSnapshot, but it was deliberately not executed
+    // under this processing contract and therefore cannot appear in the
+    // sealed source-disposition manifest.
+    scope.files_discovered = sealed_source_disposition_count(summary) as u64;
     scope.ignored_entries = summary.ignored_entries as u64;
     scope.scan_errors = summary.scan_errors as u64;
     scope.searchable_documents = summary.searchable_documents as u64;
@@ -299,6 +360,12 @@ pub(super) fn import_scan_scope_from_summary(
     scope.scan_budget_exhausted = summary.scan_budget.is_some_and(|budget| budget.exhausted);
     scope.updated_at = current_timestamp_or(updated_at);
     Ok(Some(scope))
+}
+
+fn sealed_source_disposition_count(summary: &ImportSummary) -> usize {
+    summary
+        .files_discovered
+        .saturating_sub(summary.deferred_pdf_documents)
 }
 
 fn ensure_import_not_cancelled(store: &OwnedMetaStore, task_id: &ImportTaskId) -> Result<()> {
@@ -331,6 +398,10 @@ pub(crate) struct ImportCancelPoller {
     last_probe: Option<Instant>,
     cached_cancelled: bool,
 }
+
+#[cfg(test)]
+#[path = "orchestrator_tests.rs"]
+mod tests;
 
 impl ImportCancelPoller {
     pub(crate) fn new(min_interval: Duration) -> Self {

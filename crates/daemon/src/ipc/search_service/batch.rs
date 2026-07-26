@@ -153,7 +153,7 @@ impl BatchChildReply {
         let response =
             serde_json::from_str::<serde_json::Value>(response_body).unwrap_or_else(|_| {
                 serde_json::json!({
-                    "schema_version": "resume-ir.error.v2",
+                    "schema_version": "resume-ir.error.v3",
                     "request_id": self.request_id,
                     "status": "error",
                     "error": {
@@ -210,7 +210,7 @@ impl BatchChildReply {
 
 pub(crate) fn overload_body(batch_id: &str) -> String {
     serde_json::json!({
-        "schema_version": "resume-ir.error.v2",
+        "schema_version": "resume-ir.error.v3",
         "request_id": batch_id,
         "status": "error",
         "error": {

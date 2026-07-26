@@ -130,7 +130,7 @@ function parseReleaseReceipt(result, source) {
     throw releaseError();
   }
   if (
-    receipt?.schema_version !== "resume-ir.macos-dmg-composition.v3" ||
+    receipt?.schema_version !== "resume-ir.macos-dmg-composition.v4" ||
     JSON.stringify(receipt.source) !== JSON.stringify(source) ||
     receipt.target_triple !== TARGET_TRIPLE ||
     !/^[a-f0-9]{64}$/.test(receipt.dmg_sha256 ?? "") ||

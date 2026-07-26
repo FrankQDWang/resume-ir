@@ -93,6 +93,102 @@ hosted-hanging case 2/2; run `0a3c9514-d110-4eac-a585-1ae6f9387a1c`
 passed the three affected control-loop shutdown, accept and blocked-routing
 cases. Previously passed business and integration rows remain reusable.
 
+## v0.1.3 schema-v30 implementation round
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| V13-01 | Fresh authority initializes exact v30; exact v29 migrates through encrypted COW; preparing/ready/published receipts recover; future authority fails closed | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9` | passed: 5 exact `migration_v30::tests` cases, 128 filtered out | manifest, registry, COW copy, receipt, source witness, publication or current-store validation changes |
+| V13-02 | Missing v29 key cannot create, repair or mutate migration authority | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9` | passed: 1 exact case, 134 filtered out | key read, predecessor validation or migration entry changes |
+| V13-03 | Tampered forward-migration checksum fails closed without repair | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9` | passed: 1 exact case, 134 filtered out | registry checksum, history schema or validation changes |
+| V13-04 | Native desktop accepts discovery v4/status v4/diagnostics v5 and the bounded migrating state | `ffd3085c7274fb33a0867d99a9ef4a46ee9088bb375dd9a166eec8e4a89eb378` | passed: Nextest `27dd6fdb-8f15-49a3-a052-2abc3587aae2`, 4 passed, 69 skipped | discovery/auth binding, status/diagnostics projection or migrating health contract changes |
+| V13-05 | WebView validator and runtime projection accept migrating without stale store authority | `eda866b1987b237da2ead756b8d201aa9b9842865428045afb870699512a4f18` | passed: exact Vitest case, 1 passed, 15 skipped | TS contract validator, daemon health projection or runtime-state mapping changes |
+| V13-06 | v30 storage plus daemon/CLI consumers compile as one affected production boundary | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9:ffd3085c7274fb33a0867d99a9ef4a46ee9088bb375dd9a166eec8e4a89eb378` | passed: locked `cargo check` for meta-store, daemon-contract, resume-daemon and resume-cli | any listed crate production source or dependency changes |
+| V13-07 | Machine contracts pin bootstrap v2 and the v0.1.3 feature-train versions exactly | `9d2eca4d1c5060c5eeea3c74fbe9d01a795d4b6d080e78b05bb105b4bf137ed2` | passed: exact bootstrap mutation test and performance contract checker | active goal, acceptance matrix, loop pins, checker or fixture pin changes |
+| V13-08 | Root-workspace pure status v4 health tests | `ffd3085c7274fb33a0867d99a9ef4a46ee9088bb375dd9a166eec8e4a89eb378` | not_run: two exact test binaries compiled, then remained at zero CPU before emitting test results and were terminated | run only after the local Rust test-process stall is understood or in a clean exact-commit worktree |
+| V13-09 | Frontend type contract, Rust formatting and changed-file whitespace | `eda866b1987b237da2ead756b8d201aa9b9842865428045afb870699512a4f18` | passed: TypeScript no-emit, rustfmt check and `git diff --check` | frontend types, Rust sources or changed text changes |
+| V13-10 | Affected Rust production targets are warning-free | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9:ffd3085c7274fb33a0867d99a9ef4a46ee9088bb375dd9a166eec8e4a89eb378` | passed: focused root and desktop Clippy with `-D warnings`; test targets were not built | affected production Rust source or dependency changes |
+| V13-11 | An internal-test installer binds a worktree artifact manifest, DMG bytes, mounted composition, installed composition and signature without weakening exact-main release provenance | `1ad8acab59a7b9c0042750982b73d4d44ee907b58e948309f58e5c35266ee1c0:794454e8597e98bfe9ddffc132019f7fba2e834c5b7729e3b97c5efc15ed2f85:ea7a20d87ca7a6f18b00eb49752b759c1690df7108d04d864f2fec4f95be44ab` | passed: 3 exact Node cases; valid snapshot installed, DMG drift rejected and copied-App composition drift rejected | worktree artifact schema, source binding, DMG verification, install lifecycle or package runner changes |
+| V13-12 | Product manifest is the v0.1.3 version authority and the worktree installer does not duplicate it | `d181f7f1f894655adccfb5d18563ca27373b32ff65149b6c7ef27f4bb01bf450:ea7a20d87ca7a6f18b00eb49752b759c1690df7108d04d864f2fec4f95be44ab` | passed: 2 exact product-version Node cases | product manifest, version resolver, Tauri version path or listed lifecycle scripts change |
+| V13-13 | Exact feature commit produces one verified arm64 internal-test DMG and installs it without removing user data | `2175fa7958a435b96828ee51b12fdc793d2e23ae:eedb24209c40c27855db0f3bc101c3a11b60cc8510b35afbc5e94836d5fad708` | passed: DMG `8cdfd7771777b6079c3064a6c42c45dbcac0fcb338f9b0adf2981f5948d9dd6c`, composition `28cbe3ba083ba2e4645a1d4a7a7dccc1c2d735c572bed739a855cb54ec78d87d`, install receipt `4a19ece125c33fd2859e8cc978743ffd58a868814add336abaf00572d9fbdcdc`; `user_data_removed=false` | any bundled source, resource, packaging, worktree installer or product version change |
+| V13-14 | Installed v29 authority visibly migrates to v30, retains the source authority and restores the existing searchable/source aggregates | `8699e1cec536ba9fee74bf09908ccbd44ee03c74` | passed: migration screenshot `b867b41e961ee1a630f161afe12955505cba30dc3ce153901321a2821f019cda`; ready-source screenshot `1647c82f473508b63293a93a256c0986f8e0597fbba299f373c9b55b6ef79e23`; 1 root, 8,720 discovered and 7,607 searchable restored | migration/store/daemon bootstrap, migrating projection, source aggregate or data-preservation behavior changes |
+| V13-15 | Latest installed exact-v30 authority initializes without claiming another migration and reaches ready with the preserved searchable aggregate | `a62d791a611f3d97d4d7b1d81e6a06f347b1d07ffc083e6504e126a8ebc2f017:db7aa5d311efe5e0b2f28c5bda27c8a3d87257d8edce9fba0eab42c66d28dee0` | passed: initializing screenshot `4d680c2a9d5e3af6c0b03e77f2f6ab38b8c40b7c6af7006e03d0dd9a23c08dce`; ready screenshot `46fd5c77ce4ebeac001c8590324bdbeed2beff4994f39cf31487a2a222d37638`; fail-closed transient status loss recovered to 7,607 searchable | exact-v30 open, lifecycle/status polling, health copy or ready projection changes |
+| V13-X01 | Broad Nextest inventory discovery attempt | working tree before V13-08 | not_run: cancelled during integration-binary enumeration before selected root tests executed | never reuse; exact `--lib`/`--bin` targeting is required |
+| V13-X02 | Unrelated privacy-maintenance receipt test selected by an overly broad `receipt_` filter | working tree before V13-01 | incidental pass; excluded from v0.1.3 evidence and reuse decisions | never use as feature evidence |
+| V13-X03 | Root-launched Vitest command accidentally discovered an immutable cached worktree | pre-V13-15 working tree | invalid invocation: cached copy could not resolve React; current App test did not execute. Replaced by a desktop-root exact run: 2 passed, 3 skipped | never reuse; frontend Vitest commands must run from `apps/desktop` |
+
+The first v29→v30 regression failed before schema application because the COW
+copy path reused a create-new-only writer to reopen the already-created staging
+database. The repair split `create_encrypted_writer` from
+`open_existing_encrypted_writer`; only the failed migration case was rerun at
+that point and passed. A later registry review corrected future-chain counting,
+which invalidated all five v30 migration cases; those five and only those five
+were then rerun together and passed.
+
+The first installed-worktree attempt correctly refused a branch artifact at
+the exact-main provenance gate. Supplying the worktree source identity then
+proved a second missing boundary: the installer compared snapshot App bytes to
+an unrelated current build directory. V13-11 adds a separate internal-test
+entrypoint that binds the emitted artifact manifest, recomputed DMG digest,
+mounted and installed bundle-composition digests, source identity and signature.
+The exact-main installer is unchanged. The existing unreceipted v0.1.2 App was
+restored after both failed pre-install checks; neither attempt removed user
+data.
+
+V13-14 remains valid after the installer and health-copy repairs because no
+store, migration, bootstrap, daemon-contract or migrating-state code changed.
+The latest exact-commit DMG was therefore verified with the non-repeating
+clean-v30 start in V13-15 instead of mutating the retained real predecessor to
+force another migration. Screenshots are local-only aggregate UI evidence and
+contain no source path, resume text, query, token or candidate result.
+
+## v0.1.3 schema-v30 implementation round
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| V13-01 | Fresh authority initializes exact v30; exact v29 migrates through encrypted COW; preparing/ready/published receipts recover; future authority fails closed | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9` | passed: 5 exact `migration_v30::tests` cases, 128 filtered out | manifest, registry, COW copy, receipt, source witness, publication or current-store validation changes |
+| V13-02 | Missing v29 key cannot create, repair or mutate migration authority | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9` | passed: 1 exact case, 134 filtered out | key read, predecessor validation or migration entry changes |
+| V13-03 | Tampered forward-migration checksum fails closed without repair | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9` | passed: 1 exact case, 134 filtered out | registry checksum, history schema or validation changes |
+| V13-04 | Native desktop accepts discovery v4/status v4/diagnostics v5 and the bounded migrating state | `ffd3085c7274fb33a0867d99a9ef4a46ee9088bb375dd9a166eec8e4a89eb378` | passed: Nextest `27dd6fdb-8f15-49a3-a052-2abc3587aae2`, 4 passed, 69 skipped | discovery/auth binding, status/diagnostics projection or migrating health contract changes |
+| V13-05 | WebView validator and runtime projection accept migrating without stale store authority | `eda866b1987b237da2ead756b8d201aa9b9842865428045afb870699512a4f18` | passed: exact Vitest case, 1 passed, 15 skipped | TS contract validator, daemon health projection or runtime-state mapping changes |
+| V13-06 | v30 storage plus daemon/CLI consumers compile as one affected production boundary | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9:ffd3085c7274fb33a0867d99a9ef4a46ee9088bb375dd9a166eec8e4a89eb378` | passed: locked `cargo check` for meta-store, daemon-contract, resume-daemon and resume-cli | any listed crate production source or dependency changes |
+| V13-07 | Machine contracts pin bootstrap v2 and the v0.1.3 feature-train versions exactly | `9d2eca4d1c5060c5eeea3c74fbe9d01a795d4b6d080e78b05bb105b4bf137ed2` | passed: exact bootstrap mutation test and performance contract checker | active goal, acceptance matrix, loop pins, checker or fixture pin changes |
+| V13-08 | Root-workspace pure status v4 health tests | `ffd3085c7274fb33a0867d99a9ef4a46ee9088bb375dd9a166eec8e4a89eb378` | not_run: two exact test binaries compiled, then remained at zero CPU before emitting test results and were terminated | run only after the local Rust test-process stall is understood or in a clean exact-commit worktree |
+| V13-09 | Frontend type contract, Rust formatting and changed-file whitespace | `eda866b1987b237da2ead756b8d201aa9b9842865428045afb870699512a4f18` | passed: TypeScript no-emit, rustfmt check and `git diff --check` | frontend types, Rust sources or changed text changes |
+| V13-10 | Affected Rust production targets are warning-free | `7acfcfa717d9a49007615ce1eca19a3b8902e66daec6b343d6d0076f4e52a0b9:ffd3085c7274fb33a0867d99a9ef4a46ee9088bb375dd9a166eec8e4a89eb378` | passed: focused root and desktop Clippy with `-D warnings`; test targets were not built | affected production Rust source or dependency changes |
+| V13-11 | An internal-test installer binds a worktree artifact manifest, DMG bytes, mounted composition, installed composition and signature without weakening exact-main release provenance | `1ad8acab59a7b9c0042750982b73d4d44ee907b58e948309f58e5c35266ee1c0:794454e8597e98bfe9ddffc132019f7fba2e834c5b7729e3b97c5efc15ed2f85:ea7a20d87ca7a6f18b00eb49752b759c1690df7108d04d864f2fec4f95be44ab` | passed: 3 exact Node cases; valid snapshot installed, DMG drift rejected and copied-App composition drift rejected | worktree artifact schema, source binding, DMG verification, install lifecycle or package runner changes |
+| V13-12 | Product manifest is the v0.1.3 version authority and the worktree installer does not duplicate it | `d181f7f1f894655adccfb5d18563ca27373b32ff65149b6c7ef27f4bb01bf450:ea7a20d87ca7a6f18b00eb49752b759c1690df7108d04d864f2fec4f95be44ab` | passed: 2 exact product-version Node cases | product manifest, version resolver, Tauri version path or listed lifecycle scripts change |
+| V13-13 | Exact feature commit produces one verified arm64 internal-test DMG and installs it without removing user data | `2175fa7958a435b96828ee51b12fdc793d2e23ae:eedb24209c40c27855db0f3bc101c3a11b60cc8510b35afbc5e94836d5fad708` | passed: DMG `8cdfd7771777b6079c3064a6c42c45dbcac0fcb338f9b0adf2981f5948d9dd6c`, composition `28cbe3ba083ba2e4645a1d4a7a7dccc1c2d735c572bed739a855cb54ec78d87d`, install receipt `4a19ece125c33fd2859e8cc978743ffd58a868814add336abaf00572d9fbdcdc`; `user_data_removed=false` | any bundled source, resource, packaging, worktree installer or product version change |
+| V13-14 | Installed v29 authority visibly migrates to v30, retains the source authority and restores the existing searchable/source aggregates | `8699e1cec536ba9fee74bf09908ccbd44ee03c74` | passed: migration screenshot `b867b41e961ee1a630f161afe12955505cba30dc3ce153901321a2821f019cda`; ready-source screenshot `1647c82f473508b63293a93a256c0986f8e0597fbba299f373c9b55b6ef79e23`; 1 root, 8,720 discovered and 7,607 searchable restored | migration/store/daemon bootstrap, migrating projection, source aggregate or data-preservation behavior changes |
+| V13-15 | Latest installed exact-v30 authority initializes without claiming another migration and reaches ready with the preserved searchable aggregate | `a62d791a611f3d97d4d7b1d81e6a06f347b1d07ffc083e6504e126a8ebc2f017:db7aa5d311efe5e0b2f28c5bda27c8a3d87257d8edce9fba0eab42c66d28dee0` | passed: initializing screenshot `4d680c2a9d5e3af6c0b03e77f2f6ab38b8c40b7c6af7006e03d0dd9a23c08dce`; ready screenshot `46fd5c77ce4ebeac001c8590324bdbeed2beff4994f39cf31487a2a222d37638`; fail-closed transient status loss recovered to 7,607 searchable | exact-v30 open, lifecycle/status polling, health copy or ready projection changes |
+| V13-X01 | Broad Nextest inventory discovery attempt | working tree before V13-08 | not_run: cancelled during integration-binary enumeration before selected root tests executed | never reuse; exact `--lib`/`--bin` targeting is required |
+| V13-X02 | Unrelated privacy-maintenance receipt test selected by an overly broad `receipt_` filter | working tree before V13-01 | incidental pass; excluded from v0.1.3 evidence and reuse decisions | never use as feature evidence |
+| V13-X03 | Root-launched Vitest command accidentally discovered an immutable cached worktree | pre-V13-15 working tree | invalid invocation: cached copy could not resolve React; current App test did not execute. Replaced by a desktop-root exact run: 2 passed, 3 skipped | never reuse; frontend Vitest commands must run from `apps/desktop` |
+
+The first v29→v30 regression failed before schema application because the COW
+copy path reused a create-new-only writer to reopen the already-created staging
+database. The repair split `create_encrypted_writer` from
+`open_existing_encrypted_writer`; only the failed migration case was rerun at
+that point and passed. A later registry review corrected future-chain counting,
+which invalidated all five v30 migration cases; those five and only those five
+were then rerun together and passed.
+
+The first installed-worktree attempt correctly refused a branch artifact at
+the exact-main provenance gate. Supplying the worktree source identity then
+proved a second missing boundary: the installer compared snapshot App bytes to
+an unrelated current build directory. V13-11 adds a separate internal-test
+entrypoint that binds the emitted artifact manifest, recomputed DMG digest,
+mounted and installed bundle-composition digests, source identity and signature.
+The exact-main installer is unchanged. The existing unreceipted v0.1.2 App was
+restored after both failed pre-install checks; neither attempt removed user
+data.
+
+V13-14 remains valid after the installer and health-copy repairs because no
+store, migration, bootstrap, daemon-contract or migrating-state code changed.
+The latest exact-commit DMG was therefore verified with the non-repeating
+clean-v30 start in V13-15 instead of mutating the retained real predecessor to
+force another migration. Screenshots are local-only aggregate UI evidence and
+contain no source path, resume text, query, token or candidate result.
+
 P0-01 commands passed on 2026-07-24: the exact product-version Node test,
 affected DMG-plan/worktree-release/config Node tests, locked desktop Cargo
 metadata and official Tauri `info` config resolution.
@@ -542,13 +638,609 @@ unreached target without short-circuiting:
 
 ## Version rounds
 
-Rows for v0.1.3 through v0.1.8 are appended when each linked issue opens.
-Every round begins with focused failing regressions, retains unaffected earlier
-passes, and ends with an exact-commit installed native row before issue closure.
+The original v0.1.3 rows remain historical evidence for their exact inputs.
+The approved execution contract subsequently made v0.1.3–v0.1.8 one atomic
+business implementation train: later production code, contracts, packaging
+declarations and UI were completed without intermediate test, build, Linux,
+DMG, install or Computer Use runs. No historical pass is inherited when its
+declared behavior boundary or input fingerprint changed.
+
+| Round | Business boundary | Status | Validation disposition |
+| --- | --- | --- | --- |
+| V14 | schema v31 source-root authority, path truth, watcher/periodic/manual scan coordinator and per-root progress UI | implementation_complete | not_run |
+| V15 | schema v32 durable root deletion and privacy purge | implementation_complete | not_run |
+| V16 | schema v33 PDFium text/render runtime and resumable OCR/reprocess | implementation_complete | not_run |
+| V17 | selection-bound original-PDF reader and resizable detail drawer | implementation_complete | not_run |
+| V18 | selection-bound native source reveal and final v0.1.8 packaging contract | implementation_complete | not_run |
 
 ## Final round
 
-The complete resumable parallel matrix, merged-main install and soak remain
-`not_run` until v0.1.8 is merged. Their absence does not block an individual
-feature issue from closing after its own installed acceptance, but it does
-block #217 and release-ready claims.
+The complete resumable parallel matrix, exact-tree macOS DMG/install,
+Computer Use acceptance and 120-minute soak remain `not_run` until the full
+v0.1.8 business tree is frozen. The matrix runs fail-late and records every
+failure before any repair. Repair invalidates only the rows whose declared
+inputs or behavior boundary changed; all other passes remain reusable. Until
+these rows pass, #217 and every release-ready claim remain open.
+
+### Final matrix round F01 — 2026-07-25
+
+The frozen v0.1.8 tree entered the resumable fail-late matrix. No Linux product
+lane was run. Runner receipts remain local and contain only bounded command
+metadata and redacted logs.
+
+| Row | Behavior boundary | Receipt | Status |
+| --- | --- | --- | --- |
+| F01-01 | Workspace Rust targets satisfy deny-warnings Clippy policy | `20260725T172451Z-2dad7880` | passed in 742.37 seconds; later PDFium source-identity constant change invalidated only the daemon boundary |
+| F01-02 | Embedder tests | `20260725T173724Z-56c66437` | passed in 406.26 seconds; reusable |
+| F01-03 | Benchmark-runner tests | `20260725T173724Z-56c66437` | passed in 586.91 seconds; reusable |
+| F01-04 | License gate | `20260725T173724Z-56c66437` | passed; reusable |
+| F01-05 | Local quality release evidence | `20260725T173724Z-56c66437` | passed; reusable |
+| F01-06 | Release SBOM | `20260725T173724Z-56c66437` | passed; reusable |
+| F01-07 | Desktop Tauri Rust tests | `20260725T180648Z-bdeef06f` | passed after removing the obsolete path-based import IPC and correcting v5 fixtures; 63 passed |
+| F01-08 | Desktop Tauri deny-warnings Clippy | `20260725T180754Z-72692d5a` | passed after the same dead-contract removal; reusable |
+| F01-09 | Release/operator runbooks | `20260725T180856Z-1a99114b` plus focused current-tree rerun | passed after exact vocabulary and Xcode prerequisite documentation |
+| F01-10 | macOS Xcode/PDFium build prerequisite | focused Node tests and native preflight | 5 tests passed; explicit `DEVELOPER_DIR` is isolated from global selection; current host blocked before source synchronization because only Apple Command Line Tools are installed |
+| F01-11 | Changed-file whitespace | focused current-tree rerun | passed |
+| F01-12 | Daemon/PDFium source-identity deny-warnings Clippy boundary | `CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 cargo clippy -p resume-daemon --bin resume-daemon --locked -- -D warnings` | passed in 6m02s; replaces only the daemon boundary invalidated after F01-01 |
+| F01-13 | Public repository privacy boundary | `./scripts/ci/guard-public-repo.sh` | passed on the current public-input tree |
+
+The fail-late receipt `20260725T173724Z-56c66437` also recorded one shared
+native-link blocker across workspace-core, resume-cli, CLI/daemon closed loops,
+incremental import, benchmark smoke, local OCR, diagnostics evidence and
+release readiness: the reviewed macOS `libpdfium.a` pack did not yet exist.
+The worktree bundle failed for the same missing pack. This was not treated as
+ten unrelated product defects.
+
+The source builder was then repaired to use real pinned depot_tools revision
+`f394ab2c993283e94680ca13db98b99927868e98`, deterministic minimal PDFium
+checkout configuration and official depot_tools bootstrap. The pinned PDFium
+source synced successfully. Generation then failed at the official Chromium
+macOS SDK probe because the machine's selected developer directory is
+`/Library/Developer/CommandLineTools` and no complete Xcode installation is
+present. PDFium's official macOS prerequisites require Xcode; the build does
+not spoof `xcodebuild`, patch the upstream checkout or claim a Command Line
+Tools build as release evidence.
+
+The production builder now performs this capability check before any network
+or source-sync work, prefers a command-scoped explicit `DEVELOPER_DIR`, falls
+back to the selected Xcode directory, binds that directory to the child build,
+rejects symlinked/unsafe selections and leaves the global `xcode-select`
+setting unchanged. Once complete Xcode is available, the remaining
+invalid/failed set is exactly:
+
+- `cargo-test-workspace-core`
+- `cargo-test-resume-cli`
+- `cli-closed-loop`
+- `daemon-closed-loop`
+- `daemon-incremental-import`
+- `benchmark-smoke`
+- `local-ocr-runtime`
+- `local-diagnostics-release-evidence`
+- `release-readiness`
+- `desktop-macos-worktree-bundle`
+
+Those cells, followed by installed macOS acceptance, Computer Use and the
+120-minute soak, remain `not_run`/blocked. Already-valid rows above must not be
+replayed merely because the host prerequisite is later supplied.
+
+### Final repair round F02 — 2026-07-26
+
+The host prerequisite is now satisfied by `/Applications/Xcode.app`:
+`xcodebuild -version` reports Xcode 16.4 (build 16F6). The reviewed local
+PDFium build pack exists under the private build cache, and the bounded runtime
+identity pack is staged for daemon tests. This unblocks only the ten F01 cells
+listed above; reusable F01 passes remain closed.
+
+The current repair-boundary fingerprint is
+`e3843830c1be594c478817c2370f980664dfa5bf0d66198617953ac6eb6f4c40`
+over the source-root retry, import publication, frozen-PDF manifest,
+PDFium-attestation and watcher regression inputs. The repository base is
+`0f1b45c3fdd10eb857a0feb56d768745e8331865`; this fingerprint intentionally
+describes the dirty feature-train tree rather than claiming an immutable
+commit.
+
+| Row | Behavior boundary | Exact command/result | Status |
+| --- | --- | --- | --- |
+| F02-01 | A retryable source-root failure receives a new scan attempt while a queued retry keeps its identity | `cargo test -p meta-store --lib --locked source_roots_tests::source_root_retry_ -- --test-threads=1`; 2 passed | passed; reusable unless source-root retry/head logic changes |
+| F02-02 | Frozen PDFs remain part of source scan truth without making the sealed import disposition manifest impossible to satisfy | `CARGO_INCREMENTAL=0 cargo test -p import-pipeline --lib --locked import_run::orchestrator::tests:: -- --test-threads=1`; 2 passed, 126 filtered out | passed; reusable unless import summary, PDF policy or sealed-manifest construction changes |
+| F02-03 | A completed watched root is requeued after text and PDF-family changes using the current reviewed runtime contracts | `CARGO_INCREMENTAL=0 cargo test -p resume-daemon --locked --test s4_daemon --features native-runtime-tests foreground_import_watcher_requeues_completed_root_after_word_and_pdf_change_without_path_leak -- --exact --test-threads=1`; 1 passed, 21 filtered out, 53.62 seconds | passed; reusable unless watcher/coordinator, source occurrence publication, runtime attestation or daemon test harness changes |
+| F02-04 | Rust formatting after the repair set | `cargo fmt --all -- --check` | passed; invalidated by later Rust edits |
+| F02-X01 | Initial exact watcher retry with incremental compilation enabled | compilation remained at zero CPU before test execution and was cancelled orderly | not a test result; never reuse |
+
+Earlier failing watcher attempts have no reuse value. Their combined root
+causes were repaired at their owning boundaries: failed scan attempts now
+restart instead of retaining terminal identity; searchable source occurrences
+are published only after immutable document/version facts exist; frozen PDF
+deferrals are excluded from the sealed processed-disposition count while
+remaining visible in source scan progress; and the daemon's reviewed PDFium
+identity constants match the generated pack. No Linux lane was run.
+
+### Final fail-late round F02-B — 2026-07-26
+
+Runner receipt `20260726T091240Z-183931d2` resumed exactly the ten F01 cells
+that Xcode/PDFium had blocked. It ran to completion without fail-fast:
+
+| Cell | Result | Reuse disposition |
+| --- | --- | --- |
+| `cargo-test-workspace-core` | failed after 866.62 seconds: 125 import-pipeline unit tests passed and three PDF fixture/metrics cases failed | failure has no reuse value; only the parser/import boundary is reopened |
+| `cargo-test-resume-cli` | failed after 334.16 seconds: all reached tests passed except s146 expected schema 29 while the current authority returned 33 | failure has no reuse value; s147 had not yet executed and shares the same stale literal |
+| `cli-closed-loop` | passed in 39.89 seconds | invalidated by the subsequent PDFium metrics CLI-output hard cut; rerun this cell only |
+| `daemon-closed-loop` | passed in 25.03 seconds | reusable |
+| `daemon-incremental-import` | passed in 109.35 seconds | reusable |
+| `benchmark-smoke` | passed in 22.36 seconds | reusable |
+| `local-ocr-runtime` | passed in 2.82 seconds | reusable |
+| `local-diagnostics-release-evidence` | passed in 4.08 seconds | reusable |
+| `release-readiness` | passed in 3.37 seconds | reusable |
+| `desktop-macos-worktree-bundle` | passed in 241.30 seconds | invalidated by the subsequent source repair; do not install this artifact |
+
+The invalidated pre-repair artifact was
+`resume-ir_0.1.8_aarch64_e299dc95a986.dmg`, source-tree SHA-256
+`e299dc95a9868f4a2dd06d0a619f8ae75329def51512bb7ba665cfb8cef436f9`,
+DMG SHA-256
+`dc6b69dc4903ed428be5948c220ad30a6397a35c279af202e88085a6430fdc6e`
+and composition digest
+`9827aff82096f70b5d463336dddc3369e7f011b4b4d5cd89ef3b46d7e08261ec`.
+It is retained only as bounded build evidence and is not an install candidate.
+
+F02-03 and `daemon-incremental-import` were the same exact test under
+different evidence identifiers. The latter therefore repeated one already
+passed test. Future executions must use the manifest cell id
+`daemon-incremental-import` as the ledger authority rather than recording an
+ad-hoc alias row.
+
+### Final repair round F03 — 2026-07-26
+
+The three workspace-core failures were caused by legacy lopdf fixture
+assumptions rather than a production PDFium defect. The UTF-16BE literal used a
+Type1 Helvetica font without `ToUnicode`, so its raw bytes are not valid
+visible Chinese text; that case now asserts the intended OCR-required
+disposition. The valid `ToUnicode` fixture had used `T*` without defining text
+leading, placing every line at the same location; it now has explicit leading
+and remains directly searchable. The production visual-text quality gate is
+unchanged.
+
+The failure exposed a second contract defect before the next assertion could
+run: `PdfTextExtractionTimings` and CLI output still named removed lopdf phases
+that PDFium could never populate. F03 hard-cuts that dead surface to
+`PdfTextExtractionMetrics`, containing only PDFium document load, page-text
+load, character iteration, quality evaluation, page/character and byte
+counts. No compatibility fields or zero-valued aliases remain.
+
+The CLI key tests now use the exported `CURRENT_SCHEMA_VERSION` authority
+instead of literals 29 or 33, covering both backup/restore and the previously
+unreached rotation case.
+
+Focused F03 verification:
+
+- `tests::import_root_routes_utf16be_literal_without_tounicode_to_ocr` passed:
+  1 passed, 127 filtered out, 13.65 seconds.
+- `tests::import_root_keeps_tounicode_cmap_pdf_text_layer_searchable_without_ocr`
+  passed: 1 passed, 127 filtered out, 14.62 seconds.
+- `tests::parallel_parse_workers_record_pdfium_and_post_parser_metrics` passed:
+  1 passed, 127 filtered out, 14.64 seconds.
+- `cargo test -p resume-cli --locked --test s146_metadata_key_cli --test
+  s147_metadata_key_rotation_cli -- --test-threads=1 --nocapture` passed both
+  exact one-case targets.
+- `cli-closed-loop` passed in runner receipt
+  `20260726T103040Z-3f02d3f5`: one executed cell, no failure.
+- Rust formatting and focused changed-file whitespace checks passed.
+
+Before the successful run, macOS repeatedly held new Rust processes before
+their entry point while Storage Management and `syspolicyd` scanned local
+build artifacts. Attempts cancelled before a selected test entered Rust
+`main` remain `not_run`, not failures. Closing the Storage settings UI and
+terminating its exact helper processes did not modify project or user data.
+The user accepted the macOS execution prompt, after which compiler and test
+processes ran normally.
+
+One attempted `launchctl submit` workaround was incorrectly inferred by
+launchd as a keep-alive job. It restarted the same UTF-16BE exact case six
+times before removal; its overwritten logs are not evidence. The subsequent
+direct, single execution above is the authoritative result. No further
+launchd-backed test execution is allowed in this train.
+
+### Final native manual round F04 — 2026-07-26
+
+The repaired worktree produced one new internal-test artifact in runner receipt
+`20260726T103209Z-3ba42dfb`. The `desktop-macos-worktree-bundle` cell passed in
+306.43 seconds with input fingerprint
+`ecc1133f009c47747e942b9df34f28af49c5b445de503786f2e80d1ab70723dd`.
+The artifact is `resume-ir_0.1.8_aarch64_f161c5b820ad.dmg`, source-tree digest
+`f161c5b820adb5e1006c9f2ebe99283d242408497c75a2a9f7821742b0426bb1`,
+DMG digest
+`caabc8890fe699f0f0a074b5f791c1617afed38175f6bfb09fa910f235315897`
+and App composition digest
+`cbe255133e4af2d43588361300ce7ceaea18ac9f1a8f58a2bff121b2f8fb392b`.
+The mounted composition contained one arm64 App, daemon, embedding and PDF
+renderer sidecars, all four reviewed runtime packs, an ad-hoc valid hardened
+runtime signature and no build-machine path marker.
+
+The receipt-bound installer installed version 0.1.8 in `/Applications` and
+returned `user_data_removed=false`. The previously installed 0.1.3 App and its
+incompatible pre-release install receipt were archived as recoverable local
+artifacts after both current install and uninstall transactions correctly
+failed closed. No metadata database, encryption key, authorized root, search
+index or source file was moved during that installer-contract hard cut.
+
+Computer Use then launched the installed App against an isolated synthetic
+HOME. Acceptance proved:
+
+- an empty current store initialized directly at schema v33 and reached daemon
+  ready without reading the operator's normal application data;
+- one selected directory displayed per-root progress, nullable ETA, watcher
+  state, start/rescan, pause and delete controls;
+- first scan reached 100% with one discovered/searchable TXT; a zero-change
+  rescan kept the count at one;
+- adding a public synthetic PDF was detected by the live watcher without a
+  manual scan, increasing the searchable count to two;
+- keyword search returned the exact synthetic TXT and PDF;
+- the detail drawer exposed structured fields, extracted text, a draggable
+  left edge and reset control; a visual drag increased its width;
+- Finder reveal selected the exact synthetic TXT without returning a path to
+  WebView state;
+- the original-PDF view rendered the visible one-page synthetic PDF inside the
+  drawer;
+- root deletion revoked the old generation, removed the root card and all
+  search results, and a new explicit search returned zero of zero;
+- both source files remained present, and the PDF retained digest
+  `38a88c1ebeb3d02b499b3dfb04e952dcfd346c87df3217707b669eb74ee1c011`;
+- normal App exit left no installed App/daemon/runtime process, IPC file or
+  lifecycle workspace behind.
+
+The six local-only screenshots are bounded synthetic UI evidence. Their
+digests, in state order, are:
+
+- initial:
+  `187af378166642b50a890c20a6458894ab3786a5601a7ddccbb65db2bd292acd`
+- scan:
+  `cf1e8b9a45bc5bbc46f4424ce9a7f1243bb70620f88cd71c672a69ce242f668e`
+- resized detail:
+  `17f2fdd16f49e6dcdc2411f36866dc19c0b2ce2b5902ae3c4f7687a33285eb1c`
+- Finder reveal:
+  `0f54c6273a618134cc55c47d111ad524bd8ddb53063205a981f4125fb78c3866`
+- PDF:
+  `3a1e996853486dc60d01563634d28571e3e2ee9b652ec76c24c40c308260835f`
+- deleted:
+  `83a39b0532ce77dbe93b8d42813e7a549584aae26909542d15151e95ecf6be8e`
+
+The post-repair focused deny-warnings boundary passed for `parser-pdf`,
+`import-pipeline` and `resume-cli`. Its `--all-targets` selection linted every
+CLI test target and took 8 minutes 09 seconds; that was wider than necessary.
+It is retained as valid evidence, but future repair rounds must select only the
+affected lib/bin and named test targets.
+
+Every failed or unrun F02-B cell is now closed by its authoritative focused
+repair result, while the unaffected F01/F02-B passes remain reused. The
+remaining release-train sequence is commit/PR reconciliation, an exact
+merged-main build and installed-main acceptance, followed by the uninterrupted
+120-minute soak bound to that same commit. No soak result is claimed yet.
+
+### Platform boundary correction F05 — 2026-07-26
+
+The user reaffirmed that the current delivery is macOS-only. Windows and Linux
+execution, investigation, repair, packaging and evidence are out of scope and
+cannot block this train unless a later explicit user instruction changes the
+boundary. The repository-level agent contract and active-goal machine contract
+now preserve this rule across context compaction and agent handoff.
+
+One already-running non-required Windows CI retry reached the workspace test
+step and was cancelled by its 60-minute job limit. It is recorded only as an
+out-of-scope observation: it is not a failure to repair, it will not be rerun,
+and it does not invalidate any macOS evidence. The PR and required security
+workflows now execute on macOS; the non-required platform workflow no longer
+runs on pull requests and has no Windows matrix. Required check names and
+branch protection remain unchanged.
+
+### macOS PR PDFium prerequisite repair F06 — 2026-07-26
+
+PR run `30202037705`, job `89793521886`, completed metadata, the search
+boundary, formatting and workspace Clippy, then failed before executing any
+test because the linker could not find `libpdfium.a`. This is a CI prerequisite
+failure, not a failed business assertion. The exact macOS DMG path had already
+proved the reviewed static archive; the PR workflow alone had omitted that
+same preparation boundary.
+
+The repair adds an exact-key Actions cache for the reviewed macOS PDFium static
+pack. Cache misses build from the pinned source contract; every restored or
+new pack is revalidated before Cargo runs. No dynamic fallback, feature
+disablement or test skip was added. Independent post-test checks now use
+`!cancelled()` so one failed test cell does not hide the remaining failures.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F06-01 | PR workflow prepares and validates the same reviewed macOS PDFium static archive required by production linking | `0c64de0fa53675e9714eb49013e014baeb5b3a6abb5f5a692aae4a45d983d7b7:a9676ff49e0a7f852fe4753672540782837ace154292200ab76af166a3e0184c:2f52425a0fc7e0ac5d38415fb8655e3692f4f132ec695e1e6ff53297579e2665` | focused workflow checker and pack verifier passed | PR workflow, PDFium contract/build/verification or workspace static-link configuration changes |
+| F06-02 | The PDF renderer test targets link against the reviewed archive | `0c64de0fa53675e9714eb49013e014baeb5b3a6abb5f5a692aae4a45d983d7b7` | `cargo test -p resume-pdf-render-runtime --locked --no-run` passed in 0.43 seconds | PDF renderer crate, PDFium archive, Cargo link configuration or target toolchain changes |
+
+One attempted local execution was left launch-suspended by the command runner
+after linking. It executed no test body, was terminated by exact PID, and is
+`not_run`; F06-02 is the authoritative compile/link result. No previously valid
+workspace or feature row was replayed.
+
+### clean-checkout PDFium dependency repair F07 — 2026-07-26
+
+PR run `30202411939`, job `89794541844`, proved the first cache-miss path was
+not hermetic. The builder requested PDFium's `minimal` checkout, while the
+pinned PDFium DEPS makes `third_party/simdutf` conditional on
+`checkout_v8 = checkout_configuration != "minimal"`. GN still loads
+`//third_party/simdutf` while generating the reviewed complete static library,
+so a clean runner failed. The local source workspace retained that dependency
+from an older broader checkout and had masked the defect.
+
+The builder now uses PDFium's documented `small` checkout: it omits corpora and
+instrumented libraries but includes dependencies required to generate PDFium.
+The production GN arguments remain unchanged, including `pdf_enable_v8=false`.
+The fail-late workflow was also narrowed so Cargo-dependent CLI, daemon and
+benchmark checks continue after test failures only when the PDFium pack
+verified successfully; prerequisite failure no longer creates three misleading
+secondary failures. License, runbook, handoff and workflow checks remain
+independently fail-late.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F07-01 | Clean PDFium source checkout includes complete-static-library generation dependencies | `dbcc01dc52d3045ace02df95b9db560c18e6fb8514d14c3bb0cb5da1c55f59dd:bf949f46603081e81aa76a57e2b808eaec12af34a30d59ccdbd7ce72796f6835` | exact Node regression failed before the export/fix, then 2 cases passed in 40 ms | macOS PDFium builder, checkout mode, pinned source DEPS or regression test changes |
+| F07-02 | Fail-late checks distinguish a failed prerequisite from business-test failures | `3c8d712427a6171d51de77fad4409e698ecd9e81f23ebe960692d4823174f26a:a43391b545d7b81185dc3f2d304cd5bb60574125519904e3cec0879598367e22` | workflow checker passed | PR step dependencies or workflow policy changes |
+
+The CLI import, daemon seed and benchmark smoke failures in run `30202411939`
+all occurred after `libpdfium.a` failed to build. They are classified as
+`invalidated_by_prerequisite`, not product failures and not reusable evidence.
+License, runbook, handoff and workflow checks passed and remain reusable.
+
+### public synthetic PDF fixture repair F08 — 2026-07-26
+
+PR run `30202721429`, job `89795371823`, successfully built and verified the
+reviewed PDFium archive, completed Clippy and reached the workspace tests. The
+only failed assertion was
+`frozen_public_synthetic_fixture_matches_production_admission`: observed
+classification counts `(2, 2, 3, 1, 1)` differed from expected
+`(3, 3, 1, 1, 1)`. Every earlier workspace test in the job passed, and the
+fail-late CLI, daemon, license, runbook, handoff, workflow and benchmark checks
+all passed.
+
+Both misclassified samples were the fixture's synthetic text-layer PDFs. Its
+builder emitted `T*` for multiple lines without defining text leading, placing
+all lines at the same visual location under PDFium. The fixture now defines
+14-point leading before those operations, matching the visible multiline text
+the frozen sample claims. Production PDF quality and classification logic are
+unchanged.
+
+The workflow also replaces the monolithic cache action with explicit restore
+and save actions. A verified cache miss is saved immediately before tests, so a
+later business assertion cannot discard a successful 14-minute PDFium build.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F08-01 | Frozen public synthetic PDF samples expose distinct visible lines to production PDFium admission | `2af924eabcb91900cb06df1e1bd6f72bdd2c98faee312d0ef6e861461d54f2ca` | passed in macOS PR run `30203505154`; the repaired public synthetic admission case no longer appears among workspace failures | public synthetic admission fixture, PDF text extraction, quality or classifier changes |
+| F08-02 | A verified PDFium pack is cached before later test failures | `8a2924957941fd4de7a0bd9c3f2f456539a20f1a63e48fd8abc8d0b8b84600e7:297571b242256bd081325303a241f13761adce53e2f046a15f15afbccdddad22` | workflow checker passed | PR cache ordering, key, verification or workflow policy changes |
+
+A focused local F08-01 attempt did not reach the test: the compiler spent more
+than three minutes blocked enumerating the oversized local
+`target/debug/deps` directory, and a direct filesystem enumeration blocked at
+the same syscall. Both exact processes were terminated. This is `not_run`; it
+does not replace the deterministic hosted red result or the required hosted
+green result.
+
+### current-schema and migration recovery repair F09 — 2026-07-26
+
+macOS PR run `30203505154`, job `89797466189`, restored and verified the cached
+PDFium pack, passed Clippy, passed the repaired F08 public fixture and completed
+every fail-late CLI, daemon, license, runbook, handoff, workflow and benchmark
+check. Workspace tests reached 141 meta-store library cases and isolated eight
+failures after 133 passes.
+
+The failures had three shared causes:
+
+- current-store recovery validated a ready v33 target through the predecessor
+  validator, which accepts only v29–v32 source authorities;
+- historical v29 publication fixtures requested a production sibling
+  connection, which correctly migrated their authority to v33 before the
+  historical assertion ran;
+- two current-store tests still asserted v29, and one configured-rescan test
+  still expected a terminal retryable head to be reused instead of creating a
+  new queued attempt.
+
+The repair dispatches receipt validation by manifest role, gives synthetic
+historical fixtures a test-only consuming publication-session seam that cannot
+enter production, and updates current-schema and manual-rescan assertions
+without relaxing migration, integrity or publication validation. The current
+delivery contract also removes the obsolete Windows private-corpus transfer
+section; the checker now rejects its reintroduction. macOS remains the only
+active delivery platform.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F09-01 | A ready v33 COW receipt validates and atomically publishes its already-verified target | `d771454b6be5dad98b7340b93f8f8b4cdb789bc317f54d3e8f3e43c2ad27d69a` | passed in macOS PR run `30204531887` | current-store receipt reconciliation, manifest dispatch or current-store validation changes |
+| F09-02 | Historical v29 publication fixtures remain v29 without entering the production migration boundary | `df187302b5501308b89db3fbdf60ae75b8f628e355c22a99e66b632320b3a44a:b217941a8a313f0bb68fc763b875ae58ee70b6f4ae7a4ca14a7cc71f92d25c0b` | four affected assertions passed in macOS PR run `30204531887`; the complete meta-store lib result was 141 passed | historical fixture seam, v29 publication validation or migration-test support changes |
+| F09-03 | Fresh owner/read paths assert the schema selected by the current product, not the retired v29 hard cut | `dd188f730183e9c8cdc7fef1719306fb89f61e78ca6338828e21f387ddf775a1` | two affected assertions passed in macOS PR run `30204531887` | current schema, owner open or read-only current-store contract changes |
+| F09-04 | An explicit rescan after a failed retryable task creates a new queued attempt and cancels the terminal head | `0778537f42156afad582d44768a6809d60eea2ffe0cac039b0429d8d35919ced` | passed in macOS PR run `30204531887` | configured rescan, task-head retention or retry semantics change |
+| F09-05 | Active goal cannot re-enable Windows/Linux execution through the retired private-corpus transfer policy | `e5d57102184b33586cc83487779292955e28693137fbddf41ce86c86706d48ea:ea873c97d3e92ec546081cc6c3b3323b1690fc3697ca129c7a6842c31bdfc879:050ceb75b004160133b3648533c6387c8442d077a2346cdf65248149f956656d:c477bb451c00357a8adf73df638289202fd7e05467ce4f2923128b67f7eb47bc` | autonomous-goal, loop-state and performance checkers plus seven governance mutation tests passed | active platform contract, pinned synthetic fixtures or autonomous-goal checker changes |
+
+The local exact F09-01 binary compiled, then remained suspended in macOS
+`_dyld_start` before entering the Rust test harness. A read-only process sample
+confirmed zero test-body execution; the exact cargo parent and orphaned child
+were terminated orderly. This is `not_run`, not a failed assertion. The
+existing macOS PR job is the authoritative red-capable feedback loop and will
+reuse the saved PDFium pack. No unrelated local Rust test was run.
+
+### final stale schema assertion repair F10 — 2026-07-26
+
+macOS PR run `30204531887` proved every F09 repair: the meta-store library
+reported 141 passed and no failures. It also completed Clippy plus every
+fail-late CLI, daemon, license, runbook, handoff, workflow and benchmark check.
+The only remaining workspace failure was the separate
+`excluded_document_status` integration target: its first test called
+`EphemeralMetaStore::run_migrations()`, which now deliberately initializes
+current schema v33, while the old test name and final assertion still expected
+v29. Its excluded-status round-trip and non-deletion assertions had already
+passed, and the target's publication test passed.
+
+The repair renames that one case to current-schema semantics and compares with
+`CURRENT_SCHEMA_VERSION`. No production code or behavior changed.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F10-01 | Excluded status round-trips without deletion in the schema initialized by the current ephemeral migration API | `51d549db58f437176fc7cd9fe23d27e23ffc59c6cf0ebbdc6d280a29dd41ccf0` | passed with the target's second case in macOS PR run `30204933297`; 2 passed | excluded document status, ephemeral migration target or current schema changes |
+
+The local exact integration binary again remained suspended in `_dyld_start`
+after compilation and before the Rust test harness. A process sample confirmed
+the same host loader failure and the exact processes were terminated. It is
+`not_run`; the next macOS PR run is the assertion authority. Every unrelated
+pass from run `30204531887` remains reusable.
+
+### source-root authority and remaining current-schema repair F11 — 2026-07-26
+
+macOS PR run `30204933297` passed F10 and again passed the complete meta-store
+library. The next integration target then isolated one failure in
+`s26_import_root_control`: its periodic-requeue assertion expected root B, but
+the old fixture had created only legacy import task/scope rows. Current
+production requeue correctly requires a matching active `source_root`, so it
+returned no roots. The repair registers root A and root B through the current
+authority before exercising pause, requeue, claim and resume semantics; the
+production authority query remains strict.
+
+Because Cargo stopped after s26, later integration targets were unrun. A bounded
+static audit of those remaining meta-store tests found five more current API
+assertions in `s3_sqlite` and `s807_v27` that still hard-coded schema 29. The
+historical v29 migration fixtures remain unchanged. Current ephemeral/owner/read
+tests now use `CURRENT_SCHEMA_VERSION`, the migration-history assertion covers
+the complete contiguous range, and the current schema table inventory includes
+the v30–v33 authority, deletion and PDF reprocessing tables.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F11-01 | A paused current source root is excluded while another active root remains eligible for periodic requeue and worker claim | `02dd09a868c3ad6c1ffaa2df431c7c259941706c0b4c0ee8c76815d25d6e0aee` | passed in macOS PR run `30205337013`; 2 target cases passed | source-root authority, pause/resume, periodic requeue or worker-claim filters change |
+| F11-02 | Current ephemeral, owner and read APIs expose the contiguous current schema and complete v30–v33 table set | `95d7618e796c378621cbd7e942130bee289fbc91c97955b8ada7740401394c64` | the affected current-schema assertions passed in macOS PR run `30205337013`; the s3 target reached 56 passes before two independent OCR fixture failures | current schema, migration registry or current table inventory changes |
+| F11-03 | Current owned-store identity and derived rows remain insert-once without claiming historical v29 | `e40d84f2786155bf47d26b5e23c8206a0504e77f5ec97912ee3182c340aaf677` | passed in macOS PR run `30206076466`; all 38 s807_v27 cases passed | current schema or immutable identity/derived-row semantics change |
+
+All independent and fail-late checks in runs `30204933297` and `30205337013`
+passed. F09 and F10 remain reusable and are not reopened by these test-only
+fixture changes.
+
+### OCR cache source-authority fixture repair F12 — 2026-07-26
+
+macOS PR run `30205337013` proved F11-01 and the current-schema portion of
+F11-02. The s3 target ran 58 cases and isolated two failures after 56 passes:
+both OCR cache persistence fixtures used arbitrary content hashes with no
+current source authority.
+
+Production intentionally accepts an OCR page-cache write only while the
+content hash is referenced by a non-deleted document, current source revision
+and present occurrence under a non-deleting source root. This prevents deleted
+or unauthorized source content from retaining application-derived OCR data.
+The repair preserves that guard and seeds the minimum real authority graph in
+the two persistence tests. It does not weaken cache deletion, root deletion or
+privacy behavior.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F12-01 | OCR success, retryable failure and word-box cache rows persist only for an actively referenced source revision while debug output remains redacted | `044645f9b4e14ff7f903e5a195636756dda90903bc86d48ba793383486454438` | passed in macOS PR run `30206076466`; all 58 s3 cases passed | OCR cache authority guard, scan/occurrence lifetime, cache payload persistence or debug redaction changes |
+
+The first fixture repair created the root, document, revision and occurrence
+but omitted the occurrence's referenced scan snapshot. Both cases failed at
+the same public `observe_source_occurrence` call before any cache assertion.
+The completed fixture now creates that snapshot through `begin_scan`; it does
+not bypass or weaken the foreign key.
+
+No local Rust test body was started because the already-confirmed macOS loader
+condition would make another launch non-authoritative. Only the affected s3
+target was compiled and linted. The next macOS PR run continues from the
+previous fail point; valid F09–F11 results and all independent checks remain
+reused.
+
+### deleted-data OCR authority and workspace fail-late repair F13 — 2026-07-26
+
+macOS PR run `30206076466` proved F12, F11-03 and every intervening target,
+then isolated one failure in the CLI deleted-data purge target. The test
+constructed an OCR cache entry for an imported document but did not prove that
+the document had a current root/scan/occurrence authority. The guarded cache
+upsert therefore remained a no-op and the later purge correctly reported zero
+cache rows instead of the fixture's expected one.
+
+The fixture now establishes the source authority through public APIs before
+the cache write and immediately reads the cache row back. The purge assertion
+therefore measures real retained derived data instead of assuming an
+unverified insert. Production cache and purge behavior remain unchanged.
+
+The run also exposed that `cargo test --workspace` stops after the first failed
+test binary. That contradicted the train's explicit fail-late requirement even
+though independent workflow steps continued. The macOS PR test command now
+uses Cargo's native `--no-fail-fast`, and the workflow checker pins this
+behavior so future failures cannot silently hide later workspace targets.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F13-01 | Deleted-data purge removes a proven OCR cache row and word-box payload without exposing source paths or OCR text | `4922574b6d3a566645ad37dceb4c617f5f0697c77c38d4da563d35fd3fa7e134` | focused local target compilation entered the known zero-CPU target-directory stall and was terminated as `not_run`; exact assertion pending the next macOS PR run | deleted-data purge, OCR authority/cache retention, residual scan or redaction changes |
+| F13-02 | A macOS workspace test failure does not prevent later workspace test binaries from running | `591ca7951cbd882cb2c466ef38bbc374c9f2be5e50114146b1faf4653ad4e7f7:24cbbb903150585f3d70b2733724cffa6a5648d43bd760eb4e2f62a2da1efff9` | focused workflow checker passed; execution behavior pending the next macOS PR run | PR workflow test command or workflow checker changes |
+
+All independent checks in run `30206076466` passed. Earlier meta-store,
+parser, index, search, OCR client and CLI pass results remain valid and are not
+reopened by this CLI fixture plus workflow-policy repair.
+
+### complete fail-late workspace repair F14 — 2026-07-26
+
+macOS PR run `30206651549` proved F13 and the workflow's new fail-late
+behavior: after the first failed target, every remaining workspace test target
+and every independent post-test check still ran. The run collected the complete
+remaining set of 21 failures across seven test targets instead of stopping at
+the first one.
+
+The failures reduced to four shared contract boundaries:
+
+- OCR worker fixtures had documents and revisions but no present occurrence
+  under the current source-root/scan authority, so the production cache guard
+  correctly rejected writes;
+- PDF and release-readiness fixtures still described the retired `lopdf` /
+  Poppler path or emitted multiline PDF text without leading, while explicit
+  rescans still expected terminal retryable task reuse;
+- daemon worker gates did not freeze PDF import for every runtime combination
+  already declared unavailable by the capability matrix, and two tests
+  conflated missing, invalid and not-configured runtime evidence;
+- the v28 rejection and v29 preservation tests constructed historical
+  authorities through current APIs, so their own observation/setup could
+  invoke v33 behavior before the daemon under test.
+
+The repair keeps the production source-authority, runtime and migration
+validation strict. It adds only one production change: worker gating now uses
+the same embedding/classifier/PDFium conjunction as the published PDF-import
+capability. Historical setup uses an explicitly feature-gated synthetic test
+seam and the v29 acceptance now proves the real `migrating` transition followed
+by exact business-head, epoch and artifact-digest preservation at v33.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F14-01 | OCR work and cache reuse require a present occurrence under current root/scan authority | `5d9d932300e3b2efb5a7c7683409e3bfa9ab9856d1cf3bff68e8ea580d7e2450` | seven previously failed exact cases passed locally; one direct warm-up plus Nextest run `b150028a-1c14-4e9a-a603-47b810b3853c` (6/6) | OCR cache authority, source occurrence, worker claim, renderer or OCR publication changes |
+| F14-02 | PDFium metrics/text layout, release evidence and explicit-rescan task replacement match current contracts | `f3286deb070a04eb6d9f19138ae72702961b2104ad8b8659a45392da15152b6c` | seven previously failed exact cases passed locally: s21 2/2, Nextest `508dcfc1-6b68-445b-b6f4-abde514c7b48` 2/2 and `aa01fa02-7098-4e1f-ba04-aec16f88ae55` 3/3 | PDF extraction/metrics, release-readiness evidence, task-head coordination or candidate assignment changes |
+| F14-03 | Runtime capability publication and worker claims use one embedding/classifier/OCR/PDFium gate; completed scans have current root authority | `8f823f903ea3a9bf669421624e553502fed6bf0c3650b6045a04eab315a386b8` | four previously failed exact daemon unit cases passed locally | runtime attestation/reason vocabulary, capability derivation, worker gate or periodic rescan changes |
+| F14-04 | v28 remains byte-preserving unsupported while exact v29 migrates through the explicit COW boundary and preserves business state | `78b992b26a9c5b8e6a3476de9be8ba053ffe0f2b168a3b2c625fe18844460602` | two exact v28 rejection cases and one exact v29→v33 preservation case passed locally | migration-test support, v28 rejection, COW registry, core migration state or preservation summary changes |
+
+The first multi-binary Nextest attempts were cancelled before any test body
+after macOS held several new binaries in `_dyld_start` while `syspolicyd`
+validated them. Serial first launch followed by same-binary parallel execution
+completed successfully. These cancelled enumerations are `not_run`, not failed
+tests. Focused production/test-seam Clippy, loop-state, performance-contract,
+autonomous-goal and public-repository checks all passed. No previously valid
+workspace target was replayed.
+
+### direct CLI managed-root scan coordination repair F15 — 2026-07-26
+
+macOS PR run `30210820223` proved every F14 case except one previously valid
+s15 idempotency case. The complete fail-late run then passed all later workspace
+targets plus CLI/daemon closed loops, licenses, runbooks, handoff, workflow and
+benchmark smoke. The sole failure was a second direct CLI import after the test
+had established current source-root authority: the CLI still created only the
+legacy task/scope head, so occurrence persistence had no matching task-keyed
+`ScanSnapshot` and failed closed.
+
+The repair gives direct CLI imports of managed roots the same atomic
+task/snapshot coordination contract used by daemon scans. Scan success and
+failure completion moved from daemon-private code into a small shared
+import-pipeline module, so both execution owners update progress, missing-file
+truth, PDF reprocessing and terminal scan state identically. Legacy-only direct
+imports remain batched exactly as before; one invocation cannot mix managed
+and unmanaged roots.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F15-01 | A second direct import of a managed source root creates a matching task-keyed scan, preserves one OCR job and completes the scan | `6676ac93976590aa1a8fa44723bf4966299f967237c96397377af8bc80d9f67d` | the sole failed exact case passed locally; focused Clippy for import-pipeline, resume-cli and resume-daemon passed | direct import coordination, source scan completion, occurrence persistence or OCR job identity changes |
+
+No previously valid workspace target was replayed. The next PR run needs only
+to validate this affected boundary and the repository's required macOS gates.
