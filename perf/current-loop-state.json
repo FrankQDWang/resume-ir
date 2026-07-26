@@ -1,9 +1,9 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "blocked_needs_external_input",
+  "workflow_state": "pr_opened",
   "experiment_state": "contract_locked",
-  "evidence_lane": "smoke",
+  "evidence_lane": "gui_manual",
   "contract_pins": {
     "active_goal_sha256": "be81a1a1c52c0d57b217add9454ba0edc20f30e92aefb2ac88c36532d084bd67",
     "acceptance_matrix_sha256": "4f93b6cc49d11bc039f001a878d78f431a2ce67eb509a5b9736529d755f82d91",
@@ -682,7 +682,10 @@
     {"from":"red_check_written","to":"implementation_active","evidence_ref":"PROGRESS.md#s810"},
     {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#s810"},
     {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#s810"},
-    {"from":"evidence_review","to":"blocked_needs_external_input","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"}
+    {"from":"evidence_review","to":"blocked_needs_external_input","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"},
+    {"from":"blocked_needs_external_input","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-repair-round-f02--2026-07-26"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-native-manual-round-f04--2026-07-26"},
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/238"}
   ],
   "verification": {
     "commands": [
@@ -2858,7 +2861,15 @@
       {"command":"CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 cargo clippy -p resume-daemon --bin resume-daemon --locked -- -D warnings","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"},
       {"command":"macOS PDFium Xcode preflight exact Node tests","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"},
       {"command":"npm run build:macos:pdfium --prefix apps/desktop","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"},
-      {"command":"current-tree runbooks, public repository guard and git diff checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"}
+      {"command":"current-tree runbooks, public repository guard and git diff checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"},
+      {"command":"final fail-late repair runner receipt 20260726T091240Z-183931d2","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-fail-late-round-f02-b--2026-07-26"},
+      {"command":"three exact PDFium import and metrics regression cases","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-repair-round-f03--2026-07-26"},
+      {"command":"cargo test -p resume-cli --locked --test s146_metadata_key_cli --test s147_metadata_key_rotation_cli -- --test-threads=1 --nocapture","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-repair-round-f03--2026-07-26"},
+      {"command":"verify-local-parallel cli-closed-loop receipt 20260726T103040Z-3f02d3f5","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-repair-round-f03--2026-07-26"},
+      {"command":"CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 cargo clippy -p parser-pdf -p import-pipeline -p resume-cli --all-targets --locked -- -D warnings","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-native-manual-round-f04--2026-07-26"},
+      {"command":"verify-local-parallel desktop-macos-worktree-bundle receipt 20260726T103209Z-3ba42dfb","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-native-manual-round-f04--2026-07-26"},
+      {"command":"receipt-bound v0.1.8 install and isolated-synthetic Computer Use acceptance","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-native-manual-round-f04--2026-07-26"},
+      {"command":"performance, autonomous-goal, loop-state, public-repository and diff checks after final repair","exit_code":0,"evidence_ref":"PROGRESS.md#v0.1.8-final-repair-dmg-and-synthetic-installed-acceptance"}
     ],
     "all_required_commands_ran": false,
     "claim": "partial"
@@ -2874,10 +2885,10 @@
   "github_ledger": {
     "primary_issue": "#217",
     "active_prs": [
-      "#237"
+      "#235",
+      "#237",
+      "#238"
     ],
-    "open_blockers": [
-      "#53"
-    ]
+    "open_blockers": []
   }
 }
