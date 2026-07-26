@@ -30,6 +30,7 @@ import {
   DEFAULT_INSTALLED_EXECUTABLES,
   EMBEDDING_EXECUTABLE,
   PDF_RENDER_EXECUTABLE,
+  RELEASE_BUILD_TIMEOUT_MS,
   WORKSPACE_MARKER,
   WORKSPACE_MARKER_SCHEMA,
   WORKSPACE_PREFIX,
@@ -117,6 +118,37 @@ test("bounded tools always use argv execution with shell disabled", async () => 
   assert.equal(captured.toolOptions.shell, false);
   assert.deepEqual(captured.args, ["one", "two"]);
   assert.equal(typeof captured.command, "string");
+});
+
+test("the bounded tool layer admits the full release-build budget only", async () => {
+  const spawnTool = () => {
+    const child = new EventEmitter();
+    child.pid = 9_997;
+    child.exitCode = null;
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.kill = () => {};
+    queueMicrotask(() => {
+      child.stdout.end();
+      child.stderr.end();
+      child.exitCode = 0;
+      child.emit("exit", 0, null);
+    });
+    return child;
+  };
+
+  const result = await runBoundedTool("/synthetic/tool", [], {
+    spawnTool,
+    timeoutMs: RELEASE_BUILD_TIMEOUT_MS,
+  });
+  assert.equal(result.status, 0);
+  await assert.rejects(
+    runBoundedTool("/synthetic/tool", [], {
+      spawnTool,
+      timeoutMs: RELEASE_BUILD_TIMEOUT_MS + 1,
+    }),
+    /tool_invocation_invalid/,
+  );
 });
 
 test("a caller can raise one bounded stdout budget without removing the global cap", async () => {

@@ -1276,3 +1276,24 @@ without turning normal cold-build variance into a false product failure.
 No previously valid product, workspace or PR test was replayed. Native
 installed-main acceptance remains incomplete and must resume from this failed
 release-build boundary after the repair reaches main.
+
+### bounded-process timeout ceiling repair F17 — 2026-07-27
+
+The first native retry after F16 failed before spawning the exact-main build
+with `tool_invocation_invalid`. The release deployment correctly requested
+the new 40-minute budget, but `runBoundedTool` still rejected every timeout
+above the former 20-minute clone limit. This was the second half of the same
+split-timeout contract and no native scenario or user-data mutation ran.
+
+The bounded-process ceiling now admits the exact release-build maximum while
+rejecting larger caller values. Individual call sites remain responsible for
+their smaller operation-specific timeout, so the repair does not make ordinary
+tools unbounded.
+
+| Row | Behavior boundary | Status | Re-run only when |
+| --- | --- | --- | --- |
+| F17-01 | The process executor accepts the exact release-build maximum and rejects any larger timeout | focused process suite: 14/14 passed | bounded-process validation or release-build timeout changes |
+| F17-02 | Release deployment still uses the independent bounded budget | focused release-deployment suite: 12/12 passed | release deployment or timeout routing changes |
+
+No product or workspace suite was replayed. Native installed-main acceptance
+remains incomplete and resumes only after F17 reaches main.
