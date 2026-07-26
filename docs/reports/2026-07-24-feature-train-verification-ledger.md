@@ -955,3 +955,32 @@ One attempted local execution was left launch-suspended by the command runner
 after linking. It executed no test body, was terminated by exact PID, and is
 `not_run`; F06-02 is the authoritative compile/link result. No previously valid
 workspace or feature row was replayed.
+
+### clean-checkout PDFium dependency repair F07 — 2026-07-26
+
+PR run `30202411939`, job `89794541844`, proved the first cache-miss path was
+not hermetic. The builder requested PDFium's `minimal` checkout, while the
+pinned PDFium DEPS makes `third_party/simdutf` conditional on
+`checkout_v8 = checkout_configuration != "minimal"`. GN still loads
+`//third_party/simdutf` while generating the reviewed complete static library,
+so a clean runner failed. The local source workspace retained that dependency
+from an older broader checkout and had masked the defect.
+
+The builder now uses PDFium's documented `small` checkout: it omits corpora and
+instrumented libraries but includes dependencies required to generate PDFium.
+The production GN arguments remain unchanged, including `pdf_enable_v8=false`.
+The fail-late workflow was also narrowed so Cargo-dependent CLI, daemon and
+benchmark checks continue after test failures only when the PDFium pack
+verified successfully; prerequisite failure no longer creates three misleading
+secondary failures. License, runbook, handoff and workflow checks remain
+independently fail-late.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F07-01 | Clean PDFium source checkout includes complete-static-library generation dependencies | `dbcc01dc52d3045ace02df95b9db560c18e6fb8514d14c3bb0cb5da1c55f59dd:bf949f46603081e81aa76a57e2b808eaec12af34a30d59ccdbd7ce72796f6835` | exact Node regression failed before the export/fix, then 2 cases passed in 40 ms | macOS PDFium builder, checkout mode, pinned source DEPS or regression test changes |
+| F07-02 | Fail-late checks distinguish a failed prerequisite from business-test failures | `3c8d712427a6171d51de77fad4409e698ecd9e81f23ebe960692d4823174f26a:a43391b545d7b81185dc3f2d304cd5bb60574125519904e3cec0879598367e22` | workflow checker passed | PR step dependencies or workflow policy changes |
+
+The CLI import, daemon seed and benchmark smoke failures in run `30202411939`
+all occurred after `libpdfium.a` failed to build. They are classified as
+`invalidated_by_prerequisite`, not product failures and not reusable evidence.
+License, runbook, handoff and workflow checks passed and remain reusable.

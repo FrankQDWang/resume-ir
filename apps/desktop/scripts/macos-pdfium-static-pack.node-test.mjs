@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { PDFIUM_CHECKOUT_CONFIGURATION } from "./build-macos-pdfium-static-pack.mjs";
 import { readMacosPdfiumSourceContract } from "./macos-pdfium-static-pack.mjs";
 
 const contractFile = fileURLToPath(
@@ -19,4 +20,8 @@ test("standalone macOS PDFium does not depend on Chromium PGO profiles", () => {
   );
   assert.ok(contract.pdfium.gn_arguments.includes("use_thin_lto=false"));
   assert.ok(!contract.pdfium.gn_arguments.includes("treat_warnings_as_errors=false"));
+});
+
+test("source checkout includes dependencies required to generate the complete static library", () => {
+  assert.equal(PDFIUM_CHECKOUT_CONFIGURATION, "small");
 });

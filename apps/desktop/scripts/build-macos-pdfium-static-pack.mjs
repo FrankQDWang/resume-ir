@@ -11,6 +11,7 @@ import { resolveMacosXcodeToolchain } from "./macos-xcode-toolchain.mjs";
 
 const DEPOT_TOOLS_REPOSITORY =
   "https://chromium.googlesource.com/chromium/tools/depot_tools.git";
+export const PDFIUM_CHECKOUT_CONFIGURATION = "small";
 
 function run(command, args, { cwd, env = process.env } = {}) {
   const result = spawnSync(command, args, {
@@ -119,7 +120,7 @@ export async function buildMacosPdfiumStaticPack({
       "config",
       "--unmanaged",
       "--custom-var",
-      'checkout_configuration="minimal"',
+      `checkout_configuration="${PDFIUM_CHECKOUT_CONFIGURATION}"`,
       contract.pdfium.source_repository,
     ],
     { cwd: clientRoot, env: environment },

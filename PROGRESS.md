@@ -31243,6 +31243,15 @@ Output summary:
   failures before repair.
 - Focused workflow policy, PDFium pack verification and PDF renderer test-link
   checks passed. No previously valid feature or workspace test was rerun.
+- The first clean CI cache miss then exposed that the builder's `minimal`
+  PDFium checkout excluded `third_party/simdutf`, even though GN loads it while
+  generating the complete static library. A stale broader local source cache
+  had masked this. The builder now uses PDFium's documented `small` checkout
+  while retaining `pdf_enable_v8=false` in production GN arguments.
+- Fail-late Cargo-dependent CLI, daemon and benchmark checks now run only after
+  the PDFium prerequisite verifies; independent policy checks still continue.
+  The exact checkout regression failed before the fix and passed after it,
+  together with the focused workflow and pack-verification checks.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

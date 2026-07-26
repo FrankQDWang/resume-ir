@@ -45,6 +45,7 @@ jobs:
         run: npm run build:macos:pdfium
 
       - name: Verify reviewed macOS PDFium static pack
+        id: pdfium-verify
         working-directory: apps/desktop
         run: npm run verify:macos:pdfium
 
@@ -68,11 +69,11 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: CLI closed-loop check
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.pdfium-verify.outcome == 'success' }}
         run: ./scripts/ci/check-cli-closed-loop.sh
 
       - name: Daemon closed-loop check
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.pdfium-verify.outcome == 'success' }}
         run: ./scripts/ci/check-daemon-closed-loop.sh
 
       - name: License check
@@ -92,7 +93,7 @@ jobs:
         run: ./scripts/ci/check-workflows.sh
 
       - name: Benchmark smoke
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.pdfium-verify.outcome == 'success' }}
         run: ./scripts/ci/check-benchmark-smoke.sh
 
   contract_check:

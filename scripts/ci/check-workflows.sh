@@ -79,6 +79,7 @@ require_text "$pr_workflow" "steps.pdfium-cache.outputs.cache-hit != 'true'"
 require_text "$pr_workflow" "Verify reviewed macOS PDFium static pack"
 require_text "$pr_workflow" "npm run verify:macos:pdfium"
 require_text "$pr_workflow" 'if: ${{ !cancelled() }}'
+require_text "$pr_workflow" "if: \${{ !cancelled() && steps.pdfium-verify.outcome == 'success' }}"
 require_text "$pr_workflow" "check-workflows.sh"
 require_text "$pr_workflow" "actions/checkout@v6"
 
