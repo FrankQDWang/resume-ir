@@ -90,9 +90,9 @@ require_text "$nightly_workflow" "nightly benchmark smoke report leaked a local 
 require_text "$nightly_workflow" "nightly OCR benchmark smoke report leaked a local path or runtime-data marker"
 require_text "$nightly_workflow" "nightly vector benchmark smoke report leaked a local path or runtime-data marker"
 
-require_text "$platform_workflow" "pull_request"
 require_text "$platform_workflow" "macos-latest"
-require_text "$platform_workflow" "windows-latest"
+reject_text "$platform_workflow" "windows-latest"
+reject_text "$platform_workflow" "pull_request:"
 require_text "$platform_workflow" "cargo build --workspace --locked"
 require_text "$platform_workflow" "cargo test --workspace --locked"
 require_text "$platform_workflow" "actions/checkout@v6"
