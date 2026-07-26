@@ -32,9 +32,9 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
 
-      - name: Cache reviewed macOS PDFium static pack
+      - name: Restore reviewed macOS PDFium static pack
         id: pdfium-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .cache/resume-ir-macos-pdfium-static-pack
           key: macos-pdfium-${{ runner.arch }}-${{ hashFiles('apps/desktop/resources/pdf-renderer/aarch64-apple-darwin/source-contract.json', 'apps/desktop/scripts/build-macos-pdfium-static-pack.mjs', 'apps/desktop/scripts/macos-pdfium-static-pack.mjs', 'apps/desktop/scripts/macos-xcode-toolchain.mjs') }}
@@ -48,6 +48,13 @@ jobs:
         id: pdfium-verify
         working-directory: apps/desktop
         run: npm run verify:macos:pdfium
+
+      - name: Save reviewed macOS PDFium static pack
+        if: steps.pdfium-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/resume-ir-macos-pdfium-static-pack
+          key: ${{ steps.pdfium-cache.outputs.cache-primary-key }}
 
       - name: Install OCR renderer dependencies
         run: |

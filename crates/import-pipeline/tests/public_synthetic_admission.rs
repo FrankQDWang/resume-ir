@@ -449,7 +449,7 @@ fn text_layer_pdf(text: &str) -> Vec<u8> {
         .lines()
         .map(|line| format!("({}) Tj T* ", pdf_escape(line)))
         .collect::<String>();
-    let content = format!("BT /F1 12 Tf 72 720 Td {operations}ET\n").into_bytes();
+    let content = format!("BT /F1 12 Tf 14 TL 72 720 Td {operations}ET\n").into_bytes();
     build_pdf(vec![
         b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),

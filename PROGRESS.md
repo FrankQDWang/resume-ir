@@ -31252,6 +31252,17 @@ Output summary:
   the PDFium prerequisite verifies; independent policy checks still continue.
   The exact checkout regression failed before the fix and passed after it,
   together with the focused workflow and pack-verification checks.
+- The next macOS run built and verified PDFium and isolated one real workspace
+  failure: the frozen public synthetic PDF helper used `T*` without text
+  leading, so two multiline samples visually overlapped and became
+  `needs_review`. The helper now defines visible 14-point leading; production
+  PDF quality and classification remain unchanged.
+- PDFium cache restore/save are now explicit, with save immediately after pack
+  verification. Later test failures cannot throw away a successful first
+  build. The workflow and formatting checks pass; the repaired exact synthetic
+  admission case awaits the next hosted macOS run because local Rust compilation
+  was blocked enumerating the oversized target dependency directory before any
+  test entered.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

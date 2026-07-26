@@ -984,3 +984,37 @@ The CLI import, daemon seed and benchmark smoke failures in run `30202411939`
 all occurred after `libpdfium.a` failed to build. They are classified as
 `invalidated_by_prerequisite`, not product failures and not reusable evidence.
 License, runbook, handoff and workflow checks passed and remain reusable.
+
+### public synthetic PDF fixture repair F08 — 2026-07-26
+
+PR run `30202721429`, job `89795371823`, successfully built and verified the
+reviewed PDFium archive, completed Clippy and reached the workspace tests. The
+only failed assertion was
+`frozen_public_synthetic_fixture_matches_production_admission`: observed
+classification counts `(2, 2, 3, 1, 1)` differed from expected
+`(3, 3, 1, 1, 1)`. Every earlier workspace test in the job passed, and the
+fail-late CLI, daemon, license, runbook, handoff, workflow and benchmark checks
+all passed.
+
+Both misclassified samples were the fixture's synthetic text-layer PDFs. Its
+builder emitted `T*` for multiple lines without defining text leading, placing
+all lines at the same visual location under PDFium. The fixture now defines
+14-point leading before those operations, matching the visible multiline text
+the frozen sample claims. Production PDF quality and classification logic are
+unchanged.
+
+The workflow also replaces the monolithic cache action with explicit restore
+and save actions. A verified cache miss is saved immediately before tests, so a
+later business assertion cannot discard a successful 14-minute PDFium build.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F08-01 | Frozen public synthetic PDF samples expose distinct visible lines to production PDFium admission | `2af924eabcb91900cb06df1e1bd6f72bdd2c98faee312d0ef6e861461d54f2ca` | hosted exact case failed before repair; repaired case pending the next macOS PR run | public synthetic admission fixture, PDF text extraction, quality or classifier changes |
+| F08-02 | A verified PDFium pack is cached before later test failures | `8a2924957941fd4de7a0bd9c3f2f456539a20f1a63e48fd8abc8d0b8b84600e7:297571b242256bd081325303a241f13761adce53e2f046a15f15afbccdddad22` | workflow checker passed | PR cache ordering, key, verification or workflow policy changes |
+
+A focused local F08-01 attempt did not reach the test: the compiler spent more
+than three minutes blocked enumerating the oversized local
+`target/debug/deps` directory, and a direct filesystem enumeration blocked at
+the same syscall. Both exact processes were terminated. This is `not_run`; it
+does not replace the deterministic hosted red result or the required hosted
+green result.
