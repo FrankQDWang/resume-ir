@@ -914,3 +914,19 @@ repair result, while the unaffected F01/F02-B passes remain reused. The
 remaining release-train sequence is commit/PR reconciliation, an exact
 merged-main build and installed-main acceptance, followed by the uninterrupted
 120-minute soak bound to that same commit. No soak result is claimed yet.
+
+### Platform boundary correction F05 — 2026-07-26
+
+The user reaffirmed that the current delivery is macOS-only. Windows and Linux
+execution, investigation, repair, packaging and evidence are out of scope and
+cannot block this train unless a later explicit user instruction changes the
+boundary. The repository-level agent contract and active-goal machine contract
+now preserve this rule across context compaction and agent handoff.
+
+One already-running non-required Windows CI retry reached the workspace test
+step and was cancelled by its 60-minute job limit. It is recorded only as an
+out-of-scope observation: it is not a failure to repair, it will not be rerun,
+and it does not invalidate any macOS evidence. The PR and required security
+workflows now execute on macOS; the non-required platform workflow no longer
+runs on pull requests and has no Windows matrix. Required check names and
+branch protection remain unchanged.
