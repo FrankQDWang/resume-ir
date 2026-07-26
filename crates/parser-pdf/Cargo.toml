@@ -9,7 +9,7 @@ publish.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
-lopdf = "0.42.0"
+lopdf = "0.44.0"
 parser-common = { path = "../parser-common" }
 
 [dev-dependencies]
