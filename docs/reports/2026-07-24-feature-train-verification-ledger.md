@@ -1107,9 +1107,34 @@ the v30–v33 authority, deletion and PDF reprocessing tables.
 
 | Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
 | --- | --- | --- | --- | --- |
-| F11-01 | A paused current source root is excluded while another active root remains eligible for periodic requeue and worker claim | `02dd09a868c3ad6c1ffaa2df431c7c259941706c0b4c0ee8c76815d25d6e0aee` | target-specific compile and deny-warnings Clippy passed; exact assertions pending the next macOS PR run | source-root authority, pause/resume, periodic requeue or worker-claim filters change |
-| F11-02 | Current ephemeral, owner and read APIs expose the contiguous current schema and complete v30–v33 table set | `95d7618e796c378621cbd7e942130bee289fbc91c97955b8ada7740401394c64` | target-specific compile and deny-warnings Clippy passed; target was unrun after F11-01 failed and awaits the next macOS PR run | current schema, migration registry or current table inventory changes |
+| F11-01 | A paused current source root is excluded while another active root remains eligible for periodic requeue and worker claim | `02dd09a868c3ad6c1ffaa2df431c7c259941706c0b4c0ee8c76815d25d6e0aee` | passed in macOS PR run `30205337013`; 2 target cases passed | source-root authority, pause/resume, periodic requeue or worker-claim filters change |
+| F11-02 | Current ephemeral, owner and read APIs expose the contiguous current schema and complete v30–v33 table set | `95d7618e796c378621cbd7e942130bee289fbc91c97955b8ada7740401394c64` | the affected current-schema assertions passed in macOS PR run `30205337013`; the s3 target reached 56 passes before two independent OCR fixture failures | current schema, migration registry or current table inventory changes |
 | F11-03 | Current owned-store identity and derived rows remain insert-once without claiming historical v29 | `e40d84f2786155bf47d26b5e23c8206a0504e77f5ec97912ee3182c340aaf677` | target-specific compile and deny-warnings Clippy passed; target was unrun after F11-01 failed and awaits the next macOS PR run | current schema or immutable identity/derived-row semantics change |
 
-All independent and fail-late checks in run `30204933297` passed. F09 and F10
-remain reusable and are not reopened by these three test-only fixture changes.
+All independent and fail-late checks in runs `30204933297` and `30205337013`
+passed. F09 and F10 remain reusable and are not reopened by these test-only
+fixture changes.
+
+### OCR cache source-authority fixture repair F12 — 2026-07-26
+
+macOS PR run `30205337013` proved F11-01 and the current-schema portion of
+F11-02. The s3 target ran 58 cases and isolated two failures after 56 passes:
+both OCR cache persistence fixtures used arbitrary content hashes with no
+current source authority.
+
+Production intentionally accepts an OCR page-cache write only while the
+content hash is referenced by a non-deleted document, current source revision
+and present occurrence under a non-deleting source root. This prevents deleted
+or unauthorized source content from retaining application-derived OCR data.
+The repair preserves that guard and seeds the minimum real authority graph in
+the two persistence tests. It does not weaken cache deletion, root deletion or
+privacy behavior.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F12-01 | OCR success, retryable failure and word-box cache rows persist only for an actively referenced source revision while debug output remains redacted | `506e3bdd33871ae6eecdc7fd2d1aac7ac6c2949f71c517349398f0daa9c327d2` | affected target compiled and passed deny-warnings Clippy; exact assertions pending the next macOS PR run | OCR cache authority guard, source occurrence lifetime, cache payload persistence or debug redaction changes |
+
+No local Rust test body was started because the already-confirmed macOS loader
+condition would make another launch non-authoritative. Only the affected s3
+target was compiled and linted. The next macOS PR run continues from the
+previous fail point; valid F09–F11 results remain reused.

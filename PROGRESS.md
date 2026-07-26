@@ -31302,6 +31302,14 @@ Output summary:
   include v30–v33 tables. Historical v29 migration fixtures were not changed.
   Target-specific compile and deny-warnings Clippy passed for all three affected
   targets.
+- macOS PR run `30205337013` proved the repaired s26 authority fixture and the
+  current-schema assertions, then isolated two s3 OCR cache fixtures after 56
+  passes. Production correctly rejects cache writes without a present
+  source-occurrence authority. The tests now seed an active root, document,
+  source revision and occurrence for their content hash; the production privacy
+  guard remains strict. Only the affected s3 target was compiled and linted
+  with deny-warnings locally; exact assertions continue in the next macOS PR
+  run, while earlier valid results remain reused.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

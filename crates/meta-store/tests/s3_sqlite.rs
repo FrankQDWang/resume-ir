@@ -1290,14 +1290,9 @@ fn completed_embedding_update_jobs_can_be_requeued_for_vector_snapshot_rebuild()
 #[test]
 fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
     let store = migrated_store();
-    let key = OcrPageCacheKey::new(
-        "synthetic-content-hash-for-ocr-cache",
-        2,
-        300,
-        "eng+chi_sim",
-        "balanced",
-    )
-    .unwrap();
+    let content_hash = seed_active_ocr_cache_source(&store, "ocr-cache-success");
+    let key =
+        OcrPageCacheKey::new(content_hash.as_str(), 2, 300, "eng+chi_sim", "balanced").unwrap();
     let success = OcrPageCacheEntry::succeeded(
         key.clone(),
         "Synthetic OCR text that must stay out of debug",
@@ -1315,7 +1310,7 @@ fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
         Some(success.clone())
     );
     let debug = format!("{success:?} {key:?}");
-    assert!(!debug.contains("synthetic-content-hash-for-ocr-cache"));
+    assert!(!debug.contains(content_hash.as_str()));
     assert!(!debug.contains("Synthetic OCR text"));
     assert_eq!(
         success.text(),
@@ -1344,8 +1339,8 @@ fn ocr_page_cache_persists_success_and_retryable_failure_by_redacted_key() {
 #[test]
 fn ocr_page_cache_persists_word_boxes_without_debug_payload_leak() {
     let store = migrated_store();
-    let key =
-        OcrPageCacheKey::new("synthetic-bbox-content-hash", 1, 300, "eng", "balanced").unwrap();
+    let content_hash = seed_active_ocr_cache_source(&store, "ocr-cache-word-boxes");
+    let key = OcrPageCacheKey::new(content_hash.as_str(), 1, 300, "eng", "balanced").unwrap();
     let word_boxes = vec![
         OcrWordBox::new("SecretName", 12, 34, 56, 18, 0.92).unwrap(),
         OcrWordBox::new("Rust", 72, 34, 40, 18, 0.88).unwrap(),
@@ -1377,7 +1372,7 @@ fn ocr_page_cache_persists_word_boxes_without_debug_payload_leak() {
 
     let debug = format!("{loaded:?} {:?}", loaded.word_boxes());
     assert!(!debug.contains("SecretName"));
-    assert!(!debug.contains("synthetic-bbox-content-hash"));
+    assert!(!debug.contains(content_hash.as_str()));
 }
 
 #[test]
@@ -3236,6 +3231,34 @@ fn source_revision(document_id: &DocumentId) -> SourceRevision {
         ContentDigest::from_bytes(document_id.as_str().as_bytes()),
         128,
     )
+}
+
+fn seed_active_ocr_cache_source(store: &EphemeralMetaStore, label: &str) -> ContentDigest {
+    let now = UnixTimestamp::from_unix_seconds(1_800_000_790);
+    let document = document(label, false, DocumentStatus::Searchable);
+    let revision = source_revision(&document.id);
+    let root_path = format!("/synthetic/ocr-cache/{label}");
+    let root = store
+        .register_source_root(&root_path, &root_path, label, now)
+        .unwrap();
+
+    store.upsert_document(&document).unwrap();
+    assert_eq!(
+        store.insert_source_revision(&revision).unwrap(),
+        IdentityInsertOutcome::Inserted
+    );
+    store
+        .observe_source_occurrence(
+            &root.id,
+            &format!("{label}.pdf"),
+            &document.id,
+            &revision.id,
+            "ocr-cache-fixture",
+            now,
+        )
+        .unwrap();
+
+    revision.content_hash
 }
 
 fn insert_resume_version(store: &EphemeralMetaStore, version: &ResumeVersion) {
