@@ -1297,3 +1297,24 @@ tools unbounded.
 
 No product or workspace suite was replayed. Native installed-main acceptance
 remains incomplete and resumes only after F17 reaches main.
+
+### release-promotion timeout ownership repair F18 — 2026-07-27
+
+The next native retry was instrumented only through release preparation.
+Source authority, the exclusive acceptance lease, interrupted-run recovery and
+the exact-main release build all completed. The default reinstall child then
+threw `ReferenceError: CLONE_TIMEOUT_MS is not defined`; no installed product
+scenario or authorized-data clone ran.
+
+F16 separated the build budget from clone preparation but removed the old
+timeout import while promotion still referenced it. Release promotion now owns
+an explicit 20-minute lifecycle timeout, independent of the 40-minute release
+build and the clone/dependency budget.
+
+| Row | Behavior boundary | Status | Re-run only when |
+| --- | --- | --- | --- |
+| F18-01 | Default exact-release reinstall invokes the lifecycle child with its explicit bounded promotion budget | focused release-deployment suite: 13/13 passed | release deployment, lifecycle promotion or timeout routing changes |
+
+No previously valid product, workspace or delivery suite was replayed. Native
+installed-main acceptance remains incomplete and resumes only after F18
+reaches main.

@@ -12,6 +12,7 @@ import { COMPOSITION, DMG, HEAD, ICON, SOURCE } from "./fixtures.mjs";
 import {
   CLONE_TIMEOUT_MS,
   RELEASE_BUILD_TIMEOUT_MS,
+  RELEASE_PROMOTION_TIMEOUT_MS,
 } from "./core.mjs";
 
 const baseOptions = Object.freeze({
@@ -143,6 +144,29 @@ test("gives the full release build an independent bounded timeout", async () => 
 
   assert.equal(observedTimeoutMs, RELEASE_BUILD_TIMEOUT_MS);
   assert.ok(observedTimeoutMs > CLONE_TIMEOUT_MS);
+});
+
+test("gives release promotion its own bounded lifecycle timeout", async () => {
+  const injected = dependencies("0.1.8");
+  delete injected.values.reinstallCurrent;
+  let observed;
+  injected.values.runTool = async (command, args, options) => {
+    observed = { command, args, options };
+    return {
+      status: 0,
+      timedOut: false,
+      overflow: false,
+      stderr: "",
+      stdout:
+        '{"schema_version":"resume-ir.macos-app-reinstall.v1","from_version":"0.1.8","to_version":"0.1.8"}\n',
+    };
+  };
+
+  await deployExactInstalledRelease(baseOptions, injected.values);
+
+  assert.equal(observed.command, process.execPath);
+  assert.match(observed.args[0], /macos-reinstall-lifecycle\.mjs$/);
+  assert.equal(observed.options.timeoutMs, RELEASE_PROMOTION_TIMEOUT_MS);
 });
 
 function dependencies(installedVersion) {

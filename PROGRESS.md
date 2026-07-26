@@ -30555,6 +30555,23 @@ Output summary:
   budget and continues to reject any larger value. Focused process tests pass
   14/14 and release-deployment tests remain 12/12; no business suite was run.
 
+### v0.1.8 release-promotion timeout ownership repair F18
+
+- A stage-instrumented replay of only the failed installed-main release
+  preparation boundary proved that source authority, the acceptance lease,
+  interrupted-run recovery and the exact-main release build all succeeded.
+- Promotion then threw `ReferenceError: CLONE_TIMEOUT_MS is not defined`.
+  F16 had separated the release-build budget from the clone budget but removed
+  the clone-timeout import while the install/reinstall lifecycle child still
+  referenced it. The outer acceptance boundary consequently collapsed this
+  programming error to `acceptance_internal_failure` before any native product
+  scenario ran.
+- Release promotion now owns an explicit 20-minute lifecycle timeout, separate
+  from both the 40-minute build budget and clone/dependency preparation. The
+  focused release-deployment suite passes 13/13, including a regression that
+  executes the default reinstall child boundary and observes its exact timeout.
+  No product, workspace or already-valid delivery suite was replayed.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2
