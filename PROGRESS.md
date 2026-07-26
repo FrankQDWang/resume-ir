@@ -30526,6 +30526,24 @@ Output summary:
   import-pipeline, resume-cli and resume-daemon also passed; no unrelated test
   target was replayed.
 
+### v0.1.8 exact-main native build timeout repair F16
+
+- PR run `30211712917` passed every required macOS and security check, and the
+  feature train merged to exact main commit
+  `b18d5ceaee684b43c59841a2bf0c94a8653ebc42`.
+- The merged-main worktree builder produced and installed a receipt-bound
+  0.1.8 DMG successfully. Native installed-main acceptance then reached the
+  isolated clean Tauri build and timed out at the shared 20-minute
+  clone/dependency budget.
+- Focused reproduction captured a complete, valid exact-main DMG receipt from
+  the child at timeout. The build had succeeded; the parent terminated it
+  before clean process exit and collapsed the result to
+  `release_build_failed`.
+- Release building now has its own bounded 40-minute budget. Clone and
+  dependency preparation retain the existing 20-minute bound. The focused
+  release-deployment suite passes 12/12, including the new independent-budget
+  regression; no business or workspace suite was replayed.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2

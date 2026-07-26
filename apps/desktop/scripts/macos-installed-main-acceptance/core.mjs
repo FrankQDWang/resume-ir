@@ -84,6 +84,7 @@ export const MAX_OWNER_FILE_BYTES = 16 * 1024;
 export const MAX_DIAGNOSTICS_BYTES = 2 * 1024 * 1024;
 export const TOOL_TIMEOUT_MS = 15_000;
 export const CLONE_TIMEOUT_MS = 20 * 60_000;
+export const RELEASE_BUILD_TIMEOUT_MS = 40 * 60_000;
 export const COLD_READY_TIMEOUT_MS = 20 * 60_000;
 export const READY_TIMEOUT_MS = 2 * 60_000;
 export const CONTENTION_TIMEOUT_MS = 2 * 60_000;
