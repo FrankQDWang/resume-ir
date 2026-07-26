@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 
 import {
-  CLONE_TIMEOUT_MS,
   MAX_TOOL_OUTPUT_BYTES,
+  RELEASE_BUILD_TIMEOUT_MS,
   TOOL_TIMEOUT_MS,
   createExitMonitor,
   fail,
@@ -36,7 +36,7 @@ export async function runBoundedTool(
     !args.every((arg) => typeof arg === "string" && !arg.includes("\0")) ||
     !Number.isSafeInteger(timeoutMs) ||
     timeoutMs < 25 ||
-    timeoutMs > CLONE_TIMEOUT_MS ||
+    timeoutMs > RELEASE_BUILD_TIMEOUT_MS ||
     !Number.isSafeInteger(maxStdoutBytes) ||
     maxStdoutBytes < 1 ||
     maxStdoutBytes > MAX_CALLER_STDOUT_BYTES ||

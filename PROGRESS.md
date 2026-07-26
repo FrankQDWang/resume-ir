@@ -30544,6 +30544,17 @@ Output summary:
   release-deployment suite passes 12/12, including the new independent-budget
   regression; no business or workspace suite was replayed.
 
+### v0.1.8 bounded-process timeout ceiling repair F17
+
+- The first post-F16 native retry failed before spawning the release build with
+  `tool_invocation_invalid`.
+- The release caller correctly requested 40 minutes, but the shared bounded
+  process layer still rejected every timeout above the former 20-minute clone
+  budget. The caller and executor contracts therefore disagreed.
+- The bounded process ceiling now admits the exact 40-minute release-build
+  budget and continues to reject any larger value. Focused process tests pass
+  14/14 and release-deployment tests remain 12/12; no business suite was run.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2
