@@ -2876,6 +2876,8 @@
       {"command":"macOS PR run 30204531887 fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-stale-schema-assertion-repair-f10--2026-07-26"},
       {"command":"cargo clippy -p meta-store --test excluded_document_status --features migration-test-support --locked -- -D warnings","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-stale-schema-assertion-repair-f10--2026-07-26"},
       {"command":"exact F10-01 local Rust test launch","exit_code":130,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-stale-schema-assertion-repair-f10--2026-07-26"},
+      {"command":"macOS PR run 30204933297 fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#source-root-authority-and-remaining-current-schema-repair-f11--2026-07-26"},
+      {"command":"cargo clippy -p meta-store --features migration-test-support --test s26_import_root_control --test s3_sqlite --test s807_v27 --locked -- -D warnings","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#source-root-authority-and-remaining-current-schema-repair-f11--2026-07-26"},
       {"command":"performance, autonomous-goal, loop-state, public-repository and diff checks after final repair","exit_code":0,"evidence_ref":"PROGRESS.md#v0.1.8-final-repair-dmg-and-synthetic-installed-acceptance"}
     ],
     "all_required_commands_ran": false,

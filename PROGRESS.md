@@ -31288,8 +31288,20 @@ Output summary:
   `excluded_document_status` integration assertion that called the current v33
   ephemeral migration API but still named and expected v29. It now uses
   `CURRENT_SCHEMA_VERSION`; its exact target compiles and target-specific
-  deny-warnings Clippy passes. The local binary again stalled before main in
-  `_dyld_start`, so the assertion awaits only the next cached macOS PR run.
+  deny-warnings Clippy passes. macOS PR run `30204933297` proved both target
+  cases.
+- That run next exposed one s26 fixture gap: periodic requeue now correctly
+  requires active `source_root` authority, while the old test created only
+  legacy task/scope control rows. The fixture now registers both roots before
+  testing pause/requeue/claim/resume; production authority filters remain
+  strict.
+- Cargo stopped after s26, so a bounded audit of the later unrun meta-store
+  integration targets was performed before another push. Five current-API
+  assertions in s3/s807 still hard-coded schema 29; they now use
+  `CURRENT_SCHEMA_VERSION`, assert the complete contiguous migration range and
+  include v30–v33 tables. Historical v29 migration fixtures were not changed.
+  Target-specific compile and deny-warnings Clippy passed for all three affected
+  targets.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

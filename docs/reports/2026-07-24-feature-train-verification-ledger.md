@@ -1078,10 +1078,38 @@ The repair renames that one case to current-schema semantics and compares with
 
 | Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
 | --- | --- | --- | --- | --- |
-| F10-01 | Excluded status round-trips without deletion in the schema initialized by the current ephemeral migration API | `51d549db58f437176fc7cd9fe23d27e23ffc59c6cf0ebbdc6d280a29dd41ccf0` | exact target compiled and target-specific deny-warnings Clippy passed; exact assertion pending the next macOS PR run | excluded document status, ephemeral migration target or current schema changes |
+| F10-01 | Excluded status round-trips without deletion in the schema initialized by the current ephemeral migration API | `51d549db58f437176fc7cd9fe23d27e23ffc59c6cf0ebbdc6d280a29dd41ccf0` | passed with the target's second case in macOS PR run `30204933297`; 2 passed | excluded document status, ephemeral migration target or current schema changes |
 
 The local exact integration binary again remained suspended in `_dyld_start`
 after compilation and before the Rust test harness. A process sample confirmed
 the same host loader failure and the exact processes were terminated. It is
 `not_run`; the next macOS PR run is the assertion authority. Every unrelated
 pass from run `30204531887` remains reusable.
+
+### source-root authority and remaining current-schema repair F11 — 2026-07-26
+
+macOS PR run `30204933297` passed F10 and again passed the complete meta-store
+library. The next integration target then isolated one failure in
+`s26_import_root_control`: its periodic-requeue assertion expected root B, but
+the old fixture had created only legacy import task/scope rows. Current
+production requeue correctly requires a matching active `source_root`, so it
+returned no roots. The repair registers root A and root B through the current
+authority before exercising pause, requeue, claim and resume semantics; the
+production authority query remains strict.
+
+Because Cargo stopped after s26, later integration targets were unrun. A bounded
+static audit of those remaining meta-store tests found five more current API
+assertions in `s3_sqlite` and `s807_v27` that still hard-coded schema 29. The
+historical v29 migration fixtures remain unchanged. Current ephemeral/owner/read
+tests now use `CURRENT_SCHEMA_VERSION`, the migration-history assertion covers
+the complete contiguous range, and the current schema table inventory includes
+the v30–v33 authority, deletion and PDF reprocessing tables.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F11-01 | A paused current source root is excluded while another active root remains eligible for periodic requeue and worker claim | `02dd09a868c3ad6c1ffaa2df431c7c259941706c0b4c0ee8c76815d25d6e0aee` | target-specific compile and deny-warnings Clippy passed; exact assertions pending the next macOS PR run | source-root authority, pause/resume, periodic requeue or worker-claim filters change |
+| F11-02 | Current ephemeral, owner and read APIs expose the contiguous current schema and complete v30–v33 table set | `95d7618e796c378621cbd7e942130bee289fbc91c97955b8ada7740401394c64` | target-specific compile and deny-warnings Clippy passed; target was unrun after F11-01 failed and awaits the next macOS PR run | current schema, migration registry or current table inventory changes |
+| F11-03 | Current owned-store identity and derived rows remain insert-once without claiming historical v29 | `e40d84f2786155bf47d26b5e23c8206a0504e77f5ec97912ee3182c340aaf677` | target-specific compile and deny-warnings Clippy passed; target was unrun after F11-01 failed and awaits the next macOS PR run | current schema or immutable identity/derived-row semantics change |
+
+All independent and fail-late checks in run `30204933297` passed. F09 and F10
+remain reusable and are not reopened by these three test-only fixture changes.

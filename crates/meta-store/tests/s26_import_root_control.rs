@@ -18,6 +18,16 @@ fn root_pause_is_durable_and_excludes_only_that_root_from_requeue_and_claim() {
 
     let root_a = "/synthetic/managed-root-a";
     let root_b = "/synthetic/managed-root-b";
+    for (root, label) in [(root_a, "Managed Root A"), (root_b, "Managed Root B")] {
+        store
+            .register_source_root(
+                root,
+                root,
+                label,
+                UnixTimestamp::from_unix_seconds(1_800_099_998),
+            )
+            .unwrap();
+    }
     insert_task_with_scope(&store, "completed-a", root_a, ImportTaskStatus::Completed);
     insert_task_with_scope(&store, "completed-b", root_b, ImportTaskStatus::Completed);
 

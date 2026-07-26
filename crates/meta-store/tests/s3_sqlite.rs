@@ -21,24 +21,20 @@ use meta_store::{
     SearchPublicationSession, SearchPublicationState, SearchPublicationValidation,
     SearchRepairReason, SourceRevision, TerminalDocumentUpdate, UnixTimestamp,
     VectorSnapshotDescriptor, WorkerTaskControl, WorkerTaskKind, CLASSIFIER_EPOCH,
+    CURRENT_SCHEMA_VERSION,
 };
 mod support;
 
 #[test]
-fn migrations_are_idempotent_and_schema_v29_is_queryable() {
+fn migrations_are_idempotent_and_current_schema_is_queryable() {
     let store = EphemeralMetaStore::open_in_memory().unwrap();
 
     assert!(store.foreign_keys_enabled().unwrap());
 
     let first = store.run_migrations().unwrap();
-    assert_eq!(
-        first.applied_versions(),
-        &[
-            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25, 26, 27, 28, 29,
-        ]
-    );
-    assert_eq!(store.schema_version().unwrap(), 29);
+    let expected_versions = (1..=CURRENT_SCHEMA_VERSION).collect::<Vec<_>>();
+    assert_eq!(first.applied_versions(), expected_versions.as_slice());
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 
     for table_name in [
         "candidate",
@@ -71,13 +67,21 @@ fn migrations_are_idempotent_and_schema_v29_is_queryable() {
         "import_task_completion",
         "artifact_repair_context",
         "artifact_repair_attempt",
+        "forward_migration_history",
+        "source_root",
+        "source_occurrence",
+        "source_occurrence_revision",
+        "scan_snapshot",
+        "source_root_deletion",
+        "source_root_deletion_document",
+        "pdf_reprocess_job",
     ] {
         assert!(store.schema_table_exists(table_name).unwrap());
     }
 
     let second = store.run_migrations().unwrap();
     assert!(second.applied_versions().is_empty());
-    assert_eq!(store.schema_version().unwrap(), 29);
+    assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
 }
 
 #[test]
@@ -108,7 +112,7 @@ fn owner_created_metadata_store_survives_read_reopen_without_plaintext_header() 
         );
         assert_eq!(store.metadata_encryption_state().label(), "sqlcipher");
         store.upsert_document(&document).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 29);
+        assert_eq!(store.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
     }
 
     let db_path = meta_store::metadata_store_path(&data_dir).unwrap();
@@ -134,7 +138,7 @@ fn owner_created_metadata_store_survives_read_reopen_without_plaintext_header() 
 
 #[test]
 fn read_open_rejects_an_unpublished_plaintext_database() {
-    let data_dir = temp_data_dir("unowned-plaintext-v29");
+    let data_dir = temp_data_dir("unowned-plaintext");
     let db_path = data_dir.join("unpublished.sqlite3");
 
     fs::write(&db_path, b"SQLite format 3\0synthetic unpublished fixture").unwrap();
@@ -2069,7 +2073,7 @@ fn import_tasks_persist_without_document_foreign_key() {
 
     {
         let reopened = ReadMetaStore::open_data_dir(&data_dir).unwrap();
-        assert_eq!(reopened.schema_version().unwrap(), 29);
+        assert_eq!(reopened.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
         assert_eq!(reopened.import_task_by_id(&task.id).unwrap(), Some(task));
         assert!(reopened.visible_documents().unwrap().is_empty());
     }
