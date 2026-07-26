@@ -1244,3 +1244,35 @@ and unmanaged roots.
 
 No previously valid workspace target was replayed. The next PR run needs only
 to validate this affected boundary and the repository's required macOS gates.
+
+### exact-main native build timeout repair F16 — 2026-07-27
+
+Required macOS and security run `30211712917` passed completely, and PR #238
+merged as exact main commit
+`b18d5ceaee684b43c59841a2bf0c94a8653ebc42`. The receipt-bound worktree build
+then produced DMG digest
+`b00a98bd2d13ac01d32be46db5481bb15549381643a8d28d92a5eb75e5328f43`
+from source-tree digest
+`b98391bb375e697a9d19db1cdea2ca17db2ce2072fd2c006548a3d84384dcde1`,
+and installed version 0.1.8 without removing user data.
+
+Installed-main acceptance reached the isolated exact-main release build but
+reported `release_build_failed`. A focused reproduction retained the child
+result: the child emitted a complete valid
+`resume-ir.macos-dmg-composition.v4` receipt, then the parent terminated it at
+the shared 20-minute timeout before clean process exit. The App build,
+composition, source identity, signature and DMG verification had all
+succeeded. The defect was the acceptance harness assigning one timeout budget
+to both source/dependency preparation and a full cold Tauri release build.
+
+The release build now owns a separate bounded 40-minute budget while clone and
+dependency preparation retain 20 minutes. This preserves process bounds
+without turning normal cold-build variance into a false product failure.
+
+| Row | Behavior boundary | Status | Re-run only when |
+| --- | --- | --- | --- |
+| F16-01 | A full exact-main release build has an independent bounded budget greater than clone/dependency preparation | focused `release-deployment.node-test.mjs`: 12/12 passed | installed-main release deployment, bounded-process timeout or immutable build staging changes |
+
+No previously valid product, workspace or PR test was replayed. Native
+installed-main acceptance remains incomplete and must resume from this failed
+release-build boundary after the repair reaches main.

@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
+  buildVerifiedDmg,
   deployExactInstalledRelease,
   parseReleaseBuildReceipt,
 } from "./release-deployment.mjs";
 import { MACOS_TEST_RELEASE_ERROR_CODES } from "../macos-test-release.mjs";
 import { COMPOSITION, DMG, HEAD, ICON, SOURCE } from "./fixtures.mjs";
+import {
+  CLONE_TIMEOUT_MS,
+  RELEASE_BUILD_TIMEOUT_MS,
+} from "./core.mjs";
 
 const baseOptions = Object.freeze({
   applicationSupportRoot: "/synthetic/support",
@@ -106,6 +112,37 @@ test("does not trust a typed failure receipt from an unhealthy child result", ()
       /release_build_failed/,
     );
   }
+});
+
+test("gives the full release build an independent bounded timeout", async () => {
+  let observedTimeoutMs;
+  const repoRoot = fileURLToPath(new URL("../../../..", import.meta.url));
+  await buildVerifiedDmg({
+    environment: BUILD_ENVIRONMENT,
+    repoRoot,
+    runTool: async (_command, _args, options) => {
+      observedTimeoutMs = options.timeoutMs;
+      return {
+        status: 0,
+        timedOut: false,
+        overflow: false,
+        stderr: "",
+        stdout: `${JSON.stringify({
+          schema_version: "resume-ir.macos-dmg-composition.v4",
+          source: SOURCE,
+          dmg_sha256: DMG,
+          app_composition_digest: COMPOSITION,
+        })}\n`,
+      };
+    },
+    source: {
+      source: SOURCE,
+      version: "0.1.8",
+    },
+  });
+
+  assert.equal(observedTimeoutMs, RELEASE_BUILD_TIMEOUT_MS);
+  assert.ok(observedTimeoutMs > CLONE_TIMEOUT_MS);
 });
 
 function dependencies(installedVersion) {

@@ -11,8 +11,8 @@ import {
 import { validateSourceIdentity } from "../macos-source-identity.mjs";
 import { runBoundedTool, toolSucceeded } from "./bounded-process.mjs";
 import {
-  CLONE_TIMEOUT_MS,
   INSTALLED_APP_BUNDLE,
+  RELEASE_BUILD_TIMEOUT_MS,
   TARGET_TRIPLE,
   exactKeys,
   fail,
@@ -95,7 +95,7 @@ export function parseReleaseBuildReceipt(result) {
   fail("release_build_failed");
 }
 
-async function defaultBuildVerifiedDmg({
+export async function buildVerifiedDmg({
   environment,
   repoRoot,
   runTool,
@@ -143,7 +143,7 @@ async function defaultBuildVerifiedDmg({
       cwd: repoRoot,
       env: environment,
       signal,
-      timeoutMs: CLONE_TIMEOUT_MS,
+      timeoutMs: RELEASE_BUILD_TIMEOUT_MS,
     }),
   );
   let builtSource;
@@ -392,7 +392,7 @@ export async function deployExactInstalledRelease(options, overrides = {}) {
     }
     await guard("build_release");
     const built = await (
-      overrides.buildVerifiedDmg ?? defaultBuildVerifiedDmg
+      overrides.buildVerifiedDmg ?? buildVerifiedDmg
     )({
       environment: immutable.buildEnvironment,
       repoRoot: immutable.repoRoot,
