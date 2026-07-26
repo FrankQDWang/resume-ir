@@ -30488,6 +30488,27 @@ Output summary:
 - `cargo fmt --check`: exit 0.
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`: exit 0.
 
+### v0.1.8 final fail-late workspace repair F14
+
+- macOS PR run `30206651549` exercised the workspace with `--no-fail-fast`,
+  proved the F13 repair, continued through every later target, and collected
+  all 21 remaining failures across seven test targets in one run.
+- The shared causes were repaired without weakening production validation:
+  OCR fixtures now establish current root/scan/occurrence authority; PDF and
+  release fixtures match PDFium; explicit rescans replace terminal retryable
+  tasks; runtime worker gates match the published capability conjunction; and
+  historical v28/v29 tests use a feature-gated synthetic setup seam rather
+  than invoking the current migration entrypoint during fixture creation.
+- Only the 21 failed or directly invalidated cases were rerun locally. CLI
+  exact results are 14/14 and daemon exact results are 7/7. Previously valid
+  workspace results were not repeated.
+- macOS held first launches of newly linked test binaries in `_dyld_start`
+  while `syspolicyd` validated them. Serial first launch followed by
+  same-binary parallel execution completed; cancelled multi-binary
+  enumerations executed no test bodies and are recorded as `not_run`.
+- The authoritative command/run mapping is in
+  `docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26`.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2

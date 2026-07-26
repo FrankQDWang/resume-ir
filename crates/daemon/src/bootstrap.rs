@@ -459,22 +459,29 @@ fn classify_embedding_start(
 }
 
 fn apply_runtime_worker_gates(options: &mut RunOptions, runtimes: ipc::OptionalRuntimeMatrix) {
-    if runtimes.classifier.state != ipc::OptionalRuntimeState::Available {
+    let embedding_available = runtimes.embedding.state == ipc::OptionalRuntimeState::Available;
+    let ocr_available = runtimes.ocr.state == ipc::OptionalRuntimeState::Available;
+    let classifier_available = runtimes.classifier.state == ipc::OptionalRuntimeState::Available;
+    let pdfium_available = runtimes.pdfium.state == ipc::OptionalRuntimeState::Available;
+
+    if !classifier_available {
         options.work_imports = false;
         options.work_imports_once = false;
         options.work_ocr = false;
         options.work_ocr_once = false;
     }
-    if runtimes.ocr.state != ipc::OptionalRuntimeState::Available {
+    if !ocr_available {
         options.work_ocr = false;
         options.work_ocr_once = false;
     }
-    if runtimes.pdfium.state != ipc::OptionalRuntimeState::Available {
+    if !(embedding_available && classifier_available && pdfium_available) {
         options.pdf_import = import_pipeline::PdfImportPolicy::Frozen;
+    }
+    if !pdfium_available {
         options.work_ocr = false;
         options.work_ocr_once = false;
     }
-    if runtimes.embedding.state != ipc::OptionalRuntimeState::Available {
+    if !embedding_available {
         options.resident_embedding = None;
         options.search_vectorization = Default::default();
         options.work_imports = false;

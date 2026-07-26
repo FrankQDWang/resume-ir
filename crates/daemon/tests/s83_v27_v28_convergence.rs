@@ -7,10 +7,9 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use import_pipeline::{current_import_processing_contract, ImportOptions};
 use meta_store::{
     migration_test_support::{
-        seed_v27_repairing_fixture, seed_v28_blocked_processing_contract_fixture,
+        seed_v27_repairing_fixture, seed_v28_legacy_artifact_repair_fixture, V28ArtifactRepairHead,
     },
     DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, MetaStoreErrorClass, ReadMetaStore,
 };
@@ -58,13 +57,7 @@ fn standalone_daemon_rejects_v27_without_migrating_or_rewriting_existing_files()
 fn standalone_daemon_rejects_v28_without_migrating_or_rewriting_existing_files() {
     let workspace = tempdir().unwrap();
     let data_dir = workspace.path().join("data");
-    let source_root = workspace.path().join("resume-ir-synthetic-v28-hard-cut");
-    fs::create_dir_all(&source_root).unwrap();
-    fs::write(source_root.join("synthetic.txt"), "synthetic v28 fixture").unwrap();
-    let canonical_root = fs::canonicalize(&source_root).unwrap();
-    let contract = current_import_processing_contract(&ImportOptions::default()).unwrap();
-    seed_v28_blocked_processing_contract_fixture(&data_dir, &canonical_root, 41, &contract)
-        .unwrap();
+    seed_v28_legacy_artifact_repair_fixture(&data_dir, V28ArtifactRepairHead::Ready).unwrap();
     assert_unsupported_store(&data_dir);
     let before = snapshot_existing_files(&data_dir);
 
@@ -112,14 +105,7 @@ fn standalone_daemon_rejects_unknown_manifest_authority_without_rewriting_existi
 fn repeated_v28_control_plane_generations_remain_blocked_and_never_consume_old_bytes() {
     let workspace = tempdir().unwrap();
     let data_dir = workspace.path().join("data");
-    let source_root = workspace
-        .path()
-        .join("resume-ir-synthetic-v28-restart-hard-cut");
-    fs::create_dir_all(&source_root).unwrap();
-    let canonical_root = fs::canonicalize(&source_root).unwrap();
-    let contract = current_import_processing_contract(&ImportOptions::default()).unwrap();
-    seed_v28_blocked_processing_contract_fixture(&data_dir, &canonical_root, 41, &contract)
-        .unwrap();
+    seed_v28_legacy_artifact_repair_fixture(&data_dir, V28ArtifactRepairHead::Blocked).unwrap();
     let before = snapshot_existing_files(&data_dir);
     let mut prior_instance_id = None;
 

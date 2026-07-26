@@ -73,7 +73,7 @@ impl OwnedMetaStore {
     /// Test-only seam for publishing a synthetic historical fixture without
     /// reopening it through the current migration boundary first.
     #[cfg(any(test, feature = "migration-test-support"))]
-    pub(crate) fn into_historical_search_publication_session_for_test(
+    pub fn into_historical_search_publication_session_for_test(
         self,
     ) -> Result<SearchPublicationSession> {
         self.access

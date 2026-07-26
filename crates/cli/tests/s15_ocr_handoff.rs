@@ -7,11 +7,11 @@ use import_pipeline::{
     prepare_migration_rebuild_artifacts, ImportOptions, SearchPublicationVectorization,
 };
 use meta_store::{
-    ClassificationStatus, ContentDigest, CurrentClassifierEpoch, DataDirectoryOwnerAcquisition,
-    DataDirectoryOwnerLease, Document, DocumentId, DocumentStatus, FileExtension,
-    IngestJobFailureKind, IngestJobKind, IngestJobStatus, OcrPageCacheEntry, OcrPageCacheKey,
-    OcrPageCacheStatus, OwnedMetaStore, ReadMetaStore, ReasonCode, SearchRepairReason,
-    SourceRevision, SourceRevisionTriage, UnixTimestamp, CLASSIFIER_EPOCH,
+    BeginScanOutcome, ClassificationStatus, ContentDigest, CurrentClassifierEpoch,
+    DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, Document, DocumentId, DocumentStatus,
+    FileExtension, IngestJobFailureKind, IngestJobKind, IngestJobStatus, OcrPageCacheEntry,
+    OcrPageCacheKey, OcrPageCacheStatus, OwnedMetaStore, ReadMetaStore, ReasonCode, ScanTrigger,
+    SearchRepairReason, SourceRevision, SourceRevisionTriage, UnixTimestamp, CLASSIFIER_EPOCH,
 };
 
 #[test]
@@ -1355,6 +1355,62 @@ fn import_fixtures(data_dir: &Path, fixture_root: &Path) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    ensure_scanned_fixture_source_authority(data_dir, fixture_root);
+}
+
+fn ensure_scanned_fixture_source_authority(data_dir: &Path, fixture_root: &Path) {
+    let store = create_owned_store(data_dir);
+    let document = scanned_document_from_owned(&store);
+    let canonical_root = std::fs::canonicalize(fixture_root).unwrap();
+    let canonical_root = path_str(&canonical_root);
+    let root = store
+        .source_root_by_canonical_path(canonical_root)
+        .unwrap()
+        .unwrap_or_else(|| {
+            store
+                .register_source_root(
+                    canonical_root,
+                    canonical_root,
+                    "synthetic OCR fixture",
+                    document.updated_at,
+                )
+                .unwrap()
+        });
+    let content_digest = document
+        .content_hash
+        .as_deref()
+        .expect("scanned fixture has a content digest")
+        .parse::<ContentDigest>()
+        .unwrap();
+    let source_revision =
+        SourceRevision::for_content(document.id.clone(), content_digest, document.byte_size);
+    store.insert_source_revision(&source_revision).unwrap();
+    let scan = store
+        .begin_scan(
+            &root.id,
+            "s15-imported-ocr-source-authority",
+            ScanTrigger::Manual,
+            document.updated_at,
+        )
+        .unwrap();
+    let scan_id = match scan {
+        BeginScanOutcome::Started(snapshot) | BeginScanOutcome::Coalesced(snapshot) => snapshot.id,
+    };
+    let relative_path = Path::new(&document.normalized_path)
+        .strip_prefix(canonical_root)
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/");
+    store
+        .observe_source_occurrence(
+            &root.id,
+            &relative_path,
+            &document.id,
+            &source_revision.id,
+            &scan_id,
+            document.updated_at,
+        )
+        .unwrap();
 }
 
 fn scanned_document(store: &ReadMetaStore) -> meta_store::Document {
@@ -1542,6 +1598,32 @@ fn seed_ocr_pdf_document_with_bytes(
         std::fs::metadata(&document_path).unwrap().len(),
     );
     store.insert_source_revision(&source_revision).unwrap();
+    let canonical_root = std::fs::canonicalize(&private_root).unwrap();
+    let canonical_root = path_str(&canonical_root);
+    let source_root = store
+        .register_source_root(canonical_root, canonical_root, "synthetic OCR fixture", now)
+        .unwrap();
+    let scan = store
+        .begin_scan(
+            &source_root.id,
+            "s15-seeded-ocr-source-authority",
+            ScanTrigger::Manual,
+            now,
+        )
+        .unwrap();
+    let scan_id = match scan {
+        BeginScanOutcome::Started(snapshot) | BeginScanOutcome::Coalesced(snapshot) => snapshot.id,
+    };
+    store
+        .observe_source_occurrence(
+            &source_root.id,
+            "synthetic-scanned-resume.pdf",
+            &doc_id,
+            &source_revision.id,
+            &scan_id,
+            now,
+        )
+        .unwrap();
     store
         .insert_source_revision_triage(&SourceRevisionTriage {
             source_revision_id: source_revision.id.clone(),

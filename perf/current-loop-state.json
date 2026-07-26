@@ -685,7 +685,8 @@
     {"from":"evidence_review","to":"blocked_needs_external_input","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-matrix-round-f01--2026-07-25"},
     {"from":"blocked_needs_external_input","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-repair-round-f02--2026-07-26"},
     {"from":"verification_active","to":"evidence_review","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-native-manual-round-f04--2026-07-26"},
-    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/238"}
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/238"},
+    {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"}
   ],
   "verification": {
     "commands": [
@@ -2884,6 +2885,10 @@
       {"command":"macOS PR run 30206076466 fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#deleted-data-ocr-authority-and-workspace-fail-late-repair-f13--2026-07-26"},
       {"command":"./scripts/ci/check-workflows.sh","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#deleted-data-ocr-authority-and-workspace-fail-late-repair-f13--2026-07-26"},
       {"command":"focused resume-cli s14 Clippy launch","exit_code":130,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#deleted-data-ocr-authority-and-workspace-fail-late-repair-f13--2026-07-26"},
+      {"command":"macOS PR run 30206651549 complete fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"},
+      {"command":"F14 exact resume-cli previously failed cases: 14 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"},
+      {"command":"F14 exact resume-daemon previously failed cases: 7 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"},
+      {"command":"F14 focused production/test-seam Clippy and governance/public-boundary checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"},
       {"command":"performance, autonomous-goal, loop-state, public-repository and diff checks after final repair","exit_code":0,"evidence_ref":"PROGRESS.md#v0.1.8-final-repair-dmg-and-synthetic-installed-acceptance"}
     ],
     "all_required_commands_ran": false,

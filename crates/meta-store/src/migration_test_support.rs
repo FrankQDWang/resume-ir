@@ -14,6 +14,19 @@ pub use v28_artifact::{
     V28LegacyArtifactRepairFixtureFacts,
 };
 
+/// Opens a synthetic exact-v29 authority without invoking the production
+/// current-store migration entrypoint.
+///
+/// This feature-gated seam exists only for cross-process migration tests that
+/// must populate a historical store before launching the current daemon.
+pub fn open_or_create_synthetic_v29_store(
+    owner: &DataDirectoryOwnerLease,
+) -> Result<OwnedMetaStore> {
+    let owner = owner.shared_guard();
+    let (path, key) = crate::migration_v29::prepare_active_v29_store(&owner)?;
+    OwnedMetaStore::open_owned_encrypted(path, &key, owner)
+}
+
 use std::{
     fmt, fs,
     path::{Component, Path},

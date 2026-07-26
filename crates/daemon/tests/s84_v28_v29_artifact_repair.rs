@@ -11,7 +11,10 @@ use import_pipeline::{current_import_processing_contract, ImportOptions};
 use index_fulltext::{publish_snapshot, IndexDocument};
 use index_vector::{VectorModelContract, VectorSnapshotStore};
 use meta_store::{
-    migration_test_support::{seed_v28_legacy_artifact_repair_fixture, V28ArtifactRepairHead},
+    migration_test_support::{
+        open_or_create_synthetic_v29_store, seed_v28_legacy_artifact_repair_fixture,
+        V28ArtifactRepairHead,
+    },
     ActiveSearchProjection, ClassificationStatus, ContentDigest, DataDirectoryOwnerAcquisition,
     DataDirectoryOwnerLease, Document, DocumentId, DocumentStatus, FileExtension,
     FullTextSnapshotDescriptor, ImmutableIngestStage, MetaStoreErrorClass,
@@ -20,7 +23,7 @@ use meta_store::{
     SearchProjectionDigest, SearchPublicationCommit, SearchPublicationDraft,
     SearchPublicationOutcome, SearchPublicationValidation, SearchSelection,
     SearchSelectionResolution, SourceRevision, TerminalDocumentUpdate, UnixTimestamp,
-    VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
+    VectorSnapshotDescriptor, CLASSIFIER_EPOCH, CURRENT_SCHEMA_VERSION,
 };
 use process_containment::ContainedChild;
 use serde_json::json;
@@ -100,11 +103,10 @@ fn supervised_daemon_blocks_v28_without_changing_existing_bytes() {
 }
 
 #[test]
-fn supervised_daemon_preserves_exact_v29_business_head_epoch_and_artifact_digests() {
+fn supervised_daemon_migrates_v29_and_preserves_business_head_epoch_and_artifact_digests() {
     let workspace = tempdir().unwrap();
     let data_dir = workspace.path().join("data");
-    let projection = seed_current_v29_publication(&data_dir);
-    let before = preserved_v29_summary(&data_dir, &projection);
+    let (projection, before) = seed_current_v29_publication(&data_dir);
     assert_eq!(before.generation, "s84-current-v29-generation");
     assert_eq!(before.visible_epoch, 1);
     assert!(before.selection_is_current);
@@ -173,18 +175,26 @@ fn supervised_daemon_preserves_exact_v29_business_head_epoch_and_artifact_digest
     );
     daemon.finish();
 
-    assert_eq!(preserved_v29_summary(&data_dir, &projection), before);
+    let owner = match DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("synthetic data dir is owned"),
+    };
+    let store = owner.open_store().unwrap();
+    assert_eq!(
+        preserved_business_summary(&store, &projection, CURRENT_SCHEMA_VERSION),
+        before
+    );
     assert!(!data_dir.join("ipc.endpoints.json").exists());
     assert!(!data_dir.join("ipc.auth").exists());
 }
 
-fn seed_current_v29_publication(data_dir: &Path) -> ActiveSearchProjection {
+fn seed_current_v29_publication(data_dir: &Path) -> (ActiveSearchProjection, PreservedV29Summary) {
     const GENERATION: &str = "s84-current-v29-generation";
     let owner = match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
         DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
         DataDirectoryOwnerAcquisition::Contended => panic!("synthetic data dir is owned"),
     };
-    let store = owner.open_store().unwrap();
+    let store = open_or_create_synthetic_v29_store(&owner).unwrap();
     let now = UnixTimestamp::from_unix_seconds(1_800_084_000);
     let source = b"synthetic PreservationToken v29 resume";
     let mut document = Document {
@@ -257,7 +267,9 @@ fn seed_current_v29_publication(data_dir: &Path) -> ActiveSearchProjection {
         .acquire_migration_rebuild_barrier_token(contract.id())
         .unwrap()
         .unwrap();
-    let mut session = store.wait_for_search_publication_session().unwrap();
+    let mut session = store
+        .into_historical_search_publication_session_for_test()
+        .unwrap();
     assert!(matches!(
         session
             .acquire_migration_rebuild_publication_attempt(&barrier, now)
@@ -354,9 +366,11 @@ fn seed_current_v29_publication(data_dir: &Path) -> ActiveSearchProjection {
         SearchPublicationOutcome::Applied
     );
     drop(session);
+    let store = open_or_create_synthetic_v29_store(&owner).unwrap();
+    let summary = preserved_business_summary(&store, &projection, 29);
     drop(store);
     drop(owner);
-    projection
+    (projection, summary)
 }
 
 #[derive(Debug, PartialEq)]
@@ -376,12 +390,12 @@ struct PreservedV29Summary {
     vector_artifact_digest: ContentDigest,
 }
 
-fn preserved_v29_summary(
-    data_dir: &Path,
+fn preserved_business_summary(
+    store: &meta_store::OwnedMetaStore,
     projection: &ActiveSearchProjection,
+    expected_schema_version: u32,
 ) -> PreservedV29Summary {
-    let store = ReadMetaStore::open_data_dir(data_dir).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 29);
+    assert_eq!(store.schema_version().unwrap(), expected_schema_version);
     let state = store.search_projection_state().unwrap();
     let publication = state.publication.as_deref().unwrap();
     let selection = SearchSelection {
@@ -478,12 +492,15 @@ fn wait_for_core_state(
         if state == expected_state {
             return response;
         }
-        assert_eq!(
-            state, "initializing",
+        let reason = response.body["core"]["reason"].as_str().unwrap();
+        assert!(
+            matches!(
+                (state, reason),
+                ("initializing", "metadata_initializing") | ("migrating", "metadata_migrating")
+            ),
             "unexpected core transition: {}",
             response.raw
         );
-        assert_eq!(response.body["core"]["reason"], "metadata_initializing");
         if let Some(status) = child.try_wait().unwrap() {
             panic!("daemon exited before core became {expected_state}: {status}");
         }

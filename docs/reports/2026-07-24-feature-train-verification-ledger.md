@@ -1174,3 +1174,48 @@ behavior so future failures cannot silently hide later workspace targets.
 All independent checks in run `30206076466` passed. Earlier meta-store,
 parser, index, search, OCR client and CLI pass results remain valid and are not
 reopened by this CLI fixture plus workflow-policy repair.
+
+### complete fail-late workspace repair F14 — 2026-07-26
+
+macOS PR run `30206651549` proved F13 and the workflow's new fail-late
+behavior: after the first failed target, every remaining workspace test target
+and every independent post-test check still ran. The run collected the complete
+remaining set of 21 failures across seven test targets instead of stopping at
+the first one.
+
+The failures reduced to four shared contract boundaries:
+
+- OCR worker fixtures had documents and revisions but no present occurrence
+  under the current source-root/scan authority, so the production cache guard
+  correctly rejected writes;
+- PDF and release-readiness fixtures still described the retired `lopdf` /
+  Poppler path or emitted multiline PDF text without leading, while explicit
+  rescans still expected terminal retryable task reuse;
+- daemon worker gates did not freeze PDF import for every runtime combination
+  already declared unavailable by the capability matrix, and two tests
+  conflated missing, invalid and not-configured runtime evidence;
+- the v28 rejection and v29 preservation tests constructed historical
+  authorities through current APIs, so their own observation/setup could
+  invoke v33 behavior before the daemon under test.
+
+The repair keeps the production source-authority, runtime and migration
+validation strict. It adds only one production change: worker gating now uses
+the same embedding/classifier/PDFium conjunction as the published PDF-import
+capability. Historical setup uses an explicitly feature-gated synthetic test
+seam and the v29 acceptance now proves the real `migrating` transition followed
+by exact business-head, epoch and artifact-digest preservation at v33.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F14-01 | OCR work and cache reuse require a present occurrence under current root/scan authority | `5d9d932300e3b2efb5a7c7683409e3bfa9ab9856d1cf3bff68e8ea580d7e2450` | seven previously failed exact cases passed locally; one direct warm-up plus Nextest run `b150028a-1c14-4e9a-a603-47b810b3853c` (6/6) | OCR cache authority, source occurrence, worker claim, renderer or OCR publication changes |
+| F14-02 | PDFium metrics/text layout, release evidence and explicit-rescan task replacement match current contracts | `f3286deb070a04eb6d9f19138ae72702961b2104ad8b8659a45392da15152b6c` | seven previously failed exact cases passed locally: s21 2/2, Nextest `508dcfc1-6b68-445b-b6f4-abde514c7b48` 2/2 and `aa01fa02-7098-4e1f-ba04-aec16f88ae55` 3/3 | PDF extraction/metrics, release-readiness evidence, task-head coordination or candidate assignment changes |
+| F14-03 | Runtime capability publication and worker claims use one embedding/classifier/OCR/PDFium gate; completed scans have current root authority | `8f823f903ea3a9bf669421624e553502fed6bf0c3650b6045a04eab315a386b8` | four previously failed exact daemon unit cases passed locally | runtime attestation/reason vocabulary, capability derivation, worker gate or periodic rescan changes |
+| F14-04 | v28 remains byte-preserving unsupported while exact v29 migrates through the explicit COW boundary and preserves business state | `78b992b26a9c5b8e6a3476de9be8ba053ffe0f2b168a3b2c625fe18844460602` | two exact v28 rejection cases and one exact v29→v33 preservation case passed locally | migration-test support, v28 rejection, COW registry, core migration state or preservation summary changes |
+
+The first multi-binary Nextest attempts were cancelled before any test body
+after macOS held several new binaries in `_dyld_start` while `syspolicyd`
+validated them. Serial first launch followed by same-binary parallel execution
+completed successfully. These cancelled enumerations are `not_run`, not failed
+tests. Focused production/test-seam Clippy, loop-state, performance-contract,
+autonomous-goal and public-repository checks all passed. No previously valid
+workspace target was replayed.

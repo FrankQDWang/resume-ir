@@ -85,7 +85,7 @@ mod tests {
     };
     use meta_store::{
         DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, ImportRootKind, ImportScanProfile,
-        ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus,
+        ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, ScanCounts,
     };
     use tempfile::TempDir;
 
@@ -199,6 +199,9 @@ mod tests {
 
         let root = "/synthetic/completed-rescan-root";
         let queued_at = UnixTimestamp::from_unix_seconds(90);
+        let source_root = store
+            .register_source_root(root, root, "completed rescan fixture", queued_at)
+            .unwrap();
         let task = ImportTask {
             id: ImportTaskId::from_non_secret_parts(&["completed-root-rescan-fixture"]),
             root_path: root.to_string(),
@@ -232,6 +235,14 @@ mod tests {
         store
             .insert_import_task_with_scan_scope(&task, &scope, &processing_contract)
             .unwrap();
+        store
+            .begin_scan(
+                &source_root.id,
+                task.id.as_str(),
+                ScanTrigger::Manual,
+                queued_at,
+            )
+            .unwrap();
         let running = store
             .claim_observed_import_task_for_worker(&task, UnixTimestamp::from_unix_seconds(99))
             .unwrap()
@@ -239,6 +250,15 @@ mod tests {
         scope.updated_at = finished_at;
         store
             .complete_import_task(&running.id, processing_contract.id(), &scope, finished_at)
+            .unwrap();
+        store
+            .reconcile_complete_source_scan(
+                &source_root.id,
+                task.id.as_str(),
+                ScanCounts::default(),
+                None,
+                finished_at,
+            )
             .unwrap();
 
         CompletedRootFixture {

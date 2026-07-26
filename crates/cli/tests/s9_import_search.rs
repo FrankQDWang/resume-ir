@@ -121,18 +121,14 @@ fn import_fixtures_builds_searchable_index_and_reopens_snapshot() {
         "index publication encrypted publication ms:",
         "index publication encrypted validation ms:",
         "pdf parse document load ms:",
-        "pdf parse page content fetch ms:",
-        "pdf parse text operator prefilter ms:",
-        "pdf parse font encoding ms:",
-        "pdf parse content decode ms:",
-        "pdf parse content string parse sampled ms:",
-        "pdf parse text collection ms:",
-        "pdf parse text byte decode sampled ms:",
-        "pdf parse text accumulation sampled ms:",
-        "pdf parse content string operands:",
-        "pdf parse content string bytes:",
-        "pdf parse text decode runs:",
-        "pdf parse text decode input bytes:",
+        "pdf parse page text load ms:",
+        "pdf parse character iteration ms:",
+        "pdf parse quality evaluation ms:",
+        "pdf parse pages loaded:",
+        "pdf parse characters seen:",
+        "pdf parse characters emitted:",
+        "pdf parse source bytes:",
+        "pdf parse output bytes:",
         "import post-parser normalization ms:",
         "import post-parser sectionization ms:",
     ] {
@@ -1992,7 +1988,7 @@ fn import_persists_scan_errors_without_path_leak() {
 }
 
 #[test]
-fn import_reuses_recoverable_task_after_restart() {
+fn import_replaces_terminal_retryable_task_on_explicit_rescan() {
     serialize_windows_s9_import_test!();
     let data_dir = temp_dir("import-restart-data");
     let fixture_root = fixture_root();
@@ -2019,13 +2015,22 @@ fn import_reuses_recoverable_task_after_restart() {
     assert!(import.stderr.is_empty());
     let import_stdout = String::from_utf8_lossy(&import.stdout);
     assert!(import_stdout.contains("status: completed"));
-    assert!(import_stdout.contains(&pending_task_id.to_string()));
+    let replacement_task_id = stdout_value(&import_stdout, "task id: ")
+        .parse::<ImportTaskId>()
+        .unwrap();
+    assert_ne!(replacement_task_id, pending_task_id);
+    assert!(!import_stdout.contains(&pending_task_id.to_string()));
     assert!(!import_stdout.contains(path_str(&fixture_root)));
     assert!(!import_stdout.contains(path_str(&canonical_fixture_root)));
 
     let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
-    let task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
-    assert_eq!(task.status, ImportTaskStatus::Completed);
+    let retired_task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
+    assert_eq!(retired_task.status, ImportTaskStatus::FailedRetryable);
+    let replacement_task = store
+        .import_task_by_id(&replacement_task_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(replacement_task.status, ImportTaskStatus::Completed);
     assert_eq!(store.status_summary().unwrap().import_tasks_recoverable, 0);
 
     let search = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
@@ -2262,7 +2267,7 @@ fn multi_root_import_does_not_take_over_live_running_task_for_any_root() {
 }
 
 #[test]
-fn multi_root_import_reuses_recoverable_task_for_each_root() {
+fn multi_root_import_replaces_terminal_retryable_task_for_each_root() {
     serialize_windows_s9_import_test!();
     let data_dir = temp_dir("multi-root-recoverable-data");
     let fixture_root = fixture_root();
@@ -2292,7 +2297,13 @@ fn multi_root_import_reuses_recoverable_task_for_each_root() {
     );
     assert!(import.stderr.is_empty());
     let import_stdout = String::from_utf8_lossy(&import.stdout);
-    assert!(import_stdout.contains(&pending_task_id.to_string()));
+    let replacement_task_ids = stdout_value(&import_stdout, "task ids: ")
+        .split(',')
+        .map(|value| value.parse::<ImportTaskId>().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(replacement_task_ids.len(), 2);
+    assert!(!replacement_task_ids.contains(&pending_task_id));
+    assert!(!import_stdout.contains(&pending_task_id.to_string()));
     assert!(import_stdout.contains("roots scanned: 2"));
     assert!(!import_stdout.contains(path_str(&fixture_root)));
     assert!(!import_stdout.contains(path_str(&second_root)));
@@ -2300,8 +2311,15 @@ fn multi_root_import_reuses_recoverable_task_for_each_root() {
     assert!(!import_stdout.contains(path_str(&canonical_second_root)));
 
     let store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
-    let task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
-    assert_eq!(task.status, ImportTaskStatus::Completed);
+    let retired_task = store.import_task_by_id(&pending_task_id).unwrap().unwrap();
+    assert_eq!(retired_task.status, ImportTaskStatus::FailedRetryable);
+    for replacement_task_id in replacement_task_ids {
+        let replacement_task = store
+            .import_task_by_id(&replacement_task_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(replacement_task.status, ImportTaskStatus::Completed);
+    }
     assert_eq!(store.status_summary().unwrap().import_tasks_recoverable, 0);
 
     remove_dir(&data_dir);

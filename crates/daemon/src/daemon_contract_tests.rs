@@ -315,7 +315,7 @@ fn projection_state_gates_query_routes_with_fixed_codes() {
 }
 
 #[test]
-fn ocr_claim_requires_both_ready_projection_and_an_attested_runtime() {
+fn ocr_claim_requires_ready_projection_and_all_attested_runtimes() {
     let data_dir = std::env::temp_dir().join(format!(
         "resume-ir-daemon-ocr-migration-gate-{}-{}",
         std::process::id(),
@@ -357,9 +357,10 @@ fn ocr_claim_requires_both_ready_projection_and_an_attested_runtime() {
     );
 
     let ready_summary = run_ocr_worker_once(&data_dir, &store, &options, || true).unwrap();
+    assert_eq!(ready_summary.runtime_unavailable, None);
     assert_eq!(
-        ready_summary.runtime_unavailable,
-        Some(ipc::OptionalRuntimeReason::Missing)
+        ready_summary.pdfium_unavailable,
+        Some(ipc::OptionalRuntimeReason::NotConfigured)
     );
     let still_queued = store.ingest_job_by_id(&job_id).unwrap().unwrap();
     assert_eq!(still_queued.status, IngestJobStatus::Queued);
