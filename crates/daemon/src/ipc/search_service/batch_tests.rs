@@ -53,3 +53,15 @@ fn batch_request_rejects_more_than_sixty_four_children() {
     });
     assert!(parse_request(invalid.to_string().as_bytes()).is_err());
 }
+
+#[test]
+fn batch_admission_failure_uses_the_unified_error_v2_contract() {
+    let value: serde_json::Value = serde_json::from_str(&overload_body("batch-1")).unwrap();
+
+    assert_eq!(value["schema_version"], "resume-ir.error.v2");
+    assert_eq!(value["request_id"], "batch-1");
+    assert_eq!(value["error"]["code"], "OVERLOADED");
+    assert_eq!(value["error"]["action"], "retry");
+    assert_eq!(value["error"]["retry_after_ms"], 250);
+    assert!(value.get("batch_id").is_none());
+}

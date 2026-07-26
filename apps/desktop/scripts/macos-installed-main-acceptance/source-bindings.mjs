@@ -6,6 +6,10 @@ import {
   verifyBundleComposition,
 } from "../macos-bundle-composition.mjs";
 import {
+  captureSourceIdentity,
+  validateSourceIdentity,
+} from "../macos-source-identity.mjs";
+import {
   CLOSED_SYSTEM_TOOL_ENV,
   MACOS_SYSTEM_TOOLS,
 } from "../macos-system-tools.mjs";
@@ -23,10 +27,14 @@ import {
   TOOL_TIMEOUT_MS,
   fail,
 } from "./core.mjs";
+import {
+  PRODUCT_VERSION,
+  PRODUCT_VERSION_SOURCE,
+} from "../product-version.mjs";
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_ICON_BYTES = 8 * 1024 * 1024;
-export const REQUIRED_INSTALLED_VERSION = "0.1.2";
+export const REQUIRED_INSTALLED_VERSION = PRODUCT_VERSION;
 const EXPECTED_ORIGIN = "https://github.com/FrankQDWang/resume-ir.git";
 const EXPECTED_BUNDLE_ID = "local.resume-ir.desktop";
 const EXPECTED_PRODUCT_NAME = "resume-ir";
@@ -248,7 +256,7 @@ export async function deriveCommitProductBinding(repoRoot, gitHead, runTool) {
     packageManifest.version !== REQUIRED_INSTALLED_VERSION ||
     tauriManifest?.productName !== EXPECTED_PRODUCT_NAME ||
     tauriManifest?.identifier !== EXPECTED_BUNDLE_ID ||
-    tauriManifest?.version !== packageManifest.version
+    tauriManifest?.version !== PRODUCT_VERSION_SOURCE
   ) {
     fail("source_manifest_invalid");
   }
@@ -256,6 +264,40 @@ export async function deriveCommitProductBinding(repoRoot, gitHead, runTool) {
     iconSha256: createHash("sha256").update(icon.stdout).digest("hex"),
     version: packageManifest.version,
   });
+}
+
+export async function deriveExactMainSourceIdentity(
+  repoRoot,
+  gitHead,
+  capture = captureSourceIdentity,
+) {
+  if (
+    !path.isAbsolute(repoRoot ?? "") ||
+    !GIT_HEAD.test(gitHead ?? "") ||
+    typeof capture !== "function"
+  ) {
+    fail("source_manifest_invalid");
+  }
+  let source;
+  try {
+    source = validateSourceIdentity(
+      (
+        await capture({
+          repoRoot,
+          authority: "exact_main_commit",
+        })
+      )?.identity,
+    );
+  } catch {
+    fail("source_manifest_invalid");
+  }
+  if (
+    source.authority !== "exact_main_commit" ||
+    source.base_commit !== gitHead
+  ) {
+    fail("source_manifest_invalid");
+  }
+  return source;
 }
 
 function executablePaths(composition) {
@@ -282,19 +324,21 @@ function executablePaths(composition) {
 
 export async function verifyInstalledSourceBindings({
   applicationSupportRoot,
+  deriveSourceIdentity = deriveExactMainSourceIdentity,
   repoRoot,
   runTool,
   verifySignaturePolicy = verifyMacosInternalTestSignaturePolicy,
 }) {
   const { gitHead } = await verifyGitMainBinding(repoRoot, runTool);
-  const source = await deriveCommitProductBinding(repoRoot, gitHead, runTool);
+  const product = await deriveCommitProductBinding(repoRoot, gitHead, runTool);
+  const source = await deriveSourceIdentity(repoRoot, gitHead);
   let composition;
   try {
     composition = await verifyBundleComposition({
       appBundle: INSTALLED_APP_BUNDLE,
       targetTriple: TARGET_TRIPLE,
-      expectedVersion: source.version,
-      expectedSourceCommit: gitHead,
+      expectedVersion: product.version,
+      expectedSource: source,
       verifySignaturePolicy: ({ appBundle }) =>
         verifySignaturePolicy({
           appBundle,
@@ -311,8 +355,8 @@ export async function verifyInstalledSourceBindings({
   }
   if (
     composition.schema_version !== BUNDLE_COMPOSITION_SCHEMA ||
-    composition.source_commit !== gitHead ||
-    composition.icon?.sha256 !== source.iconSha256
+    JSON.stringify(composition.source) !== JSON.stringify(source) ||
+    composition.icon?.sha256 !== product.iconSha256
   ) {
     fail("installed_composition_binding_mismatch");
   }
@@ -325,9 +369,9 @@ export async function verifyInstalledSourceBindings({
   }
   if (
     receipt?.schema_version !== INSTALL_RECEIPT_SCHEMA ||
-    receipt.version !== REQUIRED_INSTALLED_VERSION ||
-    composition.version !== REQUIRED_INSTALLED_VERSION ||
-    receipt.source_commit !== gitHead
+    receipt.version !== product.version ||
+    composition.version !== product.version ||
+    JSON.stringify(receipt.source) !== JSON.stringify(source)
   ) {
     fail("installed_receipt_invalid");
   }
@@ -336,7 +380,8 @@ export async function verifyInstalledSourceBindings({
     dmgSha256: receipt.dmg_sha256,
     executablePaths: executablePaths(composition),
     gitHead,
-    iconSha256: source.iconSha256,
-    version: source.version,
+    iconSha256: product.iconSha256,
+    source,
+    version: product.version,
   });
 }

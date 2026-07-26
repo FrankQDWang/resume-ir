@@ -103,7 +103,7 @@ impl SearchPublicationSession {
 
     /// Synthetic v28 fixture seam used only to exercise the v28-to-v29 COW
     /// migration. Runtime v29 publication never enters this contract.
-    #[cfg(any(test, feature = "migration-test-support"))]
+    #[cfg(feature = "migration-test-support")]
     pub(crate) fn begin_legacy_v28_search_publication_for_test(
         &self,
         draft: &SearchPublicationDraft,

@@ -14,6 +14,7 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  captureV29LogicalAuthority,
   validateInstalledReadyArtifacts,
   validateInstalledRecoveryEvidence,
 } from "./acceptance-evidence.mjs";
@@ -29,12 +30,24 @@ const SNAPSHOT_ARTIFACT_DIGEST = `sha256:${createHash("sha256")
 
 function readyStatus(overrides = {}) {
   return {
-    schema_version: "daemon.status.v2",
+    schema_version: "daemon.status.v3",
     status: "ok",
     process_state: "ready",
-    service_state: "ready",
-    services: { metadata: "ready", query: "ready" },
-    repair_reason: null,
+    core: { state: "ready", reason: null },
+    optional_runtimes: {
+      embedding: { state: "available", reason: null },
+      ocr: { state: "available", reason: null },
+      classifier: { state: "available", reason: null },
+    },
+    capabilities: {
+      keyword_search: { state: "available", reason: null },
+      detail: { state: "available", reason: null },
+      semantic_search: { state: "available", reason: null },
+      hybrid_search: { state: "available", reason: null },
+      text_import: { state: "available", reason: null },
+      ocr_import: { state: "available", reason: null },
+      index_publication: { state: "available", reason: null },
+    },
     repair_progress: null,
     error: null,
     ipc: {
@@ -273,10 +286,15 @@ test("binds the active v29 metadata file, one exact generation pair, and a bound
 
 test("validates cold Ready and artifact evidence without a search witness", async (context) => {
   const { dataDir } = await fixture(context);
+  const expectedV29Authority = await captureV29LogicalAuthority({
+    dataDir,
+    runTool: metadataAuthority(),
+  });
   assert.deepEqual(
     await validateInstalledReadyArtifacts({
       dataDir,
       diagnostics: diagnostics(),
+      expectedV29Authority,
       runTool: metadataAuthority(),
       status: readyStatus(),
     }),
@@ -284,6 +302,16 @@ test("validates cold Ready and artifact evidence without a search witness", asyn
       generationAgreement: true,
       metadataArtifactBound: true,
     },
+  );
+  await assert.rejects(
+    validateInstalledReadyArtifacts({
+      dataDir,
+      diagnostics: diagnostics(),
+      expectedV29Authority: { ...expectedV29Authority, visibleEpoch: 6 },
+      runTool: metadataAuthority(),
+      status: readyStatus(),
+    }),
+    /v29_logical_authority_changed/,
   );
 });
 

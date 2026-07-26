@@ -12,7 +12,7 @@ import {
   requirePrivateFile,
   requireSecureDirectory,
 } from "./filesystem-cow.mjs";
-import { validateDaemonDiagnostics } from "./ipc-contracts.mjs";
+import { readyStatus, validateDaemonDiagnostics } from "./ipc-contracts.mjs";
 
 const CONTENT_DIGEST = /^sha256:[a-f0-9]{64}$/;
 const GENERATION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -129,9 +129,9 @@ export function validateReadyStatus(value) {
       "schema_version",
       "status",
       "process_state",
-      "service_state",
-      "services",
-      "repair_reason",
+      "core",
+      "optional_runtimes",
+      "capabilities",
       "repair_progress",
       "error",
       "ipc",
@@ -161,16 +161,7 @@ export function validateReadyStatus(value) {
       "index_health",
       "snapshot_present",
     ]) ||
-    value.schema_version !== "daemon.status.v2" ||
-    value.status !== "ok" ||
-    value.process_state !== "ready" ||
-    value.service_state !== "ready" ||
-    !exactKeys(value.services, ["metadata", "query"]) ||
-    value.services.metadata !== "ready" ||
-    value.services.query !== "ready" ||
-    value.repair_reason !== null ||
-    value.repair_progress !== null ||
-    value.error !== null ||
+    !readyStatus(value) ||
     !validIpcCounts(value.ipc) ||
     !countKeys.every((key) => boundedCount(value[key], MAX_DOCUMENTS)) ||
     value.visible_epoch < 1 ||
@@ -437,6 +428,11 @@ async function readMetadataAuthority(file, runTool) {
   return parseMetadataAuthorityLine(result.stdout);
 }
 
+export async function captureV29LogicalAuthority({ dataDir, runTool }) {
+  const metadata = await validateMetadataArtifact(dataDir);
+  return readMetadataAuthority(metadata.file, runTool);
+}
+
 function parseFulltextManifest(value, generation) {
   if (
     !exactKeys(value, [
@@ -645,7 +641,7 @@ async function readExactGeneration(dataDir, kind, generation) {
 }
 
 async function validateReadyArtifacts(
-  { dataDir, runTool },
+  { dataDir, expectedV29Authority, runTool },
   ready,
   redacted,
 ) {
@@ -659,6 +655,12 @@ async function validateReadyArtifacts(
   }
   const metadataBefore = await validateMetadataArtifact(dataDir);
   const authority = await readMetadataAuthority(metadataBefore.file, runTool);
+  if (
+    expectedV29Authority !== undefined &&
+    JSON.stringify(authority) !== JSON.stringify(expectedV29Authority)
+  ) {
+    fail("v29_logical_authority_changed");
+  }
   const [fulltext, vector] = await Promise.all([
     readExactGeneration(dataDir, "fulltext", authority.fulltextGeneration),
     readExactGeneration(dataDir, "vector", authority.vectorGeneration),
@@ -714,12 +716,17 @@ async function validateReadyArtifacts(
 export async function validateInstalledReadyArtifacts({
   dataDir,
   diagnostics,
+  expectedV29Authority,
   runTool,
   status,
 }) {
   const ready = validateReadyStatus(status);
   const redacted = validateDaemonDiagnostics(diagnostics);
-  return validateReadyArtifacts({ dataDir, runTool }, ready, redacted);
+  return validateReadyArtifacts(
+    { dataDir, expectedV29Authority, runTool },
+    ready,
+    redacted,
+  );
 }
 
 export async function validateInstalledRecoveryEvidence({

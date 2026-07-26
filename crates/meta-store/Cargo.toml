@@ -30,5 +30,20 @@ name = "s807_v27"
 path = "tests/s807_v27.rs"
 required-features = ["migration-test-support"]
 
+[[test]]
+name = "excluded_document_status"
+path = "tests/excluded_document_status.rs"
+required-features = ["migration-test-support"]
+
+[[test]]
+name = "s26_import_root_control"
+path = "tests/s26_import_root_control.rs"
+required-features = ["migration-test-support"]
+
+[[test]]
+name = "s3_sqlite"
+path = "tests/s3_sqlite.rs"
+required-features = ["migration-test-support"]
+
 [lints]
 workspace = true

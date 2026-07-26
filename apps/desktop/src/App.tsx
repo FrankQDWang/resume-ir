@@ -1,11 +1,9 @@
-import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react"
+import { type FormEvent, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
   AlertTriangle,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock3,
-  Download,
   FileText,
   FolderOpen,
   FolderTree,
@@ -27,17 +25,13 @@ import {
   bridgeFailureKind,
   controlManagedRoot,
   exportDiagnostics,
-  getDaemonLifecycle,
   importSelectedRoot,
-  listManagedRoots,
   managedRootControlOutcome,
   managedRootRecoveryFailure,
   managedRootScanOutcome,
   readDiagnostics,
-  readStatus,
   reauthorizeManagedRoot,
   requestSearchCancel,
-  retryDaemon,
   rescanManagedRoot,
   searchDeadlineMs,
   searchOutcome,
@@ -47,28 +41,23 @@ import {
   type ManagedRoot,
   type ManagedRootControlAction,
   type SearchHit,
-  type StatusBody,
 } from "./daemon"
 import { MAX_DETAIL_PAGES, useDetailSession } from "./detail-session"
+import { daemonRetryControl, useDaemonRuntime } from "./daemon-runtime"
+import { DiagnosticsContent, type DiagnosticsState } from "./diagnostics-panel"
 import {
-  blockedReasonMessage,
-  detailReadMayContinue,
-  isDaemonLifecycleSnapshot,
-  reconcileResultFreshness,
-  serviceStateFromStatus,
-  startSerialLifecyclePolling,
-  type DaemonLifecycleSnapshot,
-  type DaemonService,
-  type ResultFreshness,
-} from "./runtime-state"
+  CapabilityMatrix,
+  IndexServiceSummary,
+  indexServicePresentation,
+  lifecycleLabel,
+} from "./daemon-health"
+
+export { IndexServiceSummary, indexServicePresentation } from "./daemon-health"
 
 type ViewState = "idle" | "loading" | "complete" | "partial" | "empty" | "overload" | "cancelled" | "error"
-type ImportState = "idle" | "selecting" | "selected" | "submitting" | "reauthorizing" | "queued" | "pending" | "active" | "cancelled" | "unavailable" | "mismatch" | "overload" | "error"
-type DiagnosticsState = "idle" | "loading" | "ready" | "exporting" | "saved" | "cancelled" | "blocked" | "overload" | "error"
 type Mode = "keyword" | "field" | "hybrid" | "semantic"
 type Degree = "" | "associate" | "bachelor" | "master" | "doctorate"
 type Overlay = "import" | "diagnostics" | null
-type RootControlState = "loading" | "unmanaged" | "active" | "paused" | "overload" | "error"
 
 const MODE_OPTIONS: Array<{ value: Mode; label: string }> = [
   { value: "keyword", label: "关键词" },
@@ -84,55 +73,6 @@ const PREVIEW_RESULTS: SearchHit[] = [
   { rank: 4, selection: { doc_id: "doc_preview_04", version_id: "ver_preview_04", visible_epoch: 1 }, file_name: "候选人_扫描简历.pdf", snippet: "Java 高级开发，熟悉 Kafka、分布式系统与高并发服务治理。" },
   { rank: 5, selection: { doc_id: "doc_preview_05", version_id: "ver_preview_05", visible_epoch: 1 }, file_name: "陈晨_服务端开发.pdf", snippet: "服务端研发，参与交易系统与事件驱动架构建设。" },
 ]
-const PREVIEW_MANAGED_ROOTS: ManagedRoot[] = [
-  { root_handle: "root-00000000000000000000000000000000", display_label: "工程岗位简历", availability: "available" },
-  { root_handle: "root-11111111111111111111111111111111", display_label: "外置盘历史简历", availability: "unavailable" },
-]
-const PREVIEW_ROOT_CONTROLS: Record<string, RootControlState> = {
-  "root-00000000000000000000000000000000": "active",
-  "root-11111111111111111111111111111111": "paused",
-}
-
-const STARTING_LIFECYCLE: DaemonLifecycleSnapshot = {
-  schema_version: "resume-ir.desktop-daemon-lifecycle.v1",
-  state: "starting",
-  generation: 0,
-  restart_attempt: 0,
-  restart_budget: 5,
-  retry_delay_ms: null,
-  consecutive_heartbeat_failures: 0,
-  blocked_reason: null,
-  last_exit: null,
-  restart_ledger_reason: null,
-}
-const PREVIEW_LIFECYCLE: DaemonLifecycleSnapshot = { ...STARTING_LIFECYCLE, state: "ready", generation: 1 }
-
-interface ResultSnapshot {
-  generation: number
-  visibleEpoch: number
-}
-
-function lifecycleMessage(snapshot: DaemonLifecycleSnapshot): string {
-  if (snapshot.state === "starting") return "正在启动本地 daemon"
-  if (snapshot.state === "recovering") return snapshot.retry_delay_ms === null
-    ? "daemon 正在恢复"
-    : `daemon 正在恢复，约 ${snapshot.retry_delay_ms}ms 后重试`
-  if (snapshot.state === "circuit_open") return "daemon 连续异常，恢复电路暂时开路"
-  if (snapshot.state === "blocked") return blockedReasonMessage(snapshot.blocked_reason)
-  return "daemon 已就绪"
-}
-
-function lifecycleLabel(snapshot: DaemonLifecycleSnapshot, service: DaemonService): string {
-  if (snapshot.state === "ready") {
-    if (service === "ready") return "daemon 可用"
-    if (service === "repairing") return "daemon 修复中"
-    return "daemon 服务降级"
-  }
-  if (snapshot.state === "starting") return "daemon 启动中"
-  if (snapshot.state === "recovering") return "daemon 恢复中"
-  if (snapshot.state === "circuit_open") return "daemon 已开路"
-  return "daemon 已阻止"
-}
 
 function Pill({ tone = "neutral", children }: { tone?: "neutral" | "ok" | "warn" | "err" | "info" | "primary"; children: ReactNode }) {
   return <span className={`pill pill-${tone}`}><span className="pill-dot" />{children}</span>
@@ -183,107 +123,9 @@ function countLabel(value: number | null | undefined): string {
   return value === null || value === undefined ? "—" : value.toLocaleString()
 }
 
-export function indexServicePresentation(
-  service: DaemonService,
-  repairReason: StatusBody["repair_reason"],
-  repairProgress?: StatusBody["repair_progress"],
-): { title: string; message: string } {
-  if (service === "ready") return { title: "索引可用", message: "daemon 可用" }
-  if (service === "repairing") {
-    if (repairProgress?.phase === "retry_wait") {
-      const retrySeconds = Math.ceil((repairProgress.retry_after_ms ?? 0) / 1000)
-      return {
-        title: "索引修复等待重试",
-        message: `第 ${repairProgress.attempt ?? "—"}/${repairProgress.max_attempts ?? "—"} 次修复未完成，${retrySeconds} 秒后继续`,
-      }
-    }
-    if (repairProgress?.phase === "rebuilding") {
-      return {
-        title: "索引修复中",
-        message: `正在执行第 ${repairProgress.attempt ?? "—"}/${repairProgress.max_attempts ?? "—"} 次修复`,
-      }
-    }
-    if (repairProgress?.phase === "migration_rebuild") {
-      return { title: "索引升级中", message: "正在从本地元数据重建当前索引" }
-    }
-    return { title: "索引修复中", message: "daemon 已连接，索引正在修复" }
-  }
-  if (repairReason === "runtime_invariant") {
-    return {
-      title: "索引修复已阻塞",
-      message: "daemon 已连接，索引修复已阻塞，请导出诊断",
-    }
-  }
-  if (repairReason === "source_unavailable") {
-    return {
-      title: "索引修复已阻塞",
-      message: "daemon 已连接，来源不可用，请恢复来源磁盘连接或文件权限",
-    }
-  }
-  return { title: "索引能力降级", message: "daemon 已连接，索引能力降级" }
-}
-
-export function IndexServiceSummary({
-  lifecycle,
-  service,
-  status,
-  searchablePercent,
-  connectionMessage,
-}: {
-  lifecycle: DaemonLifecycleSnapshot
-  service: DaemonService
-  status: Pick<StatusBody, "repair_reason" | "repair_progress" | "searchable_documents" | "ocr_queue_depth"> | null
-  searchablePercent: number
-  connectionMessage: string
-}) {
-  const presentation = indexServicePresentation(
-    service,
-    status?.repair_reason ?? null,
-    status?.repair_progress ?? null,
-  )
-  const healthy = lifecycle.state === "ready" && service === "ready"
-  const title = lifecycle.state === "ready"
-    ? presentation.title
-    : lifecycleLabel(lifecycle, service)
-  const message = healthy && status
-    ? `${countLabel(status.searchable_documents)} 份可搜索 · OCR 队列 ${countLabel(status.ocr_queue_depth)}`
-    : lifecycle.state === "ready" ? presentation.message : connectionMessage
-  return <>
-    <div className="status-title"><strong>{title}</strong><span className={healthy ? "ok-text" : "warn-text"}>{searchablePercent}%</span></div>
-    <progress className="progress-track" data-health={healthy ? "ok" : "warn"} value={searchablePercent} max={100} aria-label="可搜索简历比例" />
-    <p>{message}</p>
-  </>
-}
-
-function DiagnosticsContent({ state, message, diagnostics, onExport }: { state: DiagnosticsState; message: string; diagnostics: DiagnosticsBody | null; onExport: () => void }) {
-  const privacySafe = diagnostics !== null && !diagnostics.contains_raw_resume_text && !diagnostics.contains_queries && !diagnostics.contains_resume_paths && !diagnostics.contains_candidate_results && !diagnostics.contains_snippet_text
-  return <div className="sheet-scroll diagnostics-content">
-    <div className={`banner banner-${state === "error" || state === "blocked" || state === "overload" ? "err" : state === "saved" ? "ok" : "neutral"}`} aria-live="polite">
-      {state === "loading" || state === "exporting" ? <LoaderCircle className="spin" size={16} /> : state === "error" || state === "blocked" || state === "overload" ? <AlertTriangle size={16} /> : <ShieldCheck size={16} />}<span>{message}</span>
-    </div>
-    {diagnostics && <>
-      <section className="panel-card"><header><strong>脱敏导出边界</strong><Pill tone={privacySafe ? "ok" : "err"}>{privacySafe ? "5/5 通过" : "阻止导出"}</Pill></header>
-        {["简历正文", "查询文本", "原始路径", "候选结果", "结果摘要"].map((label) => <div className="check-row" key={label}><CheckCircle2 size={14} /><span>{label}</span><small>不包含</small></div>)}
-      </section>
-      <section className="panel-card"><header><strong>本地聚合</strong><span>{diagnostics.evidence_lane} · {diagnostics.evidence_status} · epoch {countLabel(diagnostics.visible_epoch)}</span></header><dl>
-        <div><dt>已索引 / 可搜索</dt><dd>{countLabel(diagnostics.metrics.indexed_documents)} / {countLabel(diagnostics.metrics.searchable_documents)}</dd></div>
-        <div><dt>OCR / embedding</dt><dd>{countLabel(diagnostics.metrics.ocr_queue_depth)} / {countLabel(diagnostics.metrics.embedding_queue_depth)}</dd></div>
-        <div><dt>可恢复 / 永久失败</dt><dd>{countLabel(diagnostics.error_counts.failed_retryable)} / {countLabel(diagnostics.error_counts.failed_permanent)}</dd></div>
-        <div><dt>查询 P95</dt><dd>{diagnostics.metrics.query_latency?.p95_ms === null || diagnostics.metrics.query_latency === null ? "—" : `${diagnostics.metrics.query_latency.p95_ms}ms`}</dd></div>
-      </dl></section>
-      <button className="primary-button wide-button" onClick={onExport} disabled={!privacySafe || state === "exporting" || state === "loading"}>{state === "exporting" ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}导出脱敏 JSON</button>
-    </>}
-  </div>
-}
-
 export function App() {
   const previewMode = import.meta.env.DEV ? new URLSearchParams(window.location.search).get("preview") : null
   const preview = previewMode === "search" || previewMode === "detail" || previewMode === "import"
-  const [lifecycle, setLifecycle] = useState<DaemonLifecycleSnapshot>(preview ? PREVIEW_LIFECYCLE : STARTING_LIFECYCLE)
-  const [service, setService] = useState<DaemonService>(preview ? "ready" : "degraded")
-  const [resultFreshness, setResultFreshness] = useState<ResultFreshness>("current")
-  const [connectionMessage, setConnectionMessage] = useState(preview ? "daemon 可用" : lifecycleMessage(STARTING_LIFECYCLE))
-  const [status, setStatus] = useState<StatusBody | null>(preview ? { schema_version: "daemon.status.v2", status: "ok", process_state: "ready", service_state: "ready", services: { metadata: "ready", query: "ready" }, repair_reason: null, repair_progress: null, error: null, indexed_documents: 1284, searchable_documents: 1098, partial_documents: 84, visible_epoch: 1, failed_retryable: 2, failed_permanent: 1, recovery_queue_depth: 0, ocr_queue_depth: 102, embedding_queue_depth: 186, entity_mentions: 0, import_tasks_queued: 0, index_health: "ready", latest_import_scan: { files_discovered: 1284, searchable_documents: 1098, ocr_required_documents: 102, failed_documents: 1 }, ipc: { accepted: 8, completed: 8, client_disconnect: 0, request_failure: 0, response_failure: 0 } } : null)
   const [query, setQuery] = useState(preview ? "Java Kafka 支付" : "")
   const [mode, setMode] = useState<Mode>(preview ? "hybrid" : "keyword")
   const [showFilters, setShowFilters] = useState(false)
@@ -297,19 +139,43 @@ export function App() {
   const [resultPage, setResultPage] = useState(0)
   const [latency, setLatency] = useState<number | null>(preview ? 42 : null)
   const [overlay, setOverlay] = useState<Overlay>(previewMode === "import" ? "import" : null)
-  const [managedRoots, setManagedRoots] = useState<ManagedRoot[]>(previewMode === "import" ? PREVIEW_MANAGED_ROOTS : [])
-  const [rootControls, setRootControls] = useState<Record<string, RootControlState>>(previewMode === "import" ? PREVIEW_ROOT_CONTROLS : {})
-  const [selectedRoot, setSelectedRoot] = useState<ManagedRoot | null>(previewMode === "import" ? PREVIEW_MANAGED_ROOTS[0] : null)
-  const [importState, setImportState] = useState<ImportState>(previewMode === "import" ? "selected" : "idle")
-  const [importMessage, setImportMessage] = useState(previewMode === "import" ? "已恢复 2 个本地授权目录" : "选择一个本地目录后提交完整扫描")
   const [diagnosticsState, setDiagnosticsState] = useState<DiagnosticsState>("idle")
   const [diagnosticsMessage, setDiagnosticsMessage] = useState("尚未读取本地脱敏诊断")
   const [diagnostics, setDiagnostics] = useState<DiagnosticsBody | null>(null)
   const cancelToken = useRef<string | null>(null)
   const previewDetailOpened = useRef(false)
-  const lifecycleRef = useRef(lifecycle)
-  const resultSnapshot = useRef<ResultSnapshot | null>(preview ? { generation: 1, visibleEpoch: 1 } : null)
-  const managedRootsGeneration = useRef<number | null>(null)
+  const {
+    lifecycle,
+    lifecycleRef,
+    actionAuthorityRef,
+    service,
+    setService,
+    runtimeView,
+    resultFreshness,
+    setResultFreshness,
+    connectionMessage,
+    authoritativeStatus,
+    resultSnapshot,
+    managedRoots,
+    setManagedRoots,
+    rootControls,
+    setRootControls,
+    selectedRoot,
+    setSelectedRoot,
+    importState,
+    setImportState,
+    importMessage,
+    setImportMessage,
+    bindDetailObservers,
+    captureActionAuthority,
+    actionAuthorityIsCurrent,
+    captureCapabilityAuthority,
+    capabilityAuthorityIsCurrent,
+    capabilityAuthorized,
+    refreshStatus,
+    retryLifecycle,
+    refreshManagedRoots,
+  } = useDaemonRuntime({ preview, previewImport: previewMode === "import" })
   const {
     detail,
     detailLoading,
@@ -320,158 +186,35 @@ export function App() {
     open: openDetail,
     resume: resumeDetail,
     reset: resetDetail,
+    observeAuthority: observeDetailAuthority,
     observeLifecycle: observeDetailLifecycle,
-  } = useDetailSession({ preview, lifecycleRef, service, onStaleSelection: () => setResultFreshness("stale") })
+  } = useDetailSession({
+    preview,
+    authorityRef: actionAuthorityRef,
+    lifecycleRef,
+    service,
+    isCapabilityAuthorized: () => capabilityAuthorized("detail"),
+    onStaleSelection: () => setResultFreshness("stale"),
+  })
+  useLayoutEffect(() => {
+    bindDetailObservers({ observeAuthority: observeDetailAuthority, observeLifecycle: observeDetailLifecycle })
+  }, [bindDetailObservers, observeDetailAuthority, observeDetailLifecycle])
 
   const terms = useMemo(() => queryTerms(query), [query])
   const filterCount = [skills, location, degree, years].filter((value) => value.trim()).length
   const resultPageCount = Math.max(1, Math.ceil(results.length / RESULT_PAGE_SIZE))
   const visibleResults = results.slice(resultPage * RESULT_PAGE_SIZE, (resultPage + 1) * RESULT_PAGE_SIZE)
-  const latestScan = status?.latest_import_scan
-  const searchablePercent = status?.indexed_documents && status.searchable_documents !== null ? Math.round((status.searchable_documents / status.indexed_documents) * 100) : 0
-  const health = lifecycle.state === "ready"
+  const latestScan = authoritativeStatus?.latest_import_scan
+  const searchablePercent = authoritativeStatus?.indexed_documents && authoritativeStatus.searchable_documents !== null ? Math.round((authoritativeStatus.searchable_documents / authoritativeStatus.indexed_documents) * 100) : 0
+  const health = lifecycle.state === "running" && runtimeView === "trusted"
     ? service === "ready" ? "ok" : "degraded"
-    : lifecycle.state === "starting" || lifecycle.state === "recovering" ? "loading" : "unavailable"
-  const operationsPaused = lifecycle.state !== "ready" || service !== "ready"
-
-  async function refreshStatus() {
-    if (preview) return
-    try {
-      const reply = await readStatus()
-      const body = reply.body.schema_version === "daemon.status.v2" ? reply.body : null
-      setStatus(body)
-      const nextService = serviceStateFromStatus({
-        httpStatus: reply.http_status,
-        status: body?.service_state ?? "unavailable",
-      })
-      setService(nextService)
-      const result = resultSnapshot.current
-      if (body) {
-        setResultFreshness((current) => reconcileResultFreshness({
-          current,
-          hasResults: result !== null,
-          resultGeneration: result?.generation ?? null,
-          resultVisibleEpoch: result?.visibleEpoch ?? null,
-          lifecycle: lifecycleRef.current,
-          serviceVisibleEpoch: body.visible_epoch,
-        }))
-      }
-      setConnectionMessage(indexServicePresentation(
-        nextService,
-        body?.repair_reason ?? null,
-      ).message)
-    } catch (error) {
-      if (bridgeFailureKind(error) === "overload") {
-        setConnectionMessage("状态刷新繁忙，稍后自动重试")
-        return
-      }
-      setStatus(null)
-      setService("degraded")
-      setConnectionMessage("本地 daemon 状态暂时不可读")
-    }
-  }
-
-  function applyLifecycleSnapshot(snapshot: DaemonLifecycleSnapshot) {
-    lifecycleRef.current = snapshot
-    setLifecycle(snapshot)
-    const result = resultSnapshot.current
-    setResultFreshness((current) => reconcileResultFreshness({
-      current,
-      hasResults: result !== null,
-      resultGeneration: result?.generation ?? null,
-      resultVisibleEpoch: result?.visibleEpoch ?? null,
-      lifecycle: snapshot,
-      serviceVisibleEpoch: null,
-    }))
-    observeDetailLifecycle(snapshot)
-    if (snapshot.state !== "ready") {
-      setService("degraded")
-      setConnectionMessage(lifecycleMessage(snapshot))
-    }
-  }
-
-  async function retryLifecycle() {
-    if (preview) return
-    setConnectionMessage("正在请求 daemon 监督器重试")
-    try {
-      const snapshot = await retryDaemon()
-      if (!isDaemonLifecycleSnapshot(snapshot)) throw new Error("lifecycle contract mismatch")
-      applyLifecycleSnapshot(snapshot)
-    } catch (error) {
-      if (bridgeFailureKind(error) === "overload") {
-        setConnectionMessage("daemon 监督器正在处理另一个请求")
-        return
-      }
-      setConnectionMessage(bridgeError(error).message)
-    }
-  }
-
-  async function refreshManagedRoots() {
-    if (preview) return
-    try {
-      const response = await listManagedRoots()
-      if (response.schema_version !== "resume-ir.desktop-managed-roots.v1" || response.limit !== 16 || response.roots.length > response.limit) {
-        throw new Error("managed root contract mismatch")
-      }
-      setManagedRoots(response.roots)
-      setSelectedRoot((current) => {
-        const restored = current && response.roots.find((root) => root.root_handle === current.root_handle)
-        return restored ?? response.roots.find((root) => root.availability === "available") ?? response.roots[0] ?? null
-      })
-      if (response.roots.length > 0) {
-        const available = response.roots.filter((root) => root.availability === "available").length
-        setImportState(available > 0 ? "selected" : "unavailable")
-        setImportMessage(available > 0 ? `已恢复 ${response.roots.length} 个本地授权目录` : "授权目录当前均不可读取")
-      }
-      await inspectRootControls(response.roots)
-    } catch (error) {
-      const overload = bridgeFailureKind(error) === "overload"
-      setImportState(overload ? "overload" : "error")
-      setImportMessage(overload ? "授权目录读取入口繁忙，请稍后重试" : "无法读取本地授权目录记录")
-    }
-  }
-
-  async function inspectRootControls(roots: ManagedRoot[]) {
-    const next: Record<string, RootControlState> = {}
-    for (const root of roots) {
-      next[root.root_handle] = "loading"
-      setRootControls({ ...next })
-      try {
-        const outcome = managedRootControlOutcome(await controlManagedRoot(root.root_handle, "inspect"))
-        next[root.root_handle] = outcome
-      } catch (error) {
-        next[root.root_handle] = bridgeFailureKind(error) === "overload" ? "overload" : "error"
-      }
-    }
-    setRootControls(next)
-  }
-
-  useEffect(() => {
-    if (preview) return
-    return startSerialLifecyclePolling({
-      readSnapshot: getDaemonLifecycle,
-      onSnapshot: async (snapshot) => {
-        if (!isDaemonLifecycleSnapshot(snapshot)) throw new Error("lifecycle contract mismatch")
-        applyLifecycleSnapshot(snapshot)
-        if (snapshot.state === "ready") {
-          await refreshStatus()
-          if (managedRootsGeneration.current !== snapshot.generation) {
-            managedRootsGeneration.current = snapshot.generation
-            await refreshManagedRoots()
-          }
-        }
-      },
-      onError: (error) => setConnectionMessage(bridgeError(error).message),
-      clock: {
-        setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
-        clearTimeout: (timer) => window.clearTimeout(timer),
-      },
-      focusEvents: {
-        addFocusListener: (listener) => window.addEventListener("focus", listener),
-        removeFocusListener: (listener) => window.removeEventListener("focus", listener),
-      },
-    })
-  }, [preview])
+    : lifecycle.state === "starting" || lifecycle.state === "retry_wait" ? "loading" : "unavailable"
+  const searchCapability = authoritativeStatus?.capabilities[mode === "semantic" ? "semantic_search" : mode === "hybrid" ? "hybrid_search" : "keyword_search"]
+  const searchAllowed = runtimeView === "trusted" && lifecycle.state === "running" && searchCapability !== undefined && ["available", "degraded"].includes(searchCapability.state)
+  const detailAllowed = runtimeView === "trusted" && lifecycle.state === "running" && authoritativeStatus?.capabilities.detail.state === "available"
+  const importAllowed = runtimeView === "trusted" && lifecycle.state === "running" && authoritativeStatus?.capabilities.text_import.state === "available"
+  const operationsPaused = !detailAllowed
+  const retryControl = daemonRetryControl(lifecycle)
   useEffect(() => {
     if (previewMode !== "detail" || previewDetailOpened.current) return
     previewDetailOpened.current = true
@@ -480,10 +223,13 @@ export function App() {
 
   async function runSearch(event: FormEvent) {
     event.preventDefault()
-    if (!query.trim() || view === "loading" || lifecycleRef.current.state !== "ready" || service !== "ready") return
+    if (!query.trim() || view === "loading" || !searchAllowed) return
     if (preview) { setView("complete"); setResults(PREVIEW_RESULTS); setResultPage(0); setLatency(42); setResultFreshness("current"); setMessage("命中 5 条"); return }
+    const capability = mode === "semantic" ? "semantic_search" : mode === "hybrid" ? "hybrid_search" : "keyword_search"
+    const authority = captureCapabilityAuthority(capability, true)
+    if (!authority) return
     const id = crypto.randomUUID()
-    const startedGeneration = lifecycleRef.current.generation
+    const startedGeneration = authority.generation
     const previousView = view
     cancelToken.current = `gui-cancel-${id}`
     resetDetail()
@@ -499,7 +245,7 @@ export function App() {
         schema_version: "resume-ir.ipc-request.v3", request_id: `gui-search-${id}`, client_capability: "interactive_gui", deadline_ms: searchDeadlineMs(mode), cancel_token: cancelToken.current,
         payload: { query, mode: mode === "field" ? "fulltext" : mode === "keyword" ? "fulltext" : mode, top_k: 50, filters },
       })
-      if (!detailReadMayContinue(lifecycleRef.current, startedGeneration)) {
+      if (!capabilityAuthorityIsCurrent(authority, capability, true)) {
         setResultFreshness("interrupted")
         setView(results.length > 0 ? previousView : "error")
         setMessage("daemon 已换代，本次搜索已中断；结果未自动重放")
@@ -507,15 +253,15 @@ export function App() {
       }
       const body = reply.body
       const outcome = searchOutcome(reply)
-      if (body.schema_version === "daemon.error.v1") {
-        resultSnapshot.current = null; setResultFreshness("current"); setResults([]); setView("error"); setMessage(`查询失败：${body.status}`); return
-      }
-      if (body.schema_version === "resume-ir.error.v1") {
+      if (body.schema_version === "resume-ir.error.v2") {
         if (body.error.code === "REPAIRING" || body.error.code === "METADATA_UNAVAILABLE" || body.error.code === "QUERY_SERVICE_UNAVAILABLE") {
           setService(body.error.code === "REPAIRING" ? "repairing" : "degraded")
           setResultFreshness(results.length > 0 ? "interrupted" : "current")
           setView(results.length > 0 ? previousView : "error")
           setMessage(body.error.code === "REPAIRING" ? "索引正在修复；现有结果已保留" : "查询服务暂时不可用；现有结果已保留")
+        } else if (body.error.code === "SERVICE_INITIALIZING" || body.error.code === "SERVICE_BLOCKED" || body.error.code === "CAPABILITY_UNAVAILABLE") {
+          setView(results.length > 0 ? previousView : "error")
+          setMessage(body.error.code === "SERVICE_INITIALIZING" ? "核心服务仍在初始化；现有结果已保留" : "当前操作能力不可用；现有结果已保留")
         } else if (body.error.code === "OVERLOADED") {
           setResultFreshness("current")
           setView(results.length > 0 ? previousView : "overload")
@@ -538,7 +284,7 @@ export function App() {
       else { setView("complete"); setMessage(`命中 ${body.result_count} 条`) }
     } catch (error) {
       const failure = bridgeFailureKind(error)
-      if (failure === "unavailable" || !detailReadMayContinue(lifecycleRef.current, startedGeneration)) {
+      if (failure === "unavailable" || !capabilityAuthorityIsCurrent(authority, capability, true)) {
         setResultFreshness(results.length > 0 ? "interrupted" : "current")
         setView(results.length > 0 ? previousView : "error")
         setMessage("daemon 恢复打断了本次搜索；现有结果已保留且不会自动重放")
@@ -556,9 +302,15 @@ export function App() {
   async function cancelSearch() {
     const token = cancelToken.current
     if (!token) return
-    await requestSearchCancel(`gui-cancel-command-${crypto.randomUUID()}`, token).catch((error) => {
+    const authority = captureActionAuthority()
+    if (!authority) return
+    try {
+      await requestSearchCancel(`gui-cancel-command-${crypto.randomUUID()}`, token)
+      if (!actionAuthorityIsCurrent(authority)) return
+    } catch (error) {
+      if (!actionAuthorityIsCurrent(authority)) return
       setMessage(bridgeFailureKind(error) === "overload" ? "取消入口繁忙，本次查询仍在执行" : "取消请求未送达，本次查询仍在执行")
-    })
+    }
   }
 
   async function chooseImportRoot() {
@@ -577,9 +329,12 @@ export function App() {
     if (preview) {
       setSelectedRoot(root); setImportState("queued"); setImportMessage(intent === "rescan" ? "已开始增量重新扫描" : "已创建本地导入任务"); return
     }
+    const authority = captureCapabilityAuthority("text_import")
+    if (!authority) return
     setSelectedRoot(root); setImportState("submitting"); setImportMessage(intent === "rescan" ? "正在提交增量重新扫描" : "正在提交本地导入任务")
     try {
       const reply = intent === "rescan" ? await rescanManagedRoot(root.root_handle) : await importSelectedRoot(root.root_handle)
+      if (!capabilityAuthorityIsCurrent(authority, "text_import")) return
       const outcome = managedRootScanOutcome(reply)
       setImportState(outcome)
       if (outcome === "queued") setImportMessage(intent === "rescan" ? "已开始增量重新扫描" : "已创建本地导入任务")
@@ -588,6 +343,7 @@ export function App() {
       else { setImportMessage("daemon 未接受目录扫描任务"); return }
       await refreshStatus()
     } catch (error) {
+      if (!capabilityAuthorityIsCurrent(authority, "text_import")) return
       const overload = bridgeFailureKind(error) === "overload"
       setImportState(overload ? "overload" : "error")
       setImportMessage(overload ? "目录扫描入口繁忙，请稍后重试" : bridgeError(error).message)
@@ -595,7 +351,8 @@ export function App() {
   }
 
   async function changeRootControl(root: ManagedRoot, action: ManagedRootControlAction) {
-    if (operationsPaused) return
+    const authority = captureActionAuthority()
+    if (!authority) return
     if (action === "resume" && root.availability !== "available") {
       setImportState("unavailable")
       setImportMessage("目录当前不可读取，重新授权后才能恢复监控")
@@ -612,6 +369,7 @@ export function App() {
     }
     try {
       const reply = await controlManagedRoot(root.root_handle, action)
+      if (!actionAuthorityIsCurrent(authority)) return
       const outcome = managedRootControlOutcome(reply)
       setRootControls((current) => ({ ...current, [root.root_handle]: outcome }))
       if (outcome === "unmanaged") {
@@ -631,6 +389,7 @@ export function App() {
       else setImportMessage(outcome === "paused" ? "目录监控保持暂停" : "目录持续监控正常")
       await refreshStatus()
     } catch (error) {
+      if (!actionAuthorityIsCurrent(authority)) return
       const state = bridgeFailureKind(error) === "overload" ? "overload" : "error"
       setRootControls((current) => ({ ...current, [root.root_handle]: state }))
       setImportState(state)
@@ -685,12 +444,11 @@ export function App() {
 
   async function openDiagnostics() {
     resetDetail(); setOverlay("diagnostics"); setDiagnosticsState("loading"); setDiagnosticsMessage("正在读取本地聚合诊断")
-    try { const reply = await readDiagnostics(); if (reply.http_status !== 200 || reply.body.schema_version !== "resume-ir.diagnostics.v3" || reply.body.privacy_boundary !== "redacted_local_aggregate") { setDiagnostics(null); setDiagnosticsState("blocked"); setDiagnosticsMessage("诊断合同未满足脱敏导出边界"); return } setDiagnostics(reply.body); setDiagnosticsState("ready"); setDiagnosticsMessage("只读聚合诊断已就绪") }
+    try { const reply = await readDiagnostics(); if (reply.http_status !== 200 || reply.body.schema_version !== "resume-ir.diagnostics.v4" || reply.body.privacy_boundary !== "redacted_local_aggregate") { setDiagnostics(null); setDiagnosticsState("blocked"); setDiagnosticsMessage("诊断合同未满足脱敏导出边界"); return } setDiagnostics(reply.body); setDiagnosticsState("ready"); setDiagnosticsMessage("只读聚合诊断已就绪") }
     catch (error) { const overload = bridgeFailureKind(error) === "overload"; setDiagnostics(null); setDiagnosticsState(overload ? "overload" : "error"); setDiagnosticsMessage(overload ? "诊断读取入口繁忙，请稍后重试" : bridgeError(error).message) }
   }
 
   async function saveDiagnostics() {
-    if (!diagnostics) return
     setDiagnosticsState("exporting"); setDiagnosticsMessage("正在打开保存位置选择器")
     try { const receipt = await exportDiagnostics(); if (!receipt) { setDiagnosticsState("cancelled"); setDiagnosticsMessage("已取消导出"); return } setDiagnosticsState("saved"); setDiagnosticsMessage(`已导出 ${receipt.file_label}`) }
     catch (error) { const overload = bridgeFailureKind(error) === "overload"; setDiagnosticsState(overload ? "overload" : "error"); setDiagnosticsMessage(overload ? "诊断导出入口繁忙，请稍后重试" : bridgeError(error).message) }
@@ -707,25 +465,26 @@ export function App() {
         <button onClick={() => void openDiagnostics()}><ShieldCheck size={16} />隐私与诊断</button>
       </nav>
       <div className="sidebar-status">
-        <IndexServiceSummary lifecycle={lifecycle} service={service} status={status} searchablePercent={searchablePercent} connectionMessage={connectionMessage} />
-        {(lifecycle.state === "circuit_open" || lifecycle.state === "blocked") && <button type="button" className="plain-button wide-button" onClick={() => void retryLifecycle()}>请求监督器重试</button>}
+        <IndexServiceSummary lifecycle={lifecycle} service={service} status={authoritativeStatus} searchablePercent={searchablePercent} connectionMessage={connectionMessage} runtimeView={runtimeView} />
+        {runtimeView === "trusted" && retryControl && <button type="button" className="plain-button wide-button" onClick={() => void retryLifecycle()} disabled={retryControl.disabled}>{retryControl.label}</button>}
         <div className="local-only"><HardDriveDownload size={14} />完全本地运行 · 不上传</div>
       </div>
     </aside>
 
     <main className="main-shell">
-      <header className="topbar"><div><span>resume-ir</span><ChevronRight size={14} /><strong>搜索</strong></div><Pill tone={health === "ok" ? "ok" : lifecycle.state === "blocked" ? "err" : "warn"}>{lifecycleLabel(lifecycle, service)}</Pill></header>
+      <header className="topbar"><div><span>resume-ir</span><ChevronRight size={14} /><strong>搜索</strong></div><Pill tone={health === "ok" ? "ok" : lifecycle.state === "blocked" || runtimeView === "bridge_error" ? "err" : "warn"}>{lifecycleLabel(lifecycle, service, runtimeView)}</Pill></header>
+      <CapabilityMatrix lifecycle={lifecycle} status={authoritativeStatus} runtimeView={runtimeView} />
       <form className="search-head" onSubmit={runSearch}>
         <div className="query-box"><Search size={16} /><input id="query" value={query} onChange={(event) => setQuery(event.target.value)} maxLength={512} placeholder="输入关键词，空格分隔多个 Query（默认 AND 交集）" />{query && <button type="button" className="icon-button" aria-label="清空" onClick={() => setQuery("")}><X size={16} /></button>}</div>
         <div className="search-controls">
           <div className="term-chain">{terms.length > 1 && terms.map((term, index) => <span key={term}>{index > 0 && <b>AND</b>}<Tag tone="primary">{term}</Tag></span>)}</div>
-          <div className="control-actions"><div className="segmented">{MODE_OPTIONS.map((option) => <button type="button" key={option.value} className={mode === option.value ? "selected" : ""} onClick={() => { setMode(option.value); if (option.value === "field") setShowFilters(true) }}>{option.label}</button>)}</div><button type="button" className={showFilters ? "filter-button active" : "filter-button"} onClick={() => setShowFilters((open) => !open)}><SlidersHorizontal size={14} />过滤{filterCount ? ` · ${filterCount}` : ""}</button><button className="primary-button" type="submit" disabled={health !== "ok" || !query.trim() || view === "loading"}>{view === "loading" ? <LoaderCircle className="spin" size={15} /> : <Search size={15} />}搜索</button>{view === "loading" && <button type="button" className="plain-button" onClick={() => void cancelSearch()}>取消</button>}</div>
+          <div className="control-actions"><div className="segmented">{MODE_OPTIONS.map((option) => <button type="button" key={option.value} className={mode === option.value ? "selected" : ""} onClick={() => { setMode(option.value); if (option.value === "field") setShowFilters(true) }}>{option.label}</button>)}</div><button type="button" className={showFilters ? "filter-button active" : "filter-button"} onClick={() => setShowFilters((open) => !open)}><SlidersHorizontal size={14} />过滤{filterCount ? ` · ${filterCount}` : ""}</button><button className="primary-button" type="submit" disabled={!searchAllowed || !query.trim() || view === "loading"}>{view === "loading" ? <LoaderCircle className="spin" size={15} /> : <Search size={15} />}搜索</button>{view === "loading" && <button type="button" className="plain-button" onClick={() => void cancelSearch()}>取消</button>}</div>
         </div>
       </form>
 
       <div className="content-shell">
         <section className="results-pane" aria-live="polite">
-          {view !== "idle" && <div className={`execution-bar execution-${view}`}><div>{view === "loading" ? <LoaderCircle className="spin" size={15} /> : view === "error" || view === "overload" ? <AlertTriangle size={15} /> : <Pill tone={view === "partial" ? "warn" : view === "complete" ? "ok" : "neutral"}>{view === "partial" ? "部分结果" : view === "complete" ? "搜索完成" : "搜索状态"}</Pill>}<span>{message}</span>{latency !== null && <span><Clock3 size={14} />{latency.toFixed(0)} ms</span>}<span>已索引 {countLabel(status?.searchable_documents)} / {countLabel(status?.indexed_documents)}</span></div><div><Tag tone={mode === "semantic" || mode === "hybrid" ? "ok" : "neutral"}>语义</Tag><Tag>正文</Tag>{filterCount > 0 && <Tag tone="primary">字段 · {filterCount}</Tag>}</div></div>}
+          {view !== "idle" && <div className={`execution-bar execution-${view}`}><div>{view === "loading" ? <LoaderCircle className="spin" size={15} /> : view === "error" || view === "overload" ? <AlertTriangle size={15} /> : <Pill tone={view === "partial" ? "warn" : view === "complete" ? "ok" : "neutral"}>{view === "partial" ? "部分结果" : view === "complete" ? "搜索完成" : "搜索状态"}</Pill>}<span>{message}</span>{latency !== null && <span><Clock3 size={14} />{latency.toFixed(0)} ms</span>}<span>已索引 {countLabel(authoritativeStatus?.searchable_documents)} / {countLabel(authoritativeStatus?.indexed_documents)}</span></div><div><Tag tone={mode === "semantic" || mode === "hybrid" ? "ok" : "neutral"}>语义</Tag><Tag>正文</Tag>{filterCount > 0 && <Tag tone="primary">字段 · {filterCount}</Tag>}</div></div>}
           {view === "idle" && <div className="empty-state"><Search size={32} /><p>请输入搜索条件。空查询不会执行重型搜索。</p></div>}
           {(view === "empty" || view === "error" || view === "overload" || view === "cancelled") && <div className={`state-banner state-${view}`}><strong>{message}</strong><span>系统不会自动放宽查询语义。</span></div>}
           {resultFreshness === "interrupted" && results.length > 0 && <div className="state-banner"><strong>daemon 恢复打断了当前会话</strong><span>现有结果仅保留作上下文；系统不会自动重放搜索或详情请求。</span></div>}
@@ -741,7 +500,7 @@ export function App() {
       <div className="sheet-scroll detail-content">
         {detailLoading && !detail && <div className="detail-loading"><LoaderCircle className="spin" size={20} />正在读取精确版本的结构化字段与正文</div>}
         {detailError && <div className="banner banner-err"><AlertTriangle size={16} />{detailError}</div>}
-        {detailInterrupted && lifecycle.state === "ready" && <button type="button" className="plain-button wide-button" onClick={() => void resumeDetail()} disabled={detailLoading || service === "repairing"}>显式续读当前版本</button>}
+        {detailInterrupted && detailAllowed && <button type="button" className="plain-button wide-button" onClick={() => void resumeDetail()} disabled={detailLoading}>显式续读当前版本</button>}
         {detail && <>
           <div className="status-row"><Pill tone="ok">精确版本</Pill><Pill tone="info">{detail.schema_version}</Pill>{bodyComplete ? <Pill tone="ok">正文完整</Pill> : detailInterrupted ? <Pill tone="warn">正文已中断</Pill> : <Pill tone="warn">正文读取中</Pill>}</div>
           <section className="detail-section"><h3>搜索命中摘要</h3><p className="snippet-box">{detail.snippet || "（无命中摘要）"}</p><div className="tag-row">{terms.map((term) => <Tag key={term} tone="primary">命中：{term}</Tag>)}</div></section>
@@ -774,7 +533,7 @@ export function App() {
               <div className="source-actions">
                 {unavailable ? <button type="button" className="plain-button" onClick={() => void reauthorizeRoot(root)} disabled={busy}>
                   <RefreshCw size={14} />{importState === "reauthorizing" && selectedRoot?.root_handle === root.root_handle ? "授权中" : "重新授权"}
-                </button> : control !== "paused" && <button type="button" className="plain-button" onClick={() => void requestRootScan(root, "rescan")} disabled={health !== "ok" || busy}>
+                </button> : control !== "paused" && <button type="button" className="plain-button" onClick={() => void requestRootScan(root, "rescan")} disabled={!importAllowed || busy}>
                   <RefreshCw size={14} />{importState === "submitting" && selectedRoot?.root_handle === root.root_handle ? "提交中" : control === "unmanaged" ? "开始扫描" : "重新扫描"}
                 </button>}
                 {control === "active" && <button type="button" className="plain-button" onClick={() => void changeRootControl(root, "pause")} disabled={operationsPaused || busy}><Pause size={14} />暂停监控</button>}
@@ -786,9 +545,9 @@ export function App() {
         </section> : <section className="source-card"><FolderTree size={24} /><div><strong>尚未选择目录</strong><p>目录扫描、解析、分类与索引全部在本机完成。</p></div></section>}
         <div className="sheet-actions">
           <button type="button" className="plain-button" onClick={() => void chooseImportRoot()} disabled={["selecting", "submitting", "reauthorizing"].includes(importState)}><FolderOpen size={15} />{managedRoots.length > 0 ? "添加目录" : "选择目录"}</button>
-          {selectedRoot && <button type="button" className="primary-button" onClick={() => void submitImport()} disabled={selectedRoot.availability !== "available" || rootControls[selectedRoot.root_handle] === "paused" || health !== "ok" || ["submitting", "reauthorizing"].includes(importState)}><Upload size={15} />{selectedRoot.availability !== "available" ? "目录不可用" : rootControls[selectedRoot.root_handle] === "paused" ? "监控已暂停" : "扫描此目录"}</button>}
+          {selectedRoot && <button type="button" className="primary-button" onClick={() => void submitImport()} disabled={selectedRoot.availability !== "available" || rootControls[selectedRoot.root_handle] === "paused" || !importAllowed || ["submitting", "reauthorizing"].includes(importState)}><Upload size={15} />{selectedRoot.availability !== "available" ? "目录不可用" : rootControls[selectedRoot.root_handle] === "paused" ? "监控已暂停" : "扫描此目录"}</button>}
         </div>
-        <section className="panel-card source-summary"><header><strong>当前本地索引</strong></header><dl><div><dt>已发现</dt><dd>{latestScan?.files_discovered ?? "—"}</dd></div><div><dt>可搜索</dt><dd>{status?.searchable_documents ?? "—"}</dd></div><div><dt>OCR 待处理</dt><dd>{status?.ocr_queue_depth ?? "—"}</dd></div><div><dt>失败</dt><dd>{latestScan?.failed_documents ?? "—"}</dd></div></dl></section>
+        <section className="panel-card source-summary"><header><strong>当前本地索引</strong></header><dl><div><dt>已发现</dt><dd>{latestScan?.files_discovered ?? "—"}</dd></div><div><dt>可搜索</dt><dd>{authoritativeStatus?.searchable_documents ?? "—"}</dd></div><div><dt>OCR 待处理</dt><dd>{authoritativeStatus?.ocr_queue_depth ?? "—"}</dd></div><div><dt>失败</dt><dd>{latestScan?.failed_documents ?? "—"}</dd></div></dl></section>
       </div>
     </SlideOver>}
     {overlay === "diagnostics" && <SlideOver title="隐私与诊断" subtitle="敏感详情可在本地展示；导出证据仍保持脱敏" onClose={() => setOverlay(null)}><DiagnosticsContent state={diagnosticsState} message={diagnosticsMessage} diagnostics={diagnostics} onExport={() => void saveDiagnostics()} /></SlideOver>}

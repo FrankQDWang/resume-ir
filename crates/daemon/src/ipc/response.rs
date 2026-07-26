@@ -77,11 +77,36 @@ pub(crate) fn write_service_unavailable(
 
 pub(crate) fn unified_error_body(request_id: Option<&str>, code: &str, action: &str) -> String {
     let mut body = serde_json::json!({
-        "schema_version": "resume-ir.error.v1",
+        "schema_version": "resume-ir.error.v2",
         "status": "error",
         "error": {
             "code": code,
             "action": action,
+            "capability": serde_json::Value::Null,
+            "reason": serde_json::Value::Null,
+        },
+    });
+    if let Some(request_id) = request_id {
+        body["request_id"] = serde_json::json!(request_id);
+    }
+    body.to_string()
+}
+
+pub(crate) fn service_error_body(
+    request_id: Option<&str>,
+    code: &str,
+    action: &str,
+    capability: Option<&str>,
+    reason: Option<&str>,
+) -> String {
+    let mut body = serde_json::json!({
+        "schema_version": "resume-ir.error.v2",
+        "status": "error",
+        "error": {
+            "code": code,
+            "action": action,
+            "capability": capability,
+            "reason": reason,
         },
     });
     if let Some(request_id) = request_id {
@@ -122,5 +147,42 @@ mod tests {
             write_all(&mut server, b"response after peer reset"),
             Err(ResponseSinkError::ClientDisconnected)
         );
+    }
+}
+
+#[cfg(test)]
+mod transport_ownership_tests {
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::time::Duration;
+
+    use super::write_http_response;
+
+    #[test]
+    fn response_writer_does_not_shutdown_a_shared_transport_owner() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind response ownership fixture");
+        let mut client =
+            TcpStream::connect(listener.local_addr().unwrap()).expect("connect ownership fixture");
+        let (mut response_writer, _) = listener.accept().expect("accept ownership fixture");
+        let mut lifecycle_owner = response_writer
+            .try_clone()
+            .expect("clone lifecycle transport owner");
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .expect("bound ownership fixture read");
+
+        write_http_response(&mut response_writer, 200, "text/plain", "ok")
+            .expect("write complete response frame");
+        lifecycle_owner
+            .write_all(b"x")
+            .expect("response writer must not close the lifecycle owner");
+
+        let expected =
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nokx";
+        let mut received = vec![0_u8; expected.len()];
+        client
+            .read_exact(&mut received)
+            .expect("read response plus lifecycle-owned byte");
+        assert_eq!(received, expected);
     }
 }

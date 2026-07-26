@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   parseReplacementArguments,
   reinstallMacosDmg,
-} from "./macos-upgrade-lifecycle.mjs";
+} from "./macos-reinstall-core.mjs";
 
 async function main() {
   const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));

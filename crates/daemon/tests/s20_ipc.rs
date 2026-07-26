@@ -26,12 +26,73 @@ use std::os::unix::fs::PermissionsExt;
 const IPC_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg(not(windows))]
 const IPC_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(10);
+const IPC_CORE_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(120);
 const IPC_ENDPOINT_POLL_DELAY: Duration = Duration::from_millis(25);
 const IMPORT_WORKER_STATUS_REQUEST_LIMIT: usize = 320;
 const IMPORT_WORKER_SEARCHABLE_MAX_REQUESTS: usize = 260;
 const IMPORT_WORKER_SEARCHABLE_TIMEOUT: Duration = Duration::from_secs(20);
 const IMPORT_WORKER_STATUS_POLL_DELAY: Duration = Duration::from_millis(50);
-const ACTIVE_IMPORT_FILE_COUNT: usize = 1_024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TestIpcMetrics {
+    accepted: u64,
+    completed: u64,
+    client_disconnect: u64,
+    request_failure: u64,
+    response_failure: u64,
+}
+
+impl TestIpcMetrics {
+    fn from_status(payload: &serde_json::Value) -> Self {
+        Self::from_value(&payload["ipc"])
+    }
+
+    fn from_diagnostics(payload: &serde_json::Value) -> Self {
+        Self::from_value(&payload["metrics"]["ipc"])
+    }
+
+    fn from_value(value: &serde_json::Value) -> Self {
+        Self {
+            accepted: value["accepted"].as_u64().expect("accepted counter"),
+            completed: value["completed"].as_u64().expect("completed counter"),
+            client_disconnect: value["client_disconnect"]
+                .as_u64()
+                .expect("client disconnect counter"),
+            request_failure: value["request_failure"]
+                .as_u64()
+                .expect("request failure counter"),
+            response_failure: value["response_failure"]
+                .as_u64()
+                .expect("response failure counter"),
+        }
+    }
+
+    fn delta_from(self, baseline: Self) -> Self {
+        Self {
+            accepted: checked_counter_delta(self.accepted, baseline.accepted),
+            completed: checked_counter_delta(self.completed, baseline.completed),
+            client_disconnect: checked_counter_delta(
+                self.client_disconnect,
+                baseline.client_disconnect,
+            ),
+            request_failure: checked_counter_delta(self.request_failure, baseline.request_failure),
+            response_failure: checked_counter_delta(
+                self.response_failure,
+                baseline.response_failure,
+            ),
+        }
+    }
+
+    fn terminal(self) -> u64 {
+        self.completed + self.request_failure + self.response_failure
+    }
+}
+
+fn checked_counter_delta(current: u64, baseline: u64) -> u64 {
+    current
+        .checked_sub(baseline)
+        .expect("daemon IPC counter must be monotonic")
+}
 
 #[test]
 fn daemon_serves_redacted_status_over_loopback_ipc() {
@@ -46,7 +107,7 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "1",
+            "2",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -55,6 +116,7 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
+    wait_for_serving_control_plane(&mut child, &endpoint, &token);
     let endpoint_manifest_path = data_dir.join("ipc.endpoints.json");
     let endpoint_manifest =
         fs::read_to_string(&endpoint_manifest_path).expect("read daemon ipc endpoint manifest");
@@ -63,7 +125,11 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
     let base_endpoint = endpoint.strip_suffix("/status").unwrap();
     assert_eq!(
         endpoint_manifest_json["schema_version"],
-        "resume-ir.daemon-ipc.v2"
+        "resume-ir.daemon-ipc.v3"
+    );
+    assert_eq!(
+        endpoint_manifest_json["launch_id"].as_str().map(str::len),
+        Some(64)
     );
     assert_eq!(endpoint_manifest_json["owner_mode"], "standalone");
     assert!(endpoint_manifest_json["instance_id"]
@@ -106,10 +172,10 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
     assert!(!endpoint_manifest.contains("ipc.auth"));
     assert!(!endpoint_manifest.contains(&token));
     assert!(!endpoint_manifest.contains("raw_resume_text"));
-    let response = http_get(&endpoint);
+    let response = http_get(&endpoint, &token);
 
     assert!(response.contains("HTTP/1.1 200 OK"));
-    assert!(response.contains("\"schema_version\":\"daemon.status.v2\""));
+    assert!(response.contains("\"schema_version\":\"daemon.status.v3\""));
     assert!(response.contains("\"status\":\"ok\""));
     assert!(response.contains("\"index_health\":\"ready\""));
     assert!(response.contains("\"import_tasks_queued\":0"));
@@ -131,7 +197,7 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
 }
 
 #[test]
-fn daemon_serves_only_authenticated_redacted_v2_diagnostics() {
+fn daemon_serves_only_authenticated_redacted_v4_diagnostics() {
     let data_dir = temp_dir("ipc-diagnostics-data");
     seed_snapshot_state(&data_dir);
     let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
@@ -143,7 +209,7 @@ fn daemon_serves_only_authenticated_redacted_v2_diagnostics() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "2",
+            "3",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -152,6 +218,7 @@ fn daemon_serves_only_authenticated_redacted_v2_diagnostics() {
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
+    wait_for_serving_control_plane(&mut child, &endpoint, &token);
     let unauthorized = http_get_diagnostics(&endpoint, None);
     let response = http_get_diagnostics(&endpoint, Some(&token));
 
@@ -159,7 +226,7 @@ fn daemon_serves_only_authenticated_redacted_v2_diagnostics() {
     assert!(response.contains("HTTP/1.1 200 OK"));
     let body = response.split("\r\n\r\n").nth(1).unwrap();
     let payload: serde_json::Value = serde_json::from_str(body).unwrap();
-    assert_eq!(payload["schema_version"], "resume-ir.diagnostics.v3");
+    assert_eq!(payload["schema_version"], "resume-ir.diagnostics.v4");
     assert_eq!(payload["privacy_boundary"], "redacted_local_aggregate");
     assert_eq!(payload["evidence_lane"], "gui_manual");
     assert_eq!(payload["evidence_status"], "unaccepted");
@@ -187,6 +254,36 @@ fn daemon_serves_only_authenticated_redacted_v2_diagnostics() {
 }
 
 #[test]
+fn delete_cannot_publish_when_index_publication_capability_is_unavailable() {
+    let data_dir = temp_dir("ipc-delete-runtime-gate-data");
+    seed_snapshot_state(&data_dir);
+    let state_before = ReadMetaStore::open_data_dir(&data_dir)
+        .unwrap()
+        .search_projection_state()
+        .unwrap();
+    let mut child = start_degraded_ipc_daemon(&data_dir, 1);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
+    let token = read_ipc_auth_token(&data_dir);
+
+    let response = http_post_json(&endpoint, "/delete", &token, serde_json::json!({}));
+    assert!(response.starts_with("HTTP/1.1 503"), "{response}");
+    let body = response_json(&response);
+    assert_eq!(body["schema_version"], "resume-ir.error.v2");
+    assert_eq!(body["error"]["code"], "CAPABILITY_UNAVAILABLE");
+    assert_eq!(body["error"]["capability"], "index_publication");
+    assert_eq!(body["error"]["reason"], "embedding_unavailable");
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    let state_after = ReadMetaStore::open_data_dir(&data_dir)
+        .unwrap()
+        .search_projection_state()
+        .unwrap();
+    assert_eq!(state_after, state_before);
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn daemon_streams_redacted_import_progress_over_loopback_ipc() {
     let data_dir = temp_dir("ipc-import-progress-data");
     let fixture_root = fixture_root();
@@ -207,7 +304,7 @@ fn daemon_streams_redacted_import_progress_over_loopback_ipc() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "1",
+            "2",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -216,6 +313,7 @@ fn daemon_streams_redacted_import_progress_over_loopback_ipc() {
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
+    wait_for_serving_control_plane(&mut child, &endpoint, &token);
     let response = http_get_import_progress(&endpoint, Some(&token));
 
     assert!(response.contains("HTTP/1.1 200 OK"));
@@ -230,6 +328,7 @@ fn daemon_streams_redacted_import_progress_over_loopback_ipc() {
     assert!(!response.contains(path_str(&fixture_root)));
     assert!(!response.contains(path_str(&canonical_fixture_root)));
     assert!(!response.contains(&token));
+    drain_status_requests(&endpoint, 2);
 
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
@@ -353,7 +452,7 @@ fn daemon_returns_404_for_non_status_ipc_path() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "1",
+            "2",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -361,6 +460,8 @@ fn daemon_returns_404_for_non_status_ipc_path() {
         .expect("start resume-daemon ipc");
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
+    let token = read_ipc_auth_token(&data_dir);
+    wait_for_serving_control_plane(&mut child, &endpoint, &token);
     let response = http_get_path(&endpoint, "/not-status");
 
     assert!(response.contains("HTTP/1.1 404 Not Found"));
@@ -388,7 +489,7 @@ fn daemon_requires_bearer_token_for_import_command_ipc() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "1",
+            "2",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -396,10 +497,14 @@ fn daemon_requires_bearer_token_for_import_command_ipc() {
         .expect("start resume-daemon ipc");
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
+    let token = read_ipc_auth_token(&data_dir);
+    wait_for_serving_control_plane(&mut child, &endpoint, &token);
     let response = http_post_import_command(&endpoint, None, &fixture_root, Some(1));
 
     assert!(response.contains("HTTP/1.1 401 Unauthorized"));
-    assert!(response.contains("\"status\":\"unauthorized\""));
+    assert!(response.contains("\"status\":\"error\""));
+    assert!(response.contains("\"code\":\"UNAUTHORIZED\""));
+    assert!(response.contains("\"action\":\"authenticate\""));
     assert!(!response.contains(path_str(&data_dir)));
     assert!(!response.contains(path_str(&fixture_root)));
     assert!(!response.contains(path_str(&canonical_fixture_root)));
@@ -416,12 +521,17 @@ fn daemon_requires_bearer_token_for_import_command_ipc() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_authenticates_and_queues_import_command_over_ipc() {
+    let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-command-data");
     seed_snapshot_state(&data_dir);
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let mut child = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -430,7 +540,7 @@ fn daemon_authenticates_and_queues_import_command_over_ipc() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "2",
+            "3",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -439,8 +549,9 @@ fn daemon_authenticates_and_queues_import_command_over_ipc() {
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
+    wait_for_ready_control_plane(&mut child, &endpoint, &token);
     let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
-    let status_response = http_get(&endpoint);
+    let status_response = status_after_snapshot_refresh(&endpoint, &token);
 
     assert!(response.contains("HTTP/1.1 202 Accepted"));
     assert!(response.contains("\"schema_version\":\"daemon.import.v1\""));
@@ -488,12 +599,17 @@ fn daemon_authenticates_and_queues_import_command_over_ipc() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_import_response_reflects_the_persisted_replacement_budget() {
+    let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-budget-replacement-data");
     seed_snapshot_state(&data_dir);
     let root = temp_dir("ipc-import-budget-replacement-root");
     let canonical_root = fs::canonicalize(&root).unwrap();
-    let mut child = start_ipc_daemon(&data_dir, 2);
+    let mut child = start_import_capable_ipc_daemon(&runtime_capacity, &data_dir, 2);
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
 
@@ -546,28 +662,37 @@ fn daemon_import_response_reflects_the_persisted_replacement_budget() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_multi_root_import_conflict_rolls_back_every_root() {
+    let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-atomic-conflict-data");
-    seed_snapshot_state(&data_dir);
     let roots_parent = temp_dir("ipc-import-atomic-conflict-roots");
     let first_root = roots_parent.join("a-first");
     let running_root = roots_parent.join("z-running");
     fs::create_dir_all(&first_root).unwrap();
     fs::create_dir_all(&running_root).unwrap();
-    populate_active_import_root(&running_root);
     let canonical_first = fs::canonicalize(&first_root).unwrap();
     let canonical_running = fs::canonicalize(&running_root).unwrap();
-    let running_id = seed_queued_import_task(
+    let started_at_seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .saturating_sub(60) as i64;
+    let running_id = seed_running_import_task(
         &data_dir,
         "atomic-running",
         &canonical_running,
-        1_800_300_000,
+        started_at_seconds,
     );
+    let task_owner = ImportTaskOwnerLock::acquire(&data_dir, &running_id).unwrap();
 
-    let mut child = start_ipc_import_worker_daemon(&data_dir, 1);
+    let mut child = start_import_capable_ipc_daemon(&runtime_capacity, &data_dir, 2);
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
-    wait_until_import_task_running(&mut child, &data_dir, &running_id);
+    assert_text_import_available_without_ocr(&http_get(&endpoint, &token));
 
     let response = http_post_import_command_value(
         &endpoint,
@@ -579,7 +704,8 @@ fn daemon_multi_root_import_conflict_rolls_back_every_root() {
         }),
     );
     assert!(response.contains("HTTP/1.1 409 Conflict"));
-    assert!(response.contains("import task is already running"));
+    assert_conflict_error_v2(&response);
+    assert!(!response.contains("import task is already running"));
     assert!(!response.contains(path_str(&first_root)));
     assert!(!response.contains(path_str(&running_root)));
 
@@ -606,12 +732,18 @@ fn daemon_multi_root_import_conflict_rolls_back_every_root() {
     );
     assert!(!store.is_import_task_cancelled(&running_id).unwrap());
 
+    drop(task_owner);
     remove_dir(&data_dir);
     remove_dir(&roots_parent);
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_controls_managed_root_durably_with_bounded_path_free_contract() {
+    let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-root-control-data");
     let root_a = fs::canonicalize(temp_dir("ipc-root-control-a")).unwrap();
     let root_b = fs::canonicalize(temp_dir("ipc-root-control-b")).unwrap();
@@ -619,7 +751,7 @@ fn daemon_controls_managed_root_durably_with_bounded_path_free_contract() {
     seed_completed_import_scope(&data_dir, "root-a", &root_a);
     seed_completed_import_scope(&data_dir, "root-b", &root_b);
 
-    let mut child = start_ipc_daemon(&data_dir, 8);
+    let mut child = start_import_capable_ipc_daemon(&runtime_capacity, &data_dir, 8);
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let responses = [
@@ -663,7 +795,7 @@ fn daemon_controls_managed_root_durably_with_bounded_path_free_contract() {
     );
     drop(store);
 
-    let mut child = start_ipc_daemon(&data_dir, 3);
+    let mut child = start_import_capable_ipc_daemon(&runtime_capacity, &data_dir, 3);
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let inspect =
@@ -691,11 +823,17 @@ fn daemon_controls_managed_root_durably_with_bounded_path_free_contract() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_import_command_can_requeue_root_after_prior_task_cancelled() {
+    let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-command-cancel-requeue-data");
+    seed_snapshot_state(&data_dir);
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let mut child = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -704,7 +842,7 @@ fn daemon_import_command_can_requeue_root_after_prior_task_cancelled() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "3",
+            "4",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -713,6 +851,7 @@ fn daemon_import_command_can_requeue_root_after_prior_task_cancelled() {
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
+    wait_for_ready_control_plane(&mut child, &endpoint, &token);
     let first_response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
     assert!(first_response.contains("HTTP/1.1 202 Accepted"));
     assert!(first_response.contains("\"new_tasks\":1"));
@@ -749,11 +888,17 @@ fn daemon_import_command_can_requeue_root_after_prior_task_cancelled() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_import_command_preserves_local_discovery_preset_scope() {
+    let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-preset-command-data");
+    seed_snapshot_state(&data_dir);
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let mut child = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -762,7 +907,7 @@ fn daemon_import_command_preserves_local_discovery_preset_scope() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "1",
+            "3",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -771,6 +916,7 @@ fn daemon_import_command_preserves_local_discovery_preset_scope() {
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
+    wait_for_ready_control_plane(&mut child, &endpoint, &token);
     let response = http_post_import_command_with_root_preset(
         &endpoint,
         &token,
@@ -784,6 +930,7 @@ fn daemon_import_command_preserves_local_discovery_preset_scope() {
     assert!(!response.contains(path_str(&fixture_root)));
     assert!(!response.contains(path_str(&canonical_fixture_root)));
     assert!(!response.contains(&token));
+    drain_status_requests(&endpoint, 2);
 
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
@@ -801,7 +948,12 @@ fn daemon_import_command_preserves_local_discovery_preset_scope() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_import_cancel_command_records_cancellation_without_path_leak() {
+    let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-cancel-command-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
@@ -816,7 +968,7 @@ fn daemon_import_cancel_command_records_cancellation_without_path_leak() {
         &canonical_fixture_root,
         started_at_seconds,
     );
-    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let mut child = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -825,7 +977,7 @@ fn daemon_import_cancel_command_records_cancellation_without_path_leak() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "2",
+            "3",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -834,6 +986,7 @@ fn daemon_import_cancel_command_records_cancellation_without_path_leak() {
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
+    wait_for_ready_control_plane(&mut child, &endpoint, &token);
     let response = http_post_import_cancel_command(&endpoint, Some(&token), &task_id);
     assert!(response.contains("HTTP/1.1 202 Accepted"));
     assert!(response.contains("\"schema_version\":\"daemon.import_cancel.v1\""));
@@ -844,7 +997,7 @@ fn daemon_import_cancel_command_records_cancellation_without_path_leak() {
     assert!(!response.contains(path_str(&canonical_fixture_root)));
     assert!(!response.contains(&token));
 
-    let status_response = http_get(&endpoint);
+    let status_response = status_after_snapshot_refresh(&endpoint, &token);
     assert!(status_response.contains("HTTP/1.1 200 OK"));
     assert!(status_response.contains("\"import_tasks_cancelled\":1"));
     assert!(!status_response.contains(path_str(&data_dir)));
@@ -877,7 +1030,7 @@ fn daemon_rejects_wrong_bearer_token_for_import_command_ipc() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "1",
+            "2",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -885,6 +1038,8 @@ fn daemon_rejects_wrong_bearer_token_for_import_command_ipc() {
         .expect("start resume-daemon ipc");
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
+    let token = read_ipc_auth_token(&data_dir);
+    wait_for_serving_control_plane(&mut child, &endpoint, &token);
     let response = http_post_import_command(
         &endpoint,
         Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
@@ -918,7 +1073,7 @@ fn daemon_rejects_malformed_ipc_request_without_stopping() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "2",
+            "3",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -926,11 +1081,13 @@ fn daemon_rejects_malformed_ipc_request_without_stopping() {
         .expect("start resume-daemon ipc");
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
+    let token = read_ipc_auth_token(&data_dir);
+    wait_for_serving_control_plane(&mut child, &endpoint, &token);
     let malformed = raw_ipc_request(
         &endpoint,
         b"POST /imports HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: nope\r\n\r\n",
     );
-    let status_response = http_get(&endpoint);
+    let status_response = http_get(&endpoint, &token);
 
     assert!(malformed.contains("HTTP/1.1 400 Bad Request"));
     assert!(status_response.contains("HTTP/1.1 200 OK"));
@@ -939,10 +1096,8 @@ fn daemon_rejects_malformed_ipc_request_without_stopping() {
         status_response.contains("\"status\":\"repairing\""),
         "{status_response}"
     );
-    assert!(status_response.contains("\"service_state\":\"repairing\""));
-    assert!(status_response.contains("\"metadata\":\"ready\""));
-    assert!(status_response.contains("\"query\":\"repairing\""));
-    assert!(status_response.contains("\"repair_reason\":\"migration_rebuild\""));
+    assert!(status_response
+        .contains("\"core\":{\"reason\":\"migration_rebuild\",\"state\":\"repairing\"}"));
 
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
@@ -957,7 +1112,8 @@ fn daemon_survives_client_disconnect_across_every_product_ipc_route() {
 
     let data_dir = temp_dir("ipc-response-disconnect-matrix-data");
     seed_snapshot_state(&data_dir);
-    let mut child = start_ipc_daemon(&data_dir, EXPECTED_ACCEPTED as usize);
+    let (mut child, baseline_ipc) =
+        start_ipc_daemon_with_baseline(&data_dir, EXPECTED_ACCEPTED as usize);
     let child_id = child.id();
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
@@ -979,7 +1135,7 @@ fn daemon_survives_client_disconnect_across_every_product_ipc_route() {
         &endpoint,
         authenticated_get_request(&endpoint, "/status", &token),
     );
-    let status = http_get(&endpoint);
+    let status = http_get(&endpoint, &token);
     assert_ready_status(&status);
     assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
 
@@ -1024,14 +1180,13 @@ fn daemon_survives_client_disconnect_across_every_product_ipc_route() {
     assert_search_response(&batch_terminal_barrier, "disconnect-batch-terminal-barrier");
     let terminal_diagnostics = http_get_diagnostics(&endpoint, Some(&token));
     let terminal_payload = response_json(&terminal_diagnostics);
-    let terminal_ipc = &terminal_payload["metrics"]["ipc"];
-    assert_eq!(terminal_ipc["accepted"], 8);
+    let terminal_ipc = TestIpcMetrics::from_diagnostics(&terminal_payload);
+    let terminal_delta = terminal_ipc.delta_from(baseline_ipc);
+    assert_eq!(terminal_delta.accepted, 8);
     assert_eq!(
-        terminal_ipc["completed"].as_u64().unwrap()
-            + terminal_ipc["request_failure"].as_u64().unwrap()
-            + terminal_ipc["response_failure"].as_u64().unwrap(),
-        7,
-        "the disconnected batch must be terminal before its successor: {terminal_ipc}"
+        terminal_delta.terminal(),
+        8,
+        "the disconnected batch must be terminal before its successor: {terminal_ipc:?}"
     );
     let batch = http_post_json(
         &endpoint,
@@ -1108,23 +1263,19 @@ fn daemon_survives_client_disconnect_across_every_product_ipc_route() {
     let diagnostics = http_get_diagnostics(&endpoint, Some(&token));
     let diagnostics_body = diagnostics.split("\r\n\r\n").nth(1).unwrap();
     let diagnostics_payload: serde_json::Value = serde_json::from_str(diagnostics_body).unwrap();
-    let ipc = &diagnostics_payload["metrics"]["ipc"];
-    assert_eq!(ipc["accepted"], EXPECTED_ACCEPTED);
-    let completed = ipc["completed"].as_u64().unwrap();
-    let request_failure = ipc["request_failure"].as_u64().unwrap();
-    let response_failure = ipc["response_failure"].as_u64().unwrap();
+    let ipc = TestIpcMetrics::from_diagnostics(&diagnostics_payload);
+    let delta = ipc.delta_from(baseline_ipc);
+    assert_eq!(delta.accepted, EXPECTED_ACCEPTED);
     assert_eq!(
-        completed + request_failure + response_failure,
-        // The diagnostics snapshot is rendered before this connection writes
-        // its response and records its own terminal outcome.
-        EXPECTED_ACCEPTED.saturating_sub(1),
-        "every accepted connection must have one terminal outcome: {ipc}"
+        delta.terminal(),
+        EXPECTED_ACCEPTED,
+        "every admitted connection since the serving baseline must have one terminal outcome: {ipc:?}"
     );
     assert!(
-        response_failure >= 1,
-        "response-side client disconnect was not observed: {ipc}"
+        delta.response_failure >= 1,
+        "response-side client disconnect was not observed: {ipc:?}"
     );
-    assert_eq!(ipc["client_disconnect"], response_failure);
+    assert_eq!(delta.client_disconnect, delta.response_failure);
     assert!(!diagnostics_body.contains(path_str(&data_dir)));
     assert!(!diagnostics_body.contains(&token));
 
@@ -1163,7 +1314,8 @@ fn daemon_data_directory_has_one_fail_closed_owner() {
         fs::read_to_string(data_dir.join("ipc.endpoints.json")).unwrap(),
         owner_manifest
     );
-    assert!(http_get(&endpoint).contains("HTTP/1.1 200 OK"));
+    let token = read_ipc_auth_token(&data_dir);
+    assert!(http_get(&endpoint, &token).contains("HTTP/1.1 200 OK"));
     let output = wait_child(owner);
     assert!(output.success, "stderr:\n{}", output.stderr);
 
@@ -1178,7 +1330,10 @@ fn daemon_rotates_generation_identity_and_authentication_token() {
     let first_manifest = read_ipc_owner_file(&data_dir, "ipc.endpoints.json");
     let first_auth = read_ipc_owner_file(&data_dir, "ipc.auth");
     assert_eq!(first_manifest["instance_id"], first_auth["instance_id"]);
-    assert!(http_get(&first_endpoint).contains("HTTP/1.1 200 OK"));
+    assert!(
+        http_get(&first_endpoint, first_auth["token"].as_str().unwrap())
+            .contains("HTTP/1.1 200 OK")
+    );
     assert!(wait_child(first).success);
     assert!(!data_dir.join("ipc.endpoints.json").exists());
     assert!(!data_dir.join("ipc.auth").exists());
@@ -1211,12 +1366,14 @@ fn stale_generation_cannot_delete_replaced_owner_files_and_auth_is_in_memory() {
     let token = read_ipc_auth_token(&data_dir);
     let fake_instance_id = "f".repeat(64);
     let fake_auth = serde_json::json!({
-        "schema_version": "resume-ir.daemon-auth.v2",
+        "schema_version": "resume-ir.daemon-auth.v3",
+        "launch_id": "d".repeat(64),
         "instance_id": fake_instance_id.clone(),
         "token": "e".repeat(64),
     });
     let fake_manifest = serde_json::json!({
-        "schema_version": "resume-ir.daemon-ipc.v2",
+        "schema_version": "resume-ir.daemon-ipc.v3",
+        "launch_id": "d".repeat(64),
         "instance_id": fake_instance_id.clone(),
         "owner_mode": "standalone",
         "status": endpoint,
@@ -1246,7 +1403,7 @@ fn stale_generation_cannot_delete_replaced_owner_files_and_auth_is_in_memory() {
 #[test]
 fn daemon_survives_one_hundred_mixed_connection_faults_and_reports_counts() {
     let data_dir = temp_dir("ipc-mixed-fault-metrics-data");
-    let mut child = start_ipc_daemon(&data_dir, 101);
+    let (mut child, baseline_ipc) = start_ipc_daemon_with_baseline(&data_dir, 101);
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
 
@@ -1269,14 +1426,12 @@ fn daemon_survives_one_hundred_mixed_connection_faults_and_reports_counts() {
     let response = http_get_diagnostics(&endpoint, Some(&token));
     let body = response.split("\r\n\r\n").nth(1).unwrap();
     let payload: serde_json::Value = serde_json::from_str(body).unwrap();
-    let ipc = &payload["metrics"]["ipc"];
-    assert_eq!(ipc["accepted"], 101);
-    let completed = ipc["completed"].as_u64().unwrap();
-    let request_failure = ipc["request_failure"].as_u64().unwrap();
-    let response_failure = ipc["response_failure"].as_u64().unwrap();
-    assert_eq!(completed + request_failure + response_failure, 100);
-    assert!(completed > 0);
-    assert!(ipc["client_disconnect"].as_u64().unwrap() <= response_failure);
+    let ipc = TestIpcMetrics::from_diagnostics(&payload);
+    let delta = ipc.delta_from(baseline_ipc);
+    assert_eq!(delta.accepted, 101);
+    assert_eq!(delta.terminal(), 101);
+    assert!(delta.completed > 0);
+    assert!(delta.client_disconnect <= delta.response_failure);
     assert!(!body.contains(path_str(&data_dir)));
     assert!(!body.contains(&token));
     let output = wait_child(child);
@@ -1310,7 +1465,7 @@ fn run_mixed_connection_fault_soak(
         .checked_mul(REQUESTS_PER_CYCLE)
         .and_then(|count| count.checked_add(1))
         .expect("bounded soak request count");
-    let mut child = start_ipc_daemon(&data_dir, max_requests);
+    let (mut child, baseline_ipc) = start_ipc_daemon_with_baseline(&data_dir, max_requests);
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     let started_at = Instant::now();
@@ -1341,6 +1496,7 @@ fn run_mixed_connection_fault_soak(
         let expected_accepted = (cycle + 1) * REQUESTS_PER_CYCLE;
         assert_soak_diagnostics(
             &http_get_diagnostics(&endpoint, Some(&token)),
+            baseline_ipc,
             expected_accepted,
             &data_dir,
             &token,
@@ -1353,6 +1509,7 @@ fn run_mixed_connection_fault_soak(
     let final_accepted = cycle_count * REQUESTS_PER_CYCLE + 1;
     assert_soak_diagnostics(
         &http_get_diagnostics(&endpoint, Some(&token)),
+        baseline_ipc,
         final_accepted,
         &data_dir,
         &token,
@@ -1365,62 +1522,56 @@ fn run_mixed_connection_fault_soak(
     remove_dir(&data_dir);
 }
 
-fn assert_soak_diagnostics(response: &str, expected_accepted: usize, data_dir: &Path, token: &str) {
+fn assert_soak_diagnostics(
+    response: &str,
+    baseline: TestIpcMetrics,
+    expected_accepted: usize,
+    data_dir: &Path,
+    token: &str,
+) {
     let body = response.split("\r\n\r\n").nth(1).unwrap();
     let payload: serde_json::Value = serde_json::from_str(body).unwrap();
-    let ipc = &payload["metrics"]["ipc"];
-    assert_eq!(ipc["accepted"], expected_accepted);
-    let completed = ipc["completed"].as_u64().unwrap();
-    let request_failure = ipc["request_failure"].as_u64().unwrap();
-    let response_failure = ipc["response_failure"].as_u64().unwrap();
-    assert_eq!(
-        completed + request_failure + response_failure,
-        expected_accepted.saturating_sub(1) as u64
-    );
-    assert!(completed > 0);
-    assert!(ipc["client_disconnect"].as_u64().unwrap() <= response_failure);
+    let ipc = TestIpcMetrics::from_diagnostics(&payload);
+    let delta = ipc.delta_from(baseline);
+    assert_eq!(delta.accepted, expected_accepted as u64);
+    assert_eq!(delta.terminal(), expected_accepted as u64);
+    assert!(delta.completed > 0);
+    assert!(delta.client_disconnect <= delta.response_failure);
     assert!(!body.contains(path_str(data_dir)));
     assert!(!body.contains(token));
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_rejects_import_command_for_running_root_without_rewriting_scope() {
+    let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-running-conflict-data");
     let fixture_root = temp_dir("ipc-import-running-conflict-root");
-    populate_active_import_root(&fixture_root);
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    let task_id = seed_queued_import_task(
+    let started_at_seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        .saturating_sub(60) as i64;
+    let task_id = seed_running_import_task(
         &data_dir,
         "ipc-running-conflict",
         &canonical_fixture_root,
-        1_700_000_000,
+        started_at_seconds,
     );
-    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
-        .args([
-            "--data-dir",
-            path_str(&data_dir),
-            "run",
-            "--foreground",
-            "--work-imports",
-            "--worker-interval-ms",
-            "1",
-            "--ipc-listen",
-            "127.0.0.1:0",
-            "--max-requests",
-            "1",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("start resume-daemon ipc");
+    let task_owner = ImportTaskOwnerLock::acquire(&data_dir, &task_id).unwrap();
+    let mut child = start_import_capable_ipc_daemon(&runtime_capacity, &data_dir, 2);
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
-    wait_until_import_task_running(&mut child, &data_dir, &task_id);
+    assert_text_import_available_without_ocr(&http_get(&endpoint, &token));
     let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
 
     assert!(response.contains("HTTP/1.1 409 Conflict"));
-    assert!(response.contains("\"status\":\"conflict\""));
+    assert_conflict_error_v2(&response);
     assert!(!response.contains(path_str(&data_dir)));
     assert!(!response.contains(path_str(&fixture_root)));
     assert!(!response.contains(path_str(&canonical_fixture_root)));
@@ -1445,18 +1596,24 @@ fn daemon_rejects_import_command_for_running_root_without_rewriting_scope() {
         .unwrap();
     assert_eq!(scope.scan_budget_limit, None);
 
+    drop(task_owner);
     remove_dir(&data_dir);
     remove_dir(&fixture_root);
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
+    let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-command-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
     let request_limit = IMPORT_WORKER_STATUS_REQUEST_LIMIT;
-    let request_limit_arg = request_limit.to_string();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let request_limit_arg = request_limit.checked_add(1).unwrap().to_string();
+    let mut child = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -1477,6 +1634,7 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
+    wait_for_ready_control_plane(&mut child, &endpoint, &token);
     let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, None);
     assert!(response.contains("HTTP/1.1 202 Accepted"));
 
@@ -1529,7 +1687,7 @@ fn daemon_replaces_legacy_auth_with_private_generation_credentials() {
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
-            "1",
+            "2",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -1538,14 +1696,15 @@ fn daemon_replaces_legacy_auth_with_private_generation_credentials() {
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let auth = read_ipc_owner_file(&data_dir, "ipc.auth");
+    wait_for_serving_control_plane(&mut child, &endpoint, auth["token"].as_str().unwrap());
     let permissions = fs::metadata(data_dir.join("ipc.auth"))
         .unwrap()
         .permissions()
         .mode();
     assert_eq!(permissions & 0o777, 0o600);
-    assert_eq!(auth["schema_version"], "resume-ir.daemon-auth.v2");
+    assert_eq!(auth["schema_version"], "resume-ir.daemon-auth.v3");
     assert_ne!(auth["token"], legacy_token.trim());
-    let response = http_get(&endpoint);
+    let response = http_get(&endpoint, auth["token"].as_str().unwrap());
 
     assert!(response.contains("HTTP/1.1 200 OK"));
     let output = wait_child(child);
@@ -1557,13 +1716,18 @@ fn daemon_replaces_legacy_auth_with_private_generation_credentials() {
 }
 
 #[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
 fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
+    let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
     let request_limit = IMPORT_WORKER_STATUS_REQUEST_LIMIT;
-    let request_limit_arg = request_limit.to_string();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    let request_limit_arg = request_limit.checked_add(1).unwrap().to_string();
+    let mut child = support::import_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
@@ -1584,7 +1748,8 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
-    let initial_response = http_get(&endpoint);
+    wait_for_ready_control_plane(&mut child, &endpoint, &token);
+    let initial_response = http_get(&endpoint, &token);
     assert!(initial_response.contains("HTTP/1.1 200 OK"));
     assert!(initial_response.contains("\"searchable_documents\":0"));
 
@@ -1718,7 +1883,8 @@ fn ipc_only_mode_serves_status_without_implicitly_repairing_search_artifacts() {
     let mut child = start_ipc_daemon(&data_dir, 1);
 
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
-    let response = http_get(&endpoint);
+    let token = read_ipc_auth_token(&data_dir);
+    let response = http_get(&endpoint, &token);
     assert!(response.contains("HTTP/1.1 200 OK"));
     assert!(response.contains(r#""process_state":"ready""#));
     let output = wait_child(child);
@@ -1819,6 +1985,82 @@ fn read_ipc_endpoint(child: &mut Child, data_dir: &Path) -> String {
     );
 }
 
+fn wait_for_ready_control_plane(child: &mut Child, endpoint: &str, token: &str) {
+    let deadline = Instant::now() + IPC_CORE_INITIALIZATION_TIMEOUT;
+    let mut last_state = "unobserved".to_string();
+    while Instant::now() < deadline {
+        if let Some(status) = child.try_wait().expect("poll daemon readiness") {
+            let stderr = read_child_stderr(child);
+            panic!(
+                "daemon exited before its control plane became ready: {status}; last state={last_state}; stderr={stderr}"
+            );
+        }
+        match try_http_get_authenticated(endpoint, token) {
+            Ok(response) if response.starts_with("HTTP/1.1 200") => {
+                let payload = response_json(&response);
+                last_state = payload["core"]["state"]
+                    .as_str()
+                    .unwrap_or("invalid")
+                    .to_string();
+                match last_state.as_str() {
+                    "ready" => return,
+                    "blocked" | "degraded" => {
+                        panic!("daemon control plane cannot serve capability test: {payload}")
+                    }
+                    "initializing" | "repairing" => {}
+                    _ => panic!("daemon returned an invalid core state: {payload}"),
+                }
+            }
+            Ok(response) => last_state = response,
+            Err(error) => last_state = error.to_string(),
+        }
+        std::thread::sleep(IPC_ENDPOINT_POLL_DELAY);
+    }
+    panic!("daemon control plane did not become ready: {last_state}");
+}
+
+fn wait_for_serving_control_plane(
+    child: &mut Child,
+    endpoint: &str,
+    token: &str,
+) -> TestIpcMetrics {
+    let deadline = Instant::now() + IPC_CORE_INITIALIZATION_TIMEOUT;
+    let mut last_state = "unobserved".to_string();
+    while Instant::now() < deadline {
+        if let Some(status) = child.try_wait().expect("poll daemon handoff") {
+            let stderr = read_child_stderr(child);
+            panic!(
+                "daemon exited before its full control plane took ownership: {status}; last state={last_state}; stderr={stderr}"
+            );
+        }
+        match try_http_get_authenticated(endpoint, token) {
+            Ok(response) if response.starts_with("HTTP/1.1 200") => {
+                let payload = response_json(&response);
+                last_state = payload["core"]["state"]
+                    .as_str()
+                    .unwrap_or("invalid")
+                    .to_string();
+                match last_state.as_str() {
+                    "ready" | "repairing" | "degraded" => {
+                        return TestIpcMetrics::from_status(&payload)
+                    }
+                    "blocked" => {
+                        panic!(
+                            "daemon blocked before its serving route owner was proven: {payload}"
+                        )
+                    }
+                    "initializing" => {}
+                    _ => panic!("daemon returned an invalid core state: {payload}"),
+                }
+            }
+            Ok(response) => last_state = response,
+            Err(error) => last_state = error.to_string(),
+        }
+        std::thread::sleep(IPC_ENDPOINT_POLL_DELAY);
+    }
+    panic!("daemon full control plane did not take ownership: {last_state}");
+}
+
 fn wait_for_searchable_documents(
     child: &mut Child,
     data_dir: &Path,
@@ -1827,6 +2069,7 @@ fn wait_for_searchable_documents(
     max_requests: usize,
 ) -> (usize, String) {
     let deadline = Instant::now() + IMPORT_WORKER_SEARCHABLE_TIMEOUT;
+    let token = read_ipc_auth_token(data_dir);
     let mut last_response = String::new();
     for request_count in 1..=max_requests {
         if let Some(status) = child.try_wait().expect("poll daemon child") {
@@ -1836,7 +2079,7 @@ fn wait_for_searchable_documents(
                 "daemon exited before searchable document count {expected}: {status}\n{stderr}\n{store_state}"
             );
         }
-        let response = match try_http_get(endpoint) {
+        let response = match try_http_get_authenticated(endpoint, &token) {
             Ok(response) if response.is_empty() => {
                 last_response = "<empty status response>".to_string();
                 std::thread::sleep(IMPORT_WORKER_STATUS_POLL_DELAY);
@@ -1908,8 +2151,8 @@ fn drain_status_requests(endpoint: &str, count: usize) {
     }
 }
 
-fn http_get(endpoint: &str) -> String {
-    try_http_get(endpoint).expect("read response")
+fn http_get(endpoint: &str, token: &str) -> String {
+    try_http_get_authenticated(endpoint, token).expect("read response")
 }
 
 fn http_get_import_progress(endpoint: &str, token: Option<&str>) -> String {
@@ -2041,10 +2284,10 @@ fn response_json(response: &str) -> serde_json::Value {
 fn assert_ready_status(response: &str) {
     assert!(response.contains("HTTP/1.1 200 OK"), "{response}");
     let payload = response_json(response);
-    assert_eq!(payload["schema_version"], "daemon.status.v2");
+    assert_eq!(payload["schema_version"], "daemon.status.v3");
     assert_eq!(payload["process_state"], "ready");
-    assert_eq!(payload["service_state"], "ready");
-    assert_eq!(payload["repair_reason"], serde_json::Value::Null);
+    assert_eq!(payload["core"]["state"], "ready");
+    assert_eq!(payload["core"]["reason"], serde_json::Value::Null);
 }
 
 fn assert_search_response(response: &str, request_id: &str) {
@@ -2141,6 +2384,21 @@ fn try_http_get(endpoint: &str) -> io::Result<String> {
         .expect("endpoint has http scheme");
     let (_addr, path) = rest.split_once('/').expect("endpoint has path");
     try_http_get_path(endpoint, &format!("/{path}"))
+}
+
+fn try_http_get_authenticated(endpoint: &str, token: &str) -> io::Result<String> {
+    let rest = endpoint
+        .strip_prefix("http://")
+        .expect("endpoint has http scheme");
+    let (addr, path) = rest.split_once('/').expect("endpoint has path");
+    let mut stream = TcpStream::connect(addr)?;
+    write!(
+        stream,
+        "GET /{path} HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+    )?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    Ok(response)
 }
 
 fn http_get_path(endpoint: &str, request_path: &str) -> String {
@@ -2387,7 +2645,8 @@ fn disconnect_client(stream: TcpStream) {
 
 fn read_ipc_auth_token(data_dir: &Path) -> String {
     let auth = read_ipc_owner_file(data_dir, "ipc.auth");
-    assert_eq!(auth["schema_version"], "resume-ir.daemon-auth.v2");
+    assert_eq!(auth["schema_version"], "resume-ir.daemon-auth.v3");
+    assert_eq!(auth["launch_id"].as_str().map(str::len), Some(64));
     assert_eq!(auth["instance_id"].as_str().map(str::len), Some(64));
     let token = auth["token"].as_str().expect("auth token").to_string();
     assert_eq!(token.len(), 64);
@@ -2609,8 +2868,15 @@ struct ChildOutput {
 }
 
 fn start_ipc_daemon(data_dir: &Path, max_requests: usize) -> Child {
-    let max_requests = max_requests.to_string();
-    Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+    start_ipc_daemon_with_baseline(data_dir, max_requests).0
+}
+
+fn start_ipc_daemon_with_baseline(data_dir: &Path, max_requests: usize) -> (Child, TestIpcMetrics) {
+    let max_requests = max_requests
+        .checked_add(1)
+        .expect("test request budget")
+        .to_string();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
         .args([
             "--data-dir",
             path_str(data_dir),
@@ -2624,20 +2890,28 @@ fn start_ipc_daemon(data_dir: &Path, max_requests: usize) -> Child {
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap()
+        .unwrap();
+    let endpoint = read_ipc_endpoint(&mut child, data_dir);
+    let token = read_ipc_auth_token(data_dir);
+    let baseline = wait_for_serving_control_plane(&mut child, &endpoint, &token);
+    (child, baseline)
 }
 
-fn start_ipc_import_worker_daemon(data_dir: &Path, max_requests: usize) -> Child {
-    let max_requests = max_requests.to_string();
-    Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+fn start_import_capable_ipc_daemon(
+    runtime_capacity: &support::ImportRuntimeCapacityLease,
+    data_dir: &Path,
+    max_requests: usize,
+) -> Child {
+    let max_requests = max_requests
+        .checked_add(1)
+        .expect("test request budget")
+        .to_string();
+    let mut child = support::import_capable_daemon_command(runtime_capacity)
         .args([
             "--data-dir",
             path_str(data_dir),
             "run",
             "--foreground",
-            "--work-imports",
-            "--worker-interval-ms",
-            "1",
             "--ipc-listen",
             "127.0.0.1:0",
             "--max-requests",
@@ -2646,27 +2920,66 @@ fn start_ipc_import_worker_daemon(data_dir: &Path, max_requests: usize) -> Child
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .unwrap()
+        .unwrap();
+    let endpoint = read_ipc_endpoint(&mut child, data_dir);
+    let token = read_ipc_auth_token(data_dir);
+    wait_for_ready_control_plane(&mut child, &endpoint, &token);
+    child
 }
 
-fn wait_until_import_task_running(child: &mut Child, data_dir: &Path, task_id: &ImportTaskId) {
-    let store = ReadMetaStore::open_data_dir(data_dir).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if let Some(status) = child.try_wait().expect("poll import worker daemon") {
-            panic!("daemon exited before import task entered running: {status}");
-        }
-        match store.import_task_by_id(task_id).unwrap().unwrap().status {
-            ImportTaskStatus::Running => return,
-            ImportTaskStatus::Completed => {
-                panic!("synthetic import completed before conflict request")
-            }
-            _ => std::thread::sleep(Duration::from_millis(2)),
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
-    panic!("import task did not enter running before timeout");
+fn start_degraded_ipc_daemon(data_dir: &Path, max_requests: usize) -> Child {
+    let max_requests = max_requests
+        .checked_add(1)
+        .expect("test request budget")
+        .to_string();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_resume-daemon"))
+        .args([
+            "--data-dir",
+            path_str(data_dir),
+            "run",
+            "--foreground",
+            "--ipc-listen",
+            "127.0.0.1:0",
+            "--max-requests",
+            max_requests.as_str(),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let endpoint = read_ipc_endpoint(&mut child, data_dir);
+    let token = read_ipc_auth_token(data_dir);
+    wait_for_serving_control_plane(&mut child, &endpoint, &token);
+    child
+}
+
+fn status_after_snapshot_refresh(endpoint: &str, token: &str) -> String {
+    std::thread::sleep(Duration::from_secs(1));
+    http_get(endpoint, token)
+}
+
+fn assert_text_import_available_without_ocr(response: &str) {
+    let status = response_json(response);
+    assert_eq!(
+        status["optional_runtimes"]["embedding"]["state"],
+        "available"
+    );
+    assert_eq!(
+        status["optional_runtimes"]["classifier"]["state"],
+        "available"
+    );
+    assert_eq!(status["optional_runtimes"]["ocr"]["state"], "unavailable");
+    assert_eq!(status["capabilities"]["text_import"]["state"], "available");
+}
+
+fn assert_conflict_error_v2(response: &str) {
+    let error = response_json(response);
+    assert_eq!(error["schema_version"], "resume-ir.error.v2");
+    assert_eq!(error["status"], "error");
+    assert_eq!(error["error"]["code"], "CONFLICT");
+    assert_eq!(error["error"]["action"], "retry");
+    assert_eq!(error["error"]["capability"], serde_json::Value::Null);
+    assert_eq!(error["error"]["reason"], serde_json::Value::Null);
 }
 
 fn wait_child(mut child: Child) -> ChildOutput {
@@ -2702,19 +3015,6 @@ fn temp_dir(label: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("resume-ir-s20-daemon-{label}-{unique}"));
     fs::create_dir_all(&path).unwrap();
     path
-}
-
-fn populate_active_import_root(root: &Path) {
-    let repeated_evidence = "Built deterministic local-first search systems in Rust. ".repeat(128);
-    for index in 0..ACTIVE_IMPORT_FILE_COUNT {
-        fs::write(
-            root.join(format!("synthetic-candidate-{index:04}.txt")),
-            format!(
-                "SUMMARY\nSynthetic Candidate {index}\nEXPERIENCE\n{repeated_evidence}\nSKILLS\nRust distributed systems"
-            ),
-        )
-        .unwrap();
-    }
 }
 
 fn path_str(path: &Path) -> &str {

@@ -11,8 +11,8 @@ use crate::daemon_client::DesktopError;
 
 const ENDPOINT_MANIFEST_FILE: &str = "ipc.endpoints.json";
 const AUTH_MANIFEST_FILE: &str = "ipc.auth";
-const ENDPOINT_SCHEMA: &str = "resume-ir.daemon-ipc.v2";
-const AUTH_SCHEMA: &str = "resume-ir.daemon-auth.v2";
+const ENDPOINT_SCHEMA: &str = "resume-ir.daemon-ipc.v3";
+const AUTH_SCHEMA: &str = "resume-ir.daemon-auth.v3";
 const MAX_ENDPOINT_MANIFEST_BYTES: u64 = 16 * 1024;
 const MAX_AUTH_MANIFEST_BYTES: u64 = 1024;
 const GENERATION_VALUE_LENGTH: usize = 64;
@@ -46,6 +46,7 @@ impl DaemonRoute {
 
 /// A fully validated discovery/auth pair for exactly one daemon generation.
 pub(crate) struct DaemonConnection {
+    launch_id: String,
     instance_id: String,
     token: String,
     addr: SocketAddr,
@@ -61,7 +62,8 @@ impl DaemonConnection {
     }
 
     fn is_same_generation(&self, other: &Self) -> bool {
-        self.instance_id == other.instance_id
+        self.launch_id == other.launch_id
+            && self.instance_id == other.instance_id
             && self.token == other.token
             && self.addr == other.addr
     }
@@ -71,12 +73,13 @@ impl DaemonConnection {
 /// Implementations return `Some` only for `ready`, and must release any
 /// internal lock before returning so owner-file and socket I/O stays lock-free.
 pub(crate) trait ConnectionGenerationSource {
-    fn ready_generation(&self) -> Option<u64>;
+    fn ready_identity(&self) -> Option<crate::daemon_lifecycle::ReadyDaemonIdentity>;
 }
 
 /// Native proof that a business request belongs to one supervisor/daemon pair.
 pub(crate) struct ConnectionLease {
     supervisor_generation: u64,
+    launch_id: String,
     instance_id: String,
 }
 
@@ -85,26 +88,30 @@ impl ConnectionLease {
         data_dir: &Path,
         generation_source: &impl ConnectionGenerationSource,
     ) -> Result<(Self, DaemonConnection), DesktopError> {
-        let supervisor_generation = generation_source
-            .ready_generation()
+        let identity = generation_source
+            .ready_identity()
             .ok_or_else(generation_changed)?;
-        let connection = load_connection(data_dir).map_err(|error| {
+        let connection = load_connection(data_dir, &identity.launch_id).map_err(|error| {
             if error.is_daemon_unavailable() {
                 generation_changed()
             } else {
                 error
             }
         })?;
-        ensure_generation(generation_source, supervisor_generation)?;
+        ensure_generation(generation_source, &identity)?;
         let lease = Self {
-            supervisor_generation,
+            supervisor_generation: identity.supervisor_generation,
+            launch_id: identity.launch_id,
             instance_id: connection.instance_id.clone(),
         };
         Ok((lease, connection))
     }
 
     fn supervisor_is_current(&self, generation_source: &impl ConnectionGenerationSource) -> bool {
-        generation_source.ready_generation() == Some(self.supervisor_generation)
+        generation_source.ready_identity().is_some_and(|identity| {
+            identity.supervisor_generation == self.supervisor_generation
+                && identity.launch_id == self.launch_id
+        })
     }
 
     fn instance_is_current(&self, connection: &DaemonConnection) -> bool {
@@ -126,7 +133,7 @@ pub(crate) fn with_connection_lease<T>(
 
     let result = request(&connection);
     let supervisor_was_stable = lease.supervisor_is_current(generation_source);
-    let connection_is_stable = load_connection(data_dir).is_ok_and(|current| {
+    let connection_is_stable = load_connection(data_dir, &lease.launch_id).is_ok_and(|current| {
         lease.instance_is_current(&current) && connection.is_same_generation(&current)
     });
     let supervisor_is_still_stable = lease.supervisor_is_current(generation_source);
@@ -139,22 +146,64 @@ pub(crate) fn with_connection_lease<T>(
 /// Loads a generation-bound pair for supervisor startup and heartbeat probes.
 /// Probes do not use a business lease because the supervisor is still in the
 /// `starting` state before it publishes its first ready generation.
-pub(crate) fn load_probe_connection(data_dir: &Path) -> Result<DaemonConnection, DesktopError> {
-    load_connection(data_dir)
+pub(crate) fn load_probe_connection(
+    data_dir: &Path,
+    expected_launch_id: &str,
+) -> Result<DaemonConnection, DesktopError> {
+    let manifest_before = read_probe_owner_file(
+        &data_dir.join(ENDPOINT_MANIFEST_FILE),
+        MAX_ENDPOINT_MANIFEST_BYTES,
+        "本地 daemon 未运行或尚未就绪",
+    )?;
+    ensure_probe_launch(&manifest_before, expected_launch_id)?;
+    let auth = read_probe_owner_file(
+        &data_dir.join(AUTH_MANIFEST_FILE),
+        MAX_AUTH_MANIFEST_BYTES,
+        "本地 daemon 凭据不可用",
+    )?;
+    ensure_probe_launch(&auth, expected_launch_id)?;
+    let manifest_after = read_probe_owner_file(
+        &data_dir.join(ENDPOINT_MANIFEST_FILE),
+        MAX_ENDPOINT_MANIFEST_BYTES,
+        "本地 daemon 未运行或尚未就绪",
+    )?;
+    ensure_probe_launch(&manifest_after, expected_launch_id)?;
+    decode_connection_for_launch(&manifest_before, &auth, &manifest_after, expected_launch_id)
 }
 
-fn ensure_generation(
-    generation_source: &impl ConnectionGenerationSource,
-    expected: u64,
-) -> Result<(), DesktopError> {
-    if generation_source.ready_generation() == Some(expected) {
+fn read_probe_owner_file(
+    path: &Path,
+    max_bytes: u64,
+    unavailable_message: &'static str,
+) -> Result<Vec<u8>, DesktopError> {
+    read_owner_file(path, max_bytes, unavailable_message).map_err(|_| generation_changed())
+}
+
+fn ensure_probe_launch(bytes: &[u8], expected_launch_id: &str) -> Result<(), DesktopError> {
+    let envelope: ProbeLaunchEnvelope =
+        serde_json::from_slice(bytes).map_err(|_| generation_changed())?;
+    if valid_generation_value(expected_launch_id) && envelope.launch_id == expected_launch_id {
         Ok(())
     } else {
         Err(generation_changed())
     }
 }
 
-fn load_connection(data_dir: &Path) -> Result<DaemonConnection, DesktopError> {
+fn ensure_generation(
+    generation_source: &impl ConnectionGenerationSource,
+    expected: &crate::daemon_lifecycle::ReadyDaemonIdentity,
+) -> Result<(), DesktopError> {
+    if generation_source.ready_identity().as_ref() == Some(expected) {
+        Ok(())
+    } else {
+        Err(generation_changed())
+    }
+}
+
+fn load_connection(
+    data_dir: &Path,
+    expected_launch_id: &str,
+) -> Result<DaemonConnection, DesktopError> {
     let manifest_before = read_owner_file(
         &data_dir.join(ENDPOINT_MANIFEST_FILE),
         MAX_ENDPOINT_MANIFEST_BYTES,
@@ -170,13 +219,14 @@ fn load_connection(data_dir: &Path) -> Result<DaemonConnection, DesktopError> {
         MAX_ENDPOINT_MANIFEST_BYTES,
         "本地 daemon 未运行或尚未就绪",
     )?;
-    decode_connection(&manifest_before, &auth, &manifest_after)
+    decode_connection_for_launch(&manifest_before, &auth, &manifest_after, expected_launch_id)
 }
 
-fn decode_connection(
+fn decode_connection_for_launch(
     manifest_before: &[u8],
     auth: &[u8],
     manifest_after: &[u8],
+    expected_launch_id: &str,
 ) -> Result<DaemonConnection, DesktopError> {
     if manifest_before != manifest_after {
         return Err(generation_changed());
@@ -188,13 +238,19 @@ fn decode_connection(
     if manifest.schema_version != ENDPOINT_SCHEMA || auth.schema_version != AUTH_SCHEMA {
         return Err(protocol_error("daemon endpoint 版本不兼容"));
     }
-    if !valid_generation_value(&manifest.instance_id)
+    if !valid_generation_value(expected_launch_id)
+        || !valid_generation_value(&manifest.launch_id)
+        || !valid_generation_value(&auth.launch_id)
+        || !valid_generation_value(&manifest.instance_id)
         || !valid_generation_value(&auth.instance_id)
         || !valid_generation_value(&auth.token)
     {
         return Err(protocol_error("daemon generation 合同无效"));
     }
-    if manifest.instance_id != auth.instance_id {
+    if manifest.launch_id != auth.launch_id
+        || manifest.launch_id != expected_launch_id
+        || manifest.instance_id != auth.instance_id
+    {
         return Err(generation_changed());
     }
     if manifest.owner_mode != OwnerMode::DesktopSupervised {
@@ -223,10 +279,22 @@ fn decode_connection(
     }
 
     Ok(DaemonConnection {
+        launch_id: manifest.launch_id,
         instance_id: manifest.instance_id,
         token: auth.token,
         addr: addr.ok_or_else(|| protocol_error("daemon endpoint 合同为空"))?,
     })
+}
+
+#[cfg(test)]
+fn decode_connection(
+    manifest_before: &[u8],
+    auth: &[u8],
+    manifest_after: &[u8],
+) -> Result<DaemonConnection, DesktopError> {
+    let manifest: EndpointManifest = serde_json::from_slice(manifest_before)
+        .map_err(|_| protocol_error("daemon endpoint 合同无效"))?;
+    decode_connection_for_launch(manifest_before, auth, manifest_after, &manifest.launch_id)
 }
 
 fn parse_exact_endpoint(endpoint: &str, expected_path: &str) -> Result<SocketAddr, DesktopError> {
@@ -332,6 +400,7 @@ fn generation_changed() -> DesktopError {
 #[serde(deny_unknown_fields)]
 struct EndpointManifest {
     schema_version: String,
+    launch_id: String,
     instance_id: String,
     owner_mode: OwnerMode,
     status: String,
@@ -357,8 +426,14 @@ enum OwnerMode {
 #[serde(deny_unknown_fields)]
 struct AuthManifest {
     schema_version: String,
+    launch_id: String,
     instance_id: String,
     token: String,
+}
+
+#[derive(Deserialize)]
+struct ProbeLaunchEnvelope {
+    launch_id: String,
 }
 
 #[cfg(test)]
@@ -367,9 +442,10 @@ mod tests {
 
     const INSTANCE: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const TOKEN: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const LAUNCH: &str = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 
     #[test]
-    fn strict_v2_pair_accepts_one_canonical_loopback_generation() {
+    fn strict_v3_pair_accepts_one_canonical_loopback_generation() {
         let manifest = manifest(INSTANCE, "desktop_supervised", "127.0.0.1:4312");
         let auth = auth(INSTANCE, TOKEN);
         let connection =
@@ -425,11 +501,11 @@ mod tests {
         std::fs::set_permissions(&manifest_path, std::fs::Permissions::from_mode(0o644)).unwrap();
         std::fs::set_permissions(&auth_path, std::fs::Permissions::from_mode(0o600)).unwrap();
 
-        let error = match load_probe_connection(data_dir.path()) {
+        let error = match load_probe_connection(data_dir.path(), LAUNCH) {
             Err(error) => error,
             Ok(_) => panic!("group-readable discovery manifest must be rejected"),
         };
-        assert_eq!(error.code(), "daemon_protocol");
+        assert!(error.is_stale_generation());
     }
 
     #[test]
@@ -455,6 +531,84 @@ mod tests {
             Ok(_) => panic!("mismatched auth generation must be rejected"),
         };
         assert_eq!(mismatch_error.code(), "daemon_generation_changed");
+    }
+
+    #[test]
+    fn wrong_launch_is_stale_but_exact_launch_contract_drift_is_protocol_mismatch() {
+        let wrong_launch = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+        let foreign_manifest = manifest(INSTANCE, "desktop_supervised", "127.0.0.1:4312")
+            .replace(LAUNCH, wrong_launch);
+        let foreign_auth = auth(INSTANCE, TOKEN).replace(LAUNCH, wrong_launch);
+        let foreign = match decode_connection_for_launch(
+            foreign_manifest.as_bytes(),
+            foreign_auth.as_bytes(),
+            foreign_manifest.as_bytes(),
+            LAUNCH,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("foreign launch must not be adopted"),
+        };
+        assert!(foreign.is_stale_generation());
+
+        let exact_launch_malformed = foreign_manifest.replace(wrong_launch, LAUNCH).replacen(
+            "\"status\"",
+            "\"unexpected_status\"",
+            1,
+        );
+        let exact = match decode_connection_for_launch(
+            exact_launch_malformed.as_bytes(),
+            auth(INSTANCE, TOKEN).as_bytes(),
+            exact_launch_malformed.as_bytes(),
+            LAUNCH,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("exact-launch schema drift must fail closed"),
+        };
+        assert_eq!(exact.code(), "daemon_protocol");
+    }
+
+    #[test]
+    fn startup_probe_treats_old_malformed_half_written_and_foreign_files_as_stale() {
+        let current = manifest(INSTANCE, "desktop_supervised", "127.0.0.1:4312");
+        let current_auth = auth(INSTANCE, TOKEN);
+        let old_v2 = current
+            .replace(ENDPOINT_SCHEMA, "resume-ir.daemon-ipc.v2")
+            .replace(&format!(r#","launch_id":"{LAUNCH}"#), "");
+        for bytes in [old_v2.as_bytes(), b"{\"schema_version\":", b"{}"] {
+            assert!(ensure_probe_launch(bytes, LAUNCH)
+                .unwrap_err()
+                .is_stale_generation());
+        }
+
+        let wrong_launch = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+        let foreign = current.replace(LAUNCH, wrong_launch);
+        assert!(ensure_probe_launch(foreign.as_bytes(), LAUNCH)
+            .unwrap_err()
+            .is_stale_generation());
+
+        let exact_contract_drift = current.replacen("\"status\"", "\"unexpected_status\"", 1);
+        let exact_error = match decode_probe_connection_for_test(
+            exact_contract_drift.as_bytes(),
+            current_auth.as_bytes(),
+            exact_contract_drift.as_bytes(),
+            LAUNCH,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("exact-launch contract drift must be a protocol mismatch"),
+        };
+        assert_eq!(exact_error.code(), "daemon_protocol");
+    }
+
+    fn decode_probe_connection_for_test(
+        manifest_before: &[u8],
+        auth: &[u8],
+        manifest_after: &[u8],
+        expected_launch_id: &str,
+    ) -> Result<DaemonConnection, DesktopError> {
+        ensure_probe_launch(manifest_before, expected_launch_id)?;
+        ensure_probe_launch(auth, expected_launch_id)?;
+        ensure_probe_launch(manifest_after, expected_launch_id)?;
+        decode_connection_for_launch(manifest_before, auth, manifest_after, expected_launch_id)
     }
 
     #[test]
@@ -491,6 +645,7 @@ mod tests {
     fn manifest(instance_id: &str, owner_mode: &str, addr: &str) -> String {
         serde_json::to_string(&serde_json::json!({
             "schema_version": ENDPOINT_SCHEMA,
+            "launch_id": LAUNCH,
             "instance_id": instance_id,
             "owner_mode": owner_mode,
             "status": format!("http://{addr}/status"),
@@ -510,6 +665,7 @@ mod tests {
     fn auth(instance_id: &str, token: &str) -> String {
         serde_json::to_string(&serde_json::json!({
             "schema_version": AUTH_SCHEMA,
+            "launch_id": LAUNCH,
             "instance_id": instance_id,
             "token": token,
         }))

@@ -210,10 +210,7 @@ export async function stageOcrResourcePack(plan) {
       const destination = path.join(temporary, entry.file);
       await mkdir(path.dirname(destination), { recursive: true });
       await copyFile(path.join(plan.sourcePackRoot, entry.file), destination);
-      await chmod(
-        destination,
-        entry.executable || entry.role === "engine_library" ? 0o755 : 0o644,
-      );
+      await chmod(destination, entry.executable ? 0o755 : 0o644);
     }
     await validatedSourcePack(temporary, plan.expectedManifest);
     let previous = false;

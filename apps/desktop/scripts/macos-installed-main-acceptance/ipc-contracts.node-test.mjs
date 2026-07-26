@@ -1,576 +1,474 @@
 import assert from "node:assert/strict";
+import { chmod, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
-import {
-  chmod,
-  mkdtemp,
-  realpath,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import {
-  readVerifiedPrivateText,
-  readActiveStoreManifest,
-} from "./filesystem-cow.mjs";
+import { diagnostics } from "./fixtures.mjs";
+import { readActiveStoreManifest } from "./filesystem-cow.mjs";
 import {
   captureLifecycleReceiptBoundary,
   contentionStatus,
+  initializingStatus,
+  optionalRuntimeFaultStatus,
   persistentBlockedStatus,
   readDaemonConnection,
-  requestJsonPost,
+  readyStatus,
+  requestJsonPostServiceUnavailable,
+  validDaemonStatus,
   validateDaemonDiagnostics,
   validateLifecycleReceipt,
   validateLifecycleReceiptBoundary,
 } from "./ipc-contracts.mjs";
-import { diagnostics } from "./fixtures.mjs";
 
-test("sends the bounded search witness as an authenticated JSON POST", async (context) => {
-  const observed = [];
-  const server = http.createServer((request, response) => {
-    const chunks = [];
-    request.on("data", (chunk) => chunks.push(chunk));
-    request.on("end", () => {
-      observed.push({
-        authorization: request.headers.authorization,
-        body: Buffer.concat(chunks).toString("utf8"),
-        method: request.method,
-        url: request.url,
-      });
-      response.writeHead(200, { "Content-Type": "application/json" });
-      response.end('{"status":"ok"}');
-    });
-  });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  context.after(() => new Promise((resolve) => server.close(resolve)));
-  const address = server.address();
-  const body = { schema_version: "synthetic.search.v1", top_k: 1 };
-  assert.deepEqual(
-    await requestJsonPost(
-      new URL(`http://127.0.0.1:${address.port}/search`),
-      "a".repeat(64),
-      body,
-    ),
-    { status: "ok" },
-  );
-  assert.deepEqual(observed, [
-    {
-      authorization: `Bearer ${"a".repeat(64)}`,
-      body: JSON.stringify(body),
-      method: "POST",
-      url: "/search",
+const LAUNCH = "a".repeat(64);
+const INSTANCE = "b".repeat(64);
+const TOKEN = "c".repeat(64);
+
+function allCapabilities(state, reason) {
+  const capability = { state, reason };
+  return {
+    keyword_search: { ...capability },
+    detail: { ...capability },
+    semantic_search: { ...capability },
+    hybrid_search: { ...capability },
+    text_import: { ...capability },
+    ocr_import: { ...capability },
+    index_publication: { ...capability },
+  };
+}
+
+function status(overrides = {}) {
+  return {
+    schema_version: "daemon.status.v3",
+    status: "ok",
+    process_state: "ready",
+    core: { state: "ready", reason: null },
+    optional_runtimes: {
+      embedding: { state: "available", reason: null },
+      ocr: { state: "available", reason: null },
+      classifier: { state: "available", reason: null },
     },
-  ]);
-});
-
-test("validates diagnostics privacy flags and rejects path-shaped payloads", () => {
-  const value = diagnostics();
-  assert.equal(validateDaemonDiagnostics(value), value);
-  assert.throws(
-    () =>
-      validateDaemonDiagnostics(
-        diagnostics({ private_debug: "/Users/example/private-resume.pdf" }),
-      ),
-    /diagnostics_contract_invalid/,
-  );
-  assert.throws(
-    () =>
-      validateDaemonDiagnostics(diagnostics({ contains_resume_paths: true })),
-    /diagnostics_contract_invalid/,
-  );
-  assert.throws(
-    () =>
-      validateDaemonDiagnostics(diagnostics({ benchmark_refs: ["synthetic"] })),
-    /diagnostics_contract_invalid/,
-  );
-});
-
-test("rejects unknown diagnostics nested keys without relying on path scanning", () => {
-  const progress = {
-    phase: "retry_wait",
-    attempt: 1,
-    max_attempts: 5,
-    retry_after_ms: 1_000,
-    last_error_kind: "fulltext_publication_busy",
-  };
-  const retry = diagnostics({
-    service_state: "repairing",
-    services: { metadata: "ready", query: "repairing" },
-    repair_reason: "artifact_unavailable",
-    repair_progress: progress,
-    error: { code: "REPAIRING", action: "wait_for_repair" },
-  });
-  const retryExpected = {
-    attempt: 1,
-    kind: "fulltext",
-    phase: "retry_wait",
-  };
-
-  assert.throws(
-    () =>
-      validateDaemonDiagnostics(
-        diagnostics({
-          services: { metadata: "ready", query: "ready", worker: "ready" },
-        }),
-      ),
-    /diagnostics_contract_invalid/,
-  );
-  assert.throws(
-    () =>
-      validateDaemonDiagnostics(
-        {
-          ...retry,
-          repair_progress: { ...progress, subsystem: "fulltext" },
-        },
-        [],
-        retryExpected,
-      ),
-    /diagnostics_contract_invalid/,
-  );
-  assert.throws(
-    () =>
-      validateDaemonDiagnostics(
-        {
-          ...retry,
-          error: {
-            code: "REPAIRING",
-            action: "wait_for_repair",
-            detail: "synthetic-detail",
-          },
-        },
-        [],
-        retryExpected,
-      ),
-    /diagnostics_contract_invalid/,
-  );
-});
-
-test("rejects invalid diagnostics enums and out-of-contract numeric bounds", () => {
-  const retry = (overrides = {}) =>
-    diagnostics({
-      service_state: "repairing",
-      services: { metadata: "ready", query: "repairing" },
-      repair_reason: "artifact_unavailable",
-      repair_progress: {
-        phase: "retry_wait",
-        attempt: 1,
-        max_attempts: 5,
-        retry_after_ms: 1_000,
-        last_error_kind: "fulltext_publication_busy",
-        ...overrides,
-      },
-      error: { code: "REPAIRING", action: "wait_for_repair" },
-    });
-
-  assert.throws(
-    () =>
-      validateDaemonDiagnostics(
-        retry({ last_error_kind: "fulltext" }),
-        [],
-        { attempt: 1, kind: "fulltext", phase: "retry_wait" },
-      ),
-    /diagnostics_contract_invalid/,
-  );
-  assert.throws(
-    () =>
-      validateDaemonDiagnostics(retry({ attempt: 6 }), [], {
-        attempt: 6,
-        kind: "fulltext",
-        phase: "retry_wait",
-      }),
-    /diagnostics_contract_invalid/,
-  );
-  const value = diagnostics();
-  assert.throws(
-    () =>
-      validateDaemonDiagnostics({
-        ...value,
-        metrics: {
-          ...value.metrics,
-          query_latency: {
-            ...value.metrics.query_latency,
-            p95_ms: 3_600_001,
-          },
-        },
-      }),
-    /diagnostics_contract_invalid/,
-  );
-});
-
-test("requires persisted child-exit recovery followed by the next ready generation", () => {
-  const event = (overrides) => ({
-    at_unix_ms: 1_000,
-    state: "recovering",
-    generation: 4,
-    restart_attempt: 1,
-    restart_budget: 5,
-    retry_delay_ms: 0,
-    consecutive_heartbeat_failures: 0,
-    blocked_reason: null,
-    last_exit: "child_exited",
-    restart_ledger_reason: null,
+    capabilities: allCapabilities("available", null),
+    error: null,
+    repair_progress: null,
+    indexed_documents: 4,
+    searchable_documents: 4,
+    partial_documents: 0,
+    visible_epoch: 7,
+    failed_retryable: 0,
+    failed_permanent: 0,
+    recovery_queue_depth: 0,
+    ocr_queue_depth: 0,
+    ocr_jobs_queued: 0,
+    ocr_page_budget_blocked: 0,
+    ocr_remediation: "none",
+    ocr_language_unavailable: 0,
+    ocr_language_remediation: "none",
+    embedding_queue_depth: 0,
+    entity_mentions: 0,
+    import_tasks_queued: 0,
+    import_tasks_recoverable: 0,
+    import_tasks_cancelled: 0,
+    import_scan_scopes: 1,
+    import_scan_errors: 0,
+    query_latency: {
+      sample_count: 0,
+      p50_ms: null,
+      p95_ms: null,
+      p99_ms: null,
+      last_result_count: null,
+      raw_queries: "<redacted>",
+    },
+    latest_import_scan: null,
+    active_profile: "balanced",
+    index_health: "ready",
+    snapshot_present: true,
+    ipc: {
+      accepted: 1,
+      completed: 1,
+      client_disconnect: 0,
+      request_failure: 0,
+      response_failure: 0,
+    },
     ...overrides,
-  });
-  const receipt = {
-    schema_version: "resume-ir.desktop-daemon-lifecycle-receipt.v1",
-    persistence_state: "ready",
-    dropped_event_count: 0,
-    events: [
-      event({}),
-      event({ at_unix_ms: 1_001, state: "ready", generation: 5 }),
-    ],
   };
-  assert.equal(validateLifecycleReceipt(receipt, []), receipt);
-  assert.throws(
-    () =>
-      validateLifecycleReceipt(
-        { ...receipt, persistence_state: "recovered_corrupt", events: [] },
-        [],
-      ),
-    /lifecycle_receipt_invalid/,
-  );
-  assert.throws(
-    () =>
-      validateLifecycleReceipt(
-        {
-          ...receipt,
-          events: [event({}), event({ at_unix_ms: 999, state: "ready" })],
-        },
-        [],
-      ),
-    /lifecycle_receipt_invalid/,
-  );
-});
+}
 
-test("binds lifecycle recovery to the receipt captured before this kill", () => {
-  const event = (overrides) => ({
-    at_unix_ms: 1_000,
-    state: "ready",
-    generation: 4,
-    restart_attempt: 0,
-    restart_budget: 5,
-    retry_delay_ms: null,
-    consecutive_heartbeat_failures: 0,
-    blocked_reason: null,
-    last_exit: null,
-    restart_ledger_reason: null,
-    ...overrides,
-  });
-  const before = {
-    schema_version: "resume-ir.desktop-daemon-lifecycle-receipt.v1",
-    persistence_state: "ready",
-    dropped_event_count: 0,
-    events: [event({})],
-  };
-  const beforeSource = `${JSON.stringify(before)}\n`;
-  const boundary = captureLifecycleReceiptBoundary({
-    capturedAtUnixMs: 2_000,
-    source: beforeSource,
-    value: before,
-  });
-  const after = {
-    ...before,
-    events: [
-      ...before.events,
-      event({
-        at_unix_ms: 2_001,
-        state: "recovering",
-        restart_attempt: 1,
-        retry_delay_ms: 1_000,
-        last_exit: "child_exited",
-      }),
-      event({
-        at_unix_ms: 3_001,
-        generation: 5,
-        restart_attempt: 1,
-        last_exit: "child_exited",
-      }),
-    ],
-  };
-  assert.equal(
-    validateLifecycleReceiptBoundary({
-      boundary,
-      source: `${JSON.stringify(after)}\n`,
-      value: after,
-    }),
-    after,
-  );
-  assert.throws(
-    () =>
-      validateLifecycleReceiptBoundary({
-        boundary,
-        source: beforeSource,
-        value: before,
-      }),
-    /lifecycle_receipt_boundary_invalid/,
-  );
-  const historical = {
-    ...after,
-    events: after.events.map((item, index) =>
-      index === 1 ? { ...item, at_unix_ms: 1_500 } : item,
-    ),
-  };
-  assert.throws(
-    () =>
-      validateLifecycleReceiptBoundary({
-        boundary,
-        source: `${JSON.stringify(historical)}\n`,
-        value: historical,
-      }),
-    /lifecycle_receipt_boundary_invalid/,
-  );
-});
-
-test("requires exact publication-busy error kinds for retry and blocked states", () => {
-  const progress = (overrides = {}) => ({
-    phase: "retry_wait",
-    attempt: 1,
-    max_attempts: 5,
-    retry_after_ms: 1_000,
-    last_error_kind: "fulltext_publication_busy",
-    ...overrides,
-  });
-  const retry = {
-    schema_version: "daemon.status.v2",
+function retryStatus(kind, attempt) {
+  return status({
     status: "repairing",
-    process_state: "ready",
-    service_state: "repairing",
-    services: { metadata: "ready", query: "repairing" },
-    repair_reason: "artifact_unavailable",
-    repair_progress: progress(),
-    error: { code: "REPAIRING", action: "wait_for_repair" },
-  };
-  assert.equal(contentionStatus(retry, "fulltext", 1), true);
-  assert.equal(contentionStatus(retry, "vector", 1), false);
-  assert.equal(
-    contentionStatus(
-      {
-        ...retry,
-        repair_progress: {
-          ...progress(),
-          last_error_kind: "fulltext_storage",
-        },
-      },
-      "fulltext",
-      1,
-    ),
-    false,
-  );
-  const { last_error_kind: _removed, ...broadProgress } = progress();
-  assert.equal(
-    contentionStatus(
-      {
-        ...retry,
-        repair_progress: { ...broadProgress, last_error_class: "fulltext" },
-      },
-      "fulltext",
-      1,
-    ),
-    false,
-  );
-
-  const blocked = {
-    ...retry,
-    status: "degraded",
-    service_state: "degraded",
-    services: { metadata: "ready", query: "unavailable" },
-    repair_reason: "runtime_invariant",
-    repair_progress: progress({
-      phase: "blocked",
-      attempt: 5,
-      retry_after_ms: null,
-    }),
+    core: { state: "repairing", reason: "artifact_unavailable" },
+    capabilities: allCapabilities("initializing", "core_initializing"),
     error: {
-      code: "QUERY_SERVICE_UNAVAILABLE",
-      action: "repair_required",
+      code: "SERVICE_INITIALIZING",
+      action: "wait_for_service",
+      capability: null,
+      reason: "artifact_unavailable",
     },
-  };
-  assert.equal(persistentBlockedStatus(blocked, "fulltext"), true);
-  assert.equal(
-    persistentBlockedStatus(
-      { ...blocked, repair_reason: "artifact_unavailable" },
-      "fulltext",
-    ),
-    false,
-  );
-
-  const retryDiagnostics = diagnostics({
-    process_state: "ready",
-    service_state: "repairing",
-    services: { metadata: "ready", query: "repairing" },
-    repair_reason: "artifact_unavailable",
-    repair_progress: progress(),
-    error: { code: "REPAIRING", action: "wait_for_repair" },
-  });
-  assert.equal(
-    validateDaemonDiagnostics(retryDiagnostics, [], {
-      attempt: 1,
-      kind: "fulltext",
+    repair_progress: {
       phase: "retry_wait",
-    }),
-    retryDiagnostics,
-  );
-  assert.throws(
-    () =>
-      validateDaemonDiagnostics(
-        diagnostics({
-          ...retryDiagnostics,
-          repair_progress: progress({
-            last_error_kind: "vector_publication_busy",
-          }),
-        }),
-        [],
-        { attempt: 1, kind: "fulltext", phase: "retry_wait" },
-      ),
-    /diagnostics_contract_invalid/,
-  );
-  const blockedDiagnostics = diagnostics({
-    process_state: "ready",
-    service_state: "degraded",
-    services: { metadata: "ready", query: "unavailable" },
-    repair_reason: "runtime_invariant",
-    repair_progress: progress({
-      phase: "blocked",
-      attempt: 5,
-      retry_after_ms: null,
-    }),
-    error: {
-      code: "QUERY_SERVICE_UNAVAILABLE",
-      action: "repair_required",
+      attempt,
+      max_attempts: 5,
+      retry_after_ms: 500,
+      last_error_kind: `${kind}_publication_busy`,
     },
   });
-  assert.equal(
-    validateDaemonDiagnostics(blockedDiagnostics, [], {
-      kind: "fulltext",
+}
+
+function blockedStatus(kind) {
+  return status({
+    status: "blocked",
+    core: { state: "blocked", reason: "runtime_invariant" },
+    capabilities: allCapabilities("blocked", "core_blocked"),
+    error: {
+      code: "SERVICE_BLOCKED",
+      action: "repair_required",
+      capability: null,
+      reason: "runtime_invariant",
+    },
+    repair_progress: {
       phase: "blocked",
-    }),
-    blockedDiagnostics,
-  );
-  assert.throws(
-    () =>
-      validateDaemonDiagnostics(
-        {
-          ...blockedDiagnostics,
-          repair_progress: {
-            ...blockedDiagnostics.repair_progress,
-            last_error_kind: "fulltext_failure",
-          },
+      attempt: 5,
+      max_attempts: 5,
+      retry_after_ms: null,
+      last_error_kind: `${kind}_publication_busy`,
+    },
+  });
+}
+
+function missingRuntimeStatus(runtimeName) {
+  const capabilities = allCapabilities("available", null);
+  if (runtimeName === "embedding") {
+    capabilities.semantic_search = {
+      state: "unavailable",
+      reason: "embedding_unavailable",
+    };
+    capabilities.hybrid_search = {
+      state: "degraded",
+      reason: "embedding_unavailable",
+    };
+    for (const name of ["text_import", "ocr_import", "index_publication"]) {
+      capabilities[name] = {
+        state: "unavailable",
+        reason: "embedding_unavailable",
+      };
+    }
+  } else if (runtimeName === "ocr") {
+    capabilities.ocr_import = {
+      state: "unavailable",
+      reason: "ocr_unavailable",
+    };
+  } else {
+    for (const name of ["text_import", "ocr_import", "index_publication"]) {
+      capabilities[name] = {
+        state: "unavailable",
+        reason: "classifier_unavailable",
+      };
+    }
+  }
+  return status({
+    optional_runtimes: {
+      embedding: {
+        state: runtimeName === "embedding" ? "unavailable" : "available",
+        reason: runtimeName === "embedding" ? "missing" : null,
+      },
+      ocr: {
+        state: runtimeName === "ocr" ? "unavailable" : "available",
+        reason: runtimeName === "ocr" ? "missing" : null,
+      },
+      classifier: {
+        state: runtimeName === "classifier" ? "unavailable" : "available",
+        reason: runtimeName === "classifier" ? "missing" : null,
+      },
+    },
+    capabilities,
+  });
+}
+
+function receipt(events) {
+  return {
+    schema_version: "resume-ir.desktop-daemon-lifecycle-receipt.v2",
+    persistence_state: "ready",
+    dropped_event_count: 0,
+    events,
+  };
+}
+
+function lifecycleEvent(at, state, transitionReason, generation, overrides = {}) {
+  return {
+    at_unix_ms: at,
+    state,
+    transition_reason: transitionReason,
+    generation,
+    automatic_restart_attempt: 0,
+    automatic_restart_limit: 5,
+    retry_after_ms: null,
+    heartbeat_failures: 0,
+    last_exit: null,
+    ...overrides,
+  };
+}
+
+test("status v3 distinguishes ready, repairing, and blocked without daemon restart", () => {
+  assert.equal(readyStatus(status()), true);
+  assert.equal(validDaemonStatus(status()), true);
+  assert.equal(readyStatus({ ...status(), schema_version: "daemon.status.v2" }), false);
+  assert.equal(validDaemonStatus({ ...status(), private_debug: true }), false);
+  assert.equal(
+    validDaemonStatus({
+      ...status(),
+      capabilities: {
+        ...status().capabilities,
+        keyword_search: {
+          state: "unavailable",
+          reason: "embedding_unavailable",
         },
-        [],
-        { kind: "fulltext", phase: "blocked" },
-      ),
-    /diagnostics_contract_invalid/,
+      },
+    }),
+    false,
+  );
+  assert.equal(contentionStatus(retryStatus("fulltext", 1), "fulltext", 1), true);
+  assert.equal(persistentBlockedStatus(blockedStatus("vector"), "vector"), true);
+  assert.equal(contentionStatus({ ...retryStatus("fulltext", 1), private_debug: true }, "fulltext", 1), false);
+});
+
+async function serviceResponse(statusCode, body) {
+  const server = http.createServer((_request, response) => {
+    response.writeHead(statusCode, { "Content-Type": "application/json" });
+    response.end(body);
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  return {
+    close: () => new Promise((resolve) => server.close(resolve)),
+    url: new URL(`http://127.0.0.1:${address.port}/imports`),
+  };
+}
+
+test("service-unavailable POST helper accepts only exact HTTP 503 JSON", async (context) => {
+  const expected = {
+    schema_version: "resume-ir.error.v2",
+    status: "error",
+    error: {
+      code: "CAPABILITY_UNAVAILABLE",
+      action: "select_supported_mode",
+      capability: "text_import",
+      reason: "classifier_unavailable",
+    },
+  };
+  const unavailable = await serviceResponse(503, JSON.stringify(expected));
+  context.after(unavailable.close);
+  assert.deepEqual(
+    await requestJsonPostServiceUnavailable(
+      unavailable.url,
+      TOKEN,
+      { roots: ["/private/synthetic"] },
+    ),
+    expected,
+  );
+
+  const success = await serviceResponse(202, JSON.stringify(expected));
+  context.after(success.close);
+  await assert.rejects(
+    requestJsonPostServiceUnavailable(
+      success.url,
+      TOKEN,
+      { roots: ["/private/synthetic"] },
+    ),
+    /daemon_response_invalid/,
+  );
+
+  const malformed = await serviceResponse(503, "not-json");
+  context.after(malformed.close);
+  await assert.rejects(
+    requestJsonPostServiceUnavailable(
+      malformed.url,
+      TOKEN,
+      { roots: ["/private/synthetic"] },
+    ),
+    /daemon_response_invalid/,
   );
 });
 
-test("parses strict private v28 manifests and rejects permissive files", async (context) => {
-  const root = await realpath(
-    await mkdtemp(path.join(os.tmpdir(), "resume-ir-manifest-test-")),
-  );
-  context.after(() => rm(root, { recursive: true, force: true }));
-  await chmod(root, 0o700);
-  const manifest = path.join(root, "metadata-active.v1");
-  const records = [
-    "resume-ir.metadata-active.v1",
-    "file=metadata-v28-1111111111111111.sqlite3",
-    "schema=28",
-    `digest=${"1".repeat(64)}`,
-  ];
-  const canonical = `${records.join("\n")}\n`;
-  await writeFile(manifest, canonical, { mode: 0o600 });
-  assert.deepEqual(await readActiveStoreManifest(root), {
-    fileName: "metadata-v28-1111111111111111.sqlite3",
-    schema: 28,
-    digest: "1".repeat(64),
+test("slow initialization and every missing optional runtime require exact matrices", () => {
+  const initializing = status({
+    status: "initializing",
+    core: { state: "initializing", reason: "metadata_initializing" },
+    optional_runtimes: {
+      embedding: { state: "initializing", reason: null },
+      ocr: { state: "initializing", reason: null },
+      classifier: { state: "initializing", reason: null },
+    },
+    capabilities: allCapabilities("initializing", "core_initializing"),
+    error: {
+      code: "SERVICE_INITIALIZING",
+      action: "wait_for_service",
+      capability: null,
+      reason: "metadata_initializing",
+    },
   });
-  for (const invalid of [
-    canonical.slice(0, -1),
-    `${canonical}\n`,
-    `${canonical}extra=forbidden\n`,
-    canonical.replaceAll("\n", "\r\n"),
-    canonical.replace("schema=28", "schema=29"),
-  ]) {
-    await writeFile(manifest, invalid);
-    await assert.rejects(
-      readActiveStoreManifest(root),
-      /active_store_manifest_invalid/,
+  assert.equal(initializingStatus(initializing), true);
+  for (const runtimeName of ["embedding", "ocr", "classifier"]) {
+    const observed = missingRuntimeStatus(runtimeName);
+    assert.equal(optionalRuntimeFaultStatus(observed, runtimeName), true);
+    assert.equal(
+      optionalRuntimeFaultStatus(
+        {
+          ...observed,
+          optional_runtimes: {
+            ...observed.optional_runtimes,
+            [runtimeName]: { state: "unavailable", reason: "invalid" },
+          },
+        },
+        runtimeName,
+      ),
+      false,
     );
   }
-  await writeFile(manifest, canonical);
-  await chmod(manifest, 0o644);
-  await assert.rejects(readActiveStoreManifest(root), /private_file_invalid/);
 });
 
-test("reads only a generation-consistent owner-only loopback discovery pair", async (context) => {
-  const root = await realpath(
-    await mkdtemp(path.join(os.tmpdir(), "resume-ir-connection-test-")),
+test("diagnostics v4 validates exact health and privacy matrices", () => {
+  assert.equal(validateDaemonDiagnostics(diagnostics()).schema_version, "resume-ir.diagnostics.v4");
+  assert.throws(
+    () => validateDaemonDiagnostics(diagnostics({ schema_version: "resume-ir.diagnostics.v3" })),
+    /diagnostics_contract_invalid/,
   );
-  context.after(() => rm(root, { recursive: true, force: true }));
-  await chmod(root, 0o700);
-  const instanceId = "1".repeat(64);
-  const token = "2".repeat(64);
-  const origin = "http://127.0.0.1:43111";
-  const endpoint = {
-    schema_version: "resume-ir.daemon-ipc.v2",
-    instance_id: instanceId,
-    owner_mode: "desktop_supervised",
-    status: `${origin}/status`,
-    diagnostics: `${origin}/diagnostics`,
-    imports: `${origin}/imports`,
-    import_cancel: `${origin}/imports/cancel`,
-    import_control: `${origin}/imports/control`,
-    import_progress: `${origin}/imports/progress`,
-    search: `${origin}/search`,
-    search_batch: `${origin}/search/batch`,
-    details: `${origin}/details`,
-    delete: `${origin}/delete`,
-  };
-  await writeFile(
-    path.join(root, "ipc.endpoints.json"),
-    JSON.stringify(endpoint),
-    {
-      mode: 0o600,
+  assert.throws(
+    () => validateDaemonDiagnostics(diagnostics({ contains_queries: true })),
+    /diagnostics_contract_invalid/,
+  );
+  const retry = retryStatus("fulltext", 1);
+  assert.equal(
+    validateDaemonDiagnostics(diagnostics({
+      core: retry.core,
+      capabilities: retry.capabilities,
+      error: retry.error,
+      repair_progress: retry.repair_progress,
+    }), [], { phase: "retry_wait", kind: "fulltext", attempt: 1 }).core.state,
+    "repairing",
+  );
+
+  const embeddingFaultCapabilities = allCapabilities("available", null);
+  embeddingFaultCapabilities.semantic_search = { state: "unavailable", reason: "embedding_unavailable" };
+  embeddingFaultCapabilities.hybrid_search = { state: "degraded", reason: "embedding_unavailable" };
+  for (const operation of ["text_import", "ocr_import", "index_publication"]) {
+    embeddingFaultCapabilities[operation] = { state: "unavailable", reason: "embedding_unavailable" };
+  }
+  const embeddingFault = diagnostics({
+    optional_runtimes: {
+      embedding: { state: "unavailable", reason: "invalid" },
+      ocr: { state: "available", reason: null },
+      classifier: { state: "available", reason: null },
     },
-  );
-  await writeFile(
-    path.join(root, "ipc.auth"),
-    JSON.stringify({
-      schema_version: "resume-ir.daemon-auth.v2",
-      instance_id: instanceId,
-      token,
-    }),
-    { mode: 0o600 },
-  );
-
-  const connection = await readDaemonConnection(root);
-  assert.equal(connection.instanceId, instanceId);
-  assert.equal(connection.urls.status.pathname, "/status");
-  await chmod(path.join(root, "ipc.auth"), 0o644);
-  await assert.rejects(readDaemonConnection(root), /private_file_invalid/);
-});
-
-test("rejects an owner-file pathname replacement after the verified open", async (context) => {
-  const root = await realpath(
-    await mkdtemp(path.join(os.tmpdir(), "resume-ir-owner-race-test-")),
-  );
-  context.after(() => rm(root, { recursive: true, force: true }));
-  await chmod(root, 0o700);
-  const file = path.join(root, "owner.json");
-  const replacement = path.join(root, "replacement.json");
-  const displaced = path.join(root, "displaced.json");
-  await writeFile(file, '{"generation":"first"}', { mode: 0o600 });
-  await writeFile(replacement, '{"generation":"second"}', { mode: 0o600 });
-
-  await assert.rejects(
-    readVerifiedPrivateText(file, 1_024, {
-      afterVerifiedOpen: async () => {
-        await rename(file, displaced);
-        await rename(replacement, file);
+    capabilities: embeddingFaultCapabilities,
+  });
+  assert.equal(validateDaemonDiagnostics(embeddingFault).capabilities.hybrid_search.state, "degraded");
+  assert.throws(
+    () => validateDaemonDiagnostics({
+      ...embeddingFault,
+      capabilities: {
+        ...embeddingFaultCapabilities,
+        text_import: { state: "available", reason: null },
       },
     }),
-    /private_file_invalid/,
+    /diagnostics_contract_invalid/,
   );
+});
+
+test("lifecycle receipt v2 proves one post-boundary retry and new generation", () => {
+  const before = receipt([
+    lifecycleEvent(100, "starting", "initial_start", 0),
+    lifecycleEvent(200, "running", "control_plane_ready", 1),
+  ]);
+  const source = `${JSON.stringify(before)}\n`;
+  const boundary = captureLifecycleReceiptBoundary({
+    capturedAtUnixMs: 250,
+    source,
+    value: before,
+  });
+  const after = receipt([
+    ...before.events,
+    lifecycleEvent(300, "retry_wait", "child_exited", 1, {
+      automatic_restart_attempt: 1,
+      retry_after_ms: 250,
+      last_exit: "child_exited",
+    }),
+    lifecycleEvent(600, "running", "control_plane_ready", 2, {
+      automatic_restart_attempt: 1,
+      last_exit: "child_exited",
+    }),
+  ]);
+  const afterSource = `${JSON.stringify(after)}\n`;
+  assert.equal(
+    validateLifecycleReceiptBoundary({ boundary, source: afterSource, value: after }),
+    after,
+  );
+  assert.equal(validateLifecycleReceipt(after), after);
+  assert.throws(
+    () => validateLifecycleReceipt({ ...after, schema_version: "resume-ir.desktop-daemon-lifecycle-receipt.v1" }),
+    /lifecycle_receipt_invalid/,
+  );
+});
+
+test("active store reader accepts only exact private v29 authority", async (context) => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "resume-ir-v29-manifest-")));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  const digest = "1".repeat(64);
+  const file = path.join(root, "metadata-active.v1");
+  await writeFile(file, `resume-ir.metadata-active.v1\nfile=metadata-v29-${digest.slice(0, 16)}.sqlite3\nschema=29\ndigest=${digest}\n`, { mode: 0o600 });
+  await chmod(file, 0o600);
+  assert.deepEqual(await readActiveStoreManifest(root), {
+    fileName: `metadata-v29-${digest.slice(0, 16)}.sqlite3`,
+    schema: 29,
+    digest,
+  });
+  await writeFile(file, `resume-ir.metadata-active.v1\nfile=metadata-v28-${digest.slice(0, 16)}.sqlite3\nschema=28\ndigest=${digest}\n`, { mode: 0o600 });
+  await assert.rejects(
+    readActiveStoreManifest(root),
+    /active_store_manifest_invalid/,
+  );
+});
+
+test("discovery/auth v3 require one launch, instance, token, and loopback origin", async (context) => {
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "resume-ir-v3-discovery-")));
+  context.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(root, { recursive: true });
+  const endpoints = {
+    schema_version: "resume-ir.daemon-ipc.v3",
+    launch_id: LAUNCH,
+    instance_id: INSTANCE,
+    owner_mode: "desktop_supervised",
+    status: "http://127.0.0.1:4312/status",
+    diagnostics: "http://127.0.0.1:4312/diagnostics",
+    imports: "http://127.0.0.1:4312/imports",
+    import_cancel: "http://127.0.0.1:4312/imports/cancel",
+    import_control: "http://127.0.0.1:4312/imports/control",
+    import_progress: "http://127.0.0.1:4312/imports/progress",
+    search: "http://127.0.0.1:4312/search",
+    search_batch: "http://127.0.0.1:4312/search/batch",
+    details: "http://127.0.0.1:4312/details",
+    delete: "http://127.0.0.1:4312/delete",
+  };
+  const auth = {
+    schema_version: "resume-ir.daemon-auth.v3",
+    launch_id: LAUNCH,
+    instance_id: INSTANCE,
+    token: TOKEN,
+  };
+  await writeFile(path.join(root, "ipc.endpoints.json"), JSON.stringify(endpoints), { mode: 0o600 });
+  await writeFile(path.join(root, "ipc.auth"), JSON.stringify(auth), { mode: 0o600 });
+  await chmod(path.join(root, "ipc.endpoints.json"), 0o600);
+  await chmod(path.join(root, "ipc.auth"), 0o600);
+  const connection = await readDaemonConnection(root);
+  assert.equal(connection.launchId, LAUNCH);
+  assert.equal(connection.instanceId, INSTANCE);
+
+  await writeFile(path.join(root, "ipc.auth"), JSON.stringify({ ...auth, launch_id: "d".repeat(64) }), { mode: 0o600 });
+  await chmod(path.join(root, "ipc.auth"), 0o600);
+  await assert.rejects(readDaemonConnection(root), /daemon_discovery_invalid/);
 });

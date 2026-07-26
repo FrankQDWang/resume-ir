@@ -9,9 +9,73 @@ import { normalizeAcceptanceOptions, parseAcceptanceArgs } from "./options.mjs";
 import {
   createNativeAcceptanceRuntime,
   observedRealBackoff,
-  runInstalledMainAcceptance,
+  runInstalledMainAcceptanceForTesting as runInstalledMainAcceptance,
 } from "./orchestrator-receipt.mjs";
 import { HEAD, diagnostics, fakeRuntime, options } from "./fixtures.mjs";
+import {
+  OPTIONAL_RUNTIME_NAMES,
+  RUNTIME_FAULT_CASES,
+} from "./native-runtime-fault-plan.mjs";
+
+function expectedRuntimeFaultCalls(firstSessionId) {
+  const calls = [];
+  let sessionId = firstSessionId;
+  for (const definition of RUNTIME_FAULT_CASES) {
+    const { cell, evidenceSource } = definition;
+    calls.push(["clone", cell]);
+    if (evidenceSource === "deterministic_contract_projection") {
+      calls.push(
+        ["prepare-fault", cell, cell],
+        ["activate-fault", cell, cell],
+        ["validate-projected-runtime-fault", cell],
+        ["release-fault", cell],
+      );
+      continue;
+    }
+    const behaviorRuntime = OPTIONAL_RUNTIME_NAMES.find(
+      (runtimeName) => cell === `${runtimeName}_missing`,
+    );
+    if (behaviorRuntime === "embedding") {
+      calls.push(
+        ["verify"],
+        ["launch", cell, sessionId],
+        ["ready", sessionId],
+        ["create-canary", cell],
+        ["import-canary", sessionId, `ready-${sessionId}`],
+        ["capture-fault-witness", sessionId],
+        ["quit", sessionId],
+        ["zero-residue", sessionId],
+      );
+      sessionId += 1;
+    } else if (behaviorRuntime === "classifier") {
+      calls.push(["create-canary", cell]);
+    }
+    if (behaviorRuntime === "ocr") {
+      calls.push(["prepare-ocr-fixture", cell]);
+    }
+    calls.push(
+      ["prepare-fault", cell, cell],
+      ["verify"],
+      ["activate-fault", cell, cell],
+      ["launch", cell, sessionId],
+      ["validate-runtime-fault", sessionId, cell],
+    );
+    if (behaviorRuntime) {
+      calls.push([
+        `validate-${behaviorRuntime}-behavior`,
+        sessionId,
+        cell,
+      ]);
+    }
+    calls.push(
+      ["quit", sessionId],
+      ["zero-residue", sessionId],
+      ["release-fault", cell],
+    );
+    sessionId += 1;
+  }
+  return { calls, nextSessionId: sessionId };
+}
 
 test("accepts only real source, repository, and temporary-root inputs", () => {
   assert.throws(
@@ -72,7 +136,8 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
   const report = await runInstalledMainAcceptance(options(), { runtime });
 
   assert.equal(report.schema_version, ACCEPTANCE_SCHEMA);
-  assert.equal(report.outcome, "passed");
+  assert.equal(report.outcome, "not_native_evidence");
+  assert.equal(report.evidence_scope, "dependency_injected_structure_only");
   assert.equal(report.bindings.git_head, HEAD);
   assert.deepEqual(report.deployment, {
     action: "reinstall",
@@ -93,6 +158,77 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
   assert.equal(report.data_boundary.release_data_dir_override, false);
   assert.equal(report.supervised_strong_kill.targeting, "exact_owned_child");
   assert.equal(report.normal_quit_relaunch.process_residue, "none");
+  assert.equal(
+    report.bootstrap_control.foreign.foreign_endpoint_preserved,
+    true,
+  );
+  assert.equal(
+    report.bootstrap_control.slow_initialization.same_listener,
+    true,
+  );
+  assert.equal(
+    report.optional_runtime_faults.embedding_missing.native_observation
+      .capabilities.hybrid_search.state,
+    "degraded",
+  );
+  assert.equal(
+    report.optional_runtime_faults.ocr_missing.native_observation.capabilities
+      .ocr_import.reason,
+    "ocr_unavailable",
+  );
+  assert.equal(
+    report.optional_runtime_faults.classifier_missing.native_observation
+      .capabilities.text_import.reason,
+    "classifier_unavailable",
+  );
+  const runtimeFaultSequence = expectedRuntimeFaultCalls(8);
+  assert.deepEqual(
+    Object.keys(report.optional_runtime_faults),
+    RUNTIME_FAULT_CASES.map(({ cell }) => cell),
+  );
+  assert.equal(
+    report.optional_runtime_faults.embedding_missing.behavior_evidence
+      .embedding.hybrid_lexical_partial,
+    true,
+  );
+  assert.equal(
+    report.optional_runtime_faults.ocr_missing.behavior_evidence.ocr
+      .backlog_retained,
+    true,
+  );
+  assert.equal(
+    report.optional_runtime_faults.classifier_missing.behavior_evidence
+      .classifier.classifier_epoch_preserved,
+    true,
+  );
+  assert.deepEqual(
+    report.optional_runtime_faults.embedding_classifier_invalid
+      .behavior_evidence,
+    {},
+  );
+  assert.equal(
+    report.optional_runtime_faults.embedding_classifier_invalid
+      .validation_scope,
+    "status_capability_matrix_only",
+  );
+  assert.equal(
+    report.optional_runtime_faults.embedding_classifier_invalid
+      .native_observation.capabilities.text_import.reason,
+    "classifier_unavailable",
+  );
+  assert.equal(
+    report.optional_runtime_faults.all_runtimes_missing.native_observation
+      .capabilities.ocr_import.reason,
+    "classifier_unavailable",
+  );
+  assert.deepEqual(report.optional_runtime_faults.classifier_start_failed, {
+    evidence_source: "deterministic_contract_projection",
+    expected_runtime_reasons: { classifier: "start_failed" },
+    native_mutation_applied: false,
+    native_observation: null,
+    behavior_evidence: null,
+    projection_reason: "post_attestation_failure_surface_absent",
+  });
   assert.deepEqual(Object.keys(report.contention), ["fulltext", "vector"]);
   assert.equal(report.contention.fulltext.daemon_restart, false);
   assert.equal(report.contention.vector.convergence, "ready");
@@ -103,11 +239,18 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
     report.persistent_contention.error_kind,
     "fulltext_publication_busy",
   );
-  assert.equal(report.persistent_contention.repair_reason, "runtime_invariant");
-  assert.equal(
-    report.diagnostics.gui_combined_export,
-    "manual_required_native_save_dialog",
-  );
+  assert.equal(report.persistent_contention.core_reason, "runtime_invariant");
+  assert.equal(report.cold_start.v29_manifest_identity_preserved, true);
+  assert.equal(report.cold_start.v29_logical_authority_preserved, true);
+  assert.deepEqual(report.diagnostics.gui_combined_export, {
+    desktop_contract: "resume-ir.desktop-diagnostics.v2",
+    daemon_available_export: "verified",
+    daemon_unavailable_export: "verified",
+    daemon_down_lifecycle_state: "circuit_open",
+    native_save_dialog: "automated",
+    maximum_export_bytes: 256 * 1024,
+    file_permissions: "owner_only",
+  });
   assert.equal(report.cleanup, "temporary_clones_removed");
 
   const clones = runtime.calls
@@ -118,6 +261,10 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
     "fulltext-contention",
     "vector-contention",
     "fulltext-persistent-contention",
+    "stale-control",
+    "foreign-control",
+    "slow-initialization",
+    ...RUNTIME_FAULT_CASES.map(({ cell }) => cell),
   ]);
   assert.ok(
     runtime.calls.some(
@@ -126,8 +273,9 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
     ),
   );
   assert.equal(runtime.calls.at(-1)[0], "cleanup");
-  assert.deepEqual(runtime.calls.slice(0, 6), [
+  assert.deepEqual(runtime.calls.slice(0, 7), [
     ["preflight"],
+    ["fault-harness"],
     ["precheck-source-authority"],
     ["acceptance-lock"],
     ["bind-source-authority-after-lease"],
@@ -136,7 +284,12 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
   ]);
   for (let index = 0; index < runtime.calls.length; index += 1) {
     if (runtime.calls[index][0] === "launch") {
-      assert.equal(runtime.calls[index - 1][0], "verify");
+      const immediatelyBefore = runtime.calls[index - 1][0];
+      if (immediatelyBefore === "activate-fault") {
+        assert.equal(runtime.calls[index - 2][0], "verify");
+      } else {
+        assert.equal(immediatelyBefore, "verify");
+      }
     }
   }
   const launchCount = runtime.calls.filter(
@@ -165,6 +318,7 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
     ),
     [
       ["preflight"],
+      ["fault-harness"],
       ["precheck-source-authority"],
       ["acceptance-lock"],
       ["bind-source-authority-after-lease"],
@@ -214,13 +368,44 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
       ["quit", 4],
       ["zero-residue", 4],
       ["unlock", "fulltext-persistent-contention", "fulltext"],
+      ["clone", "stale-control"],
+      ["prepare-stale-control", "stale-control"],
       ["verify"],
-      ["launch", "cold-start", 5],
-      ["ready", 5],
-      ["recovery-evidence", 5, "ready-5"],
-      ["diagnostics", 5],
+      ["launch", "stale-control", 5],
+      ["validate-stale-control", 5],
       ["quit", 5],
       ["zero-residue", 5],
+      ["close-control-fixture", "stale"],
+      ["clone", "foreign-control"],
+      ["prepare-foreign-control", "foreign-control"],
+      ["verify"],
+      ["launch", "foreign-control", 6],
+      ["validate-foreign-control", 6],
+      ["quit", 6],
+      ["zero-residue", 6],
+      ["close-control-fixture", "foreign"],
+      ["clone", "slow-initialization"],
+      ["prepare-fault", "slow-initialization", "slow_initialization"],
+      ["verify"],
+      ["activate-fault", "slow-initialization", "slow_initialization"],
+      ["launch", "slow-initialization", 7],
+      ["validate-slow-initialization", 7],
+      ["quit", 7],
+      ["zero-residue", 7],
+      ["release-fault", "slow_initialization"],
+      ...runtimeFaultSequence.calls,
+      ["fault-coverage"],
+      ["verify"],
+      ["launch", "cold-start", runtimeFaultSequence.nextSessionId],
+      ["ready", runtimeFaultSequence.nextSessionId],
+      [
+        "recovery-evidence",
+        runtimeFaultSequence.nextSessionId,
+        `ready-${runtimeFaultSequence.nextSessionId}`,
+      ],
+      ["combined-diagnostics", runtimeFaultSequence.nextSessionId],
+      ["quit", runtimeFaultSequence.nextSessionId],
+      ["zero-residue", runtimeFaultSequence.nextSessionId],
       ["verify"],
       ["cleanup"],
     ],
@@ -232,6 +417,86 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
   assert.equal(publicBody.includes("47111"), false);
 });
 
+test("cannot issue a passing receipt when any required native control or fault cell is absent", async () => {
+  const cases = [
+    ["stale", "validateStaleControl", null],
+    ["foreign", "validateForeignControl", null],
+    ["slow", "validateSlowInitialization", null],
+    ["installed status", "validateRuntimeFaultCase", "embedding_invalid"],
+    [
+      "projected status",
+      "validateProjectedRuntimeFault",
+      "classifier_start_failed",
+    ],
+    [
+      "embedding behavior",
+      "validateEmbeddingFaultBehavior",
+      "embedding_missing",
+    ],
+    ["ocr behavior", "validateOcrFaultBehavior", "ocr_missing"],
+    [
+      "classifier behavior",
+      "validateClassifierFaultBehavior",
+      "classifier_missing",
+    ],
+  ];
+  for (const [label, method, selectedRuntime] of cases) {
+    const runtime = fakeRuntime();
+    const original = runtime[method].bind(runtime);
+    runtime[method] = async (...args) => {
+      if (
+        selectedRuntime === null ||
+        args.at(-1) === selectedRuntime
+      ) {
+        return undefined;
+      }
+      return original(...args);
+    };
+    await assert.rejects(
+      runInstalledMainAcceptance(options(), { runtime }),
+      /evidence_invalid/,
+      label,
+    );
+  }
+});
+
+test("cannot issue a passing receipt without both verified native diagnostics exports", async () => {
+  const runtime = fakeRuntime();
+  runtime.verifyCombinedDiagnosticsExport = async () => ({
+    desktopContract: "resume-ir.desktop-diagnostics.v2",
+    nativeSaveDialog: true,
+    ownerOnlyFile: true,
+    boundedBytes: 256 * 1024,
+    daemonAvailableState: "included",
+    daemonUnavailableState: "included",
+    daemonDownLifecycleState: "circuit_open",
+  });
+  await assert.rejects(
+    runInstalledMainAcceptance(options(), { runtime }),
+    /combined_diagnostics_evidence_invalid/,
+  );
+  assert.equal(runtime.calls.at(-1)[0], "cleanup");
+});
+
+test("the default CLI runtime wires the real external fault harness without touching the App", async () => {
+  const runtime = createNativeAcceptanceRuntime(options());
+  await runtime.requireInstalledFaultHarness();
+});
+
+test("an unactivated fault cell cannot produce a passing receipt", async () => {
+  const runtime = fakeRuntime();
+  const activate = runtime.activateFaultCell.bind(runtime);
+  runtime.activateFaultCell = async (clone) => {
+    if (clone.label === "classifier_missing") return;
+    await activate(clone);
+  };
+  await assert.rejects(
+    runInstalledMainAcceptance(options(), { runtime }),
+    /acceptance_internal_failure/,
+  );
+  assert.equal(runtime.calls.at(-1)[0], "cleanup");
+});
+
 test("source provenance is rechecked under the acceptance lease before recovery", async () => {
   const runtime = fakeRuntime({ failAt: "source-recheck" });
   await assert.rejects(
@@ -240,6 +505,7 @@ test("source provenance is rechecked under the acceptance lease before recovery"
   );
   assert.deepEqual(runtime.calls, [
     ["preflight"],
+    ["fault-harness"],
     ["precheck-source-authority"],
     ["acceptance-lock"],
     ["bind-source-authority-after-lease"],
@@ -259,6 +525,7 @@ test("read-only provenance fails before acceptance acquisition or stale recovery
   );
   assert.deepEqual(runtime.calls, [
     ["preflight"],
+    ["fault-harness"],
     ["precheck-source-authority"],
     ["cleanup"],
   ]);
@@ -286,6 +553,7 @@ test("a concurrent run that cannot acquire the acceptance lease never enters bui
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(runtime.calls, [
     ["preflight"],
+    ["fault-harness"],
     ["precheck-source-authority"],
     ["acceptance-lock"],
   ]);
@@ -297,6 +565,7 @@ test("a concurrent run that cannot acquire the acceptance lease never enters bui
   await assert.rejects(running, /acceptance_internal_failure/);
   assert.deepEqual(runtime.calls, [
     ["preflight"],
+    ["fault-harness"],
     ["precheck-source-authority"],
     ["acceptance-lock"],
     ["cleanup"],
@@ -341,6 +610,10 @@ test("every runtime mutation entrypoint revalidates the live lease and source au
     () => runtime.recoverInterruptedRuns(),
     () => runtime.prepareInstalledRelease(),
     () => runtime.createClone("synthetic"),
+    () => runtime.prepareStaleControl({}),
+    () => runtime.prepareForeignControl({}),
+    () => runtime.prepareFaultCell({}, "embedding_missing"),
+    () => runtime.prepareOcrFaultFixture({}),
     () => runtime.launchApp({}),
     () => runtime.createSyntheticCanary({}),
     () =>
@@ -353,6 +626,7 @@ test("every runtime mutation entrypoint revalidates the live lease and source au
     () => runtime.quitApp({}),
     () => runtime.holdPublicationLock({}, "fulltext"),
     () => runtime.releasePublicationLock({}),
+    () => runtime.releaseFaultCell({}),
   ];
   leaseValid = false;
   for (const mutate of mutationAttempts) {
@@ -394,7 +668,7 @@ test("requires the exact fulltext attempt-five blocked lane", async () => {
     error_kind: "fulltext_publication_busy",
     kind: "fulltext",
     phase: "blocked",
-    repair_reason: "runtime_invariant",
+    core_reason: "runtime_invariant",
     status: "expected_block_observed",
   });
   assert.equal(

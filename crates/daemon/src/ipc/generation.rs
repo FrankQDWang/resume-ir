@@ -2,13 +2,14 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::Arc;
 
 use meta_store::DataDirectoryOwnerLease;
 
 const AUTH_FILE: &str = "ipc.auth";
 const ENDPOINT_FILE: &str = "ipc.endpoints.json";
-const AUTH_SCHEMA_VERSION: &str = "resume-ir.daemon-auth.v2";
-pub(crate) const IPC_PROTOCOL_VERSION: &str = "resume-ir.daemon-ipc.v2";
+const AUTH_SCHEMA_VERSION: &str = "resume-ir.daemon-auth.v3";
+pub(crate) const IPC_PROTOCOL_VERSION: &str = "resume-ir.daemon-ipc.v3";
 const GENERATION_ID_BYTES: usize = 32;
 const OWNER_FILE_MAX_BYTES: u64 = 16 * 1024;
 
@@ -31,25 +32,34 @@ impl OwnerMode {
 }
 
 /// Owns generation-bound discovery artifacts under the process-wide metadata
-/// owner. The borrowed owner keeps the legacy daemon namespace locked until
+/// owner. The shared owner capability keeps the daemon namespace locked until
 /// every artifact from this generation has been removed.
-pub(crate) struct DaemonGenerationOwner<'owner> {
-    data_directory_owner: &'owner DataDirectoryOwnerLease,
+pub(crate) struct DaemonGenerationOwner {
+    data_directory_owner: Arc<DataDirectoryOwnerLease>,
+    launch_id: String,
     instance_id: String,
     auth_token: String,
     owner_mode: OwnerMode,
 }
 
-impl<'owner> DaemonGenerationOwner<'owner> {
+#[derive(Clone)]
+pub(crate) struct GenerationPublicationRevoker {
+    data_directory_owner: Arc<DataDirectoryOwnerLease>,
+    instance_id: String,
+}
+
+impl DaemonGenerationOwner {
     pub(crate) fn acquire(
-        data_directory_owner: &'owner DataDirectoryOwnerLease,
+        data_directory_owner: Arc<DataDirectoryOwnerLease>,
         owner_mode: OwnerMode,
+        launch_id: String,
     ) -> Result<Self, GenerationError> {
         let data_dir = data_directory_owner.canonical_data_dir();
         clear_stale_owner_file(&data_dir.join(ENDPOINT_FILE))?;
         clear_stale_owner_file(&data_dir.join(AUTH_FILE))?;
         Ok(Self {
             data_directory_owner,
+            launch_id,
             instance_id: random_hex(GENERATION_ID_BYTES)?,
             auth_token: random_hex(GENERATION_ID_BYTES)?,
             owner_mode,
@@ -60,16 +70,29 @@ impl<'owner> DaemonGenerationOwner<'owner> {
         &self.auth_token
     }
 
+    pub(crate) fn generate_launch_id() -> Result<String, GenerationError> {
+        random_hex(GENERATION_ID_BYTES)
+    }
+
+    pub(crate) fn publication_revoker(&self) -> GenerationPublicationRevoker {
+        GenerationPublicationRevoker {
+            data_directory_owner: Arc::clone(&self.data_directory_owner),
+            instance_id: self.instance_id.clone(),
+        }
+    }
+
     pub(crate) fn publish(&self, addr: SocketAddr) -> Result<(), GenerationError> {
         let data_dir = self.data_directory_owner.canonical_data_dir();
         let auth = serde_json::json!({
             "schema_version": AUTH_SCHEMA_VERSION,
+            "launch_id": self.launch_id,
             "instance_id": self.instance_id,
             "token": self.auth_token,
         })
         .to_string();
         let endpoints = serde_json::json!({
             "schema_version": IPC_PROTOCOL_VERSION,
+            "launch_id": self.launch_id,
             "instance_id": self.instance_id,
             "owner_mode": self.owner_mode.label(),
             "status": format!("http://{addr}/status"),
@@ -99,11 +122,17 @@ impl<'owner> DaemonGenerationOwner<'owner> {
     }
 }
 
-impl Drop for DaemonGenerationOwner<'_> {
-    fn drop(&mut self) {
+impl GenerationPublicationRevoker {
+    pub(crate) fn withdraw(&self) {
         let data_dir = self.data_directory_owner.canonical_data_dir();
         remove_if_owned(&data_dir.join(ENDPOINT_FILE), &self.instance_id);
         remove_if_owned(&data_dir.join(AUTH_FILE), &self.instance_id);
+    }
+}
+
+impl Drop for DaemonGenerationOwner {
+    fn drop(&mut self) {
+        self.publication_revoker().withdraw();
     }
 }
 
@@ -217,36 +246,43 @@ mod tests {
 
     use meta_store::{DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease};
 
-    use super::{DaemonGenerationOwner, GenerationError, OwnerMode};
+    use super::{
+        DaemonGenerationOwner, GenerationError, OwnerMode, AUTH_FILE, ENDPOINT_FILE,
+        OWNER_FILE_MAX_BYTES,
+    };
 
     #[test]
     fn owner_is_exclusive_and_generation_credentials_rotate() {
         let data_dir = temp_dir("exclusive");
-        let first_data_directory_owner = data_directory_owner(&data_dir);
-        let first =
-            DaemonGenerationOwner::acquire(&first_data_directory_owner, OwnerMode::Standalone)
-                .unwrap();
+        let first_data_directory_owner = std::sync::Arc::new(data_directory_owner(&data_dir));
+        let first = DaemonGenerationOwner::acquire(
+            std::sync::Arc::clone(&first_data_directory_owner),
+            OwnerMode::Standalone,
+            "1".repeat(64),
+        )
+        .unwrap();
         let first_instance = first.instance_id.clone();
         let first_token = first.auth_token.clone();
         assert!(matches!(
             DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap(),
             DataDirectoryOwnerAcquisition::Contended
         ));
+        drop(first_data_directory_owner);
         drop(first);
         assert!(matches!(
             DataDirectoryOwnerLease::try_acquire(&data_dir).unwrap(),
-            DataDirectoryOwnerAcquisition::Contended
+            DataDirectoryOwnerAcquisition::Acquired(_)
         ));
-        drop(first_data_directory_owner);
-
         let second_data_directory_owner = data_directory_owner(&data_dir);
-        let second =
-            DaemonGenerationOwner::acquire(&second_data_directory_owner, OwnerMode::Standalone)
-                .unwrap();
+        let second = DaemonGenerationOwner::acquire(
+            std::sync::Arc::new(second_data_directory_owner),
+            OwnerMode::Standalone,
+            "2".repeat(64),
+        )
+        .unwrap();
         assert_ne!(second.instance_id, first_instance);
         assert_ne!(second.auth_token, first_token);
         drop(second);
-        drop(second_data_directory_owner);
         let _ = fs::remove_dir_all(data_dir);
     }
 
@@ -254,15 +290,22 @@ mod tests {
     fn published_auth_and_manifest_share_generation_and_cleanup_is_owned() {
         let data_dir = temp_dir("publication");
         let data_directory_owner = data_directory_owner(&data_dir);
-        let owner =
-            DaemonGenerationOwner::acquire(&data_directory_owner, OwnerMode::DesktopSupervised)
-                .unwrap();
+        let owner = DaemonGenerationOwner::acquire(
+            std::sync::Arc::new(data_directory_owner),
+            OwnerMode::DesktopSupervised,
+            "a".repeat(64),
+        )
+        .unwrap();
         owner
             .publish("127.0.0.1:43111".parse::<SocketAddr>().unwrap())
             .unwrap();
         let auth = read_json(data_dir.join("ipc.auth"));
         let manifest = read_json(data_dir.join("ipc.endpoints.json"));
         assert_eq!(auth["instance_id"], manifest["instance_id"]);
+        assert_eq!(auth["schema_version"], "resume-ir.daemon-auth.v3");
+        assert_eq!(manifest["schema_version"], "resume-ir.daemon-ipc.v3");
+        assert_eq!(auth["launch_id"], "a".repeat(64));
+        assert_eq!(manifest["launch_id"], auth["launch_id"]);
         assert_eq!(manifest["owner_mode"], "desktop_supervised");
         assert_eq!(auth["token"], owner.auth_token);
 
@@ -278,7 +321,6 @@ mod tests {
             read_json(data_dir.join("ipc.endpoints.json"))["instance_id"],
             replacement_instance
         );
-        drop(data_directory_owner);
         let _ = fs::remove_dir_all(data_dir);
     }
 
@@ -289,14 +331,115 @@ mod tests {
         let data_directory_owner = data_directory_owner(&data_dir);
 
         assert_eq!(
-            DaemonGenerationOwner::acquire(&data_directory_owner, OwnerMode::Standalone)
-                .err()
-                .unwrap(),
+            DaemonGenerationOwner::acquire(
+                std::sync::Arc::new(data_directory_owner),
+                OwnerMode::Standalone,
+                "b".repeat(64),
+            )
+            .err()
+            .unwrap(),
             GenerationError::RuntimeIntegrity
         );
-
-        drop(data_directory_owner);
         let _ = fs::remove_dir_all(data_dir);
+    }
+
+    #[test]
+    fn stale_regular_control_files_are_removed_without_parsing() {
+        for (label, bytes) in [
+            ("half-written", b"{\"schema_version\":".to_vec()),
+            (
+                "oversize",
+                vec![b'x'; OWNER_FILE_MAX_BYTES.saturating_add(1) as usize],
+            ),
+        ] {
+            for file_name in [AUTH_FILE, ENDPOINT_FILE] {
+                let data_dir = temp_dir(&format!("{label}-{file_name}"));
+                let path = data_dir.join(file_name);
+                fs::write(&path, &bytes).unwrap();
+                let owner = DaemonGenerationOwner::acquire(
+                    std::sync::Arc::new(data_directory_owner(&data_dir)),
+                    OwnerMode::Standalone,
+                    "c".repeat(64),
+                )
+                .unwrap();
+
+                assert!(!path.exists());
+                drop(owner);
+                let _ = fs::remove_dir_all(data_dir);
+            }
+        }
+    }
+
+    #[test]
+    fn control_file_directories_fail_closed_without_modification() {
+        for file_name in [AUTH_FILE, ENDPOINT_FILE] {
+            let data_dir = temp_dir(&format!("directory-{file_name}"));
+            let path = data_dir.join(file_name);
+            fs::create_dir(&path).unwrap();
+            assert_integrity_failure(&data_dir);
+            assert!(path.is_dir());
+            let _ = fs::remove_dir_all(data_dir);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_fifo_and_socket_control_files_fail_closed_without_modification() {
+        use std::os::unix::fs::{symlink, FileTypeExt};
+        use std::os::unix::net::UnixListener;
+
+        use nix::sys::stat::Mode;
+        use nix::unistd::mkfifo;
+
+        for file_name in [AUTH_FILE, ENDPOINT_FILE] {
+            let symlink_dir = temp_dir(&format!("symlink-{file_name}"));
+            let target = symlink_dir.join("target");
+            fs::write(&target, b"foreign").unwrap();
+            let symlink_path = symlink_dir.join(file_name);
+            symlink(&target, &symlink_path).unwrap();
+            assert_integrity_failure(&symlink_dir);
+            assert!(fs::symlink_metadata(&symlink_path)
+                .unwrap()
+                .file_type()
+                .is_symlink());
+            assert_eq!(fs::read(&target).unwrap(), b"foreign");
+            let _ = fs::remove_dir_all(symlink_dir);
+
+            let fifo_dir = temp_dir(&format!("fifo-{file_name}"));
+            let fifo_path = fifo_dir.join(file_name);
+            mkfifo(&fifo_path, Mode::S_IRUSR | Mode::S_IWUSR).unwrap();
+            assert_integrity_failure(&fifo_dir);
+            assert!(fs::symlink_metadata(&fifo_path)
+                .unwrap()
+                .file_type()
+                .is_fifo());
+            let _ = fs::remove_dir_all(fifo_dir);
+
+            let socket_dir = short_socket_temp_dir();
+            let socket_path = socket_dir.join(file_name);
+            let listener = UnixListener::bind(&socket_path).unwrap();
+            assert_integrity_failure(&socket_dir);
+            assert!(fs::symlink_metadata(&socket_path)
+                .unwrap()
+                .file_type()
+                .is_socket());
+            drop(listener);
+            let _ = fs::remove_dir_all(socket_dir);
+        }
+    }
+
+    fn assert_integrity_failure(data_dir: &std::path::Path) {
+        let owner = data_directory_owner(data_dir);
+        assert_eq!(
+            DaemonGenerationOwner::acquire(
+                std::sync::Arc::new(owner),
+                OwnerMode::Standalone,
+                "d".repeat(64),
+            )
+            .err()
+            .unwrap(),
+            GenerationError::RuntimeIntegrity
+        );
     }
 
     fn data_directory_owner(data_dir: &std::path::Path) -> DataDirectoryOwnerLease {
@@ -319,6 +462,17 @@ mod tests {
             .as_nanos();
         let path =
             std::env::temp_dir().join(format!("resume-ir-daemon-generation-{label}-{unique}"));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    fn short_socket_temp_dir() -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = PathBuf::from("/tmp").join(format!("ri-gs-{}-{unique}", std::process::id()));
         fs::create_dir_all(&path).unwrap();
         path
     }

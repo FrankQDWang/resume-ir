@@ -105,6 +105,32 @@ impl SearchReply {
         }
     }
 
+    pub(super) fn write_capability_unavailable(
+        &mut self,
+        request_id: &str,
+        capability: &str,
+        reason: &str,
+    ) -> crate::Result<()> {
+        let body = capability_unavailable_body(request_id, capability, reason);
+        match self {
+            Self::Single { stream, completion } => {
+                let result = crate::ipc::response::write_http_response(
+                    stream,
+                    503,
+                    "application/json",
+                    &body,
+                )
+                .map_err(crate::DaemonError::response_sink);
+                complete_connection(completion, &result);
+                result
+            }
+            Self::Batch(reply) => {
+                reply.complete(503, &body);
+                Ok(())
+            }
+        }
+    }
+
     pub(super) fn write_overloaded(&mut self, request_id: &str) -> crate::Result<()> {
         let body = super::overload_body(request_id);
         match self {
@@ -319,21 +345,43 @@ fn response_body(response: SearchResponse) -> String {
 }
 
 pub(crate) fn error_body(request_id: &str, code: &str, _message: &str) -> String {
-    error_contract_body(request_id, code, error_action(code))
+    error_contract_body(request_id, code, error_action(code), None, None)
 }
 
 pub(crate) fn service_error_body(request_id: &str, code: crate::ipc::ServiceErrorCode) -> String {
-    error_contract_body(request_id, code.label(), code.action())
+    error_contract_body(request_id, code.label(), code.action(), None, None)
 }
 
-fn error_contract_body(request_id: &str, code: &str, action: &str) -> String {
+pub(crate) fn capability_unavailable_body(
+    request_id: &str,
+    capability: &str,
+    reason: &str,
+) -> String {
+    error_contract_body(
+        request_id,
+        "CAPABILITY_UNAVAILABLE",
+        "select_supported_mode",
+        Some(capability),
+        Some(reason),
+    )
+}
+
+fn error_contract_body(
+    request_id: &str,
+    code: &str,
+    action: &str,
+    capability: Option<&str>,
+    reason: Option<&str>,
+) -> String {
     serde_json::json!({
-        "schema_version": "resume-ir.error.v1",
+        "schema_version": "resume-ir.error.v2",
         "request_id": request_id,
         "status": "error",
         "error": {
             "code": code,
             "action": action,
+            "capability": capability,
+            "reason": reason,
         },
     })
     .to_string()
@@ -341,13 +389,15 @@ fn error_contract_body(request_id: &str, code: &str, action: &str) -> String {
 
 pub(crate) fn overload_body(request_id: &str) -> String {
     serde_json::json!({
-        "schema_version": "resume-ir.error.v1",
+        "schema_version": "resume-ir.error.v2",
         "request_id": request_id,
         "status": "error",
         "error": {
             "code": "OVERLOADED",
             "action": "retry",
             "retry_after_ms": 250,
+            "capability": serde_json::Value::Null,
+            "reason": serde_json::Value::Null,
         },
     })
     .to_string()
@@ -361,7 +411,7 @@ fn error_action(code: &str) -> &'static str {
         "LIMIT_EXCEEDED" => "reduce_page_size",
         "SEMANTIC_DISABLED" => "select_supported_mode",
         "REPAIRING" => "wait_for_repair",
-        "QUERY_SERVICE_UNAVAILABLE" => "retry",
+        "QUERY_SERVICE_UNAVAILABLE" => "repair_required",
         _ => "retry",
     }
 }

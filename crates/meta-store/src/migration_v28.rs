@@ -56,14 +56,6 @@ struct UpgradeSource {
     current_manifest: Option<ActiveStoreManifest>,
 }
 
-pub(super) fn validate_current_v28_store(
-    path: &Path,
-    key: &[u8],
-    store_id_digest: &str,
-) -> Result<()> {
-    validate_active_v28_store(path, key, store_id_digest)
-}
-
 pub(super) fn prepare_active_v28_store(
     owner: &Arc<DataDirectoryOwnerGuard>,
 ) -> Result<(PathBuf, [u8; METADATA_ENCRYPTION_KEY_LEN])> {

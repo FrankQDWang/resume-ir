@@ -5,14 +5,10 @@ use crate::{schema_v29, MetaStoreError, Result};
 use super::projection_validation::validate_active_projection_snapshot;
 
 #[path = "migration_v29_descriptor_records.rs"]
-mod records;
+pub(super) mod records;
 
 #[cfg(any(test, feature = "migration-test-support"))]
 pub(super) use records::legacy_fingerprint;
-#[cfg(test)]
-pub(super) use records::{
-    descriptor_contract, CURRENT_FULLTEXT_MANIFEST, CURRENT_VECTOR_INDEX, CURRENT_VECTOR_MANIFEST,
-};
 pub(super) use records::{
     parse_projection_digest, publication_descriptor_records, required_u64, DescriptorContract,
     PublicationDescriptorRecord, LEGACY_FULLTEXT_INDEX, LEGACY_FULLTEXT_MANIFEST,
@@ -207,6 +203,75 @@ pub(super) fn validate_active_head(
             .ok_or_else(MetaStoreError::storage_invariant)?,
         &publication.projection_digest,
     )
+}
+
+/// Validates the canonical current-v29 publication authority on every open.
+/// Historical descriptor parsing remains an initializer detail; an admitted
+/// v29 store may not retain a legacy descriptor as live authority.
+pub(super) fn validate_current_publication_authority(connection: &Connection) -> Result<()> {
+    let publications = publication_descriptor_records(connection)?;
+    if publications
+        .iter()
+        .any(|publication| publication.contract == DescriptorContract::Legacy)
+    {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    let head = connection
+        .query_row(
+            "SELECT service_state, generation, visible_epoch, repair_reason
+             FROM search_projection_state WHERE state_key = 'default'",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
+        )
+        .map_err(MetaStoreError::storage)?;
+    match head.1.as_deref() {
+        Some(generation) => {
+            let active_publications = publications
+                .iter()
+                .filter(|publication| {
+                    publication.generation == generation && publication.state == "ready"
+                })
+                .collect::<Vec<_>>();
+            let [publication] = active_publications.as_slice() else {
+                return Err(MetaStoreError::storage_invariant());
+            };
+            if publication.contract != DescriptorContract::Current {
+                return Err(MetaStoreError::storage_invariant());
+            }
+            validate_active_head(connection, &head, publication)
+        }
+        None => {
+            let valid_unpublished_head = matches!(
+                (head.0.as_str(), head.3.as_deref()),
+                ("repairing", Some("migration_rebuild"))
+                    | (
+                        "repair_blocked",
+                        Some("source_unavailable" | "runtime_invariant")
+                    )
+            );
+            let active_projection_count = connection
+                .query_row("SELECT COUNT(*) FROM active_search_projection", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .map_err(MetaStoreError::storage)?;
+            if !valid_unpublished_head
+                || publications
+                    .iter()
+                    .any(|publication| publication.state == "ready")
+                || active_projection_count != 0
+            {
+                return Err(MetaStoreError::storage_invariant());
+            }
+            Ok(())
+        }
+    }
 }
 
 fn insert_artifact_repair_context(

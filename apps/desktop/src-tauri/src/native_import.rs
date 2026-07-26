@@ -777,7 +777,7 @@ mod tests {
         let parent = temp_dir("private-export");
         let path = parent.join("redacted-diagnostics.json");
         let payload = serde_json::json!({
-            "schema_version": "resume-ir.desktop-diagnostics.v1",
+            "schema_version": "resume-ir.desktop-diagnostics.v2",
             "contains_resume_paths": false,
         });
 

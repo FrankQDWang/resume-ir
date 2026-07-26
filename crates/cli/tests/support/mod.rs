@@ -17,6 +17,8 @@ use meta_store::{
 
 pub const TEST_DAEMON_INSTANCE_ID: &str =
     "abababababababababababababababababababababababababababababababab";
+pub const TEST_DAEMON_LAUNCH_ID: &str =
+    "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
 
 pub fn create_store(data_dir: &Path) -> OwnedMetaStore {
     let owner = match DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
@@ -131,7 +133,8 @@ pub fn write_daemon_auth(path: &Path, token: &str) {
     fs::write(
         path,
         serde_json::json!({
-            "schema_version": "resume-ir.daemon-auth.v2",
+            "schema_version": "resume-ir.daemon-auth.v3",
+            "launch_id": TEST_DAEMON_LAUNCH_ID,
             "instance_id": TEST_DAEMON_INSTANCE_ID,
             "token": token.trim(),
         })
@@ -143,7 +146,8 @@ pub fn write_daemon_auth(path: &Path, token: &str) {
 pub fn write_daemon_discovery(data_dir: &Path, addr: SocketAddr, token: &str) {
     fs::create_dir_all(data_dir).expect("create daemon discovery fixture directory");
     let manifest = serde_json::json!({
-        "schema_version": "resume-ir.daemon-ipc.v2",
+        "schema_version": "resume-ir.daemon-ipc.v3",
+        "launch_id": TEST_DAEMON_LAUNCH_ID,
         "instance_id": TEST_DAEMON_INSTANCE_ID,
         "owner_mode": "standalone",
         "status": format!("http://{addr}/status"),
@@ -163,7 +167,61 @@ pub fn write_daemon_discovery(data_dir: &Path, addr: SocketAddr, token: &str) {
 }
 
 pub fn ready_daemon_status_body() -> &'static str {
-    "{\"schema_version\":\"daemon.status.v2\",\"status\":\"ok\",\"process_state\":\"ready\",\"index_health\":\"ready\"}"
+    r#"{
+        "schema_version":"daemon.status.v3",
+        "status":"ok",
+        "process_state":"ready",
+        "core":{"state":"ready","reason":null},
+        "optional_runtimes":{
+            "embedding":{"state":"available","reason":null},
+            "ocr":{"state":"available","reason":null},
+            "classifier":{"state":"available","reason":null}
+        },
+        "capabilities":{
+            "keyword_search":{"state":"available","reason":null},
+            "detail":{"state":"available","reason":null},
+            "semantic_search":{"state":"available","reason":null},
+            "hybrid_search":{"state":"available","reason":null},
+            "text_import":{"state":"available","reason":null},
+            "ocr_import":{"state":"available","reason":null},
+            "index_publication":{"state":"available","reason":null}
+        },
+        "error":null,
+        "repair_progress":null,
+        "indexed_documents":4,
+        "searchable_documents":3,
+        "partial_documents":1,
+        "visible_epoch":7,
+        "failed_retryable":0,
+        "failed_permanent":0,
+        "recovery_queue_depth":0,
+        "ocr_queue_depth":0,
+        "ocr_jobs_queued":0,
+        "ocr_page_budget_blocked":0,
+        "ocr_remediation":"none",
+        "ocr_language_unavailable":0,
+        "ocr_language_remediation":"none",
+        "embedding_queue_depth":0,
+        "entity_mentions":8,
+        "import_tasks_queued":0,
+        "import_tasks_recoverable":0,
+        "import_tasks_cancelled":0,
+        "import_scan_scopes":1,
+        "import_scan_errors":0,
+        "query_latency":{
+            "sample_count":1,
+            "p50_ms":2.0,
+            "p95_ms":3.0,
+            "p99_ms":4.0,
+            "last_result_count":1,
+            "raw_queries":"<redacted>"
+        },
+        "latest_import_scan":null,
+        "active_profile":"balanced",
+        "index_health":"ready",
+        "snapshot_present":true,
+        "ipc":{"accepted":2,"completed":2,"client_disconnect":0,"request_failure":0,"response_failure":0}
+    }"#
 }
 
 pub fn import_text_resumes<N: AsRef<str>, T: AsRef<str>>(

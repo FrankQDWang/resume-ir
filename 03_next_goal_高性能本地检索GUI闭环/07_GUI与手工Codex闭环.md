@@ -530,3 +530,26 @@ already-rendered content but stops pagination until explicit resume;
 `STALE_SELECTION` clears private detail/path/body state while retaining the
 result list and requiring a fresh search. Existing four-card density remains a
 visual acceptance constraint.
+
+## 15. 2026-07-21 lifecycle v2 and health projection
+
+The current lifecycle wire contract is
+`resume-ir.desktop-daemon-lifecycle.v2`; lifecycle receipts and combined desktop
+diagnostics are v2. The only lifecycle states are
+`starting|running|retry_wait|circuit_open|blocked`, each paired with a strict
+closed transition reason. `recovering`, restart-ledger fields, v1 receipts, and
+policy recovery from diagnostic output are removed.
+
+The WebView projects four independent axes: process lifecycle, daemon core,
+three optional runtimes, and operation capabilities. Buttons are authorized by
+capability, never by an aggregate Ready label. A lifecycle invoke/validation
+failure enters `bridge_error` and immediately revokes all actions derived from
+the previous snapshot. A status failure enters `service_unknown`; it may not
+display cached Ready or Starting. `blocked` and `circuit_open` show one explicit
+"重新检测并启动" action; every other state rejects manual retry with typed
+`retry_not_allowed`.
+
+Combined diagnostics remain exportable when the daemon is unavailable. They
+contain only the bounded lifecycle receipt, daemon-diagnostics availability,
+and redacted aggregates. They do not contain raw bridge errors, paths, tokens,
+manifests, runtime payloads, queries, results, or private data.

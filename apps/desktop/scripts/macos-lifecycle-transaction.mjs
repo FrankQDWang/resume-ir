@@ -178,8 +178,8 @@ function tombstoneContracts(operation) {
       target: ["install_before_target_cleanup", "install_target_tombstoned"],
     };
   }
-  if (["reinstall", "upgrade"].includes(operation)) {
-    const prefix = operation;
+  if (operation === "reinstall") {
+    const prefix = "reinstall";
     return {
       stage: [
         `${prefix}_before_stage_cleanup`,
@@ -399,7 +399,7 @@ async function finishReplacementCommit(
   const prefix = options.journal.operation;
   if (state.targetKind === "old") {
     if (state.backupPresent || !state.stagePresent) {
-      throw transactionError("upgrade transaction state is ambiguous");
+      throw transactionError("replacement transaction state is ambiguous");
     }
     await options.verifyOld(options.target, options.journal);
     await tx.phase(`${prefix}_before_backup`);
@@ -419,7 +419,7 @@ async function finishReplacementCommit(
   }
   if (!state.targetPresent) {
     if (!state.backupPresent || !state.stagePresent) {
-      throw transactionError("upgrade transaction state is ambiguous");
+      throw transactionError("replacement transaction state is ambiguous");
     }
     await options.verifyNew(paths.stage, options.journal);
     await tx.phase(`${prefix}_before_promotion`);
@@ -430,7 +430,7 @@ async function finishReplacementCommit(
       move: dependencies.move,
       directory: options.applicationsRoot,
       syncDirectory: dependencies.syncDirectory,
-      message: "upgrade promotion failed",
+      message: "replacement promotion failed",
     });
     state.targetPresent = true;
     state.stagePresent = false;
@@ -438,7 +438,7 @@ async function finishReplacementCommit(
     await tx.phase(`${prefix}_target_promoted`);
   }
   if (state.targetKind !== "new" || state.stagePresent) {
-    throw transactionError("upgrade transaction state is ambiguous");
+    throw transactionError("replacement transaction state is ambiguous");
   }
   await options.verifyNew(options.target, options.journal);
   await options.register(options.target);
@@ -466,48 +466,6 @@ async function finishReplacementCommit(
     ]).has(tx.journal.phase)
   ) {
     await tx.phase(`${prefix}_receipt_committed`);
-  }
-  if (options.readReceiptSet || options.removeLegacyReceipt) {
-    if (
-      typeof options.readReceiptSet !== "function" ||
-      typeof options.removeLegacyReceipt !== "function"
-    ) {
-      throw transactionError("legacy receipt migration contract is incomplete");
-    }
-    let receiptSet = await options.readReceiptSet();
-    if (
-      !sameReceipt(receiptSet.current_receipt, options.journal.new_receipt) ||
-      !["both_valid", "current_only"].includes(receiptSet.state)
-    ) {
-      throw transactionError("lifecycle receipt does not match journal");
-    }
-    if (receiptSet.state === "both_valid") {
-      if (!sameReceipt(receiptSet.legacy_receipt, options.journal.old_receipt)) {
-        throw transactionError("lifecycle receipt does not match journal");
-      }
-      await tx.phase("upgrade_before_legacy_receipt_removal");
-      await options.removeLegacyReceipt({
-        applicationSupportRoot: options.applicationSupportRoot,
-        expectedReceipt: options.journal.old_receipt,
-      });
-      receiptSet = await options.readReceiptSet();
-      if (
-        receiptSet.state !== "current_only" ||
-        !sameReceipt(receiptSet.current_receipt, options.journal.new_receipt)
-      ) {
-        throw transactionError("legacy receipt removal is incomplete");
-      }
-      await tx.phase("upgrade_legacy_receipt_removed");
-    } else if (
-      !new Set([
-        "upgrade_legacy_receipt_removed",
-        "upgrade_before_backup_cleanup",
-        "upgrade_backup_tombstoned",
-        "upgrade_complete",
-      ]).has(tx.journal.phase)
-    ) {
-      await tx.phase("upgrade_legacy_receipt_removed");
-    }
   }
   if (state.backupPresent) {
     await quarantineAndGc({
@@ -547,7 +505,7 @@ async function recoverReplacementTransaction(options, operation) {
   const state = await classifyReplacementState(options, paths);
   if (state.targetKind === "old") {
     if (state.backupPresent || !sameReceipt(receipt, options.journal.old_receipt)) {
-      throw transactionError("upgrade transaction state is ambiguous");
+      throw transactionError("replacement transaction state is ambiguous");
     }
     if (!state.stagePresent) {
       await tx.finish(`${operation}_complete`);
@@ -555,11 +513,11 @@ async function recoverReplacementTransaction(options, operation) {
     }
   } else if (!state.targetPresent) {
     if (!state.backupPresent) {
-      throw transactionError("upgrade transaction state is ambiguous");
+      throw transactionError("replacement transaction state is ambiguous");
     }
     if (!state.stagePresent) {
       if (!sameReceipt(receipt, options.journal.old_receipt)) {
-        throw transactionError("upgrade transaction state is ambiguous");
+        throw transactionError("replacement transaction state is ambiguous");
       }
       await tx.phase(`${operation}_before_restore`);
       await options.verifyOld(paths.backup, options.journal);
@@ -577,16 +535,12 @@ async function recoverReplacementTransaction(options, operation) {
     }
   } else if (state.targetKind === "new") {
     if (state.stagePresent) {
-      throw transactionError("upgrade transaction state is ambiguous");
+      throw transactionError("replacement transaction state is ambiguous");
     }
   } else {
-    throw transactionError("upgrade transaction state is ambiguous");
+    throw transactionError("replacement transaction state is ambiguous");
   }
   return finishReplacementCommit(options, tx, state, dependencies, paths);
-}
-
-export function recoverUpgradeTransaction(options) {
-  return recoverReplacementTransaction(options, "upgrade");
 }
 
 export function recoverReinstallTransaction(options) {
@@ -619,11 +573,11 @@ async function rollbackReplacementTransaction(options, operation) {
   }
   if (state.targetKind === "old") {
     if (state.backupPresent) {
-      throw transactionError("upgrade transaction state is ambiguous");
+      throw transactionError("replacement transaction state is ambiguous");
     }
   } else if (state.targetKind === "new") {
     if (!state.backupPresent || state.stagePresent) {
-      throw transactionError("upgrade transaction state is ambiguous");
+      throw transactionError("replacement transaction state is ambiguous");
     }
     await options.verifyNew(options.target, options.journal);
     await options.unregister(options.target);
@@ -640,7 +594,7 @@ async function rollbackReplacementTransaction(options, operation) {
     state.targetPresent = false;
     state.targetKind = undefined;
   } else if (!state.backupPresent) {
-    throw transactionError("upgrade transaction state is ambiguous");
+    throw transactionError("replacement transaction state is ambiguous");
   }
   if (state.stagePresent) {
     await quarantineAndGc({
@@ -671,10 +625,6 @@ async function rollbackReplacementTransaction(options, operation) {
   }
   await tx.finish(`${operation}_complete`);
   return { outcome: "rolled_back", journal: tx.journal };
-}
-
-export function rollbackUpgradeTransaction(options) {
-  return rollbackReplacementTransaction(options, "upgrade");
 }
 
 export function rollbackReinstallTransaction(options) {

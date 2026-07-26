@@ -1,3 +1,4 @@
+#[cfg(any(test, feature = "migration-test-support"))]
 use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{self, ErrorKind};
@@ -50,6 +51,7 @@ impl Drop for ImportTaskOwnerLock {
     }
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 pub(crate) fn acquire_legacy_task_locks(
     data_dir: &Path,
     task_ids: impl IntoIterator<Item = String>,

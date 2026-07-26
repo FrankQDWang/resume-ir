@@ -1,15 +1,11 @@
 import { invoke } from "@tauri-apps/api/core"
 
-import type { DaemonLifecycleSnapshot } from "./runtime-state"
+import { isDiagnosticsReply, isStatusReply } from "./daemon-contract"
+import { isDaemonLifecycleSnapshot, type DaemonLifecycleSnapshot } from "./runtime-state"
 
 export interface DaemonReply<T> {
   http_status: number
   body: T
-}
-
-export interface DaemonErrorBody {
-  schema_version: "daemon.error.v1"
-  status: "unauthorized" | "bad_request" | "conflict" | "not_found" | "too_large" | "internal"
 }
 
 export interface BridgeError {
@@ -32,38 +28,48 @@ export interface SearchHit {
   snippet: string
 }
 
-export type DaemonServiceState = "ready" | "degraded" | "repairing" | "unavailable"
-export type SearchRepairReason = "migration_rebuild" | "artifact_unavailable" | "source_unavailable" | "runtime_invariant"
-export type ArtifactRepairAttemptErrorKind =
-  | "fulltext_publication_busy"
-  | "fulltext_failure"
-  | "vector_publication_busy"
-  | "vector_failure"
-  | "metadata_failure"
-  | "interrupted"
+export type CoreState = "initializing" | "ready" | "repairing" | "degraded" | "blocked"
+export type CoreReason = "metadata_initializing" | "migration_rebuild" | "artifact_unavailable" | "source_unavailable" | "runtime_invariant" | "unsupported_store_schema" | "metadata_unavailable"
+export type OptionalRuntimeState = "initializing" | "available" | "unavailable"
+export type OptionalRuntimeReason = "missing" | "invalid" | "start_failed" | "not_configured"
+export type CapabilityState = "initializing" | "available" | "degraded" | "unavailable" | "blocked"
+export type CapabilityReason = "core_initializing" | "core_blocked" | "embedding_unavailable" | "ocr_unavailable" | "classifier_unavailable"
+export type CapabilityName = "keyword_search" | "detail" | "semantic_search" | "hybrid_search" | "text_import" | "ocr_import" | "index_publication"
+
+export interface OptionalRuntimeStatus {
+  state: OptionalRuntimeState
+  reason: OptionalRuntimeReason | null
+}
+
+export interface CapabilityStatus {
+  state: CapabilityState
+  reason: CapabilityReason | null
+}
 
 export interface RepairProgress {
   phase: "queued" | "migration_rebuild" | "source_unavailable" | "rebuilding" | "retry_wait" | "blocked"
   attempt: number | null
   max_attempts: number | null
   retry_after_ms: number | null
-  last_error_kind: ArtifactRepairAttemptErrorKind | null
+  last_error_kind: "fulltext_publication_busy" | "fulltext_failure" | "vector_publication_busy" | "vector_failure" | "metadata_failure" | "interrupted" | null
 }
 
 export interface DaemonServiceError {
-  code: "UNAUTHORIZED" | "BAD_REQUEST" | "CONFLICT" | "NOT_FOUND" | "STALE_SELECTION" | "RESPONSE_TOO_LARGE" | "LIMIT_EXCEEDED" | "SEMANTIC_DISABLED" | "REPAIRING" | "METADATA_UNAVAILABLE" | "QUERY_SERVICE_UNAVAILABLE" | "OVERLOADED" | "INTERNAL"
-  action: "authenticate" | "correct_request" | "refresh_search" | "reduce_page_size" | "select_supported_mode" | "wait_for_repair" | "retry" | "repair_required"
+  code: "UNAUTHORIZED" | "BAD_REQUEST" | "CONFLICT" | "NOT_FOUND" | "STALE_SELECTION" | "RESPONSE_TOO_LARGE" | "LIMIT_EXCEEDED" | "SEMANTIC_DISABLED" | "REPAIRING" | "METADATA_UNAVAILABLE" | "QUERY_SERVICE_UNAVAILABLE" | "OVERLOADED" | "INTERNAL" | "SERVICE_INITIALIZING" | "SERVICE_BLOCKED" | "CAPABILITY_UNAVAILABLE"
+  action: "authenticate" | "correct_request" | "refresh_search" | "reduce_page_size" | "select_supported_mode" | "wait_for_repair" | "wait_for_service" | "retry" | "repair_required"
   retry_after_ms?: number
+  capability: CapabilityName | null
+  reason: CoreReason | CapabilityReason | null
 }
 
 export interface DaemonServiceErrorBody {
-  schema_version: "resume-ir.error.v1"
+  schema_version: "resume-ir.error.v2"
   request_id?: string
   status: "error"
   error: DaemonServiceError
 }
 
-export type DaemonFailureBody = DaemonErrorBody | DaemonServiceErrorBody
+export type DaemonFailureBody = DaemonServiceErrorBody
 
 export interface IpcMetrics {
   accepted: number
@@ -74,15 +80,27 @@ export interface IpcMetrics {
 }
 
 export interface StatusBody {
-  schema_version: "daemon.status.v2"
-  status: "ok" | "repairing" | "degraded"
+  schema_version: "daemon.status.v3"
+  status: "initializing" | "ok" | "repairing" | "degraded" | "blocked"
   process_state: "ready"
-  service_state: DaemonServiceState
-  services: {
-    metadata: "ready" | "unavailable"
-    query: "ready" | "repairing" | "unavailable"
+  core: {
+    state: CoreState
+    reason: CoreReason | null
   }
-  repair_reason: SearchRepairReason | null
+  optional_runtimes: {
+    embedding: OptionalRuntimeStatus
+    ocr: OptionalRuntimeStatus
+    classifier: OptionalRuntimeStatus
+  }
+  capabilities: {
+    keyword_search: CapabilityStatus
+    detail: CapabilityStatus
+    semantic_search: CapabilityStatus
+    hybrid_search: CapabilityStatus
+    text_import: CapabilityStatus
+    ocr_import: CapabilityStatus
+    index_publication: CapabilityStatus
+  }
   repair_progress: RepairProgress | null
   error: DaemonServiceError | null
   indexed_documents: number | null
@@ -93,24 +111,51 @@ export interface StatusBody {
   failed_permanent: number | null
   recovery_queue_depth: number | null
   ocr_queue_depth: number | null
+  ocr_jobs_queued: number | null
+  ocr_page_budget_blocked: number | null
+  ocr_remediation: "none" | "raise OCR max pages per document or skip oversized scanned PDFs" | null
+  ocr_language_unavailable: number | null
+  ocr_language_remediation: "none" | "install requested OCR language packs or choose an installed OCR language" | null
   embedding_queue_depth: number | null
   entity_mentions: number | null
   import_tasks_queued: number | null
+  import_tasks_recoverable: number | null
+  import_tasks_cancelled: number | null
+  import_scan_scopes: number | null
+  import_scan_errors: number | null
+  query_latency: null | {
+    sample_count: number
+    p50_ms: number | null
+    p95_ms: number | null
+    p99_ms: number | null
+    last_result_count: number | null
+    raw_queries: "<redacted>"
+  }
   index_health: "empty" | "building" | "ready" | "stale" | null
   latest_import_scan: null | {
+    scan_profile: "explicit" | "discovery"
     files_discovered: number
+    ignored_entries: number
+    scan_errors: number
     searchable_documents: number
     ocr_required_documents: number
+    ocr_jobs_queued: number
     failed_documents: number
+    deleted_documents: number
+    scan_budget_observed: number | null
+    scan_budget_limit: number | null
+    scan_budget_exhausted: boolean
   }
+  active_profile: "balanced" | null
+  snapshot_present: boolean | null
   ipc: IpcMetrics
 }
 
 export function daemonHealth(reply: DaemonReply<StatusBody | DaemonFailureBody>): "ok" | "degraded" {
   return reply.http_status === 200
-    && reply.body.schema_version === "daemon.status.v2"
+    && reply.body.schema_version === "daemon.status.v3"
     && reply.body.status === "ok"
-    && reply.body.service_state === "ready"
+    && reply.body.core.state === "ready"
     ? "ok"
     : "degraded"
 }
@@ -156,8 +201,7 @@ export function searchDeadlineMs(mode: "keyword" | "field" | "hybrid" | "semanti
 }
 
 export function searchOutcome(reply: DaemonReply<SearchBody | DaemonFailureBody>): SearchOutcome {
-  if (reply.body.schema_version === "daemon.error.v1") return "error"
-  if (reply.body.schema_version === "resume-ir.error.v1") return reply.body.error.code === "OVERLOADED" ? "overload" : "error"
+  if (reply.body.schema_version === "resume-ir.error.v2") return reply.body.error.code === "OVERLOADED" ? "overload" : "error"
   if (reply.body.status === "cancelled") return "cancelled"
   if (reply.http_status < 200 || reply.http_status >= 300) return "error"
   if (reply.body.partial) return "partial"
@@ -238,10 +282,9 @@ export interface ImportBody {
 export type ManagedRootScanOutcome = "queued" | "pending" | "active" | "error"
 
 export function managedRootScanOutcome(reply: DaemonReply<ImportBody | DaemonFailureBody>): ManagedRootScanOutcome {
-  if (reply.body.schema_version === "daemon.error.v1") {
-    return reply.body.status === "conflict" ? "active" : "error"
+  if (reply.body.schema_version === "resume-ir.error.v2") {
+    return reply.http_status === 409 && reply.body.error.code === "CONFLICT" ? "active" : "error"
   }
-  if (reply.body.schema_version === "resume-ir.error.v1") return "error"
   if (reply.http_status < 200 || reply.http_status >= 300) return "error"
   return reply.body.new_tasks === 1 ? "queued" : "pending"
 }
@@ -258,16 +301,15 @@ export interface ManagedRootControlBody {
 }
 
 export function managedRootControlOutcome(reply: DaemonReply<ManagedRootControlBody | DaemonFailureBody>): ManagedRootControlOutcome {
-  if (reply.body.schema_version === "daemon.error.v1") {
-    return reply.http_status === 404 && reply.body.status === "not_found" ? "unmanaged" : "error"
+  if (reply.body.schema_version === "resume-ir.error.v2") {
+    return reply.http_status === 404 && reply.body.error.code === "NOT_FOUND" ? "unmanaged" : "error"
   }
-  if (reply.body.schema_version === "resume-ir.error.v1") return "error"
   if (reply.http_status < 200 || reply.http_status >= 300) return "error"
   return reply.body.status
 }
 
 export interface DiagnosticsBody {
-  schema_version: "resume-ir.diagnostics.v3"
+  schema_version: "resume-ir.diagnostics.v4"
   privacy_boundary: "redacted_local_aggregate"
   evidence_lane: "gui_manual"
   evidence_status: "unaccepted"
@@ -278,12 +320,24 @@ export interface DiagnosticsBody {
   contains_snippet_text: false
   visible_epoch: number | null
   process_state: "ready"
-  service_state: DaemonServiceState
-  services: {
-    metadata: "ready" | "unavailable"
-    query: "ready" | "repairing" | "unavailable"
+  core: {
+    state: CoreState
+    reason: CoreReason | null
   }
-  repair_reason: SearchRepairReason | null
+  optional_runtimes: {
+    embedding: OptionalRuntimeStatus
+    ocr: OptionalRuntimeStatus
+    classifier: OptionalRuntimeStatus
+  }
+  capabilities: {
+    keyword_search: CapabilityStatus
+    detail: CapabilityStatus
+    semantic_search: CapabilityStatus
+    hybrid_search: CapabilityStatus
+    text_import: CapabilityStatus
+    ocr_import: CapabilityStatus
+    index_publication: CapabilityStatus
+  }
   repair_progress: RepairProgress | null
   error: DaemonServiceError | null
   metrics: {
@@ -298,7 +352,7 @@ export interface DiagnosticsBody {
     import_tasks_recoverable: number | null
     import_tasks_cancelled: number | null
     query_latency: null | {
-      sample_count: number
+      sample_count: number | null
       p50_ms: number | null
       p95_ms: number | null
       p99_ms: number | null
@@ -326,16 +380,24 @@ export interface SearchCancelBody {
   status: "cancelled" | "cancel_requested" | "complete"
 }
 
-export async function readStatus(): Promise<DaemonReply<StatusBody | DaemonFailureBody>> {
-  return invoke<DaemonReply<StatusBody | DaemonFailureBody>>("daemon_request", {
+export async function readStatus(): Promise<DaemonReply<StatusBody>> {
+  const reply = await invoke<unknown>("daemon_request", {
     request: { operation: "status" },
   })
+  if (!isStatusReply(reply)) throw contractFailure("daemon status v3 合同无效")
+  return reply
 }
 
-export async function readDiagnostics(): Promise<DaemonReply<DiagnosticsBody | DaemonFailureBody>> {
-  return invoke<DaemonReply<DiagnosticsBody | DaemonFailureBody>>("daemon_request", {
+export async function readDiagnostics(): Promise<DaemonReply<DiagnosticsBody>> {
+  const reply = await invoke<unknown>("daemon_request", {
     request: { operation: "diagnostics" },
   })
+  if (!isDiagnosticsReply(reply)) throw contractFailure("daemon diagnostics v4 合同无效")
+  return reply
+}
+
+function contractFailure(message: string): BridgeError {
+  return { code: "daemon_contract", message }
 }
 
 export async function searchResumes(body: SearchRequestBody): Promise<DaemonReply<SearchBody | DaemonFailureBody>> {
@@ -371,11 +433,15 @@ export async function requestSearchCancel(requestId: string, cancelToken: string
 }
 
 export async function getDaemonLifecycle(): Promise<DaemonLifecycleSnapshot> {
-  return invoke<DaemonLifecycleSnapshot>("get_daemon_lifecycle")
+  const snapshot = await invoke<unknown>("get_daemon_lifecycle")
+  if (!isDaemonLifecycleSnapshot(snapshot)) throw contractFailure("desktop lifecycle v2 合同无效")
+  return snapshot
 }
 
 export async function retryDaemon(): Promise<DaemonLifecycleSnapshot> {
-  return invoke<DaemonLifecycleSnapshot>("retry_daemon")
+  const snapshot = await invoke<unknown>("retry_daemon")
+  if (!isDaemonLifecycleSnapshot(snapshot)) throw contractFailure("desktop lifecycle v2 合同无效")
+  return snapshot
 }
 
 export async function hydrateDetail(requestId: string, selection: SearchSelection, bodyOffsetBytes: number): Promise<DaemonReply<DetailHydrateBody | DaemonFailureBody>> {
@@ -449,6 +515,9 @@ export function bridgeFailureKind(error: unknown): BridgeFailureKind {
     || projected.code === "REPAIRING"
     || projected.code === "METADATA_UNAVAILABLE"
     || projected.code === "QUERY_SERVICE_UNAVAILABLE"
+    || projected.code === "SERVICE_INITIALIZING"
+    || projected.code === "SERVICE_BLOCKED"
+    || projected.code === "CAPABILITY_UNAVAILABLE"
   ) return "unavailable"
   if (projected.code === "STALE_SELECTION") return "stale_selection"
   if (projected.code === "NOT_FOUND") return "selection_missing"

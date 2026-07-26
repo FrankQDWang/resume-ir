@@ -6,7 +6,10 @@ use crate::command_failure::CommandFailure;
 
 use super::super::protocol::Request;
 use super::super::ServiceErrorCode;
-use super::{authorized, unauthorized_body, write, write_service_unavailable, RouteResult};
+use super::{
+    authorized, unauthorized_body, unified_error_body, write, write_service_unavailable,
+    RouteResult,
+};
 
 pub(super) fn handle(
     store: &OwnedMetaStore,
@@ -45,12 +48,18 @@ fn write_error(
     status: &str,
     message: Option<&str>,
 ) -> RouteResult {
-    let mut body = serde_json::json!({
-        "schema_version": "daemon.error.v1",
-        "status": status,
-    });
-    if let Some(message) = message {
-        body["message"] = serde_json::json!(message);
-    }
-    write(stream, status_code, "application/json", &body.to_string())
+    let _ = message;
+    let (code, action) = match status {
+        "bad_request" => ("BAD_REQUEST", "correct_request"),
+        "conflict" => ("CONFLICT", "retry"),
+        "not_found" => ("NOT_FOUND", "refresh_search"),
+        "too_large" => ("LIMIT_EXCEEDED", "reduce_page_size"),
+        _ => ("INTERNAL", "retry"),
+    };
+    write(
+        stream,
+        status_code,
+        "application/json",
+        &unified_error_body(None, code, action),
+    )
 }

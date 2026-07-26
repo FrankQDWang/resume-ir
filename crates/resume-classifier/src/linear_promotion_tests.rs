@@ -22,6 +22,18 @@ fn write_artifact(model: ArtifactModel) -> tempfile::NamedTempFile {
     file
 }
 
+#[test]
+fn attested_bundled_bytes_do_not_depend_on_the_source_path_after_loading() {
+    let artifact = write_artifact(synthetic_model());
+    let bytes = fs::read(artifact.path()).unwrap();
+    let policy = LinearPromotionPolicy::load_attested_bundled_bytes(&bytes);
+    assert!(policy.enabled());
+
+    fs::write(artifact.path(), b"replaced-after-attestation").unwrap();
+    assert!(policy.enabled());
+    assert!(!LinearPromotionPolicy::load_attested_bundled_bytes(b"invalid").enabled());
+}
+
 fn synthetic_model() -> ArtifactModel {
     ArtifactModel {
         schema: ARTIFACT_SCHEMA.to_string(),

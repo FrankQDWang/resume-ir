@@ -21,6 +21,7 @@ import {
 import {
   persistInstallReceipt,
   readInstallReceipt,
+  validateInstallReceipt,
 } from "./macos-install-receipt.mjs";
 import { readLifecycleJournal } from "./macos-lifecycle-journal.mjs";
 import {
@@ -32,6 +33,11 @@ import { prepareOwnerEvidenceDirectory } from "./macos-owner-evidence-store.mjs"
 import { withVerifiedMacosDmg } from "./verify-macos-dmg.mjs";
 
 const SOURCE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
+const SOURCE = Object.freeze({
+  authority: "worktree_snapshot",
+  base_commit: SOURCE_COMMIT,
+  source_tree_sha256: "a".repeat(64),
+});
 
 const EXPECTED_APP = {
   bundle_id: "local.resume-ir.desktop",
@@ -42,9 +48,9 @@ const EXPECTED_APP = {
 
 function dmgReceipt() {
   return {
-    schema_version: "resume-ir.macos-dmg-composition.v2",
+    schema_version: "resume-ir.macos-dmg-composition.v3",
     target_triple: "aarch64-apple-darwin",
-    source_commit: SOURCE_COMMIT,
+    source: SOURCE,
     dmg_count: 1,
     app_bundle_count: 1,
     digest_match: true,
@@ -69,7 +75,7 @@ function compositionReceipt(version = EXPECTED_APP.version) {
     bundle_id: EXPECTED_APP.bundle_id,
     version,
     target_triple: "aarch64-apple-darwin",
-    source_commit: SOURCE_COMMIT,
+    source: SOURCE,
     composition_digest: dmgReceipt().app_composition_digest,
   };
 }
@@ -77,11 +83,11 @@ function compositionReceipt(version = EXPECTED_APP.version) {
 function installReceipt(version = EXPECTED_APP.version) {
   const composition = compositionReceipt(version);
   return {
-    schema_version: "resume-ir.macos-install-receipt.v2",
+    schema_version: "resume-ir.macos-install-receipt.v3",
     bundle_id: composition.bundle_id,
     version,
     target_triple: composition.target_triple,
-    source_commit: SOURCE_COMMIT,
+    source: SOURCE,
     composition_digest: composition.composition_digest,
     dmg_sha256: dmgReceipt().dmg_sha256,
   };
@@ -246,11 +252,11 @@ test("installs only after DMG verification and emits a bounded receipt", async (
   assert.equal(verifiedCompositions.length, 5);
   assert.equal(persistedReceipts.length, 1);
   assert.deepEqual(persistedReceipts[0], {
-    schema_version: "resume-ir.macos-install-receipt.v2",
+    schema_version: "resume-ir.macos-install-receipt.v3",
     bundle_id: EXPECTED_APP.bundle_id,
     version: EXPECTED_APP.version,
     target_triple: "aarch64-apple-darwin",
-    source_commit: SOURCE_COMMIT,
+    source: SOURCE,
     composition_digest: dmgReceipt().app_composition_digest,
     dmg_sha256: dmgReceipt().dmg_sha256,
   });
@@ -389,7 +395,7 @@ test("install recovers a partial verifier mount after attach timeout", async (co
       withVerifiedDmg: (request) =>
         withVerifiedMacosDmg({
           ...request,
-          verifySource: async () => SOURCE_COMMIT,
+          verifySource: async () => SOURCE,
           mountProbe: async () => true,
         }),
       applicationSupportRoot: values.applicationSupportRoot,
@@ -457,28 +463,12 @@ test("rejects an existing target and symlinked Applications root", async (contex
   );
 });
 
-test("current install and uninstall reject legacy evidence before recovery", async (context) => {
-  for (const operation of [installMacosDmg, uninstallMacosApp]) {
-    const values = await fixture(context);
-    let journalRead = false;
-    await assert.rejects(
-      operation({
-        repoRoot: values.root,
-        targetTriple: "aarch64-apple-darwin",
-        dmg: values.dmg,
-        applicationsDirectory: values.applicationsDirectory,
-        platform: "darwin",
-        applicationSupportRoot: values.applicationSupportRoot,
-        readLegacyReceipt: async () => ({ version: "0.1.1" }),
-        readJournal: async () => {
-          journalRead = true;
-          return undefined;
-        },
-      }),
-      /legacy install receipt is invalid for current/,
-    );
-    assert.equal(journalRead, false);
-  }
+test("hard-cut install receipt validation rejects v2 evidence", () => {
+  const legacy = {
+    ...installReceipt(),
+    schema_version: "resume-ir.macos-install-receipt.v2",
+  };
+  assert.throws(() => validateInstallReceipt(legacy), /install receipt is invalid/);
 });
 
 test("removes a staged or installed App after copy, lease cleanup, or registration failure", async (context) => {

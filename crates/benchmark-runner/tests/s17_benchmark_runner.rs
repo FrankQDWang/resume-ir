@@ -4540,7 +4540,6 @@ fn oversized_stdout_query_fixture_script_body() -> &'static str {
     concat!(
         "#!/bin/sh\n",
         "dd if=/dev/zero bs=1048576 count=9 2>/dev/null || true\n",
-        "sleep 30\n",
     )
 }
 
@@ -5016,7 +5015,7 @@ fn missing_stage_latency_query_fixture_script_body() -> &'static str {
 fn oversized_stdout_query_fixture_script_body() -> &'static str {
     concat!(
         "@echo off\r\n",
-        "powershell -NoProfile -Command \"$s='x'*9437184; try { [Console]::Out.Write($s) } catch {}; Start-Sleep -Seconds 30\"\r\n",
+        "powershell -NoProfile -Command \"$s='x'*9437184; [Console]::Out.Write($s)\"\r\n",
     )
 }
 

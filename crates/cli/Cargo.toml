@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 benchmark-runner = { path = "../benchmark-runner" }
 core-domain = { path = "../core-domain" }
+daemon-contract = { path = "../daemon-contract" }
 embedder = { path = "../embedder" }
 fs-crawler = { path = "../fs-crawler" }
 fs4 = "0.13.1"

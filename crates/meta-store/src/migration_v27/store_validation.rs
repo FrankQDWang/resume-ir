@@ -2,11 +2,11 @@ use std::path::Path;
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
-use crate::{
-    active_store_manifest::owner_regular_file_exists, apply_sqlcipher_key, schema_v27,
-    verify_sqlcipher_key, MetaStoreError, Result,
-};
+#[cfg(any(test, feature = "migration-test-support"))]
+use crate::{active_store_manifest::owner_regular_file_exists, schema_v27};
+use crate::{apply_sqlcipher_key, verify_sqlcipher_key, MetaStoreError, Result};
 
+#[cfg(any(test, feature = "migration-test-support"))]
 pub(crate) fn validate_active_store(path: &Path, key: &[u8], store_id_digest: &str) -> Result<()> {
     if !owner_regular_file_exists(path)? {
         return Err(MetaStoreError::storage_invariant());
@@ -21,6 +21,7 @@ pub(crate) fn validate_active_store(path: &Path, key: &[u8], store_id_digest: &s
     Ok(())
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 fn validate_database_integrity(connection: &Connection) -> Result<()> {
     let integrity = connection
         .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
@@ -36,6 +37,7 @@ fn validate_database_integrity(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 pub(crate) fn open_encrypted_connection(path: &Path, key: &[u8]) -> Result<Connection> {
     let connection = Connection::open(path).map_err(MetaStoreError::storage)?;
     apply_sqlcipher_key(&connection, key)?;

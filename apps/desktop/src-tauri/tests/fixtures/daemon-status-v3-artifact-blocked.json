@@ -1,0 +1,53 @@
+{
+  "schema_version": "daemon.status.v3",
+  "status": "blocked",
+  "process_state": "ready",
+  "core": { "state": "blocked", "reason": "artifact_unavailable" },
+  "optional_runtimes": {
+    "embedding": { "state": "available", "reason": null },
+    "ocr": { "state": "available", "reason": null },
+    "classifier": { "state": "available", "reason": null }
+  },
+  "capabilities": {
+    "keyword_search": { "state": "blocked", "reason": "core_blocked" },
+    "detail": { "state": "blocked", "reason": "core_blocked" },
+    "semantic_search": { "state": "blocked", "reason": "core_blocked" },
+    "hybrid_search": { "state": "blocked", "reason": "core_blocked" },
+    "text_import": { "state": "blocked", "reason": "core_blocked" },
+    "ocr_import": { "state": "blocked", "reason": "core_blocked" },
+    "index_publication": { "state": "blocked", "reason": "core_blocked" }
+  },
+  "error": {
+    "code": "SERVICE_BLOCKED",
+    "action": "repair_required",
+    "capability": null,
+    "reason": "artifact_unavailable"
+  },
+  "repair_progress": null,
+  "indexed_documents": null,
+  "searchable_documents": null,
+  "partial_documents": null,
+  "visible_epoch": null,
+  "failed_retryable": null,
+  "failed_permanent": null,
+  "recovery_queue_depth": null,
+  "ocr_queue_depth": null,
+  "ocr_jobs_queued": null,
+  "ocr_page_budget_blocked": null,
+  "ocr_remediation": null,
+  "ocr_language_unavailable": null,
+  "ocr_language_remediation": null,
+  "embedding_queue_depth": null,
+  "entity_mentions": null,
+  "import_tasks_queued": null,
+  "import_tasks_recoverable": null,
+  "import_tasks_cancelled": null,
+  "import_scan_scopes": null,
+  "import_scan_errors": null,
+  "query_latency": null,
+  "latest_import_scan": null,
+  "active_profile": null,
+  "index_health": null,
+  "snapshot_present": null,
+  "ipc": { "accepted": 1, "completed": 1, "client_disconnect": 0, "request_failure": 0, "response_failure": 0 }
+}

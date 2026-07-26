@@ -254,11 +254,11 @@ fn run_search_worker(
                 task.reply
                     .write_error(&task.envelope.request_id, 413, "LIMIT_EXCEEDED", message)
             }
-            Err(CommandFailure::ServiceUnavailable(code)) => task.reply.write_error(
+            Err(CommandFailure::ServiceUnavailable(code)) => write_service_unavailable(
+                &mut task.reply,
                 &task.envelope.request_id,
-                503,
+                task.args.mode,
                 code,
-                "query service is unavailable",
             ),
             Err(CommandFailure::Internal) => task.reply.write_error(
                 &task.envelope.request_id,
@@ -274,6 +274,22 @@ fn run_search_worker(
         let _ = deadline_waker.send(DeadlineCommand::Wake);
     }
     Ok(())
+}
+
+fn write_service_unavailable(
+    reply: &mut SearchReply,
+    request_id: &str,
+    mode: DaemonSearchMode,
+    code: &str,
+) -> crate::Result<()> {
+    if mode == DaemonSearchMode::Semantic && code == "SEMANTIC_RUNTIME_UNAVAILABLE" {
+        return reply.write_capability_unavailable(
+            request_id,
+            "semantic_search",
+            "embedding_unavailable",
+        );
+    }
+    reply.write_error(request_id, 503, code, "query service is unavailable")
 }
 
 pub(super) fn run_deadline_scheduler(receiver: Receiver<DeadlineCommand>) {

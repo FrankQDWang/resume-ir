@@ -1,6 +1,8 @@
 [package]
 name = "resume-desktop"
-version = "0.1.2"
+# This is the internal Rust crate version, not the product version.
+# apps/desktop/package.json is the single product-version authority.
+version = "0.0.0"
 edition = "2021"
 publish = false
 
@@ -13,8 +15,9 @@ tauri = { version = "2.11.5", features = [] }
 tempfile = "3.27.0"
 rfd = { version = "0.17.2", default-features = false }
 uuid = { version = "1.23.5", features = ["v4"] }
+getrandom = "0.3.4"
+daemon-contract = { path = "../../../crates/daemon-contract" }
 process-containment = { path = "../../../crates/process-containment" }
-sha2 = "0.10"
 
 [build-dependencies]
 tauri-build = { version = "2.5.6", features = [] }

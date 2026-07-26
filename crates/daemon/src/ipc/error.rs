@@ -20,6 +20,7 @@ pub(crate) enum RuntimeEvent {
     ImportWorkerStopped,
     ImportWorkerFailed(DaemonFatalError),
     QueryWorkerStopped,
+    StatusUpdaterStopped,
 }
 
 /// The terminal outcome of one accepted IPC connection.

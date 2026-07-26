@@ -8,12 +8,16 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod support;
 
-use support::{ready_daemon_status_body, write_daemon_discovery};
+use support::{ready_daemon_status_body, write_daemon_auth, write_daemon_discovery};
 
 const DEFAULT_TEST_TOKEN: &str = "abababababababababababababababababababababababababababababababab";
 
 #[test]
 fn status_can_read_redacted_daemon_status_over_loopback_ipc() {
+    let token_dir = temp_dir_path("direct-status-token");
+    fs::create_dir_all(&token_dir).unwrap();
+    let token_file = token_dir.join("ipc.auth");
+    write_daemon_auth(&token_file, DEFAULT_TEST_TOKEN);
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
     listener.set_nonblocking(true).unwrap();
     let addr = listener.local_addr().unwrap();
@@ -21,8 +25,32 @@ fn status_can_read_redacted_daemon_status_over_loopback_ipc() {
         let (mut stream, _) = accept_with_timeout(&listener);
         let request = read_http_request(&mut stream);
         assert!(request.starts_with("GET /status HTTP/1.1"));
+        assert!(request.contains(&format!("Authorization: Bearer {DEFAULT_TEST_TOKEN}")));
 
-        let body = "{\"schema_version\":\"daemon.status.v2\",\"status\":\"ok\",\"process_state\":\"ready\",\"index_health\":\"ready\",\"import_tasks_queued\":0,\"import_tasks_cancelled\":1,\"ocr_page_budget_blocked\":1,\"ocr_language_unavailable\":1,\"latest_import_scan\":{\"files_discovered\":9,\"ignored_entries\":2,\"scan_errors\":1,\"searchable_documents\":4,\"ocr_required_documents\":1,\"ocr_jobs_queued\":1,\"failed_documents\":1,\"deleted_documents\":0,\"scan_budget_observed\":9,\"scan_budget_limit\":10,\"scan_budget_exhausted\":false}}";
+        let mut body: serde_json::Value = serde_json::from_str(ready_daemon_status_body()).unwrap();
+        body["import_tasks_cancelled"] = serde_json::json!(1);
+        body["ocr_page_budget_blocked"] = serde_json::json!(1);
+        body["ocr_remediation"] =
+            serde_json::json!("raise OCR max pages per document or skip oversized scanned PDFs");
+        body["ocr_language_unavailable"] = serde_json::json!(1);
+        body["ocr_language_remediation"] = serde_json::json!(
+            "install requested OCR language packs or choose an installed OCR language"
+        );
+        body["latest_import_scan"] = serde_json::json!({
+            "scan_profile": "explicit",
+            "files_discovered": 9,
+            "ignored_entries": 2,
+            "scan_errors": 1,
+            "searchable_documents": 4,
+            "ocr_required_documents": 1,
+            "ocr_jobs_queued": 1,
+            "failed_documents": 1,
+            "deleted_documents": 0,
+            "scan_budget_observed": 9,
+            "scan_budget_limit": 10,
+            "scan_budget_exhausted": false,
+        });
+        let body = body.to_string();
         write!(
             stream,
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -33,7 +61,13 @@ fn status_can_read_redacted_daemon_status_over_loopback_ipc() {
     });
 
     let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
-        .args(["status", "--ipc", &format!("http://{addr}/status")])
+        .args([
+            "status",
+            "--ipc",
+            &format!("http://{addr}/status"),
+            "--ipc-token-file",
+            path_str(&token_file),
+        ])
         .output()
         .expect("run resume-cli status --ipc");
 
@@ -63,6 +97,7 @@ fn status_can_read_redacted_daemon_status_over_loopback_ipc() {
     assert!(stdout.contains("latest import scan errors: 1"));
     assert!(!stdout.contains("raw_resume_text"));
     assert!(!stdout.contains("PRIVATE"));
+    remove_dir(&token_dir);
 }
 
 #[test]
@@ -76,6 +111,7 @@ fn status_ipc_auto_discovers_endpoint_without_path_leak() {
         let (mut stream, _) = accept_with_timeout(&listener);
         let request = read_http_request(&mut stream);
         assert!(request.starts_with("GET /status HTTP/1.1"));
+        assert!(request.contains(&format!("Authorization: Bearer {DEFAULT_TEST_TOKEN}")));
 
         let body = ready_daemon_status_body();
         write!(
@@ -122,8 +158,11 @@ fn status_watch_import_ipc_auto_streams_redacted_progress_without_local_store() 
         let (mut status_stream, _) = accept_with_timeout(&listener);
         let status_request = read_http_request(&mut status_stream);
         assert!(status_request.starts_with("GET /status HTTP/1.1"));
-        assert!(!status_request.contains("Authorization:"));
-        let status_body = "{\"schema_version\":\"daemon.status.v2\",\"status\":\"ok\",\"process_state\":\"ready\",\"index_health\":\"ready\",\"import_tasks_queued\":1,\"import_tasks_cancelled\":0}";
+        assert!(status_request.contains(&format!("Authorization: Bearer {token}")));
+        let mut status_body: serde_json::Value =
+            serde_json::from_str(ready_daemon_status_body()).unwrap();
+        status_body["import_tasks_queued"] = serde_json::json!(1);
+        let status_body = status_body.to_string();
         write!(
             status_stream,
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -186,6 +225,10 @@ fn status_watch_import_ipc_auto_streams_redacted_progress_without_local_store() 
 #[test]
 fn status_ipc_connect_failure_does_not_fallback_to_sqlite() {
     let data_dir = temp_dir_path("connect-failure");
+    let token_dir = temp_dir_path("connect-failure-token");
+    fs::create_dir_all(&token_dir).unwrap();
+    let token_file = token_dir.join("ipc.auth");
+    write_daemon_auth(&token_file, DEFAULT_TEST_TOKEN);
     let _port_reservation =
         TcpListener::bind("127.0.0.1:0").expect("reserve loopback port for connect failure");
     let status_url = reserved_unbound_loopback_status_url(&_port_reservation);
@@ -196,6 +239,8 @@ fn status_ipc_connect_failure_does_not_fallback_to_sqlite() {
             "status",
             "--ipc",
             &status_url,
+            "--ipc-token-file",
+            path_str(&token_file),
         ])
         .output()
         .expect("run resume-cli status --ipc against closed port");
@@ -204,17 +249,23 @@ fn status_ipc_connect_failure_does_not_fallback_to_sqlite() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("unable to connect to daemon status ipc"));
     assert!(!data_dir.exists());
+    remove_dir(&token_dir);
 }
 
 #[test]
 fn status_ipc_http_error_does_not_fallback_to_sqlite() {
     let data_dir = temp_dir_path("http-error");
+    let token_dir = temp_dir_path("http-error-token");
+    fs::create_dir_all(&token_dir).unwrap();
+    let token_file = token_dir.join("ipc.auth");
+    write_daemon_auth(&token_file, DEFAULT_TEST_TOKEN);
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
     let addr = listener.local_addr().unwrap();
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().expect("accept status request");
         let request = read_http_request(&mut stream);
         assert!(request.starts_with("GET /status HTTP/1.1"));
+        assert!(request.contains(&format!("Authorization: Bearer {DEFAULT_TEST_TOKEN}")));
         let body = "{\"schema_version\":\"daemon.status.v1\",\"status\":\"error\"}";
         write!(
             stream,
@@ -232,6 +283,8 @@ fn status_ipc_http_error_does_not_fallback_to_sqlite() {
             "status",
             "--ipc",
             &format!("http://{addr}/status"),
+            "--ipc-token-file",
+            path_str(&token_file),
         ])
         .output()
         .expect("run resume-cli status --ipc against erroring daemon");
@@ -241,12 +294,35 @@ fn status_ipc_http_error_does_not_fallback_to_sqlite() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("daemon status ipc returned an error"));
     assert!(!data_dir.exists());
+    remove_dir(&token_dir);
+}
+
+#[test]
+fn status_ipc_direct_requires_v3_auth_token_file() {
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args(["status", "--ipc", "http://127.0.0.1:4000/status"])
+        .output()
+        .expect("run resume-cli status --ipc without auth");
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--ipc-token-file"));
 }
 
 #[test]
 fn status_ipc_rejects_non_loopback_and_wrong_path() {
+    let token_dir = temp_dir_path("invalid-endpoint-token");
+    fs::create_dir_all(&token_dir).unwrap();
+    let token_file = token_dir.join("ipc.auth");
+    write_daemon_auth(&token_file, DEFAULT_TEST_TOKEN);
     let non_loopback = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
-        .args(["status", "--ipc", "http://192.0.2.1:4000/status"])
+        .args([
+            "status",
+            "--ipc",
+            "http://192.0.2.1:4000/status",
+            "--ipc-token-file",
+            path_str(&token_file),
+        ])
         .output()
         .expect("run resume-cli status --ipc non-loopback");
     assert!(!non_loopback.status.success());
@@ -254,7 +330,13 @@ fn status_ipc_rejects_non_loopback_and_wrong_path() {
     assert!(String::from_utf8_lossy(&non_loopback.stderr).contains("loopback"));
 
     let wrong_path = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
-        .args(["status", "--ipc", "http://127.0.0.1:4000/private"])
+        .args([
+            "status",
+            "--ipc",
+            "http://127.0.0.1:4000/private",
+            "--ipc-token-file",
+            path_str(&token_file),
+        ])
         .output()
         .expect("run resume-cli status --ipc wrong path");
     assert!(!wrong_path.status.success());
@@ -275,6 +357,7 @@ fn status_ipc_rejects_non_loopback_and_wrong_path() {
     assert!(!wrong_progress_path.status.success());
     assert_eq!(wrong_progress_path.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&wrong_progress_path.stderr).contains("resume-cli status"));
+    remove_dir(&token_dir);
 }
 
 fn read_http_request(stream: &mut impl Read) -> String {

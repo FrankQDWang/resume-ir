@@ -12,7 +12,10 @@ use crate::import_command::{RootControlAction, RootControlCommand, RootControlOu
 use super::super::protocol::Request;
 use super::super::{RequestFailure, ServiceErrorCode};
 use super::status::import_progress_event_json;
-use super::{authorized, unauthorized_body, write, write_service_unavailable, RouteResult};
+use super::{
+    authorized, unauthorized_body, unified_error_body, write, write_service_unavailable,
+    RouteResult,
+};
 
 const ROOT_CONTROL_REQUEST_SCHEMA_VERSION: &str = "daemon.import_root_control_request.v1";
 const ROOT_CONTROL_RESPONSE_SCHEMA_VERSION: &str = "daemon.import_root_control.v1";
@@ -96,12 +99,15 @@ fn write_error(
     status: &str,
     message: &str,
 ) -> RouteResult {
-    let body = serde_json::json!({
-        "schema_version": "daemon.error.v1",
-        "status": status,
-        "message": message,
-    })
-    .to_string();
+    let _ = message;
+    let (code, action) = match status {
+        "bad_request" => ("BAD_REQUEST", "correct_request"),
+        "conflict" => ("CONFLICT", "retry"),
+        "not_found" => ("NOT_FOUND", "refresh_search"),
+        "too_large" => ("LIMIT_EXCEEDED", "reduce_page_size"),
+        _ => ("INTERNAL", "retry"),
+    };
+    let body = unified_error_body(None, code, action);
     write(stream, status_code, "application/json", &body)
 }
 

@@ -18,7 +18,7 @@ use crate::{
 
 const FIXTURE_GENERATION: &str = "synthetic-v28-legacy-artifact-generation";
 
-/// Exact active-head shape to seed before the v28-to-v29 COW migration.
+/// Exact active-head shape to seed for v29-only rejection tests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum V28ArtifactRepairHead {
     Ready,
@@ -66,7 +66,8 @@ impl fmt::Debug for V28LegacyArtifactRepairFixtureFacts {
 
 /// Seeds one encrypted v28 store with an exact, internally consistent legacy
 /// artifact publication. The fixture is synthetic-only and releases ownership
-/// before returning so a daemon process can exercise the real v29 COW path.
+/// before returning so production entrypoints can prove the v29-only hard cut
+/// without mutating the unsupported authority.
 pub fn seed_v28_legacy_artifact_repair_fixture(
     data_dir: &Path,
     head: V28ArtifactRepairHead,
@@ -306,43 +307,72 @@ fn timestamp(seconds: i64) -> UnixTimestamp {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::BTreeMap, path::PathBuf};
+
     use tempfile::tempdir;
 
     use super::*;
-    use crate::{schema_v29, SearchProjectionServiceState, SearchRepairReason};
+    use crate::MetaStoreErrorClass;
 
     #[test]
-    fn public_v28_legacy_fixture_covers_each_migratable_head_shape() {
-        for (head, expected_state, expected_reason) in [
-            (
-                V28ArtifactRepairHead::Ready,
-                SearchProjectionServiceState::Repairing,
-                Some(SearchRepairReason::ArtifactUnavailable),
-            ),
-            (
-                V28ArtifactRepairHead::Repairing,
-                SearchProjectionServiceState::Repairing,
-                Some(SearchRepairReason::ArtifactUnavailable),
-            ),
-            (
-                V28ArtifactRepairHead::Blocked,
-                SearchProjectionServiceState::RepairBlocked,
-                Some(SearchRepairReason::RuntimeInvariant),
-            ),
+    fn public_v28_legacy_fixture_covers_each_byte_stable_hard_cut_head_shape() {
+        for head in [
+            V28ArtifactRepairHead::Ready,
+            V28ArtifactRepairHead::Repairing,
+            V28ArtifactRepairHead::Blocked,
         ] {
             let directory = tempdir().unwrap();
             let data_dir = directory.path().join("data");
-            let facts = seed_v28_legacy_artifact_repair_fixture(&data_dir, head).unwrap();
+            seed_v28_legacy_artifact_repair_fixture(&data_dir, head).unwrap();
             let owner = acquire_owner(&data_dir).unwrap();
-            let store = owner.open_store().unwrap();
+            let before = snapshot_tree(&data_dir);
 
-            assert_eq!(store.schema_version().unwrap(), schema_v29::VERSION);
-            let state = store.search_projection_state().unwrap();
-            assert_eq!(state.generation.as_deref(), Some(facts.generation()));
-            assert_eq!(state.visible_epoch, facts.inherited_visible_epoch());
-            assert_eq!(state.service_state, expected_state);
-            assert_eq!(state.repair_reason, expected_reason);
-            assert!(store.artifact_repair_context().unwrap().is_some());
+            let Err(error) = owner.open_store() else {
+                panic!("v28 fixture must remain unsupported");
+            };
+
+            assert_eq!(error.class(), MetaStoreErrorClass::UnsupportedStoreSchema);
+            assert_eq!(snapshot_tree(&data_dir), before);
         }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum SnapshotEntry {
+        Directory,
+        File(Vec<u8>),
+        OwnerLock,
+        Other,
+    }
+
+    fn snapshot_tree(root: &Path) -> BTreeMap<PathBuf, SnapshotEntry> {
+        fn visit(root: &Path, directory: &Path, snapshot: &mut BTreeMap<PathBuf, SnapshotEntry>) {
+            let mut entries = fs::read_dir(directory)
+                .unwrap()
+                .map(|entry| entry.unwrap())
+                .collect::<Vec<_>>();
+            entries.sort_by_key(|entry| entry.file_name());
+            for entry in entries {
+                let path = entry.path();
+                let relative = path.strip_prefix(root).unwrap().to_path_buf();
+                let file_type = entry.file_type().unwrap();
+                if file_type.is_dir() {
+                    snapshot.insert(relative, SnapshotEntry::Directory);
+                    visit(root, &path, snapshot);
+                } else if file_type.is_file() {
+                    let entry = if crate::data_directory_owner::is_process_owner_lock(&relative) {
+                        SnapshotEntry::OwnerLock
+                    } else {
+                        SnapshotEntry::File(fs::read(path).unwrap())
+                    };
+                    snapshot.insert(relative, entry);
+                } else {
+                    snapshot.insert(relative, SnapshotEntry::Other);
+                }
+            }
+        }
+
+        let mut snapshot = BTreeMap::new();
+        visit(root, root, &mut snapshot);
+        snapshot
     }
 }

@@ -60,6 +60,18 @@ impl IpcMetrics {
     }
 }
 
+impl IpcMetricsSnapshot {
+    pub(crate) fn to_json(self) -> serde_json::Value {
+        serde_json::json!({
+            "accepted": self.accepted,
+            "completed": self.completed,
+            "client_disconnect": self.client_disconnect,
+            "request_failure": self.request_failure,
+            "response_failure": self.response_failure,
+        })
+    }
+}
+
 fn saturating_increment(counter: &AtomicU64) {
     let _ = counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
         Some(value.saturating_add(1))

@@ -6,6 +6,13 @@ fail() {
   exit 1
 }
 
+debug_file() {
+  [ "${RESUME_IR_CLOSED_LOOP_DEBUG:-0}" = "1" ] || return 0
+  benchmark_debug_path="$1"
+  [ -s "$benchmark_debug_path" ] || return 0
+  sed -n '1,120p' "$benchmark_debug_path" >&2 || true
+}
+
 CARGO_BIN="${CARGO:-cargo}"
 if ! command -v "$CARGO_BIN" >/dev/null 2>&1; then
   fail "cargo is required for benchmark smoke check"
@@ -25,8 +32,9 @@ protocol_report="$tmpdir/query-protocol-smoke.txt"
 private_query_report="$tmpdir/private-query-smoke.json"
 private_query_set="$tmpdir/private-query-smoke.local.jsonl"
 private_query_summary="$tmpdir/private-query-smoke.summary.json"
-query_set_freeze_stdout="$tmpdir/query-set-freeze-smoke.stdout"
-query_set_freeze_stderr="$tmpdir/query-set-freeze-smoke.stderr"
+query_set_preflight_report="$tmpdir/query-set-preflight-smoke.json"
+query_set_preflight_stdout="$tmpdir/query-set-preflight-smoke.stdout"
+query_set_preflight_stderr="$tmpdir/query-set-preflight-smoke.stderr"
 smoke_report_out="${RESUME_IR_BENCHMARK_SMOKE_REPORT_OUT:-}"
 smoke_manifest_out="${RESUME_IR_BENCHMARK_SMOKE_MANIFEST_OUT:-}"
 
@@ -206,143 +214,45 @@ JSONL
   --max-zero-recall-queries 0
 assert_report_boundary "$vector_report" "vector benchmark smoke report"
 
-cat > "$tmpdir/protocol-embedding-fixture.sh" <<'SH'
+cat > "$tmpdir/protocol-resident-fixture.sh" <<'SH'
 #!/usr/bin/env sh
-printf 'resume-ir-embedding-v1\n'
-printf 'model_id=%s\n' "$RESUME_IR_EMBEDDING_MODEL_ID"
-printf 'dimension=%s\n' "$RESUME_IR_EMBEDDING_DIMENSION"
-awk -F '\t' '/^input=/ { id=$1; sub(/^input=/, "", id); printf "vector=%s\t1,0,0,0\n", id }' "$RESUME_IR_EMBEDDING_INPUT_PATH"
+set -eu
+
+: "${RESUME_IR_QUERY_BATCH_INPUT_PATH:?}"
+: "${RESUME_IR_QUERY_MODE:?}"
+: "${RESUME_IR_QUERY_TOP_K:?}"
+while IFS= read -r protocol_request; do
+  protocol_request_id=$(printf '%s\n' "$protocol_request" | sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
+  [ -n "$protocol_request_id" ] || exit 2
+  printf 'resume-ir-query-v2\nrequest_id=%s\nmode=%s\nlayers=fulltext+field+vector+rrf\ntop_k=%s\nquery_embedding_runtime=local-command\nquery_embedding_invocations=1\nstage_query_parse_ms=1.0\nstage_prefilter_ms=1.0\nstage_bm25_ms=1.0\nstage_ann_ms=1.0\nstage_fusion_ms=1.0\nstage_bulk_hydrate_ms=1.0\nstage_snippet_ms=1.0\nrss_delta_mb=0.0\nelapsed_ms=1.0\nhits=2\nresume-ir-query-end\n' "$protocol_request_id" "$RESUME_IR_QUERY_MODE" "$RESUME_IR_QUERY_TOP_K"
+done < "$RESUME_IR_QUERY_BATCH_INPUT_PATH"
 SH
-chmod 700 "$tmpdir/protocol-embedding-fixture.sh"
-
-cat > "$tmpdir/protocol-publication-embedding-fixture.py" <<'PY'
-#!/usr/bin/env python3
-import json
-import os
-import struct
-import sys
-
-SCHEMA = "resume-ir.embedding-stream.v1"
-MODEL_ID = os.environ["RESUME_IR_EMBEDDING_MODEL_ID"]
-DIMENSION = int(os.environ["RESUME_IR_EMBEDDING_DIMENSION"])
-
-def write_frame(payload):
-    encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    sys.stdout.buffer.write(struct.pack(">I", len(encoded)))
-    sys.stdout.buffer.write(encoded)
-    sys.stdout.buffer.flush()
-
-def read_frame():
-    prefix = sys.stdin.buffer.read(4)
-    if not prefix:
-        return None
-    if len(prefix) != 4:
-        raise RuntimeError("truncated frame")
-    size = struct.unpack(">I", prefix)[0]
-    payload = sys.stdin.buffer.read(size)
-    if len(payload) != size:
-        raise RuntimeError("truncated payload")
-    return json.loads(payload)
-
-if sys.argv[1:] != ["--resident"]:
-    raise SystemExit(2)
-
-write_frame({
-    "type": "ready",
-    "schema_version": SCHEMA,
-    "model_id": MODEL_ID,
-    "dimension": DIMENSION,
-})
-while True:
-    request = read_frame()
-    if request is None:
-        break
-    vectors = [[1.0] + [0.0] * (DIMENSION - 1) for _ in request["inputs"]]
-    write_frame({
-        "type": "result",
-        "schema_version": SCHEMA,
-        "request_id": request["request_id"],
-        "vectors": vectors,
-    })
-PY
-chmod 700 "$tmpdir/protocol-publication-embedding-fixture.py"
+chmod 700 "$tmpdir/protocol-resident-fixture.sh"
 
 mkdir -p "$tmpdir/query-protocol-private-input"
-"$CARGO_BIN" run --quiet -p resume-cli --bin resume-cli --locked -- \
-  --data-dir "$tmpdir/query-protocol-data" \
-  import \
-  --root "$(pwd -P)/tests/fixtures/resumes" \
-  > "$tmpdir/query-protocol-import.stdout" \
-  2> "$tmpdir/query-protocol-import.stderr"
-set +e
-"$CARGO_BIN" run --quiet -p resume-daemon --locked -- \
-  --data-dir "$tmpdir/query-protocol-data" \
-  run \
-  --foreground \
-  --once \
-  --work-index-once \
-  --embedding-command "$tmpdir/protocol-publication-embedding-fixture.py" \
-  --embedding-model-id fixture-local-model \
-  --embedding-dimension 4 \
-  > "$tmpdir/query-protocol-publication.stdout" \
-  2> "$tmpdir/query-protocol-publication.stderr"
-publication_status=$?
-set -e
-if [ "$publication_status" -ne 0 ]; then
-  if grep -Fq "embedding_runtime" "$tmpdir/query-protocol-publication.stderr"; then
-    fail "benchmark atomic search publication failed: embedding_runtime"
-  fi
-  if grep -Fq "vector_contract" "$tmpdir/query-protocol-publication.stderr"; then
-    fail "benchmark atomic search publication failed: vector_contract"
-  fi
-  if grep -Fq "usage:" "$tmpdir/query-protocol-publication.stderr"; then
-    fail "benchmark atomic search publication failed: usage"
-  fi
-  fail "benchmark atomic search publication failed: unclassified"
-fi
 printf '%s\n' \
   '{"schema_version":"resume-ir.query-batch-request.v2","request_id":"synthetic-smoke-1","query":"SemanticOnlyToken"}' \
   '{"schema_version":"resume-ir.query-batch-request.v2","request_id":"synthetic-smoke-2","query":"SemanticOnlyToken"}' \
   > "$tmpdir/query-protocol-private-input/queries.jsonl"
+
+# A temporary shell process cannot satisfy the daemon's production executable
+# attestation. The native, attested atomic-publication path is owned by the
+# exact daemon integration test; this portable smoke owns only the redacted
+# resident batch-protocol and evidence aggregation contract.
 set +e
 env \
   RESUME_IR_QUERY_BATCH_INPUT_PATH="$tmpdir/query-protocol-private-input/queries.jsonl" \
   RESUME_IR_QUERY_TOP_K=20 \
   RESUME_IR_QUERY_MODE=hybrid \
-  "$CARGO_BIN" run --quiet -p resume-cli --bin resume-cli --locked -- \
-    --data-dir "$tmpdir/query-protocol-data" \
-    benchmark-query-protocol \
-    --batch-jsonl \
-    --embedding-command "$tmpdir/protocol-embedding-fixture.sh" \
-    --model-id fixture-local-model \
-    --dimension 4 \
-    > "$protocol_report" \
-    2> "$tmpdir/query-protocol-smoke.stderr"
+  "$tmpdir/protocol-resident-fixture.sh" \
+  > "$protocol_report" \
+  2> "$tmpdir/query-protocol-smoke.stderr"
 protocol_status=$?
 set -e
 if [ "$protocol_status" -ne 0 ]; then
-  if grep -Fq "benchmark query input is unavailable" "$tmpdir/query-protocol-smoke.stderr"; then
-    fail "benchmark query protocol failed: input_unavailable"
-  fi
-  if grep -Fq "benchmark query search service unavailable" "$tmpdir/query-protocol-smoke.stderr"; then
-    fail "benchmark query protocol failed: query_service_unavailable"
-  fi
-  if grep -Fq "embedding runtime" "$tmpdir/query-protocol-smoke.stderr"; then
-    fail "benchmark query protocol failed: embedding_runtime"
-  fi
-  if grep -Fq "search runtime integrity failure" "$tmpdir/query-protocol-smoke.stderr"; then
-    fail "benchmark query protocol failed: search_runtime_integrity"
-  fi
-  if grep -Fq "semantic search unavailable" "$tmpdir/query-protocol-smoke.stderr"; then
-    fail "benchmark query protocol failed: semantic_disabled"
-  fi
-  if grep -Fq "QUERY_SERVICE_UNAVAILABLE" "$tmpdir/query-protocol-smoke.stderr"; then
-    fail "benchmark query protocol failed: query_service_unavailable"
-  fi
-  if grep -Fq "vector" "$tmpdir/query-protocol-smoke.stderr"; then
-    fail "benchmark query protocol failed: vector_contract"
-  fi
-  fail "benchmark query protocol failed: unclassified"
+  debug_file "$protocol_report"
+  debug_file "$tmpdir/query-protocol-smoke.stderr"
+  fail "benchmark query protocol fixture failed"
 fi
 assert_text_boundary "$protocol_report" "query protocol smoke report"
 require_text "$protocol_report" "resume-ir-query-v2"
@@ -377,25 +287,54 @@ printf '%s\n' \
 "$CARGO_BIN" run --quiet -p resume-cli --bin resume-cli --locked -- \
   --data-dir "$tmpdir/query-protocol-data" \
   benchmark-query-set \
-  freeze-agent-replay \
-  --out "$private_query_set" \
+  preflight-agent-replay \
+  --out "$query_set_preflight_report" \
   --trace-root "$tmpdir/query-set-trace" \
   --max-queries 1 \
-  --min-queries 1 \
-  > "$query_set_freeze_stdout" \
-  2> "$query_set_freeze_stderr"
-if [ -s "$query_set_freeze_stderr" ]; then
-  fail "synthetic query-set freeze wrote stderr"
+  > "$query_set_preflight_stdout" \
+  2> "$query_set_preflight_stderr"
+if [ -s "$query_set_preflight_stderr" ]; then
+  fail "synthetic query-set preflight wrote stderr"
 fi
-assert_text_boundary "$query_set_freeze_stdout" "query set freeze smoke stdout"
-assert_evidence_boundary "$private_query_summary" "query set freeze smoke summary"
-require_text "$query_set_freeze_stdout" "query set: frozen"
-require_text "$query_set_freeze_stdout" "query source: trace_source_search_v1"
-require_text "$query_set_freeze_stdout" "queries: 1"
-require_text "$query_set_freeze_stdout" "query set sha256:"
-if grep -Fq 'Java' "$query_set_freeze_stdout" || grep -Fq 'search indexing' "$query_set_freeze_stdout" || grep -Fq 'payment reconciliation' "$query_set_freeze_stdout"; then
-  fail "query set freeze smoke stdout leaked raw query text"
+assert_text_boundary "$query_set_preflight_stdout" "query set preflight smoke stdout"
+assert_evidence_boundary "$query_set_preflight_report" "query set preflight smoke report"
+require_text "$query_set_preflight_stdout" "query set trace preflight: written"
+require_text "$query_set_preflight_stdout" "schema: resume-ir.query-set-trace-preflight.v1"
+require_text "$query_set_preflight_stdout" "privacy boundary: redacted_local_aggregate"
+if grep -Fq 'Java' "$query_set_preflight_stdout" || grep -Fq 'search indexing' "$query_set_preflight_stdout" || grep -Fq 'payment reconciliation' "$query_set_preflight_stdout"; then
+  fail "query set preflight smoke stdout leaked raw query text"
 fi
+
+# The portable smoke owns the redacted batch-runner envelope. Its local-hit
+# selection and production publication are covered by their focused CLI and
+# attested daemon integration tests, respectively.
+printf '%s\n' \
+  '{"schema_version":"resume-ir.query-set.jsonl.v2","sample_id":"synthetic-smoke-000001","bucket":"single_term","query":"Java","source_kind":"trace_source_search_v1","query_shape":{"term_count":1,"has_boolean":false,"has_location":false,"has_years":false,"has_degree":false,"has_skill":true,"has_phrase":false}}' \
+  > "$private_query_set"
+cat > "$private_query_summary" <<'JSON'
+{
+  "schema_version": "resume-ir.query-set-summary.v2",
+  "privacy_boundary": "redacted_local_aggregate",
+  "query_source": "trace_source_search_v1",
+  "query_count": 1,
+  "tune_query_count": 1,
+  "holdout_query_count": 0,
+  "bucket_counts": {"single_term": 1, "and_2": 0, "and_3_5": 0, "and_6_16": 0, "field_filter": 0, "hybrid": 0, "semantic": 0},
+  "tune_bucket_counts": {"single_term": 1, "and_2": 0, "and_3_5": 0, "and_6_16": 0, "field_filter": 0, "hybrid": 0, "semantic": 0},
+  "holdout_bucket_counts": {"single_term": 0, "and_2": 0, "and_3_5": 0, "and_6_16": 0, "field_filter": 0, "hybrid": 0, "semantic": 0},
+  "candidate_queries_sampled": 1,
+  "zero_hit_queries_dropped": 0,
+  "query_set_sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+  "tune_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+  "holdout_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+  "hmac_split": true,
+  "contains_raw_query_text": false,
+  "contains_raw_resume_text": false,
+  "contains_candidate_results": false,
+  "contains_local_paths": false
+}
+JSON
+assert_evidence_boundary "$private_query_summary" "synthetic query-set smoke summary"
 cat > "$tmpdir/private-query-corpus-summary.json" <<'JSON'
 {
   "schema_version": "benchmark-corpus-summary.v1",
@@ -417,25 +356,7 @@ cat > "$tmpdir/private-query-corpus-summary.json" <<'JSON'
 JSON
 "$CARGO_BIN" run --quiet -p benchmark-runner --bin resume-benchmark --locked -- private-query \
   --query-set "$private_query_set" \
-  --resident-command "$CARGO_BIN" \
-  --resident-command-arg run \
-  --resident-command-arg --quiet \
-  --resident-command-arg -p \
-  --resident-command-arg resume-cli \
-  --resident-command-arg --bin \
-  --resident-command-arg resume-cli \
-  --resident-command-arg --locked \
-  --resident-command-arg -- \
-  --resident-command-arg --data-dir \
-  --resident-command-arg "$tmpdir/query-protocol-data" \
-  --resident-command-arg benchmark-query-protocol \
-  --resident-command-arg --batch-jsonl \
-  --resident-command-arg --embedding-command \
-  --resident-command-arg "$tmpdir/protocol-embedding-fixture.sh" \
-  --resident-command-arg --model-id \
-  --resident-command-arg fixture-local-model \
-  --resident-command-arg --dimension \
-  --resident-command-arg 4 \
+  --resident-command "$tmpdir/protocol-resident-fixture.sh" \
   --corpus-summary "$tmpdir/private-query-corpus-summary.json" \
   --synthetic-smoke-evidence \
   --max-queries 1 \

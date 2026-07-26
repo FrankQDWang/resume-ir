@@ -15,7 +15,10 @@ import { fileURLToPath } from "node:url";
 
 import { verifyBundledSidecar } from "./verify-bundled-sidecar.mjs";
 import { verifyBundleComposition } from "./macos-bundle-composition.mjs";
-import { verifyMainSourceProvenance } from "./macos-source-provenance.mjs";
+import {
+  captureSourceIdentity,
+  validateSourceIdentity,
+} from "./macos-source-identity.mjs";
 import {
   MACOS_SYSTEM_TOOLS,
   runClosedSystemTool,
@@ -42,6 +45,15 @@ async function defaultRunner(command, args) {
 
 function succeeded(result) {
   return !result?.error && result?.status === 0;
+}
+
+async function resolveExactMainSource({ repoRoot }) {
+  return (
+    await captureSourceIdentity({
+      repoRoot,
+      authority: "exact_main_commit",
+    })
+  ).identity;
 }
 
 async function mountedFilesystemAt(mountDirectory) {
@@ -508,7 +520,9 @@ async function consumeVerifiedMacosDmg({
   platform = process.platform,
   runner = defaultRunner,
   verifyApp = verifyBundledSidecar,
-  verifySource = verifyMainSourceProvenance,
+  expectedSource,
+  expectedDesktop,
+  verifySource = resolveExactMainSource,
   mountProbe = mountedFilesystemAt,
   consumeVerifiedImage,
 }) {
@@ -518,12 +532,19 @@ async function consumeVerifiedMacosDmg({
     !path.isAbsolute(repoRoot) ||
     !path.isAbsolute(dmg) ||
     !path.isAbsolute(temporaryRoot) ||
+    (expectedDesktop !== undefined && !path.isAbsolute(expectedDesktop)) ||
     typeof consumeVerifiedImage !== "function"
   ) {
     throw new Error("macOS DMG verification arguments are invalid");
   }
-  const sourceCommit = await verifySource({ repoRoot });
-  if (!/^[a-f0-9]{40}$/.test(sourceCommit ?? "")) {
+  let source;
+  try {
+    source = validateSourceIdentity(
+      expectedSource === undefined
+        ? await verifySource({ repoRoot })
+        : expectedSource,
+    );
+  } catch {
     throw new Error("macOS build source provenance is invalid");
   }
   const initialDmgMetadata = await metadataForDmg(dmg, maxDmgBytes);
@@ -571,12 +592,17 @@ async function consumeVerifiedMacosDmg({
 
     const appBundle = await validateMountedDmgLayout({ mountDirectory });
     const volumeIcon = await lstat(path.join(mountDirectory, VOLUME_ICON));
-    const appReceipt = await verifyApp({ repoRoot, targetTriple, appBundle });
+    const appReceipt = await verifyApp({
+      repoRoot,
+      targetTriple,
+      appBundle,
+      expectedDesktop,
+    });
     let signaturePolicy;
     const appComposition = await verifyBundleComposition({
       appBundle,
       targetTriple,
-      expectedSourceCommit: sourceCommit,
+      expectedSource: source,
       verifySignaturePolicy: async ({ appBundle: boundAppBundle }) => {
         signaturePolicy = await verifyMacosInternalTestSignaturePolicy({
           appBundle: boundAppBundle,
@@ -594,9 +620,9 @@ async function consumeVerifiedMacosDmg({
       appBundle,
     ]);
     const receipt = Object.freeze({
-      schema_version: "resume-ir.macos-dmg-composition.v2",
+      schema_version: "resume-ir.macos-dmg-composition.v3",
       target_triple: targetTriple,
-      source_commit: sourceCommit,
+      source,
       dmg_count: 1,
       dmg_bytes: finalDmgMetadata.size,
       dmg_sha256: attachedDmgSha256,

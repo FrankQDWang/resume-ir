@@ -22,6 +22,7 @@ import {
   stableBindingsMatch,
 } from "./acceptance-sequence.mjs";
 import {
+  captureV29LogicalAuthority,
   SYNTHETIC_SEARCH_REQUEST,
   SYNTHETIC_CANARY_TOKEN,
   validateInstalledReadyArtifacts,
@@ -34,6 +35,7 @@ import {
   CONTENTION_LOCKS,
   CONTENTION_TIMEOUT_MS,
   DATA_OWNER_LOCK,
+  INSTALLED_APP_BUNDLE,
   LIFECYCLE_RECEIPT,
   PERSISTENT_CONTENTION_TIMEOUT_MS,
   POLL_MS,
@@ -70,6 +72,9 @@ import {
   validateDaemonDiagnostics,
   validateLifecycleReceiptBoundary,
 } from "./ipc-contracts.mjs";
+import { createNativeAcceptanceCells } from "./native-acceptance-cells.mjs";
+import { createInstalledNativeFaultHarness } from "./native-fault-harness.mjs";
+import { readInstalledFaultRecoveryAuthority } from "./native-fault-recovery-authority.mjs";
 import { normalizeAcceptanceOptions } from "./options.mjs";
 import {
   assertNoInstalledRuntime,
@@ -107,6 +112,7 @@ function receiptForbidden(options, session, connection) {
     session.home,
     connection?.token,
     connection?.instanceId,
+    connection?.launchId,
     SYNTHETIC_CANARY_TOKEN,
   ];
 }
@@ -216,10 +222,8 @@ export function observedRealBackoff(retryAfterMs, elapsedMs) {
 
 async function verifySourceData(options) {
   const source = await requireSecureDirectory(options.authorizedSourceDataDir);
-  const sourceManifest = await readActiveStoreManifest(source.resolved, {
-    allowLegacyReadOnly: true,
-  });
-  if (sourceManifest.schema !== 28) fail("authorized_source_schema_invalid");
+  const sourceManifest = await readActiveStoreManifest(source.resolved);
+  if (sourceManifest.schema !== 29) fail("authorized_source_schema_invalid");
   await requirePrivateFile(path.join(source.resolved, DATA_OWNER_LOCK), {
     empty: true,
   });
@@ -249,6 +253,17 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
     baseRunTool(command, args, toolOptions);
   const spawnTool = dependencies.spawnTool ?? spawn;
   const now = dependencies.now ?? (() => performance.now());
+  const installedFaultHarness =
+    dependencies.installedFaultHarness ??
+    createInstalledNativeFaultHarness({
+      cleanupRunTool,
+      loadRecoveryAuthority: async () =>
+        readInstalledFaultRecoveryAuthority({
+          appBundle: INSTALLED_APP_BUNDLE,
+          applicationSupportRoot: await resolveSupportRoot(),
+        }),
+      runTool,
+    });
   const runId = dependencies.runId ?? createAcceptanceRunId();
   const resolveApplicationSupportRoot =
     dependencies.resolveApplicationSupportRoot ??
@@ -351,7 +366,23 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
     );
   }
 
+  const nativeCells = createNativeAcceptanceCells({
+    faultHarness: installedFaultHarness,
+    getBindings: () => {
+      if (!bindings) fail("bindings_required");
+      return bindings;
+    },
+    now,
+    options,
+    requireMutationAuthority,
+    runTool,
+    signal,
+  });
+
   const runtime = {
+    async requireInstalledFaultHarness() {
+      nativeCells.requireFaultHarness();
+    },
     async validatePreLockInputs() {
       throwIfAborted(signal);
       preflight = await validateInputs(options);
@@ -376,6 +407,8 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
           workspace.runId,
         );
       }
+      await assertNoInstalledRuntime(runTool);
+      await nativeCells.recoverFaults();
     },
     async precheckSourceAuthority() {
       if (!preflight || acceptanceLockCapability || sourceExpectation) {
@@ -461,18 +494,32 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
         acquireLock: (lockFile) => acquireExistingLock(lockFile, { spawnTool }),
         releaseLock: releaseExistingLock,
       });
-      workspaces.push(workspace);
-      return workspace;
+      const boundWorkspace = Object.freeze({
+        ...workspace,
+        v29LogicalAuthority: await captureV29LogicalAuthority({
+          dataDir: workspace.dataDir,
+          runTool,
+        }),
+      });
+      workspaces.push(boundWorkspace);
+      return boundWorkspace;
     },
+    prepareStaleControl: nativeCells.prepareStaleControl,
+    prepareForeignControl: nativeCells.prepareForeignControl,
+    prepareFaultCell: nativeCells.prepareFaultCell,
+    activateFaultCell: nativeCells.activateFaultCell,
     async launchApp(workspace) {
       await requireMutationAuthority();
       if (!bindings) fail("bindings_required");
+      nativeCells.assertWorkspaceLaunchable(workspace);
       await assertNoInstalledRuntime(runTool, bindings.executablePaths);
+      const acceptanceStartedAt = now();
       const session = await launchInstalledApp(
         workspace,
         bindings.executablePaths,
         { runTool, spawnTool },
       );
+      session.acceptanceStartedAt = acceptanceStartedAt;
       session.workspace = workspace;
       sessions.push(session);
       return session;
@@ -484,9 +531,18 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
         COLD_READY_TIMEOUT_MS,
         null,
         signal,
+        runTool,
       );
-      const migrated = await readActiveStoreManifest(session.dataDir);
-      if (migrated.schema !== 29) fail("cold_migration_invalid");
+      const preserved = await readActiveStoreManifest(session.dataDir);
+      const authority = session.workspace?.v29Authority;
+      if (
+        preserved.schema !== 29 ||
+        authority?.schema !== 29 ||
+        preserved.fileName !== authority.fileName ||
+        preserved.digest !== authority.digest
+      ) {
+        fail("cold_v29_preservation_invalid");
+      }
       await Promise.all(
         [
           DATA_OWNER_LOCK,
@@ -499,8 +555,21 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
           }),
         ),
       );
-      return ready;
+      return Object.freeze({ ...ready, v29AuthorityPreserved: true });
     },
+    validateStaleControl: nativeCells.validateStaleControl,
+    validateForeignControl: nativeCells.validateForeignControl,
+    closeControlFixture: nativeCells.closeControlFixture,
+    validateSlowInitialization: nativeCells.validateSlowInitialization,
+    validateRuntimeFaultCase: nativeCells.validateRuntimeFaultCase,
+    validateProjectedRuntimeFault: nativeCells.validateProjectedRuntimeFault,
+    captureFaultWitness: nativeCells.captureFaultWitness,
+    prepareOcrFaultFixture: nativeCells.prepareOcrFaultFixture,
+    validateEmbeddingFaultBehavior: nativeCells.validateEmbeddingFaultBehavior,
+    validateOcrFaultBehavior: nativeCells.validateOcrFaultBehavior,
+    validateClassifierFaultBehavior: nativeCells.validateClassifierFaultBehavior,
+    releaseFaultCell: nativeCells.releaseFaultCell,
+    validateFaultCoverage: nativeCells.validateFaultCoverage,
     async validateColdReadyArtifacts(session, observed) {
       if (!observed?.connection || !observed?.status) {
         fail("ready_evidence_invalid");
@@ -514,6 +583,7 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
       return validateInstalledReadyArtifacts({
         dataDir: session.dataDir,
         diagnostics,
+        expectedV29Authority: session.workspace.v29LogicalAuthority,
         runTool,
         status: observed.status,
       });
@@ -542,6 +612,7 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
         COLD_READY_TIMEOUT_MS,
         observed.instanceId,
         signal,
+        runTool,
       );
     },
     waitForReady(session) {
@@ -551,6 +622,7 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
         READY_TIMEOUT_MS,
         null,
         signal,
+        runTool,
       );
     },
     async validateRecoveryEvidence(session, observed, canary) {
@@ -591,7 +663,12 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
       return capturePersistedRecoveryBoundary(session, options, signal);
     },
     waitForNewGenerationReady(session, oldInstanceId) {
-      return waitForNewGenerationReady(session, oldInstanceId, signal);
+      return waitForNewGenerationReady(
+        session,
+        oldInstanceId,
+        signal,
+        runTool,
+      );
     },
     validateRecoveryBoundary(session, boundary) {
       return validatePersistedRecoveryReceipt(
@@ -660,6 +737,7 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
         CONTENTION_TIMEOUT_MS,
         null,
         signal,
+        runTool,
       );
       const firstObservedAt = now();
       const firstRetryAfter = first.status.repair_progress.retry_after_ms;
@@ -677,6 +755,7 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
         CONTENTION_TIMEOUT_MS,
         first.instanceId,
         signal,
+        runTool,
       );
       const elapsed = now() - firstObservedAt;
       if (
@@ -708,6 +787,7 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
         CONTENTION_CONVERGENCE_TIMEOUT_MS,
         instanceId,
         signal,
+        runTool,
       );
     },
     async waitForPersistentBlock(session, kind) {
@@ -717,6 +797,7 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
         PERSISTENT_CONTENTION_TIMEOUT_MS,
         null,
         signal,
+        runTool,
       );
       await validateRepairDiagnostics(session, blocked, {
         kind,
@@ -728,29 +809,8 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
         instanceId: blocked.instanceId,
         phase: blocked.status.repair_progress.phase,
         errorKind: blocked.status.repair_progress.last_error_kind,
-        repairReason: blocked.status.repair_reason,
+        repairReason: blocked.status.core.reason,
       };
-    },
-    async validateDiagnostics(session) {
-      throwIfAborted(signal);
-      const connection = await readDaemonConnection(session.dataDir);
-      if (connection.instanceId !== session.instanceId) {
-        fail("daemon_restarted_unexpectedly");
-      }
-      const diagnostics = await requestJson(
-        connection.urls.diagnostics,
-        connection.token,
-        undefined,
-        signal,
-      );
-      validateDaemonDiagnostics(diagnostics, [
-        options.authorizedSourceDataDir,
-        session.dataDir,
-        session.home,
-        SYNTHETIC_CANARY_TOKEN,
-        connection.token,
-        connection.instanceId,
-      ]);
     },
     cleanup() {
       if (cleanupPromise) return cleanupPromise;
@@ -774,6 +834,11 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
           } catch {
             failed = true;
           }
+        }
+        try {
+          await nativeCells.cleanup();
+        } catch {
+          failed = true;
         }
         let temporaryParent;
         try {
@@ -814,13 +879,7 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
   return runtime;
 }
 
-export async function runInstalledMainAcceptance(
-  rawOptions,
-  { runtime, signal } = {},
-) {
-  const options = normalizeAcceptanceOptions(rawOptions);
-  const activeRuntime =
-    runtime ?? createNativeAcceptanceRuntime(options, { signal });
+async function executeWithCleanup(activeRuntime, signal) {
   let result;
   let primaryError;
   try {
@@ -835,4 +894,26 @@ export async function runInstalledMainAcceptance(
   }
   if (primaryError) throw primaryError;
   return { ...result, cleanup: "temporary_clones_removed" };
+}
+
+export async function runInstalledMainAcceptance(rawOptions, { signal } = {}) {
+  const options = normalizeAcceptanceOptions(rawOptions);
+  return executeWithCleanup(
+    createNativeAcceptanceRuntime(options, { signal }),
+    signal,
+  );
+}
+
+export async function runInstalledMainAcceptanceForTesting(
+  rawOptions,
+  { runtime, signal } = {},
+) {
+  if (!runtime) fail("structural_test_runtime_required");
+  normalizeAcceptanceOptions(rawOptions);
+  const report = await executeWithCleanup(runtime, signal);
+  return {
+    ...report,
+    outcome: "not_native_evidence",
+    evidence_scope: "dependency_injected_structure_only",
+  };
 }

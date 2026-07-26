@@ -513,3 +513,38 @@ are bounded bytes written under timeout; sink failure is a counted
 `ConnectionOutcome`, never a daemon exit. Diagnostics v3 reports saturating
 accepted/completed/disconnect/request-failure/response-failure counters and
 service state without raw errors, paths, queries, tokens, or bodies.
+
+## 13. 2026-07-21 bootstrap and capability contract hard cut
+
+This section supersedes the v2 discovery/auth/status and diagnostics v3 examples
+above. There is no dual reader or negotiated downgrade.
+
+- Discovery is `resume-ir.daemon-ipc.v3`; auth is
+  `resume-ir.daemon-auth.v3`. Both carry the same 256-bit `launch_id` and
+  independent daemon `instance_id`. A client connection is valid only for the
+  supervisor generation, expected launch, instance, and rotating auth token.
+- Status is `daemon.status.v3`; diagnostics is
+  `resume-ir.diagnostics.v4`; aggregate IPC is `resume-ir.ipc.v4`; bounded
+  business errors are `resume-ir.error.v2`. Search/detail/hydrate success
+  responses remain v3 because their wire shape and selection semantics do not
+  change.
+- `process_state=ready` means only that the authenticated control plane is
+  readable. `core.state` is one of
+  `initializing|ready|repairing|degraded|blocked`. `optional_runtimes` contains
+  exactly embedding, OCR, and classifier. `capabilities` contains exactly
+  keyword search, detail, semantic search, hybrid search, text import, OCR
+  import, and index publication.
+- Runtime entries use `initializing|available|unavailable` and a closed reason
+  set `missing|invalid|start_failed|not_configured`. Capability entries use
+  `initializing|available|degraded|unavailable|blocked`. Store-backed aggregates
+  are `null` until the store is ready; paths, tokens, manifests, and raw errors
+  are never status or diagnostics fields.
+- During bootstrap, authenticated status/diagnostics return 200 and every
+  business route returns `SERVICE_INITIALIZING`. A permanent core blocker uses
+  `SERVICE_BLOCKED`; an unavailable operation uses `CAPABILITY_UNAVAILABLE`.
+  Each carries a closed action/capability/reason tuple. Hybrid may return lexical
+  results with a bounded partial reason; `SEMANTIC_DISABLED` is reserved for a
+  deliberate product-contract disable, not a missing or broken runtime.
+- Status and heartbeat are generated from a bounded in-memory typed snapshot.
+  They never open SQLite or initialize a runtime. Listener, token, launch ID,
+  and instance ID remain stable across bootstrap-to-ready.

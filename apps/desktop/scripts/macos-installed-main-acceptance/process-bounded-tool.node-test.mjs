@@ -42,6 +42,7 @@ import {
 } from "./filesystem-cow.mjs";
 import {
   assertNoInstalledRuntime,
+  connectionBelongsToOwnedDaemon,
   installedAcceptanceEnvironment,
   launchInstalledApp,
   quitInstalledApp,
@@ -236,6 +237,51 @@ test("global residue inspection rejects the exact installed runtime", async () =
       /installed_runtime_already_running/,
     );
   }
+});
+
+test("daemon discovery is authoritative only for the exact App child and launch", async () => {
+  const launchId = "a".repeat(64);
+  const session = {
+    dataDir: "/synthetic/private/data",
+    executablePaths: DEFAULT_INSTALLED_EXECUTABLES,
+    pgid: 700,
+    pid: 701,
+  };
+  const connection = { launchId };
+  const result = (stdout) => ({
+    status: 0,
+    stdout,
+    stderr: "",
+    timedOut: false,
+    overflow: false,
+  });
+  const owned =
+    `702 701 700 ${DAEMON_EXECUTABLE} ` +
+    `--data-dir ${session.dataDir} --launch-id ${launchId}\n`;
+  assert.equal(
+    await connectionBelongsToOwnedDaemon(
+      session,
+      connection,
+      async () => result(owned),
+    ),
+    true,
+  );
+  assert.equal(
+    await connectionBelongsToOwnedDaemon(
+      session,
+      connection,
+      async () => result(owned.replace("702 701 700", "702 1 702")),
+    ),
+    false,
+  );
+  assert.equal(
+    await connectionBelongsToOwnedDaemon(
+      session,
+      { launchId: "b".repeat(64) },
+      async () => result(owned),
+    ),
+    false,
+  );
 });
 
 test("installed launch environment is a closed canonical allowlist", () => {

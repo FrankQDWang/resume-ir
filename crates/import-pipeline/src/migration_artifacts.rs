@@ -380,7 +380,6 @@ mod tests {
     fn invalid_publication_lock_layout_blocks_repair() {
         let temp = TestDir::new();
         let store = create_test_store(&temp.0);
-        fs::remove_file(temp.0.join("search-publication.lock")).unwrap();
         fs::create_dir(temp.0.join("search-publication.lock")).unwrap();
 
         assert!(prepare_migration_rebuild_artifacts(

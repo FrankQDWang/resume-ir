@@ -22,8 +22,8 @@ pub(crate) use batch::{
     overload_body as batch_overload_body, parse_request as parse_batch_request,
 };
 pub(crate) use wire::{
-    error_body, overload_body, parse_cancel_request, parse_request, service_error_body,
-    valid_opaque_id, CancelRequest, RequestEnvelope,
+    capability_unavailable_body, error_body, overload_body, parse_cancel_request, parse_request,
+    service_error_body, valid_opaque_id, CancelRequest, RequestEnvelope,
 };
 
 use crate::search_command::daemon_search_cancelled_output;

@@ -46,3 +46,31 @@ fn cancel_request_requires_bounded_identity() {
         assert!(parse_cancel_request(invalid.to_string().as_bytes()).is_err());
     }
 }
+
+#[test]
+fn error_v2_shared_fixtures_match_real_search_producers() {
+    let overloaded: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../apps/desktop/src-tauri/tests/fixtures/daemon-error-v2-overloaded.json"
+    )))
+    .unwrap();
+    let query_unavailable: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../apps/desktop/src-tauri/tests/fixtures/daemon-error-v2-query-service-unavailable.json"
+    )))
+    .unwrap();
+
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&overload_body("synthetic-request")).unwrap(),
+        overloaded
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&error_body(
+            "synthetic-request",
+            "QUERY_SERVICE_UNAVAILABLE",
+            "redacted",
+        ))
+        .unwrap(),
+        query_unavailable
+    );
+}

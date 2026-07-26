@@ -18,13 +18,25 @@ const epoch = 12;
 
 function readyStatus(overrides = {}) {
   return {
-    schema_version: "daemon.status.v2",
+    schema_version: "daemon.status.v3",
     status: "ok",
     visible_epoch: epoch,
     process_state: "ready",
-    service_state: "ready",
-    services: { metadata: "ready", query: "ready" },
-    repair_reason: null,
+    core: { state: "ready", reason: null },
+    optional_runtimes: {
+      embedding: { state: "available", reason: null },
+      ocr: { state: "available", reason: null },
+      classifier: { state: "available", reason: null },
+    },
+    capabilities: {
+      keyword_search: { state: "available", reason: null },
+      detail: { state: "available", reason: null },
+      semantic_search: { state: "available", reason: null },
+      hybrid_search: { state: "available", reason: null },
+      text_import: { state: "available", reason: null },
+      ocr_import: { state: "available", reason: null },
+      index_publication: { state: "available", reason: null },
+    },
     repair_progress: null,
     error: null,
     ipc: {

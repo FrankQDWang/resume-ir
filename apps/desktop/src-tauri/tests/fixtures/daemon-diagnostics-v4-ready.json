@@ -1,0 +1,52 @@
+{
+  "schema_version": "resume-ir.diagnostics.v4",
+  "privacy_boundary": "redacted_local_aggregate",
+  "contains_raw_resume_text": false,
+  "contains_queries": false,
+  "contains_resume_paths": false,
+  "contains_candidate_results": false,
+  "contains_snippet_text": false,
+  "visible_epoch": 7,
+  "evidence_lane": "gui_manual",
+  "evidence_status": "unaccepted",
+  "process_state": "ready",
+  "core": { "state": "ready", "reason": null },
+  "optional_runtimes": {
+    "embedding": { "state": "available", "reason": null },
+    "ocr": { "state": "available", "reason": null },
+    "classifier": { "state": "available", "reason": null }
+  },
+  "capabilities": {
+    "keyword_search": { "state": "available", "reason": null },
+    "detail": { "state": "available", "reason": null },
+    "semantic_search": { "state": "available", "reason": null },
+    "hybrid_search": { "state": "available", "reason": null },
+    "text_import": { "state": "available", "reason": null },
+    "ocr_import": { "state": "available", "reason": null },
+    "index_publication": { "state": "available", "reason": null }
+  },
+  "repair_progress": null,
+  "error": null,
+  "metrics": {
+    "ipc": { "accepted": 2, "completed": 2, "client_disconnect": 0, "request_failure": 0, "response_failure": 0 },
+    "indexed_documents": 4,
+    "searchable_documents": 3,
+    "partial_documents": 1,
+    "ocr_queue_depth": 0,
+    "embedding_queue_depth": 0,
+    "recovery_queue_depth": 0,
+    "import_tasks_queued": 0,
+    "import_tasks_recoverable": 0,
+    "import_tasks_cancelled": 0,
+    "query_latency": { "sample_count": 1, "p50_ms": 2.0, "p95_ms": 3.0, "p99_ms": 4.0, "last_result_count": 1 }
+  },
+  "error_counts": {
+    "failed_retryable": 0,
+    "failed_permanent": 0,
+    "import_scan_errors": 0,
+    "ocr_page_budget_blocked": 0,
+    "ocr_language_unavailable": 0,
+    "scan_error_buckets": []
+  },
+  "benchmark_refs": []
+}

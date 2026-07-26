@@ -6,9 +6,11 @@ use std::fs::OpenOptions;
 use tempfile::Builder;
 
 use crate::{
-    encode_hex, restrict_private_file_permissions, schema_v27, schema_v28, schema_v29,
-    MetaStoreError, Result, METADATA_STORE_FILE,
+    encode_hex, restrict_private_file_permissions, schema_v29, MetaStoreError, Result,
+    METADATA_STORE_FILE,
 };
+#[cfg(any(test, feature = "migration-test-support"))]
+use crate::{schema_v27, schema_v28};
 
 pub(crate) const MANIFEST_FILE: &str = "metadata-active.v1";
 const MANIFEST_SCHEMA: &str = "resume-ir.metadata-active.v1";
@@ -46,6 +48,7 @@ pub(crate) fn publish_new_active_store(
     finish_manifest_commit(data_dir, &path)
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 pub(crate) fn replace_active_store(
     data_dir: &Path,
     expected: &ActiveStoreManifest,
@@ -67,6 +70,16 @@ pub(crate) fn replace_active_store(
 }
 
 pub(crate) fn read_manifest(path: &Path) -> Result<ActiveStoreManifest> {
+    let manifest = parse_manifest(path)?;
+    validate_manifest(&manifest)?;
+    Ok(manifest)
+}
+
+pub(crate) fn read_manifest_schema_version(path: &Path) -> Result<u32> {
+    Ok(parse_manifest(path)?.schema_version)
+}
+
+fn parse_manifest(path: &Path) -> Result<ActiveStoreManifest> {
     let metadata = fs::symlink_metadata(path).map_err(MetaStoreError::io_storage)?;
     validate_owner_regular_metadata(&metadata)?;
     if metadata.len() > MANIFEST_MAX_BYTES {
@@ -87,19 +100,21 @@ pub(crate) fn read_manifest(path: &Path) -> Result<ActiveStoreManifest> {
     if lines.next().is_some() {
         return Err(MetaStoreError::invalid_value("metadata.active_manifest"));
     }
-    validate_manifest(&manifest)?;
     Ok(manifest)
 }
 
 pub(crate) fn validate_store_file_name(file_name: &str) -> Result<()> {
-    let versioned = [
-        schema_v27::VERSION,
-        schema_v28::VERSION,
-        schema_v29::VERSION,
-    ]
-    .into_iter()
-    .any(|version| versioned_store_token(file_name, version).is_some());
-    if file_name != METADATA_STORE_FILE && !versioned {
+    let versioned = versioned_store_token(file_name, schema_v29::VERSION).is_some();
+    #[cfg(any(test, feature = "migration-test-support"))]
+    let versioned = versioned
+        || [schema_v27::VERSION, schema_v28::VERSION]
+            .into_iter()
+            .any(|version| versioned_store_token(file_name, version).is_some());
+    #[cfg(any(test, feature = "migration-test-support"))]
+    let legacy_file_name = file_name == METADATA_STORE_FILE;
+    #[cfg(not(any(test, feature = "migration-test-support")))]
+    let legacy_file_name = false;
+    if !legacy_file_name && !versioned {
         return Err(MetaStoreError::invalid_value("metadata.active_store_file"));
     }
     Ok(())
@@ -151,6 +166,23 @@ pub(crate) fn validate_owner_regular_metadata(metadata: &fs::Metadata) -> Result
     Ok(())
 }
 
+pub(crate) fn validate_owner_directory_metadata(metadata: &fs::Metadata) -> Result<()> {
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        return Err(MetaStoreError::invalid_value("metadata.owner_directory"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(MetaStoreError::invalid_value(
+                "metadata.owner_directory_permissions",
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(any(test, feature = "migration-test-support"))]
 pub(crate) fn remove_owner_file_if_exists(path: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -190,15 +222,24 @@ pub(crate) fn sync_parent_directory(_data_dir: &Path) -> Result<()> {
 }
 
 fn validate_manifest(manifest: &ActiveStoreManifest) -> Result<()> {
-    if !matches!(
-        manifest.schema_version,
-        schema_v27::VERSION | schema_v28::VERSION | schema_v29::VERSION
-    ) {
+    let supported = manifest.schema_version == schema_v29::VERSION;
+    #[cfg(any(test, feature = "migration-test-support"))]
+    let supported = supported
+        || matches!(
+            manifest.schema_version,
+            schema_v27::VERSION | schema_v28::VERSION
+        );
+    if !supported {
         return Err(MetaStoreError::invalid_value("metadata.active_manifest"));
     }
     validate_store_file_name(&manifest.file_name)?;
     validate_store_id_digest(&manifest.store_id_digest)?;
-    if (manifest.file_name == METADATA_STORE_FILE && manifest.schema_version != schema_v27::VERSION)
+    #[cfg(any(test, feature = "migration-test-support"))]
+    let legacy_file_matches =
+        manifest.file_name == METADATA_STORE_FILE && manifest.schema_version == schema_v27::VERSION;
+    #[cfg(not(any(test, feature = "migration-test-support")))]
+    let legacy_file_matches = false;
+    if (!legacy_file_matches && manifest.file_name == METADATA_STORE_FILE)
         || (manifest.file_name != METADATA_STORE_FILE
             && versioned_store_token(&manifest.file_name, manifest.schema_version).is_none())
     {
@@ -229,6 +270,7 @@ fn required_value<'a>(line: Option<&'a str>, key: &str) -> Result<&'a str> {
 #[derive(Clone, Copy)]
 enum ManifestPersistMode {
     NoClobber,
+    #[cfg(any(test, feature = "migration-test-support"))]
     Replace,
 }
 
@@ -257,6 +299,7 @@ fn persist_manifest(
     restrict_private_file_permissions(temporary.path())?;
     let result = match mode {
         ManifestPersistMode::NoClobber => temporary.persist_noclobber(path),
+        #[cfg(any(test, feature = "migration-test-support"))]
         ManifestPersistMode::Replace => temporary.persist(path),
     };
     result

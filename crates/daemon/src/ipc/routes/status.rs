@@ -7,23 +7,19 @@ use meta_store::{
     SearchProjectionServiceState,
 };
 
-use super::super::diagnostics;
 use super::super::protocol::Request;
 use super::super::{
-    projection_service_health, repair_progress_json, search_repair_reason_label,
-    service_error_json, IpcMetricsSnapshot, ServiceErrorCode, ServiceHealth, ServiceState,
+    repair_progress_json, CapabilityMatrix, ControlPlaneState, CoreHealth, CoreState,
+    OptionalRuntimeMatrix, ServiceErrorCode,
 };
+#[cfg(test)]
+use super::super::{CoreReason, OptionalRuntimeHealth, OptionalRuntimeReason};
 use super::{authorized, unauthorized_body, write, RouteResult};
 
 type MetadataReadResult<T> = Result<T, MetaStoreErrorClass>;
 
-pub(super) fn status(store: &ReadMetaStore, stream: &mut TcpStream) -> RouteResult {
-    let body = status_json(store);
-    write(stream, 200, "application/json", &body)
-}
-
-pub(super) fn diagnostics(
-    store: &ReadMetaStore,
+pub(super) fn status(
+    state: &ControlPlaneState,
     auth_token: &str,
     request: &Request,
     stream: &mut TcpStream,
@@ -31,7 +27,20 @@ pub(super) fn diagnostics(
     if !authorized(auth_token, request) {
         return write(stream, 401, "application/json", &unauthorized_body());
     }
-    let body = diagnostics::render(store);
+    let body = state.status_body();
+    write(stream, 200, "application/json", &body)
+}
+
+pub(super) fn diagnostics(
+    state: &ControlPlaneState,
+    auth_token: &str,
+    request: &Request,
+    stream: &mut TcpStream,
+) -> RouteResult {
+    if !authorized(auth_token, request) {
+        return write(stream, 401, "application/json", &unauthorized_body());
+    }
+    let body = state.diagnostics_body();
     write(stream, 200, "application/json", &body)
 }
 
@@ -49,51 +58,84 @@ pub(crate) fn projection_query_error(
         Some(SearchProjectionServiceState::Ready) => None,
         Some(SearchProjectionServiceState::Repairing) => Some(ServiceErrorCode::Repairing),
         Some(SearchProjectionServiceState::RepairBlocked) => {
-            Some(ServiceErrorCode::QueryServiceRepairRequired)
+            Some(ServiceErrorCode::QueryServiceUnavailable)
         }
         None => Some(ServiceErrorCode::MetadataUnavailable),
     }
 }
 
-pub(crate) fn status_json(store: &ReadMetaStore) -> String {
-    status_json_with(|| status_json_once(store))
-}
-
+#[cfg(test)]
 pub(crate) fn status_json_with(read: impl FnMut() -> MetadataReadResult<String>) -> String {
     retry_metadata_read(read).unwrap_or_else(|_| unavailable_status_json())
 }
 
+#[cfg(test)]
 pub(crate) fn unavailable_status_json() -> String {
-    let services = ServiceHealth {
-        metadata: ServiceState::Unavailable,
-        query: ServiceState::Unavailable,
+    let core = CoreHealth {
+        state: CoreState::Degraded,
+        reason: Some(CoreReason::MetadataUnavailable),
     };
+    let runtimes = unavailable_runtimes(OptionalRuntimeReason::NotConfigured);
+    render_without_store(core, runtimes, CapabilityMatrix::derive(core, runtimes)).to_string()
+}
+
+pub(crate) fn render_without_store(
+    core: CoreHealth,
+    runtimes: OptionalRuntimeMatrix,
+    capabilities: CapabilityMatrix,
+) -> serde_json::Value {
     let metrics = super::super::process_metrics().snapshot();
-    serde_json::json!({
-        "schema_version": "daemon.status.v2",
-        "status": "degraded",
-        "process_state": "ready",
-        "service_state": services.aggregate().label(),
-        "services": {
-            "metadata": services.metadata.label(),
-            "query": services.query.label(),
-        },
-        "repair_reason": serde_json::Value::Null,
+    let mut body = serde_json::json!({
+        "schema_version": "daemon.status.v3",
+        "status": status_label(core.state),
+        "error": super::super::capability::service_error_json(core),
         "repair_progress": serde_json::Value::Null,
-        "error": {
-            "code": "METADATA_UNAVAILABLE",
-            "action": "retry",
-        },
         "indexed_documents": serde_json::Value::Null,
         "searchable_documents": serde_json::Value::Null,
         "partial_documents": serde_json::Value::Null,
         "visible_epoch": serde_json::Value::Null,
-        "ipc": metrics_json(metrics),
-    })
-    .to_string()
+        "failed_retryable": serde_json::Value::Null,
+        "failed_permanent": serde_json::Value::Null,
+        "recovery_queue_depth": serde_json::Value::Null,
+        "ocr_queue_depth": serde_json::Value::Null,
+        "ocr_jobs_queued": serde_json::Value::Null,
+        "ocr_page_budget_blocked": serde_json::Value::Null,
+        "ocr_remediation": serde_json::Value::Null,
+        "ocr_language_unavailable": serde_json::Value::Null,
+        "ocr_language_remediation": serde_json::Value::Null,
+        "embedding_queue_depth": serde_json::Value::Null,
+        "entity_mentions": serde_json::Value::Null,
+        "import_tasks_queued": serde_json::Value::Null,
+        "import_tasks_recoverable": serde_json::Value::Null,
+        "import_tasks_cancelled": serde_json::Value::Null,
+        "import_scan_scopes": serde_json::Value::Null,
+        "import_scan_errors": serde_json::Value::Null,
+        "query_latency": serde_json::Value::Null,
+        "latest_import_scan": serde_json::Value::Null,
+        "active_profile": serde_json::Value::Null,
+        "index_health": serde_json::Value::Null,
+        "snapshot_present": serde_json::Value::Null,
+        "ipc": metrics.to_json(),
+    });
+    merge_health(&mut body, core, runtimes, capabilities);
+    body
 }
 
-fn status_json_once(store: &ReadMetaStore) -> MetadataReadResult<String> {
+pub(crate) fn render_from_store(
+    store: &ReadMetaStore,
+    core: CoreHealth,
+    runtimes: OptionalRuntimeMatrix,
+    capabilities: CapabilityMatrix,
+) -> MetadataReadResult<serde_json::Value> {
+    retry_metadata_read(|| status_json_once(store, core, runtimes, capabilities))
+}
+
+fn status_json_once(
+    store: &ReadMetaStore,
+    core: CoreHealth,
+    runtimes: OptionalRuntimeMatrix,
+    capabilities: CapabilityMatrix,
+) -> MetadataReadResult<serde_json::Value> {
     let summary = store.status_summary().map_err(|error| error.class())?;
     let projection = store
         .search_projection_state()
@@ -103,32 +145,20 @@ fn status_json_once(store: &ReadMetaStore) -> MetadataReadResult<String> {
         .map_err(|error| error.class())?
         .map(|scope| latest_import_scan_json(&scope))
         .unwrap_or(serde_json::Value::Null);
-    let services = projection_service_health(projection.service_state);
     let repair_attempt = store
         .artifact_repair_attempt_state()
         .map_err(|error| error.class())?;
     let metrics = super::super::process_metrics().snapshot();
-    let body = serde_json::json!({
-        "schema_version": "daemon.status.v2",
-        "status": match services.aggregate() {
-            ServiceState::Ready => "ok",
-            ServiceState::Repairing => "repairing",
-            ServiceState::Degraded | ServiceState::Unavailable => "degraded",
-        },
-        "process_state": "ready",
-        "service_state": services.aggregate().label(),
-        "services": {
-            "metadata": services.metadata.label(),
-            "query": services.query.label(),
-        },
-        "repair_reason": projection.repair_reason.map(search_repair_reason_label),
+    let mut body = serde_json::json!({
+        "schema_version": "daemon.status.v3",
+        "status": status_label(core.state),
         "repair_progress": repair_progress_json(
             &projection,
             repair_attempt.as_ref(),
             unix_now_seconds(),
         ),
-        "error": service_error_json(services),
-        "ipc": metrics_json(metrics),
+        "error": super::super::capability::service_error_json(core),
+        "ipc": metrics.to_json(),
         "visible_epoch": projection.visible_epoch,
         "indexed_documents": summary.indexed_documents,
         "searchable_documents": summary.searchable_documents,
@@ -170,7 +200,40 @@ fn status_json_once(store: &ReadMetaStore) -> MetadataReadResult<String> {
         "index_health": crate::index_health_label(summary.index_health),
         "snapshot_present": summary.last_snapshot_id.is_some(),
     });
-    Ok(body.to_string())
+    merge_health(&mut body, core, runtimes, capabilities);
+    Ok(body)
+}
+
+fn merge_health(
+    body: &mut serde_json::Value,
+    core: CoreHealth,
+    runtimes: OptionalRuntimeMatrix,
+    capabilities: CapabilityMatrix,
+) {
+    let health = super::super::capability::health_json(core, runtimes, capabilities);
+    let object = body.as_object_mut().expect("status body is an object");
+    for (key, value) in health.as_object().expect("health body is an object") {
+        object.insert(key.clone(), value.clone());
+    }
+}
+
+fn status_label(state: CoreState) -> &'static str {
+    match state {
+        CoreState::Initializing => "initializing",
+        CoreState::Ready => "ok",
+        CoreState::Repairing => "repairing",
+        CoreState::Degraded => "degraded",
+        CoreState::Blocked => "blocked",
+    }
+}
+
+#[cfg(test)]
+fn unavailable_runtimes(reason: OptionalRuntimeReason) -> OptionalRuntimeMatrix {
+    OptionalRuntimeMatrix {
+        embedding: OptionalRuntimeHealth::unavailable(reason),
+        ocr: OptionalRuntimeHealth::unavailable(reason),
+        classifier: OptionalRuntimeHealth::unavailable(reason),
+    }
 }
 
 fn unix_now_seconds() -> i64 {
@@ -179,16 +242,6 @@ fn unix_now_seconds() -> i64 {
         .ok()
         .and_then(|duration| i64::try_from(duration.as_secs()).ok())
         .unwrap_or(0)
-}
-
-fn metrics_json(metrics: IpcMetricsSnapshot) -> serde_json::Value {
-    serde_json::json!({
-        "accepted": metrics.accepted,
-        "completed": metrics.completed,
-        "client_disconnect": metrics.client_disconnect,
-        "request_failure": metrics.request_failure,
-        "response_failure": metrics.response_failure,
-    })
 }
 
 fn retry_metadata_read<T>(
@@ -243,4 +296,64 @@ fn latest_import_scan_json(scope: &ImportScanScope) -> serde_json::Value {
         "scan_budget_limit": scope.scan_budget_limit,
         "scan_budget_exhausted": scope.scan_budget_exhausted,
     })
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use std::collections::BTreeSet;
+
+    use super::render_without_store;
+    use crate::ipc::{
+        CapabilityMatrix, CoreHealth, CoreState, OptionalRuntimeHealth, OptionalRuntimeMatrix,
+    };
+
+    #[test]
+    fn daemon_status_v3_ready_fixture_matches_producer_contract() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../apps/desktop/src-tauri/tests/fixtures/daemon-status-v3-ready.json"
+        )))
+        .unwrap();
+        let core = CoreHealth {
+            state: CoreState::Ready,
+            reason: None,
+        };
+        let runtimes = OptionalRuntimeMatrix {
+            embedding: OptionalRuntimeHealth::available(),
+            ocr: OptionalRuntimeHealth::available(),
+            classifier: OptionalRuntimeHealth::available(),
+        };
+        let capabilities = CapabilityMatrix::derive(core, runtimes);
+        let rendered = render_without_store(core, runtimes, capabilities);
+
+        assert_eq!(object_keys(&rendered), object_keys(&fixture));
+        for key in [
+            "schema_version",
+            "status",
+            "process_state",
+            "core",
+            "optional_runtimes",
+            "capabilities",
+            "error",
+        ] {
+            assert_eq!(rendered[key], fixture[key], "contract drift at {key}");
+        }
+        assert_eq!(
+            object_keys(&rendered["optional_runtimes"]),
+            object_keys(&fixture["optional_runtimes"])
+        );
+        assert_eq!(
+            object_keys(&rendered["capabilities"]),
+            object_keys(&fixture["capabilities"])
+        );
+    }
+
+    fn object_keys(value: &serde_json::Value) -> BTreeSet<&str> {
+        value
+            .as_object()
+            .expect("contract node is an object")
+            .keys()
+            .map(String::as_str)
+            .collect()
+    }
 }

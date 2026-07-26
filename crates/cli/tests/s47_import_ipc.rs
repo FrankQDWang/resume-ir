@@ -110,7 +110,7 @@ fn import_ipc_auto_discovers_endpoint_and_token_file() {
         let (mut status_stream, _) = accept_with_timeout(&listener);
         let status_request = read_http_request(&mut status_stream);
         assert!(status_request.starts_with("GET /status HTTP/1.1"));
-        assert!(!status_request.contains("Authorization:"));
+        assert!(status_request.contains(&format!("Authorization: Bearer {token}")));
         write_auto_status_response(&mut status_stream);
         drop(status_stream);
 
@@ -268,7 +268,7 @@ fn cancel_import_ipc_auto_discovers_endpoint_and_token_file() {
         let (mut status_stream, _) = accept_with_timeout(&listener);
         let status_request = read_http_request(&mut status_stream);
         assert!(status_request.starts_with("GET /status HTTP/1.1"));
-        assert!(!status_request.contains("Authorization:"));
+        assert!(status_request.contains(&format!("Authorization: Bearer {token}")));
         write_auto_status_response(&mut status_stream);
         drop(status_stream);
 
@@ -440,6 +440,61 @@ fn import_ipc_http_error_does_not_fallback_to_local_store() {
     assert!(!stderr.contains(path_str(&root_dir)));
     assert!(!stderr.contains(path_str(&token_file)));
     assert!(!stderr.contains("dddddddd"));
+    assert!(!data_dir.exists());
+
+    remove_path(&data_dir);
+    remove_path(&root_dir);
+    remove_path(&token_file);
+}
+
+#[test]
+fn import_ipc_reports_a_typed_unavailable_capability_without_leaking_context() {
+    let data_dir = temp_path("import-ipc-capability-unavailable-data");
+    let root_dir = temp_dir("import-ipc-capability-unavailable-root");
+    let token_file = temp_file("import-ipc-capability-unavailable-token");
+    let token = "abababababababababababababababababababababababababababababababab";
+    write_daemon_auth(&token_file, &format!("{token}\n"));
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake daemon");
+    let addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept import request");
+        let request = read_http_request(&mut stream);
+        assert!(request.starts_with("POST /imports HTTP/1.1"));
+        let response = "{\"schema_version\":\"resume-ir.error.v2\",\"status\":\"error\",\"error\":{\"code\":\"CAPABILITY_UNAVAILABLE\",\"action\":\"select_supported_mode\",\"capability\":\"text_import\",\"reason\":\"classifier_unavailable\"}}";
+        write!(
+            stream,
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            response.len(),
+            response
+        )
+        .expect("write capability error response");
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_resume-cli"))
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "import",
+            "--ipc",
+            &format!("http://{addr}/imports"),
+            "--ipc-token-file",
+            path_str(&token_file),
+            "--root",
+            path_str(&root_dir),
+        ])
+        .output()
+        .expect("run resume-cli import against unavailable capability");
+
+    server.join().expect("fake daemon joined");
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("daemon import ipc capability unavailable"));
+    assert!(!stderr.contains("classifier_unavailable"));
+    assert!(!stderr.contains(path_str(&data_dir)));
+    assert!(!stderr.contains(path_str(&root_dir)));
+    assert!(!stderr.contains(path_str(&token_file)));
+    assert!(!stderr.contains(token));
     assert!(!data_dir.exists());
 
     remove_path(&data_dir);

@@ -6,16 +6,16 @@ import {
   readOwnerEvidence,
   removeOwnerEvidence,
 } from "./macos-owner-evidence-store.mjs";
+import { validateSourceIdentity } from "./macos-source-identity.mjs";
 
-export const INSTALL_RECEIPT_FILE = "resume-ir.install-receipt.v2.json";
-export const INSTALL_RECEIPT_SCHEMA = "resume-ir.macos-install-receipt.v2";
+export const INSTALL_RECEIPT_FILE = "resume-ir.install-receipt.v3.json";
+export const INSTALL_RECEIPT_SCHEMA = "resume-ir.macos-install-receipt.v3";
 export { defaultApplicationSupportRoot };
 
 const EXPECTED_BUNDLE_ID = "local.resume-ir.desktop";
 const SUPPORTED_TARGET = "aarch64-apple-darwin";
 const MAX_RECEIPT_BYTES = 4 * 1024;
 const DIGEST = /^[a-f0-9]{64}$/;
-const SOURCE_COMMIT = /^[a-f0-9]{40}$/;
 const VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 const MIN_VERSION = [0, 1, 2];
 
@@ -45,13 +45,18 @@ function exactKeys(value, expected) {
 }
 
 export function validateInstallReceipt(receipt) {
+  try {
+    validateSourceIdentity(receipt?.source);
+  } catch {
+    throw receiptError();
+  }
   if (
     !exactKeys(receipt, [
       "schema_version",
       "bundle_id",
       "version",
       "target_triple",
-      "source_commit",
+      "source",
       "composition_digest",
       "dmg_sha256",
     ]) ||
@@ -59,7 +64,6 @@ export function validateInstallReceipt(receipt) {
     receipt.bundle_id !== EXPECTED_BUNDLE_ID ||
     !supportedVersion(receipt.version) ||
     receipt.target_triple !== SUPPORTED_TARGET ||
-    !SOURCE_COMMIT.test(receipt.source_commit) ||
     !DIGEST.test(receipt.composition_digest) ||
     !DIGEST.test(receipt.dmg_sha256)
   ) {
@@ -73,13 +77,18 @@ export function installReceiptPath(applicationSupportRoot) {
 }
 
 export function createInstallReceipt({ composition, dmgSha256 }) {
+  let source;
+  try {
+    source = validateSourceIdentity(composition?.source);
+  } catch {
+    throw receiptError();
+  }
   if (
     composition === null ||
     typeof composition !== "object" ||
     composition.bundle_id !== EXPECTED_BUNDLE_ID ||
     !supportedVersion(composition.version) ||
     composition.target_triple !== SUPPORTED_TARGET ||
-    !SOURCE_COMMIT.test(composition.source_commit ?? "") ||
     !DIGEST.test(composition.composition_digest ?? "") ||
     !DIGEST.test(dmgSha256 ?? "")
   ) {
@@ -90,7 +99,7 @@ export function createInstallReceipt({ composition, dmgSha256 }) {
     bundle_id: composition.bundle_id,
     version: composition.version,
     target_triple: composition.target_triple,
-    source_commit: composition.source_commit,
+    source,
     composition_digest: composition.composition_digest,
     dmg_sha256: dmgSha256,
   });
@@ -102,7 +111,7 @@ export function verifyInstallReceipt({ receipt, composition }) {
     composition?.bundle_id !== receipt.bundle_id ||
     composition?.version !== receipt.version ||
     composition?.target_triple !== receipt.target_triple ||
-    composition?.source_commit !== receipt.source_commit ||
+    JSON.stringify(composition?.source) !== JSON.stringify(receipt.source) ||
     composition?.composition_digest !== receipt.composition_digest
   ) {
     throw receiptError("install receipt does not match bundle composition");

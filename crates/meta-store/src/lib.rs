@@ -1,7 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
-use std::io::{self, Read};
+use std::io;
+#[cfg(any(test, feature = "migration-test-support"))]
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -44,6 +46,7 @@ mod migration_rebuild_barrier;
 #[doc(hidden)]
 pub mod migration_test_support;
 mod migration_v27;
+#[cfg(any(test, feature = "migration-test-support"))]
 mod migration_v28;
 mod migration_v29;
 mod ocr_publication;
@@ -313,12 +316,41 @@ pub fn restore_metadata_encryption_key(
     let parent = key_path
         .parent()
         .ok_or_else(|| MetaStoreError::invalid_value("metadata.encryption_key_path"))?;
-    fs::create_dir_all(parent).map_err(MetaStoreError::io_storage)?;
-    write_new_private_file(&key_path, encode_hex(&metadata_key).as_bytes())
-        .map_err(MetaStoreError::io_storage)?;
-    restrict_private_file_permissions(&key_path)?;
+    let created_parent = create_private_directory_if_missing(parent)?;
+    let write_result = write_new_private_file(&key_path, encode_hex(&metadata_key).as_bytes())
+        .map_err(MetaStoreError::io_storage)
+        .and_then(|()| restrict_private_file_permissions(&key_path));
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&key_path);
+        if created_parent {
+            let _ = fs::remove_dir(parent);
+        }
+        return Err(error);
+    }
 
     Ok(MetadataEncryptionKeyRestore { _private: () })
+}
+
+fn create_private_directory_if_missing(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            active_store_manifest::validate_owner_directory_metadata(&metadata)?;
+            Ok(false)
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let mut builder = fs::DirBuilder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                builder.mode(0o700);
+            }
+            builder.create(path).map_err(MetaStoreError::io_storage)?;
+            let metadata = fs::symlink_metadata(path).map_err(MetaStoreError::io_storage)?;
+            active_store_manifest::validate_owner_directory_metadata(&metadata)?;
+            Ok(true)
+        }
+        Err(error) => Err(MetaStoreError::io_storage(error)),
+    }
 }
 
 fn validate_metadata_encryption_key(key: &[u8]) -> Result<()> {
@@ -376,6 +408,7 @@ fn decode_metadata_key_hex(value: &str) -> Result<[u8; METADATA_ENCRYPTION_KEY_L
     Ok(key)
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 fn load_or_create_metadata_encryption_key(
     data_dir: &Path,
 ) -> Result<[u8; METADATA_ENCRYPTION_KEY_LEN]> {
@@ -408,6 +441,7 @@ fn random_metadata_encryption_key() -> Result<[u8; METADATA_ENCRYPTION_KEY_LEN]>
     Ok(key)
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 fn read_metadata_encryption_key(path: &Path) -> Result<[u8; METADATA_ENCRYPTION_KEY_LEN]> {
     restrict_private_file_permissions(path)?;
     let key_hex = fs::read_to_string(path).map_err(MetaStoreError::io_storage)?;
@@ -417,6 +451,11 @@ fn read_metadata_encryption_key(path: &Path) -> Result<[u8; METADATA_ENCRYPTION_
 fn read_metadata_encryption_key_without_repair(
     path: &Path,
 ) -> Result<[u8; METADATA_ENCRYPTION_KEY_LEN]> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| MetaStoreError::invalid_value("metadata.encryption_key_path"))?;
+    let parent_metadata = fs::symlink_metadata(parent).map_err(MetaStoreError::io_storage)?;
+    active_store_manifest::validate_owner_directory_metadata(&parent_metadata)?;
     let metadata = fs::symlink_metadata(path).map_err(MetaStoreError::io_storage)?;
     active_store_manifest::validate_owner_regular_metadata(&metadata)?;
     let key_hex = fs::read_to_string(path).map_err(MetaStoreError::io_storage)?;
@@ -603,6 +642,7 @@ fn decode_backup_hex(value: &str) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+#[cfg(any(test, feature = "migration-test-support"))]
 fn metadata_store_has_plaintext_header(path: &Path) -> Result<bool> {
     if !path.try_exists().map_err(MetaStoreError::io_storage)? {
         return Ok(false);
@@ -732,10 +772,10 @@ impl fmt::Debug for MetadataEncryptionKeyRotation {
 impl ReadMetaStore {
     /// Opens only an already-published v29 metadata store.
     ///
-    /// This path never creates a key, runs copy-on-write migration, publishes a
-    /// manifest, changes SQLite journal state, performs privacy maintenance, or
-    /// repairs any artifact. Legacy or absent stores require an explicit
-    /// [`DataDirectoryOwnerLease`].
+    /// This path never creates a key, changes schema, publishes a manifest,
+    /// changes SQLite journal state, performs privacy maintenance, or repairs
+    /// any artifact. Legacy stores are unsupported; absent stores require an
+    /// explicit [`DataDirectoryOwnerLease`] for fresh v29 initialization.
     pub fn open_data_dir(data_dir: &Path) -> Result<Self> {
         let published = migration_v29::open_current_v29_store(data_dir)?;
         Self::open_published_v29(published)
@@ -743,9 +783,9 @@ impl ReadMetaStore {
 
     /// Opens an already-published v29 metadata store when one exists.
     ///
-    /// Absence is reported as `None` without creating or migrating storage.
-    /// A published legacy store still returns the typed migration-ownership
-    /// error instead of being treated as absent.
+    /// Absence is reported as `None` without creating storage. A legacy or
+    /// partially published authority returns `UnsupportedStoreSchema` instead
+    /// of being treated as absent.
     pub fn open_data_dir_if_published(data_dir: &Path) -> Result<Option<Self>> {
         migration_v29::open_optional_current_v29_store(data_dir)?
             .map(Self::open_published_v29)
@@ -756,6 +796,9 @@ impl ReadMetaStore {
         (db_path, key, store_id_digest): (PathBuf, [u8; METADATA_ENCRYPTION_KEY_LEN], String),
     ) -> Result<Self> {
         validate_metadata_encryption_key(&key)?;
+        if !active_store_manifest::owner_regular_file_exists(&db_path)? {
+            return Err(MetaStoreError::storage_invariant());
+        }
         let connection = Connection::open_with_flags(&db_path, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(MetaStoreError::storage)?;
         apply_sqlcipher_key(&connection, &key)?;
@@ -783,8 +826,8 @@ impl ReadMetaStore {
 }
 
 impl OwnedMetaStore {
-    /// Opens, creates, or copy-on-write migrates the store authorized by the
-    /// unique canonical data-directory owner capability.
+    /// Opens an exact v29 store or initializes a new v29 store when no prior
+    /// metadata authority exists. It never migrates an older store.
     pub(crate) fn open_data_dir_for_owner(owner: &DataDirectoryOwnerLease) -> Result<Self> {
         let owner_guard = owner.shared_guard();
         let (db_path, key) = migration_v29::prepare_active_v29_store(&owner_guard)?;
@@ -892,7 +935,29 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
         })
     }
 
+    fn initialize_current_v29_schema(&self) -> Result<MigrationReport> {
+        let persistent_object_count = self
+            .connection
+            .borrow()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(MetaStoreError::storage)?;
+        if persistent_object_count != 0 {
+            return Err(MetaStoreError::unsupported_store_schema());
+        }
+        self.apply_schema_history()
+    }
+
+    /// Test-only entrypoint for constructing historical schema fixtures.
+    #[cfg(any(test, feature = "migration-test-support"))]
     pub fn run_migrations(&self) -> Result<MigrationReport> {
+        self.apply_schema_history()
+    }
+
+    fn apply_schema_history(&self) -> Result<MigrationReport> {
         let mut connection = self.connection.borrow_mut();
         connection
             .execute_batch(
@@ -952,6 +1017,7 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
 }
 
 impl<Access: MetadataStoreAccess> MetadataStore<Access> {
+    #[cfg(any(test, feature = "migration-test-support"))]
     fn migrate_staging_store_to_v27(&self, store_id_digest: &str) -> Result<MigrationReport>
     where
         Access: MetadataStoreWriteAccess,
@@ -992,6 +1058,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         Ok(MigrationReport { applied_versions })
     }
 
+    #[cfg(any(test, feature = "migration-test-support"))]
     fn migrate_staging_store_to_v28(&self, store_id_digest: &str) -> Result<MigrationReport>
     where
         Access: MetadataStoreWriteAccess,
@@ -4890,6 +4957,7 @@ pub enum MetaStoreErrorClass {
     Storage,
     Migration,
     MigrationOwnershipRequired,
+    UnsupportedStoreSchema,
     InvalidValue,
     NotFound,
     InvalidTransition,
@@ -4956,6 +5024,12 @@ impl MetaStoreError {
         }
     }
 
+    fn unsupported_store_schema() -> Self {
+        Self {
+            kind: MetaStoreErrorKind::UnsupportedStoreSchema,
+        }
+    }
+
     fn invalid_value(field: &'static str) -> Self {
         Self {
             kind: MetaStoreErrorKind::InvalidPersistedValue { field },
@@ -5006,6 +5080,9 @@ impl MetaStoreError {
             MetaStoreErrorKind::MigrationOwnershipRequired => {
                 MetaStoreErrorClass::MigrationOwnershipRequired
             }
+            MetaStoreErrorKind::UnsupportedStoreSchema => {
+                MetaStoreErrorClass::UnsupportedStoreSchema
+            }
             MetaStoreErrorKind::InvalidPersistedValue { .. } => MetaStoreErrorClass::InvalidValue,
             MetaStoreErrorKind::NotFound { .. } => MetaStoreErrorClass::NotFound,
             MetaStoreErrorKind::InvalidTransition => MetaStoreErrorClass::InvalidTransition,
@@ -5040,6 +5117,9 @@ impl fmt::Display for MetaStoreError {
             }
             MetaStoreErrorKind::MigrationOwnershipRequired => {
                 formatter.write_str("metadata migration requires the copy-on-write owner")
+            }
+            MetaStoreErrorKind::UnsupportedStoreSchema => {
+                formatter.write_str("metadata store schema is not supported by this build")
             }
             MetaStoreErrorKind::InvalidPersistedValue { field } => {
                 write!(
@@ -5089,6 +5169,7 @@ enum MetaStoreErrorKind {
     Storage,
     Migration,
     MigrationOwnershipRequired,
+    UnsupportedStoreSchema,
     InvalidPersistedValue { field: &'static str },
     NotFound { entity: &'static str },
     InvalidTransition,

@@ -1,32 +1,11 @@
-use serde::{de::IgnoredAny, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
-use super::enums::{
-    EvidenceLane, EvidenceStatus, PrivacyBoundary, ScanErrorClass, ScanErrorOperation,
+use super::health_contract::{
+    deserialize_required_nullable, validate_counts, validate_health_contract, validate_latency,
+    validate_repair_progress, Capabilities, CoreError, CoreStatus, IpcMetrics, OptionalRuntimes,
+    ProcessState, RepairProgress, StatusState,
 };
 use super::{decode, ensure, ensure_schema, DesktopError, SafeCount};
-
-#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum ProcessState {
-    Ready,
-}
-
-#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum ServiceState {
-    Ready,
-    Repairing,
-    Unavailable,
-    Degraded,
-}
-
-#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum StatusState {
-    Ok,
-    Repairing,
-    Degraded,
-}
 
 #[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -39,209 +18,134 @@ enum IndexHealth {
 
 #[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum SearchRepairReason {
-    MigrationRebuild,
-    ArtifactUnavailable,
-    SourceUnavailable,
-    RuntimeInvariant,
-}
-
-#[derive(Deserialize, Serialize)]
-struct Services {
-    metadata: ServiceState,
-    query: ServiceState,
-}
-
-#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-enum ServiceErrorCode {
-    Repairing,
-    MetadataUnavailable,
-    QueryServiceUnavailable,
-}
-
-#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum ServiceErrorAction {
-    WaitForRepair,
-    Retry,
-    RepairRequired,
-}
-
-#[derive(Deserialize, Serialize)]
-struct ServiceError {
-    code: ServiceErrorCode,
-    action: ServiceErrorAction,
-}
-
-#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum RepairProgressPhase {
-    Queued,
-    MigrationRebuild,
-    SourceUnavailable,
-    Rebuilding,
-    RetryWait,
-    Blocked,
-}
-
-#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum RepairErrorKind {
-    FulltextPublicationBusy,
-    FulltextFailure,
-    VectorPublicationBusy,
-    VectorFailure,
-    MetadataFailure,
-    Interrupted,
+enum ActiveProfile {
+    Balanced,
 }
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct RepairProgress {
-    phase: RepairProgressPhase,
-    #[serde(deserialize_with = "deserialize_required_nullable")]
-    attempt: Option<SafeCount>,
-    #[serde(deserialize_with = "deserialize_required_nullable")]
-    max_attempts: Option<SafeCount>,
-    #[serde(deserialize_with = "deserialize_required_nullable")]
-    retry_after_ms: Option<SafeCount>,
-    #[serde(deserialize_with = "deserialize_required_nullable")]
-    last_error_kind: Option<RepairErrorKind>,
-}
-
-#[derive(Deserialize, Serialize)]
-struct IpcMetrics {
-    accepted: SafeCount,
-    completed: SafeCount,
-    client_disconnect: SafeCount,
-    request_failure: SafeCount,
-    response_failure: SafeCount,
-}
-
-#[derive(Deserialize, Serialize)]
 pub(super) struct StatusBody {
     schema_version: String,
     status: StatusState,
     process_state: ProcessState,
-    service_state: ServiceState,
-    services: Services,
+    core: CoreStatus,
+    optional_runtimes: OptionalRuntimes,
+    capabilities: Capabilities,
     #[serde(deserialize_with = "deserialize_required_nullable")]
-    repair_reason: Option<SearchRepairReason>,
+    error: Option<CoreError>,
     #[serde(deserialize_with = "deserialize_required_nullable")]
     repair_progress: Option<RepairProgress>,
-    error: Option<ServiceError>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     indexed_documents: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     searchable_documents: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     partial_documents: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     visible_epoch: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     failed_retryable: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     failed_permanent: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     recovery_queue_depth: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     ocr_queue_depth: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    ocr_jobs_queued: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    ocr_page_budget_blocked: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    ocr_remediation: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    ocr_language_unavailable: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    ocr_language_remediation: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     embedding_queue_depth: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     entity_mentions: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     import_tasks_queued: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    import_tasks_recoverable: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    import_tasks_cancelled: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    import_scan_scopes: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    import_scan_errors: Option<SafeCount>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    query_latency: Option<StatusQueryLatency>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     index_health: Option<IndexHealth>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     latest_import_scan: Option<LatestImportScan>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    active_profile: Option<ActiveProfile>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    snapshot_present: Option<bool>,
     ipc: IpcMetrics,
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct LatestImportScan {
+    scan_profile: ScanProfile,
     files_discovered: SafeCount,
+    ignored_entries: SafeCount,
+    scan_errors: SafeCount,
     searchable_documents: SafeCount,
     ocr_required_documents: SafeCount,
+    ocr_jobs_queued: SafeCount,
     failed_documents: SafeCount,
-}
-
-#[derive(Deserialize, Serialize)]
-pub(crate) struct DiagnosticsBody {
-    schema_version: String,
-    privacy_boundary: PrivacyBoundary,
-    evidence_lane: EvidenceLane,
-    evidence_status: EvidenceStatus,
-    contains_raw_resume_text: bool,
-    contains_queries: bool,
-    contains_resume_paths: bool,
-    contains_candidate_results: bool,
-    contains_snippet_text: bool,
-    visible_epoch: Option<SafeCount>,
-    process_state: ProcessState,
-    service_state: ServiceState,
-    services: Services,
+    deleted_documents: SafeCount,
     #[serde(deserialize_with = "deserialize_required_nullable")]
-    repair_reason: Option<SearchRepairReason>,
+    scan_budget_observed: Option<SafeCount>,
     #[serde(deserialize_with = "deserialize_required_nullable")]
-    repair_progress: Option<RepairProgress>,
-    error: Option<ServiceError>,
-    metrics: DiagnosticsMetrics,
-    error_counts: DiagnosticsErrorCounts,
-    #[serde(skip_serializing)]
-    benchmark_refs: Vec<IgnoredAny>,
+    scan_budget_limit: Option<SafeCount>,
+    scan_budget_exhausted: bool,
+}
+
+#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ScanProfile {
+    Explicit,
+    Discovery,
 }
 
 #[derive(Deserialize, Serialize)]
-struct DiagnosticsMetrics {
-    ipc: IpcMetrics,
-    indexed_documents: Option<SafeCount>,
-    searchable_documents: Option<SafeCount>,
-    partial_documents: Option<SafeCount>,
-    ocr_queue_depth: Option<SafeCount>,
-    embedding_queue_depth: Option<SafeCount>,
-    recovery_queue_depth: Option<SafeCount>,
-    import_tasks_queued: Option<SafeCount>,
-    import_tasks_recoverable: Option<SafeCount>,
-    import_tasks_cancelled: Option<SafeCount>,
-    query_latency: Option<QueryLatency>,
-}
-
-#[derive(Deserialize, Serialize)]
-struct QueryLatency {
+#[serde(deny_unknown_fields)]
+struct StatusQueryLatency {
     sample_count: SafeCount,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     p50_ms: Option<f64>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     p95_ms: Option<f64>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     p99_ms: Option<f64>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
     last_result_count: Option<SafeCount>,
+    raw_queries: Redacted,
 }
 
-#[derive(Deserialize, Serialize)]
-struct DiagnosticsErrorCounts {
-    failed_retryable: Option<SafeCount>,
-    failed_permanent: Option<SafeCount>,
-    import_scan_errors: Option<SafeCount>,
-    ocr_page_budget_blocked: Option<SafeCount>,
-    ocr_language_unavailable: Option<SafeCount>,
-    scan_error_buckets: Vec<ScanErrorBucket>,
-}
-
-#[derive(Deserialize, Serialize)]
-struct ScanErrorBucket {
-    class: ScanErrorClass,
-    operation: ScanErrorOperation,
-    count: SafeCount,
+#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
+enum Redacted {
+    #[serde(rename = "<redacted>")]
+    Value,
 }
 
 pub(super) fn project_status(body: &[u8]) -> Result<StatusBody, DesktopError> {
     let value: StatusBody = decode(body)?;
-    ensure_schema(&value.schema_version, "daemon.status.v2")?;
-    validate_service_contract(value.service_state, &value.services, value.error.as_ref())?;
-    validate_repair_reason(&value.services, value.repair_reason)?;
-    validate_repair_progress(
-        &value.services,
-        value.repair_reason,
-        value.repair_progress.as_ref(),
+    ensure_schema(&value.schema_version, "daemon.status.v3")?;
+    validate_health_contract(
+        value.status,
+        &value.core,
+        &value.optional_runtimes,
+        &value.capabilities,
+        value.error.as_ref(),
     )?;
-    ensure(
-        value.status
-            == match value.service_state {
-                ServiceState::Ready => StatusState::Ok,
-                ServiceState::Repairing => StatusState::Repairing,
-                ServiceState::Degraded | ServiceState::Unavailable => StatusState::Degraded,
-            },
-    )?;
-    validate_metadata_counts(
-        value.services.metadata,
+    validate_counts(
         value.visible_epoch.is_some(),
         [
             value.indexed_documents.is_some(),
@@ -251,487 +155,188 @@ pub(super) fn project_status(body: &[u8]) -> Result<StatusBody, DesktopError> {
             value.failed_permanent.is_some(),
             value.recovery_queue_depth.is_some(),
             value.ocr_queue_depth.is_some(),
+            value.ocr_jobs_queued.is_some(),
+            value.ocr_page_budget_blocked.is_some(),
+            value.ocr_remediation.is_some(),
+            value.ocr_language_unavailable.is_some(),
+            value.ocr_language_remediation.is_some(),
             value.embedding_queue_depth.is_some(),
             value.entity_mentions.is_some(),
             value.import_tasks_queued.is_some(),
+            value.import_tasks_recoverable.is_some(),
+            value.import_tasks_cancelled.is_some(),
+            value.import_scan_scopes.is_some(),
+            value.import_scan_errors.is_some(),
+            value.query_latency.is_some(),
             value.index_health.is_some(),
+            value.active_profile.is_some(),
+            value.snapshot_present.is_some(),
         ],
     )?;
-    ensure(value.services.metadata == ServiceState::Ready || value.latest_import_scan.is_none())?;
+    validate_repair_progress(value.core.state, value.repair_progress.as_ref())?;
+    validate_remediation(
+        value.ocr_page_budget_blocked,
+        value.ocr_remediation.as_deref(),
+        "raise OCR max pages per document or skip oversized scanned PDFs",
+    )?;
+    validate_remediation(
+        value.ocr_language_unavailable,
+        value.ocr_language_remediation.as_deref(),
+        "install requested OCR language packs or choose an installed OCR language",
+    )?;
+    if let Some(latency) = &value.query_latency {
+        validate_latency(latency.p50_ms, latency.p95_ms, latency.p99_ms)?;
+    }
+    ensure(value.visible_epoch.is_some() || value.latest_import_scan.is_none())?;
     Ok(value)
 }
 
-pub(super) fn project_diagnostics(body: &[u8]) -> Result<DiagnosticsBody, DesktopError> {
-    let value: DiagnosticsBody = decode(body)?;
-    ensure_schema(&value.schema_version, "resume-ir.diagnostics.v3")?;
-    validate_service_contract(value.service_state, &value.services, value.error.as_ref())?;
-    validate_repair_reason(&value.services, value.repair_reason)?;
-    validate_repair_progress(
-        &value.services,
-        value.repair_reason,
-        value.repair_progress.as_ref(),
-    )?;
-    validate_metadata_counts(
-        value.services.metadata,
-        value.visible_epoch.is_some(),
-        [
-            value.metrics.indexed_documents.is_some(),
-            value.metrics.searchable_documents.is_some(),
-            value.metrics.partial_documents.is_some(),
-        ],
-    )?;
-    ensure(
-        !value.contains_raw_resume_text
-            && !value.contains_queries
-            && !value.contains_resume_paths
-            && !value.contains_candidate_results
-            && !value.contains_snippet_text
-            && value.benchmark_refs.len() <= 64
-            && value.error_counts.scan_error_buckets.len() <= 16,
-    )?;
-    if let Some(latency) = &value.metrics.query_latency {
-        for value in [latency.p50_ms, latency.p95_ms, latency.p99_ms]
-            .into_iter()
-            .flatten()
-        {
-            ensure(value.is_finite() && (0.0..=3_600_000.0).contains(&value))?;
-        }
-    }
-    Ok(value)
-}
-
-fn validate_service_contract(
-    aggregate: ServiceState,
-    services: &Services,
-    error: Option<&ServiceError>,
+fn validate_remediation(
+    count: Option<SafeCount>,
+    remediation: Option<&str>,
+    action: &str,
 ) -> Result<(), DesktopError> {
-    ensure(!matches!(
-        services.metadata,
-        ServiceState::Repairing | ServiceState::Degraded
-    ))?;
-    ensure(services.query != ServiceState::Degraded)?;
-    let expected = if services.metadata == ServiceState::Unavailable
-        || services.query == ServiceState::Unavailable
-    {
-        ServiceState::Degraded
-    } else if services.query == ServiceState::Repairing {
-        ServiceState::Repairing
-    } else {
-        ServiceState::Ready
-    };
-    ensure(aggregate == expected)?;
-    match (services.metadata, services.query, error) {
-        (ServiceState::Ready, ServiceState::Ready, None) => Ok(()),
-        (
-            ServiceState::Ready,
-            ServiceState::Repairing,
-            Some(ServiceError {
-                code: ServiceErrorCode::Repairing,
-                action: ServiceErrorAction::WaitForRepair,
-            }),
-        ) => Ok(()),
-        (
-            ServiceState::Unavailable,
-            ServiceState::Unavailable,
-            Some(ServiceError {
-                code: ServiceErrorCode::MetadataUnavailable,
-                action: ServiceErrorAction::Retry,
-            }),
-        ) => Ok(()),
-        (
-            ServiceState::Ready,
-            ServiceState::Unavailable,
-            Some(ServiceError {
-                code: ServiceErrorCode::QueryServiceUnavailable,
-                action: ServiceErrorAction::RepairRequired,
-            }),
-        ) => Ok(()),
+    match (count.map(SafeCount::value), remediation) {
+        (None, None) => Ok(()),
+        (Some(0), Some("none")) => Ok(()),
+        (Some(value), Some(actual)) if value > 0 && actual == action => Ok(()),
         _ => ensure(false),
-    }
-}
-
-fn validate_repair_progress(
-    services: &Services,
-    repair_reason: Option<SearchRepairReason>,
-    progress: Option<&RepairProgress>,
-) -> Result<(), DesktopError> {
-    let Some(progress) = progress else {
-        return ensure(
-            services.metadata == ServiceState::Unavailable
-                || (services.metadata == ServiceState::Ready
-                    && services.query == ServiceState::Ready),
-        );
-    };
-    ensure(services.metadata == ServiceState::Ready && services.query != ServiceState::Ready)?;
-    ensure(progress.attempt.is_none_or(|attempt| attempt.value() <= 5))?;
-    ensure(
-        progress
-            .max_attempts
-            .is_none_or(|max_attempts| max_attempts.value() == 5),
-    )?;
-    ensure(
-        progress
-            .retry_after_ms
-            .is_none_or(|retry_after| retry_after.value() <= 60_000),
-    )?;
-    match (repair_reason, progress.phase) {
-        (Some(SearchRepairReason::MigrationRebuild), RepairProgressPhase::MigrationRebuild)
-        | (Some(SearchRepairReason::SourceUnavailable), RepairProgressPhase::SourceUnavailable) => {
-            ensure(
-                progress.attempt.is_none()
-                    && progress.max_attempts.is_none()
-                    && progress.retry_after_ms.is_none()
-                    && progress.last_error_kind.is_none(),
-            )
-        }
-        (
-            Some(SearchRepairReason::ArtifactUnavailable),
-            RepairProgressPhase::Queued | RepairProgressPhase::Rebuilding,
-        ) => ensure(
-            progress.max_attempts.is_some()
-                && progress.retry_after_ms.is_none()
-                && progress.last_error_kind.is_none()
-                && (progress.phase != RepairProgressPhase::Queued || progress.attempt.is_none()),
-        ),
-        (Some(SearchRepairReason::ArtifactUnavailable), RepairProgressPhase::RetryWait) => ensure(
-            progress.attempt.is_some()
-                && progress.max_attempts.is_some()
-                && progress.retry_after_ms.is_some()
-                && progress.last_error_kind.is_some(),
-        ),
-        (Some(SearchRepairReason::RuntimeInvariant), RepairProgressPhase::Blocked) => ensure(
-            progress.max_attempts.is_some()
-                && progress.retry_after_ms.is_none()
-                && (progress.attempt.is_some() == progress.last_error_kind.is_some()),
-        ),
-        _ => ensure(false),
-    }
-}
-
-fn validate_repair_reason(
-    services: &Services,
-    repair_reason: Option<SearchRepairReason>,
-) -> Result<(), DesktopError> {
-    ensure(matches!(
-        (services.metadata, services.query, repair_reason),
-        (ServiceState::Ready, ServiceState::Ready, None)
-            | (
-                ServiceState::Ready,
-                ServiceState::Repairing,
-                Some(
-                    SearchRepairReason::MigrationRebuild | SearchRepairReason::ArtifactUnavailable
-                )
-            )
-            | (
-                ServiceState::Ready,
-                ServiceState::Unavailable,
-                Some(SearchRepairReason::SourceUnavailable | SearchRepairReason::RuntimeInvariant)
-            )
-            | (ServiceState::Unavailable, ServiceState::Unavailable, None)
-    ))
-}
-
-fn deserialize_required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer)
-}
-
-fn validate_metadata_counts<const N: usize>(
-    metadata: ServiceState,
-    has_epoch: bool,
-    has_counts: [bool; N],
-) -> Result<(), DesktopError> {
-    match metadata {
-        ServiceState::Ready => ensure(has_epoch && has_counts.into_iter().all(|present| present)),
-        ServiceState::Unavailable => {
-            ensure(!has_epoch && has_counts.into_iter().all(|present| !present))
-        }
-        ServiceState::Repairing => ensure(false),
-        ServiceState::Degraded => ensure(false),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daemon_response::health_contract::CoreState;
+    use daemon_contract::CoreReason;
 
-    fn diagnostics_payload() -> serde_json::Value {
+    fn capabilities(state: &str, reason: Option<&str>) -> serde_json::Value {
+        let value = serde_json::json!({"state": state, "reason": reason});
         serde_json::json!({
-            "schema_version": "resume-ir.diagnostics.v3",
-            "privacy_boundary": "redacted_local_aggregate",
-            "evidence_lane": "gui_manual",
-            "evidence_status": "unaccepted",
-            "contains_raw_resume_text": false,
-            "contains_queries": false,
-            "contains_resume_paths": false,
-            "contains_candidate_results": false,
-            "contains_snippet_text": false,
-            "visible_epoch": 4,
-            "process_state": "ready",
-            "service_state": "ready",
-            "services": {"metadata": "ready", "query": "ready"},
-            "repair_reason": null,
-            "repair_progress": null,
-            "error": null,
-            "metrics": {
-                "ipc": {"accepted": 4, "completed": 3, "client_disconnect": 1, "request_failure": 0, "response_failure": 0},
-                "indexed_documents": 4,
-                "searchable_documents": 3,
-                "partial_documents": 1,
-                "ocr_queue_depth": 0,
-                "embedding_queue_depth": 0,
-                "recovery_queue_depth": 0,
-                "import_tasks_queued": 0,
-                "import_tasks_recoverable": 0,
-                "import_tasks_cancelled": 0,
-                "query_latency": {"sample_count": 1, "p50_ms": 2.0, "p95_ms": 3.0, "p99_ms": 4.0, "last_result_count": 1}
-            },
-            "error_counts": {"failed_retryable": 0, "failed_permanent": 0, "import_scan_errors": 0, "ocr_page_budget_blocked": 0, "ocr_language_unavailable": 0, "scan_error_buckets": []},
-            "benchmark_refs": [{"private_ref": "synthetic-private-reference"}],
-            "private_debug": "synthetic-private-value"
+            "keyword_search": value,
+            "detail": value,
+            "semantic_search": value,
+            "hybrid_search": value,
+            "text_import": value,
+            "ocr_import": value,
+            "index_publication": value,
         })
     }
 
+    fn runtimes(state: &str, reason: Option<&str>) -> serde_json::Value {
+        let value = serde_json::json!({"state": state, "reason": reason});
+        serde_json::json!({"embedding": value, "ocr": value, "classifier": value})
+    }
+
+    fn status_payload() -> serde_json::Value {
+        serde_json::from_str(include_str!(
+            "../../tests/fixtures/daemon-status-v3-ready.json"
+        ))
+        .unwrap()
+    }
+
     #[test]
-    fn status_v2_projects_ready_and_metadata_unavailable_process_health() {
-        let ready = serde_json::json!({
-            "schema_version": "daemon.status.v2",
-            "status": "ok",
-            "process_state": "ready",
-            "service_state": "ready",
-            "services": {"metadata": "ready", "query": "ready"},
-            "repair_reason": null,
-            "repair_progress": null,
-            "error": null,
-            "indexed_documents": 4,
-            "searchable_documents": 3,
-            "partial_documents": 1,
-            "visible_epoch": 7,
-            "failed_retryable": 0,
-            "failed_permanent": 0,
-            "recovery_queue_depth": 0,
-            "ocr_queue_depth": 0,
-            "embedding_queue_depth": 0,
-            "entity_mentions": 8,
-            "import_tasks_queued": 0,
-            "index_health": "ready",
-            "latest_import_scan": null,
-            "ipc": {"accepted": 2, "completed": 2, "client_disconnect": 0, "request_failure": 0, "response_failure": 0}
-        });
+    fn status_v3_accepts_ready_and_initializing_but_rejects_v2_and_unknown_fields() {
+        let ready = status_payload();
         assert!(project_status(&serde_json::to_vec(&ready).unwrap()).is_ok());
 
-        let mut missing_reason = ready.clone();
-        missing_reason
-            .as_object_mut()
-            .unwrap()
-            .remove("repair_reason");
-        assert!(project_status(&serde_json::to_vec(&missing_reason).unwrap()).is_err());
-        let mut missing_progress = ready.clone();
-        missing_progress
-            .as_object_mut()
-            .unwrap()
-            .remove("repair_progress");
-        assert!(project_status(&serde_json::to_vec(&missing_progress).unwrap()).is_err());
-
-        let mut ready_with_reason = ready.clone();
-        ready_with_reason["repair_reason"] = serde_json::json!("migration_rebuild");
-        assert!(project_status(&serde_json::to_vec(&ready_with_reason).unwrap()).is_err());
-
-        let mut repairing = ready.clone();
-        repairing["status"] = serde_json::json!("repairing");
-        repairing["service_state"] = serde_json::json!("repairing");
-        repairing["services"]["query"] = serde_json::json!("repairing");
-        repairing["repair_reason"] = serde_json::json!("migration_rebuild");
-        repairing["repair_progress"] = serde_json::json!({
-            "phase": "migration_rebuild",
-            "attempt": null,
-            "max_attempts": null,
-            "retry_after_ms": null,
-            "last_error_kind": null,
+        let mut initializing = ready.clone();
+        initializing["status"] = serde_json::json!("initializing");
+        initializing["core"] =
+            serde_json::json!({"state": "initializing", "reason": "metadata_initializing"});
+        initializing["optional_runtimes"] = runtimes("initializing", None);
+        initializing["capabilities"] = capabilities("initializing", Some("core_initializing"));
+        initializing["error"] = serde_json::json!({
+            "code": "SERVICE_INITIALIZING",
+            "action": "wait_for_service",
+            "capability": null,
+            "reason": "metadata_initializing"
         });
-        repairing["error"] = serde_json::json!({"code": "REPAIRING", "action": "wait_for_repair"});
-        assert!(project_status(&serde_json::to_vec(&repairing).unwrap()).is_ok());
-        repairing["repair_reason"] = serde_json::json!("artifact_unavailable");
-        repairing["repair_progress"] = serde_json::json!({
-            "phase": "retry_wait",
-            "attempt": 1,
-            "max_attempts": 5,
-            "retry_after_ms": 1000,
-            "last_error_kind": "fulltext_publication_busy",
-        });
-        assert!(project_status(&serde_json::to_vec(&repairing).unwrap()).is_ok());
-        let mut missing_error_kind = repairing.clone();
-        missing_error_kind["repair_progress"]
-            .as_object_mut()
-            .unwrap()
-            .remove("last_error_kind");
-        assert!(project_status(&serde_json::to_vec(&missing_error_kind).unwrap()).is_err());
-        let mut legacy_error_class = repairing.clone();
-        legacy_error_class["repair_progress"]["last_error_class"] = serde_json::json!("fulltext");
-        assert!(project_status(&serde_json::to_vec(&legacy_error_class).unwrap()).is_err());
-        let mut collapsed_error_kind = repairing.clone();
-        collapsed_error_kind["repair_progress"]["last_error_kind"] = serde_json::json!("fulltext");
-        assert!(project_status(&serde_json::to_vec(&collapsed_error_kind).unwrap()).is_err());
-        let mut missing_retry_error_kind = repairing.clone();
-        missing_retry_error_kind["repair_progress"]["last_error_kind"] = serde_json::Value::Null;
-        assert!(project_status(&serde_json::to_vec(&missing_retry_error_kind).unwrap()).is_err());
-        repairing["repair_reason"] = serde_json::json!("source_unavailable");
-        assert!(project_status(&serde_json::to_vec(&repairing).unwrap()).is_err());
-        repairing["repair_reason"] = serde_json::Value::Null;
-        assert!(project_status(&serde_json::to_vec(&repairing).unwrap()).is_err());
-        repairing.as_object_mut().unwrap().remove("repair_reason");
-        assert!(project_status(&serde_json::to_vec(&repairing).unwrap()).is_err());
+        for field in [
+            "indexed_documents",
+            "searchable_documents",
+            "partial_documents",
+            "visible_epoch",
+            "failed_retryable",
+            "failed_permanent",
+            "recovery_queue_depth",
+            "ocr_queue_depth",
+            "ocr_jobs_queued",
+            "ocr_page_budget_blocked",
+            "ocr_remediation",
+            "ocr_language_unavailable",
+            "ocr_language_remediation",
+            "embedding_queue_depth",
+            "entity_mentions",
+            "import_tasks_queued",
+            "import_tasks_recoverable",
+            "import_tasks_cancelled",
+            "import_scan_scopes",
+            "import_scan_errors",
+            "query_latency",
+            "active_profile",
+            "index_health",
+            "snapshot_present",
+        ] {
+            initializing[field] = serde_json::Value::Null;
+        }
+        assert!(project_status(&serde_json::to_vec(&initializing).unwrap()).is_ok());
 
-        let mut blocked = ready.clone();
-        blocked["status"] = serde_json::json!("degraded");
-        blocked["service_state"] = serde_json::json!("degraded");
-        blocked["services"]["query"] = serde_json::json!("unavailable");
-        blocked["repair_reason"] = serde_json::json!("runtime_invariant");
-        blocked["repair_progress"] = serde_json::json!({
-            "phase": "blocked",
-            "attempt": 5,
-            "max_attempts": 5,
-            "retry_after_ms": null,
-            "last_error_kind": "fulltext_failure",
-        });
-        blocked["error"] =
-            serde_json::json!({"code": "QUERY_SERVICE_UNAVAILABLE", "action": "repair_required"});
-        assert!(project_status(&serde_json::to_vec(&blocked).unwrap()).is_ok());
-        let mut blocked_with_stale_retry = blocked.clone();
-        blocked_with_stale_retry["repair_progress"]["retry_after_ms"] = serde_json::json!(60_000);
-        assert!(project_status(&serde_json::to_vec(&blocked_with_stale_retry).unwrap()).is_err());
-        let mut legacy_source_shape = blocked.clone();
-        legacy_source_shape["repair_reason"] = serde_json::json!("source_unavailable");
-        assert!(project_status(&serde_json::to_vec(&legacy_source_shape).unwrap()).is_err());
-        blocked["repair_reason"] = serde_json::json!("source_unavailable");
-        blocked["repair_progress"] = serde_json::json!({
-            "phase": "source_unavailable",
-            "attempt": null,
-            "max_attempts": null,
-            "retry_after_ms": null,
-            "last_error_kind": null,
-        });
-        assert!(project_status(&serde_json::to_vec(&blocked).unwrap()).is_ok());
-        blocked["repair_reason"] = serde_json::json!("artifact_unavailable");
-        assert!(project_status(&serde_json::to_vec(&blocked).unwrap()).is_err());
-        blocked["repair_reason"] = serde_json::Value::Null;
-        assert!(project_status(&serde_json::to_vec(&blocked).unwrap()).is_err());
-
-        let unavailable = serde_json::json!({
-            "schema_version": "daemon.status.v2",
-            "status": "degraded",
-            "process_state": "ready",
-            "service_state": "degraded",
-            "services": {"metadata": "unavailable", "query": "unavailable"},
-            "repair_reason": null,
-            "repair_progress": null,
-            "error": {"code": "METADATA_UNAVAILABLE", "action": "retry"},
-            "indexed_documents": null,
-            "searchable_documents": null,
-            "partial_documents": null,
-            "visible_epoch": null,
-            "failed_retryable": null,
-            "failed_permanent": null,
-            "recovery_queue_depth": null,
-            "ocr_queue_depth": null,
-            "embedding_queue_depth": null,
-            "entity_mentions": null,
-            "import_tasks_queued": null,
-            "index_health": null,
-            "latest_import_scan": null,
-            "ipc": {"accepted": 3, "completed": 2, "client_disconnect": 1, "request_failure": 0, "response_failure": 0}
-        });
-        assert!(project_status(&serde_json::to_vec(&unavailable).unwrap()).is_ok());
-
-        let mut unavailable_with_reason = unavailable.clone();
-        unavailable_with_reason["repair_reason"] = serde_json::json!("runtime_invariant");
-        assert!(project_status(&serde_json::to_vec(&unavailable_with_reason).unwrap()).is_err());
+        let mut legacy = ready.clone();
+        legacy["schema_version"] = serde_json::json!("daemon.status.v2");
+        assert!(project_status(&serde_json::to_vec(&legacy).unwrap()).is_err());
+        let mut extra = ready;
+        extra["private_debug"] = serde_json::json!(true);
+        assert!(project_status(&serde_json::to_vec(&extra).unwrap()).is_err());
     }
 
     #[test]
-    fn diagnostics_v3_projection_drops_private_extras_and_rejects_legacy_or_unsafe_payloads() {
-        let mut payload = diagnostics_payload();
-        let projected = project_diagnostics(&serde_json::to_vec(&payload).unwrap()).unwrap();
-        let exposed = serde_json::to_string(&projected).unwrap();
-        assert!(!exposed.contains("benchmark_refs"));
-        assert!(!exposed.contains("synthetic-private-reference"));
-        assert!(!exposed.contains("private_debug"));
+    fn optional_runtime_degradation_is_independent_from_core_readiness() {
+        let mut payload = status_payload();
+        payload["optional_runtimes"]["embedding"] =
+            serde_json::json!({"state": "unavailable", "reason": "invalid"});
+        payload["capabilities"]["semantic_search"] =
+            serde_json::json!({"state": "unavailable", "reason": "embedding_unavailable"});
+        payload["capabilities"]["hybrid_search"] =
+            serde_json::json!({"state": "degraded", "reason": "embedding_unavailable"});
+        payload["capabilities"]["text_import"] =
+            serde_json::json!({"state": "unavailable", "reason": "embedding_unavailable"});
+        payload["capabilities"]["ocr_import"] =
+            serde_json::json!({"state": "unavailable", "reason": "embedding_unavailable"});
+        payload["capabilities"]["index_publication"] =
+            serde_json::json!({"state": "unavailable", "reason": "embedding_unavailable"});
+        assert!(project_status(&serde_json::to_vec(&payload).unwrap()).is_ok());
 
-        let mut missing_reason = payload.clone();
-        missing_reason
-            .as_object_mut()
-            .unwrap()
-            .remove("repair_reason");
-        assert!(project_diagnostics(&serde_json::to_vec(&missing_reason).unwrap()).is_err());
-        let mut missing_progress = payload.clone();
-        missing_progress
-            .as_object_mut()
-            .unwrap()
-            .remove("repair_progress");
-        assert!(project_diagnostics(&serde_json::to_vec(&missing_progress).unwrap()).is_err());
-
-        let mut repairing = payload.clone();
-        repairing["service_state"] = serde_json::json!("repairing");
-        repairing["services"]["query"] = serde_json::json!("repairing");
-        repairing["repair_reason"] = serde_json::json!("migration_rebuild");
-        repairing["repair_progress"] = serde_json::json!({
-            "phase": "migration_rebuild",
-            "attempt": null,
-            "max_attempts": null,
-            "retry_after_ms": null,
-            "last_error_kind": null,
-        });
-        repairing["error"] = serde_json::json!({"code": "REPAIRING", "action": "wait_for_repair"});
-        assert!(project_diagnostics(&serde_json::to_vec(&repairing).unwrap()).is_ok());
-
-        let mut blocked = payload.clone();
-        blocked["service_state"] = serde_json::json!("degraded");
-        blocked["services"]["query"] = serde_json::json!("unavailable");
-        blocked["repair_reason"] = serde_json::json!("runtime_invariant");
-        blocked["repair_progress"] = serde_json::json!({
-            "phase": "blocked",
-            "attempt": 5,
-            "max_attempts": 5,
-            "retry_after_ms": null,
-            "last_error_kind": "fulltext_failure",
-        });
-        blocked["error"] =
-            serde_json::json!({"code": "QUERY_SERVICE_UNAVAILABLE", "action": "repair_required"});
-        assert!(project_diagnostics(&serde_json::to_vec(&blocked).unwrap()).is_ok());
-
-        payload["contains_queries"] = serde_json::Value::Bool(true);
-        assert!(project_diagnostics(&serde_json::to_vec(&payload).unwrap()).is_err());
-        payload["contains_queries"] = serde_json::Value::Bool(false);
-        payload["schema_version"] = serde_json::Value::String("resume-ir.diagnostics.v2".into());
-        assert!(project_diagnostics(&serde_json::to_vec(&payload).unwrap()).is_err());
+        payload["capabilities"]["text_import"] =
+            serde_json::json!({"state": "available", "reason": null});
+        assert!(project_status(&serde_json::to_vec(&payload).unwrap()).is_err());
     }
 
     #[test]
-    fn unavailable_metadata_keeps_process_and_ipc_diagnostics_exportable() {
-        let payload = serde_json::json!({
-            "schema_version": "resume-ir.diagnostics.v3",
-            "privacy_boundary": "redacted_local_aggregate",
-            "evidence_lane": "gui_manual",
-            "evidence_status": "unaccepted",
-            "contains_raw_resume_text": false,
-            "contains_queries": false,
-            "contains_resume_paths": false,
-            "contains_candidate_results": false,
-            "contains_snippet_text": false,
-            "visible_epoch": null,
-            "process_state": "ready",
-            "service_state": "degraded",
-            "services": {"metadata": "unavailable", "query": "unavailable"},
-            "repair_reason": null,
-            "repair_progress": null,
-            "error": {"code": "METADATA_UNAVAILABLE", "action": "retry"},
-            "metrics": {"ipc": {"accepted": 1, "completed": 1, "client_disconnect": 0, "request_failure": 0, "response_failure": 0}, "indexed_documents": null, "searchable_documents": null, "partial_documents": null},
-            "error_counts": {"scan_error_buckets": []},
-            "benchmark_refs": []
-        });
-        assert!(project_diagnostics(&serde_json::to_vec(&payload).unwrap()).is_ok());
+    fn classifier_unavailability_preserves_index_publication() {
+        let mut payload = status_payload();
+        payload["optional_runtimes"]["classifier"] =
+            serde_json::json!({"state": "unavailable", "reason": "not_configured"});
+        payload["capabilities"]["text_import"] =
+            serde_json::json!({"state": "unavailable", "reason": "classifier_unavailable"});
+        payload["capabilities"]["ocr_import"] =
+            serde_json::json!({"state": "unavailable", "reason": "classifier_unavailable"});
+        assert!(project_status(&serde_json::to_vec(&payload).unwrap()).is_ok());
+
+        payload["capabilities"]["index_publication"] =
+            serde_json::json!({"state": "unavailable", "reason": "classifier_unavailable"});
+        assert!(project_status(&serde_json::to_vec(&payload).unwrap()).is_err());
+    }
+
+    #[test]
+    fn artifact_unavailable_blocked_snapshot_matches_the_daemon_contract() {
+        let payload = include_bytes!("../../tests/fixtures/daemon-status-v3-artifact-blocked.json");
+        let projected = project_status(payload).expect("artifact-blocked status must decode");
+        assert!(matches!(projected.core.state, CoreState::Blocked));
+        assert!(matches!(
+            projected.core.reason,
+            Some(CoreReason::ArtifactUnavailable)
+        ));
+        assert!(projected.visible_epoch.is_none());
     }
 }
