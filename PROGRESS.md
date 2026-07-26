@@ -31310,6 +31310,12 @@ Output summary:
   guard remains strict. Only the affected s3 target was compiled and linted
   with deny-warnings locally; exact assertions continue in the next macOS PR
   run, while earlier valid results remain reused.
+- macOS PR run `30205798442` showed both OCR fixtures reaching the occurrence
+  insertion together, where the current schema correctly requires a referenced
+  scan snapshot. The completed fixture now starts that scan through the public
+  coordinator API before observing the source. No foreign key or production
+  guard was relaxed. Clippy and every independent fail-late check passed; only
+  this affected s3 target awaits the next macOS assertion run.
 
 ## 2026-07-02 - Synthetic private-query smoke evidence claim
 

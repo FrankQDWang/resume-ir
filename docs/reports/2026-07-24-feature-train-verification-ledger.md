@@ -1132,9 +1132,16 @@ privacy behavior.
 
 | Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
 | --- | --- | --- | --- | --- |
-| F12-01 | OCR success, retryable failure and word-box cache rows persist only for an actively referenced source revision while debug output remains redacted | `506e3bdd33871ae6eecdc7fd2d1aac7ac6c2949f71c517349398f0daa9c327d2` | affected target compiled and passed deny-warnings Clippy; exact assertions pending the next macOS PR run | OCR cache authority guard, source occurrence lifetime, cache payload persistence or debug redaction changes |
+| F12-01 | OCR success, retryable failure and word-box cache rows persist only for an actively referenced source revision while debug output remains redacted | `044645f9b4e14ff7f903e5a195636756dda90903bc86d48ba793383486454438` | first fixture repair reached the current source-occurrence foreign-key guard in macOS PR run `30205798442`; the completed authority fixture compiles and passes deny-warnings Clippy, with exact assertions pending the next macOS PR run | OCR cache authority guard, scan/occurrence lifetime, cache payload persistence or debug redaction changes |
+
+The first fixture repair created the root, document, revision and occurrence
+but omitted the occurrence's referenced scan snapshot. Both cases failed at
+the same public `observe_source_occurrence` call before any cache assertion.
+The completed fixture now creates that snapshot through `begin_scan`; it does
+not bypass or weaken the foreign key.
 
 No local Rust test body was started because the already-confirmed macOS loader
 condition would make another launch non-authoritative. Only the affected s3
 target was compiled and linted. The next macOS PR run continues from the
-previous fail point; valid F09–F11 results remain reused.
+previous fail point; valid F09–F11 results and all independent checks remain
+reused.

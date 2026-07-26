@@ -16,11 +16,11 @@ use meta_store::{
     MetaStoreErrorClass, MetadataEncryptionState, MigrationRebuildBarrierToken,
     MigrationRebuildPublicationAttemptAcquire, OcrPageCacheEntry, OcrPageCacheKey,
     OcrPageCacheStatus, OcrWordBox, OwnedMetaStore, ReadMetaStore, ReasonCode, ResumeVersion,
-    ResumeVersionClassification, ResumeVersionId, ReviewDisposition, SearchProjectionDigest,
-    SearchPublicationCommit, SearchPublicationDraft, SearchPublicationOutcome,
-    SearchPublicationSession, SearchPublicationState, SearchPublicationValidation,
-    SearchRepairReason, SourceRevision, TerminalDocumentUpdate, UnixTimestamp,
-    VectorSnapshotDescriptor, WorkerTaskControl, WorkerTaskKind, CLASSIFIER_EPOCH,
+    ResumeVersionClassification, ResumeVersionId, ReviewDisposition, ScanTrigger,
+    SearchProjectionDigest, SearchPublicationCommit, SearchPublicationDraft,
+    SearchPublicationOutcome, SearchPublicationSession, SearchPublicationState,
+    SearchPublicationValidation, SearchRepairReason, SourceRevision, TerminalDocumentUpdate,
+    UnixTimestamp, VectorSnapshotDescriptor, WorkerTaskControl, WorkerTaskKind, CLASSIFIER_EPOCH,
     CURRENT_SCHEMA_VERSION,
 };
 mod support;
@@ -3241,6 +3241,7 @@ fn seed_active_ocr_cache_source(store: &EphemeralMetaStore, label: &str) -> Cont
     let root = store
         .register_source_root(&root_path, &root_path, label, now)
         .unwrap();
+    let scan_id = format!("ocr-cache-{label}");
 
     store.upsert_document(&document).unwrap();
     assert_eq!(
@@ -3248,12 +3249,15 @@ fn seed_active_ocr_cache_source(store: &EphemeralMetaStore, label: &str) -> Cont
         IdentityInsertOutcome::Inserted
     );
     store
+        .begin_scan(&root.id, &scan_id, ScanTrigger::Manual, now)
+        .unwrap();
+    store
         .observe_source_occurrence(
             &root.id,
             &format!("{label}.pdf"),
             &document.id,
             &revision.id,
-            "ocr-cache-fixture",
+            &scan_id,
             now,
         )
         .unwrap();
