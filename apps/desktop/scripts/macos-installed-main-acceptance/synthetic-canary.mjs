@@ -139,47 +139,28 @@ export function validateCanaryImportResponse(value) {
   return Object.freeze({ taskId: value.task_ids[0] });
 }
 
-export function canaryImportCompleted(value, previousEpoch) {
+export function canaryPublicationEpochAdvanced(value, previousEpoch) {
   let status;
   try {
     status = validateReadyStatus(value);
   } catch {
     return false;
   }
-  const latest = status.latest_import_scan;
   return (
     Number.isSafeInteger(previousEpoch) &&
     previousEpoch >= 1 &&
-    status.visible_epoch > previousEpoch &&
-    status.import_tasks_queued === 0 &&
-    status.import_tasks_recoverable === 0 &&
-    exactKeys(latest, [
-      "scan_profile",
-      "files_discovered",
-      "ignored_entries",
-      "scan_errors",
-      "searchable_documents",
-      "ocr_required_documents",
-      "ocr_jobs_queued",
-      "failed_documents",
-      "deleted_documents",
-      "scan_budget_observed",
-      "scan_budget_limit",
-      "scan_budget_exhausted",
-    ]) &&
-    latest.scan_profile === "explicit" &&
-    latest.files_discovered === 1 &&
-    latest.ignored_entries === 0 &&
-    latest.scan_errors === 0 &&
-    latest.searchable_documents === 1 &&
-    latest.ocr_required_documents === 0 &&
-    latest.ocr_jobs_queued === 0 &&
-    latest.failed_documents === 0 &&
-    latest.deleted_documents === 0 &&
-    latest.scan_budget_observed === 1 &&
-    latest.scan_budget_limit === 1 &&
-    latest.scan_budget_exhausted === false
+    status.visible_epoch > previousEpoch
   );
+}
+
+export function canaryPublicationCompleted(status, search, previousEpoch) {
+  if (!canaryPublicationEpochAdvanced(status, previousEpoch)) return false;
+  try {
+    validateCanarySearchResponse(search, status.visible_epoch);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function validateCanarySearchResponse(value, expectedEpoch) {

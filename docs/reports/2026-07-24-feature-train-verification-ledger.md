@@ -1420,3 +1420,30 @@ stack remained in the quadratic backfill; its COW workspace was removed and
 the authorized source hash was unchanged. No delivery matrix or unaffected
 product cell was replayed. The next native run resumes at the previously failed
 cold-start cell after F22 reaches main.
+
+### installed canary publication witness repair F23 — 2026-07-27
+
+The post-F22 exact merged-main run completed its release build, install,
+authorized v29 COW migration and core rebuild. The canary publication advanced
+the visible epoch, but a concurrent automatic rescan replaced the global
+`latest_import_scan` snapshot with an 8,720-file result and left one unrelated
+recoverable task. The harness therefore reported `daemon_status_timeout`
+despite the requested canary already being searchable.
+
+The canary gate now binds success to the user-visible publication it requested:
+a newer Ready epoch plus an exact search result containing the private
+synthetic file name and token at that same epoch. Global queue totals and the
+process-wide latest-scan snapshot remain useful diagnostics, but no longer act
+as task identity. This preserves watcher, periodic and manual scan concurrency
+instead of disabling it for acceptance.
+
+| Row | Behavior boundary | Status | Re-run only when |
+| --- | --- | --- | --- |
+| F23-01 | Concurrent global scan snapshots cannot replace the exact synthetic publication witness; wrong-file and stale-epoch results fail closed | focused synthetic-canary Node test: 3/3 passed | canary import, publication witness or search response validation changes |
+| F23-02 | The real acceptance runtime still composes all required native cells and authority checks | focused orchestrator Node test: 14/14 passed | acceptance runtime composition, lease authority or canary orchestration changes |
+| F23-03 | Changed acceptance modules remain syntactically valid | exact Node syntax checks passed | the three changed modules change |
+
+The failed installed run is retained as the F23 diagnostic witness. No full
+matrix or previously valid focused suite was replayed. After this repair reaches
+main, only the invalidated installed-main baseline and its still-unrun native
+successors resume.
