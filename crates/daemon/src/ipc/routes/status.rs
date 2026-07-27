@@ -76,12 +76,19 @@ pub(crate) fn unavailable_status_json() -> String {
         reason: Some(CoreReason::MetadataUnavailable),
     };
     let runtimes = unavailable_runtimes(OptionalRuntimeReason::NotConfigured);
-    render_without_store(core, runtimes, CapabilityMatrix::derive(core, runtimes, WriterHealth::ready())).to_string()
+    render_without_store(
+        core,
+        runtimes,
+        WriterHealth::ready(),
+        CapabilityMatrix::derive(core, runtimes, WriterHealth::ready()),
+    )
+    .to_string()
 }
 
 pub(crate) fn render_without_store(
     core: CoreHealth,
     runtimes: OptionalRuntimeMatrix,
+    writer: WriterHealth,
     capabilities: CapabilityMatrix,
 ) -> serde_json::Value {
     let metrics = super::super::process_metrics().snapshot();
@@ -117,7 +124,7 @@ pub(crate) fn render_without_store(
         "snapshot_present": serde_json::Value::Null,
         "ipc": metrics.to_json(),
     });
-    merge_health(&mut body, core, runtimes, capabilities);
+    merge_health(&mut body, core, runtimes, writer, capabilities);
     body
 }
 
@@ -125,15 +132,17 @@ pub(crate) fn render_from_store(
     store: &ReadMetaStore,
     core: CoreHealth,
     runtimes: OptionalRuntimeMatrix,
+    writer: WriterHealth,
     capabilities: CapabilityMatrix,
 ) -> MetadataReadResult<serde_json::Value> {
-    retry_metadata_read(|| status_json_once(store, core, runtimes, capabilities))
+    retry_metadata_read(|| status_json_once(store, core, runtimes, writer.clone(), capabilities))
 }
 
 fn status_json_once(
     store: &ReadMetaStore,
     core: CoreHealth,
     runtimes: OptionalRuntimeMatrix,
+    writer: WriterHealth,
     capabilities: CapabilityMatrix,
 ) -> MetadataReadResult<serde_json::Value> {
     let summary = store.status_summary().map_err(|error| error.class())?;
@@ -200,7 +209,7 @@ fn status_json_once(
         "index_health": crate::index_health_label(summary.index_health),
         "snapshot_present": summary.last_snapshot_id.is_some(),
     });
-    merge_health(&mut body, core, runtimes, capabilities);
+    merge_health(&mut body, core, runtimes, writer, capabilities);
     Ok(body)
 }
 
@@ -208,14 +217,10 @@ fn merge_health(
     body: &mut serde_json::Value,
     core: CoreHealth,
     runtimes: OptionalRuntimeMatrix,
+    writer: WriterHealth,
     capabilities: CapabilityMatrix,
 ) {
-    let health = super::super::capability::health_json(
-        core,
-        runtimes,
-        WriterHealth::ready(),
-        capabilities,
-    );
+    let health = super::super::capability::health_json(core, runtimes, writer, capabilities);
     let object = body.as_object_mut().expect("status body is an object");
     for (key, value) in health.as_object().expect("health body is an object") {
         object.insert(key.clone(), value.clone());
@@ -333,7 +338,7 @@ mod contract_tests {
             pdfium: OptionalRuntimeHealth::available(),
         };
         let capabilities = CapabilityMatrix::derive(core, runtimes, WriterHealth::ready());
-        let rendered = render_without_store(core, runtimes, capabilities);
+        let rendered = render_without_store(core, runtimes, WriterHealth::ready(), capabilities);
 
         assert_eq!(object_keys(&rendered), object_keys(&fixture));
         for key in [

@@ -43,9 +43,11 @@ impl ContractDelta {
         desired: &ImportProcessingContract,
     ) -> Self {
         let Some(committed) = committed else {
+            // No committed writer contract: all dimensions change; take the
+            // broadest strategy (derived rebuild), never a narrow PDF-only path.
             return Self {
                 kind: ContractDeltaKind::Multiple,
-                strategy: ContractTransitionStrategy::PdfRootRescan,
+                strategy: ContractTransitionStrategy::DerivedRebuild,
                 primary_changed: true,
                 ocr_changed: true,
                 derived_changed: true,
@@ -63,8 +65,7 @@ impl ContractDelta {
             };
         }
 
-        let primary_changed =
-            committed.primary_parse_version() != desired.primary_parse_version();
+        let primary_changed = committed.primary_parse_version() != desired.primary_parse_version();
         let ocr_changed = committed.ocr_parse_version() != desired.ocr_parse_version();
         let derived_changed =
             committed.derived_schema_version() != desired.derived_schema_version();

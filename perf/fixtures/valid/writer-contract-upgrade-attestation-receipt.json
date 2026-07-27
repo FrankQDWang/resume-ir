@@ -1,0 +1,18 @@
+{
+  "schema_version": "resume-ir.writer-contract-upgrade-attestation.v1",
+  "privacy_boundary": "redacted_local_aggregate",
+  "contains_raw_resume_text": false,
+  "contains_queries": false,
+  "contains_resume_paths": false,
+  "contains_candidate_results": false,
+  "phase": "restart_idempotence",
+  "schema_current": 34,
+  "writer_state": "ready",
+  "opaque_transition_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "target_contract_bound": true,
+  "hard_cut_count": 0,
+  "task_purge_count": 0,
+  "target_commit_count": 1,
+  "pre_upgrade_canary_searchable": true,
+  "post_upgrade_canary_bound_to_target": true
+}

@@ -49,7 +49,8 @@ pub(super) fn activate_contract(
         .commit_online_writer_contract(contract, now)
         .map_err(CliError::store)?
     {
-        meta_store::WriterContractTransitionOutcome::AlreadyActive => Ok(()),
+        meta_store::WriterContractTransitionOutcome::AlreadyActive
+        | meta_store::WriterContractTransitionOutcome::TargetCommitted => Ok(()),
         meta_store::WriterContractTransitionOutcome::BlockedByRunningOwner => Err(CliError::user(
             "import processing contract activation is blocked by a running task",
         )),

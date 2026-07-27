@@ -235,7 +235,7 @@ pub enum WriterTransitionPhase {
 }
 
 /// Writer authority health shared by status, diagnostics, and capability derive.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WriterHealth {
     pub state: WriterState,
@@ -243,6 +243,10 @@ pub struct WriterHealth {
     pub reason: Option<WriterReason>,
     #[serde(deserialize_with = "required_nullable")]
     pub transition_phase: Option<WriterTransitionPhase>,
+    /// Opaque transition identity for public status/diagnostics. Full digests
+    /// stay private to the store; this value is a non-path content digest.
+    #[serde(deserialize_with = "required_nullable")]
+    pub transition_id: Option<String>,
 }
 
 impl WriterHealth {
@@ -251,14 +255,25 @@ impl WriterHealth {
             state: WriterState::Ready,
             reason: None,
             transition_phase: None,
+            transition_id: None,
         }
     }
 
-    pub const fn transitioning(phase: WriterTransitionPhase) -> Self {
+    pub fn transitioning(phase: WriterTransitionPhase) -> Self {
         Self {
             state: WriterState::Transitioning,
             reason: Some(WriterReason::TransitionInProgress),
             transition_phase: Some(phase),
+            transition_id: None,
+        }
+    }
+
+    pub fn transitioning_with_id(phase: WriterTransitionPhase, transition_id: String) -> Self {
+        Self {
+            state: WriterState::Transitioning,
+            reason: Some(WriterReason::TransitionInProgress),
+            transition_phase: Some(phase),
+            transition_id: Some(transition_id),
         }
     }
 
@@ -267,6 +282,7 @@ impl WriterHealth {
             state: WriterState::Unavailable,
             reason: Some(reason),
             transition_phase: None,
+            transition_id: None,
         }
     }
 
@@ -275,10 +291,11 @@ impl WriterHealth {
             state: WriterState::Blocked,
             reason: Some(reason),
             transition_phase: None,
+            transition_id: None,
         }
     }
 
-    pub const fn admits_public_writers(self) -> bool {
+    pub const fn admits_public_writers(&self) -> bool {
         matches!(self.state, WriterState::Ready)
     }
 }

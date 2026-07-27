@@ -4,8 +4,8 @@ use rusqlite::{params, Connection, Transaction};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, MetaStoreError,
-    Result, SourceRootId,
+    schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, MetaStoreError, Result,
+    SourceRootId,
 };
 
 const V29_TO_V30_NAME: &str = "metadata-forward-migration-history";

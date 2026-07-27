@@ -7,12 +7,7 @@ use crate::{
 
 const PROMOTED_EPOCH: &str = "precision_first_v4_linear_0123456789ab";
 
-fn contract(
-    primary: &str,
-    ocr: &str,
-    derived: &str,
-    classifier: &str,
-) -> ImportProcessingContract {
+fn contract(primary: &str, ocr: &str, derived: &str, classifier: &str) -> ImportProcessingContract {
     ImportProcessingContract::new(primary, ocr, derived, classifier).unwrap()
 }
 
@@ -70,6 +65,19 @@ fn classifier_epoch_selects_reclassify() {
         delta.strategy,
         ContractTransitionStrategy::ClassifierReclassify
     );
+}
+
+#[test]
+fn missing_committed_contract_takes_broadest_strategy() {
+    let desired = contract(
+        "parser-pdfium-v2",
+        "ocr-v1",
+        "resume-ir-s9-v2",
+        CLASSIFIER_EPOCH,
+    );
+    let delta = ContractDelta::between(None, &desired);
+    assert_eq!(delta.kind, ContractDeltaKind::Multiple);
+    assert_eq!(delta.strategy, ContractTransitionStrategy::DerivedRebuild);
 }
 
 #[test]

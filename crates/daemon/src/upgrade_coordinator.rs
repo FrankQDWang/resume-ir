@@ -5,7 +5,7 @@
 
 use meta_store::{
     observe_writer_contract_transition, ImportProcessingContract, OwnedMetaStore, UnixTimestamp,
-    WriterContractTransitionOutcome,
+    WriterAuthorityHealthState, WriterContractTransitionOutcome,
 };
 
 use super::{import_processing, DaemonError, Result};
@@ -16,8 +16,8 @@ pub(crate) struct WriterAuthorityToken {
     claim_fence_epoch: u64,
 }
 
-#[allow(dead_code)]
 impl WriterAuthorityToken {
+    #[allow(dead_code)]
     pub(crate) const fn claim_fence_epoch(self) -> u64 {
         self.claim_fence_epoch
     }
@@ -38,33 +38,44 @@ pub(crate) enum WriterPriority {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum UpgradeCoordinatorOutcome {
     AlreadyActive,
+    TargetCommitted,
     TransitionRequired,
     TransitionInProgress,
     WriterUnavailable,
     HardCutActivated,
 }
 
-/// Observes Desired vs committed writer contract without mutating dormant v34
-/// tables during Slice B/C. Slice D callers use this to decide fencing.
+/// Observes Desired vs committed writer contract.
 pub(crate) fn observe_desired_contract(
     store: &OwnedMetaStore,
     desired: &ImportProcessingContract,
 ) -> Result<(UpgradeCoordinatorOutcome, Option<WriterAuthorityToken>)> {
+    let authority = store
+        .writer_authority_snapshot()
+        .map_err(DaemonError::store)?;
+    if authority.health_state == WriterAuthorityHealthState::Unavailable
+        || authority.health_state == WriterAuthorityHealthState::Blocked
+    {
+        return Ok((UpgradeCoordinatorOutcome::WriterUnavailable, None));
+    }
     let committed = store
         .active_import_processing_contract()
         .map_err(DaemonError::store)?;
     let running = store
         .running_import_task_count()
         .map_err(DaemonError::store)?;
-    let (_delta, outcome) =
-        observe_writer_contract_transition(committed.as_ref(), desired, running);
+    let (delta, outcome) = observe_writer_contract_transition(committed.as_ref(), desired, running);
+    let _ = delta;
+    let token = WriterAuthorityToken {
+        claim_fence_epoch: authority.claim_fence_epoch,
+    };
     match outcome {
-        WriterContractTransitionOutcome::AlreadyActive => Ok((
-            UpgradeCoordinatorOutcome::AlreadyActive,
-            Some(WriterAuthorityToken {
-                claim_fence_epoch: 0,
-            }),
-        )),
+        WriterContractTransitionOutcome::AlreadyActive => {
+            Ok((UpgradeCoordinatorOutcome::AlreadyActive, Some(token)))
+        }
+        WriterContractTransitionOutcome::TargetCommitted => {
+            Ok((UpgradeCoordinatorOutcome::TargetCommitted, Some(token)))
+        }
         WriterContractTransitionOutcome::TransitionRequired => {
             Ok((UpgradeCoordinatorOutcome::TransitionRequired, None))
         }
@@ -83,38 +94,40 @@ pub(crate) fn observe_desired_contract(
 }
 
 /// Bootstrap writer barrier used after store open.
-///
-/// Until Slice D fully enables online transition commits, this still activates
-/// via the legacy hard-cut path for unpublished rebuilds, but never treats
-/// `Superseded` on a Ready store as a committed online transition. Ready stores
-/// with a matching contract receive a writer token; mismatched Ready contracts
-/// report `TransitionRequired` without blocking search.
 pub(crate) fn bootstrap_writer_barrier(
     store: &OwnedMetaStore,
     desired: &ImportProcessingContract,
     now: UnixTimestamp,
-) -> Result<UpgradeCoordinatorOutcome> {
-    let (outcome, _token) = observe_desired_contract(store, desired)?;
+) -> Result<(UpgradeCoordinatorOutcome, Option<WriterAuthorityToken>)> {
+    let (outcome, token) = observe_desired_contract(store, desired)?;
     match outcome {
-        UpgradeCoordinatorOutcome::AlreadyActive => {
-            Ok(UpgradeCoordinatorOutcome::AlreadyActive)
+        UpgradeCoordinatorOutcome::AlreadyActive | UpgradeCoordinatorOutcome::TargetCommitted => {
+            Ok((outcome, token))
         }
         UpgradeCoordinatorOutcome::TransitionRequired => {
-            // Prefer online commit for Ready published authorities. Fall back to
-            // hard-cut only when the projection still matches rebuild preconditions.
             match store
-                .commit_online_writer_contract(desired, now)
+                .complete_online_writer_transition(desired, now)
                 .map_err(DaemonError::store)?
             {
                 WriterContractTransitionOutcome::AlreadyActive => {
-                    return Ok(UpgradeCoordinatorOutcome::AlreadyActive);
+                    let token = token_from_store(store)?;
+                    return Ok((UpgradeCoordinatorOutcome::AlreadyActive, Some(token)));
+                }
+                WriterContractTransitionOutcome::TargetCommitted => {
+                    let token = token_from_store(store)?;
+                    return Ok((UpgradeCoordinatorOutcome::TargetCommitted, Some(token)));
                 }
                 WriterContractTransitionOutcome::BlockedByRunningOwner => {
-                    return Ok(UpgradeCoordinatorOutcome::TransitionInProgress);
+                    return Ok((UpgradeCoordinatorOutcome::TransitionInProgress, None));
                 }
                 WriterContractTransitionOutcome::PersistedStateInvalid => {}
-                other => {
-                    let _ = other;
+                WriterContractTransitionOutcome::TransitionInProgress => {
+                    return Ok((UpgradeCoordinatorOutcome::TransitionInProgress, None));
+                }
+                WriterContractTransitionOutcome::TransitionRequired
+                | WriterContractTransitionOutcome::UnsupportedTransition
+                | WriterContractTransitionOutcome::RuntimeUnavailable => {
+                    return Ok((UpgradeCoordinatorOutcome::WriterUnavailable, None));
                 }
             }
             match store
@@ -123,32 +136,57 @@ pub(crate) fn bootstrap_writer_barrier(
             {
                 meta_store::MigrationRebuildContractActivation::Activated
                 | meta_store::MigrationRebuildContractActivation::AlreadyActive => {
-                    Ok(UpgradeCoordinatorOutcome::HardCutActivated)
+                    let token = token_from_store(store)?;
+                    Ok((UpgradeCoordinatorOutcome::HardCutActivated, Some(token)))
                 }
                 meta_store::MigrationRebuildContractActivation::Superseded => {
-                    Ok(UpgradeCoordinatorOutcome::TransitionRequired)
+                    Ok((UpgradeCoordinatorOutcome::TransitionRequired, None))
                 }
                 meta_store::MigrationRebuildContractActivation::RunningTaskConflict => {
-                    Ok(UpgradeCoordinatorOutcome::TransitionInProgress)
+                    Ok((UpgradeCoordinatorOutcome::TransitionInProgress, None))
                 }
             }
         }
-        other => Ok(other),
+        other => Ok((other, None)),
     }
+}
+
+fn token_from_store(store: &OwnedMetaStore) -> Result<WriterAuthorityToken> {
+    let authority = store
+        .writer_authority_snapshot()
+        .map_err(DaemonError::store)?;
+    Ok(WriterAuthorityToken {
+        claim_fence_epoch: authority.claim_fence_epoch,
+    })
 }
 
 /// Whether public/uncoordinated writers may claim work.
 pub(crate) fn public_writer_admitted(outcome: UpgradeCoordinatorOutcome) -> bool {
     matches!(
         outcome,
-        UpgradeCoordinatorOutcome::AlreadyActive | UpgradeCoordinatorOutcome::HardCutActivated
+        UpgradeCoordinatorOutcome::AlreadyActive
+            | UpgradeCoordinatorOutcome::TargetCommitted
+            | UpgradeCoordinatorOutcome::HardCutActivated
     )
+}
+
+pub(crate) fn admits_priority(
+    outcome: UpgradeCoordinatorOutcome,
+    priority: WriterPriority,
+) -> bool {
+    match priority {
+        WriterPriority::MetadataRecovery
+        | WriterPriority::SearchArtifactRepair
+        | WriterPriority::PrivacyDeletion => true,
+        WriterPriority::WriterContractTransition => {
+            !matches!(outcome, UpgradeCoordinatorOutcome::WriterUnavailable)
+        }
+        WriterPriority::OrdinaryImport => public_writer_admitted(outcome),
+    }
 }
 
 /// Convenience: derive Desired from run options.
 #[allow(dead_code)]
-pub(crate) fn desired_contract(
-    options: &super::RunOptions,
-) -> Result<ImportProcessingContract> {
+pub(crate) fn desired_contract(options: &super::RunOptions) -> Result<ImportProcessingContract> {
     import_processing::current_contract(options)
 }

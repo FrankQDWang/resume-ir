@@ -192,8 +192,11 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
     let startup_orphaned_recovered = if mutation_worker_enabled {
         let startup_now = current_timestamp()?;
         let recovered = import_processing::normalize_orphaned_running_tasks(&store, startup_now)?;
-        let _outcome =
-            upgrade_coordinator::bootstrap_writer_barrier(&store, &processing_contract, startup_now)?;
+        let (_outcome, _token) = upgrade_coordinator::bootstrap_writer_barrier(
+            &store,
+            &processing_contract,
+            startup_now,
+        )?;
         recovered
     } else {
         0

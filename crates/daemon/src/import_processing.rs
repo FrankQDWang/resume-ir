@@ -21,6 +21,7 @@ pub(super) fn current_contract(options: &RunOptions) -> Result<ImportProcessingC
     .map_err(DaemonError::import)
 }
 
+#[allow(dead_code)] // production bootstrap uses upgrade_coordinator; retained for tests/CLI parity
 pub(super) fn activate_contract(
     store: &OwnedMetaStore,
     contract: &ImportProcessingContract,
@@ -30,7 +31,8 @@ pub(super) fn activate_contract(
         .commit_online_writer_contract(contract, now)
         .map_err(DaemonError::store)?
     {
-        meta_store::WriterContractTransitionOutcome::AlreadyActive => Ok(()),
+        meta_store::WriterContractTransitionOutcome::AlreadyActive
+        | meta_store::WriterContractTransitionOutcome::TargetCommitted => Ok(()),
         meta_store::WriterContractTransitionOutcome::BlockedByRunningOwner => {
             Err(DaemonError::ownership_conflict())
         }
@@ -41,9 +43,11 @@ pub(super) fn activate_contract(
             {
                 MigrationRebuildContractActivation::Activated
                 | MigrationRebuildContractActivation::AlreadyActive => Ok(()),
-                MigrationRebuildContractActivation::Superseded => Err(DaemonError::recoverable_dependency(
-                    "processing-contract online transition required",
-                )),
+                MigrationRebuildContractActivation::Superseded => {
+                    Err(DaemonError::recoverable_dependency(
+                        "processing-contract online transition required",
+                    ))
+                }
                 MigrationRebuildContractActivation::RunningTaskConflict => {
                     Err(DaemonError::ownership_conflict())
                 }

@@ -14,8 +14,8 @@ use crate::daemon_error::{DaemonError, WorkerErrorDisposition, WorkerRetryClass}
 use crate::ipc::{self, DaemonFatalError};
 use crate::rescan_schedule::CompletedRootRescanSchedule;
 use crate::{
-    current_timestamp, migration_repair, print_import_worker_summary,
-    print_ocr_worker_summary, print_search_artifact_worker_summary, recover_stale_import_tasks,
+    current_timestamp, migration_repair, print_import_worker_summary, print_ocr_worker_summary,
+    print_search_artifact_worker_summary, recover_stale_import_tasks,
     run_import_worker_once_with_retry_due, run_ocr_worker_batch, run_search_artifact_worker_once,
     search_artifact_recovery_has_activity, timestamp_minus_seconds, ImportWatcher,
     ImportWorkerSummary, RunOptions, DEFAULT_IMPORT_RESCAN_MIN_AGE_SECONDS,
@@ -190,10 +190,21 @@ fn run_worker_tick(
         return Ok(WorkerOutcome::Continue);
     }
     // Contract transition is an upgrade transaction, not a per-tick health check.
-    let (writer_outcome, _) =
+    let (mut writer_outcome, _) =
         crate::upgrade_coordinator::observe_desired_contract(store, processing_contract)?;
-    let admit_ordinary_writers =
-        crate::upgrade_coordinator::public_writer_admitted(writer_outcome);
+    if matches!(
+        writer_outcome,
+        crate::upgrade_coordinator::UpgradeCoordinatorOutcome::TransitionRequired
+            | crate::upgrade_coordinator::UpgradeCoordinatorOutcome::TransitionInProgress
+    ) && crate::upgrade_coordinator::admits_priority(
+        writer_outcome,
+        crate::upgrade_coordinator::WriterPriority::WriterContractTransition,
+    ) {
+        let (advanced, _) =
+            crate::upgrade_coordinator::bootstrap_writer_barrier(store, processing_contract, now)?;
+        writer_outcome = advanced;
+    }
+    let admit_ordinary_writers = crate::upgrade_coordinator::public_writer_admitted(writer_outcome);
     if state.migration_artifacts.is_none() {
         state.migration_artifacts = Some(if gates.import || gates.index {
             prepare_migration_artifacts_for_worker(store, pipeline_control)?
@@ -243,9 +254,24 @@ fn run_worker_tick(
             if state.migration_artifacts == Some(MigrationArtifactPreparation::RepairBlocked) {
                 return Ok(());
             }
+            // Search-authority artifact repair stays above writer-contract transition.
+            if runtime_gates(options, runtime.capability_state.as_ref()).index
+                && !repaired_reported_fault
+            {
+                let recovery = run_search_artifact_worker_once(
+                    store,
+                    options,
+                    processing_contract,
+                    pipeline_control,
+                )?;
+                if runtime.summary_output == WorkerSummaryOutput::Stdout
+                    && search_artifact_recovery_has_activity(&recovery)
+                {
+                    print_search_artifact_worker_summary(&recovery)?;
+                }
+            }
             if !admit_ordinary_writers {
-                // Writer transition incomplete: skip watcher/rescan/ordinary import.
-                // Search-authority artifact repair already ran in the fault gate above.
+                // Writer transition incomplete: skip watcher/rescan/ordinary import/OCR.
                 return Ok(());
             }
             if runtime_gates(options, runtime.capability_state.as_ref()).import {
@@ -343,21 +369,6 @@ fn run_worker_tick(
                     && ocr_summary.has_activity()
                 {
                     print_ocr_worker_summary(&ocr_summary)?;
-                }
-            }
-            if runtime_gates(options, runtime.capability_state.as_ref()).index
-                && !repaired_reported_fault
-            {
-                let recovery = run_search_artifact_worker_once(
-                    store,
-                    options,
-                    processing_contract,
-                    pipeline_control,
-                )?;
-                if runtime.summary_output == WorkerSummaryOutput::Stdout
-                    && search_artifact_recovery_has_activity(&recovery)
-                {
-                    print_search_artifact_worker_summary(&recovery)?;
                 }
             }
             Ok(())

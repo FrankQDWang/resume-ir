@@ -3,10 +3,13 @@ use crate::{
     ImportProcessingContract, ImportProcessingContractId,
 };
 
-/// Attempt-level or terminal observation from the dormant transition API.
+/// Attempt-level or terminal observation from the writer-transition API.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WriterContractTransitionOutcome {
+    /// Committed writer contract already matches Desired.
     AlreadyActive,
+    /// This call completed TargetCommitted (and optional WriterReady).
+    TargetCommitted,
     TransitionRequired,
     TransitionInProgress,
     BlockedByRunningOwner,
@@ -113,10 +116,16 @@ pub fn observe_writer_contract_transition(
         return (delta, WriterContractTransitionOutcome::AlreadyActive);
     }
     if delta.strategy == ContractTransitionStrategy::Unsupported {
-        return (delta, WriterContractTransitionOutcome::UnsupportedTransition);
+        return (
+            delta,
+            WriterContractTransitionOutcome::UnsupportedTransition,
+        );
     }
     if running_task_count > 0 {
-        return (delta, WriterContractTransitionOutcome::BlockedByRunningOwner);
+        return (
+            delta,
+            WriterContractTransitionOutcome::BlockedByRunningOwner,
+        );
     }
     (delta, WriterContractTransitionOutcome::TransitionRequired)
 }

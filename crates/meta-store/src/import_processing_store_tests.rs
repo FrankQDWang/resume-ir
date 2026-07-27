@@ -291,7 +291,7 @@ fn online_commit_switches_ready_writer_contract_without_task_purge() {
         store
             .commit_online_writer_contract(&replacement, now)
             .unwrap(),
-        crate::WriterContractTransitionOutcome::AlreadyActive
+        crate::WriterContractTransitionOutcome::TargetCommitted
     );
     assert_eq!(
         active_contract_id(&store).as_deref(),
@@ -305,11 +305,36 @@ fn online_commit_switches_ready_writer_contract_without_task_purge() {
     let queued_after = store
         .connection
         .borrow()
-        .query_row("SELECT COUNT(*) FROM import_task", [], |row| {
-            row.get::<_, i64>(0)
-        })
+        .query_row(
+            "SELECT COUNT(*) FROM import_task AS task
+             WHERE task.status = 'queued'
+               AND NOT EXISTS (
+                   SELECT 1 FROM import_task_cancellation AS cancellation
+                   WHERE cancellation.import_task_id = task.id
+               )",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
         .unwrap();
     assert_eq!(queued_after, 1);
+    let binding: String = store
+        .connection
+        .borrow()
+        .query_row(
+            "SELECT binding.processing_contract_id
+             FROM import_task AS task
+             JOIN import_task_contract_binding AS binding
+               ON binding.import_task_id = task.id
+             WHERE task.status = 'queued'
+               AND NOT EXISTS (
+                   SELECT 1 FROM import_task_cancellation AS cancellation
+                   WHERE cancellation.import_task_id = task.id
+               )",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(binding, replacement.id().as_str());
 }
 
 #[test]

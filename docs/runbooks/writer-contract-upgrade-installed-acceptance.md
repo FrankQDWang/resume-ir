@@ -51,3 +51,16 @@ Using a **v29-capable** binary against the COW clone only:
 
 Only after Phases 0–3 pass may the acceptance commit be frozen for the
 120-minute soak.
+
+## Public contract gate
+
+Before requesting private roots, run:
+
+```bash
+python3 scripts/ci/check-writer-contract-upgrade-acceptance.py
+```
+
+This validates matrix fields, this runbook, and the redacted attestation receipt
+fixture under `perf/fixtures/valid/`. It reports `blocked_private_root` until
+`RESUME_IR_RUN_PRIVATE_WRITER_UPGRADE_ACCEPTANCE=1` and
+`RESUME_IR_INSTALLED_ACCEPTANCE_V29_ROOT` are set for the private DMG/APFS run.

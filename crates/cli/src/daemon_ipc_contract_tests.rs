@@ -7,7 +7,7 @@ fn ready_status() -> Value {
         "status": "ok",
         "process_state": "ready",
         "core": {"state": "ready", "reason": null},
-        "writer": {"state": "ready", "reason": null, "transition_phase": null},
+        "writer": {"state": "ready", "reason": null, "transition_phase": null, "transition_id": null},
         "optional_runtimes": {
             "embedding": {"state": "available", "reason": null},
             "ocr": {"state": "available", "reason": null},

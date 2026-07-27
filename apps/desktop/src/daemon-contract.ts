@@ -93,9 +93,9 @@ function isRuntime(value: unknown): value is OptionalRuntimeStatus {
 }
 
 function isWriter(value: unknown): value is StatusBody["writer"] {
-  if (!isRecord(value) || !hasExactKeys(value, ["state", "reason", "transition_phase"])) return false
+  if (!isRecord(value) || !hasExactKeys(value, ["state", "reason", "transition_phase", "transition_id"])) return false
   if (!["ready", "transitioning", "unavailable", "blocked"].includes(String(value.state))) return false
-  if (value.state === "ready") return value.reason === null && value.transition_phase === null
+  if (value.state === "ready") return value.reason === null && value.transition_phase === null && value.transition_id === null
   return typeof value.reason === "string"
 }
 

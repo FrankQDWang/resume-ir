@@ -38,7 +38,6 @@ mod forward_migration;
 mod immutable_ingest_stage;
 mod immutable_search;
 mod import_processing_contract;
-mod processing_contract_transition;
 mod import_processing_store;
 mod import_root_control;
 mod import_root_head;
@@ -57,6 +56,7 @@ mod migration_v29;
 mod ocr_publication;
 mod pdf_reprocess;
 mod privacy_maintenance;
+mod processing_contract_transition;
 mod schema_v27;
 mod schema_v28;
 mod schema_v29;
@@ -75,6 +75,7 @@ mod source_roots;
 #[cfg(test)]
 mod source_roots_tests;
 mod store_access;
+mod writer_transition_store;
 
 pub use metadata_logical_authority::{
     inspect_metadata_logical_authority, MetadataLogicalAuthority,
@@ -133,6 +134,7 @@ pub use classification::{
     ClassificationCounts, ClassificationStatus, ClassifierEpochSource, CurrentClassifierEpoch,
     ReasonCode, ResumeVersionClassification, ReviewDisposition, SourceRevisionTriage,
 };
+pub use contract_delta::{ContractDelta, ContractDeltaKind, ContractTransitionStrategy};
 pub use data_directory_owner::{
     import_task_owner_lock_path, DataDirectoryOwnerAcquireError, DataDirectoryOwnerAcquisition,
     DataDirectoryOwnerLease, ImportProcessingOrphanNormalizationError, ImportTaskOwnerLock,
@@ -142,12 +144,6 @@ pub use immutable_ingest_stage::ImmutableIngestStage;
 pub use immutable_search::{
     IdentityInsertOutcome, SearchProjectionServiceState, SearchProjectionState,
     SearchProjectionTransitionOutcome, SearchRepairReason, SearchSelectionResolution,
-};
-pub use contract_delta::{ContractDelta, ContractDeltaKind, ContractTransitionStrategy};
-pub use processing_contract_transition::{
-    campaign_domain_for, observe_writer_contract_transition, WriterAuthorityHealthState,
-    WriterAuthoritySnapshot, WriterContractTransitionOutcome, WriterTransitionPhase,
-    WriterTransitionReceipt,
 };
 pub use import_processing_contract::{
     ImportProcessingContract, ImportProcessingContractId, ImportSourceDispositionKind,
@@ -171,6 +167,11 @@ pub use migration_rebuild_attempt::{
 pub use migration_rebuild_barrier::{MigrationRebuildBarrierToken, MigrationRebuildProjectionRow};
 pub use ocr_publication::{OcrSearchPublicationCommit, OcrSearchPublicationOutcome};
 pub use privacy_maintenance::{PrivacyPurgeReport, PRIVACY_PURGE_BATCH_LIMIT};
+pub use processing_contract_transition::{
+    campaign_domain_for, observe_writer_contract_transition, WriterAuthorityHealthState,
+    WriterAuthoritySnapshot, WriterContractTransitionOutcome, WriterTransitionPhase,
+    WriterTransitionReceipt,
+};
 pub use resume_classifier::{
     classify as classify_resume, ClassificationResult, ClassifierInput, CLASSIFIER_EPOCH,
 };
@@ -3558,6 +3559,12 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                                 WHERE purpose.import_task_id = import_task.id
                             )
                         )
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM writer_authority_state AS writer
+                            WHERE writer.state_key = 'default'
+                              AND writer.health_state != 'ready'
+                        )
                     RETURNING {IMPORT_TASK_COLUMNS}"
                 ))
                 .map_err(MetaStoreError::storage)?;
@@ -6501,7 +6508,7 @@ fn reset_unsealed_import_attempt(
     Ok(())
 }
 
-fn insert_import_task_with_scan_scope_in_connection(
+pub(crate) fn insert_import_task_with_scan_scope_in_connection(
     connection: &Connection,
     task: &ImportTask,
     scope: &ImportScanScope,

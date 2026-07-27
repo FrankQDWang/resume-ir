@@ -27,7 +27,7 @@
   "writer": {
     "state": "ready",
     "reason": null,
-    "transition_phase": null
+    "transition_phase": null, "transition_id": null
   },
   "capabilities": {
     "keyword_search": {

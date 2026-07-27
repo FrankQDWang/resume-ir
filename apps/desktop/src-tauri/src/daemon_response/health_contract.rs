@@ -71,7 +71,7 @@ pub(super) fn validate_health_contract(
         status,
         *core,
         *runtimes,
-        *writer,
+        writer.clone(),
         *capabilities,
         error.copied(),
     )

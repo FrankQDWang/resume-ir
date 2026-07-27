@@ -18,8 +18,8 @@ use crate::{
     data_directory_owner::DataDirectoryOwnerGuard,
     forward_migration,
     migration_v27::{open_encrypted_read_connection, store_identity, sync_validated_store},
-    migration_v29, schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, MetaStoreError,
-    MetadataEncryptionState, OwnedMetaStore, Result, METADATA_ENCRYPTION_KEY_LEN,
+    migration_v29, schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34,
+    MetaStoreError, MetadataEncryptionState, OwnedMetaStore, Result, METADATA_ENCRYPTION_KEY_LEN,
 };
 use rusqlite::{backup::Backup, types::ValueRef, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};

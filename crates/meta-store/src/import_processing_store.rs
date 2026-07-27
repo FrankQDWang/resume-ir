@@ -304,8 +304,9 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         Ok(MigrationRebuildContractActivation::Activated)
     }
 
-    /// Commits Desired as the writer contract for an already-published Ready
-    /// search authority without deleting import tasks (online transition).
+    /// Online Ready-path writer transition. Prefer
+    /// [`Self::complete_online_writer_transition`]; this name remains for
+    /// call-site migration and forwards to the fenced state machine.
     pub fn commit_online_writer_contract(
         &self,
         contract: &ImportProcessingContract,
@@ -314,75 +315,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
     where
         Access: MetadataStoreWriteAccess,
     {
-        let mut connection = self.connection.borrow_mut();
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(MetaStoreError::storage)?;
-        insert_import_processing_contract_in_connection(&transaction, contract)?;
-        let state = transaction
-            .query_row(
-                "SELECT service_state, generation, repair_reason
-                 FROM search_projection_state WHERE state_key = 'default'",
-                [],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                        row.get::<_, Option<String>>(2)?,
-                    ))
-                },
-            )
-            .map_err(MetaStoreError::storage)?;
-        if state.0 != "ready" || state.1.is_none() {
-            return Ok(WriterContractTransitionOutcome::PersistedStateInvalid);
-        }
-        let active = transaction
-            .query_row(
-                "SELECT active_contract_id FROM migration_rebuild_contract_state
-                 WHERE state_key = 'default'",
-                [],
-                |row| row.get::<_, Option<String>>(0),
-            )
-            .map_err(MetaStoreError::storage)?;
-        if active.as_deref() == Some(contract.id().as_str()) {
-            transaction.commit().map_err(MetaStoreError::storage)?;
-            return Ok(WriterContractTransitionOutcome::AlreadyActive);
-        }
-        let running_task_exists = transaction
-            .query_row(
-                "SELECT EXISTS (
-                     SELECT 1 FROM import_task WHERE status = ?1
-                 )",
-                params![import_task_status_to_storage(ImportTaskStatus::Running)],
-                |row| row.get::<_, i64>(0),
-            )
-            .map_err(MetaStoreError::storage)?;
-        if running_task_exists != 0 {
-            return Ok(WriterContractTransitionOutcome::BlockedByRunningOwner);
-        }
-        transaction
-            .execute(
-                "UPDATE migration_rebuild_contract_state
-                 SET active_contract_id = ?1, updated_at_seconds = ?2
-                 WHERE state_key = 'default'",
-                params![contract.id().as_str(), now.as_unix_seconds()],
-            )
-            .map_err(MetaStoreError::storage)?;
-        // Best-effort writer_authority_state sync on v34+; older test fixtures
-        // without the table still commit the rebuild contract head.
-        let _ = transaction.execute(
-            "UPDATE writer_authority_state
-             SET health_state = 'ready',
-                 health_reason = NULL,
-                 transition_phase = 'writer_ready',
-                 committed_contract_id = ?1,
-                 desired_contract_id = ?1,
-                 updated_at_seconds = ?2
-             WHERE state_key = 'default'",
-            params![contract.id().as_str(), now.as_unix_seconds()],
-        );
-        transaction.commit().map_err(MetaStoreError::storage)?;
-        Ok(WriterContractTransitionOutcome::AlreadyActive)
+        self.complete_online_writer_transition(contract, now)
     }
 
     /// Stages one bounded, ordinal-ordered source-disposition batch in a single

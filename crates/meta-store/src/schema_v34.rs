@@ -3,13 +3,22 @@ pub(super) const VERSION: u32 = 34;
 /// Additive writer-authority and reprocessing-campaign tables for online
 /// processing-contract transitions. Applied only through the continuous COW
 /// forward-migration registry or empty-store schema history.
+///
+/// Contract and opaque digests use the same identity as
+/// `import_processing_contract.id`: `sha256:` + 64 lowercase hex (71 chars).
 pub(super) const SCHEMA: &str = r#"
 CREATE TABLE writer_contract_transition (
     transition_id TEXT PRIMARY KEY NOT NULL CHECK (
-        length(transition_id) = 64
+        length(transition_id) = 71
+        AND substr(transition_id, 1, 7) = 'sha256:'
+        AND substr(transition_id, 8) NOT GLOB '*[^0-9a-f]*'
     ),
     source_contract_id TEXT,
-    target_contract_id TEXT NOT NULL CHECK (length(target_contract_id) = 64),
+    target_contract_id TEXT NOT NULL CHECK (
+        length(target_contract_id) = 71
+        AND substr(target_contract_id, 1, 7) = 'sha256:'
+        AND substr(target_contract_id, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
     desired_product_version TEXT NOT NULL CHECK (
         length(desired_product_version) > 0
         AND length(desired_product_version) <= 64
@@ -112,9 +121,17 @@ INSERT INTO writer_authority_state (
 );
 
 CREATE TABLE reprocessing_campaign (
-    campaign_id TEXT PRIMARY KEY NOT NULL CHECK (length(campaign_id) = 64),
+    campaign_id TEXT PRIMARY KEY NOT NULL CHECK (
+        length(campaign_id) = 71
+        AND substr(campaign_id, 1, 7) = 'sha256:'
+        AND substr(campaign_id, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
     transition_id TEXT NOT NULL,
-    target_contract_id TEXT NOT NULL CHECK (length(target_contract_id) = 64),
+    target_contract_id TEXT NOT NULL CHECK (
+        length(target_contract_id) = 71
+        AND substr(target_contract_id, 1, 7) = 'sha256:'
+        AND substr(target_contract_id, 8) NOT GLOB '*[^0-9a-f]*'
+    ),
     affected_domain TEXT NOT NULL CHECK (
         affected_domain IN (
             'pdf_root_rescan',

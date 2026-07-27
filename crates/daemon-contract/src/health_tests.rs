@@ -44,7 +44,15 @@ fn all_ready_runtime_combinations_have_one_deterministic_capability_matrix() {
         };
         let core = CoreHealth::ready();
         let capabilities = CapabilityMatrix::derive(core, runtimes, WriterHealth::ready());
-        validate_health_contract(StatusState::Ok, core, runtimes, WriterHealth::ready(), capabilities, None).unwrap();
+        validate_health_contract(
+            StatusState::Ok,
+            core,
+            runtimes,
+            WriterHealth::ready(),
+            capabilities,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(
             capabilities.index_publication,
@@ -85,7 +93,12 @@ fn non_serving_core_states_never_authorize_store_access() {
         let runtimes = OptionalRuntimeMatrix::initializing();
         let capabilities = CapabilityMatrix::derive(core, runtimes, WriterHealth::ready());
         validate_health_contract(
-            core.status(), core, runtimes, WriterHealth::ready(), capabilities, CoreError::for_core(core),
+            core.status(),
+            core,
+            runtimes,
+            WriterHealth::ready(),
+            capabilities,
+            CoreError::for_core(core),
         )
         .unwrap();
         assert!(matches!(
