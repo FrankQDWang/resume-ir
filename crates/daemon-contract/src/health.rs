@@ -625,7 +625,7 @@ pub fn validate_health_contract(
         (WriterState::Ready, None)
             | (
                 WriterState::Transitioning,
-                Some(WriterReason::TransitionInProgress)
+                Some(WriterReason::TransitionInProgress | WriterReason::BlockedByRunningOwner)
             )
             | (
                 WriterState::Unavailable | WriterState::Blocked,

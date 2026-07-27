@@ -246,8 +246,8 @@ fn snapshot_from_fallible_source(
         let core = read_core()?;
         let writer = read_writer()?;
         let capabilities = CapabilityMatrix::derive(core, runtimes, writer.clone());
-        let status = render_status(core, writer.clone(), capabilities.clone())?;
-        let diagnostics = render_diagnostics(core, writer.clone(), capabilities.clone())?;
+        let status = render_status(core, writer.clone(), capabilities)?;
+        let diagnostics = render_diagnostics(core, writer.clone(), capabilities)?;
         Ok(ControlPlaneSnapshot {
             core,
             runtimes,
@@ -278,13 +278,8 @@ fn snapshot_without_store(
         core,
         runtimes,
         writer: writer.clone(),
-        capabilities: capabilities.clone(),
-        status: routes::status::render_without_store(
-            core,
-            runtimes,
-            writer.clone(),
-            capabilities.clone(),
-        ),
+        capabilities,
+        status: routes::status::render_without_store(core, runtimes, writer.clone(), capabilities),
         diagnostics: diagnostics::render_without_store(core, runtimes, writer, capabilities),
     }
 }

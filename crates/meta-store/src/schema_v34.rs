@@ -89,8 +89,28 @@ CREATE TABLE writer_authority_state (
     claim_fence_epoch INTEGER NOT NULL DEFAULT 0 CHECK (claim_fence_epoch >= 0),
     committed_contract_id TEXT,
     desired_contract_id TEXT,
+    last_completed_transition_id TEXT,
     updated_at_seconds INTEGER NOT NULL CHECK (updated_at_seconds >= 0),
+    CHECK (
+        (
+            health_state = 'ready'
+            AND health_reason IS NULL
+            AND active_transition_id IS NULL
+        )
+        OR (
+            health_state = 'transitioning'
+            AND active_transition_id IS NOT NULL
+            AND transition_phase IS NOT NULL
+            AND transition_phase != 'writer_ready'
+        )
+        OR (
+            health_state IN ('unavailable', 'blocked')
+            AND health_reason IS NOT NULL
+        )
+    ),
     FOREIGN KEY (active_transition_id)
+        REFERENCES writer_contract_transition(transition_id),
+    FOREIGN KEY (last_completed_transition_id)
         REFERENCES writer_contract_transition(transition_id),
     FOREIGN KEY (committed_contract_id)
         REFERENCES import_processing_contract(id),
@@ -107,6 +127,7 @@ INSERT INTO writer_authority_state (
     claim_fence_epoch,
     committed_contract_id,
     desired_contract_id,
+    last_completed_transition_id,
     updated_at_seconds
 ) VALUES (
     'default',
@@ -115,6 +136,7 @@ INSERT INTO writer_authority_state (
     NULL,
     NULL,
     0,
+    NULL,
     NULL,
     NULL,
     0

@@ -7,19 +7,26 @@ use meta_store::{
 
 pub(crate) fn writer_health_from_snapshot(snapshot: WriterAuthoritySnapshot) -> WriterHealth {
     let transition_phase = snapshot.transition_phase.map(map_phase);
-    let transition_id = snapshot.active_transition_id.filter(|id| !id.is_empty());
+    let active_transition_id = snapshot.active_transition_id.filter(|id| !id.is_empty());
+    let last_completed = snapshot
+        .last_completed_transition_id
+        .filter(|id| !id.is_empty());
     match snapshot.health_state {
         WriterAuthorityHealthState::Ready => WriterHealth {
             state: WriterState::Ready,
             reason: None,
-            transition_phase: None,
-            transition_id: None,
+            // Keep WriterReady phase only when a completed transition id exists so
+            // installed attestation can bind status opaque id to the private receipt.
+            transition_phase: last_completed
+                .as_ref()
+                .map(|_| WriterTransitionPhase::WriterReady),
+            transition_id: last_completed,
         },
         WriterAuthorityHealthState::Transitioning => WriterHealth {
             state: WriterState::Transitioning,
-            reason: Some(WriterReason::TransitionInProgress),
+            reason: Some(map_reason(snapshot.health_reason.as_deref())),
             transition_phase: transition_phase.or(Some(WriterTransitionPhase::Observed)),
-            transition_id,
+            transition_id: active_transition_id,
         },
         WriterAuthorityHealthState::Unavailable => WriterHealth {
             state: WriterState::Unavailable,

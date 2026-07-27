@@ -8,6 +8,106 @@ use crate::{
 };
 
 #[test]
+fn restart_after_target_committed_materializes_campaign() {
+    let store = ready_store_with_contract("parser-v1");
+    let source = processing_contract("parser-v1");
+    let desired = processing_contract("parser-pdfium-v2");
+    let now = UnixTimestamp::from_unix_seconds(1_900_300_200);
+    store.insert_import_processing_contract(&desired).unwrap();
+    let transition_id = format!("sha256:{}", "b".repeat(64));
+    store
+        .connection
+        .borrow()
+        .execute(
+            "INSERT INTO writer_contract_transition (
+                transition_id, source_contract_id, target_contract_id,
+                desired_product_version, desired_schema_version,
+                source_generation, source_visible_epoch, phase, attempt,
+                claim_fence_epoch, running_task_count, queued_task_count,
+                scheduled_task_count, created_at_seconds, updated_at_seconds
+             ) VALUES (
+                ?1, ?2, ?3, '0.1.9', 34, 'synthetic-generation', 0,
+                'target_committed', 1, 1, 0, 0, 0, ?4, ?4
+             )",
+            params![
+                transition_id,
+                source.id().as_str(),
+                desired.id().as_str(),
+                now.as_unix_seconds(),
+            ],
+        )
+        .unwrap();
+    store
+        .connection
+        .borrow()
+        .execute(
+            "UPDATE migration_rebuild_contract_state
+             SET active_contract_id = ?1, updated_at_seconds = ?2
+             WHERE state_key = 'default'",
+            params![desired.id().as_str(), now.as_unix_seconds()],
+        )
+        .unwrap();
+    store
+        .connection
+        .borrow()
+        .execute(
+            "UPDATE writer_authority_state
+             SET health_state = 'transitioning',
+                 health_reason = 'transition_in_progress',
+                 transition_phase = 'target_committed',
+                 active_transition_id = ?1,
+                 claim_fence_epoch = 1,
+                 committed_contract_id = ?2,
+                 desired_contract_id = ?2,
+                 updated_at_seconds = ?3
+             WHERE state_key = 'default'",
+            params![transition_id, desired.id().as_str(), now.as_unix_seconds()],
+        )
+        .unwrap();
+
+    assert_eq!(
+        store
+            .recover_writer_contract_transition_on_open(&desired, now)
+            .unwrap(),
+        WriterContractTransitionOutcome::TargetCommitted
+    );
+    let campaign_count: i64 = store
+        .connection
+        .borrow()
+        .query_row(
+            "SELECT COUNT(*) FROM reprocessing_campaign
+             WHERE transition_id = ?1 AND affected_domain = 'pdf_root_rescan'",
+            params![transition_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(campaign_count, 1);
+    let snapshot = store.writer_authority_snapshot().unwrap();
+    assert_eq!(snapshot.health_state, WriterAuthorityHealthState::Ready);
+    assert_eq!(
+        snapshot.last_completed_transition_id.as_deref(),
+        Some(transition_id.as_str())
+    );
+    assert_eq!(
+        store
+            .recover_writer_contract_transition_on_open(&desired, now)
+            .unwrap(),
+        WriterContractTransitionOutcome::AlreadyActive
+    );
+    let campaign_count_after: i64 = store
+        .connection
+        .borrow()
+        .query_row(
+            "SELECT COUNT(*) FROM reprocessing_campaign
+             WHERE transition_id = ?1",
+            params![transition_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(campaign_count_after, 1);
+}
+
+#[test]
 fn restart_after_claims_fenced_continues_without_double_commit() {
     let store = ready_store_with_contract("parser-v1");
     let desired = processing_contract("parser-pdfium-v2");

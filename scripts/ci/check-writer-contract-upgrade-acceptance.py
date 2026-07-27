@@ -21,8 +21,8 @@ ATTESTATION_FIXTURE = (
     ROOT
     / "perf"
     / "fixtures"
-    / "valid"
-    / "writer-contract-upgrade-attestation-receipt.json"
+    / "writer-contract-upgrade"
+    / "attestation-receipt.json"
 )
 
 REQUIRED_MATRIX_FIELDS = (

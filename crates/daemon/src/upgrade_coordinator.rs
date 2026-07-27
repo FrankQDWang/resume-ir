@@ -99,6 +99,9 @@ pub(crate) fn bootstrap_writer_barrier(
     desired: &ImportProcessingContract,
     now: UnixTimestamp,
 ) -> Result<(UpgradeCoordinatorOutcome, Option<WriterAuthorityToken>)> {
+    store
+        .reconcile_writer_runtime_availability(/*runtime_healthy*/ true, now)
+        .map_err(DaemonError::store)?;
     let (outcome, token) = observe_desired_contract(store, desired)?;
     match outcome {
         UpgradeCoordinatorOutcome::AlreadyActive | UpgradeCoordinatorOutcome::TargetCommitted => {

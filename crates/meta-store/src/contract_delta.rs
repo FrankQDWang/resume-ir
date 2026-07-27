@@ -43,11 +43,11 @@ impl ContractDelta {
         desired: &ImportProcessingContract,
     ) -> Self {
         let Some(committed) = committed else {
-            // No committed writer contract: all dimensions change; take the
-            // broadest strategy (derived rebuild), never a narrow PDF-only path.
+            // Online transition cannot invent an initial writer head. Fresh /
+            // unpublished installs use the hard-cut rebuild path instead.
             return Self {
-                kind: ContractDeltaKind::Multiple,
-                strategy: ContractTransitionStrategy::DerivedRebuild,
+                kind: ContractDeltaKind::Unknown,
+                strategy: ContractTransitionStrategy::Unsupported,
                 primary_changed: true,
                 ocr_changed: true,
                 derived_changed: true,
@@ -93,14 +93,10 @@ impl ContractDelta {
         }
 
         if changed > 1 {
+            // v0.1.9 online path only supports PDF-parser-only deltas.
             return Self {
                 kind: ContractDeltaKind::Multiple,
-                strategy: broadest_strategy(
-                    primary_changed,
-                    ocr_changed,
-                    derived_changed,
-                    classifier_changed,
-                ),
+                strategy: ContractTransitionStrategy::Unsupported,
                 primary_changed,
                 ocr_changed,
                 derived_changed,
@@ -117,54 +113,23 @@ impl ContractDelta {
                 derived_changed,
                 classifier_changed,
             }
-        } else if ocr_changed {
-            Self {
-                kind: ContractDeltaKind::OcrParser,
-                strategy: ContractTransitionStrategy::OcrRequeue,
-                primary_changed,
-                ocr_changed,
-                derived_changed,
-                classifier_changed,
-            }
-        } else if classifier_changed {
-            Self {
-                kind: ContractDeltaKind::ClassifierEpoch,
-                strategy: ContractTransitionStrategy::ClassifierReclassify,
-                primary_changed,
-                ocr_changed,
-                derived_changed,
-                classifier_changed,
-            }
         } else {
+            // OCR / classifier / derived online campaigns are not shipped yet.
             Self {
-                kind: ContractDeltaKind::DerivedSchema,
-                strategy: ContractTransitionStrategy::DerivedRebuild,
+                kind: if ocr_changed {
+                    ContractDeltaKind::OcrParser
+                } else if classifier_changed {
+                    ContractDeltaKind::ClassifierEpoch
+                } else {
+                    ContractDeltaKind::DerivedSchema
+                },
+                strategy: ContractTransitionStrategy::Unsupported,
                 primary_changed,
                 ocr_changed,
                 derived_changed,
                 classifier_changed,
             }
         }
-    }
-}
-
-fn broadest_strategy(
-    primary_changed: bool,
-    ocr_changed: bool,
-    derived_changed: bool,
-    classifier_changed: bool,
-) -> ContractTransitionStrategy {
-    // Broadest first: derived rebuild ⊃ classifier reclassify ⊃ OCR ⊃ PDF rescan.
-    if derived_changed {
-        ContractTransitionStrategy::DerivedRebuild
-    } else if classifier_changed {
-        ContractTransitionStrategy::ClassifierReclassify
-    } else if ocr_changed {
-        ContractTransitionStrategy::OcrRequeue
-    } else if primary_changed {
-        ContractTransitionStrategy::PdfRootRescan
-    } else {
-        ContractTransitionStrategy::Unsupported
     }
 }
 

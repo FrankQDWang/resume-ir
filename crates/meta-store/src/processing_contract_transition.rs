@@ -88,6 +88,7 @@ pub struct WriterAuthoritySnapshot {
     pub health_reason: Option<String>,
     pub transition_phase: Option<WriterTransitionPhase>,
     pub active_transition_id: Option<String>,
+    pub last_completed_transition_id: Option<String>,
     pub claim_fence_epoch: u64,
     pub committed_contract_id: Option<ImportProcessingContractId>,
     pub desired_contract_id: Option<ImportProcessingContractId>,

@@ -66,10 +66,57 @@ fn online_transition_inserts_transition_and_campaign_with_digest_ids() {
         Some(desired.id().as_str())
     );
     assert_eq!(
+        snapshot.last_completed_transition_id.as_deref(),
+        Some(transition_id.as_str())
+    );
+    assert_eq!(
         store
             .complete_online_writer_transition(&desired, now)
             .unwrap(),
         WriterContractTransitionOutcome::AlreadyActive
+    );
+}
+
+#[test]
+fn runtime_unavailable_latch_clears_when_probe_recovers() {
+    let store = ready_store_with_contract("parser-v1");
+    let now = UnixTimestamp::from_unix_seconds(1_900_200_050);
+    store.mark_writer_runtime_unavailable(now).unwrap();
+    assert_eq!(
+        store.writer_authority_snapshot().unwrap().health_state,
+        WriterAuthorityHealthState::Unavailable
+    );
+    assert!(!store.public_writer_claims_admitted().unwrap());
+    assert!(store
+        .reconcile_writer_runtime_availability(/*runtime_healthy*/ true, now)
+        .unwrap());
+    assert_eq!(
+        store.writer_authority_snapshot().unwrap().health_state,
+        WriterAuthorityHealthState::Ready
+    );
+    assert!(store.public_writer_claims_admitted().unwrap());
+}
+
+#[test]
+fn hard_cut_syncs_writer_authority_committed_contract() {
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
+    store.run_migrations().unwrap();
+    let contract = processing_contract("parser-v1");
+    let now = UnixTimestamp::from_unix_seconds(1_900_199_000);
+    assert_eq!(
+        store
+            .activate_migration_rebuild_contract(&contract, now)
+            .unwrap(),
+        MigrationRebuildContractActivation::Activated
+    );
+    let snapshot = store.writer_authority_snapshot().unwrap();
+    assert_eq!(snapshot.health_state, WriterAuthorityHealthState::Ready);
+    assert_eq!(
+        snapshot
+            .committed_contract_id
+            .as_ref()
+            .map(|id| id.as_str()),
+        Some(contract.id().as_str())
     );
 }
 
@@ -194,6 +241,24 @@ fn claim_fence_blocks_ordinary_claims_while_transitioning() {
         .unwrap();
 
     // Force a transitioning authority without completing the machine.
+    let transition_id = format!("sha256:{}", "c".repeat(64));
+    store
+        .connection
+        .borrow()
+        .execute(
+            "INSERT INTO writer_contract_transition (
+                transition_id, source_contract_id, target_contract_id,
+                desired_product_version, desired_schema_version,
+                source_generation, source_visible_epoch, phase, attempt,
+                claim_fence_epoch, running_task_count, queued_task_count,
+                scheduled_task_count, created_at_seconds, updated_at_seconds
+             ) VALUES (
+                ?1, ?2, ?2, '0.1.9', 34, 'synthetic-generation', 0,
+                'claims_fenced', 1, 1, 0, 0, 0, ?3, ?3
+             )",
+            params![transition_id, previous.id().as_str(), now.as_unix_seconds()],
+        )
+        .unwrap();
     store
         .connection
         .borrow()
@@ -202,10 +267,11 @@ fn claim_fence_blocks_ordinary_claims_while_transitioning() {
              SET health_state = 'transitioning',
                  health_reason = 'transition_in_progress',
                  transition_phase = 'claims_fenced',
+                 active_transition_id = ?1,
                  claim_fence_epoch = 1,
-                 updated_at_seconds = ?1
+                 updated_at_seconds = ?2
              WHERE state_key = 'default'",
-            params![now.as_unix_seconds()],
+            params![transition_id, now.as_unix_seconds()],
         )
         .unwrap();
     assert!(!store.public_writer_claims_admitted().unwrap());

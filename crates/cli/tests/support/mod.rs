@@ -184,7 +184,7 @@ pub fn ready_daemon_status_body() -> &'static str {
         "process_state":"ready",
         "core":{"state":"ready","reason":null},
         "writer":{"state":"ready","reason":null,"transition_phase":null,"transition_id":null},
-        "writer":{"state":"ready","reason":null,"transition_phase":null,"transition_id":null},"optional_runtimes":{
+        "optional_runtimes":{
             "embedding":{"state":"available","reason":null},
             "ocr":{"state":"available","reason":null},
             "classifier":{"state":"available","reason":null},

@@ -39,8 +39,11 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         let connection = self.connection.borrow();
         let active_id = connection
             .query_row(
-                "SELECT active_contract_id FROM migration_rebuild_contract_state
-                 WHERE state_key = 'default'",
+                "SELECT COALESCE(writer.committed_contract_id, legacy.active_contract_id)
+                 FROM writer_authority_state AS writer
+                 CROSS JOIN migration_rebuild_contract_state AS legacy
+                 WHERE writer.state_key = 'default'
+                   AND legacy.state_key = 'default'",
                 [],
                 |row| row.get::<_, Option<String>>(0),
             )
@@ -247,6 +250,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
             return Ok(MigrationRebuildContractActivation::Superseded);
         }
         if is_unpublished_rebuild && active.as_deref() == Some(contract.id().as_str()) {
+            sync_writer_authority_after_hard_cut(&transaction, contract.id().as_str(), now)?;
             transaction.commit().map_err(MetaStoreError::storage)?;
             return Ok(MigrationRebuildContractActivation::AlreadyActive);
         }
@@ -283,6 +287,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                 params![contract.id().as_str(), now.as_unix_seconds()],
             )
             .map_err(MetaStoreError::storage)?;
+        sync_writer_authority_after_hard_cut(&transaction, contract.id().as_str(), now)?;
         if is_blocked_contract_hard_cut {
             let reopened = transaction
                 .execute(
@@ -550,6 +555,28 @@ pub(super) fn insert_import_processing_contract_in_connection(
     } else {
         IdentityInsertOutcome::AlreadyPresent
     })
+}
+
+fn sync_writer_authority_after_hard_cut(
+    transaction: &Transaction<'_>,
+    contract_id: &str,
+    now: UnixTimestamp,
+) -> Result<()> {
+    transaction
+        .execute(
+            "UPDATE writer_authority_state
+             SET health_state = 'ready',
+                 health_reason = NULL,
+                 transition_phase = COALESCE(transition_phase, 'writer_ready'),
+                 active_transition_id = NULL,
+                 committed_contract_id = ?1,
+                 desired_contract_id = ?1,
+                 updated_at_seconds = MAX(updated_at_seconds, ?2)
+             WHERE state_key = 'default'",
+            params![contract_id, now.as_unix_seconds()],
+        )
+        .map_err(MetaStoreError::storage)?;
+    Ok(())
 }
 
 pub(super) fn import_processing_contract_in_connection(

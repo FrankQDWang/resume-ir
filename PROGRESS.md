@@ -7,16 +7,18 @@ production-ready scope source.
 
 ## Processing-contract Upgrade Coordinator (v34 / 0.1.9)
 
-Root-fix landed on PR #250 after blocking review (no shortcut online commit):
+Root-fix landed on PR #250 after blocking review (no shortcut online commit).
+Second-round blocking review fixes (local, pending push):
 
 - Spec/plan unchanged: `docs/superpowers/specs|plans/2026-07-27-processing-contract-upgrade-coordinator.md`
 - Schema **v34** digest IDs are 71-char `sha256:` identities; transition/campaign CRUD with fail-closed authority
-- Online path: fence → quiesce → target commit → campaign materialize → WriterReady; queued intents retire+rebuild under target
-- `WriterHealth` (+ opaque `transition_id`) lives in `ControlPlaneSnapshot`; status/diagnostics project from store
-- Desired/Runtime/Committed: configured classifier failure marks writer unavailable and does not commit fallback Desired
-- UpgradeCoordinator + claim fence on import claim; artifact repair runs even when ordinary writers are gated
-- Resume on `/source-roots/control` requires WriterReady/`text_import`; Pause remains always allowed
-- Public acceptance gate: `scripts/ci/check-writer-contract-upgrade-acceptance.py` + redacted attestation fixture
+- Online path: fence → quiesce → target commit → campaign materialize → WriterReady; queued intents stage-then-cancel + scheduled PDF rebind
+- Active transition resumes before AlreadyActive; `target_committed` crash recovers campaign via source-vs-desired strategy
+- Runtime unavailable is a recoverable latch (`reconcile_writer_runtime_availability`); hard-cut syncs `writer_authority_state.committed`
+- v0.1.9 online path is PDF-parser-only; OCR/classifier/derived/multiple → `UnsupportedTransition`
+- Owner lock contention projects to writer-only `blocked_by_running_owner`, not core blocked
+- `WriterHealth` Ready exposes `last_completed_transition_id` as opaque `transition_id` for attestation binding
+- Public acceptance gate: `scripts/ci/check-writer-contract-upgrade-acceptance.py` + redacted attestation fixture outside `perf/fixtures/valid/`
 - Private exact merged-main DMG + authorized v29 APFS/COW remains the merge hard gate (`blocked_private_root` until authorized)
 
 ## Execution Boundaries

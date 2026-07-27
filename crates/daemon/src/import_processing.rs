@@ -77,21 +77,32 @@ pub(super) fn acquire_owner(data_dir: &Path) -> Result<DataDirectoryOwnerLease> 
     }
 }
 
-pub(super) fn normalize_orphaned_running_tasks(
+/// Startup orphan reconciliation that projects owner contention onto a
+/// writer-only barrier instead of failing the whole daemon as a core block.
+pub(super) fn normalize_orphaned_running_tasks_for_writer_bootstrap(
     store: &OwnedMetaStore,
     now: UnixTimestamp,
 ) -> Result<usize> {
-    store
-        .normalize_orphaned_running_tasks(now)
-        .map_err(|error| match error {
-            ImportProcessingOrphanNormalizationError::Store(error) => DaemonError::store(error),
-            ImportProcessingOrphanNormalizationError::TaskOwnerLockStorage => {
-                DaemonError::recoverable_dependency("import task owner lock unavailable")
-            }
-            ImportProcessingOrphanNormalizationError::TaskOwnerLockContended => {
-                DaemonError::ownership_conflict()
-            }
-        })
+    match store.normalize_orphaned_running_tasks(now) {
+        Ok(recovered) => {
+            store
+                .clear_writer_blocked_by_running_owner(now)
+                .map_err(DaemonError::store)?;
+            Ok(recovered)
+        }
+        Err(ImportProcessingOrphanNormalizationError::TaskOwnerLockContended) => {
+            store
+                .mark_writer_blocked_by_running_owner(now)
+                .map_err(DaemonError::store)?;
+            Ok(0)
+        }
+        Err(ImportProcessingOrphanNormalizationError::Store(error)) => {
+            Err(DaemonError::store(error))
+        }
+        Err(ImportProcessingOrphanNormalizationError::TaskOwnerLockStorage) => Err(
+            DaemonError::recoverable_dependency("import task owner lock unavailable"),
+        ),
+    }
 }
 
 pub(super) fn task_matches_contract(

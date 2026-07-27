@@ -45,7 +45,7 @@ fn primary_parser_only_selects_pdf_root_rescan() {
 }
 
 #[test]
-fn classifier_epoch_selects_reclassify() {
+fn classifier_epoch_is_unsupported_until_campaign_executor_ships() {
     assert!(PROMOTED_EPOCH.starts_with(PROMOTED_EPOCH_PREFIX));
     let committed = contract(
         "parser-pdfium-v2",
@@ -61,14 +61,11 @@ fn classifier_epoch_selects_reclassify() {
     );
     let delta = ContractDelta::between(Some(&committed), &desired);
     assert_eq!(delta.kind, ContractDeltaKind::ClassifierEpoch);
-    assert_eq!(
-        delta.strategy,
-        ContractTransitionStrategy::ClassifierReclassify
-    );
+    assert_eq!(delta.strategy, ContractTransitionStrategy::Unsupported);
 }
 
 #[test]
-fn missing_committed_contract_takes_broadest_strategy() {
+fn missing_committed_contract_is_unsupported_for_online_path() {
     let desired = contract(
         "parser-pdfium-v2",
         "ocr-v1",
@@ -76,12 +73,12 @@ fn missing_committed_contract_takes_broadest_strategy() {
         CLASSIFIER_EPOCH,
     );
     let delta = ContractDelta::between(None, &desired);
-    assert_eq!(delta.kind, ContractDeltaKind::Multiple);
-    assert_eq!(delta.strategy, ContractTransitionStrategy::DerivedRebuild);
+    assert_eq!(delta.kind, ContractDeltaKind::Unknown);
+    assert_eq!(delta.strategy, ContractTransitionStrategy::Unsupported);
 }
 
 #[test]
-fn multiple_changes_take_broadest_strategy() {
+fn multiple_changes_are_unsupported_in_v019_online_path() {
     let committed = contract("parser-v1", "ocr-v1", "resume-ir-s9-v2", CLASSIFIER_EPOCH);
     let desired = contract(
         "parser-pdfium-v2",
@@ -91,5 +88,5 @@ fn multiple_changes_take_broadest_strategy() {
     );
     let delta = ContractDelta::between(Some(&committed), &desired);
     assert_eq!(delta.kind, ContractDeltaKind::Multiple);
-    assert_eq!(delta.strategy, ContractTransitionStrategy::DerivedRebuild);
+    assert_eq!(delta.strategy, ContractTransitionStrategy::Unsupported);
 }

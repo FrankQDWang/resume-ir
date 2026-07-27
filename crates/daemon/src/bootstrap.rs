@@ -110,7 +110,10 @@ fn run_persistent_ipc_with_hooks(
         let startup_orphaned_recovered = if options.has_worker_loop() {
             let startup_now = crate::current_timestamp()?;
             let recovered =
-                import_processing::normalize_orphaned_running_tasks(&store, startup_now)?;
+                import_processing::normalize_orphaned_running_tasks_for_writer_bootstrap(
+                    &store,
+                    startup_now,
+                )?;
             // Desired must not be derived/committed from a classifier fallback when
             // the configured runtime pack failed to start.
             if classifier_configured && !classifier_runtime_available {
@@ -118,6 +121,12 @@ fn run_persistent_ipc_with_hooks(
                     .mark_writer_runtime_unavailable(startup_now)
                     .map_err(DaemonError::store)?;
             } else {
+                store
+                    .reconcile_writer_runtime_availability(
+                        /*runtime_healthy*/ true,
+                        startup_now,
+                    )
+                    .map_err(DaemonError::store)?;
                 let (_outcome, _token) = crate::upgrade_coordinator::bootstrap_writer_barrier(
                     &store,
                     &processing_contract,
