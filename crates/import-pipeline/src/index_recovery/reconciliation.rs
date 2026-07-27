@@ -10,6 +10,7 @@ use super::artifact_maintenance::{
     active_artifacts_are_usable, collect_obsolete_artifacts_best_effort,
     ActiveArtifactValidationDepth,
 };
+use super::orphan_recovery::recover_matching_orphan_artifact_pair;
 use super::{SearchArtifactRecoverySummary, RECOVERY_PUBLICATION_LIMIT};
 use crate::search_artifacts::publish_rebuilt_search_artifacts_from_base;
 use crate::search_publication::load_search_publication_base;
@@ -190,7 +191,7 @@ fn reconcile_search_artifacts_with_validation(
         }
         let repair_key = ArtifactRepairKey::new(
             context.generation,
-            context.publication_fingerprint,
+            context.publication_fingerprint.clone(),
             context.visible_epoch,
         );
         let attempt = match publication_session
@@ -229,7 +230,7 @@ fn reconcile_search_artifacts_with_validation(
                 .map_err(ImportPipelineError::store)?;
             return Err(error);
         }
-        let rebuild = match artifact_validation {
+        let publication = match artifact_validation {
             Err(error) => Err(error),
             Ok(_) => (|| {
                 let base = load_search_publication_base(store)?;
@@ -238,8 +239,29 @@ fn reconcile_search_artifacts_with_validation(
                 {
                     return Err(ImportPipelineError::store_invariant());
                 }
+                let expected_publication = store
+                    .search_publication(expected_generation)
+                    .map_err(ImportPipelineError::store)?
+                    .ok_or_else(ImportPipelineError::store_invariant)?;
+                if expected_publication.publication_fingerprint.as_ref()
+                    != Some(&context.publication_fingerprint)
+                    || expected_publication.expected_visible_epoch.checked_add(1)
+                        != Some(expected_visible_epoch)
+                {
+                    return Err(ImportPipelineError::store_invariant());
+                }
+                if let Some(recovered) = recover_matching_orphan_artifact_pair(
+                    &publication_session,
+                    now,
+                    &expected_publication,
+                    &base,
+                    vectorization,
+                    control,
+                )? {
+                    return Ok((recovered, true));
+                }
                 let classifier_epoch = base.classifier_epoch.clone();
-                publish_rebuilt_search_artifacts_from_base(
+                let rebuilt = publish_rebuilt_search_artifacts_from_base(
                     &publication_session,
                     now,
                     &classifier_epoch,
@@ -250,11 +272,12 @@ fn reconcile_search_artifacts_with_validation(
                     Some(&|| control.ensure_running()),
                     |publication| decide_search_publication(publication, now, &[]),
                 )?
-                .into_committed()
+                .into_committed()?;
+                Ok((rebuilt, false))
             })(),
         };
-        let committed = match rebuild {
-            Ok(committed) => committed,
+        let (committed, recovered) = match publication {
+            Ok(publication) => publication,
             Err(error) => {
                 let finished_at = current_timestamp_or(now);
                 settle_artifact_rebuild_failure(
@@ -266,7 +289,8 @@ fn reconcile_search_artifacts_with_validation(
                 return defer_reconciliation(mode, summary, ReconciliationDeferral::RepairFailed);
             }
         };
-        summary.active_generation_rebuilt = true;
+        summary.active_generation_recovered = recovered;
+        summary.active_generation_rebuilt = !recovered;
         if control.shutdown_requested() {
             committed.release();
             return defer_reconciliation(

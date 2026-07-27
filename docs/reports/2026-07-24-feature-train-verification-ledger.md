@@ -1502,3 +1502,55 @@ OCR/PDFium cache packs instead of the normalized installed runtime packs. The
 installed App resources then passed without changing product expectations.
 No workspace, delivery matrix, non-macOS lane or previously valid installed
 successor was replayed. Exact merged-main installed acceptance remains pending.
+
+### exact orphan artifact-pair recovery F26 — 2026-07-27
+
+The first exact-main installed run after F25 timed out while the daemon repaired
+the authorized v29 COW workspace. Read-only diagnosis found that metadata still
+named a missing active search generation, while two complete current-format
+full-text/vector pairs remained on disk under different generation identities.
+Their projection, logical-content, coverage and model contracts matched the
+active metadata exactly. The previous repair path correctly refused to attach a
+different generation, but its only safe fallback rebuilt all 7,607 vectors.
+
+Recovery now performs a bounded current-format orphan scan before rebuilding.
+It holds the existing root and generation read leases, rejects the active
+generation and every generation already present in the metadata publication
+journal, and requires exact full-text and vector counts, projection digest,
+logical-content digest, vector coverage, model contract and decrypted payload
+validation. The exact candidate projection must equal the active database
+projection. A match is committed through the existing publication and repair
+attempt transaction; no artifact is renamed, no metadata is edited directly,
+and no compatibility reader or embedding fallback is added. Any mismatch,
+corruption or unsafe layout continues to the existing full rebuild.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F26-01 | A complete unjournaled current-format full-text/vector pair with exact active logical identity is atomically recovered without rebuilding | `85c0303ea910128b624f4493e9728351a797cdbe443f308449fbdfd6c086440b` | exact recovery regression passed, then passed again after F26-06 changed recovery journal lookup | orphan discovery, publication transaction, projection validation or artifact lease ownership changes |
+| F26-02 | Wrong-projection and corrupt-payload candidates are ignored and preserve the strict full-rebuild fallback | same | two exact negative regressions passed, then passed again after F26-06 | candidate validation, encrypted payload opening or rebuild fallback changes |
+| F26-03 | Recovery manifest discovery is bounded, generation-sorted and lease-bound | same | exact index-fulltext regression passed | full-text snapshot layout, manifest inspection or read-lease validation changes |
+| F26-04 | Authorized v29 COW data recovers the 7,607-document pair without embedding and preserves the source authority | same | passed in 171 seconds; `recovered=yes`, `rebuilt=no`, one exact pair retained, embedding runtime remained idle, source authority SHA-256 unchanged | COW migration, runtime gates, active projection, artifact identity or recovery transaction changes |
+| F26-05 | Changed Rust and evidence boundaries are formatted, warning-free and public-safe | same | focused index-fulltext/import-pipeline/daemon Clippy, format, diff, performance-contract, autonomous-goal, loop-state and public-repository checks passed | changed Rust production, test, evidence or governance files change |
+| F26-06 | An artifact repair already in `repairing` resumes from its context-bound ready publication even though the public state snapshot redacts publication details | `807381aebc654c98ceb08a7725a249dbb16b82c75df1c46e7662dbbeb722dfe8` | exact resumed-repair regression passed; journal record is checked against the repair fingerprint and visible epoch | repair context, publication journal lookup, fingerprint/epoch binding or repairing-state redaction changes |
+| F26-07 | A terminal repair block remains sticky and every offline mutation continues to fail closed with the bounded `Repairing` class | same | exact offline-mutation regression passed and the blocked state remained byte-for-byte equal | repair-block transition, offline reconciliation deferral or public error classification changes |
+| F26-08 | Corrupt active snapshot recovery and the three dependent local-safe aggregate probes complete without payload or path leakage | same | exact corrupt-snapshot case passed; three exact dependent aggregate cases passed | artifact-fault reporting, resumed repair, CLI fault receipt or local-safe suite composition changes |
+| F26-09 | Hosted macOS PR verification ran fail-late before repair selection | PR head `87a5d72de23c9c756772b965cf073049c7b70a40` | run `30246491821` completed all workspace and post-test cells; only two import-pipeline assertions and four dependent s71 assertions failed, while every other cell passed | never reuse the six failed assertions; unaffected passed cells remain reusable unless their boundary changes |
+
+The first two local runtime attempts did not exercise F26 because their debug
+daemon lacked the build-time executable attestation for the installed runtime
+sidecars; they are environment diagnostics, not product evidence. A later
+attested debug build exercised the exact installed runtime packs against a COW
+copy only. One zero-CPU Rust compile was cancelled before any test body and is
+recorded as `not_run`; the non-incremental replacement completed. No workspace,
+final delivery matrix, non-macOS lane or previously valid installed successor
+was replayed. PR #249 owns the repair under umbrella issue #217. Exact
+merged-main installed acceptance remains the next gate.
+
+The first PR run exposed one F26 integration error rather than a second product
+failure: reconciliation tried to recover the expected publication from the
+public `SearchProjectionState`, but that state intentionally redacts
+publication details while repair is active. Recovery now always reads the
+exact generation from the owner-protected publication journal and checks its
+fingerprint and expected epoch against the durable repair context. The two
+import assertions and four CLI assertions were rerun precisely; no workspace
+or unrelated package suite was replayed locally.

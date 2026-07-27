@@ -10,12 +10,13 @@ use index_vector::{VectorDocument, VectorModelContract, VectorSnapshotRoot, Vect
 use meta_store::{
     ActiveSearchProjection, ArtifactRepairAttempt, ArtifactRepairAttemptAcquire,
     ArtifactRepairAttemptErrorKind, ArtifactRepairAttemptPhase, ArtifactRepairKey, ContentDigest,
-    DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, FullTextSnapshotDescriptor,
-    ImportProcessingContract, OwnedMetaStore, SearchProjectionDigest, SearchProjectionServiceState,
-    SearchProjectionState, SearchProjectionTransitionOutcome, SearchPublicationCommit,
-    SearchPublicationDraft, SearchPublicationOutcome, SearchPublicationSession,
-    SearchPublicationState, SearchPublicationValidation, SearchRepairReason, UnixTimestamp,
-    VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
+    DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, DocumentId, FullTextSnapshotDescriptor,
+    ImportProcessingContract, OwnedMetaStore, ResumeVersionId, SearchProjectionDigest,
+    SearchProjectionServiceState, SearchProjectionState, SearchProjectionTransitionOutcome,
+    SearchPublicationCommit, SearchPublicationDraft, SearchPublicationOutcome,
+    SearchPublicationSession, SearchPublicationState, SearchPublicationValidation,
+    SearchRepairReason, SourceRevisionId, UnixTimestamp, VectorSnapshotDescriptor,
+    CLASSIFIER_EPOCH,
 };
 use tempfile::tempdir;
 
@@ -61,6 +62,97 @@ fn ready_empty_store(data_dir: &std::path::Path) -> OwnedMetaStore {
         SearchProjectionServiceState::Ready
     );
     store
+}
+
+#[test]
+fn orphan_pair_exact_current_artifacts_recover_without_rebuilding() {
+    let directory = tempdir().unwrap();
+    let data_dir = directory.path().join("data");
+    let store = ready_empty_store(&data_dir);
+    let before = store.search_projection_state().unwrap();
+    let active_generation = before.generation.as_deref().unwrap();
+    let orphan_generation = "search-1700000001-1700000001000000000-0-0-0";
+    publish_empty_artifact_pair(&data_dir, orphan_generation);
+    remove_exact_generation(&data_dir, active_generation);
+
+    let summary = reconcile_search_artifacts(
+        &store,
+        UnixTimestamp::from_unix_seconds(1_700_000_002),
+        &SearchPublicationVectorization::default(),
+        &PipelineRunControl::default(),
+    )
+    .unwrap();
+
+    assert!(summary.active_generation_recovered);
+    assert!(!summary.active_generation_rebuilt);
+    let after = store.search_projection_state().unwrap();
+    assert_eq!(after.service_state, SearchProjectionServiceState::Ready);
+    assert_eq!(after.repair_reason, None);
+    assert_eq!(after.generation.as_deref(), Some(orphan_generation));
+    assert_eq!(after.visible_epoch, before.visible_epoch + 1);
+    assert_exact_generation_present(&data_dir, orphan_generation);
+}
+
+#[test]
+fn orphan_pair_with_wrong_projection_is_ignored_before_full_rebuild() {
+    let directory = tempdir().unwrap();
+    let data_dir = directory.path().join("data");
+    let store = ready_empty_store(&data_dir);
+    let before = store.search_projection_state().unwrap();
+    let active_generation = before.generation.as_deref().unwrap();
+    let orphan_generation = "search-1700000002-1700000002000000000-1-0-0";
+    publish_mismatched_artifact_pair(&data_dir, orphan_generation);
+    remove_exact_generation(&data_dir, active_generation);
+
+    let summary = reconcile_search_artifacts(
+        &store,
+        UnixTimestamp::from_unix_seconds(1_700_000_003),
+        &SearchPublicationVectorization::default(),
+        &PipelineRunControl::default(),
+    )
+    .unwrap();
+
+    assert!(!summary.active_generation_recovered);
+    assert!(summary.active_generation_rebuilt);
+    let after = store.search_projection_state().unwrap();
+    assert_eq!(after.service_state, SearchProjectionServiceState::Ready);
+    assert_ne!(after.generation.as_deref(), Some(orphan_generation));
+    assert_eq!(after.visible_epoch, before.visible_epoch + 1);
+}
+
+#[test]
+fn orphan_pair_with_corrupt_payload_is_ignored_before_full_rebuild() {
+    let directory = tempdir().unwrap();
+    let data_dir = directory.path().join("data");
+    let store = ready_empty_store(&data_dir);
+    let before = store.search_projection_state().unwrap();
+    let active_generation = before.generation.as_deref().unwrap();
+    let orphan_generation = "search-1700000003-1700000003000000000-0-0-0";
+    publish_empty_artifact_pair(&data_dir, orphan_generation);
+    fs::write(
+        data_dir
+            .join("search-index/snapshots")
+            .join(orphan_generation)
+            .join("fulltext.snapshot.enc"),
+        b"invalid ciphertext",
+    )
+    .unwrap();
+    remove_exact_generation(&data_dir, active_generation);
+
+    let summary = reconcile_search_artifacts(
+        &store,
+        UnixTimestamp::from_unix_seconds(1_700_000_004),
+        &SearchPublicationVectorization::default(),
+        &PipelineRunControl::default(),
+    )
+    .unwrap();
+
+    assert!(!summary.active_generation_recovered);
+    assert!(summary.active_generation_rebuilt);
+    let after = store.search_projection_state().unwrap();
+    assert_eq!(after.service_state, SearchProjectionServiceState::Ready);
+    assert_ne!(after.generation.as_deref(), Some(orphan_generation));
+    assert_eq!(after.visible_epoch, before.visible_epoch + 1);
 }
 
 #[test]
@@ -398,10 +490,8 @@ fn offline_mutation_fails_closed_after_artifact_repair_blocks() {
         &PipelineRunControl::default(),
     )
     .unwrap_err();
-    assert_eq!(
-        replay_error.class(),
-        ImportPipelineErrorClass::ArtifactRetirement
-    );
+    assert_eq!(replay_error.class(), ImportPipelineErrorClass::Repairing);
+    assert_eq!(store.search_projection_state().unwrap(), blocked);
 }
 
 #[test]
@@ -792,6 +882,45 @@ fn publish_empty_artifact_pair(data_dir: &std::path::Path, generation: &str) {
         .unwrap();
 }
 
+fn publish_mismatched_artifact_pair(data_dir: &std::path::Path, generation: &str) {
+    let document_id = DocumentId::from_non_secret_parts(&["orphan-mismatch-document"]);
+    let source_revision_id = SourceRevisionId::from_content_identity(
+        &document_id,
+        &ContentDigest::from_bytes(b"orphan mismatch source"),
+    );
+    let version_id = ResumeVersionId::from_content_identity(
+        &document_id,
+        &source_revision_id,
+        &ContentDigest::from_bytes(b"orphan mismatch text"),
+        "parser-v1",
+        "schema-v1",
+    );
+    let projection = ActiveSearchProjection {
+        document_id: document_id.clone(),
+        resume_version_id: version_id.clone(),
+    };
+    index_fulltext::publish_snapshot(
+        &data_dir.join("search-index"),
+        generation,
+        [IndexDocument {
+            doc_id: document_id.to_string(),
+            resume_version_id: version_id.to_string(),
+            file_name: "synthetic.pdf".to_string(),
+            clean_text: "synthetic mismatch".to_string(),
+            sections: Vec::new(),
+        }],
+    )
+    .unwrap();
+    VectorSnapshotStore::new(data_dir.join("vector-index"), VectorModelContract::Disabled)
+        .unwrap()
+        .publish_generation(
+            generation,
+            [projection],
+            std::iter::empty::<VectorDocument>(),
+        )
+        .unwrap();
+}
+
 fn assert_abandoned_and_blocked(
     store: &OwnedMetaStore,
     generation: &str,
@@ -835,6 +964,18 @@ fn assert_exact_generation_absent(data_dir: &std::path::Path, generation: &str) 
             .exists());
         assert_no_generation_entry(&root.join("snapshots"), generation);
         assert_no_generation_entry(&root.join("staging"), generation);
+    }
+}
+
+fn remove_exact_generation(data_dir: &std::path::Path, generation: &str) {
+    for relative in ["search-index", "vector-index"] {
+        let root = data_dir.join(relative);
+        fs::remove_dir_all(root.join("snapshots").join(generation)).unwrap();
+        fs::remove_file(
+            root.join("generation-pins")
+                .join(format!("{generation}.lock")),
+        )
+        .unwrap();
     }
 }
 

@@ -30752,6 +30752,48 @@ Output summary:
   replayed. Exact merged-main installed acceptance remains the next gate.
 - PR #248 owns this F25 repair and is linked to umbrella issue #217.
 
+### v0.1.8 exact orphan artifact-pair recovery F26
+
+- The post-F25 exact-main installed run still timed out during repair. The
+  authorized v29 authority named a missing active generation, while two
+  complete current-format full-text/vector pairs with the same active logical
+  digests remained under different generation identities. The old repair path
+  correctly rejected generation substitution but then regenerated all 7,607
+  vectors.
+- Recovery now scans at most 256 current-format candidates under existing read
+  leases before rebuilding. It excludes the active generation and all
+  journaled publications, opens and validates both encrypted payloads, and
+  requires exact counts, projection, logical-content, coverage and configured
+  vector-model identity. A match is published through the ordinary metadata
+  transaction and repair-attempt authority; no rename, direct metadata edit,
+  compatibility reader or embedding fallback exists.
+- Exact tests pass for successful reuse, corrupt payload fallback, wrong
+  projection fallback and bounded manifest discovery. Focused
+  index-fulltext/import-pipeline/daemon Clippy, formatting and diff checks also
+  pass. Performance-contract, autonomous-goal, loop-state and public-repository
+  checks pass after the evidence update; no unaffected package or workspace
+  suite was replayed.
+- An attested macOS-only private COW witness migrated and validated the
+  7,607-document source in 171 seconds, reported `recovered: yes` and
+  `rebuilt: no`, retained one exact full-text/vector generation pair, kept the
+  embedding runtime idle, and left the source authority SHA-256 unchanged.
+  Earlier unattested debug attempts are environment diagnostics rather than
+  product evidence.
+- Exact merged-main installed acceptance is the next invalidated gate. The
+  final delivery matrix remains valid and is not rerun.
+- PR #249 owns this F26 repair and is linked to umbrella issue #217.
+- Hosted macOS PR run `30246491821` completed fail-late. Every workspace and
+  post-test cell outside two import-pipeline assertions and four dependent
+  `s71_fault_injection` assertions passed. The shared root cause was that F26
+  read the expected publication from the public projection state after repair
+  had begun, even though repairing state deliberately redacts that field.
+- Recovery now reads the exact generation from the owner-protected publication
+  journal and binds it to the durable repair fingerprint and visible epoch.
+  The resumed-repair and sticky-block import cases, corrupt-snapshot CLI case,
+  three dependent local-safe suite cases, all three orphan recovery cases,
+  focused import-pipeline Clippy, formatting and diff checks pass. No full
+  workspace or unrelated test package was replayed locally.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2

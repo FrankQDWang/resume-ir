@@ -2169,7 +2169,12 @@ mod tests {
         )
         .unwrap();
 
-        assert!(summary.active_generation_rebuilt);
+        assert!(
+            summary.active_generation_rebuilt,
+            "unexpected reconciliation summary: {summary:?}; state: {:?}; attempt: {:?}",
+            store.search_projection_state().unwrap(),
+            store.artifact_repair_attempt_state().unwrap()
+        );
         let ready = store.search_projection_state().unwrap();
         assert_eq!(ready.service_state, SearchProjectionServiceState::Ready);
         assert_eq!(ready.repair_reason, None);
