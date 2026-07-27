@@ -7,7 +7,7 @@ use tempfile::Builder;
 
 use crate::{
     encode_hex, restrict_private_file_permissions, schema_v29, schema_v30, schema_v31, schema_v32,
-    schema_v33, MetaStoreError, Result, METADATA_STORE_FILE,
+    schema_v33, schema_v34, MetaStoreError, Result, METADATA_STORE_FILE,
 };
 #[cfg(any(test, feature = "migration-test-support"))]
 use crate::{schema_v27, schema_v28};
@@ -123,6 +123,7 @@ pub(crate) fn validate_store_file_name(file_name: &str) -> Result<()> {
         schema_v31::VERSION,
         schema_v32::VERSION,
         schema_v33::VERSION,
+        schema_v34::VERSION,
     ]
     .into_iter()
     .any(|version| versioned_store_token(file_name, version).is_some());
@@ -250,6 +251,7 @@ fn validate_manifest(manifest: &ActiveStoreManifest) -> Result<()> {
             | schema_v31::VERSION
             | schema_v32::VERSION
             | schema_v33::VERSION
+            | schema_v34::VERSION
     );
     #[cfg(any(test, feature = "migration-test-support"))]
     let supported = supported

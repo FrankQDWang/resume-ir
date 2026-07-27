@@ -179,10 +179,11 @@ pub fn write_daemon_discovery(data_dir: &Path, addr: SocketAddr, token: &str) {
 
 pub fn ready_daemon_status_body() -> &'static str {
     r#"{
-        "schema_version":"daemon.status.v5",
+        "schema_version":"daemon.status.v6",
         "status":"ok",
         "process_state":"ready",
         "core":{"state":"ready","reason":null},
+        "writer":{"state":"ready","reason":null,"transition_phase":null,"transition_id":null},
         "optional_runtimes":{
             "embedding":{"state":"available","reason":null},
             "ocr":{"state":"available","reason":null},

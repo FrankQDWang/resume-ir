@@ -4,7 +4,7 @@ use std::thread;
 use meta_store::{ReadMetaStore, SearchProjectionServiceState};
 
 use super::capability::{
-    CapabilityMatrix, CoreHealth, CoreReason, CoreState, OptionalRuntimeMatrix,
+    CapabilityMatrix, CoreHealth, CoreReason, CoreState, OptionalRuntimeMatrix, WriterHealth,
 };
 use super::{diagnostics, routes, DaemonFatalError};
 
@@ -12,6 +12,7 @@ use super::{diagnostics, routes, DaemonFatalError};
 pub(crate) struct ControlPlaneSnapshot {
     pub(crate) core: CoreHealth,
     pub(crate) runtimes: OptionalRuntimeMatrix,
+    pub(crate) writer: WriterHealth,
     pub(crate) capabilities: CapabilityMatrix,
     status: serde_json::Value,
     diagnostics: serde_json::Value,
@@ -76,6 +77,11 @@ impl ControlPlaneState {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn writer_health(&self) -> WriterHealth {
+        self.snapshot().writer
     }
 
     pub(crate) fn status_body(&self) -> String {
@@ -209,11 +215,14 @@ fn snapshot_from_store(
     snapshot_from_fallible_source(
         runtimes,
         || core_health_from_store(store).map_err(|_| ()),
-        |core, capabilities| {
-            routes::status::render_from_store(store, core, runtimes, capabilities).map_err(|_| ())
+        || Ok(super::writer_health_from_store(store)),
+        |core, writer, capabilities| {
+            routes::status::render_from_store(store, core, runtimes, writer, capabilities)
+                .map_err(|_| ())
         },
-        |core, capabilities| {
-            diagnostics::render_from_store(store, core, runtimes, capabilities).map_err(|_| ())
+        |core, writer, capabilities| {
+            diagnostics::render_from_store(store, core, runtimes, writer, capabilities)
+                .map_err(|_| ())
         },
     )
 }
@@ -221,17 +230,28 @@ fn snapshot_from_store(
 fn snapshot_from_fallible_source(
     runtimes: OptionalRuntimeMatrix,
     read_core: impl FnOnce() -> Result<CoreHealth, ()>,
-    render_status: impl FnOnce(CoreHealth, CapabilityMatrix) -> Result<serde_json::Value, ()>,
-    render_diagnostics: impl FnOnce(CoreHealth, CapabilityMatrix) -> Result<serde_json::Value, ()>,
+    read_writer: impl FnOnce() -> Result<WriterHealth, ()>,
+    render_status: impl FnOnce(
+        CoreHealth,
+        WriterHealth,
+        CapabilityMatrix,
+    ) -> Result<serde_json::Value, ()>,
+    render_diagnostics: impl FnOnce(
+        CoreHealth,
+        WriterHealth,
+        CapabilityMatrix,
+    ) -> Result<serde_json::Value, ()>,
 ) -> ControlPlaneSnapshot {
     let loaded = (|| {
         let core = read_core()?;
-        let capabilities = CapabilityMatrix::derive(core, runtimes);
-        let status = render_status(core, capabilities)?;
-        let diagnostics = render_diagnostics(core, capabilities)?;
+        let writer = read_writer()?;
+        let capabilities = CapabilityMatrix::derive(core, runtimes, writer.clone());
+        let status = render_status(core, writer.clone(), capabilities)?;
+        let diagnostics = render_diagnostics(core, writer.clone(), capabilities)?;
         Ok(ControlPlaneSnapshot {
             core,
             runtimes,
+            writer,
             capabilities,
             status,
             diagnostics,
@@ -252,13 +272,15 @@ fn snapshot_without_store(
     core: CoreHealth,
     runtimes: OptionalRuntimeMatrix,
 ) -> ControlPlaneSnapshot {
-    let capabilities = CapabilityMatrix::derive(core, runtimes);
+    let writer = WriterHealth::ready();
+    let capabilities = CapabilityMatrix::derive(core, runtimes, writer.clone());
     ControlPlaneSnapshot {
         core,
         runtimes,
+        writer: writer.clone(),
         capabilities,
-        status: routes::status::render_without_store(core, runtimes, capabilities),
-        diagnostics: diagnostics::render_without_store(core, runtimes, capabilities),
+        status: routes::status::render_without_store(core, runtimes, writer.clone(), capabilities),
+        diagnostics: diagnostics::render_without_store(core, runtimes, writer, capabilities),
     }
 }
 
@@ -324,8 +346,10 @@ mod tests {
         let snapshot = state.snapshot();
         let status = snapshot.status;
 
-        assert_eq!(status["schema_version"], "daemon.status.v5");
+        assert_eq!(status["schema_version"], "daemon.status.v6");
         assert_eq!(snapshot.core.state, CoreState::Initializing);
+        assert_eq!(snapshot.writer.state, daemon_contract::WriterState::Ready);
+        assert!(snapshot.writer.transition_id.is_none());
         assert_eq!(
             status["optional_runtimes"]["embedding"]["reason"],
             "missing"
@@ -416,11 +440,15 @@ mod tests {
                     reason: None,
                 })
             },
-            |_, _| {
+            || {
+                calls.set(calls.get().max(1));
+                Ok(crate::ipc::WriterHealth::ready())
+            },
+            |_, _, _| {
                 calls.set(2);
                 Ok(serde_json::json!({"core": {"state": "ready"}}))
             },
-            |_, _| {
+            |_, _, _| {
                 calls.set(3);
                 Err(())
             },

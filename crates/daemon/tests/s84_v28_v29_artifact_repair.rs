@@ -486,7 +486,7 @@ fn wait_for_core_state(
     loop {
         let response = request(&generation.status_endpoint, &generation.token, "GET", None);
         assert_eq!(response.status_code, 200, "{}", response.raw);
-        assert_eq!(response.body["schema_version"], "daemon.status.v5");
+        assert_eq!(response.body["schema_version"], "daemon.status.v6");
         assert_eq!(response.body["process_state"], "ready");
         let state = response.body["core"]["state"].as_str().unwrap();
         if state == expected_state {

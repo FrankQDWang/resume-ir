@@ -36,6 +36,7 @@ python3 scripts/ci/check-search-runtime-boundary.py --cargo "$CARGO_BIN"
 ./scripts/ci/check-licenses.sh
 ./scripts/ci/check-runtime-bundle-policy.sh
 ./scripts/ci/check-runbooks.sh
+python3 scripts/ci/check-writer-contract-upgrade-acceptance.py
 ./scripts/ci/check-current-stage-observability.sh
 ./scripts/ci/check-local-embedding-runtime.sh
 ./scripts/ci/check-local-ocr-runtime.sh

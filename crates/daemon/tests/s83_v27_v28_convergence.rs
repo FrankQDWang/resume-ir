@@ -82,12 +82,12 @@ fn standalone_daemon_rejects_unknown_manifest_authority_without_rewriting_existi
     let manifest_path = data_dir.join("metadata-active.v1");
     let manifest = fs::read_to_string(&manifest_path).unwrap();
     assert!(manifest.starts_with("resume-ir.metadata-active.v2\n"));
-    assert!(manifest.contains("\nschema=33\n"));
+    assert!(manifest.contains("\nschema=34\n"));
     fs::write(
         &manifest_path,
         manifest
-            .replace("file=metadata-v33-", "file=metadata-v34-")
-            .replace("\nschema=33\n", "\nschema=34\n"),
+            .replace("file=metadata-v34-", "file=metadata-v35-")
+            .replace("\nschema=34\n", "\nschema=35\n"),
     )
     .unwrap();
     assert_unsupported_store(&data_dir);
@@ -247,7 +247,7 @@ fn wait_for_blocked_status(
         assert!(status.starts_with("HTTP/1.1 200"), "{status}");
         let payload: serde_json::Value =
             serde_json::from_str(status.split_once("\r\n\r\n").unwrap().1).unwrap();
-        assert_eq!(payload["schema_version"], "daemon.status.v5");
+        assert_eq!(payload["schema_version"], "daemon.status.v6");
         assert_eq!(payload["process_state"], "ready");
         if payload["core"]["state"] == "blocked" {
             return payload;

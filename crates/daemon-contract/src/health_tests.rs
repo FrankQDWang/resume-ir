@@ -43,8 +43,16 @@ fn all_ready_runtime_combinations_have_one_deterministic_capability_matrix() {
             pdfium: runtime(bits & 8 != 0),
         };
         let core = CoreHealth::ready();
-        let capabilities = CapabilityMatrix::derive(core, runtimes);
-        validate_health_contract(StatusState::Ok, core, runtimes, capabilities, None).unwrap();
+        let capabilities = CapabilityMatrix::derive(core, runtimes, WriterHealth::ready());
+        validate_health_contract(
+            StatusState::Ok,
+            core,
+            runtimes,
+            WriterHealth::ready(),
+            capabilities,
+            None,
+        )
+        .unwrap();
 
         assert_eq!(
             capabilities.index_publication,
@@ -83,11 +91,12 @@ fn non_serving_core_states_never_authorize_store_access() {
         CoreHealth::blocked(CoreReason::RuntimeInvariant),
     ] {
         let runtimes = OptionalRuntimeMatrix::initializing();
-        let capabilities = CapabilityMatrix::derive(core, runtimes);
+        let capabilities = CapabilityMatrix::derive(core, runtimes, WriterHealth::ready());
         validate_health_contract(
             core.status(),
             core,
             runtimes,
+            WriterHealth::ready(),
             capabilities,
             CoreError::for_core(core),
         )
@@ -132,7 +141,7 @@ fn shared_conformance_fixture_covers_every_ready_runtime_combination() {
             pdfium: runtime(case.runtime_availability.pdfium),
         };
         assert_eq!(
-            CapabilityMatrix::derive(CoreHealth::ready(), runtimes),
+            CapabilityMatrix::derive(CoreHealth::ready(), runtimes, WriterHealth::ready()),
             case.capabilities,
             "shared conformance drift in {}",
             case.name

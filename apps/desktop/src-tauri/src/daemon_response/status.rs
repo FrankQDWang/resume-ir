@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::health_contract::{
     deserialize_required_nullable, validate_counts, validate_health_contract, validate_latency,
     validate_repair_progress, Capabilities, CoreError, CoreStatus, IpcMetrics, OptionalRuntimes,
-    ProcessState, RepairProgress, StatusState,
+    ProcessState, RepairProgress, StatusState, WriterHealth,
 };
 use super::{decode, ensure, ensure_schema, DesktopError, SafeCount};
 
@@ -30,6 +30,7 @@ pub(super) struct StatusBody {
     process_state: ProcessState,
     core: CoreStatus,
     optional_runtimes: OptionalRuntimes,
+    writer: WriterHealth,
     capabilities: Capabilities,
     #[serde(deserialize_with = "deserialize_required_nullable")]
     error: Option<CoreError>,
@@ -137,11 +138,12 @@ enum Redacted {
 
 pub(super) fn project_status(body: &[u8]) -> Result<StatusBody, DesktopError> {
     let value: StatusBody = decode(body)?;
-    ensure_schema(&value.schema_version, "daemon.status.v5")?;
+    ensure_schema(&value.schema_version, "daemon.status.v6")?;
     validate_health_contract(
         value.status,
         &value.core,
         &value.optional_runtimes,
+        &value.writer,
         &value.capabilities,
         value.error.as_ref(),
     )?;
@@ -242,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn status_v5_accepts_ready_migrating_and_initializing_but_rejects_old_and_unknown_fields() {
+    fn status_v6_accepts_ready_migrating_and_initializing_but_rejects_old_and_unknown_fields() {
         let ready = status_payload();
         assert!(project_status(&serde_json::to_vec(&ready).unwrap()).is_ok());
 

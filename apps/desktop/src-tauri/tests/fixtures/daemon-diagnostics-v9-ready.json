@@ -1,5 +1,5 @@
 {
-  "schema_version": "resume-ir.diagnostics.v9",
+  "schema_version": "resume-ir.diagnostics.v10",
   "privacy_boundary": "redacted_local_aggregate",
   "contains_raw_resume_text": false,
   "contains_queries": false,
@@ -10,27 +10,77 @@
   "evidence_lane": "gui_manual",
   "evidence_status": "unaccepted",
   "process_state": "ready",
-  "core": { "state": "ready", "reason": null },
+  "core": {
+    "state": "ready",
+    "reason": null
+  },
   "optional_runtimes": {
-    "embedding": { "state": "available", "reason": null },
-    "ocr": { "state": "available", "reason": null },
-    "classifier": { "state": "available", "reason": null },
-    "pdfium": { "state": "available", "reason": null }
+    "embedding": {
+      "state": "available",
+      "reason": null
+    },
+    "ocr": {
+      "state": "available",
+      "reason": null
+    },
+    "classifier": {
+      "state": "available",
+      "reason": null
+    },
+    "pdfium": {
+      "state": "available",
+      "reason": null
+    }
+  },
+  "writer": {
+    "state": "ready",
+    "reason": null,
+    "transition_phase": null, "transition_id": null
   },
   "capabilities": {
-    "keyword_search": { "state": "available", "reason": null },
-    "detail": { "state": "available", "reason": null },
-    "semantic_search": { "state": "available", "reason": null },
-    "hybrid_search": { "state": "available", "reason": null },
-    "text_import": { "state": "available", "reason": null },
-    "pdf_import": { "state": "available", "reason": null },
-    "ocr_import": { "state": "available", "reason": null },
-    "index_publication": { "state": "available", "reason": null }
+    "keyword_search": {
+      "state": "available",
+      "reason": null
+    },
+    "detail": {
+      "state": "available",
+      "reason": null
+    },
+    "semantic_search": {
+      "state": "available",
+      "reason": null
+    },
+    "hybrid_search": {
+      "state": "available",
+      "reason": null
+    },
+    "text_import": {
+      "state": "available",
+      "reason": null
+    },
+    "pdf_import": {
+      "state": "available",
+      "reason": null
+    },
+    "ocr_import": {
+      "state": "available",
+      "reason": null
+    },
+    "index_publication": {
+      "state": "available",
+      "reason": null
+    }
   },
   "repair_progress": null,
   "error": null,
   "metrics": {
-    "ipc": { "accepted": 2, "completed": 2, "client_disconnect": 0, "request_failure": 0, "response_failure": 0 },
+    "ipc": {
+      "accepted": 2,
+      "completed": 2,
+      "client_disconnect": 0,
+      "request_failure": 0,
+      "response_failure": 0
+    },
     "indexed_documents": 4,
     "searchable_documents": 3,
     "partial_documents": 1,
@@ -44,7 +94,13 @@
     "source_roots_active": 1,
     "source_roots_offline": 0,
     "source_root_deletions_in_progress": 0,
-    "query_latency": { "sample_count": 1, "p50_ms": 2.0, "p95_ms": 3.0, "p99_ms": 4.0, "last_result_count": 1 }
+    "query_latency": {
+      "sample_count": 1,
+      "p50_ms": 2.0,
+      "p95_ms": 3.0,
+      "p99_ms": 4.0,
+      "last_result_count": 1
+    }
   },
   "error_counts": {
     "failed_retryable": 0,

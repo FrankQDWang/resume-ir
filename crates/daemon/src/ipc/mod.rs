@@ -15,10 +15,12 @@ pub(crate) mod server;
 mod service;
 mod source_file_service;
 mod status_updater;
+mod writer_health;
 
 pub(crate) use capability::{
     CapabilityHealth, CapabilityMatrix, CapabilityState, CoreHealth, CoreReason, CoreState,
     OptionalRuntimeHealth, OptionalRuntimeMatrix, OptionalRuntimeReason, OptionalRuntimeState,
+    WriterHealth,
 };
 pub(crate) use completion::ConnectionCompletion;
 pub(crate) use error::{
@@ -32,3 +34,4 @@ pub(crate) use runtime_health::{
 };
 pub(crate) use runtime_state::{ControlPlanePublisher, ControlPlaneState};
 pub(crate) use service::{repair_progress_json, ServiceErrorCode};
+pub(crate) use writer_health::writer_health_from_store;

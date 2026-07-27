@@ -6,5 +6,6 @@ pub use health::{
     validate_health_contract, CapabilityHealth, CapabilityMatrix, CapabilityName, CapabilityReason,
     CapabilityState, ContractViolation, CoreError, CoreErrorAction, CoreErrorCode, CoreHealth,
     CoreReason, CoreState, OptionalRuntimeHealth, OptionalRuntimeMatrix, OptionalRuntimeReason,
-    OptionalRuntimeState, StatusState,
+    OptionalRuntimeState, StatusState, WriterHealth, WriterReason, WriterState,
+    WriterTransitionPhase,
 };

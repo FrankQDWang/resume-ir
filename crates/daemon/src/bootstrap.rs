@@ -81,6 +81,9 @@ fn run_persistent_ipc_with_hooks(
             .map_err(DaemonError::from)?;
         return Ok(());
     }
+    let classifier_runtime_available =
+        runtimes.classifier.state == ipc::OptionalRuntimeState::Available;
+    let classifier_configured = options.classifier_model_path.is_some();
     control_publisher
         .set_runtimes(runtimes)
         .map_err(DaemonError::from)?;
@@ -107,8 +110,29 @@ fn run_persistent_ipc_with_hooks(
         let startup_orphaned_recovered = if options.has_worker_loop() {
             let startup_now = crate::current_timestamp()?;
             let recovered =
-                import_processing::normalize_orphaned_running_tasks(&store, startup_now)?;
-            import_processing::activate_contract(&store, &processing_contract, startup_now)?;
+                import_processing::normalize_orphaned_running_tasks_for_writer_bootstrap(
+                    &store,
+                    startup_now,
+                )?;
+            // Desired must not be derived/committed from a classifier fallback when
+            // the configured runtime pack failed to start.
+            if classifier_configured && !classifier_runtime_available {
+                store
+                    .mark_writer_runtime_unavailable(startup_now)
+                    .map_err(DaemonError::store)?;
+            } else {
+                store
+                    .reconcile_writer_runtime_availability(
+                        /*runtime_healthy*/ true,
+                        startup_now,
+                    )
+                    .map_err(DaemonError::store)?;
+                let (_outcome, _token) = crate::upgrade_coordinator::bootstrap_writer_barrier(
+                    &store,
+                    &processing_contract,
+                    startup_now,
+                )?;
+            }
             recovered
         } else {
             0
@@ -772,7 +796,8 @@ mod tests {
             state: ipc::CoreState::Ready,
             reason: None,
         };
-        let capabilities = ipc::CapabilityMatrix::derive(core, runtimes);
+        let capabilities =
+            ipc::CapabilityMatrix::derive(core, runtimes, daemon_contract::WriterHealth::ready());
         assert_eq!(
             capabilities.keyword_search.state,
             ipc::CapabilityState::Available
@@ -847,7 +872,11 @@ mod tests {
                 classifier: health(classifier),
                 pdfium: health(pdfium),
             };
-            let capabilities = ipc::CapabilityMatrix::derive(core, runtimes);
+            let capabilities = ipc::CapabilityMatrix::derive(
+                core,
+                runtimes,
+                daemon_contract::WriterHealth::ready(),
+            );
             let mut options = all_workers();
             apply_runtime_worker_gates(&mut options, runtimes);
             let import_available = embedding && classifier;

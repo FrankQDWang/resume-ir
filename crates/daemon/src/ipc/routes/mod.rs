@@ -307,6 +307,16 @@ pub(crate) fn dispatch(
         );
     }
     if request.matches("POST", "/source-roots/register") {
+        let capability = context.control_state.snapshot().capabilities.text_import;
+        if let Some(result) = require_capability(
+            &mut stream,
+            context.auth_token,
+            &request,
+            "text_import",
+            capability,
+        ) {
+            return result;
+        }
         return source_roots::register(
             context.owned_store,
             context.processing_contract,
@@ -316,6 +326,16 @@ pub(crate) fn dispatch(
         );
     }
     if request.matches("POST", "/source-roots/migrate-legacy") {
+        let capability = context.control_state.snapshot().capabilities.text_import;
+        if let Some(result) = require_capability(
+            &mut stream,
+            context.auth_token,
+            &request,
+            "text_import",
+            capability,
+        ) {
+            return result;
+        }
         return source_roots::migrate_legacy(
             context.owned_store,
             context.processing_contract,
@@ -344,6 +364,26 @@ pub(crate) fn dispatch(
         );
     }
     if request.matches("POST", "/source-roots/control") {
+        let capability = context.control_state.snapshot().capabilities.text_import;
+        let payload_action = serde_json::from_slice::<serde_json::Value>(&request.body)
+            .ok()
+            .and_then(|body| {
+                body.get("action")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            });
+        let resume_requires_writer = payload_action.as_deref() == Some("resume");
+        if resume_requires_writer {
+            if let Some(result) = require_capability(
+                &mut stream,
+                context.auth_token,
+                &request,
+                "text_import",
+                capability,
+            ) {
+                return result;
+            }
+        }
         return source_roots::control(
             context.owned_store,
             context.processing_contract,

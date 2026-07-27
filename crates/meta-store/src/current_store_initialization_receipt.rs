@@ -10,13 +10,13 @@ use crate::{
     active_store_manifest::{
         sync_parent_directory, validate_owner_regular_metadata, ActiveStoreManifest,
     },
-    schema_v33, MetaStoreError, Result,
+    schema_v34, MetaStoreError, Result,
 };
 
 pub(super) const FILE_NAME: &str = "metadata-initialization-receipt.v1";
 const SCHEMA: &str = "resume-ir.metadata-initialization-receipt.v1";
 const MAX_BYTES: u64 = 1024;
-const STAGING_PREFIX: &str = ".metadata-v33-init-";
+const STAGING_PREFIX: &str = ".metadata-v34-init-";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum InitializationPhase {
@@ -49,7 +49,7 @@ impl InitializationReceipt {
     }
 
     pub(super) fn target_file(&self) -> String {
-        format!("metadata-v33-{}.sqlite3", &self.initialization_id[..16])
+        format!("metadata-v34-{}.sqlite3", &self.initialization_id[..16])
     }
 
     pub(super) fn mark_ready(&mut self, store_id_digest: String) {
@@ -62,7 +62,7 @@ impl InitializationReceipt {
             .as_ref()
             .map(|store_id_digest| ActiveStoreManifest {
                 file_name: self.target_file(),
-                schema_version: schema_v33::VERSION,
+                schema_version: schema_v34::VERSION,
                 store_id_digest: store_id_digest.clone(),
             })
     }

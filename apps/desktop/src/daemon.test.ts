@@ -97,7 +97,7 @@ function runningLifecycle(): DaemonLifecycleSnapshot {
 function diagnostics(): DiagnosticsBody {
   const status = readyStatus()
   return {
-    schema_version: "resume-ir.diagnostics.v9",
+    schema_version: "resume-ir.diagnostics.v10",
     privacy_boundary: "redacted_local_aggregate",
     evidence_lane: "gui_manual",
     evidence_status: "unaccepted",

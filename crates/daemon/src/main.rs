@@ -38,6 +38,7 @@ mod source_root_deletion;
 mod source_root_path;
 mod source_scan_coordinator;
 mod store_access;
+mod upgrade_coordinator;
 mod worker_ipc;
 mod worker_output;
 mod worker_runtime;
@@ -179,6 +180,7 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
             reason: None,
         },
         standalone_runtimes,
+        daemon_contract::WriterHealth::ready(),
     );
 
     let store = open_owned_store(&data_directory_owner)?;
@@ -189,8 +191,18 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
         || options.work_index_once;
     let startup_orphaned_recovered = if mutation_worker_enabled {
         let startup_now = current_timestamp()?;
-        let recovered = import_processing::normalize_orphaned_running_tasks(&store, startup_now)?;
-        import_processing::activate_contract(&store, &processing_contract, startup_now)?;
+        let recovered = import_processing::normalize_orphaned_running_tasks_for_writer_bootstrap(
+            &store,
+            startup_now,
+        )?;
+        store
+            .reconcile_writer_runtime_availability(/*runtime_healthy*/ true, startup_now)
+            .map_err(DaemonError::store)?;
+        let (_outcome, _token) = upgrade_coordinator::bootstrap_writer_barrier(
+            &store,
+            &processing_contract,
+            startup_now,
+        )?;
         recovered
     } else {
         0

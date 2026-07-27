@@ -3,10 +3,11 @@ use super::*;
 
 fn ready_status() -> Value {
     serde_json::json!({
-        "schema_version": "daemon.status.v5",
+        "schema_version": "daemon.status.v6",
         "status": "ok",
         "process_state": "ready",
         "core": {"state": "ready", "reason": null},
+        "writer": {"state": "ready", "reason": null, "transition_phase": null, "transition_id": null},
         "optional_runtimes": {
             "embedding": {"state": "available", "reason": null},
             "ocr": {"state": "available", "reason": null},
@@ -136,7 +137,7 @@ fn discovery_v5_and_auth_v3_require_exact_launch_and_instance_binding() {
 }
 
 #[test]
-fn status_v5_rejects_old_unknown_and_illegal_state_combinations() {
+fn status_v6_rejects_old_unknown_and_illegal_state_combinations() {
     let ready = ready_status();
     assert!(valid_status(&ready));
 
@@ -152,7 +153,7 @@ fn status_v5_rejects_old_unknown_and_illegal_state_combinations() {
 }
 
 #[test]
-fn status_v5_accepts_initializing_with_null_store_projection() {
+fn status_v6_accepts_initializing_with_null_store_projection() {
     let mut status = ready_status();
     status["status"] = Value::String("initializing".to_string());
     status["core"] =
@@ -215,7 +216,7 @@ fn status_v5_accepts_initializing_with_null_store_projection() {
 }
 
 #[test]
-fn status_v5_accepts_independent_capability_reasons_for_combined_runtime_failure() {
+fn status_v6_accepts_independent_capability_reasons_for_combined_runtime_failure() {
     let mut status = ready_status();
     status["optional_runtimes"] = serde_json::json!({
         "embedding": {"state": "unavailable", "reason": "not_configured"},

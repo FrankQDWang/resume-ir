@@ -11,7 +11,7 @@ use crate::{
     ImportSourceDispositionKind, ImportTask, ImportTaskCompletion,
     ImportTaskDispositionBatchOutcome, ImportTaskId, ImportTaskSourceDisposition, ImportTaskStatus,
     MetaStoreError, MetadataStore, MetadataStoreAccess, MetadataStoreWriteAccess,
-    MigrationRebuildContractActivation, Result, UnixTimestamp,
+    MigrationRebuildContractActivation, Result, UnixTimestamp, WriterContractTransitionOutcome,
     IMPORT_SOURCE_DISPOSITION_BATCH_LIMIT, IMPORT_TASK_COLUMNS,
 };
 
@@ -32,6 +32,52 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         id: &ImportProcessingContractId,
     ) -> Result<Option<ImportProcessingContract>> {
         import_processing_contract_in_connection(&self.connection.borrow(), id)
+    }
+
+    /// Active writer contract from migration_rebuild_contract_state, if any.
+    pub fn active_import_processing_contract(&self) -> Result<Option<ImportProcessingContract>> {
+        let connection = self.connection.borrow();
+        let active_id = if writer_authority_table_exists(&connection)? {
+            connection
+                .query_row(
+                    "SELECT COALESCE(writer.committed_contract_id, legacy.active_contract_id)
+                     FROM writer_authority_state AS writer
+                     CROSS JOIN migration_rebuild_contract_state AS legacy
+                     WHERE writer.state_key = 'default'
+                       AND legacy.state_key = 'default'",
+                    [],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .map_err(MetaStoreError::storage)?
+        } else {
+            connection
+                .query_row(
+                    "SELECT active_contract_id FROM migration_rebuild_contract_state
+                     WHERE state_key = 'default'",
+                    [],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .map_err(MetaStoreError::storage)?
+        };
+        let Some(active_id) = active_id else {
+            return Ok(None);
+        };
+        let id = ImportProcessingContractId::from_str(&active_id)?;
+        import_processing_contract_in_connection(&connection, &id)
+    }
+
+    /// Count of import tasks currently in Running status.
+    pub fn running_import_task_count(&self) -> Result<u64> {
+        let count = self
+            .connection
+            .borrow()
+            .query_row(
+                "SELECT COUNT(*) FROM import_task WHERE status = ?1",
+                params![import_task_status_to_storage(ImportTaskStatus::Running)],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(MetaStoreError::storage)?;
+        u64::try_from(count).map_err(|_| MetaStoreError::storage_invariant())
     }
 
     pub fn import_task_processing_contract_id(
@@ -215,6 +261,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
             return Ok(MigrationRebuildContractActivation::Superseded);
         }
         if is_unpublished_rebuild && active.as_deref() == Some(contract.id().as_str()) {
+            sync_writer_authority_after_hard_cut(&transaction, contract.id().as_str(), now)?;
             transaction.commit().map_err(MetaStoreError::storage)?;
             return Ok(MigrationRebuildContractActivation::AlreadyActive);
         }
@@ -251,6 +298,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                 params![contract.id().as_str(), now.as_unix_seconds()],
             )
             .map_err(MetaStoreError::storage)?;
+        sync_writer_authority_after_hard_cut(&transaction, contract.id().as_str(), now)?;
         if is_blocked_contract_hard_cut {
             let reopened = transaction
                 .execute(
@@ -270,6 +318,20 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         }
         transaction.commit().map_err(MetaStoreError::storage)?;
         Ok(MigrationRebuildContractActivation::Activated)
+    }
+
+    /// Online Ready-path writer transition. Prefer
+    /// [`Self::complete_online_writer_transition`]; this name remains for
+    /// call-site migration and forwards to the fenced state machine.
+    pub fn commit_online_writer_contract(
+        &self,
+        contract: &ImportProcessingContract,
+        now: UnixTimestamp,
+    ) -> Result<WriterContractTransitionOutcome>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
+        self.complete_online_writer_transition(contract, now)
     }
 
     /// Stages one bounded, ordinal-ordered source-disposition batch in a single
@@ -504,6 +566,44 @@ pub(super) fn insert_import_processing_contract_in_connection(
     } else {
         IdentityInsertOutcome::AlreadyPresent
     })
+}
+
+fn sync_writer_authority_after_hard_cut(
+    transaction: &Transaction<'_>,
+    contract_id: &str,
+    now: UnixTimestamp,
+) -> Result<()> {
+    if !writer_authority_table_exists(transaction)? {
+        return Ok(());
+    }
+    transaction
+        .execute(
+            "UPDATE writer_authority_state
+             SET health_state = 'ready',
+                 health_reason = NULL,
+                 transition_phase = COALESCE(transition_phase, 'writer_ready'),
+                 active_transition_id = NULL,
+                 committed_contract_id = ?1,
+                 desired_contract_id = ?1,
+                 updated_at_seconds = MAX(updated_at_seconds, ?2)
+             WHERE state_key = 'default'",
+            params![contract_id, now.as_unix_seconds()],
+        )
+        .map_err(MetaStoreError::storage)?;
+    Ok(())
+}
+
+fn writer_authority_table_exists(connection: &Connection) -> Result<bool> {
+    let present = connection
+        .query_row(
+            "SELECT 1 FROM sqlite_master
+             WHERE type = 'table' AND name = 'writer_authority_state'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(MetaStoreError::storage)?;
+    Ok(present == Some(1))
 }
 
 pub(super) fn import_processing_contract_in_connection(

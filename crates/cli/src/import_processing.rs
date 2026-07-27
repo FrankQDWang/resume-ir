@@ -46,14 +46,49 @@ pub(super) fn activate_contract(
     now: UnixTimestamp,
 ) -> Result<()> {
     match store
-        .activate_migration_rebuild_contract(contract, now)
+        .commit_online_writer_contract(contract, now)
         .map_err(CliError::store)?
     {
-        MigrationRebuildContractActivation::Activated
-        | MigrationRebuildContractActivation::AlreadyActive
-        | MigrationRebuildContractActivation::Superseded => Ok(()),
-        MigrationRebuildContractActivation::RunningTaskConflict => Err(CliError::user(
+        meta_store::WriterContractTransitionOutcome::AlreadyActive
+        | meta_store::WriterContractTransitionOutcome::TargetCommitted => Ok(()),
+        meta_store::WriterContractTransitionOutcome::BlockedByRunningOwner => Err(CliError::user(
             "import processing contract activation is blocked by a running task",
+        )),
+        meta_store::WriterContractTransitionOutcome::PersistedStateInvalid => {
+            match store
+                .activate_migration_rebuild_contract(contract, now)
+                .map_err(CliError::store)?
+            {
+                MigrationRebuildContractActivation::Activated
+                | MigrationRebuildContractActivation::AlreadyActive => Ok(()),
+                MigrationRebuildContractActivation::Superseded => {
+                    // Repairing / blocked stores that already hold Desired remain
+                    // usable for fail-closed import gates without forcing an online
+                    // Ready-path transition.
+                    let active = store
+                        .active_import_processing_contract()
+                        .map_err(CliError::store)?;
+                    if active
+                        .as_ref()
+                        .is_some_and(|active| active.id() == contract.id())
+                    {
+                        Ok(())
+                    } else {
+                        Err(CliError::user(
+                            "processing-contract online transition required",
+                        ))
+                    }
+                }
+                MigrationRebuildContractActivation::RunningTaskConflict => Err(CliError::user(
+                    "import processing contract activation is blocked by a running task",
+                )),
+            }
+        }
+        meta_store::WriterContractTransitionOutcome::TransitionRequired
+        | meta_store::WriterContractTransitionOutcome::TransitionInProgress
+        | meta_store::WriterContractTransitionOutcome::UnsupportedTransition
+        | meta_store::WriterContractTransitionOutcome::RuntimeUnavailable => Err(CliError::user(
+            "processing-contract writer transition unavailable",
         )),
     }
 }

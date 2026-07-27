@@ -257,7 +257,7 @@ mod tests {
         let mut response = String::new();
         status_client.read_to_string(&mut response).unwrap();
         assert!(response.starts_with("HTTP/1.1 200 OK"));
-        assert!(response.contains(r#""schema_version":"daemon.status.v5""#));
+        assert!(response.contains(r#""schema_version":"daemon.status.v6""#));
 
         drop(pending);
         assert_eq!(

@@ -80,13 +80,19 @@ export interface IpcMetrics {
 }
 
 export interface StatusBody {
-  schema_version: "daemon.status.v5"
+  schema_version: "daemon.status.v6"
   status: "initializing" | "migrating" | "ok" | "repairing" | "degraded" | "blocked"
   process_state: "ready"
   core: {
     state: CoreState
     reason: CoreReason | null
   }
+  writer: {
+    state: "ready" | "transitioning" | "unavailable" | "blocked"
+    reason: string | null
+    transition_phase: string | null
+  }
+  writer: { state: "ready", reason: null, transition_phase: null },
   optional_runtimes: {
     embedding: OptionalRuntimeStatus
     ocr: OptionalRuntimeStatus
@@ -154,7 +160,7 @@ export interface StatusBody {
 }
 
 export function daemonHealth(reply: DaemonReply<StatusBody | DaemonFailureBody>): "ok" | "initializing" | "degraded" {
-  if (reply.http_status !== 200 || reply.body.schema_version !== "daemon.status.v5") return "degraded"
+  if (reply.http_status !== 200 || reply.body.schema_version !== "daemon.status.v6") return "degraded"
   if (reply.body.status === "ok" && reply.body.core.state === "ready") return "ok"
   return ["initializing", "migrating", "repairing"].includes(reply.body.status)
     ? "initializing"
@@ -394,7 +400,7 @@ export function managedRootControlOutcome(reply: DaemonReply<ManagedRootControlB
 }
 
 export interface DiagnosticsBody {
-  schema_version: "resume-ir.diagnostics.v9"
+  schema_version: "resume-ir.diagnostics.v10"
   privacy_boundary: "redacted_local_aggregate"
   evidence_lane: "gui_manual"
   evidence_status: "unaccepted"
@@ -409,6 +415,7 @@ export interface DiagnosticsBody {
     state: CoreState
     reason: CoreReason | null
   }
+  writer: { state: "ready", reason: null, transition_phase: null },
   optional_runtimes: {
     embedding: OptionalRuntimeStatus
     ocr: OptionalRuntimeStatus

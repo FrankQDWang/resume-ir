@@ -31,6 +31,7 @@ mod active_store_manifest;
 mod artifact_repair_attempt;
 mod artifact_repair_context;
 mod classification;
+mod contract_delta;
 mod current_store;
 mod data_directory_owner;
 mod forward_migration;
@@ -55,6 +56,7 @@ mod migration_v29;
 mod ocr_publication;
 mod pdf_reprocess;
 mod privacy_maintenance;
+mod processing_contract_transition;
 mod schema_v27;
 mod schema_v28;
 mod schema_v29;
@@ -63,6 +65,7 @@ mod schema_v30;
 mod schema_v31;
 mod schema_v32;
 mod schema_v33;
+mod schema_v34;
 mod search_publication;
 mod search_publication_session;
 mod search_snapshot;
@@ -72,6 +75,7 @@ mod source_roots;
 #[cfg(test)]
 mod source_roots_tests;
 mod store_access;
+mod writer_transition_store;
 
 pub use metadata_logical_authority::{
     inspect_metadata_logical_authority, MetadataLogicalAuthority,
@@ -117,7 +121,7 @@ pub type OwnedMetaStore = MetadataStore<OwnedStoreAccess>;
 pub type EphemeralMetaStore = MetadataStore<EphemeralStoreAccess>;
 
 /// Exact metadata schema accepted and produced by the current binary.
-pub const CURRENT_SCHEMA_VERSION: u32 = schema_v33::VERSION;
+pub const CURRENT_SCHEMA_VERSION: u32 = schema_v34::VERSION;
 
 pub use artifact_repair_attempt::{
     ArtifactRepairAttempt, ArtifactRepairAttemptAcquire, ArtifactRepairAttemptCancellationOutcome,
@@ -130,6 +134,7 @@ pub use classification::{
     ClassificationCounts, ClassificationStatus, ClassifierEpochSource, CurrentClassifierEpoch,
     ReasonCode, ResumeVersionClassification, ReviewDisposition, SourceRevisionTriage,
 };
+pub use contract_delta::{ContractDelta, ContractDeltaKind, ContractTransitionStrategy};
 pub use data_directory_owner::{
     import_task_owner_lock_path, DataDirectoryOwnerAcquireError, DataDirectoryOwnerAcquisition,
     DataDirectoryOwnerLease, ImportProcessingOrphanNormalizationError, ImportTaskOwnerLock,
@@ -162,6 +167,11 @@ pub use migration_rebuild_attempt::{
 pub use migration_rebuild_barrier::{MigrationRebuildBarrierToken, MigrationRebuildProjectionRow};
 pub use ocr_publication::{OcrSearchPublicationCommit, OcrSearchPublicationOutcome};
 pub use privacy_maintenance::{PrivacyPurgeReport, PRIVACY_PURGE_BATCH_LIMIT};
+pub use processing_contract_transition::{
+    campaign_domain_for, observe_writer_contract_transition, WriterAuthorityHealthState,
+    WriterAuthoritySnapshot, WriterContractTransitionOutcome, WriterTransitionPhase,
+    WriterTransitionReceipt,
+};
 pub use resume_classifier::{
     classify as classify_resume, ClassificationResult, ClassifierInput, CLASSIFIER_EPOCH,
 };
@@ -980,7 +990,7 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
     }
 
     fn initialize_current_schema(&self) -> Result<MigrationReport> {
-        self.initialize_empty_schema(schema_v33::VERSION)
+        self.initialize_empty_schema(schema_v34::VERSION)
     }
 
     fn initialize_empty_schema(&self, target_version: u32) -> Result<MigrationReport> {
@@ -1002,7 +1012,7 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
     /// Test-only entrypoint for constructing historical schema fixtures.
     #[cfg(any(test, feature = "migration-test-support"))]
     pub fn run_migrations(&self) -> Result<MigrationReport> {
-        self.apply_schema_history_to(schema_v33::VERSION)
+        self.apply_schema_history_to(schema_v34::VERSION)
     }
 
     fn apply_schema_history_to(&self, target_version: u32) -> Result<MigrationReport> {
@@ -3548,6 +3558,12 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                                  AND rebuild.active_contract_id = purpose.processing_contract_id
                                 WHERE purpose.import_task_id = import_task.id
                             )
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1
+                            FROM writer_authority_state AS writer
+                            WHERE writer.state_key = 'default'
+                              AND writer.health_state != 'ready'
                         )
                     RETURNING {IMPORT_TASK_COLUMNS}"
                 ))
@@ -6492,7 +6508,7 @@ fn reset_unsealed_import_attempt(
     Ok(())
 }
 
-fn insert_import_task_with_scan_scope_in_connection(
+pub(crate) fn insert_import_task_with_scan_scope_in_connection(
     connection: &Connection,
     task: &ImportTask,
     scope: &ImportScanScope,
