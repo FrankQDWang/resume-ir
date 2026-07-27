@@ -191,7 +191,7 @@ fn reconcile_search_artifacts_with_validation(
         }
         let repair_key = ArtifactRepairKey::new(
             context.generation,
-            context.publication_fingerprint,
+            context.publication_fingerprint.clone(),
             context.visible_epoch,
         );
         let attempt = match publication_session
@@ -239,14 +239,21 @@ fn reconcile_search_artifacts_with_validation(
                 {
                     return Err(ImportPipelineError::store_invariant());
                 }
-                let expected_publication = state
-                    .publication
-                    .as_deref()
+                let expected_publication = store
+                    .search_publication(expected_generation)
+                    .map_err(ImportPipelineError::store)?
                     .ok_or_else(ImportPipelineError::store_invariant)?;
+                if expected_publication.publication_fingerprint.as_ref()
+                    != Some(&context.publication_fingerprint)
+                    || expected_publication.expected_visible_epoch.checked_add(1)
+                        != Some(expected_visible_epoch)
+                {
+                    return Err(ImportPipelineError::store_invariant());
+                }
                 if let Some(recovered) = recover_matching_orphan_artifact_pair(
                     &publication_session,
                     now,
-                    expected_publication,
+                    &expected_publication,
                     &base,
                     vectorization,
                     control,

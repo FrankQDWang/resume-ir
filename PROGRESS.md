@@ -30782,6 +30782,17 @@ Output summary:
 - Exact merged-main installed acceptance is the next invalidated gate. The
   final delivery matrix remains valid and is not rerun.
 - PR #249 owns this F26 repair and is linked to umbrella issue #217.
+- Hosted macOS PR run `30246491821` completed fail-late. Every workspace and
+  post-test cell outside two import-pipeline assertions and four dependent
+  `s71_fault_injection` assertions passed. The shared root cause was that F26
+  read the expected publication from the public projection state after repair
+  had begun, even though repairing state deliberately redacts that field.
+- Recovery now reads the exact generation from the owner-protected publication
+  journal and binds it to the durable repair fingerprint and visible epoch.
+  The resumed-repair and sticky-block import cases, corrupt-snapshot CLI case,
+  three dependent local-safe suite cases, all three orphan recovery cases,
+  focused import-pipeline Clippy, formatting and diff checks pass. No full
+  workspace or unrelated test package was replayed locally.
 
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 

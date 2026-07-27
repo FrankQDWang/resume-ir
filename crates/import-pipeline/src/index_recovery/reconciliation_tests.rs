@@ -490,10 +490,8 @@ fn offline_mutation_fails_closed_after_artifact_repair_blocks() {
         &PipelineRunControl::default(),
     )
     .unwrap_err();
-    assert_eq!(
-        replay_error.class(),
-        ImportPipelineErrorClass::ArtifactRetirement
-    );
+    assert_eq!(replay_error.class(), ImportPipelineErrorClass::Repairing);
+    assert_eq!(store.search_projection_state().unwrap(), blocked);
 }
 
 #[test]

@@ -2915,7 +2915,11 @@
       {"command":"F26 exact current-pair recovery plus corrupt-payload and wrong-projection fallbacks: 3 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#exact-orphan-artifact-pair-recovery-f26--2026-07-27"},
       {"command":"F26 exact bounded full-text recovery manifest discovery","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#exact-orphan-artifact-pair-recovery-f26--2026-07-27"},
       {"command":"F26 focused index-fulltext/import-pipeline/daemon Clippy, format, diff, governance and public-boundary checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#exact-orphan-artifact-pair-recovery-f26--2026-07-27"},
-      {"command":"F26 authorized v29 COW exact-pair recovery witness","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#exact-orphan-artifact-pair-recovery-f26--2026-07-27"}
+      {"command":"F26 authorized v29 COW exact-pair recovery witness","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#exact-orphan-artifact-pair-recovery-f26--2026-07-27"},
+      {"command":"macOS PR run 30246491821 complete fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#exact-orphan-artifact-pair-recovery-f26--2026-07-27"},
+      {"command":"F26 exact resumed-repair and sticky-block import regressions: 2 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#exact-orphan-artifact-pair-recovery-f26--2026-07-27"},
+      {"command":"F26 exact corrupt-snapshot and dependent local-safe CLI regressions: 4 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#exact-orphan-artifact-pair-recovery-f26--2026-07-27"},
+      {"command":"F26 post-repair orphan regressions, focused import-pipeline Clippy, format and diff checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#exact-orphan-artifact-pair-recovery-f26--2026-07-27"}
     ],
     "all_required_commands_ran": false,
     "claim": "partial"
