@@ -1,7 +1,7 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "pr_opened",
+  "workflow_state": "evidence_review",
   "experiment_state": "contract_locked",
   "evidence_lane": "gui_manual",
   "contract_pins": {
@@ -12,7 +12,7 @@
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "30868881838b8785fb7f1ccf574cb8bb34c51d00"
   },
-  "current_slice": "#217 F25 ready control-plane independence repair",
+  "current_slice": "#217 F26 exact orphan artifact-pair recovery",
   "transition_history": [
     {
       "from": "slice_selected",
@@ -2911,7 +2911,11 @@
       {"command":"F24 exact IPC deadline transport-budget contract tests: 8 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ipc-deadline-transport-budget-repair-f24--2026-07-27"},
       {"command":"F25 exact ready-front-door, loopback status, import progress and product-route disconnect regressions","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ready-control-plane-independence-repair-f25--2026-07-27"},
       {"command":"F25 exact complete-runtime background import and concurrent status regressions","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ready-control-plane-independence-repair-f25--2026-07-27"},
-      {"command":"F25 cargo fmt, git diff check and focused daemon-binary Clippy","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ready-control-plane-independence-repair-f25--2026-07-27"}
+      {"command":"F25 cargo fmt, git diff check and focused daemon-binary Clippy","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ready-control-plane-independence-repair-f25--2026-07-27"},
+      {"command":"F26 exact current-pair recovery plus corrupt-payload and wrong-projection fallbacks: 3 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#exact-orphan-artifact-pair-recovery-f26--2026-07-27"},
+      {"command":"F26 exact bounded full-text recovery manifest discovery","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#exact-orphan-artifact-pair-recovery-f26--2026-07-27"},
+      {"command":"F26 focused index-fulltext/import-pipeline/daemon Clippy, format, diff, governance and public-boundary checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#exact-orphan-artifact-pair-recovery-f26--2026-07-27"},
+      {"command":"F26 authorized v29 COW exact-pair recovery witness","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#exact-orphan-artifact-pair-recovery-f26--2026-07-27"}
     ],
     "all_required_commands_ran": false,
     "claim": "partial"
@@ -2926,9 +2930,7 @@
   },
   "github_ledger": {
     "primary_issue": "#217",
-    "active_prs": [
-      "#248"
-    ],
+    "active_prs": [],
     "open_blockers": []
   }
 }

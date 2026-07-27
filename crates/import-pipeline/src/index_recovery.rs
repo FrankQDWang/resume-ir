@@ -2,6 +2,7 @@
 
 mod artifact_maintenance;
 mod migration_publication;
+mod orphan_recovery;
 mod reconciliation;
 
 const RECOVERY_PUBLICATION_LIMIT: usize = 256;
@@ -13,6 +14,7 @@ pub struct SearchArtifactRecoverySummary {
     pub vector_staging_directories_removed: usize,
     pub fulltext_generations_removed: usize,
     pub vector_generations_removed: usize,
+    pub active_generation_recovered: bool,
     pub active_generation_rebuilt: bool,
     pub gc_deferred: bool,
     pub gc_partial: bool,

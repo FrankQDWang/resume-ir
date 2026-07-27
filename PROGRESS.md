@@ -30752,6 +30752,36 @@ Output summary:
   replayed. Exact merged-main installed acceptance remains the next gate.
 - PR #248 owns this F25 repair and is linked to umbrella issue #217.
 
+### v0.1.8 exact orphan artifact-pair recovery F26
+
+- The post-F25 exact-main installed run still timed out during repair. The
+  authorized v29 authority named a missing active generation, while two
+  complete current-format full-text/vector pairs with the same active logical
+  digests remained under different generation identities. The old repair path
+  correctly rejected generation substitution but then regenerated all 7,607
+  vectors.
+- Recovery now scans at most 256 current-format candidates under existing read
+  leases before rebuilding. It excludes the active generation and all
+  journaled publications, opens and validates both encrypted payloads, and
+  requires exact counts, projection, logical-content, coverage and configured
+  vector-model identity. A match is published through the ordinary metadata
+  transaction and repair-attempt authority; no rename, direct metadata edit,
+  compatibility reader or embedding fallback exists.
+- Exact tests pass for successful reuse, corrupt payload fallback, wrong
+  projection fallback and bounded manifest discovery. Focused
+  index-fulltext/import-pipeline/daemon Clippy, formatting and diff checks also
+  pass. Performance-contract, autonomous-goal, loop-state and public-repository
+  checks pass after the evidence update; no unaffected package or workspace
+  suite was replayed.
+- An attested macOS-only private COW witness migrated and validated the
+  7,607-document source in 171 seconds, reported `recovered: yes` and
+  `rebuilt: no`, retained one exact full-text/vector generation pair, kept the
+  embedding runtime idle, and left the source authority SHA-256 unchanged.
+  Earlier unattested debug attempts are environment diagnostics rather than
+  product evidence.
+- Exact merged-main installed acceptance is the next invalidated gate. The
+  final delivery matrix remains valid and is not rerun.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
-use index_fulltext::{IndexDocument, PublishedSnapshotMetadata};
-use index_vector::{VectorModelContract, VectorSnapshotSummary};
+use index_fulltext::{FullTextIndex, IndexDocument, PublishedSnapshotMetadata};
+use index_vector::{VectorModelContract, VectorSnapshotReader, VectorSnapshotSummary};
 use meta_store::{
     ActiveSearchProjection, ArtifactRepairVectorContext, DocumentId, OwnedMetaStore,
     ResumeVersionId, SearchProjectionDigest, SearchProjectionServiceState, SearchPublicationDraft,
@@ -22,6 +22,8 @@ use super::{ImportPipelineError, Result, SearchPublicationVectorization};
 struct PreparedSearchPublication<'session> {
     publication_session: &'session SearchPublicationSession,
     _publication_lease: SearchPublicationLease,
+    _recovered_fulltext_reader: Option<FullTextIndex>,
+    _recovered_vector_reader: Option<VectorSnapshotReader>,
     pub(super) fulltext: PublishedSnapshotMetadata,
     vector: VectorSnapshotSummary,
     projections: Vec<ActiveSearchProjection>,
@@ -137,10 +139,12 @@ impl PreparedSearchPublication<'_> {
     }
 
     fn terminate(
-        self,
+        mut self,
         now: UnixTimestamp,
         decision: Result<SearchPublicationDecision>,
     ) -> Result<SearchPublicationTransactionOutcome> {
+        self._recovered_fulltext_reader.take();
+        self._recovered_vector_reader.take();
         match decision {
             Ok(SearchPublicationDecision::Applied) => Ok(
                 SearchPublicationTransactionOutcome::Committed(self.into_committed()),
@@ -213,6 +217,7 @@ impl CommittedSearchPublication {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct SearchPublicationBase {
     pub(super) generation: Option<String>,
     pub(super) visible_epoch: u64,
@@ -397,6 +402,95 @@ pub(super) fn run_search_publication_transaction(
     publication.terminate(now, decision)
 }
 
+pub(super) fn run_recovered_search_publication_transaction(
+    publication_session: &SearchPublicationSession,
+    now: UnixTimestamp,
+    base: SearchPublicationBase,
+    fulltext_reader: FullTextIndex,
+    vector_reader: VectorSnapshotReader,
+    decide: impl FnOnce(&SearchPublicationView<'_>) -> Result<SearchPublicationDecision>,
+) -> Result<SearchPublicationTransactionOutcome> {
+    let fulltext = fulltext_reader
+        .snapshot_metadata()
+        .cloned()
+        .ok_or_else(ImportPipelineError::store_invariant)?;
+    let vector = vector_reader.summary().clone();
+    let generation = fulltext.generation();
+    if generation != vector.generation()
+        || vector_reader.exact_projection() != base.projections
+        || fulltext.document_count() != base.projections.len()
+    {
+        return Err(ImportPipelineError::store_invariant());
+    }
+    let projection_digest =
+        SearchProjectionDigest::from_pairs(base.projections.iter().map(|projection| {
+            (
+                projection.document_id.as_str(),
+                projection.resume_version_id.as_str(),
+            )
+        }))
+        .map_err(|_| ImportPipelineError::store_invariant())?;
+    if fulltext.projection_digest() != &projection_digest
+        || vector.projection_digest() != &projection_digest
+    {
+        return Err(ImportPipelineError::store_invariant());
+    }
+    let staged_version_texts = StagedSearchVersionTexts::default();
+    let projected_documents =
+        projected_document_plan(&base.projections, &base.projections, &staged_version_texts)?;
+    let vector_coverage =
+        validate_vector_publication(&vector, generation, &base.projections, &projection_digest)?;
+    let draft = SearchPublicationDraft {
+        generation: generation.to_string(),
+        base_generation: base.generation,
+        expected_visible_epoch: base.visible_epoch,
+        classifier_epoch: base.classifier_epoch,
+        projection_digest,
+        now,
+    };
+    if publication_session
+        .begin_search_publication(&draft)
+        .map_err(ImportPipelineError::store)?
+        == SearchPublicationOutcome::Superseded
+    {
+        return Err(ImportPipelineError::index_io());
+    }
+    let fulltext_descriptor = meta_fulltext_descriptor(&fulltext)?;
+    let vector_descriptor = meta_vector_descriptor(&vector)?;
+    if let Err(error) = publication_session
+        .validate_search_publication(&SearchPublicationValidation {
+            generation,
+            fulltext: &fulltext_descriptor,
+            vector: &vector_descriptor,
+            now,
+        })
+        .map_err(ImportPipelineError::store)
+    {
+        drop(fulltext_reader);
+        drop(vector_reader);
+        abandon_and_retire_search_publication(
+            publication_session,
+            generation,
+            now,
+            FailedGenerationArtifacts::both_published(),
+        )?;
+        return Err(error);
+    }
+    let publication = PreparedSearchPublication {
+        publication_session,
+        _publication_lease: publication_session.retain(),
+        _recovered_fulltext_reader: Some(fulltext_reader),
+        _recovered_vector_reader: Some(vector_reader),
+        fulltext,
+        vector,
+        projections: base.projections,
+        projected_documents,
+        vector_coverage,
+    };
+    let decision = decide(&publication.view());
+    publication.terminate(now, decision)
+}
+
 #[cfg(test)]
 pub(super) struct PreparedSearchPublicationForTest<'session>(PreparedSearchPublication<'session>);
 
@@ -559,6 +653,8 @@ fn prepare_search_publication<'session>(
         Ok(PreparedSearchPublication {
             publication_session,
             _publication_lease: publication_session.retain(),
+            _recovered_fulltext_reader: None,
+            _recovered_vector_reader: None,
             fulltext,
             vector,
             projections,

@@ -211,6 +211,7 @@ pub(crate) fn search_artifact_recovery_has_activity(
         || summary.vector_staging_directories_removed > 0
         || summary.fulltext_generations_removed > 0
         || summary.vector_generations_removed > 0
+        || summary.active_generation_recovered
         || summary.active_generation_rebuilt
         || summary.gc_deferred
         || summary.gc_partial
@@ -220,6 +221,14 @@ pub(crate) fn search_artifact_recovery_has_activity(
 pub(crate) fn print_search_artifact_worker_summary(
     summary: &SearchArtifactRecoverySummary,
 ) -> Result<()> {
+    println!(
+        "search artifact worker active generation recovered: {}",
+        if summary.active_generation_recovered {
+            "yes"
+        } else {
+            "no"
+        }
+    );
     println!(
         "search artifact worker active generation rebuilt: {}",
         if summary.active_generation_rebuilt {

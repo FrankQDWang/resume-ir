@@ -77,6 +77,64 @@ impl PinnedOwnerOnlyFile {
 }
 
 impl FullTextIndex {
+    /// Returns bounded, generation-sorted manifests for published snapshots.
+    ///
+    /// This is a recovery-only discovery surface. It validates every
+    /// generation directory and required manifest artifact under the caller's
+    /// root-wide read lease, but it does not select an active generation.
+    pub fn inspect_snapshot_manifests_with_lease(
+        index_root: &Path,
+        lease: &SnapshotReadLease,
+        maximum: usize,
+    ) -> Result<Vec<PublishedSnapshotMetadata>> {
+        if !(1..=256).contains(&maximum) {
+            return Err(FullTextError::internal(
+                "full-text snapshot manifest inspection bound invalid",
+            ));
+        }
+        if !lease.protects(index_root)? {
+            return Err(FullTextError::internal(
+                "full-text snapshot lease belongs to another index root",
+            ));
+        }
+        lease.validate_layout()?;
+        let snapshots_root = lease.index_root.join(SNAPSHOTS_DIR);
+        let mut generations = Vec::new();
+        for entry in fs::read_dir(&snapshots_root).map_err(FullTextError::io)? {
+            let entry = entry.map_err(FullTextError::io)?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| FullTextError::internal("full-text snapshot entry name invalid"))?;
+            if name.starts_with('.') {
+                continue;
+            }
+            validate_snapshot_name(&name)?;
+            drop(PinnedSnapshotDirectory::acquire(&entry.path())?);
+            generations.push(name);
+            if generations.len() > maximum {
+                return Err(FullTextError::internal(
+                    "full-text snapshot manifest inspection bound exceeded",
+                ));
+            }
+        }
+        generations.sort_unstable_by(|left, right| right.cmp(left));
+
+        let mut manifests = Vec::with_capacity(generations.len());
+        for generation in generations {
+            let manifest =
+                Self::inspect_snapshot_manifest_with_lease(index_root, &generation, lease)?
+                    .ok_or_else(|| {
+                        FullTextError::internal(
+                            "full-text snapshot disappeared during manifest inspection",
+                        )
+                    })?;
+            manifests.push(manifest);
+        }
+        lease.validate_layout()?;
+        Ok(manifests)
+    }
+
     /// Inspects one exact generation's bounded manifest without decrypting or
     /// extracting its payload and without opening Tantivy.
     ///
@@ -203,6 +261,28 @@ mod tests {
 
         let lease = SnapshotReadLease::acquire(&fixture.root).unwrap().unwrap();
         assert!(FullTextIndex::open_snapshot_with_lease(&fixture.root, GENERATION, lease).is_err());
+    }
+
+    #[test]
+    fn recovery_manifest_listing_is_sorted_and_bounded() {
+        let fixture = Fixture::published("manifest-listing");
+        let later_generation = "fulltext-manifest-inspection-later";
+        publish_snapshot(&fixture.root, later_generation, Vec::new()).unwrap();
+        let lease = SnapshotReadLease::acquire(&fixture.root).unwrap().unwrap();
+
+        let manifests =
+            FullTextIndex::inspect_snapshot_manifests_with_lease(&fixture.root, &lease, 2).unwrap();
+
+        assert_eq!(
+            manifests
+                .iter()
+                .map(PublishedSnapshotMetadata::generation)
+                .collect::<Vec<_>>(),
+            vec![later_generation, GENERATION],
+        );
+        assert!(
+            FullTextIndex::inspect_snapshot_manifests_with_lease(&fixture.root, &lease, 1).is_err()
+        );
     }
 
     #[test]
