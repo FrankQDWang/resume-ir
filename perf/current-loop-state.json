@@ -12,7 +12,7 @@
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
     "git_head_sha": "30868881838b8785fb7f1ccf574cb8bb34c51d00"
   },
-  "current_slice": "#217 atomic v0.1.3-v0.1.8 business feature train",
+  "current_slice": "#217 F25 ready control-plane independence repair",
   "transition_history": [
     {
       "from": "slice_selected",
@@ -692,7 +692,9 @@
     {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-canary-publication-witness-repair-f23--2026-07-27"},
     {"from":"verification_active","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/246"},
     {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ipc-deadline-transport-budget-repair-f24--2026-07-27"},
-    {"from":"verification_active","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/247"}
+    {"from":"verification_active","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/247"},
+    {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ready-control-plane-independence-repair-f25--2026-07-27"},
+    {"from":"verification_active","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/248"}
   ],
   "verification": {
     "commands": [
@@ -2906,7 +2908,10 @@
       {"command":"F23 exact synthetic canary publication and acceptance orchestrator tests: 17 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-canary-publication-witness-repair-f23--2026-07-27"},
       {"command":"F23 changed acceptance module Node syntax checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-canary-publication-witness-repair-f23--2026-07-27"},
       {"command":"exact merged-main macOS installed acceptance after F23","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ipc-deadline-transport-budget-repair-f24--2026-07-27"},
-      {"command":"F24 exact IPC deadline transport-budget contract tests: 8 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ipc-deadline-transport-budget-repair-f24--2026-07-27"}
+      {"command":"F24 exact IPC deadline transport-budget contract tests: 8 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ipc-deadline-transport-budget-repair-f24--2026-07-27"},
+      {"command":"F25 exact ready-front-door, loopback status, import progress and product-route disconnect regressions","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ready-control-plane-independence-repair-f25--2026-07-27"},
+      {"command":"F25 exact complete-runtime background import and concurrent status regressions","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ready-control-plane-independence-repair-f25--2026-07-27"},
+      {"command":"F25 cargo fmt, git diff check and focused daemon-binary Clippy","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ready-control-plane-independence-repair-f25--2026-07-27"}
     ],
     "all_required_commands_ran": false,
     "claim": "partial"
@@ -2922,7 +2927,7 @@
   "github_ledger": {
     "primary_issue": "#217",
     "active_prs": [
-      "#247"
+      "#248"
     ],
     "open_blockers": []
   }

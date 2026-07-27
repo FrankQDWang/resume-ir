@@ -1470,3 +1470,35 @@ the combined transport ceiling is 62.5 seconds.
 No packaged product code changed and no workspace or delivery matrix was
 replayed. The installed-main baseline is invalidated only at its canary query
 boundary; later native cells remain unrun.
+
+### ready control-plane independence repair F25 — 2026-07-27
+
+The post-F24 exact installed run reached Ready on the authorized v29 COW
+workspace and accepted the synthetic canary, then timed out on the next
+authenticated status request. A focused same-App reproduction showed that the
+request timeout occurred only while the single ready listener was occupied by
+the business handler. Status and diagnostics already read only the bounded
+memory snapshot, but socket admission still shared the serialized
+`OwnedMetaStore` lane.
+
+The ready server now owns a bounded front door: at most eight concurrent
+request admissions, a five-second admission deadline and a 16-entry business
+queue. Authenticated status and diagnostics complete at the front door while
+parsed business requests move to the one store-owning data lane. Queue
+exhaustion returns bounded typed overload; no store mutex, second store owner,
+request replay or compatibility route was added.
+
+| Row | Behavior boundary | Input fingerprint | Status | Re-run only when |
+| --- | --- | --- | --- | --- |
+| F25-01 | Authenticated status completes while an admitted business request remains pending in the serialized data lane | `72e8a1aee38b4a7c2b02bde326b84bfab73cb6dc898295e8f4f853b034030811` | exact front-door unit regression passed | ready listener ownership, admission concurrency, control dispatch or business forwarding changes |
+| F25-02 | Real loopback status, import progress and all product-route disconnect outcomes retain bounded exactly-once behavior | same | three exact s20 IPC regressions passed | connection completion, response ownership, route classification or front-door shutdown changes |
+| F25-03 | Complete installed-shape macOS runtime composition reaches Ready, imports two synthetic searchable documents and keeps status available during background work | same | two exact native-runtime s20 cases passed | runtime-pack composition, worker gates, migration rebuild, import publication or ready control plane changes |
+| F25-04 | Changed daemon production boundary is formatted and warning-free | same | `cargo fmt --all -- --check`, `git diff --check` and focused daemon-binary Clippy passed | changed Rust production or test files change |
+
+Two earlier F25-03 attempts are recorded as failed environment diagnostics,
+not reusable product failures: the first used symlinked runtime directories
+that the security contract correctly rejects; the second used pre-composition
+OCR/PDFium cache packs instead of the normalized installed runtime packs. The
+installed App resources then passed without changing product expectations.
+No workspace, delivery matrix, non-macOS lane or previously valid installed
+successor was replayed. Exact merged-main installed acceptance remains pending.
