@@ -1,7 +1,7 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "verification_active",
+  "workflow_state": "pr_opened",
   "experiment_state": "contract_locked",
   "evidence_lane": "gui_manual",
   "contract_pins": {
@@ -691,7 +691,8 @@
     {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/245"},
     {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-canary-publication-witness-repair-f23--2026-07-27"},
     {"from":"verification_active","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/246"},
-    {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ipc-deadline-transport-budget-repair-f24--2026-07-27"}
+    {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ipc-deadline-transport-budget-repair-f24--2026-07-27"},
+    {"from":"verification_active","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/247"}
   ],
   "verification": {
     "commands": [
@@ -2920,7 +2921,9 @@
   },
   "github_ledger": {
     "primary_issue": "#217",
-    "active_prs": [],
+    "active_prs": [
+      "#247"
+    ],
     "open_blockers": []
   }
 }
