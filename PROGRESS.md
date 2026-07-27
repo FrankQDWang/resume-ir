@@ -30708,6 +30708,22 @@ Output summary:
   suite passed 14/14; all three changed modules pass Node syntax checks. No
   workspace, delivery matrix or previously valid installed cell was replayed.
 
+### v0.1.8 IPC deadline transport-budget repair F24
+
+- The post-F23 installed run reached Ready, advanced the migrated v29 corpus
+  from epoch 306 to 311, completed the 8,720-file background scan with no scan
+  errors and drained all import tasks. The exact canary search still never
+  produced a witness because its protocol envelope granted the daemon 5
+  seconds while the acceptance HTTP client destroyed the connection after 2.5
+  seconds.
+- POST requests with a valid bounded protocol `deadline_ms` now receive that
+  full server budget plus the existing 2.5-second transport budget. Missing or
+  invalid deadlines retain the ordinary 2.5-second timeout, and the combined
+  ceiling remains bounded at 62.5 seconds.
+- The exact IPC contract suite passes 8/8, including 5-second, maximum
+  60-second, absent and invalid deadline cases. No product code, workspace
+  suite, final delivery matrix or previously valid installed cell was replayed.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2

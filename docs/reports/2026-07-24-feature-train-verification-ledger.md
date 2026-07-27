@@ -1447,3 +1447,26 @@ The failed installed run is retained as the F23 diagnostic witness. No full
 matrix or previously valid focused suite was replayed. After this repair reaches
 main, only the invalidated installed-main baseline and its still-unrun native
 successors resume.
+
+### IPC deadline transport-budget repair F24 — 2026-07-27
+
+The post-F23 exact installed run proved that migration, repair and concurrent
+scan coordination converged: core reached Ready, epoch advanced from 306 to
+311, the 8,720-file scan completed without scan errors, and import queues
+drained. The canary query still could not become evidence because the request
+contract allowed a 5-second daemon deadline while the acceptance HTTP client
+unconditionally destroyed every connection after 2.5 seconds.
+
+The HTTP owner now derives the client response timeout from a valid bounded
+protocol `deadline_ms`, adding the existing 2.5-second transport allowance
+after the server budget. Requests without a valid protocol deadline retain the
+ordinary timeout. The maximum accepted daemon deadline remains 60 seconds and
+the combined transport ceiling is 62.5 seconds.
+
+| Row | Behavior boundary | Status | Re-run only when |
+| --- | --- | --- | --- |
+| F24-01 | A valid protocol deadline completes before the client transport timeout; missing and invalid deadlines keep the ordinary bound | exact IPC contract Node suite: 8/8 passed | HTTP request ownership, protocol deadline or timeout bounds change |
+
+No packaged product code changed and no workspace or delivery matrix was
+replayed. The installed-main baseline is invalidated only at its canary query
+boundary; later native cells remain unrun.

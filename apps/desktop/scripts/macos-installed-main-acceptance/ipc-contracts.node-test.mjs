@@ -15,6 +15,7 @@ import {
   persistentBlockedStatus,
   readDaemonConnection,
   readyStatus,
+  responseTimeoutForRequest,
   requestJsonPostServiceUnavailable,
   validDaemonStatus,
   validateDaemonDiagnostics,
@@ -25,6 +26,13 @@ import {
 const LAUNCH = "a".repeat(64);
 const INSTANCE = "b".repeat(64);
 const TOKEN = "c".repeat(64);
+
+test("protocol deadlines own the server budget before the client transport timeout", () => {
+  assert.equal(responseTimeoutForRequest({ deadline_ms: 5_000 }), 7_500);
+  assert.equal(responseTimeoutForRequest({ deadline_ms: 60_000 }), 62_500);
+  assert.equal(responseTimeoutForRequest({}), 2_500);
+  assert.equal(responseTimeoutForRequest({ deadline_ms: 60_001 }), 2_500);
+});
 
 function allCapabilities(state, reason) {
   const capability = { state, reason };
