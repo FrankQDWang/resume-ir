@@ -1,7 +1,7 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
+  "workflow_state": "pr_opened",
   "experiment_state": "contract_locked",
   "evidence_lane": "gui_manual",
   "contract_pins": {
@@ -2930,7 +2930,9 @@
   },
   "github_ledger": {
     "primary_issue": "#217",
-    "active_prs": [],
+    "active_prs": [
+      "#249"
+    ],
     "open_blockers": []
   }
 }

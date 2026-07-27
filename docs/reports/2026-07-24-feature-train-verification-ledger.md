@@ -1539,4 +1539,5 @@ attested debug build exercised the exact installed runtime packs against a COW
 copy only. One zero-CPU Rust compile was cancelled before any test body and is
 recorded as `not_run`; the non-incremental replacement completed. No workspace,
 final delivery matrix, non-macOS lane or previously valid installed successor
-was replayed. Exact merged-main installed acceptance remains the next gate.
+was replayed. PR #249 owns the repair under umbrella issue #217. Exact
+merged-main installed acceptance remains the next gate.

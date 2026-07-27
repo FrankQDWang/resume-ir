@@ -30781,6 +30781,7 @@ Output summary:
   product evidence.
 - Exact merged-main installed acceptance is the next invalidated gate. The
   final delivery matrix remains valid and is not rerun.
+- PR #249 owns this F26 repair and is linked to umbrella issue #217.
 
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
