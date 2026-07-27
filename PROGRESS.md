@@ -30750,6 +30750,7 @@ Output summary:
   status, formatting, diff check and daemon-binary Clippy. No workspace,
   delivery matrix, Windows/Linux lane or previously valid installed cell was
   replayed. Exact merged-main installed acceptance remains the next gate.
+- PR #248 owns this F25 repair and is linked to umbrella issue #217.
 
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
