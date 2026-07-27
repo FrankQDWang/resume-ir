@@ -1,7 +1,7 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "pr_opened",
+  "workflow_state": "verification_active",
   "experiment_state": "contract_locked",
   "evidence_lane": "gui_manual",
   "contract_pins": {
@@ -690,7 +690,8 @@
     {"from":"verification_active","to":"evidence_review","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-v29-migration-convergence-repair-f22--2026-07-27"},
     {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/245"},
     {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-canary-publication-witness-repair-f23--2026-07-27"},
-    {"from":"verification_active","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/246"}
+    {"from":"verification_active","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/246"},
+    {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ipc-deadline-transport-budget-repair-f24--2026-07-27"}
   ],
   "verification": {
     "commands": [
@@ -2902,7 +2903,9 @@
       {"command":"F22 focused meta-store/daemon Clippy, script syntax, public guard and 26.769-second authorized COW migration witness","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-v29-migration-convergence-repair-f22--2026-07-27"},
       {"command":"exact merged-main macOS installed acceptance after F22","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-canary-publication-witness-repair-f23--2026-07-27"},
       {"command":"F23 exact synthetic canary publication and acceptance orchestrator tests: 17 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-canary-publication-witness-repair-f23--2026-07-27"},
-      {"command":"F23 changed acceptance module Node syntax checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-canary-publication-witness-repair-f23--2026-07-27"}
+      {"command":"F23 changed acceptance module Node syntax checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-canary-publication-witness-repair-f23--2026-07-27"},
+      {"command":"exact merged-main macOS installed acceptance after F23","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ipc-deadline-transport-budget-repair-f24--2026-07-27"},
+      {"command":"F24 exact IPC deadline transport-budget contract tests: 8 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ipc-deadline-transport-budget-repair-f24--2026-07-27"}
     ],
     "all_required_commands_ran": false,
     "claim": "partial"
@@ -2917,9 +2920,7 @@
   },
   "github_ledger": {
     "primary_issue": "#217",
-    "active_prs": [
-      "#246"
-    ],
+    "active_prs": [],
     "open_blockers": []
   }
 }

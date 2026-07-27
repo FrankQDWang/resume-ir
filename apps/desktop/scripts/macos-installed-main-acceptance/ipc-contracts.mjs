@@ -18,6 +18,8 @@ import {
 } from "./core.mjs";
 import { readPrivateJson } from "./filesystem-cow.mjs";
 
+const MAX_PROTOCOL_DEADLINE_MS = 60_000;
+const MAX_REQUEST_TIMEOUT_MS = MAX_PROTOCOL_DEADLINE_MS + HTTP_TIMEOUT_MS;
 const CORE_REASONS = [
   "metadata_initializing",
   "metadata_migrating",
@@ -148,6 +150,9 @@ async function requestJsonWithBody(
   if (
     !["GET", "POST"].includes(method) ||
     ![200, 202, 503].includes(expectedStatus) ||
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > MAX_REQUEST_TIMEOUT_MS ||
     (method === "GET" && payload !== undefined) ||
     (payload !== undefined && Buffer.byteLength(payload, "utf8") > 64 * 1024)
   ) {
@@ -212,8 +217,27 @@ export async function requestJson(url, token, timeoutMs = HTTP_TIMEOUT_MS, signa
   return requestJsonWithBody(url, token, { signal, timeoutMs });
 }
 
-export async function requestJsonPost(url, token, body, { signal } = {}) {
-  return requestJsonWithBody(url, token, { body, method: "POST", signal });
+export function responseTimeoutForRequest(body) {
+  const deadlineMs = body?.deadline_ms;
+  return Number.isSafeInteger(deadlineMs) &&
+    deadlineMs >= 1 &&
+    deadlineMs <= MAX_PROTOCOL_DEADLINE_MS
+    ? deadlineMs + HTTP_TIMEOUT_MS
+    : HTTP_TIMEOUT_MS;
+}
+
+export async function requestJsonPost(
+  url,
+  token,
+  body,
+  { signal, timeoutMs = responseTimeoutForRequest(body) } = {},
+) {
+  return requestJsonWithBody(url, token, {
+    body,
+    method: "POST",
+    signal,
+    timeoutMs,
+  });
 }
 
 export async function requestJsonPostAccepted(url, token, body, { signal } = {}) {
