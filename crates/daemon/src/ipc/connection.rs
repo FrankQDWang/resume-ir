@@ -1,5 +1,6 @@
 use std::net::TcpStream;
 use std::path::Path;
+use std::sync::mpsc::{SyncSender, TrySendError};
 use std::time::Duration;
 
 use meta_store::{ImportProcessingContract, OwnedMetaStore, ReadMetaStore};
@@ -23,12 +24,113 @@ pub(crate) struct Context<'a> {
     pub(crate) source_file_service: &'a SourceFileService,
 }
 
-/// Handles one accepted connection and returns its exactly-once completion
-/// capability. Deferred response owners finish the shared capability after
-/// writing their response; this function has no process-fatal return channel.
-pub(crate) fn handle(stream: TcpStream, context: Context<'_>) -> ConnectionCompletion {
+pub(super) struct PreparedBusinessConnection {
+    stream: TcpStream,
+    request: super::protocol::Request,
+    completion: ConnectionCompletion,
+    pub(super) final_request: bool,
+}
+
+impl PreparedBusinessConnection {
+    pub(super) fn into_parts(self) -> (TcpStream, super::protocol::Request, ConnectionCompletion) {
+        (self.stream, self.request, self.completion)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ReadyAdmission {
+    BusinessForwarded,
+    Completed,
+}
+
+/// Parses and authenticates a ready-server connection without touching the
+/// metadata store. Control requests finish on the front door; business
+/// requests move to the single store-owning data lane.
+pub(super) fn admit_ready(
+    mut stream: TcpStream,
+    state: &ControlPlaneState,
+    auth_token: &str,
+    business_sender: &SyncSender<PreparedBusinessConnection>,
+    final_request: bool,
+) -> ReadyAdmission {
     let completion = ConnectionCompletion::accepted();
-    let result = handle_request(stream, context, &completion);
+    if let Err(error) = configure(&stream) {
+        completion.finish(ConnectionOutcome::from_request_result(Err(error)));
+        return ReadyAdmission::Completed;
+    }
+    let result = match super::protocol::read(&mut stream) {
+        ReadOutcome::Request(request) => {
+            if let Some(result) = routes::dispatch_control(state, auth_token, &request, &mut stream)
+            {
+                result
+            } else if routes::is_business_request(&request) {
+                let task = PreparedBusinessConnection {
+                    stream,
+                    request,
+                    completion: completion.clone(),
+                    final_request,
+                };
+                match business_sender.try_send(task) {
+                    Ok(()) => return ReadyAdmission::BusinessForwarded,
+                    Err(TrySendError::Full(mut task)) => response::write_http_response(
+                        &mut task.stream,
+                        503,
+                        "application/json",
+                        &overloaded_body(),
+                    )
+                    .map_err(RequestFailure::ResponseSink),
+                    Err(TrySendError::Disconnected(mut task)) => response::write_http_response(
+                        &mut task.stream,
+                        503,
+                        "application/json",
+                        &response::service_error_body(
+                            None,
+                            "SERVICE_BLOCKED",
+                            "retry",
+                            None,
+                            Some("runtime_invariant"),
+                        ),
+                    )
+                    .map_err(RequestFailure::ResponseSink),
+                }
+            } else {
+                routes::write(&mut stream, 404, "text/plain", "not found")
+            }
+        }
+        ReadOutcome::TooLarge => {
+            response::write_http_response(&mut stream, 413, "text/plain", "request too large")
+                .map_err(RequestFailure::ResponseSink)
+        }
+        ReadOutcome::BadRequest => {
+            response::write_http_response(&mut stream, 400, "text/plain", "bad request")
+                .map_err(RequestFailure::ResponseSink)
+        }
+    };
+    completion.finish(ConnectionOutcome::from_request_result(result));
+    ReadyAdmission::Completed
+}
+
+pub(super) fn handle_prepared(
+    stream: TcpStream,
+    request: super::protocol::Request,
+    completion: ConnectionCompletion,
+    context: Context<'_>,
+) -> ConnectionCompletion {
+    let result = routes::dispatch(
+        routes::Context {
+            data_dir: context.data_dir,
+            store: context.store,
+            owned_store: context.owned_store,
+            query_service: context.query_service,
+            processing_contract: context.processing_contract,
+            auth_token: context.auth_token,
+            control_state: context.control_state,
+            source_file_service: context.source_file_service,
+        },
+        request,
+        stream,
+        &completion,
+    );
     let outcome = match result {
         Ok(()) if completion.was_deferred() => ConnectionOutcome::Deferred,
         Ok(()) => ConnectionOutcome::Completed,
@@ -90,46 +192,6 @@ fn handle_control_request(
     }
 }
 
-fn handle_request(
-    mut stream: TcpStream,
-    context: Context<'_>,
-    completion: &ConnectionCompletion,
-) -> Result<(), RequestFailure> {
-    configure(&stream)?;
-    let request = match super::protocol::read(&mut stream) {
-        ReadOutcome::Request(request) => request,
-        ReadOutcome::TooLarge => {
-            return response::write_http_response(
-                &mut stream,
-                413,
-                "text/plain",
-                "request too large",
-            )
-            .map_err(RequestFailure::ResponseSink);
-        }
-        ReadOutcome::BadRequest => {
-            return response::write_http_response(&mut stream, 400, "text/plain", "bad request")
-                .map_err(RequestFailure::ResponseSink);
-        }
-    };
-
-    routes::dispatch(
-        routes::Context {
-            data_dir: context.data_dir,
-            store: context.store,
-            owned_store: context.owned_store,
-            query_service: context.query_service,
-            processing_contract: context.processing_contract,
-            auth_token: context.auth_token,
-            control_state: context.control_state,
-            source_file_service: context.source_file_service,
-        },
-        request,
-        stream,
-        completion,
-    )
-}
-
 fn configure(stream: &TcpStream) -> Result<(), RequestFailure> {
     stream
         .set_nonblocking(false)
@@ -138,6 +200,21 @@ fn configure(stream: &TcpStream) -> Result<(), RequestFailure> {
         .set_read_timeout(Some(Duration::from_secs(2)))
         .map_err(|error| RequestFailure::ResponseSink(ResponseSinkError::from_io(&error)))?;
     response::configure(stream).map_err(RequestFailure::ResponseSink)
+}
+
+fn overloaded_body() -> String {
+    serde_json::json!({
+        "schema_version": "resume-ir.error.v3",
+        "status": "error",
+        "error": {
+            "code": "OVERLOADED",
+            "action": "retry",
+            "retry_after_ms": 250,
+            "capability": serde_json::Value::Null,
+            "reason": serde_json::Value::Null,
+        },
+    })
+    .to_string()
 }
 
 #[cfg(test)]

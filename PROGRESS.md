@@ -30724,6 +30724,33 @@ Output summary:
   60-second, absent and invalid deadline cases. No product code, workspace
   suite, final delivery matrix or previously valid installed cell was replayed.
 
+### v0.1.8 ready control-plane independence repair F25
+
+- The post-F24 installed run proved the same App and authorized v29 COW data
+  reach Ready and accept the synthetic canary, but the immediately following
+  authenticated status request timed out while the serial store-owning IPC
+  lane was processing that business request. Status payload generation was
+  memory-only, yet listener admission was still serialized behind the data
+  lane, so the published control-plane independence contract was not true at
+  the socket boundary.
+- The ready listener now has a bounded front door. It parses and authenticates
+  up to eight concurrent admissions, serves status and diagnostics directly
+  from the typed in-memory snapshot, and forwards only parsed business
+  requests through a bounded queue to the single `OwnedMetaStore` lane. The
+  store remains singly owned; no mutex-wrapped store, request replay,
+  compatibility route or unbounded executor was introduced.
+- The front door owns request admission deadlines, overload responses,
+  request-limit handoff and shutdown cancellation. The existing data-lane
+  watchdog remains the sole owner of business execution and response delivery.
+  Native import tests now use the complete installed macOS runtime-pack shape
+  and start the index worker required to close a fresh v33 migration rebuild.
+- Focused evidence passed: the exact front-door unit regression, authenticated
+  loopback status, import-progress stream, full product-route disconnect
+  matrix, complete-runtime background import, late-queued import plus concurrent
+  status, formatting, diff check and daemon-binary Clippy. No workspace,
+  delivery matrix, Windows/Linux lane or previously valid installed cell was
+  replayed. Exact merged-main installed acceptance remains the next gate.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2

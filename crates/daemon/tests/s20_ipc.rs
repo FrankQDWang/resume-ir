@@ -1613,13 +1613,14 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
     let request_limit = IMPORT_WORKER_STATUS_REQUEST_LIMIT;
     let request_limit_arg = request_limit.checked_add(1).unwrap().to_string();
-    let mut child = support::import_capable_daemon_command(&runtime_capacity)
+    let mut child = support::fully_capable_daemon_command(&runtime_capacity)
         .args([
             "--data-dir",
             path_str(&data_dir),
             "run",
             "--foreground",
             "--work-imports",
+            "--work-index",
             "--worker-interval-ms",
             "25",
             "--ipc-listen",
@@ -1721,28 +1722,37 @@ fn daemon_replaces_legacy_auth_with_private_generation_credentials() {
     ignore = "requires reviewed native runtime packs"
 )]
 fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
+    #[cfg(unix)]
+    use std::os::unix::process::CommandExt;
+
     let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    let request_limit = IMPORT_WORKER_STATUS_REQUEST_LIMIT;
-    let request_limit_arg = request_limit.checked_add(1).unwrap().to_string();
-    let mut child = support::import_capable_daemon_command(&runtime_capacity)
+    let launch_id = "7".repeat(64);
+    let mut command = support::fully_capable_daemon_command(&runtime_capacity);
+    command
         .args([
             "--data-dir",
             path_str(&data_dir),
             "run",
             "--foreground",
+            "--parent-lifecycle-stdin",
+            "--launch-id",
+            launch_id.as_str(),
             "--work-imports",
+            "--work-index",
             "--worker-interval-ms",
             "25",
             "--ipc-listen",
             "127.0.0.1:0",
-            "--max-requests",
-            request_limit_arg.as_str(),
         ])
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command
         .spawn()
         .expect("start resume-daemon ipc plus import worker");
 
@@ -1757,16 +1767,15 @@ fn daemon_serves_status_while_import_worker_processes_late_queued_task() {
     assert!(queued_response.contains("HTTP/1.1 202 Accepted"));
     let queued_payload = response_json(&queued_response);
     let task_id = ImportTaskId::from_str(queued_payload["task_ids"][0].as_str().unwrap()).unwrap();
-    let (worker_requests, completed_response) = wait_for_searchable_documents(
+    let (_, completed_response) = wait_for_searchable_documents(
         &mut child,
         &data_dir,
         &endpoint,
         2,
         IMPORT_WORKER_SEARCHABLE_MAX_REQUESTS,
     );
-    let used_requests = 2 + worker_requests;
-    drain_status_requests(&endpoint, request_limit - used_requests);
 
+    drop(child.stdin.take());
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());

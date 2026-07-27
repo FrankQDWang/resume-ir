@@ -18,11 +18,13 @@ use super::{
 use crate::search_runtime_config::SearchRuntimeConfig;
 
 mod connection_lifecycle;
+mod ready_front_door;
 
 use connection_lifecycle::{
     handle_business_with_watchdog, run_control_loop, BusinessConnectionFinish, ControlLoopConfig,
     LISTENER_POLL_INTERVAL,
 };
+use ready_front_door::{ReadyFrontDoor, ReadyFrontDoorStop};
 
 enum ServerStop {
     RequestLimitReached,
@@ -341,7 +343,7 @@ impl BoundServer {
         source_file_service: &SourceFileService,
         status_updater: &StatusUpdater,
     ) -> ServerStop {
-        let mut listener = Some(self.listener.take().expect("bound listener is live"));
+        let listener = self.listener.take().expect("bound listener is live");
         let auth_token = self
             .daemon_owner
             .as_ref()
@@ -353,42 +355,45 @@ impl BoundServer {
             .as_ref()
             .expect("bound generation is published")
             .publication_revoker();
-        let request_limit = context.max_requests.unwrap_or(usize::MAX);
-        let mut handled_requests = 0;
-        while handled_requests < request_limit {
+        let front_door = match ReadyFrontDoor::start(
+            listener,
+            context.control_state.clone(),
+            auth_token.clone(),
+            context.shutdown.cloned(),
+            context.max_requests,
+        ) {
+            Ok(front_door) => front_door,
+            Err(error) => return ServerStop::Fatal(error),
+        };
+        loop {
             match observe_runtime(context, query_service, source_file_service, status_updater) {
                 RuntimeEvent::Running => {}
                 RuntimeEvent::ShutdownRequested => {
-                    drop(listener.take());
-                    self.withdraw();
-                    return ServerStop::ParentShutdown;
+                    return stop_front_door(front_door, ServerStop::ParentShutdown);
                 }
                 event => {
-                    drop(listener.take());
-                    self.withdraw();
-                    return ServerStop::Fatal(runtime_failure(event));
+                    return stop_front_door(front_door, ServerStop::Fatal(runtime_failure(event)));
                 }
             }
 
-            match listener
-                .as_ref()
-                .expect("business listener is live")
-                .accept()
-            {
-                Ok((stream, _)) => {
-                    let finish = if handled_requests + 1 == request_limit {
+            match front_door.recv_timeout(LISTENER_POLL_INTERVAL) {
+                Ok(task) => {
+                    let finish = if task.final_request {
                         BusinessConnectionFinish::AwaitResponseDelivery
                     } else {
                         BusinessConnectionFinish::Immediate
                     };
+                    let (stream, request, completion) = task.into_parts();
                     let result = handle_business_with_watchdog(
                         stream,
                         context.shutdown.cloned(),
                         publication_revoker.clone(),
                         finish,
                         |stream| {
-                            connection::handle(
+                            connection::handle_prepared(
                                 stream,
+                                request,
+                                completion,
                                 connection::Context {
                                     data_dir: context.data_dir,
                                     store: context.store,
@@ -403,31 +408,35 @@ impl BoundServer {
                         },
                     );
                     if let Err(error) = result {
-                        drop(listener.take());
-                        self.withdraw();
-                        return ServerStop::Fatal(error);
+                        return stop_front_door(front_door, ServerStop::Fatal(error));
                     }
-                    handled_requests += 1;
                 }
-                Err(error) => match classify_accept_error(error.kind()) {
-                    AcceptErrorDisposition::NoConnectionReady
-                    | AcceptErrorDisposition::ConnectionLocal => {
-                        thread::sleep(LISTENER_POLL_INTERVAL);
-                    }
-                    AcceptErrorDisposition::ListenerFatal => {
-                        drop(listener.take());
-                        self.withdraw();
-                        return ServerStop::Fatal(DaemonFatalError::ControlPlaneFailure);
-                    }
-                },
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return match front_door.join() {
+                        Ok(ReadyFrontDoorStop::RequestLimitReached) => {
+                            ServerStop::RequestLimitReached
+                        }
+                        Ok(ReadyFrontDoorStop::ParentShutdown | ReadyFrontDoorStop::Requested) => {
+                            ServerStop::ParentShutdown
+                        }
+                        Err(error) => ServerStop::Fatal(error),
+                    };
+                }
             }
         }
-        ServerStop::RequestLimitReached
     }
 
     fn withdraw(&mut self) {
         drop(self.listener.take());
         drop(self.daemon_owner.take());
+    }
+}
+
+fn stop_front_door(front_door: ReadyFrontDoor, terminal: ServerStop) -> ServerStop {
+    match front_door.stop_and_join() {
+        Ok(_) => terminal,
+        Err(error) => ServerStop::Fatal(error),
     }
 }
 
