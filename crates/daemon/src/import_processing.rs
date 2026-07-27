@@ -27,14 +27,35 @@ pub(super) fn activate_contract(
     now: UnixTimestamp,
 ) -> Result<()> {
     match store
-        .activate_migration_rebuild_contract(contract, now)
+        .commit_online_writer_contract(contract, now)
         .map_err(DaemonError::store)?
     {
-        MigrationRebuildContractActivation::Activated
-        | MigrationRebuildContractActivation::AlreadyActive
-        | MigrationRebuildContractActivation::Superseded => Ok(()),
-        MigrationRebuildContractActivation::RunningTaskConflict => {
+        meta_store::WriterContractTransitionOutcome::AlreadyActive => Ok(()),
+        meta_store::WriterContractTransitionOutcome::BlockedByRunningOwner => {
             Err(DaemonError::ownership_conflict())
+        }
+        meta_store::WriterContractTransitionOutcome::PersistedStateInvalid => {
+            match store
+                .activate_migration_rebuild_contract(contract, now)
+                .map_err(DaemonError::store)?
+            {
+                MigrationRebuildContractActivation::Activated
+                | MigrationRebuildContractActivation::AlreadyActive => Ok(()),
+                MigrationRebuildContractActivation::Superseded => Err(DaemonError::recoverable_dependency(
+                    "processing-contract online transition required",
+                )),
+                MigrationRebuildContractActivation::RunningTaskConflict => {
+                    Err(DaemonError::ownership_conflict())
+                }
+            }
+        }
+        meta_store::WriterContractTransitionOutcome::TransitionRequired
+        | meta_store::WriterContractTransitionOutcome::TransitionInProgress
+        | meta_store::WriterContractTransitionOutcome::UnsupportedTransition
+        | meta_store::WriterContractTransitionOutcome::RuntimeUnavailable => {
+            Err(DaemonError::recoverable_dependency(
+                "processing-contract writer transition unavailable",
+            ))
         }
     }
 }

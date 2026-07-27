@@ -72,10 +72,16 @@ const PREVIEW_LIFECYCLE: DaemonLifecycleSnapshot = {
 }
 
 const PREVIEW_STATUS: StatusBody = {
-  schema_version: "daemon.status.v5",
+  schema_version: "daemon.status.v6",
   status: "ok",
   process_state: "ready",
   core: { state: "ready", reason: null },
+  writer: {
+    state: "ready" | "transitioning" | "unavailable" | "blocked"
+    reason: string | null
+    transition_phase: string | null
+  }
+  writer: { state: "ready", reason: null, transition_phase: null },
   optional_runtimes: {
     embedding: { state: "available", reason: null },
     ocr: { state: "available", reason: null },
@@ -262,7 +268,7 @@ export function useDaemonRuntime(input: {
         || currentLifecycle.state !== "running"
         || currentLifecycle.generation !== requestedGeneration
       ) return null
-      const body = reply.body.schema_version === "daemon.status.v5" ? reply.body : null
+      const body = reply.body.schema_version === "daemon.status.v6" ? reply.body : null
       if (reply.http_status !== 200 || body === null) throw new Error("daemon status contract mismatch")
       statusGenerationRef.current = requestedGeneration
       statusRef.current = body

@@ -5,6 +5,21 @@ system design docs, the execution docs, and this running evidence log. Obsolete
 preliminary checklists are historical execution context only, not the
 production-ready scope source.
 
+## Processing-contract Upgrade Coordinator (v34 / 0.1.9)
+
+Landed the root-fix train for online writer-contract transitions:
+
+- Spec/plan: `docs/superpowers/specs|plans/2026-07-27-processing-contract-upgrade-coordinator.md`
+- Schema **v34** with writer transition / campaign / authority tables; continuous COW from v29–v33
+- Product version **0.1.9**; status **v6** + diagnostics **v10** with independent `WriterHealth`
+- `ContractDelta` planner; online `commit_online_writer_contract` (no task purge on Ready)
+- Daemon `upgrade_coordinator` replaces per-tick activation; hard-cut retained for unpublished rebuild only
+- Route admission: register/migrate-legacy gated by writer/import capability; privacy delete remains independent
+- Installed acceptance runbook: `docs/runbooks/writer-contract-upgrade-installed-acceptance.md`
+- Acceptance matrix adds pre-upgrade canary + target-contract attestation + restart identity witnesses
+
+Exact merged-main installed acceptance against authorized v29 COW remains the decisive private gate before soak.
+
 ## Execution Boundaries
 
 - Repository: `/Users/frankqdwang/MLE/resume-ir`

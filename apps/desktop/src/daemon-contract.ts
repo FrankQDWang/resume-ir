@@ -13,11 +13,11 @@ const coreReasons = ["metadata_initializing", "metadata_migrating", "migration_r
 const runtimeStates = ["initializing", "available", "unavailable"] as const
 const runtimeReasons = ["missing", "invalid", "start_failed", "not_configured"] as const
 const capabilityStates = ["initializing", "available", "degraded", "unavailable", "blocked"] as const
-const capabilityReasons = ["core_initializing", "core_blocked", "embedding_unavailable", "ocr_unavailable", "classifier_unavailable", "pdfium_unavailable"] as const
+const capabilityReasons = ["core_initializing", "core_blocked", "embedding_unavailable", "ocr_unavailable", "classifier_unavailable", "pdfium_unavailable", "writer_unavailable", "writer_transitioning"] as const
 const capabilityNames = ["keyword_search", "detail", "semantic_search", "hybrid_search", "text_import", "pdf_import", "ocr_import", "index_publication"] as const
 
 const statusKeys = [
-  "schema_version", "status", "process_state", "core", "optional_runtimes", "capabilities", "error", "repair_progress",
+  "schema_version", "status", "process_state", "core", "optional_runtimes", "writer", "capabilities", "error", "repair_progress",
   "indexed_documents", "searchable_documents", "partial_documents", "visible_epoch", "failed_retryable", "failed_permanent",
   "recovery_queue_depth", "ocr_queue_depth", "ocr_jobs_queued", "ocr_page_budget_blocked", "ocr_remediation",
   "ocr_language_unavailable", "ocr_language_remediation", "embedding_queue_depth", "entity_mentions", "import_tasks_queued",
@@ -35,10 +35,10 @@ export function isDiagnosticsReply(value: unknown): value is DaemonReply<Diagnos
 
 export function isStatusBody(value: unknown): value is StatusBody {
   if (!isRecord(value) || !hasExactKeys(value, statusKeys)) return false
-  if (value.schema_version !== "daemon.status.v5" || value.process_state !== "ready") return false
+  if (value.schema_version !== "daemon.status.v6" || value.process_state !== "ready") return false
   if (!["initializing", "migrating", "ok", "repairing", "degraded", "blocked"].includes(String(value.status))) return false
-  if (!isCore(value.core) || !isRuntimes(value.optional_runtimes) || !isCapabilities(value.capabilities)) return false
-  if (!healthStateMatches(value as unknown as StatusBody) || !capabilityMatrixMatches(value.core, value.optional_runtimes, value.capabilities)) return false
+  if (!isCore(value.core) || !isRuntimes(value.optional_runtimes) || !isWriter(value.writer) || !isCapabilities(value.capabilities)) return false
+  if (!healthStateMatches(value as unknown as StatusBody) || !capabilityMatrixMatches(value.core, value.optional_runtimes, value.writer, value.capabilities)) return false
   if (!isServiceError(value.error, value.core)) return false
   if (!isRepairProgress(value.repair_progress, value.core.state)) return false
   if (!isIpc(value.ipc)) return false
@@ -66,12 +66,12 @@ export function isDiagnosticsBody(value: unknown): value is DiagnosticsBody {
   if (!isRecord(value) || !hasExactKeys(value, [
     "schema_version", "privacy_boundary", "contains_raw_resume_text", "contains_queries", "contains_resume_paths",
     "contains_candidate_results", "contains_snippet_text", "visible_epoch", "evidence_lane", "evidence_status",
-    "process_state", "core", "optional_runtimes", "capabilities", "repair_progress", "error", "metrics", "error_counts",
+    "process_state", "core", "optional_runtimes", "writer", "capabilities", "repair_progress", "error", "metrics", "error_counts",
   ])) return false
-  if (value.schema_version !== "resume-ir.diagnostics.v9" || value.privacy_boundary !== "redacted_local_aggregate" || value.evidence_lane !== "gui_manual" || value.evidence_status !== "unaccepted" || value.process_state !== "ready") return false
+  if (value.schema_version !== "resume-ir.diagnostics.v10" || value.privacy_boundary !== "redacted_local_aggregate" || value.evidence_lane !== "gui_manual" || value.evidence_status !== "unaccepted" || value.process_state !== "ready") return false
   if (![value.contains_raw_resume_text, value.contains_queries, value.contains_resume_paths, value.contains_candidate_results, value.contains_snippet_text].every((flag) => flag === false)) return false
-  if (!nullableSafeCount(value.visible_epoch) || !isCore(value.core) || !isRuntimes(value.optional_runtimes) || !isCapabilities(value.capabilities)) return false
-  if (!capabilityMatrixMatches(value.core, value.optional_runtimes, value.capabilities) || !isServiceError(value.error, value.core) || !isRepairProgress(value.repair_progress, value.core.state)) return false
+  if (!nullableSafeCount(value.visible_epoch) || !isCore(value.core) || !isRuntimes(value.optional_runtimes) || !isWriter(value.writer) || !isCapabilities(value.capabilities)) return false
+  if (!capabilityMatrixMatches(value.core, value.optional_runtimes, value.writer, value.capabilities) || !isServiceError(value.error, value.core) || !isRepairProgress(value.repair_progress, value.core.state)) return false
   return isDiagnosticsMetrics(value.metrics, value.visible_epoch !== null)
     && isDiagnosticsErrors(value.error_counts, value.visible_epoch !== null)
 }
@@ -92,6 +92,13 @@ function isRuntime(value: unknown): value is OptionalRuntimeStatus {
     : value.reason === null
 }
 
+function isWriter(value: unknown): value is StatusBody["writer"] {
+  if (!isRecord(value) || !hasExactKeys(value, ["state", "reason", "transition_phase"])) return false
+  if (!["ready", "transitioning", "unavailable", "blocked"].includes(String(value.state))) return false
+  if (value.state === "ready") return value.reason === null && value.transition_phase === null
+  return typeof value.reason === "string"
+}
+
 function isRuntimes(value: unknown): value is StatusBody["optional_runtimes"] {
   return isRecord(value) && hasExactKeys(value, ["embedding", "ocr", "classifier", "pdfium"])
     && isRuntime(value.embedding) && isRuntime(value.ocr) && isRuntime(value.classifier) && isRuntime(value.pdfium)
@@ -109,7 +116,7 @@ function isCapability(value: unknown): value is CapabilityStatus {
   return capabilityReasons.includes(value.reason as typeof capabilityReasons[number])
 }
 
-function capabilityMatrixMatches(core: StatusBody["core"], runtimes: StatusBody["optional_runtimes"], capabilities: StatusBody["capabilities"]): boolean {
+function capabilityMatrixMatches(core: StatusBody["core"], runtimes: StatusBody["optional_runtimes"], writer: StatusBody["writer"], capabilities: StatusBody["capabilities"]): boolean {
   if (core.state === "initializing" || core.state === "migrating" || core.state === "repairing") return capabilityNames.every((name) => capabilityIs(capabilities[name], "initializing", "core_initializing"))
   if (core.state === "degraded" || core.state === "blocked") return capabilityNames.every((name) => capabilityIs(capabilities[name], "blocked", "core_blocked"))
   if (!capabilityIs(capabilities.keyword_search, "available", null) || !capabilityIs(capabilities.detail, "available", null)) return false
@@ -117,12 +124,18 @@ function capabilityMatrixMatches(core: StatusBody["core"], runtimes: StatusBody[
   const classifier = runtimes.classifier.state === "available"
   const ocr = runtimes.ocr.state === "available"
   const pdfium = runtimes.pdfium.state === "available"
+  const writerReady = writer.state === "ready"
+  const writerReason = writer.state === "transitioning" ? "writer_transitioning" : "writer_unavailable"
+  const gate = (ready: boolean, unavailableReason: CapabilityReason | null, capability: CapabilityStatus): boolean => {
+    if (!writerReady) return capabilityIs(capability, "blocked", writerReason)
+    return capabilityIs(capability, ready ? "available" : "unavailable", ready ? null : unavailableReason)
+  }
   return capabilityIs(capabilities.semantic_search, embedding ? "available" : "unavailable", embedding ? null : "embedding_unavailable")
     && capabilityIs(capabilities.hybrid_search, embedding ? "available" : "degraded", embedding ? null : "embedding_unavailable")
-    && capabilityIs(capabilities.text_import, classifier && embedding ? "available" : "unavailable", !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" : null)
-    && capabilityIs(capabilities.pdf_import, classifier && embedding && pdfium ? "available" : "unavailable", !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" : !pdfium ? "pdfium_unavailable" : null)
-    && capabilityIs(capabilities.ocr_import, classifier && embedding && pdfium && ocr ? "available" : "unavailable", !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" : !pdfium ? "pdfium_unavailable" : !ocr ? "ocr_unavailable" : null)
-    && capabilityIs(capabilities.index_publication, embedding ? "available" : "unavailable", embedding ? null : "embedding_unavailable")
+    && gate(classifier && embedding, !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" : null, capabilities.text_import)
+    && gate(classifier && embedding && pdfium, !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" : !pdfium ? "pdfium_unavailable" : null, capabilities.pdf_import)
+    && gate(classifier && embedding && pdfium && ocr, !classifier ? "classifier_unavailable" : !embedding ? "embedding_unavailable" : !pdfium ? "pdfium_unavailable" : !ocr ? "ocr_unavailable" : null, capabilities.ocr_import)
+    && gate(embedding, "embedding_unavailable", capabilities.index_publication)
 }
 
 function capabilityIs(value: CapabilityStatus, state: CapabilityStatus["state"], reason: CapabilityReason | null): boolean {

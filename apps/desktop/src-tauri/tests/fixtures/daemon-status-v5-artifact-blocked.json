@@ -1,23 +1,67 @@
 {
-  "schema_version": "daemon.status.v5",
+  "schema_version": "daemon.status.v6",
   "status": "blocked",
   "process_state": "ready",
-  "core": { "state": "blocked", "reason": "artifact_unavailable" },
+  "core": {
+    "state": "blocked",
+    "reason": "artifact_unavailable"
+  },
   "optional_runtimes": {
-    "embedding": { "state": "available", "reason": null },
-    "ocr": { "state": "available", "reason": null },
-    "classifier": { "state": "available", "reason": null },
-    "pdfium": { "state": "available", "reason": null }
+    "embedding": {
+      "state": "available",
+      "reason": null
+    },
+    "ocr": {
+      "state": "available",
+      "reason": null
+    },
+    "classifier": {
+      "state": "available",
+      "reason": null
+    },
+    "pdfium": {
+      "state": "available",
+      "reason": null
+    }
+  },
+  "writer": {
+    "state": "ready",
+    "reason": null,
+    "transition_phase": null
   },
   "capabilities": {
-    "keyword_search": { "state": "blocked", "reason": "core_blocked" },
-    "detail": { "state": "blocked", "reason": "core_blocked" },
-    "semantic_search": { "state": "blocked", "reason": "core_blocked" },
-    "hybrid_search": { "state": "blocked", "reason": "core_blocked" },
-    "text_import": { "state": "blocked", "reason": "core_blocked" },
-    "pdf_import": { "state": "blocked", "reason": "core_blocked" },
-    "ocr_import": { "state": "blocked", "reason": "core_blocked" },
-    "index_publication": { "state": "blocked", "reason": "core_blocked" }
+    "keyword_search": {
+      "state": "blocked",
+      "reason": "core_blocked"
+    },
+    "detail": {
+      "state": "blocked",
+      "reason": "core_blocked"
+    },
+    "semantic_search": {
+      "state": "blocked",
+      "reason": "core_blocked"
+    },
+    "hybrid_search": {
+      "state": "blocked",
+      "reason": "core_blocked"
+    },
+    "text_import": {
+      "state": "blocked",
+      "reason": "core_blocked"
+    },
+    "pdf_import": {
+      "state": "blocked",
+      "reason": "core_blocked"
+    },
+    "ocr_import": {
+      "state": "blocked",
+      "reason": "core_blocked"
+    },
+    "index_publication": {
+      "state": "blocked",
+      "reason": "core_blocked"
+    }
   },
   "error": {
     "code": "SERVICE_BLOCKED",
@@ -51,5 +95,11 @@
   "active_profile": null,
   "index_health": null,
   "snapshot_present": null,
-  "ipc": { "accepted": 1, "completed": 1, "client_disconnect": 0, "request_failure": 0, "response_failure": 0 }
+  "ipc": {
+    "accepted": 1,
+    "completed": 1,
+    "client_disconnect": 0,
+    "request_failure": 0,
+    "response_failure": 0
+  }
 }

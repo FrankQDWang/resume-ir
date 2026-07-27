@@ -10,7 +10,7 @@ use meta_store::{
 use super::super::protocol::Request;
 use super::super::{
     repair_progress_json, CapabilityMatrix, ControlPlaneState, CoreHealth, CoreState,
-    OptionalRuntimeMatrix, ServiceErrorCode,
+    OptionalRuntimeMatrix, ServiceErrorCode, WriterHealth,
 };
 #[cfg(test)]
 use super::super::{CoreReason, OptionalRuntimeHealth, OptionalRuntimeReason};
@@ -76,7 +76,7 @@ pub(crate) fn unavailable_status_json() -> String {
         reason: Some(CoreReason::MetadataUnavailable),
     };
     let runtimes = unavailable_runtimes(OptionalRuntimeReason::NotConfigured);
-    render_without_store(core, runtimes, CapabilityMatrix::derive(core, runtimes)).to_string()
+    render_without_store(core, runtimes, CapabilityMatrix::derive(core, runtimes, WriterHealth::ready())).to_string()
 }
 
 pub(crate) fn render_without_store(
@@ -86,7 +86,7 @@ pub(crate) fn render_without_store(
 ) -> serde_json::Value {
     let metrics = super::super::process_metrics().snapshot();
     let mut body = serde_json::json!({
-        "schema_version": "daemon.status.v5",
+        "schema_version": "daemon.status.v6",
         "status": status_label(core.state),
         "error": super::super::capability::service_error_json(core),
         "repair_progress": serde_json::Value::Null,
@@ -150,7 +150,7 @@ fn status_json_once(
         .map_err(|error| error.class())?;
     let metrics = super::super::process_metrics().snapshot();
     let mut body = serde_json::json!({
-        "schema_version": "daemon.status.v5",
+        "schema_version": "daemon.status.v6",
         "status": status_label(core.state),
         "repair_progress": repair_progress_json(
             &projection,
@@ -210,7 +210,12 @@ fn merge_health(
     runtimes: OptionalRuntimeMatrix,
     capabilities: CapabilityMatrix,
 ) {
-    let health = super::super::capability::health_json(core, runtimes, capabilities);
+    let health = super::super::capability::health_json(
+        core,
+        runtimes,
+        WriterHealth::ready(),
+        capabilities,
+    );
     let object = body.as_object_mut().expect("status body is an object");
     for (key, value) in health.as_object().expect("health body is an object") {
         object.insert(key.clone(), value.clone());
@@ -307,6 +312,7 @@ mod contract_tests {
     use super::render_without_store;
     use crate::ipc::{
         CapabilityMatrix, CoreHealth, CoreState, OptionalRuntimeHealth, OptionalRuntimeMatrix,
+        WriterHealth,
     };
 
     #[test]
@@ -326,7 +332,7 @@ mod contract_tests {
             classifier: OptionalRuntimeHealth::available(),
             pdfium: OptionalRuntimeHealth::available(),
         };
-        let capabilities = CapabilityMatrix::derive(core, runtimes);
+        let capabilities = CapabilityMatrix::derive(core, runtimes, WriterHealth::ready());
         let rendered = render_without_store(core, runtimes, capabilities);
 
         assert_eq!(object_keys(&rendered), object_keys(&fixture));

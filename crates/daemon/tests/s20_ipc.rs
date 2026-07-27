@@ -175,7 +175,7 @@ fn daemon_serves_redacted_status_over_loopback_ipc() {
     let response = http_get(&endpoint, &token);
 
     assert!(response.contains("HTTP/1.1 200 OK"));
-    assert!(response.contains("\"schema_version\":\"daemon.status.v5\""));
+    assert!(response.contains("\"schema_version\":\"daemon.status.v6\""));
     assert!(response.contains("\"status\":\"ok\""));
     assert!(response.contains("\"index_health\":\"ready\""));
     assert!(response.contains("\"import_tasks_queued\":0"));
@@ -226,7 +226,7 @@ fn daemon_serves_only_authenticated_redacted_v4_diagnostics() {
     assert!(response.contains("HTTP/1.1 200 OK"));
     let body = response.split("\r\n\r\n").nth(1).unwrap();
     let payload: serde_json::Value = serde_json::from_str(body).unwrap();
-    assert_eq!(payload["schema_version"], "resume-ir.diagnostics.v9");
+    assert_eq!(payload["schema_version"], "resume-ir.diagnostics.v10");
     assert_eq!(payload["privacy_boundary"], "redacted_local_aggregate");
     assert_eq!(payload["evidence_lane"], "gui_manual");
     assert_eq!(payload["evidence_status"], "unaccepted");
@@ -2293,7 +2293,7 @@ fn response_json(response: &str) -> serde_json::Value {
 fn assert_ready_status(response: &str) {
     assert!(response.contains("HTTP/1.1 200 OK"), "{response}");
     let payload = response_json(response);
-    assert_eq!(payload["schema_version"], "daemon.status.v5");
+    assert_eq!(payload["schema_version"], "daemon.status.v6");
     assert_eq!(payload["process_state"], "ready");
     assert_eq!(payload["core"]["state"], "ready");
     assert_eq!(payload["core"]["reason"], serde_json::Value::Null);

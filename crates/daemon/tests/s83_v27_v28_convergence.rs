@@ -247,7 +247,7 @@ fn wait_for_blocked_status(
         assert!(status.starts_with("HTTP/1.1 200"), "{status}");
         let payload: serde_json::Value =
             serde_json::from_str(status.split_once("\r\n\r\n").unwrap().1).unwrap();
-        assert_eq!(payload["schema_version"], "daemon.status.v5");
+        assert_eq!(payload["schema_version"], "daemon.status.v6");
         assert_eq!(payload["process_state"], "ready");
         if payload["core"]["state"] == "blocked" {
             return payload;

@@ -108,7 +108,11 @@ fn run_persistent_ipc_with_hooks(
             let startup_now = crate::current_timestamp()?;
             let recovered =
                 import_processing::normalize_orphaned_running_tasks(&store, startup_now)?;
-            import_processing::activate_contract(&store, &processing_contract, startup_now)?;
+            let _outcome = crate::upgrade_coordinator::bootstrap_writer_barrier(
+                &store,
+                &processing_contract,
+                startup_now,
+            )?;
             recovered
         } else {
             0
@@ -772,7 +776,11 @@ mod tests {
             state: ipc::CoreState::Ready,
             reason: None,
         };
-        let capabilities = ipc::CapabilityMatrix::derive(core, runtimes);
+        let capabilities = ipc::CapabilityMatrix::derive(
+            core,
+            runtimes,
+            daemon_contract::WriterHealth::ready(),
+        );
         assert_eq!(
             capabilities.keyword_search.state,
             ipc::CapabilityState::Available
@@ -847,7 +855,11 @@ mod tests {
                 classifier: health(classifier),
                 pdfium: health(pdfium),
             };
-            let capabilities = ipc::CapabilityMatrix::derive(core, runtimes);
+            let capabilities = ipc::CapabilityMatrix::derive(
+                core,
+                runtimes,
+                daemon_contract::WriterHealth::ready(),
+            );
             let mut options = all_workers();
             apply_runtime_worker_gates(&mut options, runtimes);
             let import_available = embedding && classifier;

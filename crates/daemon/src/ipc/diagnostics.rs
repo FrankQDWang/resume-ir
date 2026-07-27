@@ -2,6 +2,7 @@ use meta_store::{ReadMetaStore, SourceRootState};
 
 use super::{
     process_metrics, repair_progress_json, CapabilityMatrix, CoreHealth, OptionalRuntimeMatrix,
+    WriterHealth,
 };
 
 const MAX_ERROR_BUCKETS: usize = 16;
@@ -48,7 +49,7 @@ fn render_available(
         u64::try_from(store.incomplete_source_root_deletions()?.len()).unwrap_or(u64::MAX);
     let ipc = process_metrics().snapshot();
     let mut body = serde_json::json!({
-        "schema_version": "resume-ir.diagnostics.v9",
+        "schema_version": "resume-ir.diagnostics.v10",
         "privacy_boundary": "redacted_local_aggregate",
         "contains_raw_resume_text": false,
         "contains_queries": false,
@@ -107,7 +108,7 @@ pub(crate) fn render_without_store(
     capabilities: CapabilityMatrix,
 ) -> serde_json::Value {
     let mut body = serde_json::json!({
-        "schema_version": "resume-ir.diagnostics.v9",
+        "schema_version": "resume-ir.diagnostics.v10",
         "privacy_boundary": "redacted_local_aggregate",
         "contains_raw_resume_text": false,
         "contains_queries": false,
@@ -171,7 +172,8 @@ fn merge_health(
     runtimes: OptionalRuntimeMatrix,
     capabilities: CapabilityMatrix,
 ) {
-    let health = super::capability::health_json(core, runtimes, capabilities);
+    let health =
+        super::capability::health_json(core, runtimes, WriterHealth::ready(), capabilities);
     let object = body.as_object_mut().expect("diagnostics body is an object");
     for (key, value) in health.as_object().expect("health body is an object") {
         object.insert(key.clone(), value.clone());
@@ -193,7 +195,7 @@ mod tests {
     use super::render_without_store;
     use crate::ipc::{
         CapabilityMatrix, CoreHealth, CoreReason, CoreState, OptionalRuntimeHealth,
-        OptionalRuntimeMatrix, OptionalRuntimeReason,
+        OptionalRuntimeMatrix, OptionalRuntimeReason, WriterHealth,
     };
 
     #[test]
@@ -208,9 +210,9 @@ mod tests {
             classifier: OptionalRuntimeHealth::unavailable(OptionalRuntimeReason::Missing),
             pdfium: OptionalRuntimeHealth::available(),
         };
-        let value = render_without_store(core, runtimes, CapabilityMatrix::derive(core, runtimes));
+        let value = render_without_store(core, runtimes, CapabilityMatrix::derive(core, runtimes, WriterHealth::ready()));
 
-        assert_eq!(value["schema_version"], "resume-ir.diagnostics.v9");
+        assert_eq!(value["schema_version"], "resume-ir.diagnostics.v10");
         assert_eq!(value["process_state"], "ready");
         assert_eq!(value["core"]["state"], "degraded");
         assert_eq!(value["core"]["reason"], "metadata_unavailable");
@@ -246,7 +248,7 @@ mod tests {
             pdfium: OptionalRuntimeHealth::available(),
         };
         let produced =
-            render_without_store(core, runtimes, CapabilityMatrix::derive(core, runtimes));
+            render_without_store(core, runtimes, CapabilityMatrix::derive(core, runtimes, WriterHealth::ready()));
 
         assert_eq!(keys(&produced), keys(&fixture));
         for key in [

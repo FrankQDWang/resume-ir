@@ -307,6 +307,16 @@ pub(crate) fn dispatch(
         );
     }
     if request.matches("POST", "/source-roots/register") {
+        let capability = context.control_state.snapshot().capabilities.text_import;
+        if let Some(result) = require_capability(
+            &mut stream,
+            context.auth_token,
+            &request,
+            "text_import",
+            capability,
+        ) {
+            return result;
+        }
         return source_roots::register(
             context.owned_store,
             context.processing_contract,
@@ -316,6 +326,16 @@ pub(crate) fn dispatch(
         );
     }
     if request.matches("POST", "/source-roots/migrate-legacy") {
+        let capability = context.control_state.snapshot().capabilities.text_import;
+        if let Some(result) = require_capability(
+            &mut stream,
+            context.auth_token,
+            &request,
+            "text_import",
+            capability,
+        ) {
+            return result;
+        }
         return source_roots::migrate_legacy(
             context.owned_store,
             context.processing_contract,

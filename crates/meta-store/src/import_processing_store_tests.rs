@@ -260,6 +260,59 @@ fn ready_or_generation_bearing_heads_never_reopen_for_a_new_contract() {
 }
 
 #[test]
+fn online_commit_switches_ready_writer_contract_without_task_purge() {
+    let store = migrated_store();
+    let previous = processing_contract("parser-v1");
+    let now = UnixTimestamp::from_unix_seconds(1_900_100_000);
+    assert_eq!(
+        store
+            .activate_migration_rebuild_contract(&previous, now)
+            .unwrap(),
+        MigrationRebuildContractActivation::Activated
+    );
+    force_generation_bearing_state(&store, "ready", None);
+    let root_path = "synthetic/import/online-commit";
+    let task = import_task("online-commit", root_path, now);
+    let scope = import_scope(&task, 0);
+    store
+        .insert_import_task_with_scan_scope(&task, &scope, &previous)
+        .unwrap();
+    let queued_before = store
+        .connection
+        .borrow()
+        .query_row("SELECT COUNT(*) FROM import_task", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap();
+    assert_eq!(queued_before, 1);
+
+    let replacement = processing_contract("parser-pdfium-v2");
+    assert_eq!(
+        store
+            .commit_online_writer_contract(&replacement, now)
+            .unwrap(),
+        crate::WriterContractTransitionOutcome::AlreadyActive
+    );
+    assert_eq!(
+        active_contract_id(&store).as_deref(),
+        Some(replacement.id().as_str())
+    );
+    assert_eq!(raw_projection_state(&store).0, "ready");
+    assert_eq!(
+        raw_projection_state(&store).1.as_deref(),
+        Some("synthetic-generation")
+    );
+    let queued_after = store
+        .connection
+        .borrow()
+        .query_row("SELECT COUNT(*) FROM import_task", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap();
+    assert_eq!(queued_after, 1);
+}
+
+#[test]
 fn blocked_contract_hard_cut_never_deletes_a_running_task() {
     let store = blocked_store_with_running_task();
     let previous = processing_contract("parser-v1");

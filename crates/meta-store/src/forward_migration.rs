@@ -4,14 +4,15 @@ use rusqlite::{params, Connection, Transaction};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, MetaStoreError, Result,
-    SourceRootId,
+    schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, MetaStoreError,
+    Result, SourceRootId,
 };
 
 const V29_TO_V30_NAME: &str = "metadata-forward-migration-history";
 const V30_TO_V31_NAME: &str = "source-root-path-truth";
 const V31_TO_V32_NAME: &str = "source-root-durable-deletion";
 const V32_TO_V33_NAME: &str = "pdfium-parser-reprocessing";
+const V33_TO_V34_NAME: &str = "processing-contract-upgrade-coordinator";
 const PDFIUM_PARSER_CONTRACT: &str = "parser-pdfium-v2";
 const PDF_REPROCESS_LOOKUP_INDEX: &str = "__migration_pdf_reprocess_resume_lookup";
 
@@ -87,7 +88,7 @@ pub(super) fn validate_chain(connection: &Connection, from: u32, to: u32) -> Res
 }
 
 pub(super) fn apply_current_schema(connection: &mut Connection, from: u32) -> Result<()> {
-    apply_chain(connection, from, schema_v33::VERSION)
+    apply_chain(connection, from, schema_v34::VERSION)
 }
 
 fn apply_step(connection: &mut Connection, step: &MigrationStep) -> Result<()> {
@@ -412,7 +413,59 @@ fn validate_v33(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn registry() -> [MigrationStep; 4] {
+fn apply_v33_to_v34(transaction: &Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(schema_v34::SCHEMA)
+        .map_err(MetaStoreError::migration)?;
+    // Seed committed writer authority from the existing rebuild contract head
+    // without activating a transition. Slice B stays dormant.
+    transaction
+        .execute(
+            "UPDATE writer_authority_state
+             SET committed_contract_id = (
+                     SELECT active_contract_id
+                     FROM migration_rebuild_contract_state
+                     WHERE state_key = 'default'
+                 ),
+                 updated_at_seconds = MAX(updated_at_seconds, 0)
+             WHERE state_key = 'default'",
+            [],
+        )
+        .map_err(MetaStoreError::migration)?;
+    Ok(())
+}
+
+fn validate_v34(connection: &Connection) -> Result<()> {
+    let tables = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table'
+               AND name IN (
+                   'writer_contract_transition',
+                   'writer_authority_state',
+                   'reprocessing_campaign'
+               )",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(MetaStoreError::storage)?;
+    if tables != 3 {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    let authority_rows = connection
+        .query_row(
+            "SELECT COUNT(*) FROM writer_authority_state WHERE state_key = 'default'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(MetaStoreError::storage)?;
+    if authority_rows != 1 {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    Ok(())
+}
+
+fn registry() -> [MigrationStep; 5] {
     [
         MigrationStep {
             from: schema_v29::VERSION,
@@ -445,6 +498,14 @@ fn registry() -> [MigrationStep; 4] {
             schema: schema_v33::SCHEMA,
             apply: apply_v32_to_v33,
             validate: validate_v33,
+        },
+        MigrationStep {
+            from: schema_v33::VERSION,
+            to: schema_v34::VERSION,
+            name: V33_TO_V34_NAME,
+            schema: schema_v34::SCHEMA,
+            apply: apply_v33_to_v34,
+            validate: validate_v34,
         },
     ]
 }

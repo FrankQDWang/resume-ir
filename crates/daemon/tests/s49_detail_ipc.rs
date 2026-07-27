@@ -922,7 +922,7 @@ impl Daemon {
             let response = http_get_status(&self.endpoint, &self.token);
             assert_status(&response, "HTTP/1.1 200 OK");
             let payload = response_json(&response);
-            assert_eq!(payload["schema_version"], "daemon.status.v5");
+            assert_eq!(payload["schema_version"], "daemon.status.v6");
             assert_eq!(payload["process_state"], "ready");
             match payload["capabilities"]["detail"]["state"].as_str() {
                 Some("available") => return,

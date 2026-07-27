@@ -1,6 +1,6 @@
 use daemon_contract::{
     validate_health_contract, CapabilityMatrix, CoreError, CoreHealth, OptionalRuntimeMatrix,
-    StatusState,
+    StatusState, WriterHealth,
 };
 use serde_json::Value;
 
@@ -8,12 +8,13 @@ use super::{has_exact_keys, string};
 
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 pub(crate) fn valid_status(body: &Value) -> bool {
-    const KEYS: [&str; 34] = [
+    const KEYS: [&str; 35] = [
         "schema_version",
         "status",
         "process_state",
         "core",
         "optional_runtimes",
+        "writer",
         "capabilities",
         "error",
         "repair_progress",
@@ -45,7 +46,7 @@ pub(crate) fn valid_status(body: &Value) -> bool {
         "ipc",
     ];
     if !has_exact_keys(body, &KEYS)
-        || string(body, "schema_version") != Some("daemon.status.v5")
+        || string(body, "schema_version") != Some("daemon.status.v6")
         || string(body, "process_state") != Some("ready")
     {
         return false;
@@ -54,16 +55,19 @@ pub(crate) fn valid_status(body: &Value) -> bool {
         serde_json::from_value::<StatusState>(body["status"].clone()),
         serde_json::from_value::<CoreHealth>(body["core"].clone()),
         serde_json::from_value::<OptionalRuntimeMatrix>(body["optional_runtimes"].clone()),
+        serde_json::from_value::<WriterHealth>(body["writer"].clone()),
         serde_json::from_value::<CapabilityMatrix>(body["capabilities"].clone()),
         serde_json::from_value::<Option<CoreError>>(body["error"].clone()),
     );
-    let (Ok(status), Ok(core), Ok(runtimes), Ok(capabilities), Ok(error)) = parsed_health else {
+    let (Ok(status), Ok(core), Ok(runtimes), Ok(writer), Ok(capabilities), Ok(error)) =
+        parsed_health
+    else {
         return false;
     };
     let Some(core_state) = string(&body["core"], "state") else {
         return false;
     };
-    if validate_health_contract(status, core, runtimes, capabilities, error).is_err()
+    if validate_health_contract(status, core, runtimes, writer, capabilities, error).is_err()
         || !valid_repair_progress(core_state, body.get("repair_progress"))
         || !valid_store_projection(body)
         || !valid_ipc_metrics(body.get("ipc"))

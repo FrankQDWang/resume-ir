@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 pub(super) use daemon_contract::{
     CapabilityMatrix as Capabilities, CoreError, CoreHealth as CoreStatus, CoreState,
-    OptionalRuntimeMatrix as OptionalRuntimes, StatusState,
+    OptionalRuntimeMatrix as OptionalRuntimes, StatusState, WriterHealth,
 };
 
 use super::{ensure, DesktopError, SafeCount};
@@ -63,6 +63,7 @@ pub(super) fn validate_health_contract(
     status: StatusState,
     core: &CoreStatus,
     runtimes: &OptionalRuntimes,
+    writer: &WriterHealth,
     capabilities: &Capabilities,
     error: Option<&CoreError>,
 ) -> Result<(), DesktopError> {
@@ -70,6 +71,7 @@ pub(super) fn validate_health_contract(
         status,
         *core,
         *runtimes,
+        *writer,
         *capabilities,
         error.copied(),
     )

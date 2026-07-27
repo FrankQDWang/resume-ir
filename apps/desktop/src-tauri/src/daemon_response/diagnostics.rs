@@ -6,7 +6,7 @@ use super::enums::{
 use super::health_contract::{
     deserialize_required_nullable, status_for_core, validate_counts, validate_health_contract,
     validate_latency, validate_repair_progress, Capabilities, CoreError, CoreStatus, IpcMetrics,
-    OptionalRuntimes, ProcessState, RepairProgress,
+    OptionalRuntimes, ProcessState, RepairProgress, WriterHealth,
 };
 use super::{decode, ensure, ensure_schema, DesktopError, SafeCount};
 
@@ -27,6 +27,7 @@ pub(crate) struct DiagnosticsBody {
     process_state: ProcessState,
     core: CoreStatus,
     optional_runtimes: OptionalRuntimes,
+    writer: WriterHealth,
     capabilities: Capabilities,
     #[serde(deserialize_with = "deserialize_required_nullable")]
     repair_progress: Option<RepairProgress>,
@@ -113,11 +114,12 @@ struct ScanErrorBucket {
 
 pub(super) fn project_diagnostics(body: &[u8]) -> Result<DiagnosticsBody, DesktopError> {
     let value: DiagnosticsBody = decode(body)?;
-    ensure_schema(&value.schema_version, "resume-ir.diagnostics.v9")?;
+    ensure_schema(&value.schema_version, "resume-ir.diagnostics.v10")?;
     validate_health_contract(
         status_for_core(value.core.state),
         &value.core,
         &value.optional_runtimes,
+        &value.writer,
         &value.capabilities,
         value.error.as_ref(),
     )?;
@@ -183,11 +185,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn diagnostics_v9_requires_the_full_daemon_shape_and_redacts_benchmark_refs() {
+    fn diagnostics_v10_requires_the_full_daemon_shape_and_redacts_benchmark_refs() {
         let raw = include_str!("../../tests/fixtures/daemon-diagnostics-v9-ready.json");
         let projected = project_diagnostics(raw.as_bytes()).unwrap();
         let exposed = serde_json::to_value(projected).unwrap();
-        assert_eq!(exposed["schema_version"], "resume-ir.diagnostics.v9");
+        assert_eq!(exposed["schema_version"], "resume-ir.diagnostics.v10");
         assert!(exposed.get("benchmark_refs").is_none());
 
         let mut missing: serde_json::Value = serde_json::from_str(raw).unwrap();

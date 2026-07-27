@@ -4,7 +4,7 @@ use std::thread;
 use meta_store::{ReadMetaStore, SearchProjectionServiceState};
 
 use super::capability::{
-    CapabilityMatrix, CoreHealth, CoreReason, CoreState, OptionalRuntimeMatrix,
+    CapabilityMatrix, CoreHealth, CoreReason, CoreState, OptionalRuntimeMatrix, WriterHealth,
 };
 use super::{diagnostics, routes, DaemonFatalError};
 
@@ -226,7 +226,7 @@ fn snapshot_from_fallible_source(
 ) -> ControlPlaneSnapshot {
     let loaded = (|| {
         let core = read_core()?;
-        let capabilities = CapabilityMatrix::derive(core, runtimes);
+        let capabilities = CapabilityMatrix::derive(core, runtimes, WriterHealth::ready());
         let status = render_status(core, capabilities)?;
         let diagnostics = render_diagnostics(core, capabilities)?;
         Ok(ControlPlaneSnapshot {
@@ -252,7 +252,7 @@ fn snapshot_without_store(
     core: CoreHealth,
     runtimes: OptionalRuntimeMatrix,
 ) -> ControlPlaneSnapshot {
-    let capabilities = CapabilityMatrix::derive(core, runtimes);
+    let capabilities = CapabilityMatrix::derive(core, runtimes, WriterHealth::ready());
     ControlPlaneSnapshot {
         core,
         runtimes,
@@ -324,7 +324,7 @@ mod tests {
         let snapshot = state.snapshot();
         let status = snapshot.status;
 
-        assert_eq!(status["schema_version"], "daemon.status.v5");
+        assert_eq!(status["schema_version"], "daemon.status.v6");
         assert_eq!(snapshot.core.state, CoreState::Initializing);
         assert_eq!(
             status["optional_runtimes"]["embedding"]["reason"],

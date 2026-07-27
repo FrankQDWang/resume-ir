@@ -94,7 +94,7 @@ fn durable_user_cancellation_is_never_requeued_as_lifecycle_interruption() {
 fn metadata_unavailable_status_keeps_process_and_service_health() {
     let body = unavailable_status_json();
     let value: serde_json::Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(value["schema_version"], "daemon.status.v5");
+    assert_eq!(value["schema_version"], "daemon.status.v6");
     assert_eq!(value["process_state"], "ready");
     assert_eq!(value["core"]["state"], "degraded");
     assert_eq!(value["core"]["reason"], "metadata_unavailable");
@@ -277,7 +277,7 @@ fn import_capability_loss_between_candidate_and_claim_preserves_task_and_project
 }
 
 #[test]
-fn runtime_metadata_read_failure_returns_status_v5_with_blocked_capabilities() {
+fn runtime_metadata_read_failure_returns_status_v6_with_blocked_capabilities() {
     let mut attempts = 0;
     let body = status_json_with(|| {
         attempts += 1;
@@ -286,7 +286,7 @@ fn runtime_metadata_read_failure_returns_status_v5_with_blocked_capabilities() {
     let value: serde_json::Value = serde_json::from_str(&body).unwrap();
 
     assert_eq!(attempts, IPC_METADATA_READ_ATTEMPTS);
-    assert_eq!(value["schema_version"], "daemon.status.v5");
+    assert_eq!(value["schema_version"], "daemon.status.v6");
     assert_eq!(value["process_state"], "ready");
     assert_eq!(value["core"]["state"], "degraded");
     assert_eq!(value["core"]["reason"], "metadata_unavailable");

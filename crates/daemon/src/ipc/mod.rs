@@ -19,6 +19,7 @@ mod status_updater;
 pub(crate) use capability::{
     CapabilityHealth, CapabilityMatrix, CapabilityState, CoreHealth, CoreReason, CoreState,
     OptionalRuntimeHealth, OptionalRuntimeMatrix, OptionalRuntimeReason, OptionalRuntimeState,
+    WriterHealth,
 };
 pub(crate) use completion::ConnectionCompletion;
 pub(crate) use error::{

@@ -190,6 +190,99 @@ impl OptionalRuntimeMatrix {
     }
 }
 
+/// Independent writer-authority health; never folded into CoreReason.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WriterState {
+    Ready,
+    Transitioning,
+    Unavailable,
+    Blocked,
+}
+
+/// Bounded reason for a non-ready writer.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WriterReason {
+    TransitionInProgress,
+    RuntimeUnavailable,
+    UnsupportedTransition,
+    PersistedStateInvalid,
+    BlockedByRunningOwner,
+}
+
+impl WriterReason {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::TransitionInProgress => "transition_in_progress",
+            Self::RuntimeUnavailable => "runtime_unavailable",
+            Self::UnsupportedTransition => "unsupported_transition",
+            Self::PersistedStateInvalid => "persisted_state_invalid",
+            Self::BlockedByRunningOwner => "blocked_by_running_owner",
+        }
+    }
+}
+
+/// Durable writer transition phase projected to status/diagnostics.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WriterTransitionPhase {
+    Observed,
+    ClaimsFenced,
+    WorkersQuiesced,
+    TargetCommitted,
+    WriterReady,
+}
+
+/// Writer authority health shared by status, diagnostics, and capability derive.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WriterHealth {
+    pub state: WriterState,
+    #[serde(deserialize_with = "required_nullable")]
+    pub reason: Option<WriterReason>,
+    #[serde(deserialize_with = "required_nullable")]
+    pub transition_phase: Option<WriterTransitionPhase>,
+}
+
+impl WriterHealth {
+    pub const fn ready() -> Self {
+        Self {
+            state: WriterState::Ready,
+            reason: None,
+            transition_phase: None,
+        }
+    }
+
+    pub const fn transitioning(phase: WriterTransitionPhase) -> Self {
+        Self {
+            state: WriterState::Transitioning,
+            reason: Some(WriterReason::TransitionInProgress),
+            transition_phase: Some(phase),
+        }
+    }
+
+    pub const fn unavailable(reason: WriterReason) -> Self {
+        Self {
+            state: WriterState::Unavailable,
+            reason: Some(reason),
+            transition_phase: None,
+        }
+    }
+
+    pub const fn blocked(reason: WriterReason) -> Self {
+        Self {
+            state: WriterState::Blocked,
+            reason: Some(reason),
+            transition_phase: None,
+        }
+    }
+
+    pub const fn admits_public_writers(self) -> bool {
+        matches!(self.state, WriterState::Ready)
+    }
+}
+
 /// State of one public operation capability.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -223,6 +316,8 @@ pub enum CapabilityReason {
     OcrUnavailable,
     ClassifierUnavailable,
     PdfiumUnavailable,
+    WriterUnavailable,
+    WriterTransitioning,
 }
 
 impl CapabilityReason {
@@ -234,6 +329,8 @@ impl CapabilityReason {
             Self::OcrUnavailable => "ocr_unavailable",
             Self::ClassifierUnavailable => "classifier_unavailable",
             Self::PdfiumUnavailable => "pdfium_unavailable",
+            Self::WriterUnavailable => "writer_unavailable",
+            Self::WriterTransitioning => "writer_transitioning",
         }
     }
 }
@@ -285,7 +382,7 @@ pub struct CapabilityMatrix {
 }
 
 impl CapabilityMatrix {
-    pub fn derive(core: CoreHealth, runtimes: OptionalRuntimeMatrix) -> Self {
+    pub fn derive(core: CoreHealth, runtimes: OptionalRuntimeMatrix, writer: WriterHealth) -> Self {
         match core.state {
             CoreState::Initializing | CoreState::Migrating | CoreState::Repairing => {
                 return Self::uniform(
@@ -303,6 +400,22 @@ impl CapabilityMatrix {
         let classifier = runtimes.classifier.is_available();
         let ocr = runtimes.ocr.is_available();
         let pdfium = runtimes.pdfium.is_available();
+        let writer_gate = match writer.state {
+            WriterState::Ready => None,
+            WriterState::Transitioning => Some(CapabilityReason::WriterTransitioning),
+            WriterState::Unavailable | WriterState::Blocked => {
+                Some(CapabilityReason::WriterUnavailable)
+            }
+        };
+        let gated_import = |available: CapabilityHealth| -> CapabilityHealth {
+            match writer_gate {
+                None => available,
+                Some(reason) => CapabilityHealth {
+                    state: CapabilityState::Blocked,
+                    reason: Some(reason),
+                },
+            }
+        };
         Self {
             keyword_search: CapabilityHealth::available(),
             detail: CapabilityHealth::available(),
@@ -316,14 +429,14 @@ impl CapabilityMatrix {
             } else {
                 CapabilityHealth::degraded(CapabilityReason::EmbeddingUnavailable)
             },
-            text_import: if !classifier {
+            text_import: gated_import(if !classifier {
                 CapabilityHealth::unavailable(CapabilityReason::ClassifierUnavailable)
             } else if !embedding {
                 CapabilityHealth::unavailable(CapabilityReason::EmbeddingUnavailable)
             } else {
                 CapabilityHealth::available()
-            },
-            pdf_import: if !classifier {
+            }),
+            pdf_import: gated_import(if !classifier {
                 CapabilityHealth::unavailable(CapabilityReason::ClassifierUnavailable)
             } else if !embedding {
                 CapabilityHealth::unavailable(CapabilityReason::EmbeddingUnavailable)
@@ -331,8 +444,8 @@ impl CapabilityMatrix {
                 CapabilityHealth::unavailable(CapabilityReason::PdfiumUnavailable)
             } else {
                 CapabilityHealth::available()
-            },
-            ocr_import: if !classifier {
+            }),
+            ocr_import: gated_import(if !classifier {
                 CapabilityHealth::unavailable(CapabilityReason::ClassifierUnavailable)
             } else if !embedding {
                 CapabilityHealth::unavailable(CapabilityReason::EmbeddingUnavailable)
@@ -342,12 +455,14 @@ impl CapabilityMatrix {
                 CapabilityHealth::unavailable(CapabilityReason::OcrUnavailable)
             } else {
                 CapabilityHealth::available()
-            },
-            index_publication: if embedding {
+            }),
+            // Public index publication follows writer admission; search-authority
+            // artifact repair and privacy deletion use WriterAuthorityToken paths.
+            index_publication: gated_import(if embedding {
                 CapabilityHealth::available()
             } else {
                 CapabilityHealth::unavailable(CapabilityReason::EmbeddingUnavailable)
-            },
+            }),
         }
     }
 
@@ -452,6 +567,7 @@ pub fn validate_health_contract(
     status: StatusState,
     core: CoreHealth,
     runtimes: OptionalRuntimeMatrix,
+    writer: WriterHealth,
     capabilities: CapabilityMatrix,
     error: Option<CoreError>,
 ) -> Result<(), ContractViolation> {
@@ -487,8 +603,27 @@ pub fn validate_health_contract(
             ) | (OptionalRuntimeState::Unavailable, Some(_))
         )
     };
+    let valid_writer = matches!(
+        (writer.state, writer.reason),
+        (WriterState::Ready, None)
+            | (
+                WriterState::Transitioning,
+                Some(WriterReason::TransitionInProgress)
+            )
+            | (
+                WriterState::Unavailable | WriterState::Blocked,
+                Some(
+                    WriterReason::RuntimeUnavailable
+                        | WriterReason::UnsupportedTransition
+                        | WriterReason::PersistedStateInvalid
+                        | WriterReason::BlockedByRunningOwner
+                        | WriterReason::TransitionInProgress
+                )
+            )
+    );
     if status != core.status()
         || !valid_core
+        || !valid_writer
         || ![
             runtimes.embedding,
             runtimes.ocr,
@@ -497,7 +632,7 @@ pub fn validate_health_contract(
         ]
         .into_iter()
         .all(valid_runtime)
-        || capabilities != CapabilityMatrix::derive(core, runtimes)
+        || capabilities != CapabilityMatrix::derive(core, runtimes, writer)
         || error != CoreError::for_core(core)
     {
         return Err(ContractViolation);

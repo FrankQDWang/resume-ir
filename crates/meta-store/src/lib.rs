@@ -31,12 +31,14 @@ mod active_store_manifest;
 mod artifact_repair_attempt;
 mod artifact_repair_context;
 mod classification;
+mod contract_delta;
 mod current_store;
 mod data_directory_owner;
 mod forward_migration;
 mod immutable_ingest_stage;
 mod immutable_search;
 mod import_processing_contract;
+mod processing_contract_transition;
 mod import_processing_store;
 mod import_root_control;
 mod import_root_head;
@@ -63,6 +65,7 @@ mod schema_v30;
 mod schema_v31;
 mod schema_v32;
 mod schema_v33;
+mod schema_v34;
 mod search_publication;
 mod search_publication_session;
 mod search_snapshot;
@@ -117,7 +120,7 @@ pub type OwnedMetaStore = MetadataStore<OwnedStoreAccess>;
 pub type EphemeralMetaStore = MetadataStore<EphemeralStoreAccess>;
 
 /// Exact metadata schema accepted and produced by the current binary.
-pub const CURRENT_SCHEMA_VERSION: u32 = schema_v33::VERSION;
+pub const CURRENT_SCHEMA_VERSION: u32 = schema_v34::VERSION;
 
 pub use artifact_repair_attempt::{
     ArtifactRepairAttempt, ArtifactRepairAttemptAcquire, ArtifactRepairAttemptCancellationOutcome,
@@ -139,6 +142,12 @@ pub use immutable_ingest_stage::ImmutableIngestStage;
 pub use immutable_search::{
     IdentityInsertOutcome, SearchProjectionServiceState, SearchProjectionState,
     SearchProjectionTransitionOutcome, SearchRepairReason, SearchSelectionResolution,
+};
+pub use contract_delta::{ContractDelta, ContractDeltaKind, ContractTransitionStrategy};
+pub use processing_contract_transition::{
+    campaign_domain_for, observe_writer_contract_transition, WriterAuthorityHealthState,
+    WriterAuthoritySnapshot, WriterContractTransitionOutcome, WriterTransitionPhase,
+    WriterTransitionReceipt,
 };
 pub use import_processing_contract::{
     ImportProcessingContract, ImportProcessingContractId, ImportSourceDispositionKind,
@@ -980,7 +989,7 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
     }
 
     fn initialize_current_schema(&self) -> Result<MigrationReport> {
-        self.initialize_empty_schema(schema_v33::VERSION)
+        self.initialize_empty_schema(schema_v34::VERSION)
     }
 
     fn initialize_empty_schema(&self, target_version: u32) -> Result<MigrationReport> {
@@ -1002,7 +1011,7 @@ impl<Access: MetadataStoreWriteAccess> MetadataStore<Access> {
     /// Test-only entrypoint for constructing historical schema fixtures.
     #[cfg(any(test, feature = "migration-test-support"))]
     pub fn run_migrations(&self) -> Result<MigrationReport> {
-        self.apply_schema_history_to(schema_v33::VERSION)
+        self.apply_schema_history_to(schema_v34::VERSION)
     }
 
     fn apply_schema_history_to(&self, target_version: u32) -> Result<MigrationReport> {
