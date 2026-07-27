@@ -702,7 +702,9 @@ fn logical_data_digest(connection: &Connection, tables: &[String]) -> Result<Str
             .prepare(&format!("PRAGMA table_info({quoted_table})"))
             .map_err(MetaStoreError::storage)?;
         let columns = column_statement
-            .query_map([], |row| row.get::<_, String>(1))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?))
+            })
             .map_err(MetaStoreError::storage)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(MetaStoreError::storage)?;
@@ -710,14 +712,10 @@ fn logical_data_digest(connection: &Connection, tables: &[String]) -> Result<Str
         if columns.is_empty() {
             return Err(MetaStoreError::storage_invariant());
         }
-        for column in &columns {
+        for (column, _) in &columns {
             update_digest_part(&mut digest, column.as_bytes());
         }
-        let order = columns
-            .iter()
-            .map(|column| quote_identifier(column))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let order = stable_table_order(connection, table, &columns)?;
         let mut row_statement = connection
             .prepare(&format!("SELECT * FROM {quoted_table} ORDER BY {order}"))
             .map_err(MetaStoreError::storage)?;
@@ -749,6 +747,46 @@ fn logical_data_digest(connection: &Connection, tables: &[String]) -> Result<Str
         }
     }
     Ok(format!("sha256:{:x}", digest.finalize()))
+}
+
+fn stable_table_order(
+    connection: &Connection,
+    table: &str,
+    columns: &[(String, i64)],
+) -> Result<String> {
+    let without_rowid = connection
+        .query_row(
+            "SELECT wr FROM pragma_table_list
+             WHERE schema = 'main' AND name = ?1",
+            [table],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(MetaStoreError::storage)?;
+    if without_rowid == 0 {
+        return Ok("_rowid_".to_string());
+    }
+    if without_rowid != 1 {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    let mut primary_key = columns
+        .iter()
+        .filter(|(_, ordinal)| *ordinal > 0)
+        .map(|(name, ordinal)| (*ordinal, name))
+        .collect::<Vec<_>>();
+    primary_key.sort_unstable_by_key(|(ordinal, _)| *ordinal);
+    if primary_key.is_empty()
+        || primary_key
+            .iter()
+            .enumerate()
+            .any(|(index, (ordinal, _))| *ordinal != i64::try_from(index + 1).unwrap_or(i64::MAX))
+    {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    Ok(primary_key
+        .into_iter()
+        .map(|(_, name)| quote_identifier(name))
+        .collect::<Vec<_>>()
+        .join(", "))
 }
 
 fn update_digest_part(digest: &mut Sha256, value: &[u8]) {

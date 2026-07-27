@@ -314,6 +314,103 @@ fn tampered_forward_history_fails_closed_without_repair() {
     assert_eq!(snapshot_tree(fixture.data_dir()), before);
 }
 
+#[test]
+fn logical_preservation_digest_scans_storage_order_without_temp_sorting() {
+    let source = Connection::open_in_memory().unwrap();
+    source
+        .execute_batch(
+            "CREATE TABLE rowid_records (
+                 id TEXT NOT NULL UNIQUE,
+                 payload BLOB NOT NULL
+             );
+             CREATE TABLE keyed_records (
+                 group_id TEXT NOT NULL,
+                 item_id TEXT NOT NULL,
+                 payload BLOB NOT NULL,
+                 PRIMARY KEY (group_id, item_id)
+             ) WITHOUT ROWID;",
+        )
+        .unwrap();
+    for index in (0..64).rev() {
+        source
+            .execute(
+                "INSERT INTO rowid_records (id, payload) VALUES (?1, ?2)",
+                rusqlite::params![
+                    format!("row-{index:03}"),
+                    vec![u8::try_from(index).unwrap(); 64 * 1024]
+                ],
+            )
+            .unwrap();
+        source
+            .execute(
+                "INSERT INTO keyed_records (group_id, item_id, payload)
+                 VALUES (?1, ?2, ?3)",
+                rusqlite::params![
+                    format!("group-{}", index % 4),
+                    format!("item-{index:03}"),
+                    vec![u8::try_from(index).unwrap(); 64 * 1024]
+                ],
+            )
+            .unwrap();
+    }
+    let tables = vec!["keyed_records".to_string(), "rowid_records".to_string()];
+    let source_digest = logical_data_digest(&source, &tables).unwrap();
+
+    let destination_path = tempfile::NamedTempFile::new().unwrap();
+    let mut destination = Connection::open(destination_path.path()).unwrap();
+    let backup = Backup::new(&source, &mut destination).unwrap();
+    backup
+        .run_to_completion(32, Duration::from_millis(1), None)
+        .unwrap();
+    drop(backup);
+
+    assert_eq!(
+        logical_data_digest(&destination, &tables).unwrap(),
+        source_digest
+    );
+    assert_eq!(
+        stable_table_order(
+            &source,
+            "rowid_records",
+            &[("id".to_string(), 0), ("payload".to_string(), 0)]
+        )
+        .unwrap(),
+        "_rowid_"
+    );
+    assert_eq!(
+        stable_table_order(
+            &source,
+            "keyed_records",
+            &[
+                ("group_id".to_string(), 1),
+                ("item_id".to_string(), 2),
+                ("payload".to_string(), 0),
+            ]
+        )
+        .unwrap(),
+        "\"group_id\", \"item_id\""
+    );
+    for query in [
+        "SELECT * FROM rowid_records ORDER BY _rowid_",
+        "SELECT * FROM keyed_records ORDER BY \"group_id\", \"item_id\"",
+    ] {
+        let mut plan = source
+            .prepare(&format!("EXPLAIN QUERY PLAN {query}"))
+            .unwrap();
+        let details = plan
+            .query_map([], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(
+            details
+                .iter()
+                .all(|detail| !detail.contains("USE TEMP B-TREE")),
+            "{details:?}"
+        );
+    }
+}
+
 struct OwnedDirectory {
     _directory: TempDir,
     owner: DataDirectoryOwnerLease,

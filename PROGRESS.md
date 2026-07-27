@@ -30649,6 +30649,46 @@ Output summary:
   unrun receipt test by a single non-incremental Cargo queue. No workspace,
   delivery matrix or previously valid installed cell was replayed.
 
+### v0.1.8 installed v29 migration convergence repair F22
+
+- The first post-F21 installed-main run passed immutable source validation,
+  exact DMG construction/installation, the authorized APFS/COW clone and
+  encrypted v29 authority inspection, but the first cold-start cell remained
+  `core=migrating` until its 20-minute bound. Its cleanup then replaced the
+  primary failure with `cleanup_failed`, making the native result
+  non-diagnostic even though the temporary workspace and processes were
+  removed.
+- A focused launch of the same installed App against a fresh authorized COW
+  clone proved that the control plane stayed healthy while core remained
+  `metadata_migrating`. A native process sample then localized the CPU-bound
+  work to the v32-to-v33 PDF reprocessing backfill: for every source occurrence
+  its correlated `NOT EXISTS` query rescanned the encrypted `resume_version`
+  table because no `(source_revision_id, parse_version)` lookup existed.
+- The migration now creates that lookup index only inside the v32-to-v33
+  transaction, performs the backfill, and drops it before commit. Current v33
+  schema and migration checksums therefore remain unchanged, while the
+  one-time backfill is bounded by one index build plus indexed probes instead
+  of occurrence-by-version rescans.
+- The exact logical preservation digest remains byte-complete but no longer
+  sorts every table by every column. Rowid tables stream in rowid order and
+  `WITHOUT ROWID` tables stream in primary-key order, preserving deterministic
+  source/staging comparison without large temporary B-trees.
+- The acceptance orchestrator now preserves an earlier product failure when
+  cleanup also fails; cleanup-only failures remain typed `cleanup_failed`.
+  This keeps the next native run actionable without weakening cleanup.
+- Focused evidence passed: the two new meta-store regressions prove the
+  backfill uses the bounded lookup and leaves no schema artifact, and that
+  preservation scans avoid temporary sorting while matching an SQLite backup.
+  The existing exact v29 encrypted COW preservation test passes. The exact
+  Node cleanup-masking test, changed-script syntax, diff check and focused
+  meta-store/daemon Clippy all pass.
+- A direct private witness against the authorized v29 COW source completed the
+  repaired migration in 26.769 seconds, returned a valid current
+  `resume-ir.metadata-authority.v1` receipt, and preserved the source
+  ciphertext hash. The earlier diagnostic was stopped after 189 seconds while
+  still inside the quadratic backfill; no delivery matrix or unaffected
+  product cell was replayed.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2
