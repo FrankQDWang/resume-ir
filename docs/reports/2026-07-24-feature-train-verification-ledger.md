@@ -1318,3 +1318,30 @@ build and the clone/dependency budget.
 No previously valid product, workspace or delivery suite was replayed. Native
 installed-main acceptance remains incomplete and resumes only after F18
 reaches main.
+
+### release-promotion source authority repair F19 — 2026-07-27
+
+The post-F18 native retry built the exact-main DMG and reached the default
+reinstall child, which returned `macOS build source provenance is invalid`.
+A focused replay retained the immutable source only for read-only diagnosis:
+HEAD, GitHub origin, detached state, clean status, remote main and source-tree
+identity all passed immediately after the child failure. The build had already
+verified the same identity before and after artifact construction.
+
+The defect was duplicate authority. Promotion discarded the exact source
+capability already verified under the acceptance lease, then attempted to
+re-derive it through a fresh Git/remote probe after the high-load build.
+Install and reinstall now consume a bounded, closed serialized identity from
+the owner. DMG receipt, bundle composition and install receipt verification
+remain fail-closed against that identity; no retry or compatibility path was
+added.
+
+| Row | Behavior boundary | Status | Re-run only when |
+| --- | --- | --- | --- |
+| F19-01 | Serialized source identity accepts only the exact bounded closed contract | focused source-identity suite passed | source-identity serialization or validation changes |
+| F19-02 | Default install and reinstall promotion receive the verified source capability and keep independent lifecycle bounds | focused release-deployment suite passed | release deployment or promotion argument changes |
+| F19-03 | Native install/reinstall and worktree install bind verified DMG consumption to the supplied identity | focused install/reinstall/worktree suites passed | install transaction, DMG verification or source binding changes |
+
+The five focused suites passed 39/39. No product, workspace or previously valid
+delivery suite was replayed. Native installed-main acceptance remains
+incomplete and resumes only after F19 reaches main.

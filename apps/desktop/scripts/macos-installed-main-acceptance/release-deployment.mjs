@@ -219,7 +219,8 @@ async function runLifecycleCommand({
   if (!expected(receipt)) fail("release_promotion_failed");
 }
 
-function defaultPromotionOperations({ repoRoot, runTool, signal }) {
+function defaultPromotionOperations({ repoRoot, runTool, signal, source }) {
+  const serializedSource = JSON.stringify(validateSourceIdentity(source));
   const scriptsRoot = path.join(repoRoot, "apps", "desktop", "scripts");
   const lifecycle = path.join(scriptsRoot, "macos-install-lifecycle.mjs");
   const reinstall = path.join(scriptsRoot, "macos-reinstall-lifecycle.mjs");
@@ -228,6 +229,8 @@ function defaultPromotionOperations({ repoRoot, runTool, signal }) {
     TARGET_TRIPLE,
     "--applications",
     APPLICATIONS_DIRECTORY,
+    "--source-identity",
+    serializedSource,
   ];
   const invoke = (script, args, expected) =>
     runLifecycleCommand({
@@ -415,6 +418,7 @@ export async function deployExactInstalledRelease(options, overrides = {}) {
       repoRoot: immutable.repoRoot,
       runTool,
       signal: options.signal,
+      source: expectedSource.source,
     });
     const operations = {
       installCurrent: overrides.installCurrent ?? defaults.installCurrent,

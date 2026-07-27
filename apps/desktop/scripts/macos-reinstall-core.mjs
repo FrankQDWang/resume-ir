@@ -20,7 +20,10 @@ import {
   readInstallReceipt,
   verifyInstallReceipt,
 } from "./macos-install-receipt.mjs";
-import { validateSourceIdentity } from "./macos-source-identity.mjs";
+import {
+  parseSerializedSourceIdentity,
+  validateSourceIdentity,
+} from "./macos-source-identity.mjs";
 import {
   advanceLifecycleJournal,
   createLifecycleJournal,
@@ -200,9 +203,15 @@ function validateArguments({
   applicationsDirectory,
   installedVersion,
   candidateVersion,
+  expectedSource,
   temporaryRoot,
   platform,
 }) {
+  try {
+    validateSourceIdentity(expectedSource);
+  } catch {
+    throw new Error("macOS reinstall arguments are invalid");
+  }
   if (
     platform !== "darwin" ||
     targetTriple !== "aarch64-apple-darwin" ||
@@ -299,6 +308,7 @@ export async function reinstallMacosDmg(options) {
     applicationsDirectory: options.applicationsDirectory,
     installedVersion: options.installedVersion,
     candidateVersion: options.candidateVersion,
+    expectedSource: options.expectedSource,
     temporaryRoot: options.temporaryRoot ?? os.tmpdir(),
     platform: options.platform ?? process.platform,
   });
@@ -322,6 +332,7 @@ async function reinstallMacosDmgLocked({
   applicationsDirectory,
   installedVersion,
   candidateVersion,
+  expectedSource,
   temporaryRoot = os.tmpdir(),
   platform = process.platform,
   systemRunner = defaultSystemRunner,
@@ -349,6 +360,7 @@ async function reinstallMacosDmgLocked({
     applicationsDirectory,
     installedVersion,
     candidateVersion,
+    expectedSource,
     temporaryRoot,
     platform,
   });
@@ -500,6 +512,7 @@ async function reinstallMacosDmgLocked({
       repoRoot,
       targetTriple,
       dmg,
+      expectedSource,
       temporaryRoot,
       platform,
       systemRunner,
@@ -619,6 +632,7 @@ export function parseReplacementArguments(args, operation) {
     "--applications",
     "--installed-version",
     "--candidate-version",
+    "--source-identity",
   ]);
   for (let index = 0; index < args.length; index += 2) {
     const key = args[index];
@@ -637,5 +651,12 @@ export function parseReplacementArguments(args, operation) {
     applicationsDirectory: values.get("--applications"),
     installedVersion: values.get("--installed-version"),
     candidateVersion: values.get("--candidate-version"),
+    expectedSource: (() => {
+      try {
+        return parseSerializedSourceIdentity(values.get("--source-identity"));
+      } catch {
+        throw new Error(invalid);
+      }
+    })(),
   };
 }

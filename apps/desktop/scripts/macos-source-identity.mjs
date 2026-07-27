@@ -16,6 +16,7 @@ const MAX_FILES = 8_192;
 const MAX_FILE_BYTES = 32 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 512 * 1024 * 1024;
 const MAX_GIT_OUTPUT_BYTES = 4 * 1024 * 1024;
+const MAX_SERIALIZED_IDENTITY_BYTES = 1024;
 const EXCLUDED_PARTS = new Set([".cache", ".git", "dist", "node_modules", "target"]);
 const ROOT_FILES = new Set(["Cargo.lock", "Cargo.toml"]);
 const ROOT_PREFIXES = ["apps/desktop/", "crates/"];
@@ -51,6 +52,20 @@ export function validateSourceIdentity(value) {
     throw sourceError();
   }
   return Object.freeze({ ...value });
+}
+
+export function parseSerializedSourceIdentity(value) {
+  if (
+    typeof value !== "string" ||
+    Buffer.byteLength(value, "utf8") > MAX_SERIALIZED_IDENTITY_BYTES
+  ) {
+    throw sourceError();
+  }
+  try {
+    return validateSourceIdentity(JSON.parse(value));
+  } catch {
+    throw sourceError();
+  }
 }
 
 function git(repoRoot, args, runner) {

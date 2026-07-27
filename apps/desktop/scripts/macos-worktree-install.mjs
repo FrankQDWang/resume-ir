@@ -282,6 +282,7 @@ export async function installMacosWorktreeArtifact({
     dmg,
     applicationsDirectory,
     expectedVersion,
+    expectedSource: artifact.source,
     platform,
     ...(systemRunner === undefined ? {} : { systemRunner }),
     withVerifiedDmg: withVerifiedSnapshotDmg,

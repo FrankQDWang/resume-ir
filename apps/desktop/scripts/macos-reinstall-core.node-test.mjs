@@ -162,15 +162,18 @@ function argumentsFor(values, overrides = {}) {
       applicationsDirectory: values.applicationsDirectory,
       installedVersion: VERSION,
       candidateVersion: VERSION,
+      expectedSource: NEW_SOURCE,
       temporaryRoot: values.temporaryRoot,
       platform: "darwin",
       systemRunner: runnerFor(values.sourceApp, overrides),
-      withVerifiedDmg: async ({ consumeVerifiedImage }) =>
-        consumeVerifiedImage({
+      withVerifiedDmg: async ({ consumeVerifiedImage, expectedSource }) => {
+        assert.deepEqual(expectedSource, NEW_SOURCE);
+        return consumeVerifiedImage({
           appBundle: values.sourceApp,
           appComposition: composition("new"),
           receipt: dmgReceipt(overrides.dmgReceipt),
-        }),
+        });
+      },
       inspectApp: async () => ({
         bundle_id: "local.resume-ir.desktop",
         version: VERSION,

@@ -15,9 +15,16 @@ import test from "node:test";
 
 import {
   captureSourceIdentity,
+  parseSerializedSourceIdentity,
   validateSourceIdentity,
   verifyImmutableSnapshotSource,
 } from "./macos-source-identity.mjs";
+
+const SOURCE = Object.freeze({
+  authority: "exact_main_commit",
+  base_commit: "1".repeat(40),
+  source_tree_sha256: "2".repeat(64),
+});
 
 function git(args, cwd) {
   const result = spawnSync("/usr/bin/git", args, {
@@ -117,6 +124,22 @@ test("source identity is a hard-cut closed contract", () => {
       }),
     /source identity is invalid/,
   );
+});
+
+test("serialized source identity is bounded and closed", () => {
+  const serialized = JSON.stringify(SOURCE);
+  assert.deepEqual(parseSerializedSourceIdentity(serialized), SOURCE);
+  for (const invalid of [
+    "",
+    "not-json",
+    JSON.stringify({ ...SOURCE, extra: true }),
+    "x".repeat(1025),
+  ]) {
+    assert.throws(
+      () => parseSerializedSourceIdentity(invalid),
+      /source identity is invalid/,
+    );
+  }
 });
 
 test("worktree identity rejects symlinked build inputs", async (context) => {

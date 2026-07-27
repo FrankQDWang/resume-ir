@@ -30572,6 +30572,26 @@ Output summary:
   executes the default reinstall child boundary and observes its exact timeout.
   No product, workspace or already-valid delivery suite was replayed.
 
+### v0.1.8 release-promotion source authority repair F19
+
+- The post-F18 installed-main retry reached the exact-main reinstall child and
+  returned `release_promotion_failed`. A focused replay captured the child
+  error `macOS build source provenance is invalid`.
+- The immutable build source was retained only long enough for a bounded
+  read-only diagnosis. Its exact HEAD, GitHub origin, detached state, clean
+  status, remote main binding and source-tree digest all passed immediately
+  after the child failure. The DMG build had also verified the same source
+  before and after construction.
+- Promotion was discarding the source capability already verified under the
+  acceptance lease and re-deriving it through another Git/remote probe after a
+  high-load build. Install and reinstall now receive that bounded serialized
+  identity explicitly, validate its closed schema, and bind DMG, bundle
+  composition and install receipt verification to it. This removes the double
+  authority without weakening source checks or adding a retry.
+- Focused source-identity, release-deployment, install, reinstall and worktree
+  install suites pass 39/39. No product, workspace or previously valid delivery
+  suite was replayed.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2
