@@ -1,7 +1,7 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "pr_opened",
+  "workflow_state": "verification_active",
   "experiment_state": "contract_locked",
   "evidence_lane": "gui_manual",
   "contract_pins": {
@@ -688,7 +688,8 @@
     {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/238"},
     {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"},
     {"from":"verification_active","to":"evidence_review","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-v29-migration-convergence-repair-f22--2026-07-27"},
-    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/245"}
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/245"},
+    {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-canary-publication-witness-repair-f23--2026-07-27"}
   ],
   "verification": {
     "commands": [
@@ -2897,7 +2898,10 @@
       {"command":"F21 exact encrypted v29/current authority, daemon receipt and acceptance-evidence checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#encrypted-metadata-authority-inspection-repair-f21--2026-07-27"},
       {"command":"F21 focused meta-store/daemon Clippy, script syntax, public guard and private read-only authority witness","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#encrypted-metadata-authority-inspection-repair-f21--2026-07-27"},
       {"command":"F22 exact bounded backfill, storage-order digest, v29 COW and cleanup-composition regressions","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-v29-migration-convergence-repair-f22--2026-07-27"},
-      {"command":"F22 focused meta-store/daemon Clippy, script syntax, public guard and 26.769-second authorized COW migration witness","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-v29-migration-convergence-repair-f22--2026-07-27"}
+      {"command":"F22 focused meta-store/daemon Clippy, script syntax, public guard and 26.769-second authorized COW migration witness","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-v29-migration-convergence-repair-f22--2026-07-27"},
+      {"command":"exact merged-main macOS installed acceptance after F22","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-canary-publication-witness-repair-f23--2026-07-27"},
+      {"command":"F23 exact synthetic canary publication and acceptance orchestrator tests: 17 passed","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-canary-publication-witness-repair-f23--2026-07-27"},
+      {"command":"F23 changed acceptance module Node syntax checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-canary-publication-witness-repair-f23--2026-07-27"}
     ],
     "all_required_commands_ran": false,
     "claim": "partial"
@@ -2912,9 +2916,7 @@
   },
   "github_ledger": {
     "primary_issue": "#217",
-    "active_prs": [
-      "#245"
-    ],
+    "active_prs": [],
     "open_blockers": []
   }
 }

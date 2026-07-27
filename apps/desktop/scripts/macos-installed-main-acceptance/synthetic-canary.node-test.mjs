@@ -7,7 +7,8 @@ import test from "node:test";
 import {
   SYNTHETIC_CANARY_FILE_NAME,
   SYNTHETIC_CANARY_TOKEN,
-  canaryImportCompleted,
+  canaryPublicationCompleted,
+  canaryPublicationEpochAdvanced,
   createSyntheticCanary,
   syntheticCanaryImportRequest,
   validateCanaryImportResponse,
@@ -147,7 +148,7 @@ test("creates one owner-only fixed synthetic canary outside the cloned data dire
   });
 });
 
-test("accepts only the exact one-root import receipt and completed one-file publication", () => {
+test("binds canary completion to its search witness instead of mutable global scan state", () => {
   const taskId = `imp_${"a".repeat(32)}`;
   assert.deepEqual(
     validateCanaryImportResponse({
@@ -161,16 +162,37 @@ test("accepts only the exact one-root import receipt and completed one-file publ
     }),
     { taskId },
   );
-  assert.equal(canaryImportCompleted(readyStatus(), epoch - 1), true);
-  assert.equal(canaryImportCompleted(readyStatus(), epoch), false);
+  assert.equal(canaryPublicationEpochAdvanced(readyStatus(), epoch - 1), true);
+  assert.equal(canaryPublicationEpochAdvanced(readyStatus(), epoch), false);
+  const result = {
+    rank: 1,
+    selection: {
+      doc_id: `doc_${"1".repeat(32)}`,
+      version_id: `ver_${"2".repeat(32)}`,
+      visible_epoch: epoch,
+    },
+    file_name: SYNTHETIC_CANARY_FILE_NAME,
+    snippet: SYNTHETIC_CANARY_TOKEN,
+  };
   assert.equal(
-    canaryImportCompleted(
+    canaryPublicationCompleted(
       readyStatus({
+        import_tasks_recoverable: 1,
         latest_import_scan: {
           ...readyStatus().latest_import_scan,
-          searchable_documents: 0,
+          files_discovered: 8720,
+          searchable_documents: 101,
         },
       }),
+      searchResponse([result]),
+      epoch - 1,
+    ),
+    true,
+  );
+  assert.equal(
+    canaryPublicationCompleted(
+      readyStatus(),
+      searchResponse([{ ...result, file_name: "unrelated.txt" }]),
       epoch - 1,
     ),
     false,

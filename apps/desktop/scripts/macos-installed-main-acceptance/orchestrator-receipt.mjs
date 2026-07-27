@@ -93,7 +93,8 @@ import {
 } from "./process-lifecycle.mjs";
 import { readProcessStartTime } from "./process-identity.mjs";
 import {
-  canaryImportCompleted,
+  canaryPublicationCompleted,
+  canaryPublicationEpochAdvanced,
   createSyntheticCanary,
   syntheticCanaryImportRequest,
   validateCanaryImportResponse,
@@ -614,7 +615,22 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
       );
       return pollStatus(
         session,
-        (status) => canaryImportCompleted(status, previousEpoch),
+        async (status) => {
+          if (!canaryPublicationEpochAdvanced(status, previousEpoch)) {
+            return false;
+          }
+          try {
+            const search = await requestJsonPost(
+              observed.connection.urls.search,
+              observed.connection.token,
+              SYNTHETIC_SEARCH_REQUEST,
+              { signal },
+            );
+            return canaryPublicationCompleted(status, search, previousEpoch);
+          } catch {
+            return false;
+          }
+        },
         COLD_READY_TIMEOUT_MS,
         observed.instanceId,
         signal,

@@ -30689,6 +30689,25 @@ Output summary:
   still inside the quadratic backfill; no delivery matrix or unaffected
   product cell was replayed.
 
+### v0.1.8 installed canary publication witness repair F23
+
+- The exact merged-main installed run passed source validation, DMG build and
+  install, encrypted v29 migration and core convergence. The canary was
+  published and the visible epoch advanced, but the baseline cell timed out
+  because a concurrent watcher/rescan task replaced the process-wide
+  `latest_import_scan` snapshot and left one unrelated recoverable task.
+- The acceptance predicate had incorrectly treated mutable global operational
+  counters as the identity of the accepted one-file canary task. It now waits
+  for a newer Ready publication and verifies the unique synthetic file and
+  token through the real search IPC at that exact visible epoch. Watcher,
+  periodic and manual scans may continue concurrently without overwriting this
+  user-visible witness.
+- Focused evidence passed: the exact synthetic-canary contract test proves an
+  unrelated 8,720-file scan and recoverable task cannot replace the canary
+  witness, while a wrong file still fails closed; the acceptance orchestrator
+  suite passed 14/14; all three changed modules pass Node syntax checks. No
+  workspace, delivery matrix or previously valid installed cell was replayed.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2

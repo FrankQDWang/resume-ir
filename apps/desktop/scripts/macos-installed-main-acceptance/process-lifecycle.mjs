@@ -374,7 +374,9 @@ export async function pollStatus(
         undefined,
         signal,
       );
-      if (predicate(status)) return { connection, instanceId, launchId, status };
+      if (await predicate(status)) {
+        return { connection, instanceId, launchId, status };
+      }
     } catch (error) {
       if (
         error instanceof AcceptanceError &&
