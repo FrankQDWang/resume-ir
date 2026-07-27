@@ -1370,3 +1370,53 @@ failure after the implementation itself completed. Only that exact test was
 rerun after correcting the assertion path, and it passed. No product,
 workspace or previously valid delivery suite was replayed. Native
 installed-main acceptance resumes only after F20 reaches main.
+
+### encrypted metadata-authority inspection repair F21 — 2026-07-27
+
+The first post-F20 clone failed before daemon launch because the acceptance
+harness sent encrypted SQLCipher metadata to the system SQLite CLI. Meta-store
+now owns a read-only exact-v29/current logical-authority inspector, and the
+packaged daemon exposes only its bounded path-free receipt. Installed
+acceptance uses that verified daemon boundary for both sides of migration.
+
+| Row | Behavior boundary | Status | Re-run only when |
+| --- | --- | --- | --- |
+| F21-01 | Exact encrypted v29 and current metadata authority can be inspected without owner acquisition or writes | exact meta-store v29/current tests passed; direct authorized-source receipt contained 24 closed fields and source bytes were unchanged | metadata manifest/key/integrity, authority descriptor or inspector changes |
+| F21-02 | Daemon emits one bounded path-free metadata-authority receipt | exact daemon receipt test passed | daemon internal command or receipt schema changes |
+| F21-03 | Installed acceptance uses the verified packaged daemon rather than system SQLite | focused acceptance-evidence Node suite 6/6 passed | installed metadata evidence collection changes |
+| F21-04 | Changed production boundaries remain warning-free and public-safe | focused meta-store/daemon Clippy, script syntax, diff and public guard passed | affected Rust/Node/public-boundary code changes |
+
+No workspace, delivery matrix or previously valid installed product cell was
+replayed. Native installed-main acceptance resumes only after F21 reaches main.
+
+### installed v29 migration convergence repair F22 — 2026-07-27
+
+The next native run passed build, install, COW and encrypted authority
+inspection, then kept the same healthy control plane at
+`core=migrating` until the first cold-start cell's 20-minute timeout. A focused
+COW launch and native process sample localized the CPU-bound path to the
+v32-to-v33 PDF reprocessing backfill: each source occurrence performed an
+encrypted full scan of `resume_version`.
+
+The backfill now creates a transaction-local lifecycle index over
+`(source_revision_id, parse_version)`, performs indexed probes, and drops the
+index before commit. The v33 schema/checksum remains unchanged. Exact
+preservation hashing also streams ordinary tables in rowid order and
+`WITHOUT ROWID` tables in primary-key order instead of sorting by every column.
+When cleanup and a product cell both fail, the orchestrator preserves the
+product failure rather than masking it.
+
+| Row | Behavior boundary | Status | Re-run only when |
+| --- | --- | --- | --- |
+| F22-01 | PDF reprocessing backfill uses the bounded lookup and leaves no persistent schema artifact | exact new meta-store regression passed | v32-to-v33 backfill SQL or migration transaction changes |
+| F22-02 | Exact source/staging digest is deterministic without a temporary sort | exact new rowid/WITHOUT ROWID backup regression passed | preservation witness or table-order logic changes |
+| F22-03 | Existing encrypted v29 COW preservation remains exact | existing exact v29 migration test passed | current-store COW, forward chain or preservation logic changes |
+| F22-04 | Cleanup never replaces an earlier product failure | exact Node orchestrator failure-composition test passed | acceptance cleanup/error composition changes |
+| F22-05 | Authorized private v29 witness converges to valid current authority while preserving source ciphertext | passed in 26.769 seconds; source schema 29, current authority valid, source ciphertext unchanged | migration chain, SQLCipher backup or authority inspection changes |
+| F22-06 | Changed production boundaries remain warning-free | focused meta-store/daemon Clippy, Node syntax and diff checks passed | affected Rust or Node code changes |
+
+The pre-repair focused witness was stopped after 189 seconds while its sampled
+stack remained in the quadratic backfill; its COW workspace was removed and
+the authorized source hash was unchanged. No delivery matrix or unaffected
+product cell was replayed. The next native run resumes at the previously failed
+cold-start cell after F22 reaches main.

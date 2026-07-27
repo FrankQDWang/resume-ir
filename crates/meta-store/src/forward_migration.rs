@@ -13,6 +13,7 @@ const V30_TO_V31_NAME: &str = "source-root-path-truth";
 const V31_TO_V32_NAME: &str = "source-root-durable-deletion";
 const V32_TO_V33_NAME: &str = "pdfium-parser-reprocessing";
 const PDFIUM_PARSER_CONTRACT: &str = "parser-pdfium-v2";
+const PDF_REPROCESS_LOOKUP_INDEX: &str = "__migration_pdf_reprocess_resume_lookup";
 
 struct MigrationStep {
     from: u32,
@@ -353,6 +354,7 @@ fn apply_v32_to_v33(transaction: &Transaction<'_>) -> Result<()> {
     transaction
         .execute_batch(schema_v33::SCHEMA)
         .map_err(MetaStoreError::migration)?;
+    create_pdf_reprocess_lookup_index(transaction)?;
     transaction
         .execute(
             "INSERT INTO pdf_reprocess_job (
@@ -374,6 +376,22 @@ fn apply_v32_to_v33(transaction: &Transaction<'_>) -> Result<()> {
                )
              ON CONFLICT(source_revision_id) DO NOTHING",
             params![PDFIUM_PARSER_CONTRACT],
+        )
+        .map_err(MetaStoreError::migration)?;
+    transaction
+        .execute(&format!("DROP INDEX {PDF_REPROCESS_LOOKUP_INDEX}"), [])
+        .map_err(MetaStoreError::migration)?;
+    Ok(())
+}
+
+fn create_pdf_reprocess_lookup_index(transaction: &Transaction<'_>) -> Result<()> {
+    transaction
+        .execute(
+            &format!(
+                "CREATE INDEX {PDF_REPROCESS_LOOKUP_INDEX}
+                 ON resume_version(source_revision_id, parse_version)"
+            ),
+            [],
         )
         .map_err(MetaStoreError::migration)?;
     Ok(())
@@ -430,3 +448,7 @@ fn registry() -> [MigrationStep; 4] {
         },
     ]
 }
+
+#[cfg(test)]
+#[path = "forward_migration_tests.rs"]
+mod tests;

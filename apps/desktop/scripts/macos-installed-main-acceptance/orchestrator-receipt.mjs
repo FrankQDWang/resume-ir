@@ -889,6 +889,7 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
 async function executeWithCleanup(activeRuntime, signal) {
   let result;
   let primaryError;
+  let cleanupError;
   try {
     result = await executeAcceptance(activeRuntime, signal);
   } catch (error) {
@@ -896,10 +897,11 @@ async function executeWithCleanup(activeRuntime, signal) {
   }
   try {
     await activeRuntime.cleanup();
-  } catch {
-    fail("cleanup_failed");
+  } catch (error) {
+    cleanupError = asAcceptanceError(error);
   }
   if (primaryError) throw primaryError;
+  if (cleanupError) fail("cleanup_failed");
   return { ...result, cleanup: "temporary_clones_removed" };
 }
 

@@ -686,7 +686,9 @@
     {"from":"blocked_needs_external_input","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-repair-round-f02--2026-07-26"},
     {"from":"verification_active","to":"evidence_review","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#final-native-manual-round-f04--2026-07-26"},
     {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/238"},
-    {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"}
+    {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-v29-migration-convergence-repair-f22--2026-07-27"},
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/245"}
   ],
   "verification": {
     "commands": [
@@ -2891,7 +2893,11 @@
       {"command":"F14 focused production/test-seam Clippy and governance/public-boundary checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#complete-fail-late-workspace-repair-f14--2026-07-26"},
       {"command":"macOS PR run 30210820223 complete fail-late workspace and post-test checks","exit_code":1,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#direct-cli-managed-root-scan-coordination-repair-f15--2026-07-26"},
       {"command":"F15 exact repeated managed-root CLI import regression and focused three-crate Clippy","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#direct-cli-managed-root-scan-coordination-repair-f15--2026-07-26"},
-      {"command":"performance, autonomous-goal, loop-state, public-repository and diff checks after final repair","exit_code":0,"evidence_ref":"PROGRESS.md#v0.1.8-final-repair-dmg-and-synthetic-installed-acceptance"}
+      {"command":"performance, autonomous-goal, loop-state, public-repository and diff checks after final repair","exit_code":0,"evidence_ref":"PROGRESS.md#v0.1.8-final-repair-dmg-and-synthetic-installed-acceptance"},
+      {"command":"F21 exact encrypted v29/current authority, daemon receipt and acceptance-evidence checks","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#encrypted-metadata-authority-inspection-repair-f21--2026-07-27"},
+      {"command":"F21 focused meta-store/daemon Clippy, script syntax, public guard and private read-only authority witness","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#encrypted-metadata-authority-inspection-repair-f21--2026-07-27"},
+      {"command":"F22 exact bounded backfill, storage-order digest, v29 COW and cleanup-composition regressions","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-v29-migration-convergence-repair-f22--2026-07-27"},
+      {"command":"F22 focused meta-store/daemon Clippy, script syntax, public guard and 26.769-second authorized COW migration witness","exit_code":0,"evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#installed-v29-migration-convergence-repair-f22--2026-07-27"}
     ],
     "all_required_commands_ran": false,
     "claim": "partial"
@@ -2907,7 +2913,7 @@
   "github_ledger": {
     "primary_issue": "#217",
     "active_prs": [
-      "#238"
+      "#245"
     ],
     "open_blockers": []
   }

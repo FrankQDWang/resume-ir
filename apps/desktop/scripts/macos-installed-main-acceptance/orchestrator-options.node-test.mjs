@@ -746,4 +746,20 @@ test("redacts arbitrary tool failures and always performs cleanup", async () => 
       error.code === "cleanup_failed" &&
       !error.message.includes("/private/cleanup/path"),
   );
+
+  const primaryAndCleanupRuntime = fakeRuntime({
+    cleanupFails: true,
+    failAt: "cold",
+  });
+  await assert.rejects(
+    runInstalledMainAcceptance(options(), {
+      runtime: primaryAndCleanupRuntime,
+    }),
+    (error) =>
+      error instanceof AcceptanceError &&
+      error.code === "acceptance_internal_failure" &&
+      !error.message.includes("/private/path") &&
+      !error.message.includes("/private/cleanup/path"),
+  );
+  assert.equal(primaryAndCleanupRuntime.calls.at(-1)[0], "cleanup");
 });
