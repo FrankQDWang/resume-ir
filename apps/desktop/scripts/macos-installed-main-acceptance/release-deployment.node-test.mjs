@@ -167,6 +167,33 @@ test("gives release promotion its own bounded lifecycle timeout", async () => {
   assert.equal(observed.command, process.execPath);
   assert.match(observed.args[0], /macos-reinstall-lifecycle\.mjs$/);
   assert.equal(observed.options.timeoutMs, RELEASE_PROMOTION_TIMEOUT_MS);
+  const sourceArgument = observed.args.indexOf("--source-identity");
+  assert.notEqual(sourceArgument, -1);
+  assert.deepEqual(JSON.parse(observed.args[sourceArgument + 1]), SOURCE);
+});
+
+test("passes the verified source capability to default install promotion", async () => {
+  const injected = dependencies(undefined);
+  delete injected.values.installCurrent;
+  let observedArgs;
+  injected.values.runTool = async (_command, args) => {
+    observedArgs = args;
+    return {
+      status: 0,
+      timedOut: false,
+      overflow: false,
+      stderr: "",
+      stdout:
+        '{"schema_version":"resume-ir.macos-installed-app.v1","version":"0.1.8"}\n',
+    };
+  };
+
+  await deployExactInstalledRelease(baseOptions, injected.values);
+
+  assert.match(observedArgs[0], /macos-install-lifecycle\.mjs$/);
+  const sourceArgument = observedArgs.indexOf("--source-identity");
+  assert.notEqual(sourceArgument, -1);
+  assert.deepEqual(JSON.parse(observedArgs[sourceArgument + 1]), SOURCE);
 });
 
 function dependencies(installedVersion) {

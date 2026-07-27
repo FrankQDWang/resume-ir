@@ -100,7 +100,8 @@ const signatureReceipt = async () => ({
 });
 
 function verifiedDmgLease(sourceApp, options = {}) {
-  return async ({ consumeVerifiedImage }) => {
+  return async ({ consumeVerifiedImage, expectedSource }) => {
+    assert.deepEqual(expectedSource, SOURCE);
     const result = await consumeVerifiedImage({
       appBundle: sourceApp,
       appComposition: options.composition ?? compositionReceipt(),
@@ -187,6 +188,7 @@ test("public lifecycle entry fails closed when another process owner holds the l
     await assert.rejects(
       installMacosDmg({
         repoRoot: values.root,
+        expectedSource: SOURCE,
         targetTriple: "aarch64-apple-darwin",
         dmg: values.dmg,
         applicationsDirectory: values.applicationsDirectory,
@@ -217,6 +219,7 @@ test("installs only after DMG verification and emits a bounded receipt", async (
   const persistedReceipts = [];
   const receipt = await installMacosDmg({
     repoRoot: values.root,
+    expectedSource: SOURCE,
     targetTriple: "aarch64-apple-darwin",
     dmg: values.dmg,
     applicationsDirectory: values.applicationsDirectory,
@@ -316,6 +319,7 @@ test("copies from the verified mounted image without remounting a replaced DMG p
   };
   const receipt = await installMacosDmg({
     repoRoot: values.root,
+    expectedSource: SOURCE,
     targetTriple: "aarch64-apple-darwin",
     dmg: values.dmg,
     applicationsDirectory: values.applicationsDirectory,
@@ -386,6 +390,7 @@ test("install recovers a partial verifier mount after attach timeout", async (co
   await assert.rejects(
     installMacosDmg({
       repoRoot: values.root,
+      expectedSource: SOURCE,
       targetTriple: "aarch64-apple-darwin",
       dmg: values.dmg,
       applicationsDirectory: values.applicationsDirectory,
@@ -412,6 +417,7 @@ test("rejects an install without the exact signature and entitlement policy", as
   await assert.rejects(
     installMacosDmg({
       repoRoot: values.root,
+      expectedSource: SOURCE,
       targetTriple: "aarch64-apple-darwin",
       dmg: values.dmg,
       applicationsDirectory: values.applicationsDirectory,
@@ -439,6 +445,7 @@ test("rejects an existing target and symlinked Applications root", async (contex
   await assert.rejects(
     installMacosDmg({
       repoRoot: values.root,
+      expectedSource: SOURCE,
       targetTriple: "aarch64-apple-darwin",
       dmg: values.dmg,
       applicationsDirectory: values.applicationsDirectory,
@@ -453,6 +460,7 @@ test("rejects an existing target and symlinked Applications root", async (contex
   await assert.rejects(
     installMacosDmg({
       repoRoot: values.root,
+      expectedSource: SOURCE,
       targetTriple: "aarch64-apple-darwin",
       dmg: values.dmg,
       applicationsDirectory: linkedRoot,
@@ -478,6 +486,7 @@ test("removes a staged or installed App after copy, lease cleanup, or registrati
     await assert.rejects(
       installMacosDmg({
         repoRoot: values.root,
+        expectedSource: SOURCE,
         targetTriple: "aarch64-apple-darwin",
         dmg: values.dmg,
         applicationsDirectory: values.applicationsDirectory,
@@ -510,6 +519,7 @@ test("fails closed on bundle identity, version, or icon drift", async (context) 
   await assert.rejects(
     installMacosDmg({
       repoRoot: values.root,
+      expectedSource: SOURCE,
       targetTriple: "aarch64-apple-darwin",
       dmg: values.dmg,
       applicationsDirectory: values.applicationsDirectory,
@@ -534,6 +544,7 @@ test("removes the installed App when owner-only receipt persistence fails", asyn
   await assert.rejects(
     installMacosDmg({
       repoRoot: values.root,
+      expectedSource: SOURCE,
       targetTriple: "aarch64-apple-darwin",
       dmg: values.dmg,
       applicationsDirectory: values.applicationsDirectory,

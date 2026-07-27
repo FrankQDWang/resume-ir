@@ -20,7 +20,10 @@ import {
   removeInstallReceipt,
   verifyInstallReceipt,
 } from "./macos-install-receipt.mjs";
-import { validateSourceIdentity } from "./macos-source-identity.mjs";
+import {
+  parseSerializedSourceIdentity,
+  validateSourceIdentity,
+} from "./macos-source-identity.mjs";
 import {
   advanceLifecycleJournal,
   createLifecycleJournal,
@@ -242,7 +245,16 @@ function validateArguments({
   }
 }
 
+function requireExpectedSource(expectedSource) {
+  try {
+    return validateSourceIdentity(expectedSource);
+  } catch {
+    throw new Error("macOS lifecycle arguments are invalid");
+  }
+}
+
 export async function installMacosDmg(options) {
+  requireExpectedSource(options.expectedSource);
   validateArguments({
     repoRoot: options.repoRoot,
     targetTriple: options.targetTriple,
@@ -275,6 +287,7 @@ async function installMacosDmgLocked({
   dmg,
   applicationsDirectory,
   expectedVersion = PRODUCT_VERSION,
+  expectedSource,
   temporaryRoot = os.tmpdir(),
   platform = process.platform,
   systemRunner = defaultSystemRunner,
@@ -294,6 +307,7 @@ async function installMacosDmgLocked({
   filesystem = {},
 }, lifecycleLockCapability) {
   requireLifecycleLockCapability(lifecycleLockCapability);
+  requireExpectedSource(expectedSource);
   validateArguments({
     repoRoot,
     targetTriple,
@@ -410,6 +424,7 @@ async function installMacosDmgLocked({
       repoRoot,
       targetTriple,
       dmg,
+      expectedSource,
       temporaryRoot,
       platform,
       systemRunner,
@@ -685,7 +700,13 @@ function parseArguments(args) {
     const key = args[index];
     const value = args[index + 1];
     if (
-      !["--target", "--dmg", "--applications", "--version"].includes(key) ||
+      ![
+        "--target",
+        "--dmg",
+        "--applications",
+        "--version",
+        "--source-identity",
+      ].includes(key) ||
       !value ||
       values.has(key)
     ) {
@@ -698,9 +719,21 @@ function parseArguments(args) {
     !values.has("--applications") ||
     !values.has("--version") ||
     (action === "install" && !values.has("--dmg")) ||
-    (action === "uninstall" && values.has("--dmg"))
+    (action === "install" && !values.has("--source-identity")) ||
+    (action === "uninstall" &&
+      (values.has("--dmg") || values.has("--source-identity")))
   ) {
     throw new Error("invalid macOS lifecycle arguments");
+  }
+  let expectedSource;
+  if (action === "install") {
+    try {
+      expectedSource = parseSerializedSourceIdentity(
+        values.get("--source-identity"),
+      );
+    } catch {
+      throw new Error("invalid macOS lifecycle arguments");
+    }
   }
   return {
     action,
@@ -708,6 +741,7 @@ function parseArguments(args) {
     dmg: values.get("--dmg"),
     applicationsDirectory: values.get("--applications"),
     expectedVersion: values.get("--version"),
+    expectedSource,
   };
 }
 
