@@ -502,6 +502,7 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
       const boundWorkspace = Object.freeze({
         ...workspace,
         v29LogicalAuthority: await captureV29LogicalAuthority({
+          daemonExecutable: bindings.executablePaths.daemon,
           dataDir: workspace.dataDir,
           runTool,
         }),
@@ -585,6 +586,7 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
         signal,
       );
       return validateInstalledReadyArtifacts({
+        daemonExecutable: bindings.executablePaths.daemon,
         dataDir: session.dataDir,
         diagnostics,
         expectedV29Authority: session.workspace.v29LogicalAuthority,
@@ -649,6 +651,7 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
       ]);
       validateCanarySearchResponse(search, observed.status.visible_epoch);
       return validateInstalledRecoveryEvidence({
+        daemonExecutable: bindings.executablePaths.daemon,
         dataDir: session.dataDir,
         diagnostics,
         runTool,

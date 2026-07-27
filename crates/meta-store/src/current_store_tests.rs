@@ -10,8 +10,11 @@ use tempfile::TempDir;
 use super::*;
 use crate::{
     active_store_manifest::{read_manifest, read_manifest_format_version},
-    DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, Document, DocumentId, DocumentStatus,
-    FileExtension, MetaStoreErrorClass, OwnedMetaStore, UnixTimestamp,
+    ContentDigest, DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, Document, DocumentId,
+    DocumentStatus, FileExtension, FullTextSnapshotDescriptor, ImportProcessingContract,
+    MetaStoreErrorClass, OwnedMetaStore, SearchProjectionDigest, SearchPublicationCommit,
+    SearchPublicationDraft, SearchPublicationOutcome, SearchPublicationValidation, UnixTimestamp,
+    VectorSnapshotDescriptor, CLASSIFIER_EPOCH,
 };
 
 #[test]
@@ -37,6 +40,103 @@ fn authority_free_directory_initializes_exact_v33_and_reopens_without_writes() {
     assert_eq!(read_manifest_format_version(&manifest_path).unwrap(), 2);
     let before = snapshot_tree(fixture.data_dir());
     drop(crate::ReadMetaStore::open_data_dir(fixture.data_dir()).unwrap());
+    assert_eq!(snapshot_tree(fixture.data_dir()), before);
+}
+
+#[test]
+fn encrypted_current_logical_authority_is_inspected_without_writes() {
+    const GENERATION: &str = "current-authority-generation";
+    let fixture = OwnedDirectory::new();
+    let store = fixture.owner.open_store().unwrap();
+    let contract = ImportProcessingContract::new(
+        "current-authority-parser",
+        "current-authority-ocr",
+        "current-authority-schema",
+        CLASSIFIER_EPOCH,
+    )
+    .unwrap();
+    store
+        .activate_migration_rebuild_contract(
+            &contract,
+            UnixTimestamp::from_unix_seconds(1_899_999_998),
+        )
+        .unwrap();
+    let barrier = store
+        .acquire_migration_rebuild_barrier_token(contract.id())
+        .unwrap()
+        .unwrap();
+    let projection_digest = SearchProjectionDigest::from_pairs::<_, &str, &str>([]).unwrap();
+    let mut session = store.wait_for_search_publication_session().unwrap();
+    assert!(matches!(
+        session
+            .acquire_migration_rebuild_publication_attempt(
+                &barrier,
+                UnixTimestamp::from_unix_seconds(1_899_999_999),
+            )
+            .unwrap(),
+        crate::MigrationRebuildPublicationAttemptAcquire::Started(_)
+    ));
+    assert_eq!(
+        session
+            .begin_search_publication(&SearchPublicationDraft {
+                generation: GENERATION.to_string(),
+                base_generation: None,
+                expected_visible_epoch: 0,
+                classifier_epoch: CLASSIFIER_EPOCH.to_string(),
+                projection_digest: projection_digest.clone(),
+                now: UnixTimestamp::from_unix_seconds(1_900_000_000),
+            })
+            .unwrap(),
+        SearchPublicationOutcome::Applied
+    );
+    let fulltext = FullTextSnapshotDescriptor::new(
+        GENERATION.to_string(),
+        0,
+        projection_digest.clone(),
+        ContentDigest::from_bytes(b"current-fulltext"),
+    );
+    let vector = VectorSnapshotDescriptor::disabled(
+        GENERATION.to_string(),
+        0,
+        projection_digest.clone(),
+        projection_digest,
+        ContentDigest::from_bytes(b"current-vector"),
+    );
+    session
+        .validate_search_publication(&SearchPublicationValidation {
+            generation: GENERATION,
+            fulltext: &fulltext,
+            vector: &vector,
+            now: UnixTimestamp::from_unix_seconds(1_900_000_001),
+        })
+        .unwrap();
+    assert_eq!(
+        session
+            .commit_migration_rebuild_search_publication(
+                &SearchPublicationCommit {
+                    generation: GENERATION,
+                    terminal_documents: &[],
+                    projections: &[],
+                    projected_documents: &[],
+                    vector_coverage: &[],
+                    now: UnixTimestamp::from_unix_seconds(1_900_000_002),
+                },
+                &barrier,
+            )
+            .unwrap(),
+        SearchPublicationOutcome::Applied
+    );
+    drop(session);
+    drop(store);
+    let before = snapshot_tree(fixture.data_dir());
+
+    let authority = crate::inspect_metadata_logical_authority(fixture.data_dir()).unwrap();
+
+    assert_eq!(authority.generation, GENERATION);
+    assert_eq!(authority.visible_epoch, 1);
+    assert_eq!(authority.fulltext_document_count, 0);
+    assert_eq!(authority.vector_mode, "disabled");
+    assert_eq!(authority.vector_model_id, None);
     assert_eq!(snapshot_tree(fixture.data_dir()), before);
 }
 

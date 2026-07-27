@@ -18,6 +18,7 @@ mod import_processing;
 mod import_watcher;
 mod import_worker;
 mod ipc;
+mod metadata_authority;
 mod migration_repair;
 mod ocr_worker;
 mod parent_lifecycle;
@@ -88,9 +89,12 @@ fn run() -> Result<()> {
     }
 
     let data_dir = take_data_dir(&mut args)?;
+    if args == ["inspect-metadata-authority"] {
+        return metadata_authority::run(&data_dir);
+    }
     if args.first().map(String::as_str) != Some("run") {
         return Err(DaemonError::usage(
-            "expected command: resume-daemon run --foreground [--once]",
+            "expected command: resume-daemon run --foreground [--once] or inspect-metadata-authority",
         ));
     }
 

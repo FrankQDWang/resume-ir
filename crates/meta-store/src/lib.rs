@@ -42,6 +42,7 @@ mod import_root_control;
 mod import_root_head;
 mod import_task_failure;
 mod import_task_purpose;
+mod metadata_logical_authority;
 mod migration_rebuild_attempt;
 mod migration_rebuild_barrier;
 #[cfg(feature = "migration-test-support")]
@@ -72,6 +73,9 @@ mod source_roots;
 mod source_roots_tests;
 mod store_access;
 
+pub use metadata_logical_authority::{
+    inspect_metadata_logical_authority, MetadataLogicalAuthority,
+};
 pub use source_root_deletion::{SourceRootDeletion, SourceRootDeletionPhase};
 pub use source_roots::{
     BeginScanOutcome, OccurrenceChange, ScanCompleteness, ScanCounts, ScanPhase, ScanSnapshot,

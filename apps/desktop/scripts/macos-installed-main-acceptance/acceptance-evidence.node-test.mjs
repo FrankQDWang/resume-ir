@@ -23,6 +23,8 @@ import { diagnostics } from "./fixtures.mjs";
 const STORE_DIGEST = "1".repeat(64);
 const PROJECTION_DIGEST = `sha256:${"2".repeat(64)}`;
 const GENERATION = "generation-ready";
+const DAEMON_EXECUTABLE =
+  "/Applications/resume-ir.app/Contents/MacOS/resume-daemon";
 const SNAPSHOT_PAYLOAD = "encrypted";
 const SNAPSHOT_ARTIFACT_DIGEST = `sha256:${createHash("sha256")
   .update(SNAPSHOT_PAYLOAD)
@@ -123,46 +125,42 @@ function searchResponse(overrides = {}) {
 
 function metadataAuthority(overrides = {}) {
   const generation = overrides.generation ?? GENERATION;
-  const values = {
+  const value = {
+    schema_version: "resume-ir.metadata-authority.v1",
     generation,
-    visibleEpoch: 7,
-    projectionDigest: PROJECTION_DIGEST,
-    vectorProjectionDigest: PROJECTION_DIGEST,
+    visible_epoch: 7,
+    service_state: "ready",
+    publication_state: "ready",
+    projection_digest: PROJECTION_DIGEST,
+    fulltext_generation: generation,
+    fulltext_manifest_schema: "fulltext.snapshot.v3",
+    fulltext_index_schema: "tantivy.fulltext.v3",
+    fulltext_document_count: 4,
+    fulltext_projection_digest: PROJECTION_DIGEST,
+    fulltext_logical_content_digest: `sha256:${"3".repeat(64)}`,
+    vector_generation: generation,
+    vector_manifest_schema: "vector.snapshot.v4",
+    vector_index_schema: "hnsw-vector.v4",
+    vector_mode: "disabled",
+    vector_model_id: null,
+    vector_dimension: null,
+    vector_projection_count: 4,
+    vector_coverage_digest: `sha256:${"5".repeat(64)}`,
+    vector_count: 0,
+    vector_document_count: 0,
+    vector_projection_digest: PROJECTION_DIGEST,
+    vector_logical_content_digest: `sha256:${"3".repeat(64)}`,
     ...overrides,
   };
-  const fields = [
-    values.generation,
-    values.visibleEpoch,
-    "ready",
-    "ready",
-    values.projectionDigest,
-    values.generation,
-    "fulltext.snapshot.v3",
-    "tantivy.fulltext.v3",
-    4,
-    values.projectionDigest,
-    `sha256:${"3".repeat(64)}`,
-    values.generation,
-    "vector.snapshot.v4",
-    "hnsw-vector.v4",
-    "disabled",
-    "",
-    -1,
-    4,
-    `sha256:${"5".repeat(64)}`,
-    0,
-    0,
-    values.vectorProjectionDigest,
-    `sha256:${"3".repeat(64)}`,
-  ];
   return async (command, args, options) => {
-    assert.equal(command, "/usr/bin/sqlite3");
-    assert.equal(args.at(-2).endsWith(".sqlite3"), true);
-    assert.match(args.at(-1), /search_projection_state/);
+    assert.equal(command, DAEMON_EXECUTABLE);
+    assert.equal(args[0], "--data-dir");
+    assert.equal(path.isAbsolute(args[1]), true);
+    assert.equal(args[2], "inspect-metadata-authority");
     assert.equal(options.env.HOME, "/var/empty");
     return {
       status: 0,
-      stdout: `${fields.join("\t")}\n`,
+      stdout: `${JSON.stringify(value)}\n`,
       stderr: "",
       timedOut: false,
       overflow: false,
@@ -265,6 +263,7 @@ test("binds the active v33 metadata file, one exact generation pair, and a bound
   const { dataDir } = await fixture(context);
   assert.deepEqual(
     await validateInstalledRecoveryEvidence({
+      daemonExecutable: DAEMON_EXECUTABLE,
       dataDir,
       diagnostics: diagnostics(),
       runTool: metadataAuthority(),
@@ -297,12 +296,14 @@ test("binds the active v33 metadata file, one exact generation pair, and a bound
 test("validates cold Ready and artifact evidence without a search witness", async (context) => {
   const { dataDir } = await fixture(context, { schema: 29 });
   const expectedV29Authority = await captureV29LogicalAuthority({
+    daemonExecutable: DAEMON_EXECUTABLE,
     dataDir,
     runTool: metadataAuthority(),
   });
   await writeActiveManifest(dataDir, 33);
   assert.deepEqual(
     await validateInstalledReadyArtifacts({
+      daemonExecutable: DAEMON_EXECUTABLE,
       dataDir,
       diagnostics: diagnostics(),
       expectedV29Authority,
@@ -316,6 +317,7 @@ test("validates cold Ready and artifact evidence without a search witness", asyn
   );
   await assert.rejects(
     validateInstalledReadyArtifacts({
+      daemonExecutable: DAEMON_EXECUTABLE,
       dataDir,
       diagnostics: diagnostics(),
       expectedV29Authority: { ...expectedV29Authority, visibleEpoch: 6 },
@@ -331,6 +333,7 @@ test("rejects missing or stale metadata and generation artifacts", async (contex
   await unlink(path.join(missing.dataDir, missing.metadataFile));
   await assert.rejects(
     validateInstalledRecoveryEvidence({
+      daemonExecutable: DAEMON_EXECUTABLE,
       dataDir: missing.dataDir,
       diagnostics: diagnostics(),
       runTool: metadataAuthority(),
@@ -348,6 +351,7 @@ test("rejects missing or stale metadata and generation artifacts", async (contex
   );
   await assert.rejects(
     validateInstalledRecoveryEvidence({
+      daemonExecutable: DAEMON_EXECUTABLE,
       dataDir: stale.dataDir,
       diagnostics: diagnostics(),
       runTool: metadataAuthority({ generation: "generation-stale" }),
@@ -368,6 +372,7 @@ test("rejects projection/count/epoch inconsistencies without exposing result con
   );
   await assert.rejects(
     validateInstalledRecoveryEvidence({
+      daemonExecutable: DAEMON_EXECUTABLE,
       dataDir: projection.dataDir,
       diagnostics: diagnostics(),
       runTool: metadataAuthority(),
@@ -380,6 +385,7 @@ test("rejects projection/count/epoch inconsistencies without exposing result con
   const epoch = await fixture(context);
   await assert.rejects(
     validateInstalledRecoveryEvidence({
+      daemonExecutable: DAEMON_EXECUTABLE,
       dataDir: epoch.dataDir,
       diagnostics: diagnostics({ visible_epoch: 8 }),
       runTool: metadataAuthority(),
@@ -403,6 +409,7 @@ test("rejects fulltext or vector bytes that do not match the manifest artifact d
 
     await assert.rejects(
       validateInstalledRecoveryEvidence({
+        daemonExecutable: DAEMON_EXECUTABLE,
         dataDir,
         diagnostics: diagnostics(),
         runTool: metadataAuthority(),
@@ -429,6 +436,7 @@ test("rejects snapshot keys above the explicit small-file bound", async (context
 
   await assert.rejects(
     validateInstalledRecoveryEvidence({
+      daemonExecutable: DAEMON_EXECUTABLE,
       dataDir,
       diagnostics: diagnostics(),
       runTool: metadataAuthority(),

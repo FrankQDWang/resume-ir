@@ -271,6 +271,26 @@ fn current_v29_publication_fingerprint_corruption_is_rejected_byte_stably() {
 }
 
 #[test]
+fn encrypted_v29_logical_authority_is_inspected_without_writes() {
+    let fixture = OwnedDirectory::new();
+    seed_published_v29_projection(fixture.open_v29_store().unwrap());
+    let before = snapshot_tree(fixture.data_dir());
+
+    let authority = crate::inspect_metadata_logical_authority(fixture.data_dir()).unwrap();
+
+    assert_eq!(authority.generation, "v29-preservation-generation");
+    assert_eq!(authority.visible_epoch, 1);
+    assert_eq!(authority.fulltext_document_count, 1);
+    assert_eq!(authority.vector_mode, "enabled");
+    assert_eq!(
+        authority.vector_model_id.as_deref(),
+        Some("preserved-v29-vector-model")
+    );
+    assert_eq!(authority.vector_dimension, Some(3));
+    assert_eq!(snapshot_tree(fixture.data_dir()), before);
+}
+
+#[test]
 fn current_v29_active_head_epoch_corruption_is_rejected_byte_stably() {
     let fixture = OwnedDirectory::new();
     seed_published_v29_projection(fixture.open_v29_store().unwrap());
