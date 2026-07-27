@@ -61,9 +61,24 @@ pub(super) fn activate_contract(
             {
                 MigrationRebuildContractActivation::Activated
                 | MigrationRebuildContractActivation::AlreadyActive => Ok(()),
-                MigrationRebuildContractActivation::Superseded => Err(CliError::user(
-                    "processing-contract online transition required",
-                )),
+                MigrationRebuildContractActivation::Superseded => {
+                    // Repairing / blocked stores that already hold Desired remain
+                    // usable for fail-closed import gates without forcing an online
+                    // Ready-path transition.
+                    let active = store
+                        .active_import_processing_contract()
+                        .map_err(CliError::store)?;
+                    if active
+                        .as_ref()
+                        .is_some_and(|active| active.id() == contract.id())
+                    {
+                        Ok(())
+                    } else {
+                        Err(CliError::user(
+                            "processing-contract online transition required",
+                        ))
+                    }
+                }
                 MigrationRebuildContractActivation::RunningTaskConflict => Err(CliError::user(
                     "import processing contract activation is blocked by a running task",
                 )),

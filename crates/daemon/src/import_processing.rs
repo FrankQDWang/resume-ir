@@ -44,9 +44,19 @@ pub(super) fn activate_contract(
                 MigrationRebuildContractActivation::Activated
                 | MigrationRebuildContractActivation::AlreadyActive => Ok(()),
                 MigrationRebuildContractActivation::Superseded => {
-                    Err(DaemonError::recoverable_dependency(
-                        "processing-contract online transition required",
-                    ))
+                    let active = store
+                        .active_import_processing_contract()
+                        .map_err(DaemonError::store)?;
+                    if active
+                        .as_ref()
+                        .is_some_and(|active| active.id() == contract.id())
+                    {
+                        Ok(())
+                    } else {
+                        Err(DaemonError::recoverable_dependency(
+                            "processing-contract online transition required",
+                        ))
+                    }
                 }
                 MigrationRebuildContractActivation::RunningTaskConflict => {
                     Err(DaemonError::ownership_conflict())

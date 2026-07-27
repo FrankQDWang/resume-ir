@@ -143,7 +143,18 @@ pub(crate) fn bootstrap_writer_barrier(
                     Ok((UpgradeCoordinatorOutcome::HardCutActivated, Some(token)))
                 }
                 meta_store::MigrationRebuildContractActivation::Superseded => {
-                    Ok((UpgradeCoordinatorOutcome::TransitionRequired, None))
+                    let active = store
+                        .active_import_processing_contract()
+                        .map_err(DaemonError::store)?;
+                    if active
+                        .as_ref()
+                        .is_some_and(|active| active.id() == desired.id())
+                    {
+                        let token = token_from_store(store)?;
+                        Ok((UpgradeCoordinatorOutcome::AlreadyActive, Some(token)))
+                    } else {
+                        Ok((UpgradeCoordinatorOutcome::TransitionRequired, None))
+                    }
                 }
                 meta_store::MigrationRebuildContractActivation::RunningTaskConflict => {
                     Ok((UpgradeCoordinatorOutcome::TransitionInProgress, None))

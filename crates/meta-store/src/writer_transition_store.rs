@@ -929,17 +929,38 @@ fn read_authority_snapshot(connection: &Connection) -> Result<WriterAuthoritySna
 }
 
 fn active_contract(connection: &Connection) -> Result<Option<ImportProcessingContract>> {
-    let active_id = connection
+    let active_id = if connection
         .query_row(
-            "SELECT COALESCE(writer.committed_contract_id, legacy.active_contract_id)
-             FROM writer_authority_state AS writer
-             CROSS JOIN migration_rebuild_contract_state AS legacy
-             WHERE writer.state_key = 'default'
-               AND legacy.state_key = 'default'",
+            "SELECT 1 FROM sqlite_master
+             WHERE type = 'table' AND name = 'writer_authority_state'",
             [],
-            |row| row.get::<_, Option<String>>(0),
+            |row| row.get::<_, i64>(0),
         )
-        .map_err(MetaStoreError::storage)?;
+        .optional()
+        .map_err(MetaStoreError::storage)?
+        == Some(1)
+    {
+        connection
+            .query_row(
+                "SELECT COALESCE(writer.committed_contract_id, legacy.active_contract_id)
+                 FROM writer_authority_state AS writer
+                 CROSS JOIN migration_rebuild_contract_state AS legacy
+                 WHERE writer.state_key = 'default'
+                   AND legacy.state_key = 'default'",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .map_err(MetaStoreError::storage)?
+    } else {
+        connection
+            .query_row(
+                "SELECT active_contract_id FROM migration_rebuild_contract_state
+                 WHERE state_key = 'default'",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .map_err(MetaStoreError::storage)?
+    };
     let Some(active_id) = active_id else {
         return Ok(None);
     };

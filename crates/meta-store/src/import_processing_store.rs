@@ -37,17 +37,28 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
     /// Active writer contract from migration_rebuild_contract_state, if any.
     pub fn active_import_processing_contract(&self) -> Result<Option<ImportProcessingContract>> {
         let connection = self.connection.borrow();
-        let active_id = connection
-            .query_row(
-                "SELECT COALESCE(writer.committed_contract_id, legacy.active_contract_id)
-                 FROM writer_authority_state AS writer
-                 CROSS JOIN migration_rebuild_contract_state AS legacy
-                 WHERE writer.state_key = 'default'
-                   AND legacy.state_key = 'default'",
-                [],
-                |row| row.get::<_, Option<String>>(0),
-            )
-            .map_err(MetaStoreError::storage)?;
+        let active_id = if writer_authority_table_exists(&connection)? {
+            connection
+                .query_row(
+                    "SELECT COALESCE(writer.committed_contract_id, legacy.active_contract_id)
+                     FROM writer_authority_state AS writer
+                     CROSS JOIN migration_rebuild_contract_state AS legacy
+                     WHERE writer.state_key = 'default'
+                       AND legacy.state_key = 'default'",
+                    [],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .map_err(MetaStoreError::storage)?
+        } else {
+            connection
+                .query_row(
+                    "SELECT active_contract_id FROM migration_rebuild_contract_state
+                     WHERE state_key = 'default'",
+                    [],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .map_err(MetaStoreError::storage)?
+        };
         let Some(active_id) = active_id else {
             return Ok(None);
         };
@@ -562,6 +573,9 @@ fn sync_writer_authority_after_hard_cut(
     contract_id: &str,
     now: UnixTimestamp,
 ) -> Result<()> {
+    if !writer_authority_table_exists(transaction)? {
+        return Ok(());
+    }
     transaction
         .execute(
             "UPDATE writer_authority_state
@@ -577,6 +591,19 @@ fn sync_writer_authority_after_hard_cut(
         )
         .map_err(MetaStoreError::storage)?;
     Ok(())
+}
+
+fn writer_authority_table_exists(connection: &Connection) -> Result<bool> {
+    let present = connection
+        .query_row(
+            "SELECT 1 FROM sqlite_master
+             WHERE type = 'table' AND name = 'writer_authority_state'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(MetaStoreError::storage)?;
+    Ok(present == Some(1))
 }
 
 pub(super) fn import_processing_contract_in_connection(
