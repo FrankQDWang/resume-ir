@@ -30592,6 +30592,25 @@ Output summary:
   install suites pass 39/39. No product, workspace or previously valid delivery
   suite was replayed.
 
+### v0.1.8 COW release-receipt authority repair F20
+
+- Exact-main installation reached the first authorized v29 APFS/COW clone.
+  Forced per-file cloning completed, then the workspace rejected the cloned
+  install receipt and the outer boundary reported `acceptance_internal_failure`.
+- The authorized data snapshot correctly retained the receipt of the App that
+  existed when the snapshot was created. That release evidence is not user-data
+  authority and cannot be required to match a later exact-main App.
+- After cloning, the harness now reads the cloned receipt as the compare-and-swap
+  predecessor, creates the current receipt from the already verified installed
+  composition and DMG digest, atomically replaces only the temporary workspace
+  receipt, and verifies the result. The authorized source receipt and all source
+  bytes remain unchanged. Receipt failures now return typed
+  `apfs_clone_invalid` rather than an internal error.
+- The focused COW test proves source receipt preservation and current receipt
+  rebinding. Its implementation path passed on the first run; an incorrect
+  assertion path failed and was corrected, then that exact test passed. The ten
+  unaffected sibling tests were not replayed.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2

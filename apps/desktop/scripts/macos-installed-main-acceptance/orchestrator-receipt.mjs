@@ -493,6 +493,7 @@ export function createNativeAcceptanceRuntime(options, dependencies = {}) {
         authorizedSourceDataDir: options.authorizedSourceDataDir,
         temporaryParent: options.temporaryParent,
         expectedComposition: bindings.composition,
+        expectedDmgSha256: bindings.dmgSha256,
         runId,
         runTool,
         acquireLock: (lockFile) => acquireExistingLock(lockFile, { spawnTool }),

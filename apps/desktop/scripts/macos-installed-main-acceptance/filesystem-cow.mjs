@@ -19,6 +19,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  createInstallReceipt,
+  persistInstallReceipt,
   readInstallReceipt,
   verifyInstallReceipt,
 } from "../macos-install-receipt.mjs";
@@ -651,6 +653,7 @@ export async function createCowCloneWorkspace({
   authorizedSourceDataDir,
   temporaryParent,
   expectedComposition,
+  expectedDmgSha256,
   runId = createAcceptanceRunId(),
   runTool = runBoundedTool,
   acquireLock = acquireExistingLock,
@@ -739,8 +742,26 @@ export async function createCowCloneWorkspace({
     ) {
       fail("apfs_clone_invalid");
     }
-    const receipt = await readInstallReceipt({ applicationSupportRoot });
-    verifyInstallReceipt({ receipt, composition: expectedComposition });
+    try {
+      const clonedReceipt = await readInstallReceipt({
+        applicationSupportRoot,
+      });
+      const expectedReceipt = createInstallReceipt({
+        composition: expectedComposition,
+        dmgSha256: expectedDmgSha256,
+      });
+      await persistInstallReceipt({
+        applicationSupportRoot,
+        receipt: expectedReceipt,
+        expectedReceipt: clonedReceipt,
+      });
+      verifyInstallReceipt({
+        receipt: await readInstallReceipt({ applicationSupportRoot }),
+        composition: expectedComposition,
+      });
+    } catch {
+      fail("apfs_clone_invalid");
+    }
     const sourceManifestAfter = await readManifest(source.resolved);
     if (
       sourceManifestAfter.schema !== sourceManifest.schema ||

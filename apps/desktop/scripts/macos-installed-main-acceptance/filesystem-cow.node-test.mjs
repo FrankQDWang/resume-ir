@@ -36,6 +36,19 @@ import { WORKSPACE_PREFIX } from "./core.mjs";
 import { COMPOSITION, DMG, SOURCE } from "./fixtures.mjs";
 
 const darwinTest = process.platform === "darwin" ? test : test.skip;
+const SOURCE_INSTALL_RECEIPT = Object.freeze({
+  schema_version: "resume-ir.macos-install-receipt.v3",
+  bundle_id: "local.resume-ir.desktop",
+  version: "0.1.8",
+  target_triple: "aarch64-apple-darwin",
+  source: {
+    authority: "exact_main_commit",
+    base_commit: "3".repeat(40),
+    source_tree_sha256: "4".repeat(64),
+  },
+  composition_digest: "5".repeat(64),
+  dmg_sha256: "6".repeat(64),
+});
 
 test("v1 launch markers require the exact authority-anchor state shape", () => {
   const runId = "a".repeat(64);
@@ -240,15 +253,7 @@ test("creates the test HOME with forced per-file COW while leaving the source un
   });
   await writeFile(
     path.join(source, "resume-ir.install-receipt.v3.json"),
-    `${JSON.stringify({
-      schema_version: "resume-ir.macos-install-receipt.v3",
-      bundle_id: "local.resume-ir.desktop",
-      version: "0.1.8",
-      target_triple: "aarch64-apple-darwin",
-      source: SOURCE,
-      composition_digest: COMPOSITION,
-      dmg_sha256: DMG,
-    })}\n`,
+    `${JSON.stringify(SOURCE_INSTALL_RECEIPT)}\n`,
     { mode: 0o600 },
   );
   const calls = [];
@@ -282,6 +287,7 @@ test("creates the test HOME with forced per-file COW while leaving the source un
       source: SOURCE,
       composition_digest: COMPOSITION,
     },
+    expectedDmgSha256: DMG,
     runTool,
     requireApfs: async () => {},
     readManifest: async (directory, readOptions) => {
@@ -308,6 +314,32 @@ test("creates the test HOME with forced per-file COW while leaving the source un
   assert.equal(
     await readFile(path.join(source, "metadata-active.v1"), "utf8"),
     manifestBody,
+  );
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(
+        path.join(source, "resume-ir.install-receipt.v3.json"),
+        "utf8",
+      ),
+    ),
+    SOURCE_INSTALL_RECEIPT,
+  );
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(
+        path.join(workspace.dataDir, "resume-ir.install-receipt.v3.json"),
+        "utf8",
+      ),
+    ),
+    {
+      schema_version: "resume-ir.macos-install-receipt.v3",
+      bundle_id: "local.resume-ir.desktop",
+      version: "0.1.8",
+      target_triple: "aarch64-apple-darwin",
+      source: SOURCE,
+      composition_digest: COMPOSITION,
+      dmg_sha256: DMG,
+    },
   );
   assert.equal((await stat(workspace.dataDir)).mode & 0o777, 0o755);
   assert.equal(

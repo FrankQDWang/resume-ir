@@ -1345,3 +1345,28 @@ added.
 The five focused suites passed 39/39. No product, workspace or previously valid
 delivery suite was replayed. Native installed-main acceptance remains
 incomplete and resumes only after F19 reaches main.
+
+### COW release-receipt authority repair F20 — 2026-07-27
+
+After F19, exact-main promotion and installation completed and native acceptance
+reached its first authorized v29 APFS/COW clone. File cloning succeeded, but
+the workspace required the historical install receipt captured with the source
+data to match the newly installed exact-main App. That cross-authority
+comparison was impossible after any release change and surfaced as
+`acceptance_internal_failure`.
+
+The source data authority and installed release authority are now separate.
+The cloned historical receipt is used only as the compare-and-swap predecessor.
+The temporary workspace receives a current receipt derived from the verified
+installed composition and DMG digest, while the authorized source receipt and
+all source bytes remain unchanged.
+
+| Row | Behavior boundary | Status | Re-run only when |
+| --- | --- | --- | --- |
+| F20-01 | COW clone preserves the source receipt, atomically binds the temporary HOME to the current installed release, and returns typed clone failure on invalid evidence | focused exact COW test passed | COW workspace construction, install receipt persistence or installed binding changes |
+
+The first focused file run had 10 unaffected passes and one assertion-path
+failure after the implementation itself completed. Only that exact test was
+rerun after correcting the assertion path, and it passed. No product,
+workspace or previously valid delivery suite was replayed. Native
+installed-main acceptance resumes only after F20 reaches main.
