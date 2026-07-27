@@ -30611,6 +30611,44 @@ Output summary:
   assertion path failed and was corrected, then that exact test passed. The ten
   unaffected sibling tests were not replayed.
 
+### v0.1.8 encrypted metadata-authority inspection repair F21
+
+- The post-F20 installed-main run created its authorized v29 COW workspace and
+  then failed `metadata_authority_invalid` before daemon launch or migration.
+  Read-only diagnosis proved the metadata file is SQLCipher ciphertext while
+  the acceptance harness was invoking system `/usr/bin/sqlite3 -readonly`
+  directly. The unit fixture had stubbed that system command, so it could not
+  expose the real encryption-boundary defect.
+- Meta-store now owns one read-only logical-authority inspection boundary for
+  exact encrypted v29 sources and exact current stores. It validates the
+  private manifest, key, store identity, schema/integrity, ready head and exact
+  publication descriptors without acquiring the data-directory owner or
+  creating, migrating, repairing or mutating storage.
+- The packaged daemon exposes that capability only as
+  `inspect-metadata-authority` and emits one bounded 4 KiB
+  `resume-ir.metadata-authority.v1` JSON line. The closed receipt contains the
+  same aggregate generation, epoch, descriptor and count authority previously
+  checked by the harness; it contains no path, key, raw text or database bytes.
+  Installed acceptance now invokes its already verified daemon executable
+  instead of system SQLite for both the pre-migration v29 witness and the
+  post-migration current witness.
+- Focused evidence passed: the acceptance-evidence Node suite is 6/6; exact
+  encrypted v29 and current meta-store tests prove the complete directory byte
+  tree is unchanged; the daemon receipt unit test passes; production
+  meta-store/daemon clippy passes with warnings denied; the three changed
+  scripts pass syntax and diff checks. A direct private local witness against
+  the authorized v29 COW source returned the exact 24-field contract and the
+  complete source byte-tree digest was unchanged before and after inspection.
+- One v29 test first rejected the legal owner directory because the new
+  inspector redundantly required mode `0700`; it was aligned with the existing
+  read-only open contract while sensitive directories/files remain strict.
+  One current-store fixture first published without the required processing
+  contract/barrier/attempt and was correctly superseded; the fixture now uses
+  the real publication authority state machine. A parallel incremental daemon
+  compile stopped making progress and was orderly replaced only for the still
+  unrun receipt test by a single non-incremental Cargo queue. No workspace,
+  delivery matrix or previously valid installed cell was replayed.
+
 - `cargo test --workspace`: exit 0; 5 identity tests passed, plus crate unit/doc test harnesses with 0 failures.
 
 ### S2

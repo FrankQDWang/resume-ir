@@ -33,35 +33,8 @@ const HASH_CHUNK_BYTES = 64 * 1024;
 const SEARCH_REQUEST_ID = "installed-main-synthetic-witness";
 export const SYNTHETIC_CANARY_TOKEN =
   "resumeirinstalledmaincanary7f3d9b2c";
-const SQLITE3 = "/usr/bin/sqlite3";
-const METADATA_AUTHORITY_SQL = `
-SELECT head.generation,
-       head.visible_epoch,
-       head.service_state,
-       publication.state,
-       publication.projection_digest,
-       publication.fulltext_generation,
-       publication.fulltext_manifest_schema,
-       publication.fulltext_index_schema,
-       publication.fulltext_document_count,
-       publication.fulltext_projection_digest,
-       publication.fulltext_logical_content_digest,
-       publication.vector_generation,
-       publication.vector_manifest_schema,
-       publication.vector_index_schema,
-       publication.vector_mode,
-       hex(COALESCE(publication.vector_model_id, '')),
-       COALESCE(publication.vector_dimension, -1),
-       publication.vector_projection_count,
-       publication.vector_coverage_digest,
-       publication.vector_count,
-       publication.vector_document_count,
-       publication.vector_projection_digest,
-       publication.vector_logical_content_digest
-FROM search_projection_state AS head
-JOIN search_publication_journal AS publication
-  ON publication.generation = head.generation
-WHERE head.state_key = 'default';`.trim();
+const METADATA_AUTHORITY_SCHEMA = "resume-ir.metadata-authority.v1";
+const MAX_METADATA_AUTHORITY_BYTES = 4 * 1024;
 
 function boundedCount(value, maximum = Number.MAX_SAFE_INTEGER) {
   return Number.isSafeInteger(value) && value >= 0 && value <= maximum;
@@ -330,60 +303,77 @@ async function validateMetadataArtifact(
 function parseMetadataAuthorityLine(source) {
   if (
     typeof source !== "string" ||
+    Buffer.byteLength(source, "utf8") > MAX_METADATA_AUTHORITY_BYTES ||
     !source.endsWith("\n") ||
     source.slice(0, -1).includes("\n")
   ) {
     fail("metadata_authority_invalid");
   }
-  const fields = source.slice(0, -1).split("\t");
-  if (fields.length !== 23) fail("metadata_authority_invalid");
-  const number = (index) => {
-    const value = Number(fields[index]);
-    if (!boundedCount(value, MAX_DOCUMENTS)) {
-      fail("metadata_authority_invalid");
-    }
-    return value;
-  };
-  const modelHex = fields[15];
+  let value;
+  try {
+    value = JSON.parse(source);
+  } catch {
+    fail("metadata_authority_invalid");
+  }
   if (
-    modelHex.length > 512 ||
-    modelHex.length % 2 !== 0 ||
-    !/^[A-F0-9]*$/.test(modelHex)
+    !exactKeys(value, [
+      "schema_version",
+      "generation",
+      "visible_epoch",
+      "service_state",
+      "publication_state",
+      "projection_digest",
+      "fulltext_generation",
+      "fulltext_manifest_schema",
+      "fulltext_index_schema",
+      "fulltext_document_count",
+      "fulltext_projection_digest",
+      "fulltext_logical_content_digest",
+      "vector_generation",
+      "vector_manifest_schema",
+      "vector_index_schema",
+      "vector_mode",
+      "vector_model_id",
+      "vector_dimension",
+      "vector_projection_count",
+      "vector_coverage_digest",
+      "vector_count",
+      "vector_document_count",
+      "vector_projection_digest",
+      "vector_logical_content_digest",
+    ]) ||
+    value.schema_version !== METADATA_AUTHORITY_SCHEMA
   ) {
     fail("metadata_authority_invalid");
   }
-  const modelId = Buffer.from(modelHex, "hex").toString("utf8");
-  if (Buffer.from(modelId, "utf8").toString("hex").toUpperCase() !== modelHex) {
-    fail("metadata_authority_invalid");
-  }
-  const dimension = Number(fields[16]);
   const authority = {
-    generation: fields[0],
-    visibleEpoch: number(1),
-    serviceState: fields[2],
-    publicationState: fields[3],
-    projectionDigest: fields[4],
-    fulltextGeneration: fields[5],
-    fulltextManifestSchema: fields[6],
-    fulltextIndexSchema: fields[7],
-    fulltextDocumentCount: number(8),
-    fulltextProjectionDigest: fields[9],
-    fulltextLogicalContentDigest: fields[10],
-    vectorGeneration: fields[11],
-    vectorManifestSchema: fields[12],
-    vectorIndexSchema: fields[13],
-    vectorMode: fields[14],
-    vectorModelId: modelId === "" ? null : modelId,
-    vectorDimension: dimension === -1 ? null : dimension,
-    vectorProjectionCount: number(17),
-    vectorCoverageDigest: fields[18],
-    vectorCount: number(19),
-    vectorDocumentCount: number(20),
-    vectorProjectionDigest: fields[21],
-    vectorLogicalContentDigest: fields[22],
+    generation: value.generation,
+    visibleEpoch: value.visible_epoch,
+    serviceState: value.service_state,
+    publicationState: value.publication_state,
+    projectionDigest: value.projection_digest,
+    fulltextGeneration: value.fulltext_generation,
+    fulltextManifestSchema: value.fulltext_manifest_schema,
+    fulltextIndexSchema: value.fulltext_index_schema,
+    fulltextDocumentCount: value.fulltext_document_count,
+    fulltextProjectionDigest: value.fulltext_projection_digest,
+    fulltextLogicalContentDigest: value.fulltext_logical_content_digest,
+    vectorGeneration: value.vector_generation,
+    vectorManifestSchema: value.vector_manifest_schema,
+    vectorIndexSchema: value.vector_index_schema,
+    vectorMode: value.vector_mode,
+    vectorModelId: value.vector_model_id,
+    vectorDimension: value.vector_dimension,
+    vectorProjectionCount: value.vector_projection_count,
+    vectorCoverageDigest: value.vector_coverage_digest,
+    vectorCount: value.vector_count,
+    vectorDocumentCount: value.vector_document_count,
+    vectorProjectionDigest: value.vector_projection_digest,
+    vectorLogicalContentDigest: value.vector_logical_content_digest,
   };
   if (
     !GENERATION.test(authority.generation) ||
+    !boundedCount(authority.visibleEpoch, MAX_DOCUMENTS) ||
     authority.visibleEpoch < 1 ||
     authority.serviceState !== "ready" ||
     authority.publicationState !== "ready" ||
@@ -391,12 +381,16 @@ function parseMetadataAuthorityLine(source) {
     authority.fulltextGeneration !== authority.generation ||
     authority.fulltextManifestSchema !== "fulltext.snapshot.v3" ||
     authority.fulltextIndexSchema !== "tantivy.fulltext.v3" ||
+    !boundedCount(authority.fulltextDocumentCount, MAX_DOCUMENTS) ||
     !CONTENT_DIGEST.test(authority.fulltextProjectionDigest) ||
     !CONTENT_DIGEST.test(authority.fulltextLogicalContentDigest) ||
     authority.vectorGeneration !== authority.generation ||
     authority.vectorManifestSchema !== "vector.snapshot.v4" ||
     authority.vectorIndexSchema !== "hnsw-vector.v4" ||
     !["disabled", "enabled"].includes(authority.vectorMode) ||
+    !boundedCount(authority.vectorProjectionCount, MAX_DOCUMENTS) ||
+    !boundedCount(authority.vectorCount, MAX_DOCUMENTS) ||
+    !boundedCount(authority.vectorDocumentCount, MAX_DOCUMENTS) ||
     (authority.vectorMode === "disabled" &&
       (authority.vectorModelId !== null ||
         authority.vectorDimension !== null ||
@@ -417,18 +411,25 @@ function parseMetadataAuthorityLine(source) {
   return Object.freeze(authority);
 }
 
-async function readMetadataAuthority(file, runTool) {
-  if (typeof runTool !== "function") fail("metadata_authority_invalid");
+async function readMetadataAuthority(
+  { daemonExecutable, dataDir },
+  runTool,
+) {
+  if (
+    typeof runTool !== "function" ||
+    typeof dataDir !== "string" ||
+    typeof daemonExecutable !== "string" ||
+    !path.isAbsolute(dataDir) ||
+    !path.isAbsolute(daemonExecutable)
+  ) {
+    fail("metadata_authority_invalid");
+  }
   const result = await runTool(
-    SQLITE3,
+    daemonExecutable,
     [
-      "-batch",
-      "-readonly",
-      "-noheader",
-      "-separator",
-      "\t",
-      file,
-      METADATA_AUTHORITY_SQL,
+      "--data-dir",
+      dataDir,
+      "inspect-metadata-authority",
     ],
     { env: CLOSED_SYSTEM_TOOL_ENV, timeoutMs: TOOL_TIMEOUT_MS },
   );
@@ -438,12 +439,16 @@ async function readMetadataAuthority(file, runTool) {
   return parseMetadataAuthorityLine(result.stdout);
 }
 
-export async function captureV29LogicalAuthority({ dataDir, runTool }) {
-  const metadata = await validateMetadataArtifact(
+export async function captureV29LogicalAuthority({
+  daemonExecutable,
+  dataDir,
+  runTool,
+}) {
+  await validateMetadataArtifact(
     dataDir,
     AUTHORIZED_SOURCE_SCHEMA,
   );
-  return readMetadataAuthority(metadata.file, runTool);
+  return readMetadataAuthority({ daemonExecutable, dataDir }, runTool);
 }
 
 export async function validateRetainedV29Predecessor(
@@ -678,7 +683,7 @@ async function readExactGeneration(dataDir, kind, generation) {
 }
 
 async function validateReadyArtifacts(
-  { dataDir, expectedV29Authority, runTool },
+  { daemonExecutable, dataDir, expectedV29Authority, runTool },
   ready,
   redacted,
 ) {
@@ -691,7 +696,10 @@ async function validateReadyArtifacts(
     fail("ready_evidence_epoch_mismatch");
   }
   const metadataBefore = await validateMetadataArtifact(dataDir);
-  const authority = await readMetadataAuthority(metadataBefore.file, runTool);
+  const authority = await readMetadataAuthority(
+    { daemonExecutable, dataDir },
+    runTool,
+  );
   if (
     expectedV29Authority !== undefined &&
     JSON.stringify(authority) !== JSON.stringify(expectedV29Authority)
@@ -751,6 +759,7 @@ async function validateReadyArtifacts(
 }
 
 export async function validateInstalledReadyArtifacts({
+  daemonExecutable,
   dataDir,
   diagnostics,
   expectedV29Authority,
@@ -760,13 +769,14 @@ export async function validateInstalledReadyArtifacts({
   const ready = validateReadyStatus(status);
   const redacted = validateDaemonDiagnostics(diagnostics);
   return validateReadyArtifacts(
-    { dataDir, expectedV29Authority, runTool },
+    { daemonExecutable, dataDir, expectedV29Authority, runTool },
     ready,
     redacted,
   );
 }
 
 export async function validateInstalledRecoveryEvidence({
+  daemonExecutable,
   dataDir,
   diagnostics,
   runTool,
@@ -780,7 +790,7 @@ export async function validateInstalledRecoveryEvidence({
     fail("ready_evidence_epoch_mismatch");
   }
   const artifactEvidence = await validateReadyArtifacts(
-    { dataDir, runTool },
+    { daemonExecutable, dataDir, runTool },
     ready,
     redacted,
   );
