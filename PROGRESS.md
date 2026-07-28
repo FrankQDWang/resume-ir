@@ -24,7 +24,15 @@ schema v34 before native installed validation.
   SQLite connections. The corrective runtime slice reuses the store handles
   prepared during bootstrap and keeps the initializing front door live through
   the final ready handoff; focused handoff coverage and the full daemon test
-  suite pass. Rebuilt-DMG installed acceptance remains the next gate.
+  suite pass.
+- The rebuilt exact-main DMG then reached a healthy generation-one daemon, but
+  the desktop kept revoking status authority. The installed v34 store correctly
+  projected a completed writer attestation as `ready` plus `writer_ready` and
+  an opaque transition ID; the native bridge accepted that contract while the
+  frontend validator incorrectly allowed only a null transition. The corrective
+  desktop slice accepts both ready-without-transition and completed-transition
+  witnesses, rejects incomplete pairs, and covers status plus diagnostics.
+  Rebuilt-DMG installed import/search acceptance remains the next gate.
 - Spec/plan unchanged: `docs/superpowers/specs|plans/2026-07-27-processing-contract-upgrade-coordinator.md`
 - Schema **v34** digest IDs are 71-char `sha256:` identities; transition/campaign CRUD with fail-closed authority
 - Online path: fence → quiesce → target commit → campaign materialize → WriterReady; queued intents stage-then-cancel + scheduled PDF rebind
