@@ -109,6 +109,7 @@ function diagnostics(): DiagnosticsBody {
     visible_epoch: 7,
     process_state: "ready",
     core: status.core,
+    writer: status.writer,
     optional_runtimes: status.optional_runtimes,
     capabilities: status.capabilities,
     repair_progress: null,
