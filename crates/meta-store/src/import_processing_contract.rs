@@ -5,6 +5,8 @@ use core_domain::{ContentDigest, DocumentId, ResumeVersionId, SourceRevisionId};
 use crate::{ImportTaskId, MetaStoreError, Result, UnixTimestamp};
 
 const CONTRACT_FIELD_MAX_BYTES: usize = 64;
+const SOURCE_TRIAGE_EPOCH_PREFIX: &str = "triage_v2_";
+const SOURCE_TRIAGE_CONTRACT_HEX_BYTES: usize = 48;
 
 /// Exact parser identity for the non-PDF formats supported by schema v33.
 ///
@@ -35,6 +37,51 @@ impl FromStr for ImportProcessingContractId {
             .parse::<ContentDigest>()
             .map(Self)
             .map_err(|_| MetaStoreError::invalid_value("import_processing_contract.id"))
+    }
+}
+
+/// Bounded source-routing identity derived from one complete processing contract.
+///
+/// Source triage precedes normalized-text classification, so parser and OCR
+/// routing changes must not reuse the classifier epoch as their immutable key.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SourceTriageEpoch(String);
+
+impl SourceTriageEpoch {
+    pub fn parse(value: &str) -> Result<Self> {
+        let Some(contract_hex) = value.strip_prefix(SOURCE_TRIAGE_EPOCH_PREFIX) else {
+            return Err(MetaStoreError::invalid_value("source_triage_epoch"));
+        };
+        if contract_hex.len() != SOURCE_TRIAGE_CONTRACT_HEX_BYTES
+            || !contract_hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        {
+            return Err(MetaStoreError::invalid_value("source_triage_epoch"));
+        }
+        Ok(Self(value.to_string()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    fn for_processing_contract(contract: &ImportProcessingContract) -> Self {
+        let contract_id = contract
+            .id()
+            .as_str()
+            .strip_prefix("sha256:")
+            .expect("processing contract IDs are validated content digests");
+        Self(format!(
+            "{SOURCE_TRIAGE_EPOCH_PREFIX}{}",
+            &contract_id[..SOURCE_TRIAGE_CONTRACT_HEX_BYTES]
+        ))
+    }
+}
+
+impl fmt::Debug for SourceTriageEpoch {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SourceTriageEpoch(<redacted>)")
     }
 }
 
@@ -106,6 +153,10 @@ impl ImportProcessingContract {
 
     pub fn classifier_epoch(&self) -> &str {
         &self.classifier_epoch
+    }
+
+    pub fn source_triage_epoch(&self) -> SourceTriageEpoch {
+        SourceTriageEpoch::for_processing_contract(self)
     }
 
     pub(super) fn from_stored_parts(

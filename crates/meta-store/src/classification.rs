@@ -4,8 +4,9 @@ pub use resume_classifier::{ClassificationStatus, ReasonCode};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{
-    i64_to_u64, IdentityInsertOutcome, MetaStoreError, MetadataStore, MetadataStoreAccess,
-    MetadataStoreWriteAccess, Result, ResumeVersionId, SourceRevisionId, UnixTimestamp,
+    i64_to_u64, IdentityInsertOutcome, ImportProcessingContract, MetaStoreError, MetadataStore,
+    MetadataStoreAccess, MetadataStoreWriteAccess, Result, ResumeVersionId, SourceRevisionId,
+    SourceTriageEpoch, UnixTimestamp,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -54,6 +55,35 @@ impl fmt::Debug for CurrentClassifierEpoch<'_> {
             .field("value", &"<redacted>")
             .field("source", &self.source)
             .finish()
+    }
+}
+
+mod sealed_source_triage_epoch {
+    pub trait Sealed {}
+}
+
+/// A validated stored source-triage identity.
+///
+/// Existing authorities can contain the historical classifier-bound identity,
+/// while current writes use a processing-contract-bound [`SourceTriageEpoch`].
+/// The sealed trait keeps that transition explicit at OCR job boundaries.
+pub trait StoredSourceTriageEpoch: sealed_source_triage_epoch::Sealed {
+    fn stored_epoch(&self) -> &str;
+}
+
+impl sealed_source_triage_epoch::Sealed for CurrentClassifierEpoch<'_> {}
+
+impl StoredSourceTriageEpoch for CurrentClassifierEpoch<'_> {
+    fn stored_epoch(&self) -> &str {
+        self.value
+    }
+}
+
+impl sealed_source_triage_epoch::Sealed for &SourceTriageEpoch {}
+
+impl StoredSourceTriageEpoch for &SourceTriageEpoch {
+    fn stored_epoch(&self) -> &str {
+        self.as_str()
     }
 }
 
@@ -208,6 +238,23 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                 "classification_counts.classifier_epoch",
             ));
         }
+        self.classification_counts_for_epochs(classifier_epoch, classifier_epoch)
+    }
+
+    pub fn classification_counts_for_processing_contract(
+        &self,
+        processing_contract: &ImportProcessingContract,
+    ) -> Result<ClassificationCounts> {
+        let classifier_epoch = processing_contract.classifier_epoch();
+        let source_triage_epoch = processing_contract.source_triage_epoch();
+        self.classification_counts_for_epochs(classifier_epoch, source_triage_epoch.as_str())
+    }
+
+    fn classification_counts_for_epochs(
+        &self,
+        classifier_epoch: &str,
+        source_triage_epoch: &str,
+    ) -> Result<ClassificationCounts> {
         let counts = self
             .connection
             .borrow()
@@ -233,7 +280,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                       ON document.id = revision.document_id
                      AND document.content_hash = revision.content_hash
                     WHERE document.is_deleted = 0
-                      AND source_triage.triage_epoch = ?1
+                      AND source_triage.triage_epoch = ?2
                  )
                  SELECT
                     COALESCE((SELECT SUM(status = 'resume_candidate') FROM final), 0),
@@ -242,7 +289,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                     COALESCE((SELECT SUM(status = 'ocr_backlog') FROM triage), 0),
                     COALESCE((SELECT SUM(status = 'failed') FROM final), 0)
                       + COALESCE((SELECT SUM(status = 'failed') FROM triage), 0)",
-                params![classifier_epoch],
+                params![classifier_epoch, source_triage_epoch],
                 |row| {
                     Ok([
                         row.get::<_, i64>(0)?,
@@ -592,18 +639,26 @@ fn validate_epoch_and_reasons(
     reasons: &[ReasonCode],
     field: &'static str,
 ) -> Result<()> {
+    validate_stored_source_triage_epoch(epoch, field)?;
+    if reasons.is_empty()
+        || reasons.len() > CLASSIFICATION_REASON_LIMIT
+        || reasons
+            .iter()
+            .enumerate()
+            .any(|(index, reason)| reasons[..index].contains(reason))
+    {
+        return Err(MetaStoreError::invalid_value(field));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_stored_source_triage_epoch(epoch: &str, field: &'static str) -> Result<()> {
     let epoch = epoch.as_bytes();
     if epoch.is_empty()
         || epoch.len() > 64
         || !epoch
             .iter()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_')
-        || reasons.is_empty()
-        || reasons.len() > CLASSIFICATION_REASON_LIMIT
-        || reasons
-            .iter()
-            .enumerate()
-            .any(|(index, reason)| reasons[..index].contains(reason))
     {
         return Err(MetaStoreError::invalid_value(field));
     }

@@ -4,8 +4,8 @@ use core_domain::EntityMentionId;
 use extractor_rules::{extract_strong_fields, FieldType, RuleEvidenceKind, RuleMatch};
 use index_fulltext::IndexDocument;
 use meta_store::{
-    ContactHash, CurrentClassifierEpoch, Document, DocumentStatus, EntityMention, EntityType,
-    OwnedMetaStore, ResumeVersion, ResumeVersionId, SourceRevision, UnixTimestamp,
+    ContactHash, Document, DocumentStatus, EntityMention, EntityType, OwnedMetaStore,
+    ResumeVersion, ResumeVersionId, SourceRevision, UnixTimestamp,
 };
 use privacy::{ContactHasher, ContactKind};
 use resume_classifier::LinearPromotionPolicy;
@@ -13,6 +13,7 @@ use resume_classifier::LinearPromotionPolicy;
 use super::model::{PendingSearchableDocument, PendingSearchablePublicationKind};
 use crate::classification::AdmissionDecision;
 use crate::immutable_ingest::{self, StagedDerivedData, StagedResume};
+use crate::processing_contract::current_source_triage_epoch;
 use crate::source_dispositions::ProcessedFile;
 use crate::{ImportPipelineError, Result};
 
@@ -143,8 +144,12 @@ pub(crate) fn persist_source_revision_failure(
     now: UnixTimestamp,
     linear_promotion: &LinearPromotionPolicy,
 ) -> Result<()> {
-    let triage = AdmissionDecision::failed(linear_promotion)
-        .into_source_triage(source_revision.id.clone(), now);
+    let triage_epoch = current_source_triage_epoch(linear_promotion)?;
+    let triage = AdmissionDecision::failed(linear_promotion).into_source_triage(
+        source_revision.id.clone(),
+        &triage_epoch,
+        now,
+    );
     immutable_ingest::stage(
         store,
         StagedResume {
@@ -165,8 +170,12 @@ pub(crate) fn mark_ocr_required_and_enqueue(
 ) -> Result<bool> {
     document.status = DocumentStatus::OcrRequired;
     document.updated_at = now;
-    let triage = AdmissionDecision::ocr_backlog(linear_promotion)
-        .into_source_triage(source_revision.id.clone(), now);
+    let triage_epoch = current_source_triage_epoch(linear_promotion)?;
+    let triage = AdmissionDecision::ocr_backlog(linear_promotion).into_source_triage(
+        source_revision.id.clone(),
+        &triage_epoch,
+        now,
+    );
     immutable_ingest::stage(
         store,
         StagedResume {
@@ -176,10 +185,8 @@ pub(crate) fn mark_ocr_required_and_enqueue(
         },
     )
     .map_err(ImportPipelineError::store)?;
-    let triage_epoch = CurrentClassifierEpoch::parse(&triage.triage_epoch)
-        .ok_or_else(ImportPipelineError::store_invariant)?;
     let enqueue = store
-        .enqueue_ocr_job_for_source_triage(&source_revision.id, triage_epoch, now)
+        .enqueue_ocr_job_for_source_triage(&source_revision.id, &triage_epoch, now)
         .map_err(ImportPipelineError::store)?;
 
     Ok(enqueue.scheduled)
@@ -257,3 +264,108 @@ pub(crate) fn entity_type_from_field_type(field_type: &FieldType) -> EntityType 
 #[cfg(test)]
 #[path = "persistence_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod source_triage_contract_tests {
+    use super::*;
+    use meta_store::{
+        ClassificationStatus, ContentDigest, DataDirectoryOwnerAcquisition,
+        DataDirectoryOwnerLease, DocumentId, FileExtension, ImmutableIngestStage, ReasonCode,
+        SourceRevisionTriage, CLASSIFIER_EPOCH,
+    };
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn parser_routing_change_uses_a_new_source_triage_identity() {
+        let data_dir = TestDir::new("source-triage-processing-contract-identity");
+        let owner = match DataDirectoryOwnerLease::try_acquire(data_dir.path()).unwrap() {
+            DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+            DataDirectoryOwnerAcquisition::Contended => panic!("test store owner contended"),
+        };
+        let store = owner.open_store().unwrap();
+        store.run_migrations().unwrap();
+        let now = UnixTimestamp::from_unix_seconds(1_700_210_100);
+        let content_hash = ContentDigest::from_bytes(b"synthetic parser routing change");
+        let mut document = Document {
+            id: DocumentId::from_non_secret_parts(&["source-triage-processing-contract-identity"]),
+            source_uri: "file:///fixture/synthetic.pdf".to_string(),
+            normalized_path: "/fixture/synthetic.pdf".to_string(),
+            file_name: "synthetic.pdf".to_string(),
+            extension: FileExtension::Pdf,
+            byte_size: 128,
+            mtime: now,
+            content_hash: Some(content_hash.as_str().to_string()),
+            text_hash: None,
+            is_deleted: false,
+            created_at: now,
+            updated_at: now,
+            status: DocumentStatus::FailedPermanent,
+        };
+        let source_revision =
+            SourceRevision::for_content(document.id.clone(), content_hash, document.byte_size);
+        let legacy_triage = SourceRevisionTriage {
+            source_revision_id: source_revision.id.clone(),
+            status: ClassificationStatus::Failed,
+            triage_epoch: CLASSIFIER_EPOCH.to_string(),
+            reason_codes: vec![ReasonCode::ParserFailed],
+            triaged_at: now,
+        };
+        store
+            .stage_immutable_ingest(ImmutableIngestStage::SourceTriage {
+                document: &document,
+                source_revision: &source_revision,
+                triage: &legacy_triage,
+            })
+            .unwrap();
+
+        let promotion = LinearPromotionPolicy::default();
+        let current_epoch = current_source_triage_epoch(&promotion).unwrap();
+        let queued =
+            mark_ocr_required_and_enqueue(&store, &mut document, &source_revision, now, &promotion)
+                .unwrap();
+
+        assert!(queued);
+        assert_eq!(
+            store
+                .source_revision_triage(&source_revision.id, CLASSIFIER_EPOCH)
+                .unwrap(),
+            Some(legacy_triage)
+        );
+        let current = store
+            .source_revision_triage(&source_revision.id, current_epoch.as_str())
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.status, ClassificationStatus::OcrBacklog);
+        assert_eq!(current.reason_codes, vec![ReasonCode::OcrRequired]);
+    }
+
+    struct TestDir(PathBuf);
+
+    impl TestDir {
+        fn new(label: &str) -> Self {
+            let unique = format!(
+                "{label}-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
+            let path = std::env::temp_dir().join(unique);
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+}

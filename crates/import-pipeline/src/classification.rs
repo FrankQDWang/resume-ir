@@ -1,7 +1,7 @@
 use meta_store::{
     classify_resume, ClassificationResult, ClassificationStatus, ClassifierInput,
     ResumeVersionClassification, ResumeVersionId, ReviewDisposition, SourceRevisionId,
-    SourceRevisionTriage, UnixTimestamp,
+    SourceRevisionTriage, SourceTriageEpoch, UnixTimestamp,
 };
 use resume_classifier::{LinearPromotionPolicy, PromotionSection};
 use sectionizer::SectionChunk;
@@ -66,12 +66,13 @@ impl AdmissionDecision {
     pub(crate) fn into_source_triage(
         self,
         source_revision_id: SourceRevisionId,
+        triage_epoch: &SourceTriageEpoch,
         triaged_at: UnixTimestamp,
     ) -> SourceRevisionTriage {
         SourceRevisionTriage {
             source_revision_id,
             status: self.0.status(),
-            triage_epoch: self.0.classifier_epoch().to_string(),
+            triage_epoch: triage_epoch.as_str().to_string(),
             reason_codes: self.0.reason_codes().to_vec(),
             triaged_at,
         }

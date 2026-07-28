@@ -1122,9 +1122,9 @@ mod tests {
     };
     use index_vector::{QueryVector, VectorIndexError, VectorModelContract, VectorSnapshotRoot};
     use meta_store::{
-        ActiveSearchProjection, ClassificationStatus, ContentDigest, CurrentClassifierEpoch,
-        DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, Document, DocumentId,
-        DocumentStatus, EntityMention, EntityMentionId, EntityType, FileExtension, ImportRootKind,
+        ActiveSearchProjection, ClassificationStatus, ContentDigest, DataDirectoryOwnerAcquisition,
+        DataDirectoryOwnerLease, Document, DocumentId, DocumentStatus, EntityMention,
+        EntityMentionId, EntityType, FileExtension, ImportRootKind,
         ImportScanBudgetKind as StoreImportScanBudgetKind, ImportScanProfile, ImportScanScope,
         ImportTask, ImportTaskFailure, ImportTaskPurpose, ImportTaskStatus, IngestJobStatus,
         MigrationRebuildPublicationAttemptAcquire, OcrAttemptFailure, OwnedMetaStore,
@@ -1336,12 +1336,14 @@ mod tests {
             SourceRevision::for_content(document.id.clone(), content_hash, document.byte_size);
         store.upsert_document(&document).unwrap();
         store.insert_source_revision(&source_revision).unwrap();
+        let triage_epoch = super::current_import_processing_contract(&ImportOptions::default())
+            .unwrap()
+            .source_triage_epoch();
         let triage = AdmissionDecision::ocr_backlog(&LinearPromotionPolicy::default())
-            .into_source_triage(source_revision.id.clone(), now);
+            .into_source_triage(source_revision.id.clone(), &triage_epoch, now);
         store.insert_source_revision_triage(&triage).unwrap();
-        let triage_epoch = CurrentClassifierEpoch::parse(&triage.triage_epoch).unwrap();
         store
-            .enqueue_ocr_job_for_source_triage(&source_revision.id, triage_epoch, now)
+            .enqueue_ocr_job_for_source_triage(&source_revision.id, &triage_epoch, now)
             .unwrap();
         store.claim_next_ocr_job(now).unwrap().unwrap()
     }
@@ -3125,8 +3127,12 @@ mod tests {
             let task = import_task(&format!("gate-{workers}"), root.to_str().unwrap(), now);
             insert_test_import_task(&store, &task, &ImportOptions::default());
             let options = ImportOptions::low_memory_default_for_available_parallelism(workers);
-            import_root_with_options(&data_dir, &store, &task, &root, now, options).unwrap();
-            let counts = store.classification_counts(CLASSIFIER_EPOCH).unwrap();
+            let contract = super::current_import_processing_contract(&options).unwrap();
+            let summary =
+                import_root_with_options(&data_dir, &store, &task, &root, now, options).unwrap();
+            let counts = store
+                .classification_counts_for_processing_contract(&contract)
+                .unwrap();
             assert_eq!(
                 (
                     counts.resume_candidate,
@@ -3135,7 +3141,8 @@ mod tests {
                     counts.ocr_backlog,
                     counts.failed
                 ),
-                (1, 1, 1, 1, 1)
+                (1, 1, 1, 1, 1),
+                "workers={workers}, summary={summary:?}"
             );
             assert_eq!(store.searchable_document_ids().unwrap().len(), 1);
         }
@@ -3183,7 +3190,8 @@ mod tests {
             root.to_str().unwrap(),
             second_now,
         );
-        insert_test_import_task(&store, &second_task, &ImportOptions::default());
+        let second_contract =
+            insert_test_import_task(&store, &second_task, &ImportOptions::default());
         let summary = import_root_with_options(
             &data_dir,
             &store,
@@ -3215,9 +3223,10 @@ mod tests {
             .contains("Stable Candidate"));
         let failed_revision =
             SourceRevision::for_content(document.id, ContentDigest::from_bytes(&[]), 0);
+        let source_triage_epoch = second_contract.source_triage_epoch();
         assert_eq!(
             store
-                .source_revision_triage(&failed_revision.id, CLASSIFIER_EPOCH)
+                .source_revision_triage(&failed_revision.id, source_triage_epoch.as_str())
                 .unwrap()
                 .unwrap()
                 .status,
@@ -4762,7 +4771,7 @@ mod tests {
 
         assert_eq!(summary.files_discovered, 1);
         assert_eq!(summary.searchable_documents, 0);
-        assert_eq!(summary.ocr_required_documents, 1);
+        assert_eq!(summary.ocr_required_documents, 1, "summary={summary:?}");
         assert_eq!(summary.failed_documents, 0);
         let document = store.visible_documents().unwrap().remove(0);
         assert_eq!(document.status, meta_store::DocumentStatus::OcrRequired);
@@ -4801,7 +4810,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(summary.files_discovered, 1);
-        assert_eq!(summary.searchable_documents, 1);
+        assert_eq!(summary.searchable_documents, 1, "summary={summary:?}");
         assert_eq!(summary.ocr_required_documents, 0);
         assert_eq!(summary.failed_documents, 0);
         let document = store.visible_documents().unwrap().remove(0);
@@ -5193,7 +5202,10 @@ mod tests {
 
         assert_eq!(first_summary.files_discovered, 1);
         assert_eq!(first_summary.searchable_documents, 0);
-        assert_eq!(first_summary.ocr_required_documents, 1);
+        assert_eq!(
+            first_summary.ocr_required_documents, 1,
+            "summary={first_summary:?}"
+        );
         assert_eq!(first_summary.ocr_jobs_queued, 1);
         assert_eq!(first_status.searchable_documents, 0);
         assert_eq!(first_status.ocr_queue_depth, 1);

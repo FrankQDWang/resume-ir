@@ -135,7 +135,9 @@ fn frozen_public_synthetic_fixture_matches_production_admission() {
 
     let summary = import_root_with_options(&data_dir, &store, &task, &root, now, options).unwrap();
 
-    let counts = store.classification_counts(CLASSIFIER_EPOCH).unwrap();
+    let counts = store
+        .classification_counts_for_processing_contract(&contract)
+        .unwrap();
     assert_eq!(
         (
             counts.resume_candidate,
@@ -375,11 +377,13 @@ fn current_classification_status(
     store: &OwnedMetaStore,
     document: &Document,
 ) -> Option<ClassificationStatus> {
+    let contract = current_import_processing_contract(&ImportOptions::default()).unwrap();
+    let source_triage_epoch = contract.source_triage_epoch();
     let content_hash = document.content_hash.as_deref()?.parse().ok()?;
     let revision =
         SourceRevision::for_content(document.id.clone(), content_hash, document.byte_size);
     if let Some(triage) = store
-        .source_revision_triage(&revision.id, CLASSIFIER_EPOCH)
+        .source_revision_triage(&revision.id, source_triage_epoch.as_str())
         .unwrap()
     {
         return Some(triage.status);

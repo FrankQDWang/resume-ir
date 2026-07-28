@@ -695,6 +695,7 @@ fn validate_exact_source_manifest(
     contract: &ImportProcessingContract,
     expected_count: u64,
 ) -> Result<()> {
+    let source_triage_epoch = contract.source_triage_epoch();
     let aggregate = connection
         .query_row(
             "SELECT COUNT(*), MIN(disposition.source_ordinal),
@@ -751,7 +752,7 @@ fn validate_exact_source_manifest(
               AND classification.classifier_epoch = ?3
              LEFT JOIN source_revision_triage AS triage
                ON triage.source_revision_id = disposition.source_revision_id
-              AND triage.triage_epoch = ?3
+              AND triage.triage_epoch = ?8
              WHERE disposition.import_task_id = ?1
                AND disposition.processing_contract_id = ?2",
             params![
@@ -762,6 +763,7 @@ fn validate_exact_source_manifest(
                 contract.primary_parse_version(),
                 contract.ocr_parse_version(),
                 crate::NON_PDF_PARSE_VERSION,
+                source_triage_epoch.as_str(),
             ],
             |row| {
                 Ok((

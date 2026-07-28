@@ -63,7 +63,8 @@ impl PdfParser {
         input: ParseInput<'_>,
         budget: ResourceBudget,
     ) -> Result<(ParseOutput, PdfTextExtractionMetrics)> {
-        let parse_budget = budget.begin(input.bytes().len())?;
+        let source_bytes = input.bytes().len();
+        budget.check_parse_allowed(source_bytes)?;
         if self.supports(input.probe()) == SupportLevel::Unsupported {
             return Err(ParserError::unsupported(
                 "pdf parser received unsupported probe",
@@ -72,9 +73,11 @@ impl PdfParser {
         if !input.probe().has_pdf_header() {
             return Err(ParserError::corrupted("pdf header is missing"));
         }
+        let pdfium = process_pdfium()?;
+        let parse_budget = budget.begin(source_bytes)?;
         parse_budget.check_deadline()?;
         let mut metrics = PdfTextExtractionMetrics::default();
-        let extraction = extract_visible_text(input.bytes(), &parse_budget, &mut metrics)?;
+        let extraction = extract_visible_text(input.bytes(), &pdfium, &parse_budget, &mut metrics)?;
         let quality_started = Instant::now();
         let quality_is_acceptable = text_quality_is_acceptable(&extraction.text);
         metrics.quality_evaluation += quality_started.elapsed();
@@ -125,11 +128,11 @@ fn process_pdfium() -> Result<MutexGuard<'static, Pdfium>> {
 
 fn extract_visible_text(
     bytes: &[u8],
+    pdfium: &Pdfium,
     budget: &ParseBudget,
     metrics: &mut PdfTextExtractionMetrics,
 ) -> Result<PdfiumTextExtraction> {
     let load_started = Instant::now();
-    let pdfium = process_pdfium()?;
     let document = pdfium
         .load_pdf_from_byte_slice(bytes, None)
         .map_err(|_| ParserError::corrupted("pdfium rejected the document"))?;
@@ -384,4 +387,70 @@ fn contains_high_entropy_run(text: &str) -> bool {
             .sum::<f64>();
         entropy >= 4.5
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::thread;
+
+    #[test]
+    fn runtime_owner_wait_does_not_consume_document_parse_budget() {
+        let runtime_owner = process_pdfium().unwrap();
+        let bytes = scanned_pdf_bytes();
+        let (started_tx, started_rx) = mpsc::channel();
+        let parser = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            PdfParser.parse(
+                ParseInput::from_bytes(Some("pdf"), &bytes),
+                ResourceBudget::default().with_timeout(Duration::from_millis(200)),
+            )
+        });
+        started_rx.recv().unwrap();
+        thread::sleep(Duration::from_millis(500));
+        drop(runtime_owner);
+
+        let output = parser.join().unwrap().unwrap();
+        assert_eq!(output.status(), ParseStatus::OcrRequired);
+    }
+
+    fn scanned_pdf_bytes() -> Vec<u8> {
+        build_valid_pdf(vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>".to_vec(),
+            b"<< /Type /XObject /Subtype /Image /Width 100 /Height 100 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 11 >>\nstream\nimage bytes\nendstream".to_vec(),
+            b"<< /Length 24 >>\nstream\nq 100 0 0 100 0 0 cm /Im1 Do Q\nendstream".to_vec(),
+        ])
+    }
+
+    fn build_valid_pdf(objects: Vec<Vec<u8>>) -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = Vec::with_capacity(objects.len());
+        for (index, object) in objects.iter().enumerate() {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+            pdf.extend_from_slice(object);
+            if !object.ends_with(b"\n") {
+                pdf.push(b'\n');
+            }
+            pdf.extend_from_slice(b"endobj\n");
+        }
+        let xref_offset = pdf.len();
+        pdf.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+        pdf.extend_from_slice(b"0000000000 65535 f\r\n");
+        for offset in offsets {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n\r\n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!(
+                "trailer\n<< /Root 1 0 R /Size {} >>\nstartxref\n{}\n%%EOF",
+                objects.len() + 1,
+                xref_offset
+            )
+            .as_bytes(),
+        );
+        pdf
+    }
 }
