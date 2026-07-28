@@ -1195,7 +1195,7 @@ test("desktop config prepares three sidecars and four resource packs", async () 
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
 
   assert.equal(config.version, "../package.json");
-  assert.equal(packageJson.version, "0.1.8");
+  assert.equal(packageJson.version, "0.1.9");
   assert.equal(config.build.beforeBuildCommand, "npm run build");
   assert.equal(config.bundle.active, false);
   assert.equal(config.bundle.externalBin, undefined);

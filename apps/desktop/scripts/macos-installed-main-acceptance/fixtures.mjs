@@ -213,7 +213,7 @@ export function fakeRuntime({
         dmgSha256: DMG,
         gitHead: HEAD,
         source: SOURCE,
-        version: "0.1.8",
+        version: "0.1.9",
         ...deploymentOverrides,
       };
     },
@@ -229,7 +229,7 @@ export function fakeRuntime({
         iconSha256: ICON,
         source: SOURCE,
         sourceSchema: 29,
-        version: "0.1.8",
+        version: "0.1.9",
         ...bindingOverrides,
       };
     },

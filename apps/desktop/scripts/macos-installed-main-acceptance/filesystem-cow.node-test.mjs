@@ -39,7 +39,7 @@ const darwinTest = process.platform === "darwin" ? test : test.skip;
 const SOURCE_INSTALL_RECEIPT = Object.freeze({
   schema_version: "resume-ir.macos-install-receipt.v3",
   bundle_id: "local.resume-ir.desktop",
-  version: "0.1.8",
+  version: "0.1.9",
   target_triple: "aarch64-apple-darwin",
   source: {
     authority: "exact_main_commit",
@@ -282,7 +282,7 @@ test("creates the test HOME with forced per-file COW while leaving the source un
     temporaryParent,
     expectedComposition: {
       bundle_id: "local.resume-ir.desktop",
-      version: "0.1.8",
+      version: "0.1.9",
       target_triple: "aarch64-apple-darwin",
       source: SOURCE,
       composition_digest: COMPOSITION,
@@ -334,7 +334,7 @@ test("creates the test HOME with forced per-file COW while leaving the source un
     {
       schema_version: "resume-ir.macos-install-receipt.v3",
       bundle_id: "local.resume-ir.desktop",
-      version: "0.1.8",
+      version: "0.1.9",
       target_triple: "aarch64-apple-darwin",
       source: SOURCE,
       composition_digest: COMPOSITION,

@@ -16,7 +16,7 @@ import test from "node:test";
 
 import { reinstallMacosDmg } from "./macos-reinstall-core.mjs";
 
-const VERSION = "0.1.8";
+const VERSION = "0.1.9";
 const OLD_SOURCE = Object.freeze({
   authority: "exact_main_commit",
   base_commit: "1".repeat(40),

@@ -120,7 +120,7 @@ test("accepts only real source, repository, and temporary-root inputs", () => {
   assert.equal(parsed.temporaryParent, "/synthetic/tmp");
   for (const [name, value] of [
     ["--expected-git-head", HEAD],
-    ["--expected-version", "0.1.8"],
+    ["--expected-version", "0.1.9"],
     ["--expected-composition-digest", "b".repeat(64)],
     ["--expected-icon-sha256", "c".repeat(64)],
     ["--persistent-contention", "fulltext"],
@@ -154,7 +154,7 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
   assert.deepEqual(report.deployment, {
     action: "reinstall",
     built_dmg_verified: true,
-    installed_version: "0.1.8",
+    installed_version: "0.1.9",
     source: "clean_origin_main",
   });
   assert.equal(report.data_boundary.clone, "apfs_copy_on_write");
@@ -614,7 +614,7 @@ test("every runtime mutation entrypoint revalidates the live lease and source au
     releaseDeploymentOverrides: {
       deriveCommitProductBinding: async () => ({
         iconSha256: "c".repeat(64),
-        version: "0.1.8",
+        version: "0.1.9",
       }),
       deriveSourceIdentity: async () => ({
         ...SOURCE,
@@ -663,7 +663,7 @@ test("every runtime mutation entrypoint revalidates the live lease and source au
   );
 });
 
-test("rejects an installed App or receipt that did not come from this exact 0.1.8 build", async () => {
+test("rejects an installed App or receipt that did not come from this exact 0.1.9 build", async () => {
   await assert.rejects(
     runInstalledMainAcceptance(options(), {
       runtime: fakeRuntime({
