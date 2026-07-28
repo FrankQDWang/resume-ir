@@ -44,6 +44,21 @@ schema v34 before native installed validation.
   29.4 seconds to 328 milliseconds. No private path, filename, content, count,
   token, database, or diagnostic artifact is retained. Rebuilt-DMG installed
   source-root, import, search, and detail acceptance remains the next gate.
+- The exact-main DMG containing that query fix then exposed a colder startup
+  handoff gap. After the initializing control plane was withdrawn, the source
+  file service synchronously reopened and fully validated the large encrypted
+  metadata store while the artifact worker opened another sibling. A local
+  process sample and bounded lifecycle receipt showed three consecutive
+  heartbeat misses and automatic generation restarts even though status was
+  responsive before the handoff. The corrective slice now opens the dedicated
+  source-file reader while the initializing control plane remains available
+  and transfers that validated handle into the ready service; the service can
+  no longer reopen from a path. The focused live-handoff test and all 101 daemon
+  unit tests pass. A self-contained worktree DMG then cold-opened the existing
+  authorized store to Ready on its first daemon generation and remained on the
+  same launch with zero heartbeat failures or automatic restarts. No private
+  path, content, query, result, token, database, or raw diagnostic artifact is
+  retained. An exact merged-main DMG witness remains required.
 - Spec/plan unchanged: `docs/superpowers/specs|plans/2026-07-27-processing-contract-upgrade-coordinator.md`
 - Schema **v34** digest IDs are 71-char `sha256:` identities; transition/campaign CRUD with fail-closed authority
 - Online path: fence → quiesce → target commit → campaign materialize → WriterReady; queued intents stage-then-cancel + scheduled PDF rebind

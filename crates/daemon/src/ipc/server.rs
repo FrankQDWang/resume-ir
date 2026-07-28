@@ -166,7 +166,13 @@ impl BoundServer {
         result.map(|_| ())
     }
 
-    pub(crate) fn serve(mut self, mut context: Context<'_>) -> Result<(), DaemonFatalError> {
+    /// Starts the ready data plane from a source-file store opened while the
+    /// initializing control plane was still available.
+    pub(crate) fn serve(
+        mut self,
+        mut context: Context<'_>,
+        source_file_store: ReadMetaStore,
+    ) -> Result<(), DaemonFatalError> {
         if !self.handoff_complete {
             self.withdraw();
             return Err(DaemonFatalError::ControlPlaneFailure);
@@ -212,7 +218,7 @@ impl BoundServer {
         let source_file_service = match start_or_block_core_service(
             &mut control_publisher,
             context.control_state.snapshot().runtimes,
-            || SourceFileService::start(context.data_dir),
+            || SourceFileService::start(source_file_store),
         )? {
             Some(service) => service,
             None => {
