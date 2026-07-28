@@ -18,6 +18,13 @@ contract slices align all version-bound fixtures to 0.1.9 and advance the
 installed-main acceptance receipt and cold migration target from schema v33 to
 schema v34 before native installed validation.
 
+- Installed exact-main 0.1.9 acceptance exposed a supervised-daemon heartbeat
+  restart loop on an existing large v34 store: the initializing control plane
+  was withdrawn before worker IPC synchronously reopened and revalidated three
+  SQLite connections. The corrective runtime slice reuses the store handles
+  prepared during bootstrap and keeps the initializing front door live through
+  the final ready handoff; focused handoff coverage and the full daemon test
+  suite pass. Rebuilt-DMG installed acceptance remains the next gate.
 - Spec/plan unchanged: `docs/superpowers/specs|plans/2026-07-27-processing-contract-upgrade-coordinator.md`
 - Schema **v34** digest IDs are 71-char `sha256:` identities; transition/campaign CRUD with fail-closed authority
 - Online path: fence → quiesce → target commit → campaign materialize → WriterReady; queued intents stage-then-cancel + scheduled PDF rebind
