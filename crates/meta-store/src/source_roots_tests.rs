@@ -14,13 +14,26 @@ use crate::{
 fn source_root_classification_counts_seek_resume_versions_by_document() {
     let store = EphemeralMetaStore::open_in_memory().unwrap();
     store.run_migrations().unwrap();
+    let contract = ImportProcessingContract::new(
+        "source-root-query-plan-parser",
+        "source-root-query-plan-ocr",
+        "source-root-query-plan-schema",
+        CLASSIFIER_EPOCH,
+    )
+    .unwrap();
+    let source_triage_epoch = contract.source_triage_epoch();
     let explain = format!("EXPLAIN QUERY PLAN {SOURCE_ROOT_CLASSIFICATION_COUNTS_SQL}");
     let connection = store.connection.borrow();
     let mut statement = connection.prepare(&explain).unwrap();
     let details = statement
-        .query_map(params!["root-query-plan", CLASSIFIER_EPOCH], |row| {
-            row.get::<_, String>(3)
-        })
+        .query_map(
+            params![
+                "root-query-plan",
+                CLASSIFIER_EPOCH,
+                source_triage_epoch.as_str()
+            ],
+            |row| row.get::<_, String>(3),
+        )
         .unwrap()
         .collect::<rusqlite::Result<Vec<_>>>()
         .unwrap();
@@ -126,6 +139,16 @@ fn source_root_classification_counts_only_include_the_current_source_revision() 
         OccurrenceChange::Inserted
     );
 
+    let contract = ImportProcessingContract::new(
+        "source-root-counts-parser",
+        "source-root-counts-ocr",
+        "source-root-counts-schema",
+        CLASSIFIER_EPOCH,
+    )
+    .unwrap();
+    store
+        .activate_migration_rebuild_contract(&contract, now)
+        .unwrap();
     assert_eq!(
         store
             .source_root_classification_counts(&root.id, CLASSIFIER_EPOCH)

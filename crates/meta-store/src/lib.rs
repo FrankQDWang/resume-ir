@@ -133,6 +133,7 @@ pub use artifact_repair_context::{ArtifactRepairContext, ArtifactRepairVectorCon
 pub use classification::{
     ClassificationCounts, ClassificationStatus, ClassifierEpochSource, CurrentClassifierEpoch,
     ReasonCode, ResumeVersionClassification, ReviewDisposition, SourceRevisionTriage,
+    StoredSourceTriageEpoch,
 };
 pub use contract_delta::{ContractDelta, ContractDeltaKind, ContractTransitionStrategy};
 pub use data_directory_owner::{
@@ -148,7 +149,7 @@ pub use immutable_search::{
 pub use import_processing_contract::{
     ImportProcessingContract, ImportProcessingContractId, ImportSourceDispositionKind,
     ImportTaskCompletion, ImportTaskDispositionBatchOutcome, ImportTaskSourceDisposition,
-    MigrationRebuildContractActivation, IMPORT_SOURCE_DISPOSITION_BATCH_LIMIT,
+    MigrationRebuildContractActivation, SourceTriageEpoch, IMPORT_SOURCE_DISPOSITION_BATCH_LIMIT,
     NON_PDF_PARSE_VERSION,
 };
 pub use import_root_control::{ImportRootControlStatus, ImportRootControlUpdate};
@@ -2115,16 +2116,16 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         }
     }
 
-    pub fn enqueue_ocr_job_for_source_triage(
+    pub fn enqueue_ocr_job_for_source_triage<Epoch: StoredSourceTriageEpoch>(
         &self,
         source_revision_id: &SourceRevisionId,
-        triage_epoch: CurrentClassifierEpoch<'_>,
+        triage_epoch: Epoch,
         queued_at: UnixTimestamp,
     ) -> Result<EnqueuedIngestJob>
     where
         Access: MetadataStoreWriteAccess,
     {
-        let triage_epoch = triage_epoch.as_str();
+        let triage_epoch = triage_epoch.stored_epoch();
         let (job_id, scheduled) = {
             let mut connection = self.connection.borrow_mut();
             let transaction = connection.transaction().map_err(MetaStoreError::storage)?;
@@ -2412,10 +2413,10 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         })
     }
 
-    pub fn ocr_job_for_source_triage(
+    pub fn ocr_job_for_source_triage<Epoch: StoredSourceTriageEpoch>(
         &self,
         source_revision_id: &SourceRevisionId,
-        triage_epoch: CurrentClassifierEpoch<'_>,
+        triage_epoch: Epoch,
     ) -> Result<Option<IngestJob>> {
         let connection = self.connection.borrow();
         let sql = format!(
@@ -2431,7 +2432,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         let mut rows = statement
             .query(params![
                 source_revision_id.as_str(),
-                triage_epoch.as_str(),
+                triage_epoch.stored_epoch(),
                 ingest_job_kind_to_storage(IngestJobKind::OcrDocument),
             ])
             .map_err(MetaStoreError::storage)?;
@@ -3145,9 +3146,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
             .ok_or_else(MetaStoreError::storage_invariant)?;
         let source_revision_id = SourceRevisionId::from_str(&spec.0)
             .map_err(|_| MetaStoreError::invalid_value("ocr_job_spec.source_revision_id"))?;
-        if CurrentClassifierEpoch::parse(&spec.1).is_none() {
-            return Err(MetaStoreError::invalid_value("ocr_job_spec.triage_epoch"));
-        }
+        classification::validate_stored_source_triage_epoch(&spec.1, "ocr_job_spec.triage_epoch")?;
         Ok(ClaimedOcrJob {
             job,
             source_revision_id,

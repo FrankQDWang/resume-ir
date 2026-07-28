@@ -1,4 +1,5 @@
-use meta_store::ImportProcessingContract;
+use meta_store::{ImportProcessingContract, SourceTriageEpoch};
+use resume_classifier::LinearPromotionPolicy;
 
 use super::{
     ImportOptions, ImportPipelineError, Result, OCR_PARSE_VERSION, PARSE_VERSION, SCHEMA_VERSION,
@@ -13,8 +14,19 @@ use super::{
 pub fn current_import_processing_contract(
     options: &ImportOptions,
 ) -> Result<ImportProcessingContract> {
-    let classifier_epoch = options
-        .linear_promotion
+    import_processing_contract_for_promotion(&options.linear_promotion)
+}
+
+pub(crate) fn current_source_triage_epoch(
+    promotion: &LinearPromotionPolicy,
+) -> Result<SourceTriageEpoch> {
+    Ok(import_processing_contract_for_promotion(promotion)?.source_triage_epoch())
+}
+
+fn import_processing_contract_for_promotion(
+    promotion: &LinearPromotionPolicy,
+) -> Result<ImportProcessingContract> {
+    let classifier_epoch = promotion
         .classifier_epoch()
         .unwrap_or(meta_store::CLASSIFIER_EPOCH);
     ImportProcessingContract::new(

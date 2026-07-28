@@ -11,7 +11,8 @@ use super::model::{
 };
 use crate::search_artifacts::index_document_from_resume_version;
 use crate::{
-    primary_parse_version_for, ImportPipelineError, Result, OCR_PARSE_VERSION, SCHEMA_VERSION,
+    primary_parse_version_for, processing_contract::current_source_triage_epoch,
+    ImportPipelineError, Result, OCR_PARSE_VERSION, SCHEMA_VERSION,
 };
 
 pub(crate) fn exact_rerun_decision(
@@ -44,6 +45,7 @@ pub(crate) fn exact_rerun_decision(
     let classifier_epoch = linear_promotion
         .classifier_epoch()
         .unwrap_or(meta_store::CLASSIFIER_EPOCH);
+    let source_triage_epoch = current_source_triage_epoch(linear_promotion)?;
     let expected_primary_parse = primary_parse_version_for(&file.extension);
 
     match document.status {
@@ -119,20 +121,18 @@ pub(crate) fn exact_rerun_decision(
         DocumentStatus::OcrRequired => {
             update_nonprojected_document_metadata(store, &mut document, file, now)?;
             let Some(triage) = store
-                .source_revision_triage(&source_revision.id, classifier_epoch)
+                .source_revision_triage(&source_revision.id, source_triage_epoch.as_str())
                 .map_err(ImportPipelineError::store)?
             else {
                 return Ok(None);
             };
-            if !classification_epoch_matches(classifier_epoch, &triage.triage_epoch)
+            if triage.triage_epoch != source_triage_epoch.as_str()
                 || triage.status != ClassificationStatus::OcrBacklog
             {
                 return Ok(None);
             }
-            let triage_epoch = CurrentClassifierEpoch::parse(classifier_epoch)
-                .ok_or_else(ImportPipelineError::store_invariant)?;
             let job = store
-                .ocr_job_for_source_triage(&source_revision.id, triage_epoch)
+                .ocr_job_for_source_triage(&source_revision.id, &source_triage_epoch)
                 .map_err(ImportPipelineError::store)?;
             Ok(job.as_ref().is_some_and(ocr_job_is_actionable).then_some(
                 ExactRerunDecision::UnchangedOcrRequired {

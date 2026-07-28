@@ -955,6 +955,9 @@ exit 17
     assert_eq!(jobs[0].status, IngestJobStatus::FailedRetryable);
     assert_eq!(jobs[0].attempt_count, 1);
     let job_id = jobs[0].id.clone();
+    let source_triage_epoch = current_import_processing_contract(&ImportOptions::default())
+        .unwrap()
+        .source_triage_epoch();
     let cache_key = OcrPageCacheKey::new(
         scanned.content_hash.expect("content hash"),
         1,
@@ -1001,7 +1004,7 @@ exit 17
             scanned.byte_size,
         );
         let classification = store
-            .source_revision_triage(&source_revision.id, CLASSIFIER_EPOCH)
+            .source_revision_triage(&source_revision.id, source_triage_epoch.as_str())
             .unwrap()
             .unwrap();
         assert_eq!(job.attempt_count, attempt);

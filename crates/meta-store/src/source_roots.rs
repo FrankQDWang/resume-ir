@@ -368,7 +368,7 @@ pub(crate) const SOURCE_ROOT_CLASSIFICATION_COUNTS_SQL: &str = "
             SELECT 1
             FROM source_revision_triage AS triage
             WHERE triage.source_revision_id = occurrence.source_revision_id
-              AND triage.triage_epoch = ?2
+              AND triage.triage_epoch = ?3
               AND triage.status = 'ocr_backlog'
         )), 0),
         COALESCE(SUM(
@@ -386,7 +386,7 @@ pub(crate) const SOURCE_ROOT_CLASSIFICATION_COUNTS_SQL: &str = "
                 SELECT 1
                 FROM source_revision_triage AS triage
                 WHERE triage.source_revision_id = occurrence.source_revision_id
-                  AND triage.triage_epoch = ?2
+                  AND triage.triage_epoch = ?3
                   AND triage.status = 'failed'
             )
         ), 0)
@@ -520,12 +520,25 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                 "source_root_classification_counts.classifier_epoch",
             ));
         }
+        let processing_contract = self
+            .active_import_processing_contract()?
+            .ok_or_else(|| MetaStoreError::not_found("import_processing_contract"))?;
+        if processing_contract.classifier_epoch() != classifier_epoch {
+            return Err(MetaStoreError::invalid_value(
+                "source_root_classification_counts.classifier_epoch",
+            ));
+        }
+        let source_triage_epoch = processing_contract.source_triage_epoch();
         let counts = self
             .connection
             .borrow()
             .query_row(
                 SOURCE_ROOT_CLASSIFICATION_COUNTS_SQL,
-                params![root_id.as_str(), classifier_epoch],
+                params![
+                    root_id.as_str(),
+                    classifier_epoch,
+                    source_triage_epoch.as_str(),
+                ],
                 |row| {
                     Ok([
                         row.get::<_, i64>(0)?,

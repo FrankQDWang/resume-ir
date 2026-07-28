@@ -59,6 +59,24 @@ schema v34 before native installed validation.
   same launch with zero heartbeat failures or automatic restarts. No private
   path, content, query, result, token, database, or raw diagnostic artifact is
   retained. An exact merged-main DMG witness remains required.
+- The subsequent authorized installed-runtime rescan exposed an immutable
+  source-routing conflict: a historical parser failure and the current OCR
+  route reused the classifier epoch even though parser/OCR processing authority
+  had changed. The corrective slice derives a bounded source-triage identity
+  from the complete import processing contract, keeps final resume
+  classification bound to the classifier epoch, and moves OCR lookup, exact
+  source-manifest validation, root aggregation, and rerun lookup to the new
+  identity without rewriting the historical fact. A synthetic regression
+  preserves the legacy failure while admitting the current OCR fact. During
+  verification, concurrent PDF tests also proved that waiting for the
+  process-wide PDFium owner could consume a document's 30-second parse budget;
+  the parser now validates the input first, acquires the shared runtime, and
+  starts the per-document deadline only after it owns the serialized parser.
+  The focused ownership regression, the deterministic concurrent PDF scenario,
+  and repeated full import-pipeline runs pass. No private path, filename,
+  content, count, database, query, token, or raw diagnostic artifact is
+  retained. Exact merged-main DMG installation, rescan, search, and detail
+  acceptance remain required.
 - Spec/plan unchanged: `docs/superpowers/specs|plans/2026-07-27-processing-contract-upgrade-coordinator.md`
 - Schema **v34** digest IDs are 71-char `sha256:` identities; transition/campaign CRUD with fail-closed authority
 - Online path: fence → quiesce → target commit → campaign materialize → WriterReady; queued intents stage-then-cancel + scheduled PDF rebind
