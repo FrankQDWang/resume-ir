@@ -1,5 +1,4 @@
 use std::net::TcpStream;
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::Arc;
@@ -51,8 +50,7 @@ struct Task {
 }
 
 impl SourceFileService {
-    pub(crate) fn start(data_dir: &Path) -> crate::Result<Self> {
-        let store = ReadMetaStore::open_data_dir(data_dir).map_err(crate::DaemonError::store)?;
+    pub(crate) fn start(store: ReadMetaStore) -> crate::Result<Self> {
         let (sender, receiver) = mpsc::sync_channel::<Task>(QUEUE_CAPACITY);
         let cancellation = Arc::new(AtomicBool::new(false));
         let worker_cancellation = Arc::clone(&cancellation);

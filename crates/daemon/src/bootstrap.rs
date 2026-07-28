@@ -19,6 +19,7 @@ struct PersistentRuntime {
     worker_store: OwnedMetaStore,
     ipc_store: ReadMetaStore,
     ipc_owned_store: OwnedMetaStore,
+    source_file_store: ReadMetaStore,
     processing_contract: ImportProcessingContract,
     startup_orphaned_recovered: usize,
     _resident_embedding_owner: Option<ResidentEmbeddingOwner>,
@@ -141,10 +142,12 @@ fn run_persistent_ipc_with_hooks(
         };
         let ipc_store = crate::open_store(data_dir)?;
         let ipc_owned_store = store.open_sibling().map_err(DaemonError::store)?;
+        let source_file_store = crate::open_store(data_dir)?;
         Ok(PersistentRuntime {
             worker_store: store,
             ipc_store,
             ipc_owned_store,
+            source_file_store,
             processing_contract,
             startup_orphaned_recovered,
             _resident_embedding_owner: resident_embedding_owner,
@@ -186,6 +189,7 @@ fn run_persistent_ipc_with_hooks(
             worker_store,
             ipc_store,
             ipc_owned_store,
+            source_file_store,
             processing_contract,
             startup_orphaned_recovered,
             _resident_embedding_owner,
@@ -196,6 +200,7 @@ fn run_persistent_ipc_with_hooks(
             worker_store,
             ipc_store,
             ipc_owned_store,
+            source_file_store,
             options: &options,
             processing_contract: &processing_contract,
             startup_orphaned_recovered,
@@ -208,25 +213,37 @@ fn run_persistent_ipc_with_hooks(
         return Ok(());
     }
 
-    control_publisher.prepare_from_store(&runtime.ipc_store);
+    let PersistentRuntime {
+        worker_store: _worker_store,
+        ipc_store,
+        ipc_owned_store,
+        source_file_store,
+        processing_contract,
+        startup_orphaned_recovered: _,
+        _resident_embedding_owner,
+    } = runtime;
+    control_publisher.prepare_from_store(&ipc_store);
     bound_server
         .finish_initializing(initializing_server)
         .map_err(DaemonError::from)?;
     bound_server
-        .serve(ipc::server::Context {
-            data_dir,
-            store: &runtime.ipc_store,
-            owned_store: &runtime.ipc_owned_store,
-            max_requests: options.max_requests,
-            search_runtime_config: options.search_runtime_config(),
-            processing_contract: &runtime.processing_contract,
-            shutdown: parent_shutdown.as_ref(),
-            worker_result_receiver: None,
-            artifact_fault_reporter: None,
-            control_state,
-            control_publisher: Some(control_publisher),
-            runtime_health_receiver: None,
-        })
+        .serve(
+            ipc::server::Context {
+                data_dir,
+                store: &ipc_store,
+                owned_store: &ipc_owned_store,
+                max_requests: options.max_requests,
+                search_runtime_config: options.search_runtime_config(),
+                processing_contract: &processing_contract,
+                shutdown: parent_shutdown.as_ref(),
+                worker_result_receiver: None,
+                artifact_fault_reporter: None,
+                control_state,
+                control_publisher: Some(control_publisher),
+                runtime_health_receiver: None,
+            },
+            source_file_store,
+        )
         .map_err(DaemonError::from)
 }
 

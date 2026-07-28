@@ -17,6 +17,7 @@ pub(crate) struct Runtime<'a> {
     pub(crate) worker_store: OwnedMetaStore,
     pub(crate) ipc_store: ReadMetaStore,
     pub(crate) ipc_owned_store: OwnedMetaStore,
+    pub(crate) source_file_store: ReadMetaStore,
     pub(crate) options: &'a RunOptions,
     pub(crate) processing_contract: &'a ImportProcessingContract,
     pub(crate) startup_orphaned_recovered: usize,
@@ -33,6 +34,7 @@ pub(crate) fn run(runtime: Runtime<'_>) -> Result<()> {
         worker_store,
         ipc_store,
         ipc_owned_store,
+        source_file_store,
         options,
         processing_contract,
         startup_orphaned_recovered,
@@ -82,20 +84,23 @@ pub(crate) fn run(runtime: Runtime<'_>) -> Result<()> {
         abort_worker_for_process_exit(worker_handle);
         return Err(DaemonError::from(error));
     }
-    let ipc_result = bound_server.serve(ipc::server::Context {
-        data_dir,
-        store: &ipc_store,
-        owned_store: &ipc_owned_store,
-        max_requests: options.max_requests,
-        search_runtime_config: options.search_runtime_config(),
-        processing_contract,
-        shutdown: Some(&stop_worker),
-        worker_result_receiver: Some(&worker_result_receiver),
-        artifact_fault_reporter,
-        control_state,
-        control_publisher: Some(control_publisher),
-        runtime_health_receiver: Some(runtime_health_receiver),
-    });
+    let ipc_result = bound_server.serve(
+        ipc::server::Context {
+            data_dir,
+            store: &ipc_store,
+            owned_store: &ipc_owned_store,
+            max_requests: options.max_requests,
+            search_runtime_config: options.search_runtime_config(),
+            processing_contract,
+            shutdown: Some(&stop_worker),
+            worker_result_receiver: Some(&worker_result_receiver),
+            artifact_fault_reporter,
+            control_state,
+            control_publisher: Some(control_publisher),
+            runtime_health_receiver: Some(runtime_health_receiver),
+        },
+        source_file_store,
+    );
     stop_worker.store(true, Ordering::Release);
     if let Err(fatal) = ipc_result {
         abort_worker_for_process_exit(worker_handle);
