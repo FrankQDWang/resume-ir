@@ -8,7 +8,12 @@ production-ready scope source.
 ## Processing-contract Upgrade Coordinator (v34 / 0.1.9)
 
 Root-fix landed on PR #250 after blocking review (no shortcut online commit).
-Second-round blocking review fixes (local, pending push):
+Second-round blocking review fixes landed in PR #250. Post-merge exact-main
+macOS validation then found that the PR workflow did not compile the desktop
+frontend: an invalid duplicate `writer` preview field made `npm run build` fail
+before a 0.1.9 DMG could be produced. The current corrective slice removes that
+invalid field and makes the PR workflow run the desktop frontend build so this
+release blocker cannot recur behind green Rust-only checks.
 
 - Spec/plan unchanged: `docs/superpowers/specs|plans/2026-07-27-processing-contract-upgrade-coordinator.md`
 - Schema **v34** digest IDs are 71-char `sha256:` identities; transition/campaign CRUD with fail-closed authority

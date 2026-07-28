@@ -33,7 +33,7 @@ export type CoreReason = "metadata_initializing" | "metadata_migrating" | "migra
 export type OptionalRuntimeState = "initializing" | "available" | "unavailable"
 export type OptionalRuntimeReason = "missing" | "invalid" | "start_failed" | "not_configured"
 export type CapabilityState = "initializing" | "available" | "degraded" | "unavailable" | "blocked"
-export type CapabilityReason = "core_initializing" | "core_blocked" | "embedding_unavailable" | "ocr_unavailable" | "classifier_unavailable" | "pdfium_unavailable"
+export type CapabilityReason = "core_initializing" | "core_blocked" | "embedding_unavailable" | "ocr_unavailable" | "classifier_unavailable" | "pdfium_unavailable" | "writer_unavailable" | "writer_transitioning"
 export type CapabilityName = "keyword_search" | "detail" | "semantic_search" | "hybrid_search" | "text_import" | "pdf_import" | "ocr_import" | "index_publication"
 
 export interface OptionalRuntimeStatus {
@@ -44,6 +44,13 @@ export interface OptionalRuntimeStatus {
 export interface CapabilityStatus {
   state: CapabilityState
   reason: CapabilityReason | null
+}
+
+export interface WriterHealth {
+  state: "ready" | "transitioning" | "unavailable" | "blocked"
+  reason: "transition_in_progress" | "runtime_unavailable" | "unsupported_transition" | "persisted_state_invalid" | "blocked_by_running_owner" | null
+  transition_phase: "observed" | "claims_fenced" | "workers_quiesced" | "target_committed" | "writer_ready" | null
+  transition_id: string | null
 }
 
 export interface RepairProgress {
@@ -87,12 +94,7 @@ export interface StatusBody {
     state: CoreState
     reason: CoreReason | null
   }
-  writer: {
-    state: "ready" | "transitioning" | "unavailable" | "blocked"
-    reason: string | null
-    transition_phase: string | null
-  }
-  writer: { state: "ready", reason: null, transition_phase: null },
+  writer: WriterHealth
   optional_runtimes: {
     embedding: OptionalRuntimeStatus
     ocr: OptionalRuntimeStatus
@@ -415,7 +417,7 @@ export interface DiagnosticsBody {
     state: CoreState
     reason: CoreReason | null
   }
-  writer: { state: "ready", reason: null, transition_phase: null },
+  writer: WriterHealth
   optional_runtimes: {
     embedding: OptionalRuntimeStatus
     ocr: OptionalRuntimeStatus

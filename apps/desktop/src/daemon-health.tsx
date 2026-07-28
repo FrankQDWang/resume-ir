@@ -101,7 +101,16 @@ export function IndexServiceSummary({
 const runtimeLabels = { embedding: "语义运行时", ocr: "OCR 运行时", classifier: "分类器", pdfium: "PDFium 运行时" } as const
 const capabilityLabels = { keyword_search: "关键词检索", detail: "详情", semantic_search: "语义检索", hybrid_search: "混合检索", text_import: "文本导入", pdf_import: "PDF 导入", ocr_import: "OCR 导入", index_publication: "索引发布" } as const
 const runtimeReasonLabels: Record<OptionalRuntimeReason, string> = { missing: "缺失", invalid: "完整性无效", start_failed: "启动失败", not_configured: "未配置" }
-const capabilityReasonLabels: Record<CapabilityReason, string> = { core_initializing: "核心初始化中", core_blocked: "核心已阻塞", embedding_unavailable: "语义运行时不可用", ocr_unavailable: "OCR 运行时不可用", classifier_unavailable: "分类器不可用", pdfium_unavailable: "PDFium 运行时不可用" }
+const capabilityReasonLabels: Record<CapabilityReason, string> = {
+  core_initializing: "核心初始化中",
+  core_blocked: "核心已阻塞",
+  embedding_unavailable: "语义运行时不可用",
+  ocr_unavailable: "OCR 运行时不可用",
+  classifier_unavailable: "分类器不可用",
+  pdfium_unavailable: "PDFium 运行时不可用",
+  writer_unavailable: "写入服务不可用",
+  writer_transitioning: "写入服务切换中",
+}
 const coreReasonLabels: Record<CoreReason, string> = { metadata_initializing: "元数据初始化中", metadata_migrating: "本地数据正在升级", migration_rebuild: "索引重建中", artifact_unavailable: "索引产物不可用", source_unavailable: "来源不可用", runtime_invariant: "运行时不变量失败", unsupported_store_schema: "存储 schema 不受支持", metadata_unavailable: "元数据不可用" }
 
 const transitionReasonLabels: Record<DaemonTransitionReason, string> = {
