@@ -37,7 +37,7 @@ import {
 } from "./macos-installed-main-acceptance/native-fault-recovery-authority.mjs";
 
 const TARGET = "aarch64-apple-darwin";
-const VERSION = "0.1.8";
+const VERSION = "0.1.9";
 const SOURCE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
 const SOURCE = Object.freeze({
   authority: "worktree_snapshot",

@@ -22,7 +22,7 @@ const SOURCE = Object.freeze({
   source_tree_sha256: "a".repeat(64),
 });
 
-function currentReceipt(version = "0.1.8", compositionDigest = NEW_DIGEST) {
+function currentReceipt(version = "0.1.9", compositionDigest = NEW_DIGEST) {
   return {
     schema_version: "resume-ir.macos-install-receipt.v3",
     bundle_id: "local.resume-ir.desktop",
@@ -52,8 +52,8 @@ function reinstallJournal() {
   return createLifecycleJournal({
     operation: "reinstall",
     phase: "reinstall_prepared",
-    oldVersion: "0.1.8",
-    newVersion: "0.1.8",
+    oldVersion: "0.1.9",
+    newVersion: "0.1.9",
     oldCompositionDigest: NEW_DIGEST,
     newCompositionDigest: NEW_DIGEST,
     oldReceipt,
@@ -69,8 +69,8 @@ test("reinstall journal binds two current receipts without pretending to upgrade
   const journal = createLifecycleJournal({
     operation: "reinstall",
     phase: "reinstall_prepared",
-    oldVersion: "0.1.8",
-    newVersion: "0.1.8",
+    oldVersion: "0.1.9",
+    newVersion: "0.1.9",
     oldCompositionDigest: NEW_DIGEST,
     newCompositionDigest: NEW_DIGEST,
     oldReceipt,
@@ -135,7 +135,7 @@ test("rejects unknown, non-canonical, corrupt, or transaction-drifted journals",
       createLifecycleJournal({
         operation: "upgrade",
         phase: "upgrade_prepared",
-        oldVersion: "0.1.8",
+        oldVersion: "0.1.9",
         newVersion: "0.1.1",
         oldCompositionDigest: NEW_DIGEST,
         newCompositionDigest: NEW_DIGEST,
@@ -248,8 +248,8 @@ test("creates exactly one transaction under a concurrent journal race", async (c
   const second = createLifecycleJournal({
     operation: "reinstall",
     phase: "reinstall_prepared",
-    oldVersion: "0.1.8",
-    newVersion: "0.1.8",
+    oldVersion: "0.1.9",
+    newVersion: "0.1.9",
     oldCompositionDigest: NEW_DIGEST,
     newCompositionDigest: NEW_DIGEST,
     oldReceipt: { ...currentReceipt(), dmg_sha256: "d".repeat(64) },

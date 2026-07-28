@@ -10,7 +10,7 @@ import {
 } from "./product-version.mjs";
 
 test("package manifest is the single product version authority", () => {
-  assert.equal(PRODUCT_VERSION, "0.1.8");
+  assert.equal(PRODUCT_VERSION, "0.1.9");
   assert.equal(PRODUCT_VERSION_SOURCE, "../package.json");
   const tauriConfig = JSON.parse(
     readFileSync(
@@ -49,8 +49,8 @@ test("package manifest is the single product version authority", () => {
 test("product version authority rejects malformed or unrelated manifests", () => {
   for (const source of [
     "{}",
-    '{"name":"other","version":"0.1.8"}',
-    '{"name":"resume-ir-desktop","version":"v0.1.8"}',
+    '{"name":"other","version":"0.1.9"}',
+    '{"name":"resume-ir-desktop","version":"v0.1.9"}',
     '{"name":"resume-ir-desktop","version":"01.2.3"}',
     "not-json",
   ]) {

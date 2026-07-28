@@ -85,7 +85,7 @@ async function createMountedLayout(root, { withComposition = false } = {}) {
       '<?xml version="1.0" encoding="UTF-8"?>',
       '<plist version="1.0"><dict>',
       "<key>CFBundleIdentifier</key><string>local.resume-ir.desktop</string>",
-      "<key>CFBundleShortVersionString</key><string>0.1.8</string>",
+      "<key>CFBundleShortVersionString</key><string>0.1.9</string>",
       "<key>CFBundleDisplayName</key><string>resume-ir</string>",
       "<key>CFBundleIconFile</key><string>icon.icns</string>",
       "<key>CFBundleExecutable</key><string>resume-desktop</string>",
@@ -1472,7 +1472,7 @@ test("locks one credential-free arm64 internal-test build", async () => {
     frontendRoot: paths.frontendRoot,
     platform: "darwin",
     baseConfig,
-    productVersion: "0.1.8",
+    productVersion: "0.1.9",
     platformConfig,
   });
   assert.deepEqual(plan.tauriArguments, [
@@ -1483,7 +1483,7 @@ test("locks one credential-free arm64 internal-test build", async () => {
     "dmg",
     "--ci",
   ]);
-  assert.equal(path.basename(plan.dmg), "resume-ir_0.1.8_aarch64.dmg");
+  assert.equal(path.basename(plan.dmg), "resume-ir_0.1.9_aarch64.dmg");
   assert.equal(
     plan.entitlements,
     path.join(paths.frontendRoot, "src-tauri", "entitlements.internal-test.plist"),
@@ -1514,7 +1514,7 @@ test("locks one credential-free arm64 internal-test build", async () => {
           frontendRoot: paths.frontendRoot,
           platform: "darwin",
           baseConfig,
-          productVersion: "0.1.8",
+          productVersion: "0.1.9",
           platformConfig: candidate,
         }),
       /config is invalid/,

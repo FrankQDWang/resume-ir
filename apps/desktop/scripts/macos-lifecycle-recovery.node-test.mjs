@@ -39,7 +39,7 @@ import {
 import { prepareOwnerEvidenceDirectory } from "./macos-owner-evidence-store.mjs";
 import { lifecycleWorkspacePaths } from "./macos-lifecycle-workspace.mjs";
 
-const VERSION = "0.1.8";
+const VERSION = "0.1.9";
 const OLD_SOURCE = Object.freeze({
   authority: "exact_main_commit",
   base_commit: "1".repeat(40),

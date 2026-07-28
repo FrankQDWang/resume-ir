@@ -138,7 +138,7 @@ test("gives the full release build an independent bounded timeout", async () => 
     },
     source: {
       source: SOURCE,
-      version: "0.1.8",
+      version: "0.1.9",
     },
   });
 
@@ -147,7 +147,7 @@ test("gives the full release build an independent bounded timeout", async () => 
 });
 
 test("gives release promotion its own bounded lifecycle timeout", async () => {
-  const injected = dependencies("0.1.8");
+  const injected = dependencies("0.1.9");
   delete injected.values.reinstallCurrent;
   let observed;
   injected.values.runTool = async (command, args, options) => {
@@ -158,7 +158,7 @@ test("gives release promotion its own bounded lifecycle timeout", async () => {
       overflow: false,
       stderr: "",
       stdout:
-        '{"schema_version":"resume-ir.macos-app-reinstall.v1","from_version":"0.1.8","to_version":"0.1.8"}\n',
+        '{"schema_version":"resume-ir.macos-app-reinstall.v1","from_version":"0.1.9","to_version":"0.1.9"}\n',
     };
   };
 
@@ -184,7 +184,7 @@ test("passes the verified source capability to default install promotion", async
       overflow: false,
       stderr: "",
       stdout:
-        '{"schema_version":"resume-ir.macos-installed-app.v1","version":"0.1.8"}\n',
+        '{"schema_version":"resume-ir.macos-installed-app.v1","version":"0.1.9"}\n',
     };
   };
 
@@ -203,7 +203,7 @@ function dependencies(installedVersion) {
     values: {
       deriveCommitProductBinding: async () => {
         calls.push("source");
-        return { iconSha256: ICON, version: "0.1.8" };
+        return { iconSha256: ICON, version: "0.1.9" };
       },
       deriveSourceIdentity: async () => {
         calls.push("source-identity");
@@ -219,7 +219,7 @@ function dependencies(installedVersion) {
           gitHead: HEAD,
           iconSha256: ICON,
           source: SOURCE,
-          version: "0.1.8",
+          version: "0.1.9",
         };
       },
       createImmutableBuildSource: async () => {
@@ -236,7 +236,7 @@ function dependencies(installedVersion) {
         calls.push("build");
         return {
           appCompositionDigest: COMPOSITION,
-          dmg: "/synthetic/release/resume-ir_0.1.8_aarch64.dmg",
+          dmg: "/synthetic/release/resume-ir_0.1.9_aarch64.dmg",
           dmgSha256: DMG,
           source: SOURCE,
         };
@@ -255,7 +255,7 @@ function dependencies(installedVersion) {
           gitHead: HEAD,
           iconSha256: ICON,
           source: SOURCE,
-          version: "0.1.8",
+          version: "0.1.9",
         };
       },
     },
@@ -284,7 +284,7 @@ test("always builds and promotes the exact release instead of accepting a pre-ex
       ],
     ],
     [
-      "0.1.8",
+      "0.1.9",
       "reinstall",
       [
         "git",
@@ -309,7 +309,7 @@ test("always builds and promotes the exact release instead of accepting a pre-ex
       fixture.values,
     );
     assert.equal(result.deploymentAction, expectedAction);
-    assert.equal(result.version, "0.1.8");
+    assert.equal(result.version, "0.1.9");
     assert.equal(result.gitHead, HEAD);
     assert.deepEqual(result.source, SOURCE);
     assert.equal(result.compositionDigest, COMPOSITION);
@@ -354,7 +354,7 @@ test("rejects future source, future installed versions, and build-to-install dri
     gitHead: HEAD,
     iconSha256: ICON,
     source: SOURCE,
-    version: "0.1.8",
+    version: "0.1.9",
   });
   await assert.rejects(
     deployExactInstalledRelease(baseOptions, drift.values),
@@ -368,7 +368,7 @@ test("rejects future source, future installed versions, and build-to-install dri
     gitHead: HEAD,
     iconSha256: ICON,
     source: SOURCE,
-    version: "0.1.8",
+    version: "0.1.9",
   });
   await assert.rejects(
     deployExactInstalledRelease(baseOptions, dmgDrift.values),
@@ -425,7 +425,7 @@ test("builds only from an immutable commit-derived root and rechecks authority a
     live = false;
     return {
       appCompositionDigest: COMPOSITION,
-      dmg: "/synthetic/release/resume-ir_0.1.8_aarch64.dmg",
+      dmg: "/synthetic/release/resume-ir_0.1.9_aarch64.dmg",
       dmgSha256: DMG,
       source: SOURCE,
     };
@@ -442,7 +442,7 @@ test("builds only from an immutable commit-derived root and rechecks authority a
           gitHead: HEAD,
           iconSha256: ICON,
           source: SOURCE,
-          version: "0.1.8",
+          version: "0.1.9",
         },
       },
       fixture.values,
@@ -454,7 +454,7 @@ test("builds only from an immutable commit-derived root and rechecks authority a
 });
 
 test("reinstall rechecks live authority before the atomic replacement", async () => {
-  const fixture = dependencies("0.1.8");
+  const fixture = dependencies("0.1.9");
   let guardCalls = 0;
   const mutations = [];
   fixture.values.assertMutationAuthority = async (operation) => {
@@ -479,7 +479,7 @@ test("reinstall rechecks live authority before the atomic replacement", async ()
           gitHead: HEAD,
           iconSha256: ICON,
           source: SOURCE,
-          version: "0.1.8",
+          version: "0.1.9",
         },
       },
       fixture.values,
@@ -500,7 +500,7 @@ test("a drift-and-restore during build cannot alter the commit-derived build roo
       gitHead: HEAD,
       iconSha256: ICON,
       source: SOURCE,
-      version: "0.1.8",
+      version: "0.1.9",
     };
   };
   fixture.values.buildVerifiedDmg = async ({ repoRoot }) => {
@@ -511,7 +511,7 @@ test("a drift-and-restore during build cannot alter the commit-derived build roo
     liveAuthority = HEAD;
     return {
       appCompositionDigest: COMPOSITION,
-      dmg: "/synthetic/release/resume-ir_0.1.8_aarch64.dmg",
+      dmg: "/synthetic/release/resume-ir_0.1.9_aarch64.dmg",
       dmgSha256: DMG,
       source: SOURCE,
     };
@@ -523,7 +523,7 @@ test("a drift-and-restore during build cannot alter the commit-derived build roo
         gitHead: HEAD,
         iconSha256: ICON,
         source: SOURCE,
-        version: "0.1.8",
+        version: "0.1.9",
       },
     },
     fixture.values,
@@ -546,7 +546,7 @@ test("passes the immutable source closed environment through the Tauri build bou
     assert.equal(environment.PATH.includes(baseOptions.repoRoot), false);
     return {
       appCompositionDigest: COMPOSITION,
-      dmg: "/synthetic/release/resume-ir_0.1.8_aarch64.dmg",
+      dmg: "/synthetic/release/resume-ir_0.1.9_aarch64.dmg",
       dmgSha256: DMG,
       source: SOURCE,
     };
