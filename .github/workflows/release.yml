@@ -217,7 +217,8 @@ jobs:
 
       - name: Release gate
         run: |
-          echo "Packaging is complete. Signing, notarization, installer lifecycle validation, Windows MSI, and GitHub Release upload are gated until explicit release approval."
+          echo "Packaging, signing, notarization remain gated."
+          echo "Signing, notarization, installer lifecycle validation, Windows MSI, and GitHub Release upload are gated until explicit release approval."
 
   windows-package-dry-run:
     name: Windows package dry run
