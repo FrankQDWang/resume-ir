@@ -244,6 +244,32 @@ describe("strict control-plane contracts", () => {
     }
   })
 
+  it("accepts a completed writer transition and rejects an incomplete ready witness", async () => {
+    const status = readyStatus()
+    status.writer = {
+      state: "ready",
+      reason: null,
+      transition_phase: "writer_ready",
+      transition_id: `sha256:${"a".repeat(64)}`,
+    }
+    mockReply({ http_status: 200, body: status })
+    await expect(readStatus()).resolves.toEqual({ http_status: 200, body: status })
+
+    const body = diagnostics()
+    body.writer = status.writer
+    mockReply({ http_status: 200, body })
+    await expect(readDiagnostics()).resolves.toEqual({ http_status: 200, body })
+
+    status.writer.transition_id = null
+    mockReply({ http_status: 200, body: status })
+    await expect(readStatus()).rejects.toMatchObject({ code: "daemon_contract" })
+
+    status.writer.transition_phase = null
+    status.writer.transition_id = `sha256:${"b".repeat(64)}`
+    mockReply({ http_status: 200, body: status })
+    await expect(readStatus()).rejects.toMatchObject({ code: "daemon_contract" })
+  })
+
   it("keeps the daemon artifact-blocked control plane readable", async () => {
     const blocked = structuredClone(artifactBlockedStatusFixture) as StatusBody
     mockReply({ http_status: 200, body: blocked })
