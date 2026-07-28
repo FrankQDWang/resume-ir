@@ -5,21 +5,24 @@ use std::sync::{
 };
 use std::thread;
 
-use meta_store::{ImportProcessingContract, OwnedMetaStore};
+use meta_store::{ImportProcessingContract, OwnedMetaStore, ReadMetaStore};
 
 use crate::daemon_error::{DaemonError, Result};
+use crate::ipc;
 use crate::run_options::RunOptions;
 use crate::worker_runtime::{run_worker_loop, WorkerLoopRuntime, WorkerSummaryOutput};
-use crate::{ipc, open_store};
 
 pub(crate) struct Runtime<'a> {
     pub(crate) data_dir: &'a Path,
-    pub(crate) owned_store: &'a OwnedMetaStore,
+    pub(crate) worker_store: OwnedMetaStore,
+    pub(crate) ipc_store: ReadMetaStore,
+    pub(crate) ipc_owned_store: OwnedMetaStore,
     pub(crate) options: &'a RunOptions,
     pub(crate) processing_contract: &'a ImportProcessingContract,
     pub(crate) startup_orphaned_recovered: usize,
     pub(crate) parent_shutdown: Option<&'a Arc<AtomicBool>>,
     pub(crate) bound_server: ipc::server::BoundServer,
+    pub(crate) initializing_server: ipc::server::InitializingServer,
     pub(crate) control_state: ipc::ControlPlaneState,
     pub(crate) control_publisher: ipc::ControlPlanePublisher,
 }
@@ -27,18 +30,18 @@ pub(crate) struct Runtime<'a> {
 pub(crate) fn run(runtime: Runtime<'_>) -> Result<()> {
     let Runtime {
         data_dir,
-        owned_store,
+        worker_store,
+        ipc_store,
+        ipc_owned_store,
         options,
         processing_contract,
         startup_orphaned_recovered,
         parent_shutdown,
-        bound_server,
+        mut bound_server,
+        initializing_server,
         control_state,
         control_publisher,
     } = runtime;
-    let ipc_store = open_store(data_dir)?;
-    let ipc_owned_store = owned_store.open_sibling().map_err(DaemonError::store)?;
-    let worker_store = owned_store.open_sibling().map_err(DaemonError::store)?;
     let stop_worker = parent_shutdown
         .cloned()
         .unwrap_or_else(|| Arc::new(AtomicBool::new(false)));
@@ -74,6 +77,11 @@ pub(crate) fn run(runtime: Runtime<'_>) -> Result<()> {
         let _ = worker_result_sender.send(result.map(|_| ()));
     });
 
+    if let Err(error) = bound_server.finish_initializing(initializing_server) {
+        stop_worker.store(true, Ordering::Release);
+        abort_worker_for_process_exit(worker_handle);
+        return Err(DaemonError::from(error));
+    }
     let ipc_result = bound_server.serve(ipc::server::Context {
         data_dir,
         store: &ipc_store,

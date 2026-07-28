@@ -16,7 +16,7 @@ use crate::run_options::RunOptions;
 use crate::{import_processing, ipc};
 
 struct PersistentRuntime {
-    store: OwnedMetaStore,
+    worker_store: OwnedMetaStore,
     ipc_store: ReadMetaStore,
     ipc_owned_store: OwnedMetaStore,
     processing_contract: ImportProcessingContract,
@@ -47,6 +47,8 @@ struct BootstrapHooks {
     before_store_open: Option<Arc<dyn Fn() + Send + Sync>>,
     #[cfg(test)]
     store_opened: Option<Arc<dyn Fn() + Send + Sync>>,
+    #[cfg(test)]
+    before_ready_handoff: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 fn run_persistent_ipc_with_hooks(
@@ -140,7 +142,7 @@ fn run_persistent_ipc_with_hooks(
         let ipc_store = crate::open_store(data_dir)?;
         let ipc_owned_store = store.open_sibling().map_err(DaemonError::store)?;
         Ok(PersistentRuntime {
-            store,
+            worker_store: store,
             ipc_store,
             ipc_owned_store,
             processing_contract,
@@ -175,26 +177,41 @@ fn run_persistent_ipc_with_hooks(
         }
     };
 
-    control_publisher.prepare_from_store(&runtime.ipc_store);
-    bound_server
-        .finish_initializing(initializing_server)
-        .map_err(DaemonError::from)?;
-
+    #[cfg(test)]
+    if let Some(before_ready_handoff) = _hooks.before_ready_handoff.as_ref() {
+        before_ready_handoff();
+    }
     if options.has_worker_loop() {
+        let PersistentRuntime {
+            worker_store,
+            ipc_store,
+            ipc_owned_store,
+            processing_contract,
+            startup_orphaned_recovered,
+            _resident_embedding_owner,
+        } = runtime;
+        control_publisher.prepare_from_store(&ipc_store);
         crate::worker_ipc::run(crate::worker_ipc::Runtime {
             data_dir,
-            owned_store: &runtime.store,
+            worker_store,
+            ipc_store,
+            ipc_owned_store,
             options: &options,
-            processing_contract: &runtime.processing_contract,
-            startup_orphaned_recovered: runtime.startup_orphaned_recovered,
+            processing_contract: &processing_contract,
+            startup_orphaned_recovered,
             parent_shutdown: parent_shutdown.as_ref(),
             bound_server,
+            initializing_server,
             control_state,
             control_publisher,
         })?;
         return Ok(());
     }
 
+    control_publisher.prepare_from_store(&runtime.ipc_store);
+    bound_server
+        .finish_initializing(initializing_server)
+        .map_err(DaemonError::from)?;
     bound_server
         .serve(ipc::server::Context {
             data_dir,
@@ -613,6 +630,10 @@ mod tests {
         let barrier = Arc::new((Mutex::new(false), Condvar::new()));
         let hook_barrier = Arc::clone(&barrier);
         let (barrier_reached_sender, barrier_reached_receiver) = mpsc::sync_channel(1);
+        let (handoff_reached_sender, handoff_reached_receiver) = mpsc::sync_channel(1);
+        let (handoff_release_sender, handoff_release_receiver) = mpsc::sync_channel(1);
+        let handoff_release_receiver = Arc::new(Mutex::new(handoff_release_receiver));
+        let hook_handoff_release_receiver = Arc::clone(&handoff_release_receiver);
         let store_open_count = Arc::new(AtomicUsize::new(0));
         let hook_store_open_count = Arc::clone(&store_open_count);
         let hooks = BootstrapHooks {
@@ -627,13 +648,22 @@ mod tests {
             store_opened: Some(Arc::new(move || {
                 hook_store_open_count.fetch_add(1, Ordering::SeqCst);
             })),
+            before_ready_handoff: Some(Arc::new(move || {
+                handoff_reached_sender.send(()).unwrap();
+                hook_handoff_release_receiver
+                    .lock()
+                    .unwrap()
+                    .recv()
+                    .unwrap();
+            })),
         };
         let bootstrap_started = Instant::now();
         let data_dir = directory.path().to_path_buf();
         let daemon_data_dir = data_dir.clone();
         thread::scope(|scope| {
-            let cleanup = BootstrapCleanup {
+            let mut cleanup = BootstrapCleanup {
                 barrier: Arc::clone(&barrier),
+                handoff_release: Some(handoff_release_sender.clone()),
                 shutdown: Arc::clone(&shutdown),
             };
             let daemon_shutdown = Arc::clone(&shutdown);
@@ -684,6 +714,12 @@ mod tests {
             let (lock, condition) = &*barrier;
             *lock.lock().unwrap() = true;
             condition.notify_one();
+            handoff_reached_receiver
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            let prepared = authenticated_status(endpoint, token);
+            assert_eq!(prepared["core"]["state"], "initializing");
+            handoff_release_sender.send(()).unwrap();
             let ready_deadline = Instant::now() + Duration::from_secs(5);
             let ready_status = loop {
                 let status = authenticated_status(endpoint, token);
@@ -751,15 +787,19 @@ mod tests {
 
     struct BootstrapCleanup {
         barrier: Arc<(Mutex<bool>, Condvar)>,
+        handoff_release: Option<mpsc::SyncSender<()>>,
         shutdown: Arc<AtomicBool>,
     }
 
     impl BootstrapCleanup {
-        fn stop(&self) {
+        fn stop(&mut self) {
             self.shutdown.store(true, Ordering::Release);
             let (lock, condition) = &*self.barrier;
             *lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = true;
             condition.notify_all();
+            if let Some(handoff_release) = self.handoff_release.take() {
+                let _ = handoff_release.try_send(());
+            }
         }
     }
 
