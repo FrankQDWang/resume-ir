@@ -1,9 +1,172 @@
+use rusqlite::params;
+
 use crate::{
-    BeginScanOutcome, EphemeralMetaStore, ImportProcessingContract, ImportRootKind,
-    ImportScanProfile, ImportScanScope, ImportTask, ImportTaskId, ImportTaskStatus, ScanCounts,
-    ScanPhase, ScanTrigger, SourceRootScanCoordination, SourceRootState, SourceWatcherState,
+    source_roots::SOURCE_ROOT_CLASSIFICATION_COUNTS_SQL, BeginScanOutcome, ClassificationCounts,
+    ClassificationStatus, ContentDigest, Document, DocumentId, DocumentStatus, EphemeralMetaStore,
+    FileExtension, ImportProcessingContract, ImportRootKind, ImportScanProfile, ImportScanScope,
+    ImportTask, ImportTaskId, ImportTaskStatus, OccurrenceChange, ReasonCode, ResumeVersion,
+    ResumeVersionClassification, ResumeVersionId, ReviewDisposition, ScanCounts, ScanPhase,
+    ScanTrigger, SourceRevision, SourceRootScanCoordination, SourceRootState, SourceWatcherState,
     UnixTimestamp, CLASSIFIER_EPOCH,
 };
+
+#[test]
+fn source_root_classification_counts_seek_resume_versions_by_document() {
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
+    store.run_migrations().unwrap();
+    let explain = format!("EXPLAIN QUERY PLAN {SOURCE_ROOT_CLASSIFICATION_COUNTS_SQL}");
+    let connection = store.connection.borrow();
+    let mut statement = connection.prepare(&explain).unwrap();
+    let details = statement
+        .query_map(params!["root-query-plan", CLASSIFIER_EPOCH], |row| {
+            row.get::<_, String>(3)
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    let indexed_seeks = details
+        .iter()
+        .filter(|detail| {
+            detail
+                .contains("SEARCH version USING INDEX resume_version_document_idx (document_id=?)")
+        })
+        .count();
+    assert_eq!(indexed_seeks, 4, "query plan: {details:?}");
+}
+
+#[test]
+fn source_root_classification_counts_only_include_the_current_source_revision() {
+    let store = EphemeralMetaStore::open_in_memory().unwrap();
+    store.run_migrations().unwrap();
+    let now = UnixTimestamp::from_unix_seconds(1_900_199_990);
+    let root = store
+        .register_source_root(
+            "/synthetic/classification-counts",
+            "/synthetic/classification-counts",
+            "Classification counts",
+            now,
+        )
+        .unwrap();
+    store
+        .begin_scan(
+            &root.id,
+            "classification-counts-scan",
+            ScanTrigger::Manual,
+            now,
+        )
+        .unwrap();
+
+    let current_source = b"current synthetic source";
+    let prior_source = b"prior synthetic source";
+    let mut document = Document {
+        id: DocumentId::from_non_secret_parts(&["source-root-classification-counts"]),
+        source_uri: "synthetic://classification-counts/document.txt".to_string(),
+        normalized_path: "synthetic/classification-counts/document.txt".to_string(),
+        file_name: "document.txt".to_string(),
+        extension: FileExtension::Txt,
+        byte_size: current_source.len() as u64,
+        mtime: now,
+        content_hash: None,
+        text_hash: None,
+        is_deleted: false,
+        created_at: now,
+        updated_at: now,
+        status: DocumentStatus::FieldsExtracted,
+    };
+    let prior_revision = SourceRevision::for_content(
+        document.id.clone(),
+        ContentDigest::from_bytes(prior_source),
+        prior_source.len() as u64,
+    );
+    let current_revision = SourceRevision::for_content(
+        document.id.clone(),
+        ContentDigest::from_bytes(current_source),
+        current_source.len() as u64,
+    );
+    document.content_hash = Some(current_revision.content_hash.as_str().to_string());
+    store.upsert_document(&document).unwrap();
+    store.insert_source_revision(&prior_revision).unwrap();
+    store.insert_source_revision(&current_revision).unwrap();
+
+    let prior_version = classification_counts_version(&document, &prior_revision, "prior");
+    let current_version = classification_counts_version(&document, &current_revision, "current");
+    store.insert_resume_version(&prior_version).unwrap();
+    store.insert_resume_version(&current_version).unwrap();
+    store
+        .insert_resume_version_classification(&ResumeVersionClassification {
+            resume_version_id: prior_version.id,
+            status: ClassificationStatus::NonResume,
+            classifier_epoch: CLASSIFIER_EPOCH.to_string(),
+            reason_codes: vec![ReasonCode::CorroboratedNonResumeSignals],
+            classified_at: now,
+            review_disposition: ReviewDisposition::NotRequired,
+        })
+        .unwrap();
+    store
+        .insert_resume_version_classification(&ResumeVersionClassification {
+            resume_version_id: current_version.id,
+            status: ClassificationStatus::ResumeCandidate,
+            classifier_epoch: CLASSIFIER_EPOCH.to_string(),
+            reason_codes: vec![ReasonCode::CorroboratedResumeSignals],
+            classified_at: now,
+            review_disposition: ReviewDisposition::NotRequired,
+        })
+        .unwrap();
+    assert_eq!(
+        store
+            .observe_source_occurrence(
+                &root.id,
+                "document.txt",
+                &document.id,
+                &current_revision.id,
+                "classification-counts-scan",
+                now,
+            )
+            .unwrap(),
+        OccurrenceChange::Inserted
+    );
+
+    assert_eq!(
+        store
+            .source_root_classification_counts(&root.id, CLASSIFIER_EPOCH)
+            .unwrap(),
+        ClassificationCounts {
+            resume_candidate: 1,
+            non_resume: 0,
+            needs_review: 0,
+            ocr_backlog: 0,
+            failed: 0,
+        }
+    );
+}
+
+fn classification_counts_version(
+    document: &Document,
+    revision: &SourceRevision,
+    label: &str,
+) -> ResumeVersion {
+    let normalized_text_hash =
+        ContentDigest::from_bytes(format!("synthetic normalized {label}").as_bytes());
+    ResumeVersion {
+        id: ResumeVersionId::from_content_identity(
+            &document.id,
+            &revision.id,
+            &normalized_text_hash,
+            "synthetic-parser",
+            "synthetic-schema",
+        ),
+        document_id: document.id.clone(),
+        source_revision_id: revision.id.clone(),
+        normalized_text_hash,
+        parse_version: "synthetic-parser".to_string(),
+        schema_version: "synthetic-schema".to_string(),
+        language_set: vec!["en".to_string()],
+        page_count: Some(1),
+        raw_text: None,
+        clean_text: Some(format!("synthetic normalized {label}")),
+        quality_score: Some(0.9),
+    }
+}
 
 #[test]
 fn source_root_write_transactions_release_the_connection_before_result_reads() {

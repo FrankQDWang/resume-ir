@@ -332,6 +332,68 @@ pub enum OccurrenceChange {
     Replaced,
 }
 
+pub(crate) const SOURCE_ROOT_CLASSIFICATION_COUNTS_SQL: &str = "
+    SELECT
+        COALESCE(SUM(EXISTS (
+            SELECT 1
+            FROM resume_version AS version INDEXED BY resume_version_document_idx
+            JOIN resume_version_classification AS classification
+              ON classification.resume_version_id = version.id
+            WHERE version.document_id = occurrence.document_id
+              AND version.source_revision_id = occurrence.source_revision_id
+              AND classification.classifier_epoch = ?2
+              AND classification.status = 'resume_candidate'
+        )), 0),
+        COALESCE(SUM(EXISTS (
+            SELECT 1
+            FROM resume_version AS version INDEXED BY resume_version_document_idx
+            JOIN resume_version_classification AS classification
+              ON classification.resume_version_id = version.id
+            WHERE version.document_id = occurrence.document_id
+              AND version.source_revision_id = occurrence.source_revision_id
+              AND classification.classifier_epoch = ?2
+              AND classification.status = 'non_resume'
+        )), 0),
+        COALESCE(SUM(EXISTS (
+            SELECT 1
+            FROM resume_version AS version INDEXED BY resume_version_document_idx
+            JOIN resume_version_classification AS classification
+              ON classification.resume_version_id = version.id
+            WHERE version.document_id = occurrence.document_id
+              AND version.source_revision_id = occurrence.source_revision_id
+              AND classification.classifier_epoch = ?2
+              AND classification.status = 'needs_review'
+        )), 0),
+        COALESCE(SUM(EXISTS (
+            SELECT 1
+            FROM source_revision_triage AS triage
+            WHERE triage.source_revision_id = occurrence.source_revision_id
+              AND triage.triage_epoch = ?2
+              AND triage.status = 'ocr_backlog'
+        )), 0),
+        COALESCE(SUM(
+            EXISTS (
+                SELECT 1
+                FROM resume_version AS version INDEXED BY resume_version_document_idx
+                JOIN resume_version_classification AS classification
+                  ON classification.resume_version_id = version.id
+                WHERE version.document_id = occurrence.document_id
+                  AND version.source_revision_id = occurrence.source_revision_id
+                  AND classification.classifier_epoch = ?2
+                  AND classification.status = 'failed'
+            )
+            OR EXISTS (
+                SELECT 1
+                FROM source_revision_triage AS triage
+                WHERE triage.source_revision_id = occurrence.source_revision_id
+                  AND triage.triage_epoch = ?2
+                  AND triage.status = 'failed'
+            )
+        ), 0)
+     FROM source_occurrence AS occurrence
+     WHERE occurrence.root_id = ?1
+       AND occurrence.state = 'present'";
+
 impl<Access: MetadataStoreAccess> MetadataStore<Access> {
     pub fn source_roots(&self) -> Result<Vec<SourceRoot>> {
         let connection = self.connection.borrow();
@@ -462,62 +524,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
             .connection
             .borrow()
             .query_row(
-                "SELECT
-                    COALESCE(SUM(EXISTS (
-                        SELECT 1
-                        FROM resume_version AS version
-                        JOIN resume_version_classification AS classification
-                          ON classification.resume_version_id = version.id
-                        WHERE version.source_revision_id = occurrence.source_revision_id
-                          AND classification.classifier_epoch = ?2
-                          AND classification.status = 'resume_candidate'
-                    )), 0),
-                    COALESCE(SUM(EXISTS (
-                        SELECT 1
-                        FROM resume_version AS version
-                        JOIN resume_version_classification AS classification
-                          ON classification.resume_version_id = version.id
-                        WHERE version.source_revision_id = occurrence.source_revision_id
-                          AND classification.classifier_epoch = ?2
-                          AND classification.status = 'non_resume'
-                    )), 0),
-                    COALESCE(SUM(EXISTS (
-                        SELECT 1
-                        FROM resume_version AS version
-                        JOIN resume_version_classification AS classification
-                          ON classification.resume_version_id = version.id
-                        WHERE version.source_revision_id = occurrence.source_revision_id
-                          AND classification.classifier_epoch = ?2
-                          AND classification.status = 'needs_review'
-                    )), 0),
-                    COALESCE(SUM(EXISTS (
-                        SELECT 1
-                        FROM source_revision_triage AS triage
-                        WHERE triage.source_revision_id = occurrence.source_revision_id
-                          AND triage.triage_epoch = ?2
-                          AND triage.status = 'ocr_backlog'
-                    )), 0),
-                    COALESCE(SUM(
-                        EXISTS (
-                            SELECT 1
-                            FROM resume_version AS version
-                            JOIN resume_version_classification AS classification
-                              ON classification.resume_version_id = version.id
-                            WHERE version.source_revision_id = occurrence.source_revision_id
-                              AND classification.classifier_epoch = ?2
-                              AND classification.status = 'failed'
-                        )
-                        OR EXISTS (
-                            SELECT 1
-                            FROM source_revision_triage AS triage
-                            WHERE triage.source_revision_id = occurrence.source_revision_id
-                              AND triage.triage_epoch = ?2
-                              AND triage.status = 'failed'
-                        )
-                    ), 0)
-                 FROM source_occurrence AS occurrence
-                 WHERE occurrence.root_id = ?1
-                   AND occurrence.state = 'present'",
+                SOURCE_ROOT_CLASSIFICATION_COUNTS_SQL,
                 params![root_id.as_str(), classifier_epoch],
                 |row| {
                     Ok([

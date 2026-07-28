@@ -32,7 +32,18 @@ schema v34 before native installed validation.
   frontend validator incorrectly allowed only a null transition. The corrective
   desktop slice accepts both ready-without-transition and completed-transition
   witnesses, rejects incomplete pairs, and covers status plus diagnostics.
-  Rebuilt-DMG installed import/search acceptance remains the next gate.
+  Exact-main installed validation now reaches trusted desktop Ready.
+- Opening the installed source-root panel against the authorized existing store
+  exposed a second real-runtime blocker: classification aggregation repeatedly
+  scanned the complete `resume_version` table for each present occurrence and
+  exceeded the desktop bridge timeout. The corrective query binds each version
+  lookup to the occurrence document and its existing document index before
+  checking the exact source revision. A query-plan regression test proves four
+  indexed seeks, a semantic regression test excludes a prior source revision,
+  and a private read-only timing witness reduced the aggregation from roughly
+  29.4 seconds to 328 milliseconds. No private path, filename, content, count,
+  token, database, or diagnostic artifact is retained. Rebuilt-DMG installed
+  source-root, import, search, and detail acceptance remains the next gate.
 - Spec/plan unchanged: `docs/superpowers/specs|plans/2026-07-27-processing-contract-upgrade-coordinator.md`
 - Schema **v34** digest IDs are 71-char `sha256:` identities; transition/campaign CRUD with fail-closed authority
 - Online path: fence → quiesce → target commit → campaign materialize → WriterReady; queued intents stage-then-cancel + scheduled PDF rebind
