@@ -21,7 +21,7 @@ describe("visible daemon health", () => {
   it("distinguishes unsupported v29 data, runtime invariant, and source failure", () => {
     expect(indexServicePresentation("blocked", "unsupported_store_schema")).toEqual({
       title: "数据版本不受支持",
-      message: "当前版本支持从 schema v29 连续升级到 v33；更早或未来版本保持未修改",
+      message: "当前版本支持从 schema v29 连续升级到 v34；更早或未来版本保持未修改",
     })
     expect(indexServicePresentation("blocked", "runtime_invariant").message).toContain("导出脱敏诊断")
     expect(indexServicePresentation("degraded", "source_unavailable").message).toContain("来源磁盘")

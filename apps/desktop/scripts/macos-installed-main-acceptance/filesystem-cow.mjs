@@ -382,7 +382,7 @@ export async function readActiveStoreManifest(dataDir) {
     read: true,
   });
   const match = source.match(
-    /^resume-ir\.metadata-active\.v(1|2)\nfile=(metadata-v(29|30|31|32|33)-[a-f0-9]{16}\.sqlite3)\nschema=(29|30|31|32|33)\ndigest=([a-f0-9]{64})\n$/,
+    /^resume-ir\.metadata-active\.v(1|2)\nfile=(metadata-v(29|30|31|32|33|34)-[a-f0-9]{16}\.sqlite3)\nschema=(29|30|31|32|33|34)\ndigest=([a-f0-9]{64})\n$/,
   );
   if (!match) {
     fail("active_store_manifest_invalid");
@@ -393,7 +393,7 @@ export async function readActiveStoreManifest(dataDir) {
   if (
     fileSchemaValue !== schemaValue ||
     manifestVersion !== (schema === AUTHORIZED_SOURCE_SCHEMA ? "1" : "2") ||
-    ![AUTHORIZED_SOURCE_SCHEMA, 30, 31, 32, INSTALLED_TARGET_SCHEMA].includes(schema) ||
+    ![AUTHORIZED_SOURCE_SCHEMA, 30, 31, 32, 33, INSTALLED_TARGET_SCHEMA].includes(schema) ||
     fileName !== `metadata-v${schema}-${digest.slice(0, 16)}.sqlite3`
   ) {
     fail("active_store_manifest_invalid");
