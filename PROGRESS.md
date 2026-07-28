@@ -13,7 +13,10 @@ macOS validation then found that the PR workflow did not compile the desktop
 frontend: an invalid duplicate `writer` preview field made `npm run build` fail
 before a 0.1.9 DMG could be produced. The current corrective slice removes that
 invalid field and makes the PR workflow run the desktop frontend build so this
-release blocker cannot recur behind green Rust-only checks.
+release blocker cannot recur behind green Rust-only checks. Follow-up release
+contract slices align all version-bound fixtures to 0.1.9 and advance the
+installed-main acceptance receipt and cold migration target from schema v33 to
+schema v34 before native installed validation.
 
 - Spec/plan unchanged: `docs/superpowers/specs|plans/2026-07-27-processing-contract-upgrade-coordinator.md`
 - Schema **v34** digest IDs are 71-char `sha256:` identities; transition/campaign CRUD with fail-closed authority

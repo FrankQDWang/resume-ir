@@ -247,7 +247,7 @@ async function writeActiveManifest(dataDir, schema) {
   return metadataFile;
 }
 
-async function fixture(context, { schema = 33 } = {}) {
+async function fixture(context, { schema = 34 } = {}) {
   const dataDir = await realpath(
     await mkdtemp(path.join(os.tmpdir(), "resume-ir-ready-evidence-")),
   );
@@ -259,7 +259,7 @@ async function fixture(context, { schema = 33 } = {}) {
   return { dataDir, metadataFile };
 }
 
-test("binds the active v33 metadata file, one exact generation pair, and a bounded search witness", async (context) => {
+test("binds the active v34 metadata file, one exact generation pair, and a bounded search witness", async (context) => {
   const { dataDir } = await fixture(context);
   assert.deepEqual(
     await validateInstalledRecoveryEvidence({
@@ -300,7 +300,7 @@ test("validates cold Ready and artifact evidence without a search witness", asyn
     dataDir,
     runTool: metadataAuthority(),
   });
-  await writeActiveManifest(dataDir, 33);
+  await writeActiveManifest(dataDir, 34);
   assert.deepEqual(
     await validateInstalledReadyArtifacts({
       daemonExecutable: DAEMON_EXECUTABLE,

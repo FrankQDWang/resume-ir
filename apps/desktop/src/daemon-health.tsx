@@ -57,7 +57,7 @@ export function indexServicePresentation(
     return { title: "索引修复中", message: "daemon 已连接，索引正在修复" }
   }
   if (coreReason === "unsupported_store_schema") {
-    return { title: "数据版本不受支持", message: "当前版本支持从 schema v29 连续升级到 v33；更早或未来版本保持未修改" }
+    return { title: "数据版本不受支持", message: "当前版本支持从 schema v29 连续升级到 v34；更早或未来版本保持未修改" }
   }
   if (coreReason === "runtime_invariant") {
     return { title: "索引修复已阻塞", message: "daemon 已连接，请导出脱敏诊断" }
