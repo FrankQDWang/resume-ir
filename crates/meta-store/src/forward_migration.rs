@@ -4,8 +4,8 @@ use rusqlite::{params, Connection, Transaction};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, MetaStoreError, Result,
-    SourceRootId,
+    schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, schema_v35,
+    MetaStoreError, Result, SourceRootId,
 };
 
 const V29_TO_V30_NAME: &str = "metadata-forward-migration-history";
@@ -13,6 +13,7 @@ const V30_TO_V31_NAME: &str = "source-root-path-truth";
 const V31_TO_V32_NAME: &str = "source-root-durable-deletion";
 const V32_TO_V33_NAME: &str = "pdfium-parser-reprocessing";
 const V33_TO_V34_NAME: &str = "processing-contract-upgrade-coordinator";
+const V34_TO_V35_NAME: &str = "source-file-observation";
 const PDFIUM_PARSER_CONTRACT: &str = "parser-pdfium-v2";
 const PDF_REPROCESS_LOOKUP_INDEX: &str = "__migration_pdf_reprocess_resume_lookup";
 
@@ -88,7 +89,7 @@ pub(super) fn validate_chain(connection: &Connection, from: u32, to: u32) -> Res
 }
 
 pub(super) fn apply_current_schema(connection: &mut Connection, from: u32) -> Result<()> {
-    apply_chain(connection, from, schema_v34::VERSION)
+    apply_chain(connection, from, schema_v35::VERSION)
 }
 
 fn apply_step(connection: &mut Connection, step: &MigrationStep) -> Result<()> {
@@ -465,7 +466,28 @@ fn validate_v34(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn registry() -> [MigrationStep; 5] {
+fn apply_v34_to_v35(transaction: &Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(schema_v35::SCHEMA)
+        .map_err(MetaStoreError::migration)
+}
+
+fn validate_v35(connection: &Connection) -> Result<()> {
+    let tables = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'source_file_observation'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(MetaStoreError::storage)?;
+    if tables != 1 {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    Ok(())
+}
+
+fn registry() -> [MigrationStep; 6] {
     [
         MigrationStep {
             from: schema_v29::VERSION,
@@ -506,6 +528,14 @@ fn registry() -> [MigrationStep; 5] {
             schema: schema_v34::SCHEMA,
             apply: apply_v33_to_v34,
             validate: validate_v34,
+        },
+        MigrationStep {
+            from: schema_v34::VERSION,
+            to: schema_v35::VERSION,
+            name: V34_TO_V35_NAME,
+            schema: schema_v35::SCHEMA,
+            apply: apply_v34_to_v35,
+            validate: validate_v35,
         },
     ]
 }

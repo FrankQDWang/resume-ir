@@ -259,7 +259,7 @@ async function fixture(context, { schema = 34 } = {}) {
   return { dataDir, metadataFile };
 }
 
-test("binds the active v34 metadata file, one exact generation pair, and a bounded search witness", async (context) => {
+test("binds the active v35 metadata file, one exact generation pair, and a bounded search witness", async (context) => {
   const { dataDir } = await fixture(context);
   assert.deepEqual(
     await validateInstalledRecoveryEvidence({

@@ -253,7 +253,7 @@ test("orchestrates exact deployment, cold recovery, ordered contention, and the 
   );
   assert.equal(report.persistent_contention.core_reason, "runtime_invariant");
   assert.equal(report.cold_start.v29_predecessor_retained, true);
-  assert.equal(report.cold_start.v34_manifest_published, true);
+  assert.equal(report.cold_start.v35_manifest_published, true);
   assert.equal(report.cold_start.v29_logical_authority_preserved, true);
   assert.deepEqual(report.diagnostics.gui_combined_export, {
     desktop_contract: "resume-ir.desktop-diagnostics.v2",
