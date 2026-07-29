@@ -4566,6 +4566,7 @@ mod tests {
         let (processed, verification) = process_file(
             &data_dir,
             &store,
+            &task.id,
             &discovered,
             &Sectionizer::default(),
             now,
@@ -5106,6 +5107,7 @@ mod tests {
         let (processed, _) = process_file(
             &data_dir,
             &store,
+            &first_task.id,
             &discovered,
             &Sectionizer::default(),
             changed_now,

@@ -117,6 +117,7 @@ pub(super) fn process_files_sequential(
         let (processed, verification) = process_file(
             data_dir,
             store,
+            task_id,
             &file,
             sectionizer,
             now,
@@ -178,6 +179,7 @@ pub(super) fn process_indexed_files_sequential(
         let (processed, verification) = process_file(
             data_dir,
             store,
+            task_id,
             &file,
             sectionizer,
             now,

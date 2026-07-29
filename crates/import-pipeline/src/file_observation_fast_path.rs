@@ -1,7 +1,7 @@
 use std::fs;
 
 use fs_crawler::{observe_open_file, observe_path, DiscoveredFile, FileObservation};
-use meta_store::{OwnedMetaStore, SourceRevisionId, UnixTimestamp};
+use meta_store::{ImportTaskId, OwnedMetaStore, SourceRevisionId, UnixTimestamp};
 use resume_classifier::LinearPromotionPolicy;
 
 use crate::file_processing::{exact_rerun_decision, processed_file_from_exact};
@@ -18,6 +18,7 @@ pub(crate) enum FastPathAttempt {
 
 pub(crate) fn attempt_metadata_fast_path(
     store: &OwnedMetaStore,
+    task_id: &ImportTaskId,
     file: &DiscoveredFile,
     now: UnixTimestamp,
     linear_promotion: &LinearPromotionPolicy,
@@ -28,7 +29,7 @@ pub(crate) fn attempt_metadata_fast_path(
         return Ok(FastPathAttempt::Fallback);
     };
     let Some(persisted) = store
-        .source_file_observation_for_document(&file.document_id)
+        .source_file_observation_for_import_task(task_id, file.normalized_path.as_str())
         .map_err(ImportPipelineError::store)?
     else {
         io_metrics.record_metadata_fallback(ImportMetadataFallbackReason::ObservationMissing);

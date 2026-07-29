@@ -535,7 +535,10 @@ fn unchanged_mixed_root_keeps_search_publication_stable() {
             (
                 document.file_name.clone(),
                 store
-                    .source_file_observation_for_document(&document.id)
+                    .source_file_observation_for_import_task(
+                        &first_task.id,
+                        root.join(&document.file_name).to_str().unwrap(),
+                    )
                     .unwrap()
                     .is_some(),
             )
@@ -668,6 +671,174 @@ fn unchanged_mixed_root_keeps_search_publication_stable() {
     let audit_head = ready_search_head(&store);
     assert_eq!(audit_head.generation, second_head.generation);
     assert_eq!(audit_head.visible_epoch, second_head.visible_epoch);
+}
+
+#[test]
+fn overlapping_source_roots_require_one_strong_observation_per_occurrence() {
+    let temp = TestDir::new("import-pipeline-overlapping-source-root-observations");
+    let data_dir = temp.path().join("data");
+    let parent_root = temp.path().join("resume-ir-synthetic-parent");
+    let nested_root = parent_root.join("resume-ir-synthetic-nested");
+    fs::create_dir_all(&data_dir).unwrap();
+    fs::create_dir_all(&nested_root).unwrap();
+    let parent_root = fs::canonicalize(parent_root).unwrap();
+    let nested_root = fs::canonicalize(nested_root).unwrap();
+    fs::write(
+        nested_root.join("resume.txt"),
+        synthetic_resume_text("Synthetic Overlap Candidate", "Rust Search"),
+    )
+    .unwrap();
+
+    let store = create_test_store(&data_dir);
+    let options = ImportOptions {
+        parse_workers: ImportParseWorkers::new(1),
+        ..ImportOptions::default()
+    };
+    let parent_now = UnixTimestamp::from_unix_seconds(1_700_000_300);
+    let parent_source_root = store
+        .register_source_root(
+            parent_root.to_str().unwrap(),
+            parent_root.to_str().unwrap(),
+            "Synthetic parent root",
+            parent_now,
+        )
+        .unwrap();
+    let parent_task = import_task(
+        "overlap-parent-first",
+        parent_root.to_str().unwrap(),
+        parent_now,
+    );
+    store
+        .begin_scan(
+            &parent_source_root.id,
+            parent_task.id.as_str(),
+            meta_store::ScanTrigger::Manual,
+            parent_now,
+        )
+        .unwrap();
+    insert_test_import_task(&store, &parent_task, &options);
+    let parent_summary = import_root_with_options(
+        &data_dir,
+        &store,
+        &parent_task,
+        &parent_root,
+        parent_now,
+        options.clone(),
+    )
+    .unwrap();
+    assert_eq!(parent_summary.io_metrics.strong_hashes_attempted, 1);
+    assert_eq!(parent_summary.io_metrics.metadata_fast_path_hits, 0);
+    assert_eq!(store.source_file_observation_count().unwrap(), 1);
+    let source_path = nested_root.join("resume.txt");
+    assert!(store
+        .source_file_observation_for_import_task(&parent_task.id, source_path.to_str().unwrap())
+        .unwrap()
+        .is_some());
+    store
+        .complete_scan_and_remove_missing(
+            &parent_source_root.id,
+            parent_task.id.as_str(),
+            meta_store::ScanCounts {
+                discovered: 1,
+                searchable: 1,
+                processed: 1,
+                total: Some(1),
+                ..meta_store::ScanCounts::default()
+            },
+            None,
+            parent_now,
+        )
+        .unwrap();
+
+    let nested_now = UnixTimestamp::from_unix_seconds(1_700_000_301);
+    let nested_source_root_id =
+        meta_store::migration_test_support::insert_overlapping_source_root_fixture(
+            &store,
+            nested_root.to_str().unwrap(),
+            "Synthetic nested root",
+            nested_now,
+        )
+        .unwrap();
+    let nested_first_task = import_task(
+        "overlap-nested-first",
+        nested_root.to_str().unwrap(),
+        nested_now,
+    );
+    store
+        .begin_scan(
+            &nested_source_root_id,
+            nested_first_task.id.as_str(),
+            meta_store::ScanTrigger::Manual,
+            nested_now,
+        )
+        .unwrap();
+    insert_test_import_task(&store, &nested_first_task, &options);
+    let nested_first_summary = import_root_with_options(
+        &data_dir,
+        &store,
+        &nested_first_task,
+        &nested_root,
+        nested_now,
+        options.clone(),
+    )
+    .unwrap();
+    assert_eq!(nested_first_summary.io_metrics.strong_hashes_attempted, 1);
+    assert_eq!(nested_first_summary.io_metrics.metadata_fast_path_hits, 0);
+    assert_eq!(
+        store.source_file_observation_count().unwrap(),
+        2,
+        "each overlapping source occurrence must persist its own observation"
+    );
+    assert!(store
+        .source_file_observation_for_import_task(
+            &nested_first_task.id,
+            source_path.to_str().unwrap()
+        )
+        .unwrap()
+        .is_some());
+    store
+        .complete_scan_and_remove_missing(
+            &nested_source_root_id,
+            nested_first_task.id.as_str(),
+            meta_store::ScanCounts {
+                discovered: 1,
+                searchable: 1,
+                processed: 1,
+                total: Some(1),
+                ..meta_store::ScanCounts::default()
+            },
+            None,
+            nested_now,
+        )
+        .unwrap();
+
+    let nested_rescan_now = UnixTimestamp::from_unix_seconds(1_700_000_302);
+    let nested_rescan_task = import_task(
+        "overlap-nested-rescan",
+        nested_root.to_str().unwrap(),
+        nested_rescan_now,
+    );
+    store
+        .begin_scan(
+            &nested_source_root_id,
+            nested_rescan_task.id.as_str(),
+            meta_store::ScanTrigger::Manual,
+            nested_rescan_now,
+        )
+        .unwrap();
+    insert_test_import_task(&store, &nested_rescan_task, &options);
+    let nested_rescan_summary = import_root_with_options(
+        &data_dir,
+        &store,
+        &nested_rescan_task,
+        &nested_root,
+        nested_rescan_now,
+        options,
+    )
+    .unwrap();
+    assert_eq!(nested_rescan_summary.io_metrics.strong_hashes_attempted, 0);
+    assert_eq!(nested_rescan_summary.io_metrics.full_content_bytes, 0);
+    assert_eq!(nested_rescan_summary.io_metrics.metadata_fast_path_hits, 1);
 }
 
 #[test]

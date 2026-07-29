@@ -86,6 +86,7 @@ pub(super) fn process_files_with_parse_workers(
         let (processed, verification) = process_file(
             data_dir,
             store,
+            task_id,
             &file,
             &sectionizer,
             now,
@@ -195,6 +196,7 @@ pub(super) fn process_files_with_parse_workers(
             set_cancel_phase(ImportCancelCheckPhase::ParsePrepare);
             let prepared = prepare_file_for_parse(
                 store,
+                task_id,
                 index,
                 file,
                 now,

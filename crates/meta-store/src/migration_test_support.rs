@@ -46,7 +46,7 @@ use crate::{
     MigrationRebuildContractActivation, OwnedMetaStore, ReadMetaStore, ReasonCode, Result,
     ResumeVersion, ResumeVersionClassification, ResumeVersionId, ReviewDisposition,
     SearchProjectionTransitionOutcome, SearchRepairReason, SourceRevision, SourceRevisionId,
-    UnixTimestamp,
+    SourceRootId, UnixTimestamp,
 };
 
 const STORE_ID_DIGEST: &str = "7171717171717171717171717171717171717171717171717171717171717171";
@@ -54,6 +54,67 @@ const STORE_FILE: &str = "metadata-v27-7171717171717171.sqlite3";
 const MAX_SYNTHETIC_ROOT_BYTES: usize = 4_096;
 const SYNTHETIC_ROOT_PREFIX: &str = "resume-ir-synthetic-";
 const CORRUPT_IMPORT_TASK_ID: &str = "diagnostic-materialization-task";
+
+/// Inserts one synthetic source root without applying the production overlap
+/// guard so cross-crate tests can exercise persisted states created by older
+/// builds or administrative repair.
+///
+/// The candidate must be a real canonical path whose final component starts
+/// with `resume-ir-synthetic-`, and an existing registered source root must be
+/// its strict parent.
+pub fn insert_overlapping_source_root_fixture(
+    store: &OwnedMetaStore,
+    canonical_path: &str,
+    display_label: &str,
+    now: UnixTimestamp,
+) -> Result<SourceRootId> {
+    validate_synthetic_canonical_root(canonical_path)?;
+    if display_label.is_empty() || display_label.len() > 80 || display_label.contains('\0') {
+        return Err(MetaStoreError::invalid_value(
+            "migration_test_support.display_label",
+        ));
+    }
+    let has_parent = store
+        .connection
+        .borrow()
+        .query_row(
+            "SELECT EXISTS(
+                SELECT 1
+                FROM source_root
+                WHERE ?1 LIKE canonical_path || '/%'
+             )",
+            [canonical_path],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(MetaStoreError::storage)?
+        != 0;
+    if !has_parent {
+        return Err(MetaStoreError::invalid_value(
+            "migration_test_support.overlapping_parent",
+        ));
+    }
+    let root_id = SourceRootId::new()?;
+    let changed = store
+        .connection
+        .borrow()
+        .execute(
+            "INSERT INTO source_root (
+                id, canonical_path, requested_path, display_label, state,
+                watcher_state, created_at_seconds, updated_at_seconds
+             ) VALUES (?1, ?2, ?2, ?3, 'active', 'active', ?4, ?4)",
+            params![
+                root_id.as_str(),
+                canonical_path,
+                display_label,
+                now.as_unix_seconds()
+            ],
+        )
+        .map_err(MetaStoreError::storage)?;
+    if changed != 1 {
+        return Err(MetaStoreError::storage_invariant());
+    }
+    Ok(root_id)
+}
 
 /// Closed synthetic fault vocabulary for cross-process diagnostics tests.
 ///

@@ -20,7 +20,9 @@ Schema v35 adds `source_file_observation`, keyed by
 `(root_id, relative_path)` and cascading with `source_occurrence`. The row is
 not part of `Document`: it describes one physical occurrence, not deduplicated
 content or a logical document. It binds the observation to the occurrence's
-current immutable source revision.
+current immutable source revision. Reads resolve the current import task to its
+exact `(root_id, relative_path)` before lookup; a different occurrence for the
+same path-derived `document_id` is never a substitute.
 
 An observation is written only after:
 
@@ -32,6 +34,9 @@ An observation is written only after:
 Failed, incomplete, or observation-less imports do not create a row. A v34 or
 older database migrates with an empty table and therefore fails closed until
 each occurrence completes one strong import. Rows survive daemon/store restart.
+If one physical file is represented by multiple persisted source occurrences,
+each occurrence independently requires its first strong import and may reuse
+only its own observation on later scans.
 
 ## Assurance model
 

@@ -11,11 +11,14 @@ The second import-performance layer now gives recurring macOS source-root
 reconciliation a persistent, correctness-gated metadata fast path. Schema v35
 owns one observation per source occurrence and records stable identity, size,
 nanosecond mtime/change time, the verified source revision, and a staggered
-6-to-24-hour strong-audit deadline. Missing/ambiguous observations, replacement,
-contract drift, audit due, I/O failure, and TOCTOU fail closed to the existing
-full read and SHA-256 path. The existing exact rerun decision remains the sole
-processing-contract gate, and PR #267's generation/visible-epoch and
-fulltext/vector no-op publication behavior remains unchanged.
+6-to-24-hour strong-audit deadline. Lookup resolves the active import task to
+its exact `(root_id, relative_path)` owner; another occurrence for the same
+document cannot satisfy first-import verification. Missing observations,
+replacement, contract drift, audit due, I/O failure, and TOCTOU fail closed to
+the existing full read and SHA-256 path. The existing exact rerun decision
+remains the sole processing-contract gate, and PR #267's
+generation/visible-epoch and fulltext/vector no-op publication behavior remains
+unchanged.
 
 - Focused cross-store-reopen coverage proves a two-file unchanged rescan has
   zero discovery content opens, zero sampled bytes, zero full-content opens and
@@ -25,6 +28,10 @@ fulltext/vector no-op publication behavior remains unchanged.
   and strong hash. Replacement-after-discovery and final path-revalidation
   tests reject stale observations, and the audit-due case rehashes both files
   without advancing publication.
+- A persisted overlapping-root fixture proves that a new occurrence for an
+  already observed path-derived document performs one strong read/hash,
+  persists its own observation, then independently reaches zero-read reuse on
+  its next scan.
 - A local public-safe witness over 2,000 synthetic files measured a 4,463 ms
   cold import and 1,248 ms cross-reopen unchanged scan. Cold I/O was 2,000 full
   opens, 124,919 full bytes, and 2,000 strong hashes. The unchanged scan used

@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 use fs_crawler::DiscoveredFile;
 use index_fulltext::IndexDocument;
 use meta_store::{
-    Document, DocumentStatus, FileExtension, OwnedMetaStore, SourceRevision, UnixTimestamp,
+    Document, DocumentStatus, FileExtension, ImportTaskId, OwnedMetaStore, SourceRevision,
+    UnixTimestamp,
 };
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
 use parser_doc::DocParser;
@@ -42,6 +43,7 @@ use crate::{
 
 pub(crate) fn prepare_file_for_parse(
     store: &OwnedMetaStore,
+    task_id: &ImportTaskId,
     index: usize,
     file: DiscoveredFile,
     now: UnixTimestamp,
@@ -56,6 +58,7 @@ pub(crate) fn prepare_file_for_parse(
     let mut db_elapsed = Duration::ZERO;
     let result = prepare_file_for_parse_inner(
         store,
+        task_id,
         index,
         file,
         now,
@@ -72,6 +75,7 @@ pub(crate) fn prepare_file_for_parse(
 
 pub(crate) fn prepare_file_for_parse_inner(
     store: &OwnedMetaStore,
+    task_id: &ImportTaskId,
     index: usize,
     file: DiscoveredFile,
     now: UnixTimestamp,
@@ -86,7 +90,7 @@ pub(crate) fn prepare_file_for_parse_inner(
     let path = PathBuf::from(file.normalized_path.as_str());
     ensure_not_cancelled()?;
     if let FastPathAttempt::Hit(processed) =
-        attempt_metadata_fast_path(store, &file, now, linear_promotion, io_metrics)?
+        attempt_metadata_fast_path(store, task_id, &file, now, linear_promotion, io_metrics)?
     {
         return Ok(PreparedFile::Ready(ProcessedImportFile {
             file,

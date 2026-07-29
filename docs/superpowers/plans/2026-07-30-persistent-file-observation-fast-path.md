@@ -23,7 +23,7 @@ publication regression coverage. Keep it one Draft PR and commit-sized slices.
    before occurrence/publication commit.
 6. Add aggregate counters and focused tests for cross-restart no-op,
    restored-mtime middle mutation, audit rehash, replacement/TOCTOU, migration,
-   and PR #267 publication stability.
+   overlapping occurrence ownership, and PR #267 publication stability.
 7. Run a local ignored witness over 2,000 synthetic files. Gate correctness on
    I/O counters, not wall-clock thresholds.
 8. Run focused crates, workspace checks, schema/contract checks, macOS local

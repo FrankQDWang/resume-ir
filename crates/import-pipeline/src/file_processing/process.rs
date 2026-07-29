@@ -3,7 +3,9 @@ use std::time::{Duration, Instant};
 
 use fs_crawler::DiscoveredFile;
 use index_fulltext::IndexDocument;
-use meta_store::{DocumentStatus, FileExtension, OwnedMetaStore, SourceRevision, UnixTimestamp};
+use meta_store::{
+    DocumentStatus, FileExtension, ImportTaskId, OwnedMetaStore, SourceRevision, UnixTimestamp,
+};
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
 use parser_doc::DocParser;
 use parser_docx::DocxParser;
@@ -37,6 +39,7 @@ use crate::{
 pub(crate) fn process_file(
     data_dir: &Path,
     store: &OwnedMetaStore,
+    task_id: &ImportTaskId,
     file: &DiscoveredFile,
     sectionizer: &Sectionizer,
     now: UnixTimestamp,
@@ -50,7 +53,7 @@ pub(crate) fn process_file(
     let started = Instant::now();
     let mut db_elapsed = Duration::ZERO;
     if let FastPathAttempt::Hit(processed) =
-        attempt_metadata_fast_path(store, file, now, linear_promotion, io_metrics)?
+        attempt_metadata_fast_path(store, task_id, file, now, linear_promotion, io_metrics)?
     {
         return Ok((processed, ContentVerification::MetadataFastPath));
     }

@@ -1,9 +1,9 @@
 use std::str::FromStr;
 
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 use crate::{
-    ContentDigest, DocumentId, ImportTaskId, MetaStoreError, MetadataStore, MetadataStoreAccess,
+    ContentDigest, ImportTaskId, MetaStoreError, MetadataStore, MetadataStoreAccess,
     MetadataStoreWriteAccess, Result, SourceRevisionId, UnixTimestamp,
 };
 
@@ -48,13 +48,19 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         u64::try_from(count).map_err(|_| MetaStoreError::storage_invariant())
     }
 
-    pub fn source_file_observation_for_document(
+    pub fn source_file_observation_for_import_task(
         &self,
-        document_id: &DocumentId,
+        task_id: &ImportTaskId,
+        normalized_path: &str,
     ) -> Result<Option<SourceFileObservation>> {
-        let connection = self.connection.borrow();
-        let mut statement = connection
-            .prepare(
+        let Some((root, relative_path)) =
+            self.source_root_and_relative_path_for_import_task(task_id, normalized_path)?
+        else {
+            return Ok(None);
+        };
+        self.connection
+            .borrow()
+            .query_row(
                 "SELECT observation.source_revision_id, revision.content_hash,
                         observation.stable_file_id, observation.byte_size,
                         observation.mtime_seconds, observation.mtime_nanoseconds,
@@ -69,30 +75,18 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                   AND occurrence.state = 'present'
                  JOIN source_revision AS revision
                    ON revision.id = observation.source_revision_id
-                 WHERE occurrence.document_id = ?1
-                   AND observation.assurance_kind = ?2
-                 LIMIT 2",
+                 WHERE observation.root_id = ?1
+                   AND observation.relative_path = ?2
+                   AND observation.assurance_kind = ?3",
+                params![
+                    root.id.as_str(),
+                    relative_path,
+                    SOURCE_FILE_OBSERVATION_ASSURANCE
+                ],
+                source_file_observation_from_row,
             )
-            .map_err(MetaStoreError::storage)?;
-        let mut rows = statement
-            .query(params![
-                document_id.as_str(),
-                SOURCE_FILE_OBSERVATION_ASSURANCE
-            ])
-            .map_err(MetaStoreError::storage)?;
-        let first = rows
-            .next()
-            .map_err(MetaStoreError::storage)?
-            .map(source_file_observation_from_row)
-            .transpose()
-            .map_err(MetaStoreError::storage)?;
-        if rows.next().map_err(MetaStoreError::storage)?.is_some() {
-            // Overlapping source roots can legitimately make a document
-            // reachable through more than one occurrence. Ambiguity must
-            // disable reuse instead of selecting an arbitrary observation.
-            return Ok(None);
-        }
-        Ok(first)
+            .optional()
+            .map_err(MetaStoreError::storage)
     }
 
     pub fn record_strong_source_file_observation(
