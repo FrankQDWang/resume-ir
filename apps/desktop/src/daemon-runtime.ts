@@ -36,6 +36,28 @@ import {
 
 export type ImportState = "idle" | "selecting" | "selected" | "submitting" | "queued" | "pending" | "active" | "cancelled" | "unavailable" | "mismatch" | "overload" | "error"
 export type RootControlState = "loading" | "unmanaged" | "active" | "paused" | "overload" | "error"
+export type ManagedRootsReadFailure = "overload" | "error" | null
+export type ManagedRootsRefreshOutcome = Exclude<ManagedRootsReadFailure, null> | "success"
+
+export function managedRootsReadFailureAfterRefresh(
+  outcome: ManagedRootsRefreshOutcome,
+): ManagedRootsReadFailure {
+  return outcome === "success" ? null : outcome
+}
+
+export function sourcePanelBanner(
+  importState: ImportState,
+  importMessage: string,
+  managedRootsReadFailure: ManagedRootsReadFailure,
+): { state: ImportState; message: string } {
+  if (managedRootsReadFailure === "overload") {
+    return { state: "overload", message: "授权目录读取入口繁忙，请稍后重试" }
+  }
+  if (managedRootsReadFailure === "error") {
+    return { state: "error", message: "无法读取本地授权目录记录" }
+  }
+  return { state: importState, message: importMessage }
+}
 
 interface ResultSnapshot {
   generation: number
@@ -188,6 +210,7 @@ export function useDaemonRuntime(input: {
   const [selectedRoot, setSelectedRoot] = useState<SourceRoot | null>(input.previewImport ? PREVIEW_MANAGED_ROOTS[0] : null)
   const [importState, setImportState] = useState<ImportState>(input.previewImport ? "selected" : "idle")
   const [importMessage, setImportMessage] = useState(input.previewImport ? "已恢复 2 个本地授权目录" : "选择一个本地目录后提交完整扫描")
+  const [managedRootsReadFailure, setManagedRootsReadFailure] = useState<ManagedRootsReadFailure>(null)
   const lifecycleRef = useRef(initialLifecycle)
   const lifecycleReadabilityRef = useRef(initialLifecycleReadability(input.preview))
   const actionAuthorityRef = useRef(initialDaemonActionAuthority(input.preview ? 1 : null))
@@ -364,6 +387,7 @@ export function useDaemonRuntime(input: {
       if (reply.http_status !== 200 || response.schema_version !== "resume-ir.source-roots.v2" || response.limit !== 16 || response.roots.length > response.limit) {
         throw new Error("managed root contract mismatch")
       }
+      setManagedRootsReadFailure(managedRootsReadFailureAfterRefresh("success"))
       setManagedRoots(response.roots)
       setSelectedRoot((current) => {
         const restored = current && response.roots.find((root) => root.root_id === current.root_id)
@@ -398,8 +422,7 @@ export function useDaemonRuntime(input: {
       ])))
     } catch (error) {
       const overload = bridgeFailureKind(error) === "overload"
-      setImportState(overload ? "overload" : "error")
-      setImportMessage(overload ? "授权目录读取入口繁忙，请稍后重试" : "无法读取本地授权目录记录")
+      setManagedRootsReadFailure(managedRootsReadFailureAfterRefresh(overload ? "overload" : "error"))
     }
   }
 
@@ -460,6 +483,7 @@ export function useDaemonRuntime(input: {
     setImportState,
     importMessage,
     setImportMessage,
+    managedRootsReadFailure,
     bindDetailObservers,
     captureActionAuthority,
     actionAuthorityIsCurrent,
