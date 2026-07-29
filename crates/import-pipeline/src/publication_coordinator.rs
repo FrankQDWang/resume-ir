@@ -8,6 +8,7 @@ use meta_store::{
     SearchPublicationSession, SearchRepairReason, UnixTimestamp,
 };
 
+use crate::file_observation_fast_path::strong_store_observation;
 use crate::immutable_ingest::{self, StagedDerivedData, StagedResume};
 use crate::search_artifact_cache::{CurrentImportCacheMode, CurrentImportDocumentCache};
 use crate::search_artifacts::{
@@ -149,6 +150,16 @@ pub(super) fn flush_pending_searchable_documents(
                     }
                 }
                 if let Some(occurrence) = &pending.source_occurrence {
+                    if let Some(expected) = occurrence.strong_observation.as_ref() {
+                        let current = fs_crawler::observe_path(std::path::Path::new(
+                            &occurrence.normalized_path,
+                        ))
+                        .ok()
+                        .flatten();
+                        if current.as_ref() != Some(expected) {
+                            return Err(ImportPipelineError::source_changed_during_import());
+                        }
+                    }
                     store
                         .observe_import_task_source_occurrence(
                             &occurrence.task_id,
@@ -158,6 +169,23 @@ pub(super) fn flush_pending_searchable_documents(
                             occurrence.observed_at,
                         )
                         .map_err(ImportPipelineError::store)?;
+                    if let Some(observed) = occurrence.strong_observation.as_ref() {
+                        store
+                            .record_strong_source_file_observation(
+                                &occurrence.task_id,
+                                &occurrence.normalized_path,
+                                &strong_store_observation(
+                                    pending.source_revision.id.clone(),
+                                    observed,
+                                    occurrence.observed_at,
+                                ),
+                            )
+                            .map_err(ImportPipelineError::store)?;
+                        summary.io_metrics.strong_observations_persisted = summary
+                            .io_metrics
+                            .strong_observations_persisted
+                            .saturating_add(1);
+                    }
                 }
             }
             Ok(())

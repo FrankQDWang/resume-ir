@@ -126,6 +126,7 @@ pub(crate) fn commit_parse_work_result(
         file,
         mut document,
         source_revision,
+        verification,
         outcome,
         ..
     } = result;
@@ -201,7 +202,11 @@ pub(crate) fn commit_parse_work_result(
         }
     };
 
-    Ok(ProcessedImportFile { file, processed })
+    Ok(ProcessedImportFile {
+        file,
+        processed,
+        verification,
+    })
 }
 
 pub(crate) fn parallel_parse_error() -> ImportPipelineError {

@@ -7,6 +7,9 @@ use meta_store::{ImportTaskId, OwnedMetaStore, UnixTimestamp};
 use sectionizer::Sectionizer;
 
 use super::orchestrator::publish_import_progress;
+use crate::file_observation_fast_path::{
+    revalidate_discovered_observation, strong_store_observation,
+};
 use crate::file_processing::{
     commit_parse_work_result, process_file, ImportFileResult, ParseWorkerClock,
     PendingSearchableDocument, PendingSourceOccurrence,
@@ -16,6 +19,7 @@ use crate::publication_coordinator::{
 };
 use crate::search_artifact_cache::{CurrentImportCacheMode, CurrentImportDocumentCache};
 use crate::source_dispositions::{ImportDispositionBatches, ProcessedFile, SearchableStagingState};
+use crate::verified_content::ContentVerification;
 use crate::{
     ImportCancelCheckPhase, ImportFailureKind, ImportPipelineError, ImportSummary,
     LinearPromotionPolicy, Result, SearchProjectionRemovalReason, SearchPublicationVectorization,
@@ -78,6 +82,7 @@ pub(super) fn commit_ready_import_file_results(
             total_files,
             &result.file,
             result.processed,
+            result.verification,
         )?;
         *next_commit_index += 1;
         committed = true;
@@ -109,7 +114,7 @@ pub(super) fn process_files_sequential(
     for (index, file) in files.into_iter().enumerate() {
         set_cancel_phase(ImportCancelCheckPhase::SequentialParse);
         ensure_not_cancelled()?;
-        let processed = process_file(
+        let (processed, verification) = process_file(
             data_dir,
             store,
             &file,
@@ -119,6 +124,7 @@ pub(super) fn process_files_sequential(
             &mut summary.stage_timings,
             &mut summary.worker_metrics,
             &mut summary.content_bytes_read,
+            &mut summary.io_metrics,
             linear_promotion,
         )?;
         finish_import_file(
@@ -139,6 +145,7 @@ pub(super) fn process_files_sequential(
             total_files,
             &file,
             processed,
+            verification,
         )?;
     }
 
@@ -168,7 +175,7 @@ pub(super) fn process_indexed_files_sequential(
     for (index, file) in files {
         set_cancel_phase(ImportCancelCheckPhase::SequentialParse);
         ensure_not_cancelled()?;
-        let processed = process_file(
+        let (processed, verification) = process_file(
             data_dir,
             store,
             &file,
@@ -178,6 +185,7 @@ pub(super) fn process_indexed_files_sequential(
             &mut summary.stage_timings,
             &mut summary.worker_metrics,
             &mut summary.content_bytes_read,
+            &mut summary.io_metrics,
             linear_promotion,
         )?;
         finish_import_file(
@@ -198,6 +206,7 @@ pub(super) fn process_indexed_files_sequential(
             total_files,
             &file,
             processed,
+            verification,
         )?;
     }
 
@@ -222,6 +231,7 @@ pub(crate) fn finish_import_file(
     total_files: usize,
     file: &DiscoveredFile,
     processed: ProcessedFile,
+    verification: ContentVerification,
 ) -> Result<()> {
     let source_read_failed = matches!(
         &processed,
@@ -234,6 +244,15 @@ pub(crate) fn finish_import_file(
     let disposition = (!source_read_failed)
         .then(|| processed.source_disposition(index, &file.document_id))
         .transpose()?;
+    if !source_read_failed
+        && verification != ContentVerification::Unavailable
+        && !revalidate_discovered_observation(file)
+    {
+        summary
+            .io_metrics
+            .record_metadata_fallback(crate::ImportMetadataFallbackReason::ChangedDuringImport);
+        return Err(ImportPipelineError::source_changed_during_import());
+    }
     summary.processed_documents = summary.processed_documents.saturating_add(1);
     if !matches!(&processed, ProcessedFile::Searchable { .. }) {
         if let Some(disposition) = &disposition {
@@ -246,6 +265,27 @@ pub(crate) fn finish_import_file(
                     now,
                 )
                 .map_err(ImportPipelineError::store)?;
+            if verification == ContentVerification::Strong {
+                let observed = file
+                    .observation
+                    .as_ref()
+                    .ok_or_else(ImportPipelineError::source_changed_during_import)?;
+                store
+                    .record_strong_source_file_observation(
+                        task_id,
+                        file.normalized_path.as_str(),
+                        &strong_store_observation(
+                            disposition.source_revision_id.clone(),
+                            observed,
+                            now,
+                        ),
+                    )
+                    .map_err(ImportPipelineError::store)?;
+                summary.io_metrics.strong_observations_persisted = summary
+                    .io_metrics
+                    .strong_observations_persisted
+                    .saturating_add(1);
+            }
         }
     }
     match processed {
@@ -254,6 +294,9 @@ pub(crate) fn finish_import_file(
                 task_id: task_id.clone(),
                 normalized_path: file.normalized_path.as_str().to_string(),
                 observed_at: now,
+                strong_observation: (verification == ContentVerification::Strong)
+                    .then(|| file.observation.clone())
+                    .flatten(),
             });
             pending_index_documents.push(*pending);
         }

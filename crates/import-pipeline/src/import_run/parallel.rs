@@ -83,7 +83,7 @@ pub(super) fn process_files_with_parse_workers(
         }
         set_cancel_phase(ImportCancelCheckPhase::SequentialParse);
         ensure_not_cancelled()?;
-        let processed = process_file(
+        let (processed, verification) = process_file(
             data_dir,
             store,
             &file,
@@ -93,6 +93,7 @@ pub(super) fn process_files_with_parse_workers(
             &mut summary.stage_timings,
             &mut summary.worker_metrics,
             &mut summary.content_bytes_read,
+            &mut summary.io_metrics,
             linear_promotion,
         )?;
         finish_import_file(
@@ -113,6 +114,7 @@ pub(super) fn process_files_with_parse_workers(
             total_files,
             &file,
             processed,
+            verification,
         )?;
     }
     remaining_files.extend(indexed_files);
@@ -200,6 +202,7 @@ pub(super) fn process_files_with_parse_workers(
                 &mut summary.stage_timings.db,
                 &mut summary.worker_metrics.parse_prepare,
                 &mut summary.content_bytes_read,
+                &mut summary.io_metrics,
                 linear_promotion,
             )?;
             match prepared {

@@ -5597,6 +5597,7 @@ fn privacy_dataset_manifest_command(args: &[String]) -> Result<()> {
         CrawlerScanOptions {
             profile: args.profile,
             max_files: args.max_files,
+            ..CrawlerScanOptions::default()
         },
     )
     .map_err(|_| CliError::user("dataset manifest blocked: root must exist and be readable"))?;
@@ -5708,18 +5709,22 @@ fn redacted_dataset_manifest(
     update_sha256_string(&mut corpus_hasher, profile.label());
 
     for file in &report.files {
+        let fingerprint = file
+            .fingerprint
+            .as_ref()
+            .expect("dataset manifest scans request content fingerprints");
         let extension = dataset_file_extension_label(&file.extension);
         *extension_counts.entry(extension.to_string()).or_insert(0) += 1;
         total_bytes = total_bytes.saturating_add(file.byte_size);
         fingerprint_sampled_bytes =
-            fingerprint_sampled_bytes.saturating_add(file.fingerprint.sampled_bytes);
+            fingerprint_sampled_bytes.saturating_add(fingerprint.sampled_bytes);
         if file.permissions.readonly {
             readonly_file_count += 1;
         }
         update_sha256_string(&mut corpus_hasher, extension);
         update_sha256_u64(&mut corpus_hasher, file.byte_size);
         update_sha256_i64(&mut corpus_hasher, file.mtime.as_unix_seconds());
-        update_sha256_string(&mut corpus_hasher, file.fingerprint.as_str());
+        update_sha256_string(&mut corpus_hasher, fingerprint.as_str());
     }
 
     let scan_budget = report
@@ -10903,6 +10908,28 @@ fn import_command(data_dir: &Path, args: &[String]) -> Result<()> {
     println!("roots scanned: {}", roots.len());
     println!("files discovered: {}", summary.files_discovered);
     println!("content bytes read: {}", summary.content_bytes_read);
+    println!(
+        "import io: discovery_opens={} sampled_bytes={} metadata_handle_opens={} full_opens={} full_bytes={} strong_hashes_attempted={} strong_hashes_skipped={} fast_path_hits={} observations_persisted={}",
+        summary.io_metrics.discovery_content_open_count,
+        summary.io_metrics.discovery_sampled_bytes,
+        summary.io_metrics.metadata_handle_open_count,
+        summary.io_metrics.full_content_open_count,
+        summary.io_metrics.full_content_bytes,
+        summary.io_metrics.strong_hashes_attempted,
+        summary.io_metrics.strong_hashes_skipped,
+        summary.io_metrics.metadata_fast_path_hits,
+        summary.io_metrics.strong_observations_persisted,
+    );
+    println!(
+        "import metadata fallbacks: missing={} unsupported={} mismatch={} audit_due={} processing_contract={} metadata_io={} changed_during_import={}",
+        summary.io_metrics.metadata_fallbacks.observation_missing,
+        summary.io_metrics.metadata_fallbacks.unsupported_observation,
+        summary.io_metrics.metadata_fallbacks.metadata_mismatch,
+        summary.io_metrics.metadata_fallbacks.audit_due,
+        summary.io_metrics.metadata_fallbacks.processing_contract,
+        summary.io_metrics.metadata_fallbacks.metadata_io,
+        summary.io_metrics.metadata_fallbacks.changed_during_import,
+    );
     println!("searchable documents: {}", summary.searchable_documents);
     println!("ocr required documents: {}", summary.ocr_required_documents);
     println!("ocr jobs queued: {}", summary.ocr_jobs_queued);
@@ -11814,6 +11841,7 @@ fn collect_witness_inputs(
             CrawlerScanOptions {
                 profile: scan_profile,
                 max_files: Some(remaining_files),
+                ..CrawlerScanOptions::default()
             },
         )
         .map_err(|_| CliError::user("unable to scan private witness root"))?;
@@ -12234,6 +12262,7 @@ fn merge_import_summary(total: &mut ImportSummary, next: ImportSummary, root_off
     total.scan_errors += next.scan_errors;
     total.ignored_entries += next.ignored_entries;
     total.content_bytes_read += next.content_bytes_read;
+    total.io_metrics.add_assign(&next.io_metrics);
     total.searchable_documents += next.searchable_documents;
     total.ocr_required_documents += next.ocr_required_documents;
     total.ocr_jobs_queued += next.ocr_jobs_queued;

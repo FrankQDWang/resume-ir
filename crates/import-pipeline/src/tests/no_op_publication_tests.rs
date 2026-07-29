@@ -470,7 +470,23 @@ fn unchanged_mixed_root_keeps_search_publication_stable() {
     };
     let store = create_test_store(&data_dir);
     let first_now = UnixTimestamp::from_unix_seconds(1_700_000_196);
+    let source_root = store
+        .register_source_root(
+            root.to_str().unwrap(),
+            root.to_str().unwrap(),
+            "Synthetic mixed root",
+            first_now,
+        )
+        .unwrap();
     let first_task = import_task("zero-change-mixed-first", root.to_str().unwrap(), first_now);
+    store
+        .begin_scan(
+            &source_root.id,
+            first_task.id.as_str(),
+            meta_store::ScanTrigger::Manual,
+            first_now,
+        )
+        .unwrap();
     let contract = insert_test_import_task(&store, &first_task, &options);
     let first_summary = import_root_with_options(
         &data_dir,
@@ -505,6 +521,49 @@ fn unchanged_mixed_root_keeps_search_publication_stable() {
         1
     );
     assert!(first_embed_calls > 0);
+    assert!(
+        fs_crawler::crawl_directory(&root)
+            .unwrap()
+            .files
+            .iter()
+            .all(|file| file.observation.is_some()),
+        "macOS synthetic files must expose high-resolution observations: {first_summary:?}"
+    );
+    let persisted_observations = first_documents
+        .iter()
+        .map(|document| {
+            (
+                document.file_name.clone(),
+                store
+                    .source_file_observation_for_document(&document.id)
+                    .unwrap()
+                    .is_some(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        persisted_observations.iter().all(|(_, persisted)| *persisted),
+        "first import must persist one observation per successful source occurrence: {persisted_observations:?}; stored={}; {first_summary:?}",
+        store.source_file_observation_count().unwrap(),
+    );
+    store
+        .complete_scan_and_remove_missing(
+            &source_root.id,
+            first_task.id.as_str(),
+            meta_store::ScanCounts {
+                discovered: 2,
+                searchable: 1,
+                non_resume: 1,
+                processed: 2,
+                total: Some(2),
+                ..meta_store::ScanCounts::default()
+            },
+            None,
+            first_now,
+        )
+        .unwrap();
+    drop(store);
+    let store = create_test_store(&data_dir);
 
     let second_now = UnixTimestamp::from_unix_seconds(1_700_000_197);
     let second_task = import_task(
@@ -512,6 +571,14 @@ fn unchanged_mixed_root_keeps_search_publication_stable() {
         root.to_str().unwrap(),
         second_now,
     );
+    store
+        .begin_scan(
+            &source_root.id,
+            second_task.id.as_str(),
+            meta_store::ScanTrigger::Manual,
+            second_now,
+        )
+        .unwrap();
     insert_test_import_task(&store, &second_task, &options);
     let second_summary =
         import_root_with_options(&data_dir, &store, &second_task, &root, second_now, options)
@@ -545,4 +612,181 @@ fn unchanged_mixed_root_keeps_search_publication_stable() {
     assert_eq!(second_documents, first_documents);
     assert_eq!(second_classification_counts, first_classification_counts);
     assert_eq!(second_source_counts, first_source_counts);
+    assert_eq!(
+        second_summary.content_bytes_read, 0,
+        "a zero-change reconciliation must not read full file contents before rerun detection: {second_summary:?}"
+    );
+    assert_eq!(second_summary.io_metrics.discovery_content_open_count, 0);
+    assert_eq!(second_summary.io_metrics.discovery_sampled_bytes, 0);
+    assert_eq!(second_summary.io_metrics.full_content_open_count, 0);
+    assert_eq!(second_summary.io_metrics.full_content_bytes, 0);
+    assert_eq!(second_summary.io_metrics.strong_hashes_attempted, 0);
+    assert_eq!(second_summary.io_metrics.strong_hashes_skipped, 2);
+    assert_eq!(second_summary.io_metrics.metadata_fast_path_hits, 2);
+    store
+        .complete_scan_and_remove_missing(
+            &source_root.id,
+            second_task.id.as_str(),
+            meta_store::ScanCounts {
+                discovered: 2,
+                searchable: 1,
+                non_resume: 1,
+                processed: 2,
+                total: Some(2),
+                ..meta_store::ScanCounts::default()
+            },
+            None,
+            second_now,
+        )
+        .unwrap();
+
+    let audit_now =
+        UnixTimestamp::from_unix_seconds(first_now.as_unix_seconds() + 24 * 60 * 60 + 1);
+    let audit_task = import_task("zero-change-mixed-audit", root.to_str().unwrap(), audit_now);
+    store
+        .begin_scan(
+            &source_root.id,
+            audit_task.id.as_str(),
+            meta_store::ScanTrigger::Manual,
+            audit_now,
+        )
+        .unwrap();
+    insert_test_import_task(&store, &audit_task, &ImportOptions::default());
+    let audit_summary = import_root_with_options(
+        &data_dir,
+        &store,
+        &audit_task,
+        &root,
+        audit_now,
+        ImportOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(audit_summary.io_metrics.metadata_fast_path_hits, 0);
+    assert_eq!(audit_summary.io_metrics.metadata_fallbacks.audit_due, 2);
+    assert_eq!(audit_summary.io_metrics.strong_hashes_attempted, 2);
+    assert_eq!(audit_summary.io_metrics.full_content_bytes, 140);
+    let audit_head = ready_search_head(&store);
+    assert_eq!(audit_head.generation, second_head.generation);
+    assert_eq!(audit_head.visible_epoch, second_head.visible_epoch);
+}
+
+#[test]
+#[ignore = "local synthetic scale witness; deterministic counters are covered by the focused test"]
+fn metadata_fast_path_synthetic_scale_witness() {
+    const FILE_COUNT: usize = 2_000;
+
+    let temp = TestDir::new("import-pipeline-observation-scale");
+    let data_dir = temp.path().join("data");
+    let root = temp.path().join("synthetic");
+    fs::create_dir_all(&data_dir).unwrap();
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("0000-resume.txt"),
+        synthetic_resume_text("Synthetic Scale Candidate", "Rust Search"),
+    )
+    .unwrap();
+    for index in 1..FILE_COUNT {
+        fs::write(
+            root.join(format!("{index:04}-invoice.txt")),
+            format!("INVOICE\nSynthetic invoice {index}\nSubtotal 10\nPayment terms net 30"),
+        )
+        .unwrap();
+    }
+
+    let options = ImportOptions {
+        parse_workers: ImportParseWorkers::new(4),
+        ..ImportOptions::default()
+    };
+    let store = create_test_store(&data_dir);
+    let cold_now = UnixTimestamp::from_unix_seconds(1_700_001_000);
+    let source_root = store
+        .register_source_root(
+            root.to_str().unwrap(),
+            root.to_str().unwrap(),
+            "Synthetic scale root",
+            cold_now,
+        )
+        .unwrap();
+    let cold_task = import_task("observation-scale-cold", root.to_str().unwrap(), cold_now);
+    store
+        .begin_scan(
+            &source_root.id,
+            cold_task.id.as_str(),
+            meta_store::ScanTrigger::Manual,
+            cold_now,
+        )
+        .unwrap();
+    insert_test_import_task(&store, &cold_task, &options);
+    let cold_started = Instant::now();
+    let cold = import_root_with_options(
+        &data_dir,
+        &store,
+        &cold_task,
+        &root,
+        cold_now,
+        options.clone(),
+    )
+    .unwrap();
+    let cold_elapsed = cold_started.elapsed();
+    store
+        .complete_scan_and_remove_missing(
+            &source_root.id,
+            cold_task.id.as_str(),
+            meta_store::ScanCounts {
+                discovered: FILE_COUNT as u64,
+                searchable: 1,
+                non_resume: (FILE_COUNT - 1) as u64,
+                processed: FILE_COUNT as u64,
+                total: Some(FILE_COUNT as u64),
+                ..meta_store::ScanCounts::default()
+            },
+            None,
+            cold_now,
+        )
+        .unwrap();
+    drop(store);
+
+    let store = create_test_store(&data_dir);
+    let warm_now = UnixTimestamp::from_unix_seconds(1_700_001_001);
+    let warm_task = import_task("observation-scale-warm", root.to_str().unwrap(), warm_now);
+    store
+        .begin_scan(
+            &source_root.id,
+            warm_task.id.as_str(),
+            meta_store::ScanTrigger::Manual,
+            warm_now,
+        )
+        .unwrap();
+    insert_test_import_task(&store, &warm_task, &options);
+    let warm_started = Instant::now();
+    let warm =
+        import_root_with_options(&data_dir, &store, &warm_task, &root, warm_now, options).unwrap();
+    let warm_elapsed = warm_started.elapsed();
+
+    println!(
+        "synthetic_scale files={FILE_COUNT} cold_ms={} warm_ms={} cold_discovery_opens={} cold_sampled_bytes={} cold_full_opens={} cold_full_bytes={} cold_strong_hashes={} warm_discovery_opens={} warm_sampled_bytes={} warm_metadata_opens={} warm_full_opens={} warm_full_bytes={} warm_strong_hashes={} warm_fast_hits={} warm_fallbacks={:?}",
+        cold_elapsed.as_millis(),
+        warm_elapsed.as_millis(),
+        cold.io_metrics.discovery_content_open_count,
+        cold.io_metrics.discovery_sampled_bytes,
+        cold.io_metrics.full_content_open_count,
+        cold.io_metrics.full_content_bytes,
+        cold.io_metrics.strong_hashes_attempted,
+        warm.io_metrics.discovery_content_open_count,
+        warm.io_metrics.discovery_sampled_bytes,
+        warm.io_metrics.metadata_handle_open_count,
+        warm.io_metrics.full_content_open_count,
+        warm.io_metrics.full_content_bytes,
+        warm.io_metrics.strong_hashes_attempted,
+        warm.io_metrics.metadata_fast_path_hits,
+        warm.io_metrics.metadata_fallbacks,
+    );
+
+    assert_eq!(cold.io_metrics.strong_hashes_attempted, FILE_COUNT as u64);
+    assert_eq!(warm.io_metrics.discovery_content_open_count, 0);
+    assert_eq!(warm.io_metrics.discovery_sampled_bytes, 0);
+    assert_eq!(warm.io_metrics.full_content_open_count, 0);
+    assert_eq!(warm.io_metrics.full_content_bytes, 0);
+    assert_eq!(warm.io_metrics.strong_hashes_attempted, 0);
+    assert_eq!(warm.io_metrics.metadata_fast_path_hits, FILE_COUNT as u64);
 }
