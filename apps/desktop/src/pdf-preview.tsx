@@ -16,6 +16,7 @@ import {
   type SearchSelection,
 } from "./daemon"
 import { deliverDaemonPdfRange } from "./pdf-preview-range"
+import { pdfJsResourceOptions } from "./pdf-preview-resources"
 
 GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -131,6 +132,7 @@ export function PdfPreview({ selection, fileName }: {
         disableAutoFetch: true,
         disableStream: true,
         disableRange: false,
+        ...pdfJsResourceOptions(new URL("pdfjs/", globalThis.document.baseURI).href),
       }).promise
       if (disposed) {
         await loaded.destroy()

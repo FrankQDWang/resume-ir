@@ -127,6 +127,21 @@ schema v34 before native installed validation.
   interruption, and the user independently confirmed the PDF detail fix. No
   private path, filename, PDF bytes, content, selection, lease, query, or result
   is retained.
+- A later local-only reproduction isolated a second original-PDF preview gap:
+  the locked PDF.js build silently completed page rendering without CJK glyphs
+  when an Adobe CJK CID font used `Identity-H` without an embedded `ToUnicode`
+  map. The frontend now serves and builds the complete locked
+  `pdfjs-dist/cmaps` and `standard_fonts` resource sets locally, including their
+  licenses, and passes `cMapUrl`, packed-CMap mode and `standardFontDataUrl` to
+  the existing selection-bound reader. A public synthetic Type0 Adobe-GB1
+  no-`ToUnicode` regression reproduces the successful-render/zero-glyph failure
+  and now renders 1,600 deterministic dark pixels. The focused resource tests,
+  all 38 frontend tests, TypeScript checks, Vite production build, exact
+  build-artifact comparison and development-server resource checks pass.
+  Production frontend payload grows by 1,948,053 uncompressed bytes across 185
+  local files. Search loading, range/lease behavior, daemon IPC, PDFium/OCR,
+  storage and private-data boundaries are unchanged; no private PDF, path,
+  filename, content, hash, screenshot or raw diagnostic evidence is retained.
 - Spec/plan unchanged: `docs/superpowers/specs|plans/2026-07-27-processing-contract-upgrade-coordinator.md`
 - Schema **v34** digest IDs are 71-char `sha256:` identities; transition/campaign CRUD with fail-closed authority
 - Online path: fence → quiesce → target commit → campaign materialize → WriterReady; queued intents stage-then-cancel + scheduled PDF rebind

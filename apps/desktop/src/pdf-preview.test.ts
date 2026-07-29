@@ -2,6 +2,7 @@ import { clearMocks, mockIPC } from "@tauri-apps/api/mocks"
 import { beforeEach, describe, expect, it } from "vitest"
 
 import { deliverDaemonPdfRange } from "./pdf-preview-range"
+import { pdfJsResourceOptions } from "./pdf-preview-resources"
 
 interface RangeRequest {
   operation: "preview_range"
@@ -62,5 +63,15 @@ describe("daemon PDF range transport", () => {
     expect(delivered).toEqual([
       { begin: 4, bytes: Uint8Array.from([4, 5, 6, 7, 8, 9, 10, 11]) },
     ])
+  })
+})
+
+describe("PDF.js CJK CID rendering", () => {
+  it("resolves local same-origin resource directories", () => {
+    expect(pdfJsResourceOptions("tauri://localhost/pdfjs")).toEqual({
+      cMapUrl: "tauri://localhost/pdfjs/cmaps/",
+      cMapPacked: true,
+      standardFontDataUrl: "tauri://localhost/pdfjs/standard_fonts/",
+    })
   })
 })
