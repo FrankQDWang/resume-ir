@@ -3,10 +3,22 @@ import { readFile } from "node:fs/promises"
 import path from "node:path"
 import test from "node:test"
 
-import { createCanvas } from "@napi-rs/canvas"
-import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs"
+import {
+  createCanvas,
+  DOMMatrix,
+  ImageData,
+  Path2D,
+} from "@napi-rs/canvas"
+import { getDocument as getDocumentInNode } from "pdfjs-dist/legacy/build/pdf.mjs"
 
 import { pdfJsAssetEntries } from "./pdfjs-assets.mjs"
+
+globalThis.DOMMatrix ??= DOMMatrix
+globalThis.ImageData ??= ImageData
+globalThis.Path2D ??= Path2D
+const { createPdfDocumentLoadingTask } = await import(
+  "../src/pdf-preview-resources.ts"
+)
 
 const encoder = new TextEncoder()
 
@@ -101,13 +113,14 @@ test("renders a no-ToUnicode Adobe-GB1 CID font instead of silently dropping gly
     pdfJsRoot,
     "standard_fonts/LiberationSans-Regular.ttf",
   )))
-  const document = await getDocument({
-    data: syntheticCjkCidPdf(fontBytes),
-    useSystemFonts: false,
-    cMapUrl: path.join(pdfJsRoot, "cmaps/"),
-    cMapPacked: true,
-    standardFontDataUrl: path.join(pdfJsRoot, "standard_fonts/"),
-  }).promise
+  const document = await createPdfDocumentLoadingTask(
+    {
+      data: syntheticCjkCidPdf(fontBytes),
+      useSystemFonts: false,
+    },
+    pdfJsRoot,
+    getDocumentInNode,
+  ).promise
   const page = await document.getPage(1)
   const text = (await page.getTextContent()).items.map(({ str }) => str).join("")
   assert.equal(text, "鹨鹨鹨鹨")

@@ -21,6 +21,54 @@ export async function pdfJsAssetEntries(pdfJsRoot = DEFAULT_PDFJS_ROOT) {
   return entries.sort((left, right) => left.output.localeCompare(right.output))
 }
 
+export async function verifyPdfJsBuildAssets(
+  distRoot,
+  pdfJsRoot = DEFAULT_PDFJS_ROOT,
+) {
+  const expected = await pdfJsAssetEntries(pdfJsRoot)
+  const actual = []
+  for (const directory of RESOURCE_DIRECTORIES) {
+    const outputDirectory = path.join(distRoot, "pdfjs", directory)
+    for (const name of await readdir(outputDirectory)) {
+      actual.push(`pdfjs/${directory}/${name}`)
+    }
+  }
+  actual.sort()
+  const expectedOutputs = expected.map(({ output }) => output)
+  const expectedOutputSet = new Set(expectedOutputs)
+  if (
+    actual.length !== expectedOutputs.length
+    || actual.some((output) => !expectedOutputSet.has(output))
+  ) {
+    throw new Error("PDF.js build resource manifest does not match the locked dependency")
+  }
+  let byteLength = 0
+  for (const entry of expected) {
+    if (entry.output.includes("://")) {
+      throw new Error("PDF.js build resource URL must remain local")
+    }
+    const [source, output] = await Promise.all([
+      readFile(entry.source),
+      readFile(path.join(distRoot, entry.output)),
+    ])
+    if (!source.equals(output)) {
+      throw new Error(`PDF.js build resource differs from dependency: ${entry.output}`)
+    }
+    byteLength += output.byteLength
+  }
+  for (const required of [
+    "pdfjs/cmaps/Adobe-GB1-UCS2.bcmap",
+    "pdfjs/cmaps/LICENSE",
+    "pdfjs/standard_fonts/LICENSE_FOXIT",
+    "pdfjs/standard_fonts/LICENSE_LIBERATION",
+  ]) {
+    if (!actual.includes(required)) {
+      throw new Error(`PDF.js build resource is missing: ${required}`)
+    }
+  }
+  return { fileCount: actual.length, byteLength }
+}
+
 export function pdfJsAssets(pdfJsRoot = DEFAULT_PDFJS_ROOT) {
   let entries
   const loadEntries = () => entries ??= pdfJsAssetEntries(pdfJsRoot)

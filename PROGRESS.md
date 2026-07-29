@@ -138,6 +138,17 @@ schema v34 before native installed validation.
   and now renders 1,600 deterministic dark pixels. The focused resource tests,
   all 38 frontend tests, TypeScript checks, Vite production build, exact
   build-artifact comparison and development-server resource checks pass.
+  Review hardening declares the native canvas test dependency directly and
+  proves the regression after a clean script-disabled install; the focused
+  loader-seam test now locks the production `getDocument` resource options.
+  Every production frontend build also verifies the fresh `dist` contains all
+  185 expected resources, the CJK map and license files, with byte-for-byte
+  equality to the locked dependency and no remote asset name. An isolated
+  installed macOS worktree candidate reached Ready against the preserved local
+  store and rendered the authorized private witness with its CJK and Latin
+  text, icons, rules and layout intact; structured fields and extracted text
+  remained available. The existing installed app and user data were not
+  replaced or modified. Only the pass/fail conclusion is retained.
   Production frontend payload grows by 1,948,053 uncompressed bytes across 185
   local files. Search loading, range/lease behavior, daemon IPC, PDFium/OCR,
   storage and private-data boundaries are unchanged; no private PDF, path,

@@ -1,8 +1,12 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks"
-import { beforeEach, describe, expect, it } from "vitest"
+import type {
+  DocumentInitParameters,
+  PDFDocumentLoadingTask,
+} from "pdfjs-dist/types/src/display/api"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { deliverDaemonPdfRange } from "./pdf-preview-range"
-import { pdfJsResourceOptions } from "./pdf-preview-resources"
+import { createPdfDocumentLoadingTask } from "./pdf-preview-resources"
 
 interface RangeRequest {
   operation: "preview_range"
@@ -67,8 +71,26 @@ describe("daemon PDF range transport", () => {
 })
 
 describe("PDF.js CJK CID rendering", () => {
-  it("resolves local same-origin resource directories", () => {
-    expect(pdfJsResourceOptions("tauri://localhost/pdfjs")).toEqual({
+  it("passes local same-origin resources through the production loader seam", () => {
+    const loadingTask = { promise: Promise.resolve() }
+    const loadDocument = vi.fn((_options: DocumentInitParameters) => (
+      loadingTask as unknown as PDFDocumentLoadingTask
+    ))
+    const options = {
+      data: new Uint8Array([1]),
+      disableAutoFetch: true,
+      disableRange: false,
+      disableStream: true,
+    }
+
+    expect(createPdfDocumentLoadingTask(
+      options,
+      "tauri://localhost/pdfjs",
+      loadDocument,
+    )).toBe(loadingTask)
+    expect(loadDocument).toHaveBeenCalledOnce()
+    expect(loadDocument).toHaveBeenCalledWith({
+      ...options,
       cMapUrl: "tauri://localhost/pdfjs/cmaps/",
       cMapPacked: true,
       standardFontDataUrl: "tauri://localhost/pdfjs/standard_fonts/",
