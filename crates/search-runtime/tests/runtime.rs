@@ -82,6 +82,43 @@ fn disabled_vector_never_degrades_semantic_to_fulltext() {
 }
 
 #[test]
+fn lexical_scope_never_opens_the_vector_artifact() {
+    let fixture = Fixture::new("lexical-skips-vector", 2);
+    let state = fixture.store.search_projection_state().unwrap();
+    let generation = state.generation.unwrap();
+    fs::write(
+        fixture
+            .data_dir
+            .join("vector-index/snapshots")
+            .join(&generation)
+            .join("vector.snapshot.enc"),
+        b"not a valid encrypted vector snapshot",
+    )
+    .unwrap();
+    let mut coordinator = QueryCoordinator::open(&fixture.data_dir).unwrap();
+
+    let hit_count = coordinator
+        .with_lexical_query(|scope| {
+            Ok(scope
+                .fulltext_candidates("Rust", HitLimit::new(10).unwrap(), None)?
+                .len())
+        })
+        .unwrap();
+
+    assert_eq!(hit_count, 2);
+    assert_eq!(coordinator.take_artifact_fault(), None);
+    let error = coordinator.with_query(|_| Ok(())).unwrap_err();
+    assert_eq!(error.code(), SearchRuntimeErrorCode::Integrity);
+    assert_eq!(
+        coordinator
+            .take_artifact_fault()
+            .expect("composite query must still validate the vector artifact")
+            .generation(),
+        generation
+    );
+}
+
+#[test]
 fn tampered_new_generation_reports_one_exact_fault_and_is_not_served_from_cache() {
     let mut fixture = Fixture::new("invalid-new-generation", 1);
     let mut coordinator = QueryCoordinator::open(&fixture.data_dir).unwrap();

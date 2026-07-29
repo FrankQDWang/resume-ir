@@ -69,7 +69,7 @@ fn queued_search_task(
 }
 
 #[test]
-fn no_request_shutdown_never_opens_query_artifacts() {
+fn worker_prewarm_opens_query_artifacts_before_the_first_request() {
     let queue = Arc::new(SearchQueue::default());
     let _ = queue.close_and_cancel();
     let cancellations = Arc::new(CancellationRegistry::default());
@@ -89,7 +89,7 @@ fn no_request_shutdown_never_opens_query_artifacts() {
     )
     .unwrap();
 
-    assert_eq!(open_count.load(AtomicOrdering::SeqCst), 0);
+    assert_eq!(open_count.load(AtomicOrdering::SeqCst), 1);
 }
 
 #[test]
@@ -213,6 +213,38 @@ fn request_limit_drain_completes_active_and_queued_tasks_without_cancellation() 
     assert!(state.closed);
     drop(state);
     assert_eq!(admission.in_flight(), 0);
+}
+
+#[test]
+fn deadline_expiry_requests_active_work_cancellation() {
+    let admission = Arc::new(AdmissionState::new());
+    let (mut client, task) = queued_search_task("deadline-cancels-work", &admission);
+    client
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let control = Arc::clone(&task.control);
+    let deadline =
+        crate::search_contract::SearchDeadline::new(Instant::now() - Duration::from_millis(10), 1);
+    let mut scheduled = BinaryHeap::from([ScheduledDeadline {
+        sequence: 0,
+        reply: task.reply,
+        request_id: task.envelope.request_id,
+        visible_epoch: 0,
+        mode: task.args.mode,
+        query_parse_duration: Duration::ZERO,
+        deadline,
+        control: Arc::clone(&control),
+        _admission_permit: task.admission_permit,
+    }]);
+
+    expire_ready_deadlines(&mut scheduled);
+
+    assert!(scheduled.is_empty());
+    assert!(control.completed.load(AtomicOrdering::Acquire));
+    assert!(control.cancellation.is_cancelled());
+    let mut response = String::new();
+    client.read_to_string(&mut response).unwrap();
+    assert!(response.contains(r#""partial_reasons":["deadline_exceeded"]"#));
 }
 
 #[test]

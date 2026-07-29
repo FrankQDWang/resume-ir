@@ -15,6 +15,7 @@ import {
   readSourcePreviewRange,
   type SearchSelection,
 } from "./daemon"
+import { deliverDaemonPdfRange } from "./pdf-preview-range"
 
 GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -55,37 +56,14 @@ class DaemonPdfRangeTransport extends PDFDataRangeTransport {
   }
 
   private async deliverRange(begin: number, end: number): Promise<void> {
-    let offset = begin
-    while (offset < end) {
-      const length = Math.min(this.rangeBytes, end - offset)
-      const requestId = `gui-preview-range-${crypto.randomUUID()}`
-      const reply = await readSourcePreviewRange(
-        requestId,
-        this.leaseId,
-        offset,
-        length,
-      )
-      if (
-        reply.http_status !== 200
-        || reply.body.schema_version !== "resume-ir.source-preview-range.v1"
-        || reply.body.request_id !== requestId
-        || reply.body.offset !== offset
-        || reply.body.total_bytes !== this.totalBytes
-        || reply.body.bytes_read <= 0
-        || reply.body.bytes_read > length
-      ) {
-        throw new Error("range contract mismatch")
-      }
-      const bytes = decodeBase64(reply.body.data_base64)
-      if (bytes.byteLength !== reply.body.bytes_read) {
-        throw new Error("range length mismatch")
-      }
-      this.onDataRange(offset, bytes)
-      offset += bytes.byteLength
-      if (bytes.byteLength < length && offset < end) {
-        throw new Error("premature end of file")
-      }
-    }
+    await deliverDaemonPdfRange({
+      totalBytes: this.totalBytes,
+      leaseId: this.leaseId,
+      rangeBytes: this.rangeBytes,
+      begin,
+      end,
+      onDataRange: (offset, bytes) => this.onDataRange(offset, bytes),
+    })
   }
 }
 

@@ -62,9 +62,9 @@ use rank_fusion::{
 use rusqlite::Connection;
 use search_planner::plan_search;
 use search_runtime::{
-    FilterSelection, FullTextCandidate, HitLimit, HydratedSearchHit, QueryCoordinator, QueryScope,
-    SearchRuntimeError, SearchRuntimeErrorCode, SelectionLimit, SemanticCandidate,
-    SemanticContract, SemanticQueryVector,
+    FilterSelection, FullTextCandidate, HitLimit, HydratedSearchHit, LexicalQueryScope,
+    QueryCoordinator, QueryScope, SearchRuntimeError, SearchRuntimeErrorCode, SelectionLimit,
+    SemanticCandidate, SemanticContract, SemanticQueryVector,
 };
 use sha2::{Digest, Sha256};
 use sysinfo::{
@@ -14849,47 +14849,32 @@ fn execute_local_search(
     let selection_limit = SelectionLimit::new(meta_store::MAX_BOUNDED_FILTER_SELECTION)
         .map_err(search_runtime_cli_error)?;
 
-    let result = coordinator.with_query(|scope| {
-        validate_local_semantic_contract(scope.semantic_contract(), semantic.as_ref())?;
-        let filter_selection = if filter.predicates().is_empty() {
-            None
-        } else {
-            let started = Instant::now();
-            let selection = scope.filter_selection(&filter, selection_limit)?;
-            if let Some(timings) = timings.as_deref_mut() {
-                timings.prefilter_ms += duration_ms(started.elapsed());
-            }
-            Some(selection)
-        };
-
-        let candidates = match search_args.mode {
-            SearchMode::FullText => local_fulltext_candidates(
+    let result = match search_args.mode {
+        SearchMode::FullText => coordinator.with_lexical_query(|scope| {
+            let filter_selection =
+                local_filter_selection(&scope, &filter, selection_limit, timings.as_deref_mut())?;
+            let candidates = local_fulltext_candidates(
                 &scope,
                 &query,
                 semantic_hit_limit,
                 filter_selection.as_ref(),
                 timings.as_deref_mut(),
-            )?,
-            SearchMode::Semantic => local_semantic_candidates(
-                &scope,
-                semantic
-                    .as_ref()
-                    .ok_or_else(SearchRuntimeError::integrity_violation)?
-                    .query
-                    .clone(),
-                hit_limit,
-                filter_selection.as_ref(),
+            )?;
+            hydrate_local_candidates(&scope, candidates, search_args.top_k, timings)
+        }),
+        SearchMode::Semantic | SearchMode::Hybrid => coordinator.with_query(|scope| {
+            validate_local_semantic_contract(scope.semantic_contract(), semantic.as_ref())?;
+            let filter_selection = local_filter_selection(
+                scope.lexical(),
+                &filter,
+                selection_limit,
                 timings.as_deref_mut(),
-            )?,
-            SearchMode::Hybrid => {
-                let lexical = local_fulltext_candidates(
-                    &scope,
-                    &query,
-                    semantic_hit_limit,
-                    filter_selection.as_ref(),
-                    timings.as_deref_mut(),
-                )?;
-                let semantic_candidates = local_semantic_candidates(
+            )?;
+            let candidates = match search_args.mode {
+                SearchMode::FullText => {
+                    unreachable!("full-text mode uses the lexical-only scope")
+                }
+                SearchMode::Semantic => local_semantic_candidates(
                     &scope,
                     semantic
                         .as_ref()
@@ -14899,17 +14884,38 @@ fn execute_local_search(
                     hit_limit,
                     filter_selection.as_ref(),
                     timings.as_deref_mut(),
-                )?;
-                let started = Instant::now();
-                let fused = fuse_local_candidates(lexical, semantic_candidates, candidate_limit);
-                if let Some(timings) = timings.as_deref_mut() {
-                    timings.fusion_ms += duration_ms(started.elapsed());
+                )?,
+                SearchMode::Hybrid => {
+                    let lexical = local_fulltext_candidates(
+                        scope.lexical(),
+                        &query,
+                        semantic_hit_limit,
+                        filter_selection.as_ref(),
+                        timings.as_deref_mut(),
+                    )?;
+                    let semantic_candidates = local_semantic_candidates(
+                        &scope,
+                        semantic
+                            .as_ref()
+                            .ok_or_else(SearchRuntimeError::integrity_violation)?
+                            .query
+                            .clone(),
+                        hit_limit,
+                        filter_selection.as_ref(),
+                        timings.as_deref_mut(),
+                    )?;
+                    let started = Instant::now();
+                    let fused =
+                        fuse_local_candidates(lexical, semantic_candidates, candidate_limit);
+                    if let Some(timings) = timings.as_deref_mut() {
+                        timings.fusion_ms += duration_ms(started.elapsed());
+                    }
+                    fused
                 }
-                fused
-            }
-        };
-        hydrate_local_candidates(&scope, candidates, search_args.top_k, timings)
-    });
+            };
+            hydrate_local_candidates(scope.lexical(), candidates, search_args.top_k, timings)
+        }),
+    };
     match result {
         Ok(hits) => Ok(LocalSearchOutcome::Hits(hits)),
         Err(error) if error.code() == SearchRuntimeErrorCode::Unavailable => {
@@ -14917,6 +14923,23 @@ fn execute_local_search(
         }
         Err(error) => Err(search_runtime_cli_error(error)),
     }
+}
+
+fn local_filter_selection(
+    scope: &LexicalQueryScope<'_>,
+    filter: &SearchProjectionFilter,
+    selection_limit: SelectionLimit,
+    timings: Option<&mut BenchmarkQueryProtocolStageTimings>,
+) -> std::result::Result<Option<FilterSelection>, SearchRuntimeError> {
+    if filter.predicates().is_empty() {
+        return Ok(None);
+    }
+    let started = Instant::now();
+    let selection = scope.filter_selection(filter, selection_limit)?;
+    if let Some(timings) = timings {
+        timings.prefilter_ms += duration_ms(started.elapsed());
+    }
+    Ok(Some(selection))
 }
 
 fn prepare_local_semantic_query(
@@ -14995,7 +15018,7 @@ fn validate_local_semantic_contract(
 }
 
 fn local_fulltext_candidates(
-    scope: &QueryScope<'_>,
+    scope: &LexicalQueryScope<'_>,
     query: &str,
     limit: HitLimit,
     selection: Option<&FilterSelection>,
@@ -15089,7 +15112,7 @@ fn local_ranked_for_fusion(candidates: &[LocalRankedCandidate]) -> Vec<RankedHit
 }
 
 fn hydrate_local_candidates(
-    scope: &QueryScope<'_>,
+    scope: &LexicalQueryScope<'_>,
     candidates: Vec<LocalRankedCandidate>,
     top_k: usize,
     timings: Option<&mut BenchmarkQueryProtocolStageTimings>,
@@ -18810,9 +18833,9 @@ fn inspect_search_index(data_dir: &Path, store: &ReadMetaStore) -> SearchIndexDi
         return SearchIndexDiagnostic::Corrupt { staging_orphans };
     };
     let started_at = Instant::now();
-    match coordinator
-        .with_query(|scope| scope.fulltext_candidates("diagnostic", HitLimit::new(1)?, None))
-    {
+    match coordinator.with_lexical_query(|scope| {
+        scope.fulltext_candidates("diagnostic", HitLimit::new(1)?, None)
+    }) {
         Ok(hits) => SearchIndexDiagnostic::Available {
             elapsed_ms: started_at.elapsed().as_millis(),
             results: hits.len(),

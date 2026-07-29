@@ -93,6 +93,40 @@ schema v34 before native installed validation.
   filename, content, corpus count, query, token, database, or raw diagnostic
   artifact is retained. Exact merged-main DMG installation, rescan, search, and
   detail acceptance remain required.
+- Real installed keyword acceptance then exposed a cold-query head-of-line
+  failure: the first lexical request paid encrypted metadata-store validation
+  plus an unnecessary vector-generation HNSW rebuild, and the deadline monitor
+  returned a partial response without cancelling the still-running worker.
+  The corrective slice gives lexical queries a generation-pinned
+  metadata/full-text-only scope, keeps semantic/hybrid vector validation
+  fail-closed, prewarms the query coordinator on its dedicated worker, and
+  requests cancellation when a deadline response wins. A private read-only
+  timing probe separated roughly 25.4 seconds of encrypted-store open from
+  777ms first-generation lexical validation and 1.2ms warm lexical access; the
+  temporary probe was removed. Synthetic regressions prove a corrupt vector
+  artifact cannot block lexical search but still blocks composite search, and
+  prove deadline expiry cancels background work. Search-runtime tests, all
+  daemon unit tests, CLI search/filter/diagnostics/import-search suites, strict
+  release lint, formatting, and diff checks pass. No private path, filename,
+  content, corpus count, query, result, token, database, or raw diagnostic
+  artifact is retained. The installed worktree DMG passed a true process-cold
+  Computer Use acceptance: the daemon reached ready, a broad lexical query
+  completed without partial reasons in 705ms, a conjunctive lexical query
+  completed in 7ms, and a result detail opened with bounded structured fields
+  plus body content before returning to the preserved result set. Exact
+  merged-main DMG acceptance remains required.
+- The same installed-candidate pass found that original PDF detail was not
+  actually usable: PDF.js requested one logical range spanning multiple
+  daemon-bounded 64 KiB reads, while the adapter delivered each chunk as a
+  separate PDF.js range and invalidated the reader after the first delivery.
+  A focused frontend regression now requires one assembled PDF.js delivery
+  after multiple bounded daemon reads. Search results still load no PDF data;
+  only the selected PDF detail creates a short lease and PDF.js requests data
+  for the visible page. The production frontend build and all 35 frontend tests
+  pass. A rebuilt installed worktree DMG rendered the real first page without
+  interruption, and the user independently confirmed the PDF detail fix. No
+  private path, filename, PDF bytes, content, selection, lease, query, or result
+  is retained.
 - Spec/plan unchanged: `docs/superpowers/specs|plans/2026-07-27-processing-contract-upgrade-coordinator.md`
 - Schema **v34** digest IDs are 71-char `sha256:` identities; transition/campaign CRUD with fail-closed authority
 - Online path: fence → quiesce → target commit → campaign materialize → WriterReady; queued intents stage-then-cancel + scheduled PDF rebind

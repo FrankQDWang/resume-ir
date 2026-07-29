@@ -7,6 +7,6 @@ mod scope;
 pub use coordinator::{QueryCoordinator, SearchArtifactFaultKey};
 pub use error::{SearchRuntimeError, SearchRuntimeErrorCode};
 pub use scope::{
-    FilterSelection, FullTextCandidate, HitLimit, HydratedSearchHit, QueryScope, SelectionLimit,
-    SemanticCandidate, SemanticContract, SemanticQueryVector,
+    FilterSelection, FullTextCandidate, HitLimit, HydratedSearchHit, LexicalQueryScope, QueryScope,
+    SelectionLimit, SemanticCandidate, SemanticContract, SemanticQueryVector,
 };
