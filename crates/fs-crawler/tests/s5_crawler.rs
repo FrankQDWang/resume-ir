@@ -196,6 +196,7 @@ fn scan_options_stop_after_file_budget_without_path_leakage() {
         ScanOptions {
             profile: ScanProfile::Explicit,
             max_files: Some(2),
+            ..ScanOptions::default()
         },
     )
     .unwrap();
@@ -207,6 +208,33 @@ fn scan_options_stop_after_file_budget_without_path_leakage() {
     assert_eq!(budget.limit, 2);
     assert_eq!(budget.observed, 2);
     assert!(!format!("{budget:?}").contains("/fixture"));
+}
+
+#[test]
+fn metadata_only_scan_never_opens_content_for_fingerprinting() {
+    let fs = FakeFileSystem::new().dir("/fixture").file_with_open_error(
+        "/fixture/resume.txt",
+        128,
+        io::ErrorKind::PermissionDenied,
+        "content open must not be attempted",
+    );
+
+    let report = fs_crawler::crawl_with_fs_options(
+        &fs,
+        Path::new("/fixture"),
+        ScanOptions {
+            profile: ScanProfile::Explicit,
+            max_files: None,
+            fingerprint_mode: fs_crawler::FingerprintMode::MetadataOnly,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(report.files.len(), 1);
+    assert!(report.errors.is_empty());
+    assert_eq!(report.content_open_count, 0);
+    assert_eq!(report.sampled_bytes, 0);
+    assert!(report.files[0].fingerprint.is_none());
 }
 
 #[test]
@@ -230,6 +258,7 @@ fn scan_control_cancels_directory_walk_without_path_leakage() {
         ScanOptions {
             profile: ScanProfile::Explicit,
             max_files: None,
+            ..ScanOptions::default()
         },
         ScanControl::from_cancel_check(&should_cancel),
     )
@@ -259,6 +288,7 @@ fn scan_control_cancels_during_fingerprint_without_path_leakage() {
         ScanOptions {
             profile: ScanProfile::Explicit,
             max_files: None,
+            ..ScanOptions::default()
         },
         ScanControl::from_cancel_check(&should_cancel),
     )
@@ -285,12 +315,13 @@ fn quick_fingerprint_samples_head_and_tail_without_reading_entire_large_file() {
         .find(|file| file.file_name == "large.txt")
         .unwrap();
 
-    assert!(file.fingerprint.sampled_bytes <= MAX_TOTAL_SAMPLE_BYTES);
-    assert!(file.byte_size > file.fingerprint.sampled_bytes);
-    assert!(file.fingerprint.as_str().starts_with("qfp_"));
-    assert_eq!(file.fingerprint.to_string(), "<redacted-fingerprint>");
-    assert!(!format!("{:?}", file.fingerprint).contains(file.fingerprint.as_str()));
-    assert!(!format!("{file:?}").contains(file.fingerprint.as_str()));
+    let fingerprint = file.fingerprint.as_ref().unwrap();
+    assert!(fingerprint.sampled_bytes <= MAX_TOTAL_SAMPLE_BYTES);
+    assert!(file.byte_size > fingerprint.sampled_bytes);
+    assert!(fingerprint.as_str().starts_with("qfp_"));
+    assert_eq!(fingerprint.to_string(), "<redacted-fingerprint>");
+    assert!(!format!("{fingerprint:?}").contains(fingerprint.as_str()));
+    assert!(!format!("{file:?}").contains(fingerprint.as_str()));
 }
 
 #[test]
@@ -311,7 +342,10 @@ fn rename_creates_a_new_path_identity_but_preserves_content_fingerprint() {
     assert!(before.stable_file_id.is_some());
     assert_eq!(before.stable_file_id, after.stable_file_id);
     assert_ne!(before.document_id, after.document_id);
-    assert_eq!(before.fingerprint.as_str(), after.fingerprint.as_str());
+    assert_eq!(
+        before.fingerprint.as_ref().unwrap().as_str(),
+        after.fingerprint.as_ref().unwrap().as_str()
+    );
     assert!(!format!("{before:?}").contains("sfi_"));
 }
 
@@ -329,7 +363,10 @@ fn replacement_at_same_path_preserves_path_identity_but_changes_content_fingerpr
     assert_eq!(before.normalized_path, after.normalized_path);
     assert_ne!(before.stable_file_id, after.stable_file_id);
     assert_eq!(before.document_id, after.document_id);
-    assert_ne!(before.fingerprint.as_str(), after.fingerprint.as_str());
+    assert_ne!(
+        before.fingerprint.as_ref().unwrap().as_str(),
+        after.fingerprint.as_ref().unwrap().as_str()
+    );
 }
 
 #[test]
