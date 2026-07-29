@@ -81,6 +81,21 @@ impl PendingProjectionRemovals {
             .values()
             .filter_map(|removal| removal.document_update.as_ref())
     }
+
+    fn retain_active_projections(&mut self, store: &OwnedMetaStore) -> Result<()> {
+        let mut retained = BTreeMap::new();
+        for (document_id, removal) in std::mem::take(&mut self.0) {
+            if store
+                .active_search_projection_for_document(&document_id)
+                .map_err(ImportPipelineError::store)?
+                .is_some()
+            {
+                retained.insert(document_id, removal);
+            }
+        }
+        self.0 = retained;
+        Ok(())
+    }
 }
 
 /// Publishes all currently staged searchable replacements and removals through
@@ -100,7 +115,6 @@ pub(super) fn flush_pending_searchable_documents(
     index_writer_heap_bytes: usize,
     search_vectorization: &SearchPublicationVectorization,
 ) -> Result<bool> {
-    let has_delta = !pending_index_documents.is_empty() || !pending_excluded_doc_ids.is_empty();
     let projection_state = store
         .search_projection_state()
         .map_err(ImportPipelineError::store)?;
@@ -108,9 +122,6 @@ pub(super) fn flush_pending_searchable_documents(
     let migration_rebuild_staging = projection_state.generation.is_none()
         && projection_state.service_state == SearchProjectionServiceState::Repairing
         && projection_state.repair_reason == Some(SearchRepairReason::MigrationRebuild);
-    if !has_delta && !needs_initial_publication {
-        return Ok(false);
-    }
     let classifier_epoch = publication_classifier_epoch(store, pending_index_documents)?;
 
     if !pending_index_documents.is_empty() {
@@ -174,6 +185,15 @@ pub(super) fn flush_pending_searchable_documents(
         summary.searchable_documents += pending_index_documents.len();
         pending_index_documents.clear();
         pending_excluded_doc_ids.clear();
+        return Ok(false);
+    }
+
+    let unchanged_searchable_documents =
+        normalize_searchable_replacements(store, pending_index_documents)?;
+    pending_excluded_doc_ids.retain_active_projections(store)?;
+    let has_delta = !pending_index_documents.is_empty() || !pending_excluded_doc_ids.is_empty();
+    if !has_delta && !needs_initial_publication {
+        summary.searchable_documents += unchanged_searchable_documents;
         return Ok(false);
     }
 
@@ -247,6 +267,52 @@ pub(super) fn flush_pending_searchable_documents(
         index_ready_elapsed,
     );
     Ok(true)
+}
+
+fn normalize_searchable_replacements(
+    store: &OwnedMetaStore,
+    pending_documents: &mut Vec<PendingSearchableDocument>,
+) -> Result<usize> {
+    let mut retained = Vec::with_capacity(pending_documents.len());
+    let mut unchanged = 0;
+    for pending in std::mem::take(pending_documents) {
+        let is_semantic_delta = match pending.publication_kind {
+            PendingSearchablePublicationKind::MetadataChanged => true,
+            PendingSearchablePublicationKind::Replacement => {
+                searchable_replacement_changes_projection(store, &pending)?
+            }
+        };
+        if is_semantic_delta {
+            retained.push(pending);
+        } else {
+            unchanged += 1;
+        }
+    }
+    *pending_documents = retained;
+    Ok(unchanged)
+}
+
+fn searchable_replacement_changes_projection(
+    store: &OwnedMetaStore,
+    pending: &PendingSearchableDocument,
+) -> Result<bool> {
+    let Some(active_projection) = store
+        .active_search_projection_for_document(&pending.document.id)
+        .map_err(ImportPipelineError::store)?
+    else {
+        return Ok(true);
+    };
+    if active_projection.resume_version_id != pending.version.id {
+        return Ok(true);
+    }
+    let active_document = store
+        .active_search_document(&active_projection)
+        .map_err(ImportPipelineError::store)?
+        .ok_or_else(ImportPipelineError::store_invariant)?;
+    let mut projected_document = pending.document.clone();
+    projected_document.status = DocumentStatus::Searchable;
+    projected_document.updated_at = active_document.updated_at;
+    Ok(projected_document != active_document)
 }
 
 fn publication_classifier_epoch(
