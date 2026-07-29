@@ -168,9 +168,11 @@ pub(crate) fn prepare_file_for_parse_inner(
                 ProcessedFile::UnchangedOcrRequired { source_revision_id }
             }
             ExactRerunDecision::UnchangedExcluded {
+                document,
                 source_revision_id,
                 resume_version_id,
             } => ProcessedFile::UnchangedExcluded {
+                document,
                 source_revision_id,
                 resume_version_id,
             },

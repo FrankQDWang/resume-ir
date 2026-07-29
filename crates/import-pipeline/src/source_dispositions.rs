@@ -17,6 +17,7 @@ pub(super) enum ProcessedFile {
         source_revision_id: SourceRevisionId,
     },
     UnchangedExcluded {
+        document: Box<Document>,
         source_revision_id: SourceRevisionId,
         resume_version_id: ResumeVersionId,
     },
@@ -73,6 +74,7 @@ impl ProcessedFile {
             Self::UnchangedExcluded {
                 source_revision_id,
                 resume_version_id,
+                ..
             }
             | Self::Excluded {
                 source_revision_id,
