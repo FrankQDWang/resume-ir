@@ -3512,6 +3512,32 @@ guards, local runtime discovery, and PR #9 CI state.
 
 ## Command Log
 
+### S811
+
+- Live installed-app investigation for GitHub issue #264 proved that the
+  source panel could retain `无法读取本地授权目录记录` after a later valid
+  source-root response. At the same time the managed-root card had reached a
+  complete recovery scan, authenticated source-root reads returned the exact
+  v2 contract, and keyword search plus daemon/index capabilities remained
+  available. The exact subtype of the original transient read failure is not
+  recoverable from retained evidence and is not guessed here.
+- Root cause: same-generation panel polling called
+  `refreshManagedRoots(false)`. The failure path wrote the shared import
+  presentation, while a later successful non-announcing refresh updated roots
+  and controls without clearing that failure.
+- A focused RED first reported 2 failed / 4 passed tests. The corrective
+  frontend slice now owns source-list read failure separately from scan,
+  pause/resume, selection, and deletion operation messages. Any valid later
+  source-root response clears only the source-list failure, so successful
+  polling cannot erase an unrelated operation error.
+- Focused GREEN reported 6/6 daemon-runtime tests, the complete desktop Vitest
+  suite reported 37/37 tests, the desktop production frontend build passed,
+  and the diff check passed. Exact merged-main DMG installation and real
+  pause/resume recovery acceptance remain post-merge gates and will be retained
+  only as bounded aggregate evidence on issue #264.
+- No source root, local path, query, candidate data, token, response body,
+  database, or raw diagnostic artifact is committed or uploaded.
+
 ### S810
 
 - The daemon/bootstrap contract is hard-cut to discovery/auth v3, status v3,

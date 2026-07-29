@@ -38,7 +38,7 @@ import {
 } from "./daemon"
 import { useDetailSession } from "./detail-session"
 import { DetailDrawer } from "./detail-drawer"
-import { daemonRetryControl, useDaemonRuntime } from "./daemon-runtime"
+import { daemonRetryControl, sourcePanelBanner, useDaemonRuntime } from "./daemon-runtime"
 import { DiagnosticsContent, type DiagnosticsState } from "./diagnostics-panel"
 import {
   CapabilityMatrix,
@@ -166,6 +166,7 @@ export function App() {
     setImportState,
     importMessage,
     setImportMessage,
+    managedRootsReadFailure,
     bindDetailObservers,
     captureActionAuthority,
     actionAuthorityIsCurrent,
@@ -246,6 +247,7 @@ export function App() {
   const importAllowed = runtimeView === "trusted" && lifecycle.state === "running" && authoritativeStatus?.capabilities.text_import.state === "available"
   const operationsPaused = !detailAllowed
   const retryControl = daemonRetryControl(lifecycle)
+  const importBanner = sourcePanelBanner(importState, importMessage, managedRootsReadFailure)
   useEffect(() => {
     if (previewMode !== "detail" || previewDetailOpened.current) return
     previewDetailOpened.current = true
@@ -538,9 +540,9 @@ export function App() {
 
     {overlay === "import" && <SlideOver title="简历来源" subtitle="本地目录只由原生进程持有" onClose={() => setOverlay(null)}>
       <div className="sheet-scroll import-content">
-        <div className={`banner banner-${["error", "mismatch", "overload"].includes(importState) ? "err" : ["queued", "pending", "active"].includes(importState) ? "ok" : "neutral"}`} aria-live="polite">
-          {["selecting", "submitting"].includes(importState) ? <LoaderCircle className="spin" size={16} /> : ["error", "mismatch", "overload", "unavailable"].includes(importState) ? <AlertTriangle size={16} /> : <FolderOpen size={16} />}
-          <span>{importMessage}</span>
+        <div className={`banner banner-${["error", "mismatch", "overload"].includes(importBanner.state) ? "err" : ["queued", "pending", "active"].includes(importBanner.state) ? "ok" : "neutral"}`} aria-live="polite">
+          {["selecting", "submitting"].includes(importBanner.state) ? <LoaderCircle className="spin" size={16} /> : ["error", "mismatch", "overload", "unavailable"].includes(importBanner.state) ? <AlertTriangle size={16} /> : <FolderOpen size={16} />}
+          <span>{importBanner.message}</span>
         </div>
         <SourceRootsPanel
           roots={managedRoots}

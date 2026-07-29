@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest"
 
-import { daemonRetryControl } from "./daemon-runtime"
+import {
+  daemonRetryControl,
+  managedRootsReadFailureAfterRefresh,
+  sourcePanelBanner,
+} from "./daemon-runtime"
 import {
   captureLifecycleReadability,
   initialLifecycleReadability,
@@ -47,6 +51,30 @@ describe("daemon retry control", () => {
     expect(daemonRetryControl(lifecycle("blocked", null))).toEqual({
       disabled: false,
       label: "重新检测并启动",
+    })
+  })
+})
+
+describe("managed source-root read recovery", () => {
+  it("clears ordinary and overload read failures after a valid refresh", () => {
+    expect(managedRootsReadFailureAfterRefresh("error")).toBe("error")
+    expect(managedRootsReadFailureAfterRefresh("success")).toBeNull()
+    expect(managedRootsReadFailureAfterRefresh("overload")).toBe("overload")
+    expect(managedRootsReadFailureAfterRefresh("success")).toBeNull()
+  })
+
+  it("keeps source-list failures separate from other import operation messages", () => {
+    expect(sourcePanelBanner("selected", "监控已恢复", "error")).toEqual({
+      state: "error",
+      message: "无法读取本地授权目录记录",
+    })
+    expect(sourcePanelBanner("selected", "监控已恢复", "overload")).toEqual({
+      state: "overload",
+      message: "授权目录读取入口繁忙，请稍后重试",
+    })
+    expect(sourcePanelBanner("error", "daemon 未接受目录监控操作，可重试读取状态", null)).toEqual({
+      state: "error",
+      message: "daemon 未接受目录监控操作，可重试读取状态",
     })
   })
 })
