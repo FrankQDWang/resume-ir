@@ -12,13 +12,14 @@ use meta_store::{
 };
 
 use crate::error::SearchRuntimeError;
-use crate::scope::QueryScope;
+use crate::scope::{LexicalQueryScope, QueryScope};
 
 pub struct QueryCoordinator {
     store: ReadMetaStore,
     fulltext_root: PathBuf,
     vector_root: VectorSnapshotRoot,
-    cache: Option<ValidatedGeneration>,
+    fulltext_cache: Option<ValidatedFullTextGeneration>,
+    vector_cache: Option<ValidatedVectorGeneration>,
     pending_artifact_fault: Option<SearchArtifactFaultKey>,
 }
 
@@ -49,9 +50,13 @@ impl fmt::Debug for SearchArtifactFaultKey {
     }
 }
 
-struct ValidatedGeneration {
+struct ValidatedFullTextGeneration {
     key: CacheKey,
     fulltext: FullTextIndex,
+}
+
+struct ValidatedVectorGeneration {
+    key: CacheKey,
     vector: VectorSnapshotReader,
 }
 
@@ -71,7 +76,8 @@ impl QueryCoordinator {
             store,
             fulltext_root,
             vector_root,
-            cache: None,
+            fulltext_cache: None,
+            vector_cache: None,
             pending_artifact_fault: None,
         })
     }
@@ -87,9 +93,11 @@ impl QueryCoordinator {
         &mut self,
         operation: impl for<'query> FnOnce(QueryScope<'query>) -> Result<T, SearchRuntimeError>,
     ) -> Result<T, SearchRuntimeError> {
-        let fulltext_lease = SnapshotReadLease::acquire(&self.fulltext_root)
-            .map_err(|_| SearchRuntimeError::unavailable())?
-            .ok_or_else(SearchRuntimeError::unavailable)?;
+        let mut fulltext_lease = Some(
+            SnapshotReadLease::acquire(&self.fulltext_root)
+                .map_err(|_| SearchRuntimeError::unavailable())?
+                .ok_or_else(SearchRuntimeError::unavailable)?,
+        );
         let mut vector_lease = Some(
             self.vector_root
                 .acquire_read_lease()
@@ -97,44 +105,129 @@ impl QueryCoordinator {
         );
         let fulltext_root = &self.fulltext_root;
         let vector_root = &self.vector_root;
-        let cache = &mut self.cache;
+        let fulltext_cache = &mut self.fulltext_cache;
+        let vector_cache = &mut self.vector_cache;
         let pending_artifact_fault = &mut self.pending_artifact_fault;
         self.store
             .with_search_metadata_snapshot(|snapshot| {
                 let key = cache_key(snapshot.head().publication.clone())?;
-                if cache.as_ref().is_none_or(|cached| cached.key != key) {
-                    *cache = None;
-                    let validated = match validate_generation(
+                let fulltext_changed = fulltext_cache
+                    .as_ref()
+                    .is_none_or(|cached| cached.key != key);
+                let vector_changed = vector_cache.as_ref().is_none_or(|cached| cached.key != key);
+                let projections = if fulltext_changed || vector_changed {
+                    Some(
+                        snapshot
+                            .validated_active_projections()
+                            .map_err(|_| SearchRuntimeError::integrity())?,
+                    )
+                } else {
+                    None
+                };
+                if fulltext_changed {
+                    *fulltext_cache = None;
+                    let validated = match validate_fulltext_generation(
                         snapshot,
                         fulltext_root,
+                        fulltext_lease
+                            .take()
+                            .ok_or_else(SearchRuntimeError::integrity)?,
+                        key.clone(),
+                        projections
+                            .as_deref()
+                            .ok_or_else(SearchRuntimeError::integrity)?,
+                    ) {
+                        Ok(validated) => validated,
+                        Err(error) => {
+                            return Err(record_generation_error(error, pending_artifact_fault))
+                        }
+                    };
+                    *fulltext_cache = Some(validated);
+                } else {
+                    drop(fulltext_lease.take());
+                }
+                if vector_changed {
+                    *vector_cache = None;
+                    let validated = match validate_vector_generation(
+                        snapshot,
                         vector_root,
-                        fulltext_lease,
                         vector_lease
                             .take()
                             .ok_or_else(SearchRuntimeError::integrity)?,
                         key,
+                        projections
+                            .as_deref()
+                            .ok_or_else(SearchRuntimeError::integrity)?,
                     ) {
                         Ok(validated) => validated,
-                        Err(GenerationValidationError::Metadata(error)) => return Err(error),
-                        Err(GenerationValidationError::Artifact { key, error }) => {
-                            *pending_artifact_fault = Some(SearchArtifactFaultKey {
-                                generation: key.generation,
-                                publication_fingerprint: key.publication_fingerprint,
-                            });
-                            return Err(error);
+                        Err(error) => {
+                            return Err(record_generation_error(error, pending_artifact_fault))
                         }
                     };
-                    *cache = Some(validated);
+                    *vector_cache = Some(validated);
                 } else {
-                    drop(fulltext_lease);
                     drop(vector_lease.take());
                 }
-                let validated = cache.as_ref().ok_or_else(SearchRuntimeError::integrity)?;
+                let fulltext = fulltext_cache
+                    .as_ref()
+                    .ok_or_else(SearchRuntimeError::integrity)?;
+                let vector = vector_cache
+                    .as_ref()
+                    .ok_or_else(SearchRuntimeError::integrity)?;
                 operation(QueryScope::new(
                     snapshot,
-                    &validated.fulltext,
-                    &validated.vector,
+                    &fulltext.fulltext,
+                    &vector.vector,
                 ))
+            })
+            .map_err(map_transaction_error)
+    }
+
+    pub fn with_lexical_query<T>(
+        &mut self,
+        operation: impl for<'query> FnOnce(LexicalQueryScope<'query>) -> Result<T, SearchRuntimeError>,
+    ) -> Result<T, SearchRuntimeError> {
+        let mut fulltext_lease = Some(
+            SnapshotReadLease::acquire(&self.fulltext_root)
+                .map_err(|_| SearchRuntimeError::unavailable())?
+                .ok_or_else(SearchRuntimeError::unavailable)?,
+        );
+        let fulltext_root = &self.fulltext_root;
+        let fulltext_cache = &mut self.fulltext_cache;
+        let pending_artifact_fault = &mut self.pending_artifact_fault;
+        self.store
+            .with_search_metadata_snapshot(|snapshot| {
+                let key = cache_key(snapshot.head().publication.clone())?;
+                if fulltext_cache
+                    .as_ref()
+                    .is_none_or(|cached| cached.key != key)
+                {
+                    *fulltext_cache = None;
+                    let projections = snapshot
+                        .validated_active_projections()
+                        .map_err(|_| SearchRuntimeError::integrity())?;
+                    let validated = match validate_fulltext_generation(
+                        snapshot,
+                        fulltext_root,
+                        fulltext_lease
+                            .take()
+                            .ok_or_else(SearchRuntimeError::integrity)?,
+                        key,
+                        &projections,
+                    ) {
+                        Ok(validated) => validated,
+                        Err(error) => {
+                            return Err(record_generation_error(error, pending_artifact_fault))
+                        }
+                    };
+                    *fulltext_cache = Some(validated);
+                } else {
+                    drop(fulltext_lease.take());
+                }
+                let fulltext = fulltext_cache
+                    .as_ref()
+                    .ok_or_else(SearchRuntimeError::integrity)?;
+                operation(LexicalQueryScope::new(snapshot, &fulltext.fulltext))
             })
             .map_err(map_transaction_error)
     }
@@ -158,34 +251,41 @@ fn cache_key(publication: SearchPublicationRecord) -> Result<CacheKey, SearchRun
     })
 }
 
-fn validate_generation(
+fn record_generation_error(
+    error: GenerationValidationError,
+    pending_artifact_fault: &mut Option<SearchArtifactFaultKey>,
+) -> SearchRuntimeError {
+    match error {
+        GenerationValidationError::Metadata(error) => error,
+        GenerationValidationError::Artifact { key, error } => {
+            *pending_artifact_fault = Some(SearchArtifactFaultKey {
+                generation: key.generation,
+                publication_fingerprint: key.publication_fingerprint,
+            });
+            error
+        }
+    }
+}
+
+fn validate_fulltext_generation(
     snapshot: &SearchMetadataSnapshot<'_>,
     fulltext_root: &Path,
-    vector_root: &VectorSnapshotRoot,
     fulltext_lease: SnapshotReadLease,
-    vector_lease: VectorSnapshotReadLease,
     key: CacheKey,
-) -> Result<ValidatedGeneration, GenerationValidationError> {
+    projections: &[ActiveSearchProjection],
+) -> Result<ValidatedFullTextGeneration, GenerationValidationError> {
     let publication = &snapshot.head().publication;
     let fulltext_descriptor = publication
         .fulltext
         .as_ref()
         .ok_or_else(|| GenerationValidationError::Metadata(SearchRuntimeError::integrity()))?;
-    let vector_descriptor = publication
-        .vector
-        .as_ref()
-        .ok_or_else(|| GenerationValidationError::Metadata(SearchRuntimeError::integrity()))?;
     if snapshot.head().generation != key.generation
         || fulltext_descriptor.generation() != key.generation
-        || vector_descriptor.generation() != key.generation
     {
         return Err(GenerationValidationError::Metadata(
             SearchRuntimeError::integrity(),
         ));
     }
-    let projections = snapshot
-        .validated_active_projections()
-        .map_err(|_| GenerationValidationError::Metadata(SearchRuntimeError::integrity()))?;
     let fulltext =
         FullTextIndex::open_snapshot_with_lease(fulltext_root, &key.generation, fulltext_lease)
             .map_err(|_| GenerationValidationError::Artifact {
@@ -196,13 +296,35 @@ fn validate_generation(
                 key: key.clone(),
                 error: SearchRuntimeError::unavailable(),
             })?;
-    validate_fulltext(&fulltext, fulltext_descriptor, &projections).map_err(|error| {
+    validate_fulltext(&fulltext, fulltext_descriptor, projections).map_err(|error| {
         GenerationValidationError::Artifact {
             key: key.clone(),
             error,
         }
     })?;
+    Ok(ValidatedFullTextGeneration { key, fulltext })
+}
 
+fn validate_vector_generation(
+    snapshot: &SearchMetadataSnapshot<'_>,
+    vector_root: &VectorSnapshotRoot,
+    vector_lease: VectorSnapshotReadLease,
+    key: CacheKey,
+    projections: &[ActiveSearchProjection],
+) -> Result<ValidatedVectorGeneration, GenerationValidationError> {
+    let vector_descriptor = snapshot
+        .head()
+        .publication
+        .vector
+        .as_ref()
+        .ok_or_else(|| GenerationValidationError::Metadata(SearchRuntimeError::integrity()))?;
+    if snapshot.head().generation != key.generation
+        || vector_descriptor.generation() != key.generation
+    {
+        return Err(GenerationValidationError::Metadata(
+            SearchRuntimeError::integrity(),
+        ));
+    }
     let vector_contract =
         vector_contract(vector_descriptor.mode()).map_err(GenerationValidationError::Metadata)?;
     let vector = vector_root
@@ -211,17 +333,13 @@ fn validate_generation(
             key: key.clone(),
             error: SearchRuntimeError::integrity(),
         })?;
-    validate_vector(&vector, vector_descriptor, &projections, &vector_contract).map_err(
+    validate_vector(&vector, vector_descriptor, projections, &vector_contract).map_err(
         |error| GenerationValidationError::Artifact {
             key: key.clone(),
             error,
         },
     )?;
-    Ok(ValidatedGeneration {
-        key,
-        fulltext,
-        vector,
-    })
+    Ok(ValidatedVectorGeneration { key, vector })
 }
 
 fn validate_fulltext(

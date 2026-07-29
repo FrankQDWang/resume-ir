@@ -134,45 +134,42 @@ impl std::fmt::Debug for HydratedSearchHit {
     }
 }
 
-pub struct QueryScope<'query> {
+struct LexicalScopeCore<'query> {
     metadata: &'query SearchMetadataSnapshot<'query>,
     fulltext: &'query FullTextIndex,
-    vector: &'query VectorSnapshotReader,
     _not_send_or_sync: PhantomData<Rc<()>>,
 }
 
-impl<'query> QueryScope<'query> {
-    pub(crate) fn new(
+/// Generation-pinned scope for keyword and field-filtered search.
+///
+/// This scope intentionally has no vector API, so lexical callers cannot
+/// accidentally open or rebuild a vector generation.
+pub struct LexicalQueryScope<'query> {
+    core: LexicalScopeCore<'query>,
+}
+
+pub struct QueryScope<'query> {
+    lexical: LexicalQueryScope<'query>,
+    vector: &'query VectorSnapshotReader,
+}
+
+impl<'query> LexicalScopeCore<'query> {
+    fn new(
         metadata: &'query SearchMetadataSnapshot<'query>,
         fulltext: &'query FullTextIndex,
-        vector: &'query VectorSnapshotReader,
     ) -> Self {
         Self {
             metadata,
             fulltext,
-            vector,
             _not_send_or_sync: PhantomData,
         }
     }
 
-    pub fn visible_epoch(&self) -> u64 {
+    fn visible_epoch(&self) -> u64 {
         self.metadata.head().visible_epoch
     }
 
-    pub fn semantic_contract(&self) -> SemanticContract {
-        match self.vector.summary().model_contract() {
-            VectorModelContract::Disabled => SemanticContract::Disabled,
-            VectorModelContract::Enabled {
-                model_id,
-                dimension,
-            } => SemanticContract::Enabled {
-                model_id: model_id.clone(),
-                dimension: *dimension,
-            },
-        }
-    }
-
-    pub fn filter_selection(
+    fn filter_selection(
         &self,
         filter: &SearchProjectionFilter,
         limit: SelectionLimit,
@@ -198,7 +195,7 @@ impl<'query> QueryScope<'query> {
         }
     }
 
-    pub fn fulltext_candidates(
+    fn fulltext_candidates(
         &self,
         query: &str,
         limit: HitLimit,
@@ -230,6 +227,125 @@ impl<'query> QueryScope<'query> {
                 })
             })
             .collect()
+    }
+
+    fn hydrate_exact_hits(
+        &self,
+        projections: &[ActiveSearchProjection],
+    ) -> Result<Vec<HydratedSearchHit>, SearchRuntimeError> {
+        let cap =
+            NonZeroUsize::new(MAX_EXACT_HIT_HYDRATION).ok_or_else(SearchRuntimeError::integrity)?;
+        match self
+            .metadata
+            .hydrate_exact_hits(projections, cap)
+            .map_err(|_| SearchRuntimeError::integrity())?
+        {
+            ExactHitHydration::Failed(_) => Err(SearchRuntimeError::integrity()),
+            ExactHitHydration::Hydrated(hits) => Ok(hits
+                .into_iter()
+                .map(|hit| HydratedSearchHit {
+                    selection: SearchSelection {
+                        document_id: hit.projection.document_id,
+                        resume_version_id: hit.projection.resume_version_id,
+                        visible_epoch: self.visible_epoch(),
+                    },
+                    document: hit.document,
+                    candidate_id: hit.candidate_id,
+                    mentions: hit.mentions,
+                })
+                .collect()),
+        }
+    }
+}
+
+impl<'query> LexicalQueryScope<'query> {
+    pub(crate) fn new(
+        metadata: &'query SearchMetadataSnapshot<'query>,
+        fulltext: &'query FullTextIndex,
+    ) -> Self {
+        Self {
+            core: LexicalScopeCore::new(metadata, fulltext),
+        }
+    }
+
+    pub fn visible_epoch(&self) -> u64 {
+        self.core.visible_epoch()
+    }
+
+    pub fn filter_selection(
+        &self,
+        filter: &SearchProjectionFilter,
+        limit: SelectionLimit,
+    ) -> Result<FilterSelection, SearchRuntimeError> {
+        self.core.filter_selection(filter, limit)
+    }
+
+    pub fn fulltext_candidates(
+        &self,
+        query: &str,
+        limit: HitLimit,
+        selection: Option<&FilterSelection>,
+    ) -> Result<Vec<FullTextCandidate>, SearchRuntimeError> {
+        self.core.fulltext_candidates(query, limit, selection)
+    }
+
+    pub fn hydrate_exact_hits(
+        &self,
+        projections: &[ActiveSearchProjection],
+    ) -> Result<Vec<HydratedSearchHit>, SearchRuntimeError> {
+        self.core.hydrate_exact_hits(projections)
+    }
+}
+
+impl<'query> QueryScope<'query> {
+    pub(crate) fn new(
+        metadata: &'query SearchMetadataSnapshot<'query>,
+        fulltext: &'query FullTextIndex,
+        vector: &'query VectorSnapshotReader,
+    ) -> Self {
+        Self {
+            lexical: LexicalQueryScope::new(metadata, fulltext),
+            vector,
+        }
+    }
+
+    pub fn visible_epoch(&self) -> u64 {
+        self.lexical.visible_epoch()
+    }
+
+    /// Returns the generation-pinned lexical portion of this composite scope.
+    pub fn lexical(&self) -> &LexicalQueryScope<'query> {
+        &self.lexical
+    }
+
+    pub fn semantic_contract(&self) -> SemanticContract {
+        match self.vector.summary().model_contract() {
+            VectorModelContract::Disabled => SemanticContract::Disabled,
+            VectorModelContract::Enabled {
+                model_id,
+                dimension,
+            } => SemanticContract::Enabled {
+                model_id: model_id.clone(),
+                dimension: *dimension,
+            },
+        }
+    }
+
+    pub fn filter_selection(
+        &self,
+        filter: &SearchProjectionFilter,
+        limit: SelectionLimit,
+    ) -> Result<FilterSelection, SearchRuntimeError> {
+        self.lexical.filter_selection(filter, limit)
+    }
+
+    pub fn fulltext_candidates(
+        &self,
+        query: &str,
+        limit: HitLimit,
+        selection: Option<&FilterSelection>,
+    ) -> Result<Vec<FullTextCandidate>, SearchRuntimeError> {
+        self.lexical.fulltext_candidates(query, limit, selection)
     }
 
     pub fn semantic_candidates(
@@ -273,28 +389,7 @@ impl<'query> QueryScope<'query> {
         &self,
         projections: &[ActiveSearchProjection],
     ) -> Result<Vec<HydratedSearchHit>, SearchRuntimeError> {
-        let cap =
-            NonZeroUsize::new(MAX_EXACT_HIT_HYDRATION).ok_or_else(SearchRuntimeError::integrity)?;
-        match self
-            .metadata
-            .hydrate_exact_hits(projections, cap)
-            .map_err(|_| SearchRuntimeError::integrity())?
-        {
-            ExactHitHydration::Failed(_) => Err(SearchRuntimeError::integrity()),
-            ExactHitHydration::Hydrated(hits) => Ok(hits
-                .into_iter()
-                .map(|hit| HydratedSearchHit {
-                    selection: SearchSelection {
-                        document_id: hit.projection.document_id,
-                        resume_version_id: hit.projection.resume_version_id,
-                        visible_epoch: self.visible_epoch(),
-                    },
-                    document: hit.document,
-                    candidate_id: hit.candidate_id,
-                    mentions: hit.mentions,
-                })
-                .collect()),
-        }
+        self.lexical.hydrate_exact_hits(projections)
     }
 }
 

@@ -180,10 +180,11 @@ fn run_search_worker(
     artifact_fault_reporter: Option<ArtifactFaultReporter>,
     mut open_runtime: impl FnMut() -> Option<crate::query_runtime::DaemonQueryRuntime>,
 ) -> crate::Result<()> {
-    // Keep control-plane startup and no-request shutdown independent from
-    // artifact opening. The first admitted search owns lazy data-plane
-    // initialization and retains the existing service-unavailable result.
-    let mut query_runtime = None;
+    // Prewarm on the dedicated worker so encrypted-store validation does not
+    // consume the first interactive request's deadline. Control-plane startup
+    // remains independent because this function runs off-thread. A failed
+    // prewarm is retried by the first admitted request as before.
+    let mut query_runtime = open_runtime();
     while let Some(mut task) = queue.pop() {
         if task.control.completed.load(AtomicOrdering::Acquire) {
             cancellations.complete(
@@ -354,6 +355,7 @@ fn expire_ready_deadlines(scheduled: &mut BinaryHeap<ScheduledDeadline>) {
         {
             continue;
         }
+        task.control.cancellation.request();
         let mut stage_timing = QueryStageTiming::default();
         stage_timing.record_duration(QueryStage::QueryParse, task.query_parse_duration);
         let output = daemon_search_deadline_output(

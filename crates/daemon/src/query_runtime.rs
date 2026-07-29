@@ -6,9 +6,9 @@ use embedder::{EmbeddingBudget, EmbeddingInput, EmbeddingPriority};
 use meta_store::{ActiveSearchProjection, CandidateId, ResumeVersionId, SearchSelection};
 use rank_fusion::{fuse_hybrid_rrf, HybridRecall, RankedHit};
 use search_runtime::{
-    FullTextCandidate, HitLimit, HydratedSearchHit, QueryCoordinator, SearchArtifactFaultKey,
-    SearchRuntimeErrorCode, SelectionLimit, SemanticCandidate, SemanticContract,
-    SemanticQueryVector,
+    FullTextCandidate, HitLimit, HydratedSearchHit, LexicalQueryScope, QueryCoordinator,
+    SearchArtifactFaultKey, SearchRuntimeErrorCode, SelectionLimit, SemanticCandidate,
+    SemanticContract, SemanticQueryVector,
 };
 
 use super::query_timing::{QueryStage, QueryStageTiming};
@@ -121,112 +121,129 @@ impl DaemonQueryRuntime {
         let hit_limit = HitLimit::new(candidate_limit).map_err(map_runtime_error)?;
         let selection_limit =
             SelectionLimit::new(FILTER_SELECTION_LIMIT).map_err(map_runtime_error)?;
-        let pass = self
-            .coordinator
-            .with_query(|scope| {
-                let visible_epoch = scope.visible_epoch();
-                if cancellation.is_cancelled() {
-                    return Ok(QueryPass::Cancelled { visible_epoch });
-                }
-                if deadline.expired() {
-                    return Ok(QueryPass::DeadlineExceeded(CompletedSearch {
-                        visible_epoch,
-                        hits: Vec::new(),
-                        partial_reasons: Vec::new(),
-                    }));
-                }
-
-                let filter_selection = if args.filter.predicates().is_empty() {
-                    None
-                } else {
-                    Some(stage_timing.measure(QueryStage::Prefilter, || {
-                        scope.filter_selection(&args.filter, selection_limit)
-                    })?)
-                };
-
-                let semantic_state =
-                    validate_semantic_contract(scope.semantic_contract(), semantic);
-                if let Some(terminal) = semantic_state.terminal {
-                    if args.mode == DaemonSearchMode::Hybrid
-                        && terminal == SemanticTerminal::RuntimeUnavailable
-                    {
-                        let lexical = fulltext_candidates(
-                            &scope,
-                            args,
-                            hit_limit,
-                            filter_selection.as_ref(),
-                            stage_timing,
-                        )?;
-                        let hits = hydrate_candidates(&scope, lexical, args.top_k, stage_timing)?;
-                        return Ok(QueryPass::Complete(CompletedSearch {
+        let pass = match args.mode {
+            DaemonSearchMode::FullText => self.coordinator.with_lexical_query(|scope| {
+                lexical_query_pass(
+                    &scope,
+                    args,
+                    hit_limit,
+                    selection_limit,
+                    deadline,
+                    cancellation,
+                    stage_timing,
+                )
+            }),
+            DaemonSearchMode::Semantic | DaemonSearchMode::Hybrid => {
+                self.coordinator.with_query(|scope| {
+                    let visible_epoch = scope.visible_epoch();
+                    if cancellation.is_cancelled() {
+                        return Ok(QueryPass::Cancelled { visible_epoch });
+                    }
+                    if deadline.expired() {
+                        return Ok(QueryPass::DeadlineExceeded(CompletedSearch {
                             visible_epoch,
-                            hits,
-                            partial_reasons: vec![EMBEDDING_RUNTIME_UNAVAILABLE_PARTIAL_REASON],
+                            hits: Vec::new(),
+                            partial_reasons: Vec::new(),
                         }));
                     }
-                    return Ok(match terminal {
-                        SemanticTerminal::Disabled => QueryPass::SemanticDisabled,
-                        SemanticTerminal::ContractMismatch => QueryPass::SemanticContractMismatch,
-                        SemanticTerminal::RuntimeUnavailable => {
-                            QueryPass::SemanticRuntimeUnavailable
-                        }
-                    });
-                }
 
-                let candidates = match args.mode {
-                    DaemonSearchMode::FullText => fulltext_candidates(
-                        &scope,
-                        args,
-                        hit_limit,
-                        filter_selection.as_ref(),
-                        stage_timing,
-                    )?,
-                    DaemonSearchMode::Semantic => semantic_candidates(
-                        &scope,
-                        semantic_state.query.expect("validated semantic query"),
-                        hit_limit,
-                        filter_selection.as_ref(),
-                        stage_timing,
-                    )?,
-                    DaemonSearchMode::Hybrid => {
-                        let lexical = fulltext_candidates(
-                            &scope,
-                            args,
-                            hit_limit,
-                            filter_selection.as_ref(),
-                            stage_timing,
-                        )?;
-                        if cancellation.is_cancelled() {
-                            return Ok(QueryPass::Cancelled { visible_epoch });
+                    let filter_selection = if args.filter.predicates().is_empty() {
+                        None
+                    } else {
+                        Some(stage_timing.measure(QueryStage::Prefilter, || {
+                            scope.filter_selection(&args.filter, selection_limit)
+                        })?)
+                    };
+
+                    let semantic_state =
+                        validate_semantic_contract(scope.semantic_contract(), semantic);
+                    if let Some(terminal) = semantic_state.terminal {
+                        if args.mode == DaemonSearchMode::Hybrid
+                            && terminal == SemanticTerminal::RuntimeUnavailable
+                        {
+                            let lexical = fulltext_candidates(
+                                scope.lexical(),
+                                args,
+                                hit_limit,
+                                filter_selection.as_ref(),
+                                stage_timing,
+                            )?;
+                            let hits = hydrate_candidates(
+                                scope.lexical(),
+                                lexical,
+                                args.top_k,
+                                stage_timing,
+                            )?;
+                            return Ok(QueryPass::Complete(CompletedSearch {
+                                visible_epoch,
+                                hits,
+                                partial_reasons: vec![EMBEDDING_RUNTIME_UNAVAILABLE_PARTIAL_REASON],
+                            }));
                         }
-                        let semantic = semantic_candidates(
+                        return Ok(match terminal {
+                            SemanticTerminal::Disabled => QueryPass::SemanticDisabled,
+                            SemanticTerminal::ContractMismatch => {
+                                QueryPass::SemanticContractMismatch
+                            }
+                            SemanticTerminal::RuntimeUnavailable => {
+                                QueryPass::SemanticRuntimeUnavailable
+                            }
+                        });
+                    }
+
+                    let candidates = match args.mode {
+                        DaemonSearchMode::FullText => {
+                            unreachable!("full-text mode uses the lexical-only scope")
+                        }
+                        DaemonSearchMode::Semantic => semantic_candidates(
                             &scope,
                             semantic_state.query.expect("validated semantic query"),
                             hit_limit,
                             filter_selection.as_ref(),
                             stage_timing,
-                        )?;
-                        stage_timing.measure(QueryStage::Fusion, || {
-                            fuse_candidates(lexical, semantic, candidate_limit)
-                        })
-                    }
-                };
+                        )?,
+                        DaemonSearchMode::Hybrid => {
+                            let lexical = fulltext_candidates(
+                                scope.lexical(),
+                                args,
+                                hit_limit,
+                                filter_selection.as_ref(),
+                                stage_timing,
+                            )?;
+                            if cancellation.is_cancelled() {
+                                return Ok(QueryPass::Cancelled { visible_epoch });
+                            }
+                            let semantic = semantic_candidates(
+                                &scope,
+                                semantic_state.query.expect("validated semantic query"),
+                                hit_limit,
+                                filter_selection.as_ref(),
+                                stage_timing,
+                            )?;
+                            stage_timing.measure(QueryStage::Fusion, || {
+                                fuse_candidates(lexical, semantic, candidate_limit)
+                            })
+                        }
+                    };
 
-                let hits = hydrate_candidates(&scope, candidates, args.top_k, stage_timing)?;
-                let completed = CompletedSearch {
-                    visible_epoch,
-                    hits,
-                    partial_reasons: Vec::new(),
-                };
-                if cancellation.is_cancelled() {
-                    return Ok(QueryPass::Cancelled { visible_epoch });
-                }
-                if deadline.expired() {
-                    return Ok(QueryPass::DeadlineExceeded(completed));
-                }
-                Ok(QueryPass::Complete(completed))
-            })
-            .map_err(map_runtime_error)?;
+                    let hits =
+                        hydrate_candidates(scope.lexical(), candidates, args.top_k, stage_timing)?;
+                    let completed = CompletedSearch {
+                        visible_epoch,
+                        hits,
+                        partial_reasons: Vec::new(),
+                    };
+                    if cancellation.is_cancelled() {
+                        return Ok(QueryPass::Cancelled { visible_epoch });
+                    }
+                    if deadline.expired() {
+                        return Ok(QueryPass::DeadlineExceeded(completed));
+                    }
+                    Ok(QueryPass::Complete(completed))
+                })
+            }
+        }
+        .map_err(map_runtime_error)?;
 
         match pass {
             QueryPass::Complete(search) => Ok(SearchExecutionOutcome::Complete(search)),
@@ -241,6 +258,58 @@ impl DaemonQueryRuntime {
             QueryPass::SemanticRuntimeUnavailable => Err(QueryFailure::Unavailable),
         }
     }
+}
+
+fn lexical_query_pass(
+    scope: &LexicalQueryScope<'_>,
+    args: &DaemonSearchArgs,
+    hit_limit: HitLimit,
+    selection_limit: SelectionLimit,
+    deadline: &SearchDeadline,
+    cancellation: &SearchCancellation,
+    stage_timing: &mut QueryStageTiming,
+) -> Result<QueryPass, search_runtime::SearchRuntimeError> {
+    let visible_epoch = scope.visible_epoch();
+    if cancellation.is_cancelled() {
+        return Ok(QueryPass::Cancelled { visible_epoch });
+    }
+    if deadline.expired() {
+        return Ok(QueryPass::DeadlineExceeded(CompletedSearch {
+            visible_epoch,
+            hits: Vec::new(),
+            partial_reasons: Vec::new(),
+        }));
+    }
+    let filter_selection = if args.filter.predicates().is_empty() {
+        None
+    } else {
+        Some(stage_timing.measure(QueryStage::Prefilter, || {
+            scope.filter_selection(&args.filter, selection_limit)
+        })?)
+    };
+    let candidates = fulltext_candidates(
+        scope,
+        args,
+        hit_limit,
+        filter_selection.as_ref(),
+        stage_timing,
+    )?;
+    if cancellation.is_cancelled() {
+        return Ok(QueryPass::Cancelled { visible_epoch });
+    }
+    let hits = hydrate_candidates(scope, candidates, args.top_k, stage_timing)?;
+    let completed = CompletedSearch {
+        visible_epoch,
+        hits,
+        partial_reasons: Vec::new(),
+    };
+    if cancellation.is_cancelled() {
+        return Ok(QueryPass::Cancelled { visible_epoch });
+    }
+    if deadline.expired() {
+        return Ok(QueryPass::DeadlineExceeded(completed));
+    }
+    Ok(QueryPass::Complete(completed))
 }
 
 fn prepare_semantic(
@@ -355,7 +424,7 @@ fn validate_semantic_contract(
 }
 
 fn fulltext_candidates(
-    scope: &search_runtime::QueryScope<'_>,
+    scope: &LexicalQueryScope<'_>,
     args: &DaemonSearchArgs,
     limit: HitLimit,
     selection: Option<&search_runtime::FilterSelection>,
@@ -444,7 +513,7 @@ fn ranked_for_fusion(candidates: &[RankedCandidate]) -> Vec<RankedHit> {
 }
 
 fn hydrate_candidates(
-    scope: &search_runtime::QueryScope<'_>,
+    scope: &LexicalQueryScope<'_>,
     candidates: Vec<RankedCandidate>,
     top_k: usize,
     timing: &mut QueryStageTiming,
