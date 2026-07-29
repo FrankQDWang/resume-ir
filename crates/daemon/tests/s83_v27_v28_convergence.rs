@@ -82,12 +82,12 @@ fn standalone_daemon_rejects_unknown_manifest_authority_without_rewriting_existi
     let manifest_path = data_dir.join("metadata-active.v1");
     let manifest = fs::read_to_string(&manifest_path).unwrap();
     assert!(manifest.starts_with("resume-ir.metadata-active.v2\n"));
-    assert!(manifest.contains("\nschema=34\n"));
+    assert!(manifest.contains("\nschema=35\n"));
     fs::write(
         &manifest_path,
         manifest
-            .replace("file=metadata-v34-", "file=metadata-v35-")
-            .replace("\nschema=34\n", "\nschema=35\n"),
+            .replace("file=metadata-v35-", "file=metadata-v36-")
+            .replace("\nschema=35\n", "\nschema=36\n"),
     )
     .unwrap();
     assert_unsupported_store(&data_dir);

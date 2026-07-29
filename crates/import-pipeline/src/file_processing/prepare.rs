@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -6,7 +5,8 @@ use std::time::{Duration, Instant};
 use fs_crawler::DiscoveredFile;
 use index_fulltext::IndexDocument;
 use meta_store::{
-    Document, DocumentStatus, FileExtension, OwnedMetaStore, SourceRevision, UnixTimestamp,
+    Document, DocumentStatus, FileExtension, ImportTaskId, OwnedMetaStore, SourceRevision,
+    UnixTimestamp,
 };
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
 use parser_doc::DocParser;
@@ -21,25 +21,29 @@ use super::formatting::{
     document_from_discovered_file, file_extension_label, language_set, sections_to_index,
 };
 use super::model::{
-    ExactRerunDecision, ParseWorkItem, ParseWorkItemOutput, ParseWorkOutcome, ParseWorkResult,
-    PreparedFile, ProcessedImportFile,
+    ParseWorkItem, ParseWorkItemOutput, ParseWorkOutcome, ParseWorkResult, PreparedFile,
+    ProcessedImportFile,
 };
 use super::persistence::{
     entity_mentions_from_rules, persist_document_failure_without_revision,
     persist_source_revision_failure,
 };
-use super::rerun::exact_rerun_decision;
+use super::rerun::{exact_rerun_decision, processed_file_from_exact};
 use crate::classification::AdmissionDecision;
+use crate::file_observation_fast_path::{attempt_metadata_fast_path, FastPathAttempt};
 use crate::immutable_ingest::{resume_version, source_revision};
 use crate::source_digest::stream_content_digest;
 use crate::source_dispositions::ProcessedFile;
 use crate::timing::{measure_result_stage, measure_stage};
+use crate::verified_content::{read_full_content, ContentVerification};
 use crate::{
-    primary_parse_version_for, ImportFailureKind, ImportPostParserTimings, Result, SCHEMA_VERSION,
+    primary_parse_version_for, ImportFailureKind, ImportIoMetrics, ImportPostParserTimings, Result,
+    SCHEMA_VERSION,
 };
 
 pub(crate) fn prepare_file_for_parse(
     store: &OwnedMetaStore,
+    task_id: &ImportTaskId,
     index: usize,
     file: DiscoveredFile,
     now: UnixTimestamp,
@@ -47,18 +51,21 @@ pub(crate) fn prepare_file_for_parse(
     db_timing: &mut Duration,
     parse_prepare_timing: &mut Duration,
     content_bytes_read: &mut u64,
+    io_metrics: &mut ImportIoMetrics,
     linear_promotion: &LinearPromotionPolicy,
 ) -> Result<PreparedFile> {
     let started = Instant::now();
     let mut db_elapsed = Duration::ZERO;
     let result = prepare_file_for_parse_inner(
         store,
+        task_id,
         index,
         file,
         now,
         ensure_not_cancelled,
         &mut db_elapsed,
         content_bytes_read,
+        io_metrics,
         linear_promotion,
     );
     *db_timing += db_elapsed;
@@ -68,18 +75,29 @@ pub(crate) fn prepare_file_for_parse(
 
 pub(crate) fn prepare_file_for_parse_inner(
     store: &OwnedMetaStore,
+    task_id: &ImportTaskId,
     index: usize,
     file: DiscoveredFile,
     now: UnixTimestamp,
     ensure_not_cancelled: &dyn Fn() -> Result<()>,
     db_elapsed: &mut Duration,
     content_bytes_read: &mut u64,
+    io_metrics: &mut ImportIoMetrics,
     linear_promotion: &LinearPromotionPolicy,
 ) -> Result<PreparedFile> {
     ensure_not_cancelled()?;
     let mut document = document_from_discovered_file(&file, now, DocumentStatus::Discovered);
     let path = PathBuf::from(file.normalized_path.as_str());
     ensure_not_cancelled()?;
+    if let FastPathAttempt::Hit(processed) =
+        attempt_metadata_fast_path(store, task_id, &file, now, linear_promotion, io_metrics)?
+    {
+        return Ok(PreparedFile::Ready(ProcessedImportFile {
+            file,
+            processed,
+            verification: ContentVerification::MetadataFastPath,
+        }));
+    }
     if file.extension == FileExtension::Txt
         && file.byte_size > parser_text::DEFAULT_MAX_BYTES as u64
     {
@@ -96,9 +114,13 @@ pub(crate) fn prepare_file_for_parse_inner(
                     kind: ImportFailureKind::ReadError,
                     source_revision_id: None,
                 },
+                verification: ContentVerification::Unavailable,
             }));
         };
         *content_bytes_read = content_bytes_read.saturating_add(byte_size);
+        io_metrics.full_content_open_count = io_metrics.full_content_open_count.saturating_add(1);
+        io_metrics.full_content_bytes = io_metrics.full_content_bytes.saturating_add(byte_size);
+        io_metrics.strong_hashes_attempted = io_metrics.strong_hashes_attempted.saturating_add(1);
         let source_revision =
             SourceRevision::for_content(document.id.clone(), content_hash, byte_size);
         document.content_hash = Some(source_revision.content_hash.as_str().to_string());
@@ -120,10 +142,11 @@ pub(crate) fn prepare_file_for_parse_inner(
                 kind: ImportFailureKind::TextTooLarge,
                 source_revision_id: Some(source_revision.id),
             },
+            verification: ContentVerification::Unavailable,
         }));
     }
 
-    let bytes = match fs::read(&path) {
+    let bytes = match read_full_content(&file, io_metrics) {
         Ok(bytes) => bytes,
         Err(_) => {
             document.status = DocumentStatus::FailedRetryable;
@@ -137,12 +160,14 @@ pub(crate) fn prepare_file_for_parse_inner(
                     kind: ImportFailureKind::ReadError,
                     source_revision_id: None,
                 },
+                verification: ContentVerification::Unavailable,
             }));
         }
     };
     *content_bytes_read += bytes.len() as u64;
     ensure_not_cancelled()?;
 
+    io_metrics.strong_hashes_attempted = io_metrics.strong_hashes_attempted.saturating_add(1);
     let source_revision = source_revision(&document, &bytes);
     if let Some(noop_kind) = measure_result_stage(db_elapsed, || {
         exact_rerun_decision(
@@ -153,31 +178,11 @@ pub(crate) fn prepare_file_for_parse_inner(
             now,
         )
     })? {
-        let processed = match noop_kind {
-            ExactRerunDecision::UnchangedSearchable {
-                source_revision_id,
-                resume_version_id,
-            } => ProcessedFile::UnchangedSearchable {
-                source_revision_id,
-                resume_version_id,
-            },
-            ExactRerunDecision::MetadataChangedSearchable { pending } => {
-                ProcessedFile::Searchable { pending }
-            }
-            ExactRerunDecision::UnchangedOcrRequired { source_revision_id } => {
-                ProcessedFile::UnchangedOcrRequired { source_revision_id }
-            }
-            ExactRerunDecision::UnchangedExcluded {
-                document,
-                source_revision_id,
-                resume_version_id,
-            } => ProcessedFile::UnchangedExcluded {
-                document,
-                source_revision_id,
-                resume_version_id,
-            },
-        };
-        return Ok(PreparedFile::Ready(ProcessedImportFile { file, processed }));
+        return Ok(PreparedFile::Ready(ProcessedImportFile {
+            file,
+            processed: processed_file_from_exact(noop_kind),
+            verification: ContentVerification::Strong,
+        }));
     }
 
     document.content_hash = Some(source_revision.content_hash.as_str().to_string());
@@ -190,6 +195,7 @@ pub(crate) fn prepare_file_for_parse_inner(
         document,
         source_revision,
         bytes,
+        verification: ContentVerification::Strong,
     }))
 }
 
@@ -225,6 +231,7 @@ pub(crate) fn parse_work_item(
         document,
         source_revision,
         bytes,
+        verification,
     } = work;
     let parse_started = Instant::now();
     let output =
@@ -236,6 +243,7 @@ pub(crate) fn parse_work_item(
         file,
         document,
         source_revision,
+        verification,
         parse_elapsed: parse_finished.saturating_duration_since(parse_started),
         parse_started,
         parse_finished,

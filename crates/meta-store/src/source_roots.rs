@@ -1342,7 +1342,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         Ok(documents)
     }
 
-    fn source_root_and_relative_path_for_import_task(
+    pub(crate) fn source_root_and_relative_path_for_import_task(
         &self,
         task_id: &ImportTaskId,
         normalized_path: &str,

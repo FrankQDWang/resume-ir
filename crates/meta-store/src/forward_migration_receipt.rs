@@ -11,7 +11,8 @@ use crate::{
     active_store_manifest::{
         sync_parent_directory, validate_owner_regular_metadata, ActiveStoreManifest,
     },
-    schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, MetaStoreError, Result,
+    schema_v29, schema_v30, schema_v31, schema_v32, schema_v33, schema_v34, schema_v35,
+    MetaStoreError, Result,
 };
 
 pub(super) const FILE_NAME: &str = "metadata-forward-migration-receipt.v1";
@@ -165,7 +166,8 @@ fn validate(receipt: &MigrationReceipt) -> Result<()> {
             | schema_v31::VERSION
             | schema_v32::VERSION
             | schema_v33::VERSION
-    ) && receipt.target.schema_version == schema_v34::VERSION
+            | schema_v34::VERSION
+    ) && receipt.target.schema_version == schema_v35::VERSION
         && receipt.staging_file == current_staging;
     if (!legacy_v30_pair && !current_pair)
         || receipt.source.store_id_digest != receipt.target.store_id_digest

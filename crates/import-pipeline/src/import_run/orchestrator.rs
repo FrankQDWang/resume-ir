@@ -4,7 +4,8 @@ use std::path::Path;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use fs_crawler::{
-    crawl_directory_with_options_and_control, CrawlErrorKind, ScanControl, ScanOptions,
+    crawl_directory_with_options_and_control, CrawlErrorKind, FingerprintMode, ScanControl,
+    ScanOptions,
 };
 use meta_store::{
     FileExtension, ImportProcessingContract, ImportScanBudgetKind as StoreImportScanBudgetKind,
@@ -78,6 +79,7 @@ pub(super) fn run_import(
         ScanOptions {
             profile: options.scan_profile,
             max_files: options.max_files,
+            fingerprint_mode: FingerprintMode::MetadataOnly,
         },
         ScanControl::from_cancel_check(&cancel_check),
     );
@@ -124,6 +126,11 @@ pub(super) fn run_import(
         scan_errors: report.errors.len(),
         ignored_entries: report.ignored_count,
         content_bytes_read: 0,
+        io_metrics: crate::ImportIoMetrics {
+            discovery_content_open_count: report.content_open_count,
+            discovery_sampled_bytes: report.sampled_bytes,
+            ..crate::ImportIoMetrics::default()
+        },
         searchable_documents: 0,
         ocr_required_documents: 0,
         ocr_jobs_queued: 0,

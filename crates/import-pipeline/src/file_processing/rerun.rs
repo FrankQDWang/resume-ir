@@ -10,6 +10,7 @@ use super::model::{
     ExactRerunDecision, PendingSearchableDocument, PendingSearchablePublicationKind,
 };
 use crate::search_artifacts::index_document_from_resume_version;
+use crate::source_dispositions::ProcessedFile;
 use crate::{
     primary_parse_version_for, processing_contract::current_source_triage_epoch,
     ImportPipelineError, Result, OCR_PARSE_VERSION, SCHEMA_VERSION,
@@ -179,6 +180,33 @@ pub(crate) fn exact_rerun_decision(
             }))
         }
         _ => Ok(None),
+    }
+}
+
+pub(crate) fn processed_file_from_exact(decision: ExactRerunDecision) -> ProcessedFile {
+    match decision {
+        ExactRerunDecision::UnchangedSearchable {
+            source_revision_id,
+            resume_version_id,
+        } => ProcessedFile::UnchangedSearchable {
+            source_revision_id,
+            resume_version_id,
+        },
+        ExactRerunDecision::MetadataChangedSearchable { pending } => {
+            ProcessedFile::Searchable { pending }
+        }
+        ExactRerunDecision::UnchangedOcrRequired { source_revision_id } => {
+            ProcessedFile::UnchangedOcrRequired { source_revision_id }
+        }
+        ExactRerunDecision::UnchangedExcluded {
+            document,
+            source_revision_id,
+            resume_version_id,
+        } => ProcessedFile::UnchangedExcluded {
+            document,
+            source_revision_id,
+            resume_version_id,
+        },
     }
 }
 

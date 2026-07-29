@@ -6,6 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use core_domain::{DocumentId, FileExtension, UnixTimestamp};
 
+mod file_observation;
+
+pub use file_observation::{observe_open_file, observe_path, FileObservation, FileObservationTime};
+
 const FNV_OFFSET_A: u64 = 0xcbf29ce484222325;
 const FNV_OFFSET_B: u64 = 0x6c62272e07bb0142;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -139,7 +143,13 @@ pub fn crawl_with_fs_options_and_control(
                         directories.push(entry.path);
                     }
                 }
-                FsEntryKind::File => process_file(file_system, &entry.path, &mut report, control)?,
+                FsEntryKind::File => process_file(
+                    file_system,
+                    &entry.path,
+                    &mut report,
+                    options.fingerprint_mode,
+                    control,
+                )?,
                 FsEntryKind::Other => report.ignored_count += 1,
             }
         }
@@ -198,6 +208,7 @@ fn process_file(
     file_system: &impl FileSystem,
     path: &Path,
     report: &mut ScanReport,
+    fingerprint_mode: FingerprintMode,
     control: ScanControl<'_>,
 ) -> Result<()> {
     ensure_scan_not_cancelled(control)?;
@@ -238,13 +249,23 @@ fn process_file(
         return Ok(());
     }
 
-    let fingerprint = match quick_fingerprint(file_system, path, &metadata, control) {
-        Ok(fingerprint) => fingerprint,
-        Err(error) if error.kind == CrawlErrorKind::Cancelled => return Err(error),
-        Err(error) => {
-            report.errors.push(error);
-            return Ok(());
+    let fingerprint = match fingerprint_mode {
+        FingerprintMode::SampleContent => {
+            let fingerprint = match quick_fingerprint(file_system, path, &metadata, control) {
+                Ok(fingerprint) => fingerprint,
+                Err(error) if error.kind == CrawlErrorKind::Cancelled => return Err(error),
+                Err(error) => {
+                    report.errors.push(error);
+                    return Ok(());
+                }
+            };
+            report.content_open_count = report.content_open_count.saturating_add(1);
+            report.sampled_bytes = report
+                .sampled_bytes
+                .saturating_add(fingerprint.sampled_bytes);
+            Some(fingerprint)
         }
+        FingerprintMode::MetadataOnly => None,
     };
 
     let mtime = unix_timestamp(metadata.modified);
@@ -264,6 +285,7 @@ fn process_file(
             readonly: metadata.readonly,
         },
         stable_file_id,
+        observation: metadata.observation,
         fingerprint,
     });
 
@@ -588,9 +610,17 @@ impl ScanProfile {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FingerprintMode {
+    #[default]
+    SampleContent,
+    MetadataOnly,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ScanOptions {
     pub profile: ScanProfile,
     pub max_files: Option<usize>,
+    pub fingerprint_mode: FingerprintMode,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -636,6 +666,8 @@ pub struct ScanReport {
     pub scanned_directories: Vec<NormalizedPath>,
     pub skipped_directories: Vec<NormalizedPath>,
     pub budget_exhausted: Option<ScanBudgetExhausted>,
+    pub content_open_count: u64,
+    pub sampled_bytes: u64,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -648,7 +680,8 @@ pub struct DiscoveredFile {
     pub mtime: UnixTimestamp,
     pub permissions: FilePermissions,
     pub stable_file_id: Option<StableFileId>,
-    pub fingerprint: QuickFingerprint,
+    pub observation: Option<FileObservation>,
+    pub fingerprint: Option<QuickFingerprint>,
 }
 
 impl fmt::Debug for DiscoveredFile {
@@ -663,6 +696,7 @@ impl fmt::Debug for DiscoveredFile {
             .field("mtime", &self.mtime)
             .field("permissions", &self.permissions)
             .field("stable_file_id", &self.stable_file_id)
+            .field("observation", &self.observation)
             .field("fingerprint", &self.fingerprint)
             .finish()
     }
@@ -907,6 +941,7 @@ pub struct FsMetadata {
     pub modified: SystemTime,
     pub readonly: bool,
     pub stable_file_id: Option<StableFileId>,
+    pub observation: Option<FileObservation>,
 }
 
 impl FsMetadata {
@@ -917,6 +952,7 @@ impl FsMetadata {
             modified,
             readonly: false,
             stable_file_id: None,
+            observation: None,
         }
     }
 
@@ -927,6 +963,11 @@ impl FsMetadata {
 
     pub fn with_stable_file_id(mut self, stable_file_id: StableFileId) -> Self {
         self.stable_file_id = Some(stable_file_id);
+        self
+    }
+
+    pub fn with_observation(mut self, observation: FileObservation) -> Self {
+        self.observation = Some(observation);
         self
     }
 }
@@ -966,6 +1007,9 @@ impl FileSystem for StdFileSystem {
         .with_readonly(metadata.permissions().readonly());
         if let Some(stable_file_id) = platform_stable_file_id(path, &metadata) {
             result = result.with_stable_file_id(stable_file_id);
+        }
+        if let Some(observation) = file_observation::observation_from_metadata(path, &metadata)? {
+            result = result.with_observation(observation);
         }
         Ok(result)
     }

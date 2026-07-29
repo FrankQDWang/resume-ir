@@ -5,6 +5,7 @@
 mod artifact_fault;
 mod classification;
 mod data_directory_owner;
+mod file_observation_fast_path;
 mod file_processing;
 mod immutable_ingest;
 mod import_run;
@@ -27,6 +28,7 @@ mod source_digest;
 mod source_dispositions;
 mod source_scan;
 mod timing;
+mod verified_content;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -427,6 +429,7 @@ pub struct ImportSummary {
     pub scan_errors: usize,
     pub ignored_entries: usize,
     pub content_bytes_read: u64,
+    pub io_metrics: ImportIoMetrics,
     pub searchable_documents: usize,
     pub ocr_required_documents: usize,
     pub ocr_jobs_queued: usize,
@@ -437,6 +440,116 @@ pub struct ImportSummary {
     pub stage_timings: ImportStageTimings,
     pub milestone_timings: ImportMilestoneTimings,
     pub worker_metrics: ImportWorkerMetrics,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImportIoMetrics {
+    pub discovery_content_open_count: u64,
+    pub discovery_sampled_bytes: u64,
+    pub metadata_handle_open_count: u64,
+    pub full_content_open_count: u64,
+    pub full_content_bytes: u64,
+    pub strong_hashes_attempted: u64,
+    pub strong_hashes_skipped: u64,
+    pub strong_observations_persisted: u64,
+    pub metadata_fast_path_hits: u64,
+    pub metadata_fallbacks: ImportMetadataFallbackCounts,
+}
+
+impl ImportIoMetrics {
+    fn record_metadata_fallback(&mut self, reason: ImportMetadataFallbackReason) {
+        self.metadata_fallbacks.increment(reason);
+    }
+
+    pub fn add_assign(&mut self, next: &Self) {
+        self.discovery_content_open_count = self
+            .discovery_content_open_count
+            .saturating_add(next.discovery_content_open_count);
+        self.discovery_sampled_bytes = self
+            .discovery_sampled_bytes
+            .saturating_add(next.discovery_sampled_bytes);
+        self.metadata_handle_open_count = self
+            .metadata_handle_open_count
+            .saturating_add(next.metadata_handle_open_count);
+        self.full_content_open_count = self
+            .full_content_open_count
+            .saturating_add(next.full_content_open_count);
+        self.full_content_bytes = self
+            .full_content_bytes
+            .saturating_add(next.full_content_bytes);
+        self.strong_hashes_attempted = self
+            .strong_hashes_attempted
+            .saturating_add(next.strong_hashes_attempted);
+        self.strong_hashes_skipped = self
+            .strong_hashes_skipped
+            .saturating_add(next.strong_hashes_skipped);
+        self.strong_observations_persisted = self
+            .strong_observations_persisted
+            .saturating_add(next.strong_observations_persisted);
+        self.metadata_fast_path_hits = self
+            .metadata_fast_path_hits
+            .saturating_add(next.metadata_fast_path_hits);
+        self.metadata_fallbacks.add_assign(&next.metadata_fallbacks);
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImportMetadataFallbackCounts {
+    pub observation_missing: u64,
+    pub unsupported_observation: u64,
+    pub metadata_mismatch: u64,
+    pub audit_due: u64,
+    pub processing_contract: u64,
+    pub metadata_io: u64,
+    pub changed_during_import: u64,
+}
+
+impl ImportMetadataFallbackCounts {
+    fn increment(&mut self, reason: ImportMetadataFallbackReason) {
+        let counter = match reason {
+            ImportMetadataFallbackReason::ObservationMissing => &mut self.observation_missing,
+            ImportMetadataFallbackReason::UnsupportedObservation => {
+                &mut self.unsupported_observation
+            }
+            ImportMetadataFallbackReason::MetadataMismatch => &mut self.metadata_mismatch,
+            ImportMetadataFallbackReason::AuditDue => &mut self.audit_due,
+            ImportMetadataFallbackReason::ProcessingContract => &mut self.processing_contract,
+            ImportMetadataFallbackReason::MetadataIo => &mut self.metadata_io,
+            ImportMetadataFallbackReason::ChangedDuringImport => &mut self.changed_during_import,
+        };
+        *counter = counter.saturating_add(1);
+    }
+
+    fn add_assign(&mut self, next: &Self) {
+        self.observation_missing = self
+            .observation_missing
+            .saturating_add(next.observation_missing);
+        self.unsupported_observation = self
+            .unsupported_observation
+            .saturating_add(next.unsupported_observation);
+        self.metadata_mismatch = self
+            .metadata_mismatch
+            .saturating_add(next.metadata_mismatch);
+        self.audit_due = self.audit_due.saturating_add(next.audit_due);
+        self.processing_contract = self
+            .processing_contract
+            .saturating_add(next.processing_contract);
+        self.metadata_io = self.metadata_io.saturating_add(next.metadata_io);
+        self.changed_during_import = self
+            .changed_during_import
+            .saturating_add(next.changed_during_import);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ImportMetadataFallbackReason {
+    ObservationMissing,
+    UnsupportedObservation,
+    MetadataMismatch,
+    AuditDue,
+    ProcessingContract,
+    MetadataIo,
+    ChangedDuringImport,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -794,6 +907,13 @@ impl ImportPipelineError {
     fn migration_scan_incomplete() -> Self {
         Self {
             kind: ImportPipelineErrorKind::Crawl(CrawlErrorKind::SourceUnavailable),
+            retryable: true,
+        }
+    }
+
+    fn source_changed_during_import() -> Self {
+        Self {
+            kind: ImportPipelineErrorKind::Crawl(CrawlErrorKind::Io),
             retryable: true,
         }
     }
@@ -3476,6 +3596,7 @@ mod tests {
             file: file.clone(),
             document: document.clone(),
             source_revision: source_revision.clone(),
+            verification: crate::verified_content::ContentVerification::Strong,
             parse_elapsed: Duration::from_millis(100),
             parse_started: started,
             parse_finished: started + Duration::from_millis(100),
@@ -3488,6 +3609,7 @@ mod tests {
             file,
             document,
             source_revision,
+            verification: crate::verified_content::ContentVerification::Strong,
             parse_elapsed: Duration::from_millis(100),
             parse_started: started + Duration::from_millis(10),
             parse_finished: started + Duration::from_millis(110),
@@ -3591,6 +3713,7 @@ mod tests {
                     file,
                     document,
                     source_revision,
+                    verification: crate::verified_content::ContentVerification::Strong,
                     parse_elapsed: Duration::from_millis(1),
                     parse_started,
                     parse_finished: parse_started + Duration::from_millis(1),
@@ -4439,9 +4562,11 @@ mod tests {
         let mut stage_timings = ImportStageTimings::default();
         let mut worker_metrics = ImportWorkerMetrics::default();
         let mut content_bytes_read = 0;
-        let processed = process_file(
+        let mut io_metrics = crate::ImportIoMetrics::default();
+        let (processed, verification) = process_file(
             &data_dir,
             &store,
+            &task.id,
             &discovered,
             &Sectionizer::default(),
             now,
@@ -4449,6 +4574,7 @@ mod tests {
             &mut stage_timings,
             &mut worker_metrics,
             &mut content_bytes_read,
+            &mut io_metrics,
             &LinearPromotionPolicy::default(),
         )
         .unwrap();
@@ -4484,6 +4610,7 @@ mod tests {
             1,
             &discovered,
             processed,
+            verification,
         )
         .unwrap_err();
 
@@ -4976,9 +5103,11 @@ mod tests {
         let mut stage_timings = ImportStageTimings::default();
         let mut worker_metrics = ImportWorkerMetrics::default();
         let mut content_bytes_read = 0;
-        let processed = process_file(
+        let mut io_metrics = crate::ImportIoMetrics::default();
+        let (processed, _) = process_file(
             &data_dir,
             &store,
+            &first_task.id,
             &discovered,
             &Sectionizer::default(),
             changed_now,
@@ -4986,6 +5115,7 @@ mod tests {
             &mut stage_timings,
             &mut worker_metrics,
             &mut content_bytes_read,
+            &mut io_metrics,
             &LinearPromotionPolicy::default(),
         )
         .unwrap();
@@ -5176,18 +5306,36 @@ mod tests {
             .unwrap()
             .files
             .remove(0)
-            .fingerprint;
+            .fingerprint
+            .unwrap();
+        let first_observation = fs_crawler::observe_path(&path).unwrap().unwrap();
 
         let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
         let first_now = UnixTimestamp::from_unix_seconds(1_700_000_194);
+        let source_root = store
+            .register_source_root(
+                root.to_str().unwrap(),
+                root.to_str().unwrap(),
+                "Synthetic strong-hash root",
+                first_now,
+            )
+            .unwrap();
         let first_task = import_task(
             "strong-hash-first-import",
             root.to_str().unwrap(),
             first_now,
         );
+        store
+            .begin_scan(
+                &source_root.id,
+                first_task.id.as_str(),
+                meta_store::ScanTrigger::Manual,
+                first_now,
+            )
+            .unwrap();
         insert_test_import_task(&store, &first_task, &ImportOptions::default());
-        import_root_with_options(
+        let first_summary = import_root_with_options(
             &data_dir,
             &store,
             &first_task,
@@ -5196,6 +5344,22 @@ mod tests {
             ImportOptions::default(),
         )
         .unwrap();
+        store
+            .complete_scan_and_remove_missing(
+                &source_root.id,
+                first_task.id.as_str(),
+                meta_store::ScanCounts {
+                    discovered: 1,
+                    searchable: 1,
+                    processed: 1,
+                    total: Some(1),
+                    ..meta_store::ScanCounts::default()
+                },
+                None,
+                first_now,
+            )
+            .unwrap();
+        assert_eq!(first_summary.io_metrics.strong_observations_persisted, 1);
         let first_document = store.visible_documents().unwrap().remove(0);
         let first_content_hash = first_document.content_hash.clone().unwrap();
         let first_head = ready_search_head(&store);
@@ -5220,10 +5384,18 @@ mod tests {
             .unwrap()
             .files
             .remove(0)
-            .fingerprint;
+            .fingerprint
+            .unwrap();
         assert_eq!(
             first_quick_fingerprint.as_str(),
             second_quick_fingerprint.as_str()
+        );
+        let second_observation = fs_crawler::observe_path(&path).unwrap().unwrap();
+        assert_eq!(first_observation.byte_size, second_observation.byte_size);
+        assert_eq!(first_observation.modified, second_observation.modified);
+        assert_ne!(
+            first_observation.changed, second_observation.changed,
+            "restoring mtime must not hide the macOS change-time witness"
         );
 
         let second_now = UnixTimestamp::from_unix_seconds(1_700_000_195);
@@ -5232,6 +5404,14 @@ mod tests {
             root.to_str().unwrap(),
             second_now,
         );
+        store
+            .begin_scan(
+                &source_root.id,
+                second_task.id.as_str(),
+                meta_store::ScanTrigger::Manual,
+                second_now,
+            )
+            .unwrap();
         insert_test_import_task(&store, &second_task, &ImportOptions::default());
         let summary = import_root_with_options(
             &data_dir,
@@ -5258,6 +5438,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(summary.searchable_documents, 1);
+        assert_eq!(summary.io_metrics.metadata_fast_path_hits, 0);
+        assert_eq!(summary.io_metrics.metadata_fallbacks.metadata_mismatch, 1);
+        assert_eq!(summary.io_metrics.strong_hashes_attempted, 1);
         assert_eq!(summary.deleted_documents, 0);
         assert_eq!(first_document.id, second_document.id);
         assert_ne!(first_content_hash, second_document.content_hash.unwrap());

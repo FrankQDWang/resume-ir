@@ -357,10 +357,10 @@ export async function executeAcceptance(runtime, signal) {
     cold_start: {
       source_schema: 29,
       target_schema: 34,
-      v29_to_v34_migration_and_index_recovery: "ready",
+      v29_to_v35_migration_and_index_recovery: "ready",
       v29_logical_authority_preserved: true,
       v29_predecessor_retained: true,
-      v34_manifest_published: true,
+      v35_manifest_published: true,
       index_health: "ready",
       recovery_evidence: coldEvidence,
     },

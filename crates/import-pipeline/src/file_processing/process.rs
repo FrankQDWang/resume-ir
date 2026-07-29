@@ -1,10 +1,11 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use fs_crawler::DiscoveredFile;
 use index_fulltext::IndexDocument;
-use meta_store::{DocumentStatus, FileExtension, OwnedMetaStore, SourceRevision, UnixTimestamp};
+use meta_store::{
+    DocumentStatus, FileExtension, ImportTaskId, OwnedMetaStore, SourceRevision, UnixTimestamp,
+};
 use parser_common::{ParseInput, ParseStatus, Parser, ParserErrorKind, ResourceBudget};
 use parser_doc::DocParser;
 use parser_docx::DocxParser;
@@ -17,26 +18,28 @@ use text_normalizer::TextNormalizer;
 use super::formatting::{
     document_from_discovered_file, file_extension_label, language_set, sections_to_index,
 };
-use super::model::ExactRerunDecision;
 use super::persistence::{
     entity_mentions_from_rules, mark_ocr_required_and_enqueue,
     persist_document_failure_without_revision, persist_non_searchable,
     persist_source_revision_failure, prepare_pending_searchable_document,
 };
-use super::rerun::exact_rerun_decision;
+use super::rerun::{exact_rerun_decision, processed_file_from_exact};
 use crate::classification::AdmissionDecision;
+use crate::file_observation_fast_path::{attempt_metadata_fast_path, FastPathAttempt};
 use crate::immutable_ingest::{resume_version, source_revision};
 use crate::source_digest::stream_content_digest;
 use crate::source_dispositions::ProcessedFile;
 use crate::timing::{measure_result_stage, measure_stage};
+use crate::verified_content::{read_full_content, ContentVerification};
 use crate::{
-    primary_parse_version_for, ImportFailureKind, ImportPostParserTimings, ImportStageTimings,
-    ImportWorkerMetrics, Result, SCHEMA_VERSION,
+    primary_parse_version_for, ImportFailureKind, ImportIoMetrics, ImportPostParserTimings,
+    ImportStageTimings, ImportWorkerMetrics, Result, SCHEMA_VERSION,
 };
 
 pub(crate) fn process_file(
     data_dir: &Path,
     store: &OwnedMetaStore,
+    task_id: &ImportTaskId,
     file: &DiscoveredFile,
     sectionizer: &Sectionizer,
     now: UnixTimestamp,
@@ -44,10 +47,17 @@ pub(crate) fn process_file(
     stage_timings: &mut ImportStageTimings,
     worker_metrics: &mut ImportWorkerMetrics,
     content_bytes_read: &mut u64,
+    io_metrics: &mut ImportIoMetrics,
     linear_promotion: &LinearPromotionPolicy,
-) -> Result<ProcessedFile> {
+) -> Result<(ProcessedFile, ContentVerification)> {
     let started = Instant::now();
     let mut db_elapsed = Duration::ZERO;
+    if let FastPathAttempt::Hit(processed) =
+        attempt_metadata_fast_path(store, task_id, file, now, linear_promotion, io_metrics)?
+    {
+        return Ok((processed, ContentVerification::MetadataFastPath));
+    }
+    let mut verification = ContentVerification::Unavailable;
     let result = process_file_inner(
         data_dir,
         store,
@@ -58,11 +68,13 @@ pub(crate) fn process_file(
         &mut db_elapsed,
         worker_metrics,
         content_bytes_read,
+        io_metrics,
+        &mut verification,
         linear_promotion,
     );
     stage_timings.db += db_elapsed;
     stage_timings.parse += started.elapsed().saturating_sub(db_elapsed);
-    result
+    result.map(|processed| (processed, verification))
 }
 
 fn process_file_inner(
@@ -75,6 +87,8 @@ fn process_file_inner(
     db_elapsed: &mut Duration,
     worker_metrics: &mut ImportWorkerMetrics,
     content_bytes_read: &mut u64,
+    io_metrics: &mut ImportIoMetrics,
+    verification: &mut ContentVerification,
     linear_promotion: &LinearPromotionPolicy,
 ) -> Result<ProcessedFile> {
     ensure_not_cancelled()?;
@@ -97,6 +111,9 @@ fn process_file_inner(
             });
         };
         *content_bytes_read = content_bytes_read.saturating_add(byte_size);
+        io_metrics.full_content_open_count = io_metrics.full_content_open_count.saturating_add(1);
+        io_metrics.full_content_bytes = io_metrics.full_content_bytes.saturating_add(byte_size);
+        io_metrics.strong_hashes_attempted = io_metrics.strong_hashes_attempted.saturating_add(1);
         let source_revision =
             SourceRevision::for_content(document.id.clone(), content_hash, byte_size);
         document.content_hash = Some(source_revision.content_hash.as_str().to_string());
@@ -118,7 +135,7 @@ fn process_file_inner(
         });
     }
 
-    let bytes = match fs::read(&path) {
+    let bytes = match read_full_content(file, io_metrics) {
         Ok(bytes) => bytes,
         Err(_) => {
             document.status = DocumentStatus::FailedRetryable;
@@ -135,6 +152,8 @@ fn process_file_inner(
     *content_bytes_read += bytes.len() as u64;
     ensure_not_cancelled()?;
 
+    io_metrics.strong_hashes_attempted = io_metrics.strong_hashes_attempted.saturating_add(1);
+    *verification = ContentVerification::Strong;
     let source_revision = source_revision(&document, &bytes);
     if let Some(noop_kind) = measure_result_stage(db_elapsed, || {
         exact_rerun_decision(
@@ -145,30 +164,7 @@ fn process_file_inner(
             now,
         )
     })? {
-        return Ok(match noop_kind {
-            ExactRerunDecision::UnchangedSearchable {
-                source_revision_id,
-                resume_version_id,
-            } => ProcessedFile::UnchangedSearchable {
-                source_revision_id,
-                resume_version_id,
-            },
-            ExactRerunDecision::MetadataChangedSearchable { pending } => {
-                ProcessedFile::Searchable { pending }
-            }
-            ExactRerunDecision::UnchangedOcrRequired { source_revision_id } => {
-                ProcessedFile::UnchangedOcrRequired { source_revision_id }
-            }
-            ExactRerunDecision::UnchangedExcluded {
-                document,
-                source_revision_id,
-                resume_version_id,
-            } => ProcessedFile::UnchangedExcluded {
-                document,
-                source_revision_id,
-                resume_version_id,
-            },
-        });
+        return Ok(processed_file_from_exact(noop_kind));
     }
 
     document.content_hash = Some(source_revision.content_hash.as_str().to_string());

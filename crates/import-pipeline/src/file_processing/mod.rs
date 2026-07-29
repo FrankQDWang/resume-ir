@@ -20,6 +20,7 @@ pub(super) use persistence::persist_source_revision_failure;
 pub(super) use persistence::{contact_hashes_from_mentions, entity_mentions_from_rules};
 pub(super) use prepare::{parse_worker_loop, prepare_file_for_parse};
 pub(super) use process::process_file;
+pub(crate) use rerun::{exact_rerun_decision, processed_file_from_exact};
 pub(super) use results::{
     commit_parse_work_result, drain_available_parse_results, insert_import_file_result,
     insert_parse_result, recv_parse_result_with_cancel_poll, send_parse_work_with_backpressure,

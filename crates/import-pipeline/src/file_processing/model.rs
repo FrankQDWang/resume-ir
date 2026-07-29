@@ -10,6 +10,7 @@ use parser_pdf::PdfTextExtractionMetrics;
 
 use crate::classification::AdmissionDecision;
 use crate::source_dispositions::ProcessedFile;
+use crate::verified_content::ContentVerification;
 use crate::{ImportFailureKind, ImportPostParserTimings};
 
 pub(crate) struct PendingSearchableDocument {
@@ -29,6 +30,7 @@ pub(crate) struct PendingSourceOccurrence {
     pub(crate) task_id: ImportTaskId,
     pub(crate) normalized_path: String,
     pub(crate) observed_at: UnixTimestamp,
+    pub(crate) strong_observation: Option<fs_crawler::FileObservation>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,6 +47,7 @@ pub(crate) enum PreparedFile {
 pub(crate) struct ProcessedImportFile {
     pub(crate) file: DiscoveredFile,
     pub(crate) processed: ProcessedFile,
+    pub(crate) verification: ContentVerification,
 }
 
 pub(crate) enum ImportFileResult {
@@ -58,6 +61,7 @@ pub(crate) struct ParseWorkItem {
     pub(crate) document: Document,
     pub(crate) source_revision: SourceRevision,
     pub(crate) bytes: Vec<u8>,
+    pub(crate) verification: ContentVerification,
 }
 
 pub(crate) struct ParseWorkResult {
@@ -65,6 +69,7 @@ pub(crate) struct ParseWorkResult {
     pub(crate) file: DiscoveredFile,
     pub(crate) document: Document,
     pub(crate) source_revision: SourceRevision,
+    pub(crate) verification: ContentVerification,
     pub(crate) parse_elapsed: Duration,
     pub(crate) parse_started: Instant,
     pub(crate) parse_finished: Instant,
