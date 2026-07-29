@@ -3545,16 +3545,20 @@ guards, local runtime discovery, and PR #9 CI state.
   projection still caused a new search generation on the second scan.
 - The import scheduler now schedules permanent-exclusion cleanup only when the
   document still has an active projection. The publication coordinator also
-  normalizes pending removals and searchable replacements against the current
-  active projection before opening an artifact publication; a semantically
-  empty batch returns no change without advancing the visible epoch.
+  acquires the search-publication session before reading the publication
+  baseline or normalizing pending removals and searchable replacements against
+  the owner-bound active projection. The same session owns artifact publication;
+  a semantically empty batch returns no change without advancing the visible
+  epoch.
 - Focused regressions prove unchanged searchable plus excluded input keeps the
   generation, visible epoch, publication history, document/classification/source
   aggregates and embedding call count stable. Boundary tests cover idempotent
-  removals and exact replacements, while metadata-only searchable changes,
+  removals, exact replacements, owner-session lock waiting and mixed no-op plus
+  real-delta counting, while metadata-only searchable changes,
   searchable-to-excluded transitions, rename/deletion and strong-hash content
-  changes still publish.
-- The complete import-pipeline test suite passed with 137 unit tests and one
+  changes still publish. The lock-waiting and mixed-count tests both failed
+  before the owner-bound correction and passed after it.
+- The complete import-pipeline test suite passed with 139 unit tests and one
   public synthetic integration test. Strict all-target import-pipeline lint and
   formatting passed.
 - This slice does not add a file-metadata fingerprint fast path: zero-change

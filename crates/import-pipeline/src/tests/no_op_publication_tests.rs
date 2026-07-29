@@ -132,6 +132,168 @@ fn publication_boundary_discards_an_exact_searchable_replacement() {
 }
 
 #[test]
+fn publication_boundary_counts_exact_replacement_alongside_a_real_delta() {
+    let temp = TestDir::new("import-pipeline-mixed-replacement-boundary");
+    let data_dir = temp.path().join("data");
+    fs::create_dir_all(&data_dir).unwrap();
+    let store = create_test_store(&data_dir);
+    initialize_ready_empty_search(
+        &data_dir,
+        &store,
+        UnixTimestamp::from_unix_seconds(1_700_000_194),
+    );
+    let mut first_pending = vec![test_pending_searchable_document("exact-replacement")];
+    assert!(flush_pending_searchable_documents(
+        &store,
+        UnixTimestamp::from_unix_seconds(1_700_000_195),
+        &mut ImportSummary::default(),
+        &mut first_pending,
+        &mut PendingProjectionRemovals::default(),
+        None,
+        CurrentImportCacheMode::Retain,
+        &|| Ok(()),
+        &|_| {},
+        Instant::now(),
+        H2_INDEX_WRITER_HEAP_BYTES,
+        &SearchPublicationVectorization::default(),
+    )
+    .unwrap());
+    let first_head = ready_search_head(&store);
+    let mut mixed_pending = vec![
+        test_pending_searchable_document("exact-replacement"),
+        test_pending_searchable_document("real-delta"),
+    ];
+    let mut mixed_summary = ImportSummary::default();
+
+    assert!(flush_pending_searchable_documents(
+        &store,
+        UnixTimestamp::from_unix_seconds(1_700_000_196),
+        &mut mixed_summary,
+        &mut mixed_pending,
+        &mut PendingProjectionRemovals::default(),
+        None,
+        CurrentImportCacheMode::Retain,
+        &|| Ok(()),
+        &|_| {},
+        Instant::now(),
+        H2_INDEX_WRITER_HEAP_BYTES,
+        &SearchPublicationVectorization::default(),
+    )
+    .unwrap());
+    assert_eq!(mixed_summary.searchable_documents, 2);
+    let second_head = ready_search_head(&store);
+    assert_ne!(second_head.generation, first_head.generation);
+    assert_eq!(
+        second_head.visible_epoch,
+        first_head.visible_epoch.checked_add(1).unwrap()
+    );
+}
+
+#[test]
+fn publication_boundary_normalizes_after_waiting_for_the_owner_session() {
+    let temp = TestDir::new("import-pipeline-owner-bound-normalization");
+    let data_dir = temp.path().join("data");
+    fs::create_dir_all(&data_dir).unwrap();
+    let store = create_test_store(&data_dir);
+    initialize_ready_empty_search(
+        &data_dir,
+        &store,
+        UnixTimestamp::from_unix_seconds(1_700_000_194),
+    );
+    let holder_store = store.open_sibling().unwrap();
+    let waiter_store = store.open_sibling().unwrap();
+    let (holder_ready_tx, holder_ready_rx) = mpsc::sync_channel(1);
+    let (release_holder_tx, release_holder_rx) = mpsc::sync_channel(1);
+    let (waiter_ready_tx, waiter_ready_rx) = mpsc::sync_channel(1);
+
+    thread::scope(|scope| {
+        let holder = scope.spawn(move || {
+            let publication_session = holder_store.wait_for_search_publication_session().unwrap();
+            let target_index_document =
+                stage_test_index_document(&holder_store, "concurrent-target");
+            holder_ready_tx.send(()).unwrap();
+            release_holder_rx.recv().unwrap();
+            let prepared = write_incremental_search_artifacts_for_test(
+                &publication_session,
+                UnixTimestamp::from_unix_seconds(1_700_000_195),
+                CLASSIFIER_EPOCH,
+                vec![target_index_document],
+                &BTreeSet::new(),
+                0,
+                0,
+                None,
+                CurrentImportCacheMode::Retain,
+                None,
+                None,
+                None,
+                H2_INDEX_WRITER_HEAP_BYTES,
+                &SearchPublicationVectorization::default(),
+            )
+            .unwrap();
+            commit_prepared_search_publication_for_test(
+                UnixTimestamp::from_unix_seconds(1_700_000_195),
+                prepared,
+                &[terminal_searchable_document(
+                    &holder_store,
+                    "concurrent-target",
+                    UnixTimestamp::from_unix_seconds(1_700_000_195),
+                )],
+            )
+            .unwrap()
+            .release();
+        });
+        holder_ready_rx.recv().unwrap();
+
+        let waiter = scope.spawn(move || {
+            let mut pending_documents = vec![test_pending_searchable_document("real-delta")];
+            let mut pending_removals = PendingProjectionRemovals::default();
+            pending_removals
+                .schedule(
+                    DocumentId::from_non_secret_parts(&["concurrent-target"]),
+                    SearchProjectionRemovalReason::PermanentClassificationExclusion,
+                    Some(test_document("concurrent-target", DocumentStatus::Excluded)),
+                )
+                .unwrap();
+            let published = flush_pending_searchable_documents(
+                &waiter_store,
+                UnixTimestamp::from_unix_seconds(1_700_000_196),
+                &mut ImportSummary::default(),
+                &mut pending_documents,
+                &mut pending_removals,
+                None,
+                CurrentImportCacheMode::Retain,
+                &|| Ok(()),
+                &|phase| {
+                    if phase == ImportCancelCheckPhase::IndexPublication {
+                        waiter_ready_tx.send(()).unwrap();
+                    }
+                },
+                Instant::now(),
+                H2_INDEX_WRITER_HEAP_BYTES,
+                &SearchPublicationVectorization::default(),
+            )
+            .unwrap();
+            assert!(published);
+        });
+        waiter_ready_rx.recv().unwrap();
+        release_holder_tx.send(()).unwrap();
+        holder.join().unwrap();
+        waiter.join().unwrap();
+    });
+
+    assert!(store
+        .active_search_projection_for_document(&DocumentId::from_non_secret_parts(&[
+            "concurrent-target"
+        ]))
+        .unwrap()
+        .is_none());
+    assert!(store
+        .active_search_projection_for_document(&DocumentId::from_non_secret_parts(&["real-delta"]))
+        .unwrap()
+        .is_some());
+}
+
+#[test]
 fn metadata_only_searchable_change_still_publishes() {
     let temp = TestDir::new("import-pipeline-metadata-only-publication");
     let data_dir = temp.path().join("data");
