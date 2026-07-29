@@ -3549,7 +3549,9 @@ guards, local runtime discovery, and PR #9 CI state.
   baseline or normalizing pending removals and searchable replacements against
   the owner-bound active projection. The same session owns artifact publication;
   a semantically empty batch returns no change without advancing the visible
-  epoch.
+  epoch. Index-stage timing starts before owner acquisition, so both real
+  publication and owner-bound no-op paths retain publication-lock contention in
+  performance evidence.
 - Focused regressions prove unchanged searchable plus excluded input keeps the
   generation, visible epoch, publication history, document/classification/source
   aggregates and embedding call count stable. Boundary tests cover idempotent
@@ -3557,8 +3559,10 @@ guards, local runtime discovery, and PR #9 CI state.
   real-delta counting, while metadata-only searchable changes,
   searchable-to-excluded transitions, rename/deletion and strong-hash content
   changes still publish. The lock-waiting and mixed-count tests both failed
-  before the owner-bound correction and passed after it.
-- The complete import-pipeline test suite passed with 139 unit tests and one
+  before the owner-bound correction and passed after it. A controlled owner-wait
+  timing regression likewise first observed a zero-duration index stage and
+  passed after the pre-wait timer was restored.
+- The complete import-pipeline test suite passed with 140 unit tests and one
   public synthetic integration test. Strict all-target import-pipeline lint and
   formatting passed.
 - This slice does not add a file-metadata fingerprint fast path: zero-change

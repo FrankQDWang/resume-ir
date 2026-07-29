@@ -165,6 +165,7 @@ pub(super) fn flush_pending_searchable_documents(
     }
 
     set_cancel_phase(ImportCancelCheckPhase::IndexPublication);
+    let index_started = Instant::now();
     ensure_not_cancelled()?;
     let publication_session = store
         .wait_for_search_publication_session()
@@ -186,6 +187,7 @@ pub(super) fn flush_pending_searchable_documents(
         }) {
             return Err(ImportPipelineError::store_invariant());
         }
+        summary.stage_timings.index += index_started.elapsed();
         set_cancel_phase(ImportCancelCheckPhase::DbWrite);
         for document in pending_excluded_doc_ids.publication_documents() {
             ensure_not_cancelled()?;
@@ -204,6 +206,7 @@ pub(super) fn flush_pending_searchable_documents(
     pending_excluded_doc_ids.retain_active_projections(&publication_session)?;
     let has_delta = !pending_index_documents.is_empty() || !pending_excluded_doc_ids.is_empty();
     if !has_delta && !needs_initial_publication {
+        summary.stage_timings.index += index_started.elapsed();
         summary.searchable_documents += unchanged_searchable_documents;
         return Ok(false);
     }
@@ -218,7 +221,6 @@ pub(super) fn flush_pending_searchable_documents(
             .borrow_mut()
             .record_index_publication_phase_timing(phase, elapsed);
     };
-    let index_started = Instant::now();
     for document in &mut pending_documents {
         document.status = DocumentStatus::Searchable;
         document.updated_at = now;

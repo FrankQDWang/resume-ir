@@ -82,6 +82,77 @@ fn publication_boundary_discards_removal_without_an_active_projection() {
 }
 
 #[test]
+fn no_op_publication_records_owner_wait_in_index_timing() {
+    let temp = TestDir::new("import-pipeline-no-op-owner-wait-timing");
+    let data_dir = temp.path().join("data");
+    fs::create_dir_all(&data_dir).unwrap();
+    let store = create_test_store(&data_dir);
+    initialize_ready_empty_search(
+        &data_dir,
+        &store,
+        UnixTimestamp::from_unix_seconds(1_700_000_194),
+    );
+    let holder_store = store.open_sibling().unwrap();
+    let waiter_store = store.open_sibling().unwrap();
+    let (holder_ready_tx, holder_ready_rx) = mpsc::sync_channel(1);
+    let (release_holder_tx, release_holder_rx) = mpsc::sync_channel(1);
+    let (waiter_ready_tx, waiter_ready_rx) = mpsc::sync_channel(1);
+
+    thread::scope(|scope| {
+        let holder = scope.spawn(move || {
+            let _publication_session = holder_store.wait_for_search_publication_session().unwrap();
+            holder_ready_tx.send(()).unwrap();
+            release_holder_rx.recv().unwrap();
+        });
+        holder_ready_rx.recv().unwrap();
+
+        let waiter = scope.spawn(move || {
+            let mut summary = ImportSummary::default();
+            let mut pending_documents = Vec::new();
+            let mut pending_removals = PendingProjectionRemovals::default();
+            pending_removals
+                .schedule(
+                    DocumentId::from_non_secret_parts(&["never-projected"]),
+                    SearchProjectionRemovalReason::PermanentClassificationExclusion,
+                    None,
+                )
+                .unwrap();
+            assert!(!flush_pending_searchable_documents(
+                &waiter_store,
+                UnixTimestamp::from_unix_seconds(1_700_000_195),
+                &mut summary,
+                &mut pending_documents,
+                &mut pending_removals,
+                None,
+                CurrentImportCacheMode::Retain,
+                &|| Ok(()),
+                &|phase| {
+                    if phase == ImportCancelCheckPhase::IndexPublication {
+                        waiter_ready_tx.send(()).unwrap();
+                    }
+                },
+                Instant::now(),
+                H2_INDEX_WRITER_HEAP_BYTES,
+                &SearchPublicationVectorization::default(),
+            )
+            .unwrap());
+            summary
+        });
+        waiter_ready_rx.recv().unwrap();
+        thread::sleep(Duration::from_millis(100));
+        release_holder_tx.send(()).unwrap();
+        holder.join().unwrap();
+        let summary = waiter.join().unwrap();
+
+        assert!(
+            summary.stage_timings.index >= Duration::from_millis(75),
+            "owner wait was not recorded in index timing: {:?}",
+            summary.stage_timings.index
+        );
+    });
+}
+
+#[test]
 fn publication_boundary_discards_an_exact_searchable_replacement() {
     let temp = TestDir::new("import-pipeline-idempotent-replacement-boundary");
     let data_dir = temp.path().join("data");
