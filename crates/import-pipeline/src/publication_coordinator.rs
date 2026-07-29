@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use index_fulltext::IndexDocument;
 use meta_store::{
     Document, DocumentId, DocumentStatus, OwnedMetaStore, SearchProjectionServiceState,
-    SearchRepairReason, UnixTimestamp,
+    SearchPublicationSession, SearchRepairReason, UnixTimestamp,
 };
 
 use crate::immutable_ingest::{self, StagedDerivedData, StagedResume};
@@ -81,6 +81,25 @@ impl PendingProjectionRemovals {
             .values()
             .filter_map(|removal| removal.document_update.as_ref())
     }
+
+    fn retain_active_projections(
+        &mut self,
+        publication_session: &SearchPublicationSession,
+    ) -> Result<()> {
+        let store = publication_session.owned_store();
+        let mut retained = BTreeMap::new();
+        for (document_id, removal) in std::mem::take(&mut self.0) {
+            if store
+                .active_search_projection_for_document(&document_id)
+                .map_err(ImportPipelineError::store)?
+                .is_some()
+            {
+                retained.insert(document_id, removal);
+            }
+        }
+        self.0 = retained;
+        Ok(())
+    }
 }
 
 /// Publishes all currently staged searchable replacements and removals through
@@ -100,19 +119,6 @@ pub(super) fn flush_pending_searchable_documents(
     index_writer_heap_bytes: usize,
     search_vectorization: &SearchPublicationVectorization,
 ) -> Result<bool> {
-    let has_delta = !pending_index_documents.is_empty() || !pending_excluded_doc_ids.is_empty();
-    let projection_state = store
-        .search_projection_state()
-        .map_err(ImportPipelineError::store)?;
-    let needs_initial_publication = projection_state.generation.is_none();
-    let migration_rebuild_staging = projection_state.generation.is_none()
-        && projection_state.service_state == SearchProjectionServiceState::Repairing
-        && projection_state.repair_reason == Some(SearchRepairReason::MigrationRebuild);
-    if !has_delta && !needs_initial_publication {
-        return Ok(false);
-    }
-    let classifier_epoch = publication_classifier_epoch(store, pending_index_documents)?;
-
     if !pending_index_documents.is_empty() {
         set_cancel_phase(ImportCancelCheckPhase::DbWrite);
         ensure_not_cancelled()?;
@@ -158,16 +164,34 @@ pub(super) fn flush_pending_searchable_documents(
         })?;
     }
 
+    set_cancel_phase(ImportCancelCheckPhase::IndexPublication);
+    let index_started = Instant::now();
+    ensure_not_cancelled()?;
+    let publication_session = store
+        .wait_for_search_publication_session()
+        .map_err(ImportPipelineError::store)?;
+    let publication_store = publication_session.owned_store();
+    let projection_state = publication_store
+        .search_projection_state()
+        .map_err(ImportPipelineError::store)?;
+    let needs_initial_publication = projection_state.generation.is_none();
+    let migration_rebuild_staging = projection_state.generation.is_none()
+        && projection_state.service_state == SearchProjectionServiceState::Repairing
+        && projection_state.repair_reason == Some(SearchRepairReason::MigrationRebuild);
+    let classifier_epoch =
+        publication_classifier_epoch(publication_store, pending_index_documents)?;
+
     if migration_rebuild_staging {
         if pending_index_documents.iter().any(|pending| {
             pending.publication_kind != PendingSearchablePublicationKind::Replacement
         }) {
             return Err(ImportPipelineError::store_invariant());
         }
+        summary.stage_timings.index += index_started.elapsed();
         set_cancel_phase(ImportCancelCheckPhase::DbWrite);
         for document in pending_excluded_doc_ids.publication_documents() {
             ensure_not_cancelled()?;
-            store
+            publication_store
                 .upsert_document(document)
                 .map_err(ImportPipelineError::store)?;
         }
@@ -177,8 +201,16 @@ pub(super) fn flush_pending_searchable_documents(
         return Ok(false);
     }
 
-    set_cancel_phase(ImportCancelCheckPhase::IndexPublication);
-    ensure_not_cancelled()?;
+    let unchanged_searchable_documents =
+        normalize_searchable_replacements(&publication_session, pending_index_documents)?;
+    pending_excluded_doc_ids.retain_active_projections(&publication_session)?;
+    let has_delta = !pending_index_documents.is_empty() || !pending_excluded_doc_ids.is_empty();
+    if !has_delta && !needs_initial_publication {
+        summary.stage_timings.index += index_started.elapsed();
+        summary.searchable_documents += unchanged_searchable_documents;
+        return Ok(false);
+    }
+
     let removed_document_ids = pending_excluded_doc_ids.document_ids();
     let searchable_before = summary.searchable_documents;
     let (mut pending_documents, pending_replacements) =
@@ -189,10 +221,6 @@ pub(super) fn flush_pending_searchable_documents(
             .borrow_mut()
             .record_index_publication_phase_timing(phase, elapsed);
     };
-    let index_started = Instant::now();
-    let publication_session = store
-        .wait_for_search_publication_session()
-        .map_err(ImportPipelineError::store)?;
     for document in &mut pending_documents {
         document.status = DocumentStatus::Searchable;
         document.updated_at = now;
@@ -237,7 +265,7 @@ pub(super) fn flush_pending_searchable_documents(
         .add_assign(&phase_worker_metrics.into_inner());
     let committed_publication = write_result?.into_committed()?;
     committed_publication.release();
-    summary.searchable_documents += new_searchable_count;
+    summary.searchable_documents += unchanged_searchable_documents + new_searchable_count;
     pending_excluded_doc_ids.clear();
     let index_ready_elapsed = import_started.elapsed();
     record_searchable_milestones(
@@ -247,6 +275,53 @@ pub(super) fn flush_pending_searchable_documents(
         index_ready_elapsed,
     );
     Ok(true)
+}
+
+fn normalize_searchable_replacements(
+    publication_session: &SearchPublicationSession,
+    pending_documents: &mut Vec<PendingSearchableDocument>,
+) -> Result<usize> {
+    let mut retained = Vec::with_capacity(pending_documents.len());
+    let mut unchanged = 0;
+    for pending in std::mem::take(pending_documents) {
+        let is_semantic_delta = match pending.publication_kind {
+            PendingSearchablePublicationKind::MetadataChanged => true,
+            PendingSearchablePublicationKind::Replacement => {
+                searchable_replacement_changes_projection(publication_session, &pending)?
+            }
+        };
+        if is_semantic_delta {
+            retained.push(pending);
+        } else {
+            unchanged += 1;
+        }
+    }
+    *pending_documents = retained;
+    Ok(unchanged)
+}
+
+fn searchable_replacement_changes_projection(
+    publication_session: &SearchPublicationSession,
+    pending: &PendingSearchableDocument,
+) -> Result<bool> {
+    let store = publication_session.owned_store();
+    let Some(active_projection) = store
+        .active_search_projection_for_document(&pending.document.id)
+        .map_err(ImportPipelineError::store)?
+    else {
+        return Ok(true);
+    };
+    if active_projection.resume_version_id != pending.version.id {
+        return Ok(true);
+    }
+    let active_document = store
+        .active_search_document(&active_projection)
+        .map_err(ImportPipelineError::store)?
+        .ok_or_else(ImportPipelineError::store_invariant)?;
+    let mut projected_document = pending.document.clone();
+    projected_document.status = DocumentStatus::Searchable;
+    projected_document.updated_at = active_document.updated_at;
+    Ok(projected_document != active_document)
 }
 
 fn publication_classifier_epoch(

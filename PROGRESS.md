@@ -3538,6 +3538,40 @@ guards, local runtime discovery, and PR #9 CI state.
 
 ## Command Log
 
+### S812
+
+- A focused synthetic mixed-root regression first failed twice because an
+  unchanged excluded document that had never entered the active search
+  projection still caused a new search generation on the second scan.
+- The import scheduler now schedules permanent-exclusion cleanup only when the
+  document still has an active projection. The publication coordinator also
+  acquires the search-publication session before reading the publication
+  baseline or normalizing pending removals and searchable replacements against
+  the owner-bound active projection. The same session owns artifact publication;
+  a semantically empty batch returns no change without advancing the visible
+  epoch. Index-stage timing starts before owner acquisition, so both real
+  publication and owner-bound no-op paths retain publication-lock contention in
+  performance evidence.
+- Focused regressions prove unchanged searchable plus excluded input keeps the
+  generation, visible epoch, publication history, document/classification/source
+  aggregates and embedding call count stable. Boundary tests cover idempotent
+  removals, exact replacements, owner-session lock waiting and mixed no-op plus
+  real-delta counting, while metadata-only searchable changes,
+  searchable-to-excluded transitions, rename/deletion and strong-hash content
+  changes still publish. The lock-waiting and mixed-count tests both failed
+  before the owner-bound correction and passed after it. A controlled owner-wait
+  timing regression likewise first observed a zero-duration index stage and
+  passed after the pre-wait timer was restored.
+- The complete import-pipeline test suite passed with 140 unit tests and one
+  public synthetic integration test. Strict all-target import-pipeline lint and
+  formatting passed.
+- This slice does not add a file-metadata fingerprint fast path: zero-change
+  scans still read and strongly hash source bytes. It does not change periodic
+  scan cadence, watcher reconciliation, classifier semantics, OCR, embedding
+  runtime behavior, query paths, or GUI behavior. All new fixtures are
+  synthetic and no private source, path, content, database, index, model cache,
+  query, token, or raw diagnostic artifact is retained.
+
 ### S811
 
 - Live installed-app investigation for GitHub issue #264 proved that the

@@ -268,17 +268,19 @@ pub(crate) fn finish_import_file(
             summary.failure_counts.increment(kind);
         }
         ProcessedFile::Excluded { document, .. } => {
-            pending_excluded_doc_ids.schedule(
+            schedule_permanent_exclusion_if_projected(
+                store,
+                pending_excluded_doc_ids,
                 file.document_id.clone(),
-                SearchProjectionRemovalReason::PermanentClassificationExclusion,
-                Some(*document),
+                *document,
             )?;
         }
         ProcessedFile::UnchangedExcluded { document, .. } => {
-            pending_excluded_doc_ids.schedule(
+            schedule_permanent_exclusion_if_projected(
+                store,
+                pending_excluded_doc_ids,
                 file.document_id.clone(),
-                SearchProjectionRemovalReason::PermanentClassificationExclusion,
-                Some(*document),
+                *document,
             )?;
         }
         ProcessedFile::UnchangedOcrRequired { .. } => {}
@@ -335,6 +337,26 @@ pub(crate) fn finish_import_file(
         summary.stage_timings.db += progress_started.elapsed();
     }
 
+    Ok(())
+}
+
+fn schedule_permanent_exclusion_if_projected(
+    store: &OwnedMetaStore,
+    pending_removals: &mut PendingProjectionRemovals,
+    document_id: meta_store::DocumentId,
+    document: meta_store::Document,
+) -> Result<()> {
+    if store
+        .active_search_projection_for_document(&document_id)
+        .map_err(ImportPipelineError::store)?
+        .is_some()
+    {
+        pending_removals.schedule(
+            document_id,
+            SearchProjectionRemovalReason::PermanentClassificationExclusion,
+            Some(document),
+        )?;
+    }
     Ok(())
 }
 

@@ -1170,6 +1170,8 @@ mod tests {
         H2_INDEX_WRITER_HEAP_BYTES,
     };
 
+    #[path = "no_op_publication_tests.rs"]
+    mod no_op_publication_tests;
     #[path = "ocr_publication_tests.rs"]
     mod ocr_publication_tests;
 
@@ -4956,6 +4958,7 @@ mod tests {
         )
         .unwrap();
         let document_id = store.visible_documents().unwrap().remove(0).id;
+        let first_head = ready_search_head(&store);
         assert!(store
             .active_search_projection_for_document(&document_id)
             .unwrap()
@@ -5023,6 +5026,12 @@ mod tests {
         assert_eq!(
             store.document_by_id(&document_id).unwrap().unwrap().status,
             DocumentStatus::Excluded
+        );
+        let second_head = ready_search_head(&store);
+        assert_ne!(second_head.generation, first_head.generation);
+        assert_eq!(
+            second_head.visible_epoch,
+            first_head.visible_epoch.checked_add(1).unwrap()
         );
     }
 
