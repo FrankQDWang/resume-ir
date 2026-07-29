@@ -16,6 +16,7 @@ import {
   type SearchSelection,
 } from "./daemon"
 import { deliverDaemonPdfRange } from "./pdf-preview-range"
+import { createPdfDocumentLoadingTask } from "./pdf-preview-resources"
 
 GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -125,13 +126,17 @@ export function PdfPreview({ selection, fileName }: {
         created.body.range_bytes,
         setError,
       )
-      loaded = await getDocument({
-        range: transport,
-        rangeChunkSize: created.body.range_bytes,
-        disableAutoFetch: true,
-        disableStream: true,
-        disableRange: false,
-      }).promise
+      loaded = await createPdfDocumentLoadingTask(
+        {
+          range: transport,
+          rangeChunkSize: created.body.range_bytes,
+          disableAutoFetch: true,
+          disableStream: true,
+          disableRange: false,
+        },
+        new URL("pdfjs/", globalThis.document.baseURI).href,
+        getDocument,
+      ).promise
       if (disposed) {
         await loaded.destroy()
         if (leaseId) {
