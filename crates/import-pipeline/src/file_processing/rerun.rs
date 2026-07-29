@@ -173,6 +173,7 @@ pub(crate) fn exact_rerun_decision(
                 return Ok(None);
             }
             Ok(Some(ExactRerunDecision::UnchangedExcluded {
+                document: Box::new(document),
                 source_revision_id: source_revision.id,
                 resume_version_id: version.id,
             }))

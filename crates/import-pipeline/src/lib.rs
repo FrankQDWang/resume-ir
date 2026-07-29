@@ -1134,6 +1134,8 @@ mod tests {
         SearchSelection, SearchSelectionResolution, SourceRevision, UnixTimestamp,
         CLASSIFIER_EPOCH,
     };
+    use parser_common::{ParseInput, Parser, ResourceBudget};
+    use parser_pdf::PdfParser;
     use resume_classifier::LinearPromotionPolicy;
 
     fn create_test_store(data_dir: &Path) -> OwnedMetaStore {
@@ -4787,11 +4789,14 @@ mod tests {
         let root = temp.path().join("resumes");
         fs::create_dir_all(&data_dir).unwrap();
         fs::create_dir_all(&root).unwrap();
-        fs::write(
-            root.join("tounicode-cmap-resume.pdf"),
-            tounicode_cmap_pdf_bytes(),
-        )
-        .unwrap();
+        let pdf_bytes = tounicode_cmap_pdf_bytes();
+        PdfParser
+            .parse(
+                ParseInput::from_bytes(Some("pdf"), &pdf_bytes),
+                ResourceBudget::default().with_timeout(Duration::from_secs(300)),
+            )
+            .unwrap();
+        fs::write(root.join("tounicode-cmap-resume.pdf"), &pdf_bytes).unwrap();
 
         let store = create_test_store(&data_dir);
         store.run_migrations().unwrap();
@@ -4917,6 +4922,108 @@ mod tests {
         );
         assert_eq!(second_head.generation, first_head.generation);
         assert!(!format!("{second_head:?}").contains(root.to_str().unwrap()));
+    }
+
+    #[test]
+    fn import_root_retry_removes_projection_after_excluded_metadata_was_persisted() {
+        let temp = TestDir::new("import-pipeline-excluded-publication-retry");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        let source = root.join("synthetic-document.txt");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            &source,
+            synthetic_resume_text("Synthetic Candidate", "Rust Search"),
+        )
+        .unwrap();
+
+        let store = create_test_store(&data_dir);
+        let first_now = UnixTimestamp::from_unix_seconds(1_700_000_191);
+        let first_task = import_task(
+            "excluded-retry-first-import",
+            root.to_str().unwrap(),
+            first_now,
+        );
+        insert_test_import_task(&store, &first_task, &ImportOptions::default());
+        import_root_with_options(
+            &data_dir,
+            &store,
+            &first_task,
+            &root,
+            first_now,
+            ImportOptions::default(),
+        )
+        .unwrap();
+        let document_id = store.visible_documents().unwrap().remove(0).id;
+        assert!(store
+            .active_search_projection_for_document(&document_id)
+            .unwrap()
+            .is_some());
+
+        fs::write(
+            &source,
+            "INVOICE\nInvoice number: SYNTHETIC-1\nSubtotal: 100\nPayment terms: synthetic",
+        )
+        .unwrap();
+        let mut report = crawl_directory(&root).unwrap();
+        assert!(report.errors.is_empty());
+        let discovered = report.files.remove(0);
+        let changed_now = UnixTimestamp::from_unix_seconds(1_700_000_192);
+        let mut stage_timings = ImportStageTimings::default();
+        let mut worker_metrics = ImportWorkerMetrics::default();
+        let mut content_bytes_read = 0;
+        let processed = process_file(
+            &data_dir,
+            &store,
+            &discovered,
+            &Sectionizer::default(),
+            changed_now,
+            &|| Ok(()),
+            &mut stage_timings,
+            &mut worker_metrics,
+            &mut content_bytes_read,
+            &LinearPromotionPolicy::default(),
+        )
+        .unwrap();
+        assert!(matches!(processed, ProcessedFile::Excluded { .. }));
+        assert_eq!(
+            store.document_by_id(&document_id).unwrap().unwrap().status,
+            DocumentStatus::Excluded
+        );
+        assert!(store
+            .active_search_projection_for_document(&document_id)
+            .unwrap()
+            .is_some());
+
+        let retry_now = UnixTimestamp::from_unix_seconds(1_700_000_193);
+        let retry_task = import_task(
+            "excluded-retry-second-import",
+            root.to_str().unwrap(),
+            retry_now,
+        );
+        insert_test_import_task(&store, &retry_task, &ImportOptions::default());
+        let summary = import_root_with_options(
+            &data_dir,
+            &store,
+            &retry_task,
+            &root,
+            retry_now,
+            ImportOptions::default(),
+        )
+        .unwrap();
+
+        assert_eq!(summary.files_discovered, 1);
+        assert_eq!(summary.searchable_documents, 0);
+        assert_eq!(summary.failed_documents, 0);
+        assert!(store
+            .active_search_projection_for_document(&document_id)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            store.document_by_id(&document_id).unwrap().unwrap().status,
+            DocumentStatus::Excluded
+        );
     }
 
     #[test]

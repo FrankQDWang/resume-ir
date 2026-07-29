@@ -160,9 +160,11 @@ fn process_file_inner(
                 ProcessedFile::UnchangedOcrRequired { source_revision_id }
             }
             ExactRerunDecision::UnchangedExcluded {
+                document,
                 source_revision_id,
                 resume_version_id,
             } => ProcessedFile::UnchangedExcluded {
+                document,
                 source_revision_id,
                 resume_version_id,
             },

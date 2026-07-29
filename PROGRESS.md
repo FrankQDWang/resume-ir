@@ -77,6 +77,22 @@ schema v34 before native installed validation.
   content, count, database, query, token, or raw diagnostic artifact is
   retained. Exact merged-main DMG installation, rescan, search, and detail
   acceptance remain required.
+- Retrying that installed-runtime rescan after the source-triage correction
+  exposed a publication-convergence gap: the interrupted attempt had already
+  persisted a stable excluded document while its prior search projection
+  remained active. The exact rerun recognized the unchanged exclusion but
+  discarded the document snapshot before publication, so strict transition
+  validation correctly rejected removing the projection without an explicit
+  terminal update. The corrective slice carries the existing stable excluded
+  document through exact-rerun processing and supplies it to the removal
+  publication; the validator remains unchanged and no extra per-document store
+  read is added. A synthetic interrupted-publication regression, the complete
+  import-pipeline suite, and strict all-target lint pass. An attested local
+  daemon then completed the previously failing authorized full-root rescan and
+  published a new ready search head with no worker failure. No private path,
+  filename, content, corpus count, query, token, database, or raw diagnostic
+  artifact is retained. Exact merged-main DMG installation, rescan, search, and
+  detail acceptance remain required.
 - Spec/plan unchanged: `docs/superpowers/specs|plans/2026-07-27-processing-contract-upgrade-coordinator.md`
 - Schema **v34** digest IDs are 71-char `sha256:` identities; transition/campaign CRUD with fail-closed authority
 - Online path: fence → quiesce → target commit → campaign materialize → WriterReady; queued intents stage-then-cancel + scheduled PDF rebind

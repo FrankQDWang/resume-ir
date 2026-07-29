@@ -141,6 +141,7 @@ pub(crate) enum ExactRerunDecision {
         source_revision_id: SourceRevisionId,
     },
     UnchangedExcluded {
+        document: Box<meta_store::Document>,
         source_revision_id: SourceRevisionId,
         resume_version_id: ResumeVersionId,
     },

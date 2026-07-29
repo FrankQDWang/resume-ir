@@ -274,11 +274,11 @@ pub(crate) fn finish_import_file(
                 Some(*document),
             )?;
         }
-        ProcessedFile::UnchangedExcluded { .. } => {
+        ProcessedFile::UnchangedExcluded { document, .. } => {
             pending_excluded_doc_ids.schedule(
                 file.document_id.clone(),
                 SearchProjectionRemovalReason::PermanentClassificationExclusion,
-                None,
+                Some(*document),
             )?;
         }
         ProcessedFile::UnchangedOcrRequired { .. } => {}
