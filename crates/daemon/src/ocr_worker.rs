@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
@@ -45,8 +46,13 @@ pub(crate) fn run_ocr_worker_once_with_handoff(
     claim_allowed: impl Fn() -> bool,
     generation_handoff: Option<&crate::ipc::search_service::GenerationHandoff>,
 ) -> Result<OcrWorkerSummary> {
-    if generation_handoff.is_some_and(|handoff| !handoff.publication_enabled()) {
-        return Ok(OcrWorkerSummary::default());
+    if let Some(handoff) = generation_handoff {
+        let prepared = handoff.prepare_runtime().map_err(|_| {
+            DaemonError::control_plane("query runtime prepare control became unresponsive")
+        })?;
+        if !prepared {
+            return Ok(OcrWorkerSummary::default());
+        }
     }
     let now = current_timestamp()?;
     match ocr_preclaim_decision(store).map_err(DaemonError::import)? {
@@ -210,9 +216,7 @@ pub(crate) fn run_ocr_worker_batch_with_handoff(
 ) -> Result<OcrWorkerSummary> {
     let mut aggregate = OcrWorkerSummary::default();
     for _ in 0..jobs_per_tick {
-        if !claim_allowed()
-            || generation_handoff.is_some_and(|handoff| !handoff.publication_enabled())
-        {
+        if !claim_allowed() {
             break;
         }
         let summary = run_ocr_worker_once_with_handoff(
@@ -595,6 +599,7 @@ fn run_claimed_ocr_job(
             });
         }
     }
+    let generation_control_unresponsive = Cell::new(false);
     let prepare_generation =
         |publication: &meta_store::SearchPublicationRecord,
          projections: &[meta_store::ActiveSearchProjection]| {
@@ -603,7 +608,13 @@ fn run_claimed_ocr_job(
                     .map_err(|_| {
                     import_pipeline::ImportPipelineError::query_generation_preparation()
                 })?;
-            let staged = generation_handoff.is_some_and(|handoff| handoff.stage(prepared));
+            let staged = generation_handoff.is_some_and(|handoff| match handoff.stage(prepared) {
+                Ok(staged) => staged,
+                Err(_) => {
+                    generation_control_unresponsive.set(true);
+                    false
+                }
+            });
             if staged {
                 Ok(())
             } else {
@@ -628,13 +639,28 @@ fn run_claimed_ocr_job(
                 ) -> import_pipeline::Result<()>
         }),
     );
+    if generation_control_unresponsive.get() {
+        return Err(DaemonError::control_plane(
+            "query generation install control became unresponsive",
+        ));
+    }
     if let Some(generation_handoff) = generation_handoff {
-        let committed = matches!(
+        let disposition = if matches!(
             &outcome,
             Ok(import_pipeline::OcrTextIndexOutcome::Committed(_))
-        );
-        let finalized = generation_handoff.finish_publication(committed);
-        if committed && !finalized {
+        ) {
+            crate::ipc::search_service::PublicationDisposition::Committed
+        } else {
+            crate::ipc::search_service::PublicationDisposition::Aborted
+        };
+        let finalized = generation_handoff
+            .finish_publication(disposition)
+            .map_err(|_| {
+                DaemonError::control_plane("query generation finalize control became unresponsive")
+            })?;
+        if disposition == crate::ipc::search_service::PublicationDisposition::Committed
+            && !finalized
+        {
             return Err(DaemonError::control_plane(
                 "prepared query generation could not be activated",
             ));

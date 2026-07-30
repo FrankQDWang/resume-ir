@@ -30,24 +30,39 @@ No request performs projection enumeration, decryption, or HNSW construction.
   each preserves identity/order, rank, visible epoch and non-partial status
   under the existing 120/500/250 ms query acceptance redline.
 - Publication is enabled only after both the Ready front door and search-worker
-  prewarm are complete. A failed prewarm keeps OCR claims queued until a later
-  successful runtime open. Queries continue on the old exact snapshot during
-  commit; control messages retain priority, and post-commit adoption never
-  deep-opens artifacts.
+  prewarm are complete. If startup prewarm fails, each later OCR worker tick can
+  send one low-frequency `PrepareRuntime` control before claim; artifact repair
+  can therefore reopen the runtime and release the publication gate with zero
+  user queries and without polling. Prepare/install/finalize controls carry a
+  queue-local identity and wait at most the 60 s maximum query deadline plus a
+  5 s margin. An unclaimed prepare/install timeout is withdrawn atomically;
+  an indeterminate claimed control or any post-commit finalize timeout closes
+  the query queue and enters explicit fatal recovery instead of forging a
+  rollback. Queries continue on the old exact snapshot during commit; control
+  messages retain priority, and post-commit adoption never deep-opens artifacts.
 - Incremental vector publication now opens a generation-pinned,
   integrity-checked republication reader without constructing the old
   query-only ANN. Its update consumes validated base documents instead of
   cloning the full generation. Query readers share one document owner with
   their ANN and no longer duplicate `all` and same-model shards; the exact
   single-model filter contract and ranking tests remain green.
-- The completely synthetic 7,328-document load witness reproduced the review
-  blocker before the final scheduling change: semantic and hybrid requests
-  reached about 1,002 ms and returned `partial=true`,
-  `deadline_exceeded`. The unchanged witness is now GREEN over 7,331 total
-  documents, three consecutive same-tick OCR publications and 909 rotating
-  interactive requests: p95 fulltext/semantic/hybrid was 62/62/61 ms, peak
-  Daemon RSS 489.6 MiB, peak CPU 121.7%, heartbeat failures 0, automatic restart
-  attempts 0, and launch/instance identity unchanged.
+- The completely synthetic 7.3k investigation kept the same 7,328 baseline
+  documents, three per-document OCR publications and 120/500/250 ms mode
+  redlines across the decisive RED/GREEN comparison, but the exploratory and
+  final harness parameters were not identical. Earlier runs used a shorter
+  worker tick and roughly 14-50 QPS; they reproduced semantic/hybrid requests
+  at about 1,002 ms with `partial=true`, `deadline_exceeded`, and one
+  higher-rate pressure run crossed the 512 MiB RSS line. That run remains a
+  non-target pressure ceiling, not a claim that identical load turned green.
+  The final fixed witness deliberately uses a 60 s worker interval to establish
+  Ready plus a hot active generation before the batch, and 100 ms query pacing
+  (roughly 8-10 QPS). The earlier fixed run produced 909 requests,
+  p95 fulltext/semantic/hybrid 62/62/61 ms, peak Daemon RSS 489.6 MiB and peak
+  CPU 121.7%; those values apply only to that run. After the bounded control
+  protocol change, the same fixed witness was rerun over 7,331 documents and
+  produced 649 requests, p95 64/64/65 ms, peak RSS 497.5 MiB and peak CPU
+  124.6%. Both fixed runs had heartbeat failures 0, automatic restart attempts
+  0, and unchanged launch/instance identity.
 - The load witness uses production heartbeat timing (5 s interval, 2 s
   timeout, three-failure restart threshold) and a generation-bound isolated
   foreground child. It is a supervision-equivalent synthetic witness, not an

@@ -32,11 +32,11 @@ use crate::search_runtime_config::SearchRuntimeConfig;
 
 use admission::AdmissionState;
 use cancellation::{CancelStatus, CancellationRegistry, RegistryLookup, RequestControl};
-pub(crate) use runtime::GenerationHandoff;
 use runtime::{
     run_deadline_scheduler, start_search_worker, DeadlineCommand, ScheduledDeadline, SearchQueue,
     SearchTask,
 };
+pub(crate) use runtime::{GenerationHandoff, PublicationDisposition};
 use wire::{cancel_response_body, SearchReply};
 
 pub(crate) struct SearchService {
