@@ -5,6 +5,35 @@ system design docs, the execution docs, and this running evidence log. Obsolete
 preliminary checklists are historical execution context only, not the
 production-ready scope source.
 
+## Current-main import attribution contract reconciliation
+
+Issue #270 is the single execution owner for current-main installed-equivalent
+import attribution. Live observation bound this W0 slice to remote `main`
+`0387506bc381aaa04ded9eb67cc213ffcd9c6797`: PRs #249, #267, and #269 are
+merged, #268 is closed, #217 remains the umbrella, and #37 retains its older
+PR #35/D10K context. The owner uses one primary lane,
+`full_import_ocr_backlog`, with independent first-searchable, keyword-ready,
+embedding-complete, and OCR-backlog/full-import milestones.
+
+- Active policy, acceptance policy, code authority, fixtures, and checker
+  constants now agree on current metadata schema v35. Historical schema v34
+  remains an intermediate feature-train step.
+- Active and goal-level private-benchmark permissions now agree. No configured
+  private root was present, so later attribution records
+  `blocked_missing_configured_private_roots`; this contract slice did not guess
+  a path, scan `HOME`, or read private input.
+- The #217 → #270 routing is explicit. Append-only reconciliation event 554
+  records live owner/schema/capability observations, and the deterministic
+  reducer reproduces the W0 `evidence_review` snapshot byte-for-byte from the
+  main-reachable legacy snapshot plus that event.
+- `check-performance-contracts.py`, `check-autonomous-goal.py`,
+  `check-loop-state.py`, the reducer check, the public-repository guard, Python
+  compilation, and `git diff --check` pass. No import, OCR, embedding, index,
+  classifier, query, GUI, benchmark, profile, App/DMG, install, installed
+  acceptance, soak, Windows, or Linux work ran.
+- This is a partial contract-reconciliation result only. It does not claim W1,
+  D10K, performance attribution, installed acceptance, or goal completion.
+
 ## Persistent file-observation fast path (v35 / #268)
 
 The second import-performance layer now gives recurring macOS source-root

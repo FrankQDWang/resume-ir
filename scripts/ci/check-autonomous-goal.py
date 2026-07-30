@@ -5,11 +5,36 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import subprocess
 import sys
 import tomllib
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+CURRENT_MAIN_ATTRIBUTION_TRANSITION = {
+    "name": "reconcile_current_main_import_attribution_contract",
+    "from": ["pr_opened", "contract_conflict"],
+    "to": "evidence_review",
+    "required_permissions": ["github_issue_write_allowed"],
+    "required_evidence": [
+        "live_main_sha",
+        "merged_prior_prs",
+        "current_schema_v35",
+        "unique_issue_owner",
+        "primary_lane",
+        "private_input_capability",
+        "privacy_boundary",
+    ],
+    "allowed_actions": [
+        "create_issue",
+        "comment_issue",
+        "edit_contracts",
+        "run_tests",
+        "write_redacted_evidence",
+        "reduce_current_state",
+    ],
+}
 
 
 CORRECTNESS_DELIVERY_TRANSITIONS = {
@@ -447,11 +472,8 @@ def main() -> int:
         True,
         "scope.active_slice.home_mixed_root_requires_explicit_user_authorization",
     )
-    require_bool(
-        active_slice.get("home_mixed_root_authorized"),
-        True,
-        "scope.active_slice.home_mixed_root_authorized",
-    )
+    if not isinstance(active_slice.get("home_mixed_root_authorized"), bool):
+        fail("scope.active_slice.home_mixed_root_authorized: expected boolean")
     require_non_empty_string(
         active_slice.get("unconfigured_private_run_terminal"),
         "scope.active_slice.unconfigured_private_run_terminal",
@@ -475,6 +497,73 @@ def main() -> int:
         fail("scope.active_slice.allowed_paths: production slice requires a production path")
     if active_slice.get("production_code_allowed") is False and production_paths:
         fail("scope.active_slice.allowed_paths: non-production slice cannot allow production paths")
+    if active_issue == "#270":
+        require_string(
+            active_name,
+            "current_main_installed_equivalent_import_attribution",
+            "scope.active_slice.name",
+        )
+        require_bool(
+            active_slice.get("production_code_allowed"),
+            False,
+            "scope.active_slice.production_code_allowed",
+        )
+        require_bool(
+            active_slice.get("private_benchmark_allowed"),
+            True,
+            "scope.active_slice.private_benchmark_allowed",
+        )
+        require_bool(
+            active_slice.get("configured_private_roots_required"),
+            True,
+            "scope.active_slice.configured_private_roots_required",
+        )
+        require_bool(
+            active_slice.get("home_mixed_root_authorized"),
+            False,
+            "scope.active_slice.home_mixed_root_authorized",
+        )
+        require_string(
+            active_slice.get("unconfigured_private_run_terminal"),
+            "blocked_missing_configured_private_roots",
+            "scope.active_slice.unconfigured_private_run_terminal",
+        )
+        attribution = active_slice.get("attribution")
+        if not isinstance(attribution, dict):
+            fail("scope.active_slice.attribution: expected table")
+        expected_strings = {
+            "owner_kind": "attribution_evidence",
+            "primary_benchmark_lane": "full_import_ocr_backlog",
+        }
+        for key, expected in expected_strings.items():
+            require_string(
+                attribution.get(key),
+                expected,
+                f"scope.active_slice.attribution.{key}",
+            )
+        if attribution.get("milestones") != [
+            "first_searchable",
+            "keyword_ready",
+            "embedding_complete",
+            "ocr_backlog_full_import",
+        ]:
+            fail("scope.active_slice.attribution.milestones mismatch")
+        for key in [
+            "milestone_claim_mixing_allowed",
+            "optimization_or_profile_issue",
+            "benchmark_or_profile_execution_in_contract_slice_allowed",
+            "app_dmg_or_installed_acceptance_in_contract_slice_allowed",
+        ]:
+            require_bool(
+                attribution.get(key),
+                False,
+                f"scope.active_slice.attribution.{key}",
+            )
+        require_bool(
+            attribution.get("exact_current_main_required"),
+            True,
+            "scope.active_slice.attribution.exact_current_main_required",
+        )
 
     gui = active_goal.get("gui")
     if not isinstance(gui, dict):
@@ -527,6 +616,16 @@ def main() -> int:
         fail("perf/acceptance-matrix.toml: missing [platform_lanes]")
     if matrix_platform_lanes.get("allowed") != contracts.PLATFORM_LANES:
         fail("matrix.platform_lanes.allowed mismatch")
+    require_string(
+        matrix_platform_lanes.get("current_delivery"),
+        "macos_only",
+        "matrix.platform_lanes.current_delivery",
+    )
+    require_bool(
+        matrix_platform_lanes.get("non_macos_failure_blocks_current_delivery"),
+        False,
+        "matrix.platform_lanes.non_macos_failure_blocks_current_delivery",
+    )
     require_string(matrix_platform_lanes.get("primary_discovery"), contracts.PLATFORM_LANES[0], "matrix.platform_lanes.primary_discovery")
     require_string(matrix_platform_lanes.get("weak_host_validation"), contracts.PLATFORM_LANES[1], "matrix.platform_lanes.weak_host_validation")
     require_string(matrix_platform_lanes.get("ci_smoke"), contracts.PLATFORM_LANES[2], "matrix.platform_lanes.ci_smoke")
@@ -695,6 +794,11 @@ def main() -> int:
                 fail(f"autonomous_delivery.transitions[{index}].{key}: expected non-empty list")
 
     validate_correctness_delivery_sequence(autonomous, active_slice, transitions)
+    require_transition_exact(
+        transitions,
+        "reconcile_current_main_import_attribution_contract",
+        CURRENT_MAIN_ATTRIBUTION_TRANSITION,
+    )
 
     require_transition_shape(
         transitions,
@@ -743,6 +847,21 @@ def main() -> int:
             "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md: "
             "inline allowed path list is a stale mirror; use ACTIVE_GOAL.toml [scope.active_slice].allowed_paths"
         )
+    reducer = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "loop" / "reduce-current-loop-state.py"),
+            "--check",
+        ],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if reducer.returncode != 0:
+        detail = reducer.stderr.strip() or reducer.stdout.strip()
+        fail(f"derived loop-state reducer check failed: {detail}")
     print("check-autonomous-goal.py passed")
     return 0
 

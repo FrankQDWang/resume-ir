@@ -118,6 +118,37 @@ SUCCESSOR_TRANSITION_PATHS = {
 SUCCESSOR_TRANSITION_BOOTSTRAP_PATHS = SUCCESSOR_TRANSITION_PATHS | {
     "scripts/ci/check-gate-integrity.py",
 }
+CURRENT_MAIN_ATTRIBUTION_PR_EVENT = (
+    "perf/runs/contract-reconciliation-2026-07-30/events/555.json"
+)
+CURRENT_MAIN_ATTRIBUTION_PRE_PR_PATHS = {
+    "ACTIVE_GOAL.toml",
+    "PROGRESS.md",
+    "docs/superpowers/specs/2026-07-30-current-main-import-attribution-contract.md",
+    "docs/superpowers/plans/2026-07-30-current-main-import-attribution-contract.md",
+    "perf/acceptance-matrix.toml",
+    "perf/active-slice-transition.json",
+    "perf/current-loop-state.json",
+    "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
+    "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+    "perf/runs/contract-reconciliation-2026-07-30/events/554.json",
+    "scripts/ci/check-autonomous-goal.py",
+    "scripts/ci/check-gate-integrity.py",
+    "scripts/ci/check-performance-contracts.py",
+    "scripts/loop/reduce-current-loop-state.py",
+}
+CURRENT_MAIN_ATTRIBUTION_FINAL_PATHS = (
+    CURRENT_MAIN_ATTRIBUTION_PRE_PR_PATHS | {CURRENT_MAIN_ATTRIBUTION_PR_EVENT}
+)
+CURRENT_MAIN_ATTRIBUTION_STATE_PATHS = {
+    "ACTIVE_GOAL.toml",
+    "perf/active-slice-transition.json",
+    "perf/current-loop-state.json",
+    "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
+    "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+    "perf/runs/contract-reconciliation-2026-07-30/events/554.json",
+    "scripts/loop/reduce-current-loop-state.py",
+}
 
 
 def fail(message: str) -> None:
@@ -267,8 +298,14 @@ def validate_declared_successor_transition(
     )
     if raw.get("base_active_goal_sha256") != source_sha256(base_goal_source):
         fail(f"{SUCCESSOR_TRANSITION_RECORD}.base_active_goal_sha256: mismatch")
+    current_main_attribution = (base_issue, head_issue) == ("#217", "#270")
+    expected_state_paths = (
+        CURRENT_MAIN_ATTRIBUTION_STATE_PATHS
+        if current_main_attribution
+        else SUCCESSOR_TRANSITION_PATHS
+    )
     state_paths = raw.get("state_paths")
-    if not isinstance(state_paths, list) or state_paths != sorted(SUCCESSOR_TRANSITION_PATHS):
+    if not isinstance(state_paths, list) or state_paths != sorted(expected_state_paths):
         fail(f"{SUCCESSOR_TRANSITION_RECORD}.state_paths: mismatch")
     require_bool(raw.get("production_code_changed"), False, f"{SUCCESSOR_TRANSITION_RECORD}.production_code_changed")
     require_bool(raw.get("blind_holdout_reread"), False, f"{SUCCESSOR_TRANSITION_RECORD}.blind_holdout_reread")
@@ -286,18 +323,39 @@ def validate_declared_successor_transition(
     for key, value in privacy.items():
         require_bool(value, False, f"{SUCCESSOR_TRANSITION_RECORD}.privacy.{key}")
     require_bool(base_slice.get("contract_change_allowed"), True, "base.scope.active_slice.contract_change_allowed")
-    require_bool(head_slice.get("scope_exception"), False, "head.scope.active_slice.scope_exception")
+    require_bool(
+        head_slice.get("scope_exception"),
+        current_main_attribution,
+        "head.scope.active_slice.scope_exception",
+    )
     allowed_paths = head_slice.get("allowed_paths")
     if not isinstance(allowed_paths, list) or not all(isinstance(path, str) and path for path in allowed_paths):
         fail("successor active slice requires non-empty allowed_paths")
     if len(set(allowed_paths)) != len(allowed_paths):
         fail("successor active slice allowed_paths must be unique")
+    if current_main_attribution and set(allowed_paths) != CURRENT_MAIN_ATTRIBUTION_FINAL_PATHS:
+        fail(
+            "successor active slice allowed_paths mismatch: expected "
+            f"{sorted(CURRENT_MAIN_ATTRIBUTION_FINAL_PATHS)!r}, "
+            f"found {sorted(allowed_paths)!r}"
+        )
     bootstrap = raw.get("bootstrap_gate_change")
     require_bool(bootstrap, bootstrap is True, f"{SUCCESSOR_TRANSITION_RECORD}.bootstrap_gate_change")
     if bootstrap:
-        if (base_issue, head_issue) != ("#170", "#173"):
-            fail("successor transition bootstrap is restricted to #170 -> #173")
-        if changed != SUCCESSOR_TRANSITION_BOOTSTRAP_PATHS:
+        if current_main_attribution:
+            if frozenset(changed) not in {
+                frozenset(CURRENT_MAIN_ATTRIBUTION_PRE_PR_PATHS),
+                frozenset(CURRENT_MAIN_ATTRIBUTION_FINAL_PATHS),
+            }:
+                fail(
+                    "current-main attribution transition path mismatch: expected "
+                    f"{sorted(CURRENT_MAIN_ATTRIBUTION_PRE_PR_PATHS)!r} before PR "
+                    f"or {sorted(CURRENT_MAIN_ATTRIBUTION_FINAL_PATHS)!r} after PR, "
+                    f"found {sorted(changed)!r}"
+                )
+        elif (base_issue, head_issue) != ("#170", "#173"):
+            fail("successor transition bootstrap is restricted to #170 -> #173 or #217 -> #270")
+        elif changed != SUCCESSOR_TRANSITION_BOOTSTRAP_PATHS:
             fail(
                 "successor transition bootstrap path mismatch: expected "
                 f"{sorted(SUCCESSOR_TRANSITION_BOOTSTRAP_PATHS)!r}, found {sorted(changed)!r}"

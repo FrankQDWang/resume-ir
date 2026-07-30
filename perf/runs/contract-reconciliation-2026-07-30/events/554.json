@@ -1,0 +1,54 @@
+{
+  "schema_version": "resume-ir.loop-reconciliation-event.v1",
+  "run_id": "contract-reconciliation-2026-07-30",
+  "state_version": 554,
+  "previous_event_hash": "7e8ffc4d9380f040eafe7066591bb189ae42a09fecc6a820d2c53639b0f47e90",
+  "observed_at": "2026-07-30T02:48:50Z",
+  "lease_owner": "codex-contract-reconciliation",
+  "lease_expires_at": "2026-07-30T03:48:50Z",
+  "heartbeat_at": "2026-07-30T02:48:50Z",
+  "action_id": "reconcile-current-main-import-attribution-contract",
+  "idempotency_key": "resume-ir-270-contract-reconciliation-v1",
+  "expected_state_version": 553,
+  "last_confirmed_side_effect": "github_issue_270_created_and_issue_217_routed",
+  "next_wake_at": "2026-07-30T03:00:00Z",
+  "transition": {
+    "name": "reconcile_current_main_import_attribution_contract",
+    "from": "pr_opened",
+    "to": "evidence_review"
+  },
+  "result": "passed",
+  "evidence_refs": [
+    "https://github.com/FrankQDWang/resume-ir/issues/270",
+    "https://github.com/FrankQDWang/resume-ir/issues/217#issuecomment-5125736859",
+    "https://github.com/FrankQDWang/resume-ir/pull/249",
+    "https://github.com/FrankQDWang/resume-ir/pull/267",
+    "https://github.com/FrankQDWang/resume-ir/pull/269"
+  ],
+  "observation": {
+    "live_main_sha": "0387506bc381aaa04ded9eb67cc213ffcd9c6797",
+    "merged_prior_prs": ["#249", "#267", "#269"],
+    "current_schema": 35,
+    "owner_issue": "#270",
+    "primary_benchmark_lane": "full_import_ocr_backlog",
+    "configured_private_roots": false,
+    "private_input_capability": "blocked_missing_configured_private_roots",
+    "current_slice": "#270 current-main installed-equivalent import attribution contract",
+    "active_prs": [],
+    "transition_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/270"
+  },
+  "verification": [
+    {"command": "python3 scripts/ci/check-performance-contracts.py", "exit_code": 0, "evidence_ref": "PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
+    {"command": "python3 scripts/ci/check-autonomous-goal.py", "exit_code": 0, "evidence_ref": "PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
+    {"command": "python3 scripts/ci/check-loop-state.py", "exit_code": 0, "evidence_ref": "PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
+    {"command": "./scripts/ci/guard-public-repo.sh", "exit_code": 0, "evidence_ref": "PROGRESS.md#current-main-import-attribution-contract-reconciliation"}
+  ],
+  "privacy": {
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false
+  }
+}
