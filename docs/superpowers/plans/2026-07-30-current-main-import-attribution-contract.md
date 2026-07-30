@@ -1,13 +1,31 @@
-# Current-Main Import Attribution Contract Plan
+# Current-Main Import Attribution Contract and Plan
 
-Spec: `docs/superpowers/specs/2026-07-30-current-main-import-attribution-contract.md`
-Assumption: live Git/GitHub and code are execution truth; this W0 repair needs no private input or product behavior.
+Issue #270 is the sole owner of current-main installed-equivalent import
+attribution; #217 remains an open umbrella. The primary lane is
+`full_import_ocr_backlog`, with four independent milestones. The repair observed
+remote main `0387506bc381aaa04ded9eb67cc213ffcd9c6797` and schema v35.
+`git_head_sha` is an observed-base pin, not live-current authority.
 
-1. Keep #270 as the sole owner and #217 as an open umbrella.
-2. Align schema v35, macOS-only delivery, private permission, primary lane and four non-substitutable milestones.
-3. Split reconciliation from post-merge attribution; require fresh merged main, configured roots and runtime capability, otherwise record `blocked_missing_configured_private_roots`.
-4. Preserve 554/555; make the reducer graph-driven for continuous 556+ events with executable illegal-edge/hash/version negative tests.
-5. Mark routing as delegation and the snapshot SHA as observed base, not live-current authority.
-6. Run reducer/performance/autonomous/loop/integrity/public guards within 15 files/800 net lines, then commit/push/update the draft PR. Do not merge.
+Reconciliation allows 15 public paths and no benchmark/profile. After normal
+merge and cleanup, #270 must freshly observe merged main and take one path:
 
-Success is a reproducible snapshot and reachable attribution phase with no private claim. Rollback reverts the contract commits and closes #270 as `not planned`, without touching main, user data, runtime or installed apps.
+```text
+fresh main + configured roots + capability -> goal_authorized
+missing configured roots -> blocked_permission
+  blocker: blocked_missing_configured_private_roots
+```
+
+Attribution permits benchmark/profile execution and bounded redacted evidence,
+but no production edit, guessed root, HOME scan, private publication, App/DMG,
+installed acceptance or goal-complete claim. Legacy install stays with #217.
+
+1. Align schema v35, permissions, lane and milestones.
+2. Keep 554/555 immutable; reduce continuous 556+ events from the graph.
+3. Use v2 only for #217 → #270 umbrella delegation; preserve generic v1
+   terminal handoffs.
+4. Generate state through the reducer; run negative, contract, privacy and exact
+   budget gates; push the draft PR without merging.
+
+Success is truthful policy/routing, reproducible state and a reachable
+post-merge phase without private claims. Rollback reverts this contract slice
+and closes #270 as `not planned`; it never touches main, private data or apps.

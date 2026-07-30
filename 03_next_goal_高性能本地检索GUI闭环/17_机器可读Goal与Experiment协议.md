@@ -24,7 +24,7 @@ Policy truth lives in `ACTIVE_GOAL.toml`, `perf/acceptance-matrix.toml`, schemas
 
 1. 每次长程 Codex 执行开始时读取 `ACTIVE_GOAL.toml`。
 2. 若执行目标、允许路径、隐私边界或 active slice 与用户请求冲突，停止实现并回到 linked GitHub issue 重新 observe/锁定合同；不得加载旧 `fw-*` wrapper。
-3. #138/#140 audit 和 public contract 已完成，#152 local freezer 已合并关闭；当前 #155 active slice 只允许 deterministic classifier core 和 frozen public-synthetic tests。Storage/index admission、OCR wiring、private calibration、GUI、query-hot-path、新 L4 和 profile optimization 仍在范围外。
+3. 历史 #155 classifier slice 已完成；当前 #270 是 current-main installed-equivalent import attribution 的唯一 owner。合同修复期只允许 W0 public contract 工作；合并清理后仍由 #270 在 fresh merged-main、configured-root 与 runtime-capability 证据齐备时进入 attribution execution，缺 root 则进入 `blocked_missing_configured_private_roots`。不得把该授权解释为优化、App/DMG、installed acceptance、W1/D10K 或 goal completion。
 4. 目标锁不能被实现者临时放宽。需要放宽时必须先更新 linked GitHub issue 与 `ACTIVE_GOAL.toml`，再重新验证机器合同。
 
 ## 3. Experiment Report Rules

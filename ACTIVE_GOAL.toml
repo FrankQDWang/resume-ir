@@ -5,7 +5,7 @@ date = "2026-07-30"
 [authority]
 root_goal = "GOAL.md"
 active_goal_docs_root = "03_next_goal_高性能本地检索GUI闭环"
-spec = "docs/superpowers/specs/2026-07-30-current-main-import-attribution-contract.md"
+spec = "docs/superpowers/plans/2026-07-30-current-main-import-attribution-contract.md"
 plan = "docs/superpowers/plans/2026-07-30-current-main-import-attribution-contract.md"
 review_ledger = "03_next_goal_高性能本地检索GUI闭环/12_Review问题映射与修复责任.md"
 loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md"
@@ -26,8 +26,8 @@ scope_exception_reason = "Issue #270 owns one W0 contract-reconciliation phase p
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
-  "docs/superpowers/specs/2026-07-30-current-main-import-attribution-contract.md",
   "docs/superpowers/plans/2026-07-30-current-main-import-attribution-contract.md",
+  "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md",
   "perf/acceptance-matrix.toml",
   "perf/active-slice-transition.json",
   "perf/current-loop-state.json",

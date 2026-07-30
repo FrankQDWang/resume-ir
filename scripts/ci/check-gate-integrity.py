@@ -47,6 +47,9 @@ NEXT_ISSUE_CONTRACT_PATHS = {
     "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
     "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
     "03_next_goal_高性能本地检索GUI闭环/10_实施切片与验收门槛.md",
+    "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md",
+    "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md",
+    "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md",
 }
 CLASSIFIER_CORE_PATHS = {
     "ACTIVE_GOAL.toml",
@@ -115,14 +118,20 @@ SUCCESSOR_TRANSITION_PATHS = {
 SUCCESSOR_TRANSITION_BOOTSTRAP_PATHS = SUCCESSOR_TRANSITION_PATHS | {
     "scripts/ci/check-gate-integrity.py",
 }
+TRANSITION_COMMON_KEYS = {
+    "schema_version", "transition_id", "from_issue", "to_issue",
+    "successor_issue_ref", "base_active_goal_sha256", "state_paths",
+    "bootstrap_gate_change", "production_code_changed", "blind_holdout_reread",
+    "gate_weakening", "privacy",
+}
 CURRENT_MAIN_ATTRIBUTION_PR_EVENT = (
     "perf/runs/contract-reconciliation-2026-07-30/events/555.json"
 )
 CURRENT_MAIN_ATTRIBUTION_PRE_PR_PATHS = {
     "ACTIVE_GOAL.toml",
     "PROGRESS.md",
-    "docs/superpowers/specs/2026-07-30-current-main-import-attribution-contract.md",
     "docs/superpowers/plans/2026-07-30-current-main-import-attribution-contract.md",
+    "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md",
     "perf/acceptance-matrix.toml",
     "perf/active-slice-transition.json",
     "perf/current-loop-state.json",
@@ -244,6 +253,68 @@ def load_toml_at_revision(revision: str, path: str) -> dict:
     return tomllib.loads(git(["show", f"{revision}:{path}"]))
 
 
+def validate_transition_record_shape(raw: dict, base_issue: str, head_issue: str) -> bool:
+    current_main_attribution = (base_issue, head_issue) == ("#217", "#270")
+    if current_main_attribution:
+        routing_keys = {
+            "routing_kind", "source_issue_role", "source_issue_remains_open",
+            "source_issue_terminal_claim", "routing_evidence_ref",
+        }
+        routing = {
+            "routing_kind": "umbrella_to_bounded_execution_owner",
+            "source_issue_role": "umbrella", "source_issue_remains_open": True,
+            "source_issue_terminal_claim": False,
+        }
+        for key, expected in routing.items():
+            if raw.get(key) != expected:
+                fail(f"{SUCCESSOR_TRANSITION_RECORD}.{key}: mismatch")
+        schema, evidence_key = "resume-ir.active-slice-transition.v2", "routing_evidence_ref"
+    else:
+        routing_keys = {"predecessor_terminal_evidence_ref"}
+        schema = "resume-ir.active-slice-transition.v1"
+        evidence_key = "predecessor_terminal_evidence_ref"
+    if raw.get("schema_version") != schema:
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.schema_version: mismatch")
+    if set(raw) != TRANSITION_COMMON_KEYS | routing_keys:
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}: keys mismatch")
+    evidence_ref = require_non_empty_string(
+        raw.get(evidence_key), f"{SUCCESSOR_TRANSITION_RECORD}.{evidence_key}"
+    )
+    if not evidence_ref.startswith(
+        f"https://github.com/FrankQDWang/resume-ir/issues/{base_issue[1:]}#issuecomment-"
+    ):
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.{evidence_key}: mismatch")
+    return current_main_attribution
+
+
+def self_test_transition_record_shapes() -> None:
+    common = {key: None for key in TRANSITION_COMMON_KEYS}
+    v1 = common | {
+        "schema_version": "resume-ir.active-slice-transition.v1",
+        "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/1#issuecomment-1",
+    }
+    v2 = common | {
+        "schema_version": "resume-ir.active-slice-transition.v2",
+        "routing_kind": "umbrella_to_bounded_execution_owner",
+        "source_issue_role": "umbrella",
+        "source_issue_remains_open": True,
+        "source_issue_terminal_claim": False,
+        "routing_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/217#issuecomment-1",
+    }
+    validate_transition_record_shape(v1, "#1", "#2")
+    validate_transition_record_shape(v2, "#217", "#270")
+    for label, record, pair in [
+        ("generic v2", v2, ("#217", "#271")),
+        ("attribution v1", v1, ("#217", "#270")),
+        ("false terminal claim", v2 | {"source_issue_terminal_claim": True}, ("#217", "#270")),
+    ]:
+        try:
+            validate_transition_record_shape(record, *pair)
+        except ValueError:
+            continue
+        fail(f"transition shape self-test accepted {label}")
+
+
 def validate_declared_successor_transition(
     base_goal: dict,
     head_goal: dict,
@@ -253,62 +324,22 @@ def validate_declared_successor_transition(
     raw = load_json(ROOT / SUCCESSOR_TRANSITION_RECORD)
     if not isinstance(raw, dict):
         fail(f"{SUCCESSOR_TRANSITION_RECORD}: expected object")
-    expected_keys = {
-        "schema_version",
-        "transition_id",
-        "from_issue",
-        "to_issue",
-        "routing_kind",
-        "source_issue_role",
-        "source_issue_remains_open",
-        "source_issue_terminal_claim",
-        "routing_evidence_ref",
-        "successor_issue_ref",
-        "base_active_goal_sha256",
-        "state_paths",
-        "bootstrap_gate_change",
-        "production_code_changed",
-        "blind_holdout_reread",
-        "gate_weakening",
-        "privacy",
-    }
-    if set(raw) != expected_keys:
-        fail(f"{SUCCESSOR_TRANSITION_RECORD}: keys mismatch")
-    if raw.get("schema_version") != "resume-ir.active-slice-transition.v2":
-        fail(f"{SUCCESSOR_TRANSITION_RECORD}.schema_version: mismatch")
-    require_non_empty_string(raw.get("transition_id"), f"{SUCCESSOR_TRANSITION_RECORD}.transition_id")
     base_slice = base_goal.get("scope", {}).get("active_slice", {})
     head_slice = head_goal.get("scope", {}).get("active_slice", {})
     base_issue = require_issue_ref(base_slice.get("issue"), "base.scope.active_slice.issue")
     head_issue = require_issue_ref(head_slice.get("issue"), "head.scope.active_slice.issue")
+    current_main_attribution = validate_transition_record_shape(raw, base_issue, head_issue)
+    require_non_empty_string(raw.get("transition_id"), f"{SUCCESSOR_TRANSITION_RECORD}.transition_id")
     if raw.get("from_issue") != base_issue or raw.get("to_issue") != head_issue:
         fail(f"{SUCCESSOR_TRANSITION_RECORD}: issue transition mismatch")
     expected_successor_ref = f"https://github.com/FrankQDWang/resume-ir/issues/{head_issue[1:]}"
     if raw.get("successor_issue_ref") != expected_successor_ref:
         fail(f"{SUCCESSOR_TRANSITION_RECORD}.successor_issue_ref: mismatch")
-    routing = {
-        "routing_kind": "umbrella_to_bounded_execution_owner",
-        "source_issue_role": "umbrella",
-        "source_issue_remains_open": True,
-        "source_issue_terminal_claim": False,
-    }
-    for key, expected in routing.items():
-        if raw.get(key) != expected:
-            fail(f"{SUCCESSOR_TRANSITION_RECORD}.{key}: mismatch")
-    evidence_ref = require_non_empty_string(
-        raw.get("routing_evidence_ref"),
-        f"{SUCCESSOR_TRANSITION_RECORD}.routing_evidence_ref",
-    )
-    if not evidence_ref.startswith(
-        f"https://github.com/FrankQDWang/resume-ir/issues/{base_issue[1:]}#issuecomment-"
-    ):
-        fail(f"{SUCCESSOR_TRANSITION_RECORD}.routing_evidence_ref: mismatch")
     base_goal_source = subprocess.check_output(
         ["git", "show", f"{merge_base}:ACTIVE_GOAL.toml"], cwd=ROOT
     )
     if raw.get("base_active_goal_sha256") != source_sha256(base_goal_source):
         fail(f"{SUCCESSOR_TRANSITION_RECORD}.base_active_goal_sha256: mismatch")
-    current_main_attribution = (base_issue, head_issue) == ("#217", "#270")
     expected_state_paths = (
         CURRENT_MAIN_ATTRIBUTION_STATE_PATHS
         if current_main_attribution
@@ -647,6 +678,12 @@ def is_gate_path(path: str) -> bool:
 
 
 def main() -> int:
+    self_test_transition_record_shapes()
+    if sys.argv[1:]:
+        if sys.argv[1:] == ["--self-test"]:
+            print("check-gate-integrity.py self-test passed")
+            return 0
+        fail("usage: check-gate-integrity.py [--self-test]")
     active_goal = load_toml(ROOT / "ACTIVE_GOAL.toml")
     merge_base, paths = merge_base_and_changed_paths()
     base_goal = load_toml_at_revision(merge_base, "ACTIVE_GOAL.toml")

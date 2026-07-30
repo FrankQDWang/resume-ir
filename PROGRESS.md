@@ -8,26 +8,18 @@ production-ready scope source.
 ## Current-main import attribution contract reconciliation
 
 Issue #270 is the single execution owner for current-main installed-equivalent
-import attribution. The observed base was
-`0387506bc381aaa04ded9eb67cc213ffcd9c6797`; PRs #249/#267/#269 are merged,
-#268 is closed, #217 remains an umbrella and #37 is historical. Contracts and
-checkers now agree on schema v35 and the `full_import_ocr_backlog` primary lane
-with four independent milestones.
+import attribution; #217 remains an open umbrella. Contracts use schema v35,
+the `full_import_ocr_backlog` lane and four independent milestones.
 
 - Reconciliation forbids execution. After normal merge/cleanup, #270 may enter
-  `goal_authorized` only after fresh merged-main, configured-root and runtime
-  capability evidence; otherwise it records `blocked_permission` with
+  `goal_authorized` after fresh-main/root/capability evidence, or records
   `blocked_missing_configured_private_roots`.
-- The #217 → #270 record is umbrella delegation, not terminal evidence.
-  Events 554/555 remain immutable. The graph-driven reducer accepts continuous
-  556+ events; focused tests reject illegal edges, broken hashes and gaps.
-- The legacy-named snapshot `git_head_sha` is only the observed base. Fresh
-  live Git is mandatory authority for later attribution, avoiding a
-  self-staling follow-up PR.
-- Reducer, performance, autonomous, loop, integrity and public guards pass.
-  No private read, benchmark/profile, business code, App/DMG, install,
-  acceptance, soak, Windows/Linux work, W1/D10K attribution or goal-complete
-  claim occurred.
+- #217 → #270 is v2 umbrella delegation, while generic terminal handoffs remain
+  v1. Events 554/555 stay immutable; reducer self-tests cover continuous 556+,
+  illegal edges, broken hashes, gaps and routing compatibility.
+- Snapshot `git_head_sha` is observed base, never live-current authority.
+- Contract/privacy gates pass. No private read, benchmark/profile, business
+  code, App/DMG, installed acceptance, W1/D10K or goal-complete claim occurred.
 
 ## Persistent file-observation fast path (v35 / #268)
 
