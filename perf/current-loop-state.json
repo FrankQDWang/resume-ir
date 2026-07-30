@@ -1,7 +1,7 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
+  "workflow_state": "pr_opened",
   "experiment_state": "contract_locked",
   "evidence_lane": "w0_docs",
   "contract_pins": {
@@ -695,7 +695,8 @@
     {"from":"verification_active","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/247"},
     {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ready-control-plane-independence-repair-f25--2026-07-27"},
     {"from":"verification_active","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/248"},
-    {"from":"pr_opened","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"}
+    {"from":"pr_opened","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"},
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"}
   ],
   "verification": {
     "commands": [
@@ -2924,6 +2925,10 @@
       {"command":"python3 scripts/ci/check-performance-contracts.py","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
       {"command":"python3 scripts/ci/check-autonomous-goal.py","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
       {"command":"python3 scripts/ci/check-loop-state.py","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
+      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
+      {"command":"python3 scripts/ci/check-performance-contracts.py","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
+      {"command":"python3 scripts/ci/check-autonomous-goal.py","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
+      {"command":"python3 scripts/ci/check-loop-state.py","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
       {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"}
     ],
     "all_required_commands_ran": true,
@@ -2939,15 +2944,17 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "contract-reconciliation-2026-07-30",
-  "state_version": 554,
-  "previous_state_hash": "7e8ffc4d9380f040eafe7066591bb189ae42a09fecc6a820d2c53639b0f47e90",
-  "expected_state_version": 554,
-  "last_confirmed_side_effect": "github_issue_270_created_and_issue_217_routed",
+  "state_version": 555,
+  "previous_state_hash": "b436b261f26308079b832ed246d2efddcfe86910960f9c4bbada20ed1eacd8c6",
+  "expected_state_version": 555,
+  "last_confirmed_side_effect": "draft_pr_271_created_at_1b55835ae3d5550a35faaafd540ee95abdb6d46b",
   "blocked_count": 0,
   "same_blocker_key": "blocked_missing_configured_private_roots",
   "github_ledger": {
     "primary_issue": "#270",
-    "active_prs": [],
+    "active_prs": [
+      "#271"
+    ],
     "open_blockers": []
   }
 }

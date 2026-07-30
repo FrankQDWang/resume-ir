@@ -22,10 +22,10 @@ embedding-complete, and OCR-backlog/full-import milestones.
   private root was present, so later attribution records
   `blocked_missing_configured_private_roots`; this contract slice did not guess
   a path, scan `HOME`, or read private input.
-- The #217 → #270 routing is explicit. Append-only reconciliation event 554
-  records live owner/schema/capability observations, and the deterministic
-  reducer reproduces the W0 `evidence_review` snapshot byte-for-byte from the
-  main-reachable legacy snapshot plus that event.
+- The #217 → #270 routing is explicit. Event 554 records the reconciliation;
+  event 555 records live draft PR #271 at its observed head. The deterministic
+  reducer reproduces the final `pr_opened` snapshot and #270/#271 ledger
+  byte-for-byte from the main-reachable legacy snapshot plus those events.
 - `check-performance-contracts.py`, `check-autonomous-goal.py`,
   `check-loop-state.py`, the reducer check, the public-repository guard, Python
   compilation, and `git diff --check` pass. No import, OCR, embedding, index,
