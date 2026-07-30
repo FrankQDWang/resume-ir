@@ -5,16 +5,18 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, ExitStatus, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use import_pipeline::import_root_with_options;
 use meta_store::{
     DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, ImportTask, ImportTaskId,
-    ImportTaskStatus, IngestJobStatus, OwnedMetaStore, ReadMetaStore, UnixTimestamp,
+    ImportTaskStatus, IngestJobStatus, OwnedMetaStore, ReadMetaStore, ScanTrigger, UnixTimestamp,
 };
 use process_containment::ContainedChild;
 use sha2::{Digest, Sha256};
 
+#[path = "support/ocr_publication_load_witness.rs"]
+mod publication_load_witness;
 mod support;
 
 // OCR execution, page budgeting, retry, cache, and renderer semantics remain
@@ -402,6 +404,244 @@ fn reviewed_ocr_pack_remains_available_across_fresh_daemon_generations() {
 }
 
 #[test]
+fn ocr_publication_keeps_first_fulltext_query_on_one_ready_daemon_generation() {
+    assert_ocr_publication_first_query_mode("fulltext", Duration::from_millis(120));
+}
+
+#[test]
+fn ocr_publication_keeps_first_semantic_query_on_one_ready_daemon_generation() {
+    assert_ocr_publication_first_query_mode("semantic", Duration::from_millis(500));
+}
+
+#[test]
+fn ocr_publication_keeps_first_hybrid_query_on_one_ready_daemon_generation() {
+    assert_ocr_publication_first_query_mode("hybrid", Duration::from_millis(250));
+}
+
+fn assert_ocr_publication_first_query_mode(mode: &str, redline: Duration) {
+    let runtime_capacity = support::import_runtime_capacity_lease();
+    let scanned_fixture = synthetic_scanned_resume_pdf();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let daemon = support::fully_capable_daemon_command(&runtime_capacity);
+    assert_ocr_publication_first_query(
+        daemon,
+        &scanned_fixture,
+        UnixTimestamp::from_unix_seconds(now),
+        mode,
+        redline,
+    );
+}
+
+fn assert_ocr_publication_first_query(
+    mut daemon: Command,
+    scanned_fixture: &[u8],
+    now: UnixTimestamp,
+    mode: &str,
+    redline: Duration,
+) {
+    let label = format!("ocr-publication-{mode}-first-query");
+    let data_dir = data_dir_with_queued_ocr_witness_corpus(&label, scanned_fixture, now);
+    assert_eq!(
+        queued_ocr_job_status(&data_dir),
+        IngestJobStatus::Queued,
+        "synthetic scanned fixture must enter the OCR queue"
+    );
+    daemon
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--parent-lifecycle-stdin",
+            "--launch-id",
+            "5151515151515151515151515151515151515151515151515151515151515151",
+            "--work-ocr",
+            "--work-index",
+            "--worker-interval-ms",
+            "10000",
+            "--ipc-listen",
+            "127.0.0.1:0",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let mut child = ContainedChild::spawn(&mut daemon).unwrap();
+    let daemon_pid = child.id();
+    let parent_stdin = child.take_stdin().unwrap();
+    let generation = wait_for_generation(&mut child, &data_dir);
+    let initial = wait_for_status(&mut child, &generation, |status| {
+        status["core"]["state"] == "ready"
+            && status["capabilities"]["ocr_import"]["state"] == "available"
+    });
+    assert_eq!(initial["core"]["state"], "ready");
+    assert_eq!(
+        initial["capabilities"]["ocr_import"]["state"], "available",
+        "{initial}"
+    );
+    let warm_deadline = Instant::now() + STARTUP_TIMEOUT;
+    let mut warm_attempt = 0_u32;
+    let warm_old_payload = loop {
+        let response = authenticated_search(
+            &generation.search_endpoint,
+            &generation.token,
+            &format!("ocr-before-publication-{mode}-{warm_attempt}"),
+            mode,
+        );
+        let payload = response_payload(&response);
+        if payload["status"] == "ok" {
+            break payload;
+        }
+        warm_attempt += 1;
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "daemon exited while warming the old query generation"
+        );
+        assert!(
+            Instant::now() < warm_deadline,
+            "old query generation did not become hot: {payload}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(warm_old_payload["status"], "ok", "{warm_old_payload}");
+    assert_eq!(warm_old_payload["partial"], false, "{warm_old_payload}");
+    assert!(
+        warm_old_payload["result_count"].as_u64().unwrap() >= 2,
+        "{warm_old_payload}"
+    );
+    let before = ReadMetaStore::open_data_dir(&data_dir)
+        .unwrap()
+        .search_projection_state()
+        .unwrap();
+    assert_eq!(
+        queued_ocr_job_status(&data_dir),
+        IngestJobStatus::Queued,
+        "OCR must remain unclaimed until the old query generation is hot"
+    );
+
+    let publication_deadline = Instant::now() + Duration::from_secs(120);
+    let witness_store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+    let after = loop {
+        let job = witness_store.ingest_jobs().unwrap().remove(0);
+        let state = witness_store.search_projection_state().unwrap();
+        if job.status == IngestJobStatus::Completed && state.visible_epoch > before.visible_epoch {
+            break state;
+        }
+        if job.status == IngestJobStatus::Completed {
+            let documents = witness_store.visible_documents().unwrap();
+            let content_hashes = documents
+                .iter()
+                .filter_map(|document| document.content_hash.clone())
+                .collect::<Vec<_>>();
+            let cache_entries = witness_store
+                .ocr_page_cache_entries_for_content_hashes(&content_hashes)
+                .unwrap();
+            panic!(
+                "synthetic OCR completed without publication: document_statuses={:?}, cache_entry_count={}, cache_statuses={:?}, projection_state={state:?}",
+                documents
+                    .iter()
+                    .map(|document| document.status)
+                    .collect::<Vec<_>>(),
+                cache_entries.len(),
+                cache_entries
+                    .iter()
+                    .map(meta_store::OcrPageCacheEntry::status)
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert!(
+            !matches!(
+                job.status,
+                IngestJobStatus::FailedRetryable
+                    | IngestJobStatus::FailedPermanent
+                    | IngestJobStatus::Interrupted
+            ),
+            "synthetic OCR publication reached terminal status {:?}",
+            job.status
+        );
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "daemon exited during synthetic OCR publication"
+        );
+        assert!(
+            Instant::now() < publication_deadline,
+            "synthetic OCR publication timed out with job status {:?} and projection state {:?}",
+            job.status,
+            state
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+    let publication_status = wait_for_status(&mut child, &generation, |status| {
+        status["capabilities"]["semantic_search"]["state"] == "available"
+            && status["capabilities"]["hybrid_search"]["state"] == "available"
+    });
+    assert_eq!(publication_status["core"]["state"], "ready");
+    thread::sleep(Duration::from_millis(250));
+
+    let expected = witness_store
+        .with_search_metadata_snapshot(|snapshot| {
+            snapshot.validated_active_projections().map_err(|_| ())
+        })
+        .unwrap();
+    assert!(
+        expected.len() >= 2,
+        "synthetic query corpus must be searchable"
+    );
+    let started = Instant::now();
+    let response = authenticated_search(
+        &generation.search_endpoint,
+        &generation.token,
+        &format!("ocr-first-{mode}"),
+        mode,
+    );
+    let elapsed = started.elapsed();
+    let payload = response_payload(&response);
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert_eq!(payload["status"], "ok", "{payload}");
+    assert_eq!(payload["visible_epoch"], after.visible_epoch);
+    assert_eq!(payload["partial"], false, "{payload}");
+    assert_eq!(payload["partial_reasons"], serde_json::json!([]));
+    let first_order = result_selection_order(&payload);
+    assert!(!first_order.is_empty(), "{payload}");
+    for (rank, (document_id, version_id)) in first_order.iter().enumerate() {
+        assert_eq!(payload["results"][rank]["rank"], rank + 1);
+        assert!(expected.iter().any(|projection| {
+            projection.document_id.as_str() == document_id
+                && projection.resume_version_id.as_str() == version_id
+        }));
+    }
+    assert!(
+        elapsed < redline,
+        "first {mode} query took {elapsed:?}, redline is {redline:?}"
+    );
+    assert_eq!(child.id(), daemon_pid);
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "daemon exited after first {mode} query"
+    );
+    let warm_response = authenticated_search(
+        &generation.search_endpoint,
+        &generation.token,
+        &format!("ocr-warm-{mode}"),
+        mode,
+    );
+    let warm_payload = response_payload(&warm_response);
+    assert_eq!(warm_payload["visible_epoch"], after.visible_epoch);
+    assert_eq!(warm_payload["partial"], false, "{warm_payload}");
+    assert_eq!(result_selection_order(&warm_payload), first_order);
+    let current_generation = wait_for_generation(&mut child, &data_dir);
+    assert_eq!(current_generation.launch_id, generation.launch_id);
+    assert_eq!(current_generation.instance_id, generation.instance_id);
+
+    drop(parent_stdin);
+    let (status, stderr) = wait_contained_with_stderr(child);
+    assert!(status.success(), "{stderr}");
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn ready_daemon_downgrades_tampered_ocr_runtime_without_losing_core_reads() {
     let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = ready_data_dir("ocr-runtime-tamper-degrades");
@@ -488,6 +728,9 @@ fn status_from(
 struct Generation {
     token: String,
     status_endpoint: String,
+    search_endpoint: String,
+    launch_id: String,
+    instance_id: String,
 }
 
 fn wait_for_generation(child: &mut impl PollDaemonChild, data_dir: &Path) -> Generation {
@@ -504,6 +747,9 @@ fn wait_for_generation(child: &mut impl PollDaemonChild, data_dir: &Path) -> Gen
                 return Generation {
                     token: auth["token"].as_str().unwrap().to_string(),
                     status_endpoint: endpoints["status"].as_str().unwrap().to_string(),
+                    search_endpoint: endpoints["search"].as_str().unwrap().to_string(),
+                    launch_id: endpoints["launch_id"].as_str().unwrap().to_string(),
+                    instance_id: endpoints["instance_id"].as_str().unwrap().to_string(),
                 };
             }
         }
@@ -602,6 +848,57 @@ fn authenticated_get(endpoint: &str, token: &str) -> String {
     response
 }
 
+fn authenticated_search(endpoint: &str, token: &str, request_id: &str, mode: &str) -> String {
+    let (address, path) = endpoint
+        .strip_prefix("http://")
+        .unwrap()
+        .split_once('/')
+        .unwrap();
+    let body = serde_json::json!({
+        "schema_version": "resume-ir.ipc-request.v3",
+        "request_id": request_id,
+        "client_capability": "codex_validation",
+        "deadline_ms": 5_000,
+        "payload": {
+            "query": "synthetic witness",
+            "mode": mode,
+            "top_k": 10
+        }
+    })
+    .to_string();
+    let mut stream = TcpStream::connect(address).unwrap();
+    write!(
+        stream,
+        "POST /{path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    response
+}
+
+fn response_payload(response: &str) -> serde_json::Value {
+    serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+}
+
+fn result_selection_order(payload: &serde_json::Value) -> Vec<(String, String)> {
+    payload["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|result| {
+            (
+                result["selection"]["doc_id"].as_str().unwrap().to_string(),
+                result["selection"]["version_id"]
+                    .as_str()
+                    .unwrap()
+                    .to_string(),
+            )
+        })
+        .collect()
+}
+
 fn ready_data_dir(label: &str) -> PathBuf {
     let data_dir = temp_dir(label);
     let store = open_owned_store(&data_dir);
@@ -626,17 +923,61 @@ fn ready_data_dir(label: &str) -> PathBuf {
 }
 
 fn data_dir_with_queued_ocr(label: &str) -> PathBuf {
+    data_dir_with_queued_ocr_bytes_at(
+        label,
+        &single_page_pdf(),
+        UnixTimestamp::from_unix_seconds(1_800_050_000),
+    )
+}
+
+fn data_dir_with_queued_ocr_bytes_at(label: &str, pdf: &[u8], now: UnixTimestamp) -> PathBuf {
+    data_dir_with_queued_ocr_corpus(label, pdf, now, 1, 0)
+}
+
+fn data_dir_with_queued_ocr_witness_corpus(label: &str, pdf: &[u8], now: UnixTimestamp) -> PathBuf {
+    data_dir_with_queued_ocr_corpus(label, pdf, now, 1, 2)
+}
+
+fn data_dir_with_queued_ocr_load_corpus(
+    label: &str,
+    pdf: &[u8],
+    now: UnixTimestamp,
+    ocr_documents: usize,
+    searchable_seeds: usize,
+) -> PathBuf {
+    data_dir_with_queued_ocr_corpus(label, pdf, now, ocr_documents, searchable_seeds)
+}
+
+fn data_dir_with_queued_ocr_corpus(
+    label: &str,
+    pdf: &[u8],
+    now: UnixTimestamp,
+    ocr_documents: usize,
+    searchable_seeds: usize,
+) -> PathBuf {
     let data_dir = temp_dir(label);
     let private_root = data_dir.join("synthetic-scanned-resumes");
     fs::create_dir_all(&private_root).unwrap();
-    fs::write(
-        private_root.join("synthetic-scanned.pdf"),
-        single_page_pdf(),
-    )
-    .unwrap();
+    for index in 0..ocr_documents {
+        let mut variant = pdf.to_vec();
+        variant.extend_from_slice(format!("\n% synthetic-variant-{index}\n").as_bytes());
+        fs::write(
+            private_root.join(format!("synthetic-scanned-{index:04}.pdf")),
+            variant,
+        )
+        .unwrap();
+    }
+    for index in 0..searchable_seeds {
+        fs::write(
+            private_root.join(format!("synthetic-witness-{index:04}.txt")),
+            format!(
+                "SUMMARY\nSynthetic witness candidate {index}\nEXPERIENCE\nBuilt Rust retrieval systems\nSKILLS\nRust Search SQL"
+            ),
+        )
+        .unwrap();
+    }
     let canonical_root = fs::canonicalize(&private_root).unwrap();
     let store = open_owned_store(&data_dir);
-    let now = UnixTimestamp::from_unix_seconds(1_800_050_000);
     let task = ImportTask {
         id: ImportTaskId::from_non_secret_parts(&["s50", label]),
         root_path: path_str(&canonical_root).to_string(),
@@ -646,17 +987,39 @@ fn data_dir_with_queued_ocr(label: &str) -> PathBuf {
         finished_at: None,
         updated_at: now,
     };
-    support::insert_import_task_with_reviewed_contract(&store, &task);
-    import_root_with_options(
+    let source_root = store
+        .register_source_root(
+            path_str(&canonical_root),
+            path_str(&canonical_root),
+            "synthetic OCR publication witness",
+            now,
+        )
+        .unwrap();
+    store
+        .begin_scan(&source_root.id, task.id.as_str(), ScanTrigger::Manual, now)
+        .unwrap();
+    let processing_contract = support::insert_import_task_with_reviewed_contract(&store, &task);
+    let mut import_options = support::reviewed_import_options();
+    import_options.search_vectorization = publication_load_witness::witness_vectorization();
+    let summary = import_root_with_options(
         &data_dir,
         &store,
         &task,
         &canonical_root,
         now,
-        support::reviewed_import_options(),
+        import_options,
     )
     .unwrap();
-    assert_eq!(store.ingest_jobs().unwrap().len(), 1);
+    import_pipeline::finish_source_scan_success(
+        &store,
+        path_str(&canonical_root),
+        &task.id,
+        &processing_contract,
+        &summary,
+        now,
+    )
+    .unwrap();
+    assert_eq!(store.ingest_jobs().unwrap().len(), ocr_documents);
     drop(store);
     data_dir
 }
@@ -675,6 +1038,127 @@ fn open_owned_store(data_dir: &Path) -> OwnedMetaStore {
         DataDirectoryOwnerAcquisition::Contended => panic!("synthetic data dir is owned"),
     };
     owner.open_store().unwrap()
+}
+
+fn synthetic_scanned_resume_pdf() -> Vec<u8> {
+    let directory = temp_dir("synthetic-scanned-resume-source");
+    let source = directory.join("synthetic-text-resume.pdf");
+    fs::write(&source, synthetic_text_resume_pdf()).unwrap();
+    let rendered = Command::new(support::attested_pdf_renderer())
+        .env("RESUME_IR_PDF_RENDER_INPUT_PATH", &source)
+        .env("RESUME_IR_PDF_RENDER_PAGE_NO", "1")
+        .env("RESUME_IR_PDF_RENDER_DPI", "150")
+        .output()
+        .unwrap();
+    assert!(
+        rendered.status.success(),
+        "synthetic PDF rasterization failed: {}",
+        String::from_utf8_lossy(&rendered.stderr)
+    );
+    let scanned = image_pdf_from_ppm(&rendered.stdout);
+    remove_dir(&directory);
+    scanned
+}
+
+fn synthetic_text_resume_pdf() -> Vec<u8> {
+    let content = b"BT\n\
+/F1 24 Tf\n\
+72 720 Td\n\
+(SUMMARY) Tj\n\
+0 -36 Td\n\
+(Synthetic Witness Candidate) Tj\n\
+0 -48 Td\n\
+(EXPERIENCE) Tj\n\
+0 -36 Td\n\
+(Built Rust retrieval systems) Tj\n\
+0 -48 Td\n\
+(SKILLS) Tj\n\
+0 -36 Td\n\
+(Rust Search SQL) Tj\n\
+ET\n";
+    build_pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>".to_vec(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_vec(),
+        [
+            format!("<< /Length {} >>\nstream\n", content.len()).as_bytes(),
+            content,
+            b"endstream",
+        ]
+        .concat(),
+    ])
+}
+
+fn image_pdf_from_ppm(ppm: &[u8]) -> Vec<u8> {
+    let first_newline = ppm.iter().position(|byte| *byte == b'\n').unwrap();
+    assert_eq!(&ppm[..first_newline], b"P6");
+    let second_newline = ppm[first_newline + 1..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map(|offset| first_newline + 1 + offset)
+        .unwrap();
+    let dimensions = std::str::from_utf8(&ppm[first_newline + 1..second_newline]).unwrap();
+    let (width, height) = dimensions.split_once(' ').unwrap();
+    let width: usize = width.parse().unwrap();
+    let height: usize = height.parse().unwrap();
+    let third_newline = ppm[second_newline + 1..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map(|offset| second_newline + 1 + offset)
+        .unwrap();
+    assert_eq!(&ppm[second_newline + 1..third_newline], b"255");
+    let pixels = &ppm[third_newline + 1..];
+    assert_eq!(pixels.len(), width * height * 3);
+    let image = [
+        format!(
+            "<< /Type /XObject /Subtype /Image /Width {width} /Height {height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length {} >>\nstream\n",
+            pixels.len()
+        )
+        .as_bytes(),
+        pixels,
+        b"\nendstream",
+    ]
+    .concat();
+    let content = b"q\n612 0 0 792 0 0 cm\n/Im1 Do\nQ\n";
+    build_pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 4 0 R >> >> /MediaBox [0 0 612 792] /Contents 5 0 R >>".to_vec(),
+        image,
+        [
+            format!("<< /Length {} >>\nstream\n", content.len()).as_bytes(),
+            content,
+            b"endstream",
+        ]
+        .concat(),
+    ])
+}
+
+fn build_pdf(objects: &[Vec<u8>]) -> Vec<u8> {
+    let mut output = b"%PDF-1.4\n%\xff\xff\xff\xff\n".to_vec();
+    let mut offsets = Vec::new();
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(output.len());
+        output.extend_from_slice(format!("{} 0 obj\n", index + 1).as_bytes());
+        output.extend_from_slice(object);
+        output.extend_from_slice(b"\nendobj\n");
+    }
+    let xref = output.len();
+    output.extend_from_slice(
+        format!("xref\n0 {}\n0000000000 65535 f\r\n", objects.len() + 1).as_bytes(),
+    );
+    for offset in offsets {
+        output.extend_from_slice(format!("{offset:010} 00000 n\r\n").as_bytes());
+    }
+    output.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    output
 }
 
 fn single_page_pdf() -> Vec<u8> {

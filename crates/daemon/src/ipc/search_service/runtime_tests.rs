@@ -6,6 +6,12 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use import_pipeline::{
+    current_import_processing_contract, finalize_migration_rebuild, ImportOptions,
+    PipelineRunControl, SearchPublicationVectorization,
+};
+use meta_store::{DataDirectoryOwnerAcquisition, UnixTimestamp};
+
 use crate::ipc::search_service::admission::{AdmissionState, ClientClass};
 use crate::ipc::search_service::cancellation::CancellationRegistry;
 use crate::ipc::search_service::wire::{RequestEnvelope, DEADLINE_MS_MAX};
@@ -71,6 +77,8 @@ fn queued_search_task(
 #[test]
 fn worker_prewarm_opens_query_artifacts_before_the_first_request() {
     let queue = Arc::new(SearchQueue::default());
+    queue.enable_publication();
+    assert!(!queue.publication_enabled());
     let _ = queue.close_and_cancel();
     let cancellations = Arc::new(CancellationRegistry::default());
     let (deadline_sender, _deadline_receiver) = mpsc::channel();
@@ -78,7 +86,7 @@ fn worker_prewarm_opens_query_artifacts_before_the_first_request() {
 
     run_search_worker(
         crate::search_runtime_config::SearchRuntimeConfig::new(None, None, None, 100),
-        queue,
+        Arc::clone(&queue),
         cancellations,
         deadline_sender,
         None,
@@ -90,6 +98,277 @@ fn worker_prewarm_opens_query_artifacts_before_the_first_request() {
     .unwrap();
 
     assert_eq!(open_count.load(AtomicOrdering::SeqCst), 1);
+    assert!(!queue.publication_enabled());
+}
+
+#[test]
+fn failed_startup_prewarm_recovers_without_a_query_after_artifacts_become_ready() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    let handoff = GenerationHandoff::with_control_timeout_for_test(Duration::from_millis(250));
+    let queue = handoff.queue();
+    queue.enable_publication();
+    let cancellations = Arc::new(CancellationRegistry::default());
+    let (deadline_sender, _deadline_receiver) = mpsc::channel();
+    let (opened_sender, opened_receiver) = mpsc::channel();
+    let worker_data_dir = data_dir.clone();
+    let worker_queue = Arc::clone(&queue);
+    let worker = thread::spawn(move || {
+        run_search_worker(
+            crate::search_runtime_config::SearchRuntimeConfig::new(None, None, None, 100),
+            worker_queue,
+            cancellations,
+            deadline_sender,
+            None,
+            || {
+                let opened = crate::query_runtime::DaemonQueryRuntime::open(&worker_data_dir).ok();
+                opened_sender.send(opened.is_some()).unwrap();
+                opened
+            },
+        )
+    });
+
+    assert!(!opened_receiver.recv().unwrap());
+    assert!(!queue.publication_enabled());
+    let (_owner, store) = initialize_ready_empty_search(&data_dir);
+
+    assert!(handoff.prepare_runtime().unwrap());
+    assert!(opened_receiver.recv().unwrap());
+    assert!(queue.publication_enabled());
+    let prepared = prepared_current_generation(&data_dir, &store);
+    assert!(handoff.stage(prepared).unwrap());
+    assert!(handoff
+        .finish_publication(PublicationDisposition::Aborted)
+        .unwrap());
+
+    let _ = queue.close_and_cancel();
+    worker.join().unwrap().unwrap();
+}
+
+#[test]
+fn unconsumed_install_timeout_withdraws_and_allows_the_next_publication() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    let (_owner, store) = initialize_ready_empty_search(&data_dir);
+    let handoff = GenerationHandoff::with_control_timeout_for_test(Duration::from_millis(20));
+    let queue = handoff.queue();
+    queue.enable_publication();
+    queue.set_runtime_prepared(true);
+    let first = prepared_current_generation(&data_dir, &store);
+
+    let started = Instant::now();
+    assert!(!handoff.stage(first).unwrap());
+    assert!(started.elapsed() < Duration::from_millis(200));
+    {
+        let state = queue.state.lock().unwrap();
+        assert!(state.generation_control.is_none());
+        assert!(state.active_generation_control.is_none());
+        assert!(!state.publication_commit_in_flight);
+        assert!(!state.closed);
+    }
+
+    let cancellations = Arc::new(CancellationRegistry::default());
+    let (deadline_sender, _deadline_receiver) = mpsc::channel();
+    let worker_data_dir = data_dir.clone();
+    let worker_queue = Arc::clone(&queue);
+    let worker = thread::spawn(move || {
+        run_search_worker(
+            crate::search_runtime_config::SearchRuntimeConfig::new(None, None, None, 100),
+            worker_queue,
+            cancellations,
+            deadline_sender,
+            None,
+            || crate::query_runtime::DaemonQueryRuntime::open(&worker_data_dir).ok(),
+        )
+    });
+    let second = prepared_current_generation(&data_dir, &store);
+    assert!(handoff.stage(second).unwrap());
+    assert!(handoff
+        .finish_publication(PublicationDisposition::Aborted)
+        .unwrap());
+
+    let _ = queue.close_and_cancel();
+    worker.join().unwrap().unwrap();
+}
+
+#[test]
+fn claimed_install_timeout_is_distinguished_as_fatal_recovery() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("data");
+    let (_owner, store) = initialize_ready_empty_search(&data_dir);
+    let handoff = GenerationHandoff::with_control_timeout_for_test(Duration::from_millis(20));
+    let queue = handoff.queue();
+    queue.enable_publication();
+    queue.set_runtime_prepared(true);
+    let prepared = prepared_current_generation(&data_dir, &store);
+    let consumer_queue = Arc::clone(&queue);
+    let (claimed_sender, claimed_receiver) = mpsc::sync_channel(1);
+    let (release_sender, release_receiver) = mpsc::sync_channel(1);
+    let consumer = thread::spawn(move || {
+        let SearchWork::Generation(control) = consumer_queue.pop().unwrap() else {
+            panic!("install control must precede query work")
+        };
+        claimed_sender.send(()).unwrap();
+        release_receiver.recv().unwrap();
+        let id = control.id;
+        let GenerationControl::Install { reply, .. } = control.command else {
+            panic!("expected install control")
+        };
+        consumer_queue.complete_generation_control(id, false, false);
+        let _ = reply.send(false);
+    });
+
+    let started = Instant::now();
+    let error = handoff.stage(prepared).unwrap_err();
+    assert_eq!(error, GenerationHandoffError::Unresponsive);
+    assert!(started.elapsed() < Duration::from_millis(200));
+    claimed_receiver.recv().unwrap();
+    {
+        let state = queue.state.lock().unwrap();
+        assert!(state.control_protocol_failed);
+        assert!(state.closed);
+        assert!(state.publication_commit_in_flight);
+        assert!(state.active_generation_control.is_some());
+    }
+
+    release_sender.send(()).unwrap();
+    consumer.join().unwrap();
+    let state = queue.state.lock().unwrap();
+    assert!(state.active_generation_control.is_none());
+    assert!(state.completed_generation_control.is_none());
+    assert!(state.publication_commit_in_flight);
+}
+
+#[test]
+fn committed_finalize_timeout_is_bounded_and_forces_fatal_queue_recovery() {
+    let handoff = GenerationHandoff::with_control_timeout_for_test(Duration::from_millis(20));
+    let queue = handoff.queue();
+    queue.enable_publication();
+    {
+        let mut state = queue.state.lock().unwrap();
+        state.runtime_prepared = true;
+        state.publication_commit_in_flight = true;
+    }
+
+    let started = Instant::now();
+    let error = handoff
+        .finish_publication(PublicationDisposition::Committed)
+        .unwrap_err();
+
+    assert_eq!(error, GenerationHandoffError::Unresponsive);
+    assert!(started.elapsed() < Duration::from_millis(200));
+    let state = queue.state.lock().unwrap();
+    assert!(state.closed);
+    assert!(state.publication_commit_in_flight);
+    assert!(state.generation_control.is_none());
+}
+
+#[test]
+fn publication_requires_both_front_door_and_prepared_runtime() {
+    let queue = SearchQueue::default();
+
+    queue.enable_publication();
+    assert!(!queue.publication_enabled());
+    queue.set_runtime_prepared(true);
+    assert!(queue.publication_enabled());
+    queue.set_runtime_prepared(false);
+    assert!(!queue.publication_enabled());
+}
+
+fn initialize_ready_empty_search(
+    data_dir: &std::path::Path,
+) -> (
+    meta_store::DataDirectoryOwnerLease,
+    meta_store::OwnedMetaStore,
+) {
+    std::fs::create_dir_all(data_dir).unwrap();
+    let owner = match meta_store::DataDirectoryOwnerLease::try_acquire(data_dir).unwrap() {
+        DataDirectoryOwnerAcquisition::Acquired(owner) => owner,
+        DataDirectoryOwnerAcquisition::Contended => panic!("synthetic owner contended"),
+    };
+    let store = owner.open_store().unwrap();
+    let now = UnixTimestamp::from_unix_seconds(1_930_000_000);
+    let contract = current_import_processing_contract(&ImportOptions::default()).unwrap();
+    store
+        .activate_migration_rebuild_contract(&contract, now)
+        .unwrap();
+    let summary = finalize_migration_rebuild(
+        &store,
+        now,
+        &contract,
+        &SearchPublicationVectorization::default(),
+        &PipelineRunControl::default(),
+    )
+    .unwrap();
+    assert!(summary.active_generation_rebuilt);
+    (owner, store)
+}
+
+fn prepared_current_generation(
+    data_dir: &std::path::Path,
+    store: &meta_store::OwnedMetaStore,
+) -> search_runtime::PreparedQueryGeneration {
+    let state = store.search_projection_state().unwrap();
+    let publication = state.publication.as_ref().unwrap();
+    let projections = store
+        .with_search_metadata_snapshot(|snapshot| {
+            snapshot.validated_active_projections().map_err(|_| ())
+        })
+        .unwrap();
+    search_runtime::PreparedQueryGeneration::open(data_dir, publication, &projections).unwrap()
+}
+
+#[test]
+fn publication_commit_keeps_old_generation_queries_runnable() {
+    let handoff = GenerationHandoff::default();
+    let queue = handoff.queue();
+    let admission = Arc::new(AdmissionState::new());
+    let (_client, task) = queued_search_task("publication-fenced", &admission);
+    assert!(queue.push(task));
+    {
+        let mut state = queue.state.lock().unwrap();
+        state.publication_commit_in_flight = true;
+    }
+    assert!(matches!(queue.pop().unwrap(), SearchWork::Query(_)));
+    queue.state.lock().unwrap().publication_commit_in_flight = false;
+}
+
+#[test]
+fn generation_finalize_control_precedes_queued_interactive_query() {
+    let handoff = GenerationHandoff::default();
+    let queue = handoff.queue();
+    let admission = Arc::new(AdmissionState::new());
+    let (_client, task) = queued_search_task("queued-behind-finalize", &admission);
+    assert!(queue.push(task));
+    let (reply, response) = mpsc::sync_channel(1);
+    let id = GenerationControlId(1);
+    {
+        let mut state = queue.state.lock().unwrap();
+        state.publication_commit_in_flight = true;
+        state.generation_control = Some(QueuedGenerationControl {
+            id,
+            command: GenerationControl::Finalize {
+                disposition: PublicationDisposition::Committed,
+                reply,
+            },
+        });
+    }
+
+    let control = queue.pop().unwrap();
+    let SearchWork::Generation(QueuedGenerationControl {
+        id: popped_id,
+        command: GenerationControl::Finalize { disposition, reply },
+    }) = control
+    else {
+        panic!("generation finalize must have priority")
+    };
+    assert_eq!(popped_id, id);
+    assert_eq!(disposition, PublicationDisposition::Committed);
+    queue.complete_generation_control(id, true, true);
+    reply.send(true).unwrap();
+    assert!(response.recv().unwrap());
+    queue.acknowledge_generation_control(id);
+    assert!(matches!(queue.pop().unwrap(), SearchWork::Query(_)));
 }
 
 #[test]
@@ -137,7 +416,7 @@ fn shutdown_cancels_active_task_and_never_executes_queued_task() {
     let worker_executed = Arc::clone(&executed);
     let (active_entered_sender, active_entered_receiver) = mpsc::sync_channel(1);
     let worker = thread::spawn(move || {
-        while let Some(task) = worker_queue.pop() {
+        while let Some(SearchWork::Query(task)) = worker_queue.pop() {
             worker_executed.fetch_add(1, AtomicOrdering::SeqCst);
             active_entered_sender.send(()).unwrap();
             while !task.control.cancellation.is_cancelled() {
@@ -186,7 +465,7 @@ fn request_limit_drain_completes_active_and_queued_tasks_without_cancellation() 
     let (active_entered_sender, active_entered_receiver) = mpsc::sync_channel(1);
     let (active_release_sender, active_release_receiver) = mpsc::sync_channel(1);
     let worker = thread::spawn(move || {
-        while let Some(task) = worker_queue.pop() {
+        while let Some(SearchWork::Query(task)) = worker_queue.pop() {
             let execution_index = worker_executed.fetch_add(1, AtomicOrdering::SeqCst);
             if execution_index == 0 {
                 active_entered_sender.send(()).unwrap();

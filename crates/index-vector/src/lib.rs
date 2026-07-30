@@ -33,8 +33,8 @@ pub use snapshot_model::{
     VectorSnapshotUpdate, VECTOR_SNAPSHOT_SCHEMA_V4,
 };
 pub use snapshot_root::{
-    VectorGenerationInspection, VectorGenerationState, VectorSnapshotReadLease,
-    VectorSnapshotReader, VectorSnapshotRoot,
+    VectorGenerationInspection, VectorGenerationState, VectorSnapshotPublicationReader,
+    VectorSnapshotReadLease, VectorSnapshotReader, VectorSnapshotRoot,
 };
 pub use store::VectorSnapshotStore;
 

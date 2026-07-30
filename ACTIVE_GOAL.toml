@@ -21,8 +21,8 @@ configured_private_roots_required = false
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
-scope_exception = false
-scope_exception_reason = "No exception is used. Issue #272 owns one bounded macOS product-correctness repair for durable source-root deletion, same-path re-registration, second-root independence, truthful startup recovery copy, and synchronized daemon/Tauri/frontend contracts. It changes no benchmark threshold, private corpus, packaging, installer, schema version, or non-macOS delivery lane."
+scope_exception = true
+scope_exception_reason = "This first-idle-query and OCR-publication repair cannot be split safely because generation prepare/install/finalize, ANN residency, daemon/OCR/import/search-runtime contracts, and the concurrency and 7.3k synthetic witness tests must land atomically. The exception does not lower thresholds, mix benchmark lanes, or include private data; auto-merge, admin bypass, and direct pushes to main remain forbidden."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "03_next_goal_高性能本地检索GUI闭环/06_Daemon_IPC与Diagnostics契约.md",

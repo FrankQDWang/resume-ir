@@ -8,7 +8,7 @@ use crate::private_storage::{
     PinnedPrivateDirectory,
 };
 use crate::snapshot_model::{VectorSnapshotSummary, VectorSnapshotUpdate};
-use crate::snapshot_root::VectorSnapshotReader;
+use crate::snapshot_root::{VectorSnapshotPublicationReader, VectorSnapshotReader};
 use crate::VectorSnapshotPublishControl;
 use core_domain::ActiveSearchProjection;
 use fs4::fs_std::FileExt;
@@ -230,6 +230,27 @@ impl VectorSnapshotStore {
         let materialized = update.apply_with_control(base.documents(), control);
         drop(base);
         let (active_projection, documents) = materialized?;
+        self.publish_generation_with_control(generation, active_projection, documents, control)
+    }
+
+    /// Materializes a successor from a validated base payload that never
+    /// allocated a query-only ANN index.
+    pub fn publish_generation_from_publication_reader_with_control(
+        &self,
+        base: VectorSnapshotPublicationReader,
+        generation: &str,
+        update: VectorSnapshotUpdate,
+        control: VectorSnapshotPublishControl<'_>,
+    ) -> Result<VectorSnapshotSummary, VectorIndexError> {
+        if !base.belongs_to(&self.root) {
+            return Err(VectorIndexError::LeaseRootMismatch);
+        }
+        if base.summary().model_contract() != &self.model_contract {
+            return Err(VectorIndexError::InvalidModelContract);
+        }
+        control.check()?;
+        let materialized = update.apply_owned_with_control(base.into_documents(), control)?;
+        let (active_projection, documents) = materialized;
         self.publish_generation_with_control(generation, active_projection, documents, control)
     }
 

@@ -36,6 +36,7 @@ use runtime::{
     run_deadline_scheduler, start_search_worker, DeadlineCommand, ScheduledDeadline, SearchQueue,
     SearchTask,
 };
+pub(crate) use runtime::{GenerationHandoff, PublicationDisposition};
 use wire::{cancel_response_body, SearchReply};
 
 pub(crate) struct SearchService {
@@ -53,8 +54,9 @@ impl SearchService {
         data_dir: &Path,
         config: SearchRuntimeConfig,
         artifact_fault_reporter: Option<ArtifactFaultReporter>,
+        generation_handoff: GenerationHandoff,
     ) -> crate::Result<Self> {
-        let queue = Arc::new(SearchQueue::default());
+        let queue = generation_handoff.queue();
         let admission = Arc::new(AdmissionState::new());
         let batch_active = Arc::new(AtomicBool::new(false));
         let cancellations = Arc::new(CancellationRegistry::default());
@@ -130,6 +132,10 @@ impl SearchService {
             ));
         }
         Ok(())
+    }
+
+    pub(crate) fn enable_publication(&self) {
+        self.queue.enable_publication();
     }
 
     fn dispatch_reply(

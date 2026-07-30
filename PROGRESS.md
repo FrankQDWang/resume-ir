@@ -5,6 +5,88 @@ system design docs, the execution docs, and this running evidence log. Obsolete
 preliminary checklists are historical execution context only, not the
 production-ready scope source.
 
+## OCR publication first-query handoff
+
+The macOS OCR publication path now installs one fully validated generation on
+the search worker before visibility, while the worker remains the only owner of
+complete query readers. The daemon can hold at most one active plus one pending
+generation. Metadata commit no longer fences interactive work: queries that
+start before commit retain the old snapshot, and a query that races finalize
+after commit performs only an O(1) move of the already prepared reader pair.
+No request performs projection enumeration, decryption, or HNSW construction.
+
+- RED first proved the previous coordinator plus handoff layout could retain
+  active plus two coordinator generations plus two handoff generations. GREEN
+  replaces both queues with one synchronous transfer slot and one coordinator
+  `Option`; direct residency coverage observes `1 -> 2 -> 1`, rejects a third
+  install, and proves query-raced adoption plus finalize are idempotent.
+- RED also proved that sequential fulltext then semantic then hybrid checks
+  tested only one actual first query. At the search-runtime boundary, each
+  independent mode corrupts both encrypted artifacts after preparation and
+  still returns the exact expected identity/order from the installed readers,
+  proving that the first request did not deep-open either artifact. Three
+  separate native synthetic stores and Daemons also warm the selected old mode,
+  publish one OCR result, then make that same mode the first new-epoch request;
+  each preserves identity/order, rank, visible epoch and non-partial status
+  under the existing 120/500/250 ms query acceptance redline.
+- Publication is enabled only after both the Ready front door and search-worker
+  prewarm are complete. If startup prewarm fails, each later OCR worker tick can
+  send one low-frequency `PrepareRuntime` control before claim; artifact repair
+  can therefore reopen the runtime and release the publication gate with zero
+  user queries and without polling. Prepare/install/finalize controls carry a
+  queue-local identity and wait at most the 60 s maximum query deadline plus a
+  5 s margin. An unclaimed prepare/install timeout is withdrawn atomically;
+  an indeterminate claimed control or any post-commit finalize timeout closes
+  the query queue and enters explicit fatal recovery instead of forging a
+  rollback. Queries continue on the old exact snapshot during commit; control
+  messages retain priority, and post-commit adoption never deep-opens artifacts.
+- Incremental vector publication now opens a generation-pinned,
+  integrity-checked republication reader without constructing the old
+  query-only ANN. Its update consumes validated base documents instead of
+  cloning the full generation. Query readers share one document owner with
+  their ANN and no longer duplicate `all` and same-model shards; the exact
+  single-model filter contract and ranking tests remain green.
+- The completely synthetic 7.3k investigation kept the same 7,328 baseline
+  documents, three per-document OCR publications and 120/500/250 ms mode
+  redlines across the decisive RED/GREEN comparison, but the exploratory and
+  final harness parameters were not identical. Earlier runs used a shorter
+  worker tick and roughly 14-50 QPS; they reproduced semantic/hybrid requests
+  at about 1,002 ms with `partial=true`, `deadline_exceeded`, and one
+  higher-rate pressure run crossed the 512 MiB RSS line. That run remains a
+  non-target pressure ceiling, not a claim that identical load turned green.
+  The final fixed witness deliberately uses a 60 s worker interval to establish
+  Ready plus a hot active generation before the batch, and 100 ms query pacing
+  (roughly 8-10 QPS). The earlier fixed run produced 909 requests,
+  p95 fulltext/semantic/hybrid 62/62/61 ms, peak Daemon RSS 489.6 MiB and peak
+  CPU 121.7%; those values apply only to that run. After the bounded control
+  protocol change, the same fixed witness was rerun over 7,331 documents and
+  produced 649 requests, p95 64/64/65 ms, peak RSS 497.5 MiB and peak CPU
+  124.6%. Both fixed runs had heartbeat failures 0, automatic restart attempts
+  0, and unchanged launch/instance identity.
+- The load witness uses production heartbeat timing (5 s interval, 2 s
+  timeout, three-failure restart threshold) and a generation-bound isolated
+  foreground child. It is a supervision-equivalent synthetic witness, not an
+  installed-app or Tauri GUI acceptance run; no production supervisor or
+  installed Daemon was controlled.
+- Evidence did not require OCR coalescing in this slice: three continuous
+  single-document publications at the observed 7.3k scale remain within query,
+  CPU and RSS redlines after ownership and scheduling were corrected. Future
+  batching remains optional throughput work and must preserve crash recovery,
+  claim supersession, privacy and atomic visibility.
+- Privacy remained synthetic-only. Runtime-generated image PDFs, generated
+  resume text and temporary data directories contain no real resume, user
+  query, private path, token, diagnostic package or installed runtime data.
+  Failed synthetic runs were used only for enum/count diagnostics.
+- Focused search-runtime, index-vector, import-pipeline and daemon tests pass,
+  including the three independent native first-query witnesses and the 7.3k
+  load witness. Affected-crate all-target/all-feature Clippy, the complete
+  `resume-daemon` test package, the nine desktop supervisor actor contract
+  tests, formatting and the public-repository guard also pass.
+  `verify-local.sh` still stops at the pre-existing governance mutation failure
+  for tampered `scope.active_slice.scope_exception`; the active-goal file,
+  checker and mutation test are byte-identical to `main`. No Windows or Linux
+  work is part of the current macOS boundary.
+
 ## macOS source-root deletion and startup recovery
 
 Installed 0.1.9 reproduced `RefCell already mutably borrowed`: both receipt

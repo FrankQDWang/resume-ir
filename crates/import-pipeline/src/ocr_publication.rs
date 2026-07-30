@@ -2,7 +2,10 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use index_fulltext::IndexDocument;
-use meta_store::{ClaimedOcrJob, ContentDigest, OwnedMetaStore, SourceRevision, UnixTimestamp};
+use meta_store::{
+    ActiveSearchProjection, ClaimedOcrJob, ContentDigest, OwnedMetaStore, SearchPublicationRecord,
+    SearchPublicationState, SourceRevision, UnixTimestamp,
+};
 use resume_classifier::LinearPromotionPolicy;
 use sectionizer::Sectionizer;
 use text_normalizer::TextNormalizer;
@@ -55,6 +58,38 @@ pub fn index_claimed_ocr_text_with_policy(
     linear_promotion: &LinearPromotionPolicy,
     vectorization: &SearchPublicationVectorization,
 ) -> Result<OcrTextIndexOutcome> {
+    index_claimed_ocr_text_with_policy_and_preparer::<
+        fn(&SearchPublicationRecord, &[ActiveSearchProjection]) -> Result<()>,
+    >(
+        data_dir,
+        store,
+        claimed,
+        ocr_text,
+        confidence,
+        page_count,
+        now,
+        linear_promotion,
+        vectorization,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn index_claimed_ocr_text_with_policy_and_preparer<F>(
+    data_dir: &Path,
+    store: &OwnedMetaStore,
+    claimed: &ClaimedOcrJob,
+    ocr_text: &str,
+    confidence: Option<f32>,
+    page_count: Option<u32>,
+    now: UnixTimestamp,
+    linear_promotion: &LinearPromotionPolicy,
+    vectorization: &SearchPublicationVectorization,
+    prepare_generation: Option<&F>,
+) -> Result<OcrTextIndexOutcome>
+where
+    F: Fn(&SearchPublicationRecord, &[ActiveSearchProjection]) -> Result<()> + ?Sized,
+{
     let Some(document) = store
         .document_by_id(&claimed.job.document_id)
         .map_err(ImportPipelineError::store)?
@@ -136,6 +171,16 @@ pub fn index_claimed_ocr_text_with_policy(
         ImportResourcePolicy::detect().index_writer_heap_bytes,
         vectorization,
         |publication| {
+            if let Some(prepare_generation) = prepare_generation {
+                let prepared_record = publication
+                    .publication_session()
+                    .owned_store()
+                    .search_publication(publication.fulltext().generation())
+                    .map_err(ImportPipelineError::store)?
+                    .filter(|record| record.state == SearchPublicationState::Validated)
+                    .ok_or_else(ImportPipelineError::store_invariant)?;
+                prepare_generation(&prepared_record, publication.projections())?;
+            }
             let (decision, outcome) = decide_ocr_search_publication(
                 now,
                 publication,

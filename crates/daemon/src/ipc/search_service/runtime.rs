@@ -23,6 +23,17 @@ use super::wire::{RequestEnvelope, SearchReply};
 
 const DEADLINE_SCHEDULER_POLL: Duration = Duration::from_millis(10);
 
+#[path = "runtime_generation_control.rs"]
+mod generation_control;
+
+#[cfg(test)]
+use generation_control::GenerationHandoffError;
+use generation_control::{
+    reject_generation_control, CompletedGenerationControl, GenerationControl, GenerationControlId,
+    QueuedGenerationControl,
+};
+pub(crate) use generation_control::{GenerationHandoff, PublicationDisposition};
+
 pub(super) struct SearchTask {
     pub(super) reply: SearchReply,
     pub(super) envelope: RequestEnvelope,
@@ -44,7 +55,23 @@ pub(super) struct SearchQueue {
 struct SearchQueueState {
     tasks: VecDeque<SearchTask>,
     active: Option<Arc<RequestControl>>,
+    generation_control: Option<QueuedGenerationControl>,
+    active_generation_control: Option<GenerationControlId>,
+    completed_generation_control: Option<CompletedGenerationControl>,
+    next_generation_control_id: u64,
+    publication_commit_in_flight: bool,
+    publication_enabled: bool,
+    runtime_prepared: bool,
+    control_protocol_failed: bool,
     closed: bool,
+}
+
+// Boxing every SearchTask would add a heap allocation to the interactive hot
+// path. Generation controls are rare and already box their complete readers.
+#[allow(clippy::large_enum_variant)]
+enum SearchWork {
+    Query(SearchTask),
+    Generation(QueuedGenerationControl),
 }
 
 impl SearchQueue {
@@ -58,18 +85,44 @@ impl SearchQueue {
         true
     }
 
-    fn pop(&self) -> Option<SearchTask> {
+    fn pop(&self) -> Option<SearchWork> {
         let mut state = self.state.lock().expect("query queue");
         loop {
+            if let Some(control) = state.generation_control.take() {
+                state.active_generation_control = Some(control.id);
+                return Some(SearchWork::Generation(control));
+            }
+            if state.control_protocol_failed {
+                return None;
+            }
             if let Some(task) = state.tasks.pop_front() {
                 state.active = Some(Arc::clone(&task.control));
-                return Some(task);
+                return Some(SearchWork::Query(task));
             }
             if state.closed {
                 return None;
             }
             state = self.ready.wait(state).expect("query queue");
         }
+    }
+
+    pub(super) fn enable_publication(&self) {
+        let mut state = self.state.lock().expect("query queue");
+        state.publication_enabled = true;
+        self.ready.notify_all();
+    }
+
+    #[cfg(test)]
+    fn publication_enabled(&self) -> bool {
+        self.state
+            .lock()
+            .is_ok_and(|state| state.publication_enabled && state.runtime_prepared && !state.closed)
+    }
+
+    fn set_runtime_prepared(&self, prepared: bool) {
+        let mut state = self.state.lock().expect("query queue");
+        state.runtime_prepared = prepared;
+        self.ready.notify_all();
     }
 
     pub(super) fn remove(&self, control: &Arc<RequestControl>) -> Option<SearchTask> {
@@ -95,6 +148,11 @@ impl SearchQueue {
     pub(super) fn close_for_drain(&self) {
         let mut state = self.state.lock().expect("query queue");
         state.closed = true;
+        state.publication_commit_in_flight = false;
+        if let Some(control) = state.generation_control.take() {
+            reject_generation_control(control);
+        }
+        state.completed_generation_control = None;
         self.ready.notify_all();
     }
 
@@ -104,6 +162,11 @@ impl SearchQueue {
         if let Some(active) = state.active.as_ref() {
             active.cancellation.request();
         }
+        state.publication_commit_in_flight = false;
+        if let Some(control) = state.generation_control.take() {
+            reject_generation_control(control);
+        }
+        state.completed_generation_control = None;
         let queued = state.tasks.drain(..).collect();
         self.ready.notify_all();
         queued
@@ -181,11 +244,60 @@ fn run_search_worker(
     mut open_runtime: impl FnMut() -> Option<crate::query_runtime::DaemonQueryRuntime>,
 ) -> crate::Result<()> {
     // Prewarm on the dedicated worker so encrypted-store validation does not
-    // consume the first interactive request's deadline. Control-plane startup
-    // remains independent because this function runs off-thread. A failed
-    // prewarm is retried by the first admitted request as before.
+    // consume the first interactive request's deadline. Startup artifact
+    // recovery remains independent and a failed prewarm is retried later.
     let mut query_runtime = open_runtime();
-    while let Some(mut task) = queue.pop() {
+    queue.set_runtime_prepared(query_runtime.is_some());
+    while let Some(work) = queue.pop() {
+        let mut task = match work {
+            SearchWork::Generation(control) => {
+                let id = control.id;
+                match control.command {
+                    GenerationControl::PrepareRuntime { reply } => {
+                        if query_runtime.is_none() {
+                            query_runtime = open_runtime();
+                            queue.set_runtime_prepared(query_runtime.is_some());
+                        }
+                        let prepared = query_runtime.is_some();
+                        queue.complete_generation_control(id, prepared, false);
+                        let _ = reply.send(prepared);
+                    }
+                    GenerationControl::Install { prepared, reply } => {
+                        if query_runtime.is_none() {
+                            query_runtime = open_runtime();
+                            queue.set_runtime_prepared(query_runtime.is_some());
+                        }
+                        let installed = query_runtime.as_mut().is_some_and(|runtime| {
+                            runtime.install_prepared_generation(*prepared).is_ok()
+                        });
+                        queue.complete_generation_control(id, installed, false);
+                        let _ = reply.send(installed);
+                    }
+                    GenerationControl::Finalize { disposition, reply } => {
+                        let finalized =
+                            query_runtime
+                                .as_mut()
+                                .is_some_and(|runtime| match disposition {
+                                    PublicationDisposition::Committed => {
+                                        runtime.activate_prepared_generation().is_ok()
+                                    }
+                                    PublicationDisposition::Aborted => {
+                                        runtime.discard_prepared_generation();
+                                        true
+                                    }
+                                });
+                        if !finalized {
+                            query_runtime = None;
+                            queue.set_runtime_prepared(false);
+                        }
+                        queue.complete_generation_control(id, finalized, true);
+                        let _ = reply.send(finalized);
+                    }
+                }
+                continue;
+            }
+            SearchWork::Query(task) => task,
+        };
         if task.control.completed.load(AtomicOrdering::Acquire) {
             cancellations.complete(
                 task.envelope.cancel_token.as_deref(),
@@ -203,6 +315,7 @@ fn run_search_worker(
         };
         if query_runtime.is_none() {
             query_runtime = open_runtime();
+            queue.set_runtime_prepared(query_runtime.is_some());
         }
         let result = match query_runtime.as_mut() {
             Some(query_runtime) => execute_search_command(&execution, &config, query_runtime),
@@ -274,7 +387,13 @@ fn run_search_worker(
         queue.complete_active(&task.control);
         let _ = deadline_waker.send(DeadlineCommand::Wake);
     }
-    Ok(())
+    if queue.control_protocol_failed() {
+        Err(crate::DaemonError::control_plane(
+            "query generation control became unresponsive",
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 fn write_service_unavailable(

@@ -63,6 +63,43 @@ impl VectorSnapshotRoot {
         expected_model_contract: &VectorModelContract,
         lease: VectorSnapshotReadLease,
     ) -> Result<VectorSnapshotReader, VectorIndexError> {
+        let opened = self.open_generation_payload(generation, expected_model_contract, lease)?;
+        let documents = Arc::new(opened.documents);
+        let ann = AnnIndex::build(
+            Arc::clone(&documents),
+            expected_model_contract.model_id().map(str::to_string),
+        );
+        Ok(VectorSnapshotReader {
+            _generation_lease: opened.generation_lease,
+            summary: opened.summary,
+            projection: opened.projection,
+            documents,
+            ann,
+        })
+    }
+
+    /// Opens one exact validated generation for immutable republication
+    /// without constructing a query-only ANN index.
+    pub fn open_generation_for_republication_with_lease(
+        &self,
+        generation: &str,
+        expected_model_contract: &VectorModelContract,
+        lease: VectorSnapshotReadLease,
+    ) -> Result<VectorSnapshotPublicationReader, VectorIndexError> {
+        let opened = self.open_generation_payload(generation, expected_model_contract, lease)?;
+        Ok(VectorSnapshotPublicationReader {
+            _generation_lease: opened.generation_lease,
+            summary: opened.summary,
+            documents: opened.documents,
+        })
+    }
+
+    fn open_generation_payload(
+        &self,
+        generation: &str,
+        expected_model_contract: &VectorModelContract,
+        lease: VectorSnapshotReadLease,
+    ) -> Result<OpenedVectorGeneration, VectorIndexError> {
         validate_generation(generation)?;
         expected_model_contract.validate()?;
         lease.validate_for(self)?;
@@ -94,13 +131,11 @@ impl VectorSnapshotRoot {
         lease.validate_for(self)?;
         generation_identity.validate_current()?;
         drop(lease);
-        let ann = AnnIndex::build(&documents);
-        Ok(VectorSnapshotReader {
-            _generation_lease: generation_lease,
+        Ok(OpenedVectorGeneration {
+            generation_lease,
             summary,
             projection,
             documents,
-            ann,
         })
     }
 
@@ -140,6 +175,13 @@ impl VectorSnapshotRoot {
             Err(_) => VectorGenerationInspection::new(VectorGenerationState::Corrupt, None),
         }
     }
+}
+
+struct OpenedVectorGeneration {
+    generation_lease: VectorGenerationReadLease,
+    summary: VectorSnapshotSummary,
+    projection: Vec<ActiveSearchProjection>,
+    documents: Vec<VectorDocument>,
 }
 
 impl fmt::Debug for VectorSnapshotRoot {
@@ -199,8 +241,43 @@ pub struct VectorSnapshotReader {
     _generation_lease: VectorGenerationReadLease,
     summary: VectorSnapshotSummary,
     projection: Vec<ActiveSearchProjection>,
-    documents: Vec<VectorDocument>,
+    documents: Arc<Vec<VectorDocument>>,
     ann: AnnIndex,
+}
+
+/// Exact-generation vector payload owned only for constructing a successor.
+///
+/// This reader retains the same generation pin and integrity validation as a
+/// query reader, but deliberately omits the query-only ANN allocation.
+pub struct VectorSnapshotPublicationReader {
+    _generation_lease: VectorGenerationReadLease,
+    summary: VectorSnapshotSummary,
+    documents: Vec<VectorDocument>,
+}
+
+impl VectorSnapshotPublicationReader {
+    pub fn summary(&self) -> &VectorSnapshotSummary {
+        &self.summary
+    }
+
+    pub(crate) fn belongs_to(&self, root: &Path) -> bool {
+        self._generation_lease.root == root
+    }
+
+    pub(crate) fn into_documents(self) -> Vec<VectorDocument> {
+        self.documents
+    }
+}
+
+impl fmt::Debug for VectorSnapshotPublicationReader {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("VectorSnapshotPublicationReader")
+            .field("generation", &self.summary.generation())
+            .field("model_contract", &self.summary.model_contract())
+            .field("vector_count", &self.summary.vector_count())
+            .finish_non_exhaustive()
+    }
 }
 
 impl VectorSnapshotReader {
@@ -216,7 +293,7 @@ impl VectorSnapshotReader {
     /// another immutable publication. The returned values remain version-bound;
     /// callers must not use this API as a query response surface.
     pub fn documents_for_republication(&self) -> Vec<VectorDocument> {
-        self.documents.clone()
+        self.documents.as_ref().clone()
     }
 
     /// Returns the validated, document-sorted exact projection without
@@ -238,7 +315,7 @@ impl VectorSnapshotReader {
     }
 
     pub(crate) fn documents(&self) -> &[VectorDocument] {
-        &self.documents
+        self.documents.as_slice()
     }
 }
 

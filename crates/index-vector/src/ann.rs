@@ -1,7 +1,8 @@
 use crate::model::{QueryVector, VectorDocument, VectorHit, VectorIndexError};
 use hnsw_rs::prelude::{DistCosine, Hnsw};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
+use std::sync::Arc;
 
 const HNSW_MAX_CONNECTIONS: usize = 24;
 const HNSW_MAX_LAYERS: usize = 16;
@@ -10,26 +11,14 @@ const HNSW_EF_SEARCH: usize = 64;
 
 pub(crate) struct AnnIndex {
     all: Option<AnnShard>,
-    by_model: BTreeMap<String, AnnShard>,
+    model_id: Option<String>,
 }
 
 impl AnnIndex {
-    pub(crate) fn build(documents: &[VectorDocument]) -> Self {
-        let mut by_model_documents = BTreeMap::<String, Vec<VectorDocument>>::new();
-        for document in documents {
-            by_model_documents
-                .entry(document.model_id().to_string())
-                .or_default()
-                .push(document.clone());
-        }
+    pub(crate) fn build(documents: Arc<Vec<VectorDocument>>, model_id: Option<String>) -> Self {
         Self {
-            all: AnnShard::build(documents.to_vec()),
-            by_model: by_model_documents
-                .into_iter()
-                .filter_map(|(model_id, documents)| {
-                    AnnShard::build(documents).map(|shard| (model_id, shard))
-                })
-                .collect(),
+            all: AnnShard::build(documents),
+            model_id,
         }
     }
 
@@ -39,10 +28,9 @@ impl AnnIndex {
         k: usize,
         model_id: Option<&str>,
     ) -> Result<Vec<VectorHit>, VectorIndexError> {
-        let shard = match model_id {
-            Some(model_id) => self.by_model.get(model_id),
-            None => self.all.as_ref(),
-        };
+        let model_matches =
+            model_id.is_none_or(|model_id| self.model_id.as_deref() == Some(model_id));
+        let shard = model_matches.then_some(self.all.as_ref()).flatten();
         Ok(shard
             .map(|shard| shard.knn(query.values(), k))
             .unwrap_or_default())
@@ -51,11 +39,11 @@ impl AnnIndex {
 
 struct AnnShard {
     index: Hnsw<'static, f32, DistCosine>,
-    documents: Vec<VectorDocument>,
+    documents: Arc<Vec<VectorDocument>>,
 }
 
 impl AnnShard {
-    fn build(documents: Vec<VectorDocument>) -> Option<Self> {
+    fn build(documents: Arc<Vec<VectorDocument>>) -> Option<Self> {
         if documents.is_empty() {
             return None;
         }

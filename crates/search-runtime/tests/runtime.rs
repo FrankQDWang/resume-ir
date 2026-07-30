@@ -1,10 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use import_pipeline::{
     current_import_processing_contract, import_root_with_options, ImportOptions,
-    ImportTaskOwnerLock,
+    ImportTaskOwnerLock, SearchPublicationEmbeddingFailure, SearchPublicationEmbeddingInput,
+    SearchPublicationEmbeddingOutput, SearchPublicationVectorization, SearchPublicationVectorizer,
 };
 use meta_store::{
     DataDirectoryOwnerAcquisition, DataDirectoryOwnerLease, ImportRootKind,
@@ -13,8 +15,8 @@ use meta_store::{
     UnixTimestamp,
 };
 use search_runtime::{
-    HitLimit, QueryCoordinator, SearchRuntimeErrorCode, SelectionLimit, SemanticContract,
-    SemanticQueryVector,
+    HitLimit, PreparedQueryGeneration, QueryCoordinator, SearchRuntimeErrorCode, SelectionLimit,
+    SemanticContract, SemanticQueryVector,
 };
 
 #[test]
@@ -202,6 +204,168 @@ fn metadata_head_unavailable_does_not_report_an_artifact_fault() {
     assert_eq!(coordinator.take_artifact_fault(), None);
 }
 
+#[derive(Clone, Copy)]
+enum FirstQueryMode {
+    Lexical,
+    Semantic,
+    Hybrid,
+}
+
+#[derive(Debug, PartialEq)]
+struct FirstQueryResult {
+    visible_epoch: u64,
+    lexical: Vec<(core_domain::ActiveSearchProjection, usize, String)>,
+    semantic: Vec<(core_domain::ActiveSearchProjection, usize)>,
+}
+
+#[test]
+fn prepared_publication_keeps_first_lexical_query_off_deep_open() {
+    assert_prepared_first_query(FirstQueryMode::Lexical, "prepared-lexical-first");
+}
+
+#[test]
+fn prepared_publication_keeps_first_semantic_query_off_deep_open() {
+    assert_prepared_first_query(FirstQueryMode::Semantic, "prepared-semantic-first");
+}
+
+#[test]
+fn prepared_publication_keeps_first_hybrid_query_off_deep_open() {
+    assert_prepared_first_query(FirstQueryMode::Hybrid, "prepared-hybrid-first");
+}
+
+fn assert_prepared_first_query(mode: FirstQueryMode, label: &str) {
+    let mut fixture = Fixture::new_vectorized(label, 2);
+    let mut coordinator = QueryCoordinator::open(&fixture.data_dir).unwrap();
+    coordinator.prepare_current_generation().unwrap();
+    assert_eq!(coordinator.resident_generation_count(), 1);
+
+    fixture.replace_first_resume("Go");
+    let generation = fixture.publish_next();
+    let state = fixture.store.search_projection_state().unwrap();
+    let mut baseline = QueryCoordinator::open(&fixture.data_dir).unwrap();
+    let expected = execute_first_query(&mut baseline, mode);
+    let prepared = fixture.prepare_current_generation();
+
+    fs::write(
+        fixture
+            .data_dir
+            .join("search-index/snapshots")
+            .join(&generation)
+            .join("fulltext.snapshot.enc"),
+        b"unreadable after the exact generation was prepared",
+    )
+    .unwrap();
+    fs::write(
+        fixture
+            .data_dir
+            .join("vector-index/snapshots")
+            .join(&generation)
+            .join("vector.snapshot.enc"),
+        b"unreadable after the exact generation was prepared",
+    )
+    .unwrap();
+    coordinator.install_prepared_generation(prepared).unwrap();
+    assert_eq!(coordinator.resident_generation_count(), 2);
+
+    let actual = execute_first_query(&mut coordinator, mode);
+
+    assert_eq!(coordinator.resident_generation_count(), 1);
+    coordinator.activate_prepared_generation().unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(actual.visible_epoch, state.visible_epoch);
+    assert!(
+        !actual.lexical.is_empty() || !actual.semantic.is_empty(),
+        "synthetic result identity and ordering must be meaningful"
+    );
+    assert_eq!(coordinator.take_artifact_fault(), None);
+}
+
+fn execute_first_query(
+    coordinator: &mut QueryCoordinator,
+    mode: FirstQueryMode,
+) -> FirstQueryResult {
+    match mode {
+        FirstQueryMode::Lexical => coordinator
+            .with_lexical_query(|scope| {
+                let lexical = scope
+                    .fulltext_candidates("Go", HitLimit::new(10).unwrap(), None)?
+                    .into_iter()
+                    .map(|candidate| (candidate.projection, candidate.rank, candidate.file_name))
+                    .collect();
+                Ok(FirstQueryResult {
+                    visible_epoch: scope.visible_epoch(),
+                    lexical,
+                    semantic: Vec::new(),
+                })
+            })
+            .unwrap(),
+        FirstQueryMode::Semantic => coordinator
+            .with_query(|scope| {
+                let semantic = scope
+                    .semantic_candidates(
+                        SemanticQueryVector::new(vec![1.0, 1.0]).unwrap(),
+                        HitLimit::new(10).unwrap(),
+                        None,
+                    )?
+                    .into_iter()
+                    .map(|candidate| (candidate.projection, candidate.rank))
+                    .collect();
+                Ok(FirstQueryResult {
+                    visible_epoch: scope.visible_epoch(),
+                    lexical: Vec::new(),
+                    semantic,
+                })
+            })
+            .unwrap(),
+        FirstQueryMode::Hybrid => coordinator
+            .with_query(|scope| {
+                let lexical = scope
+                    .fulltext_candidates("Go", HitLimit::new(10).unwrap(), None)?
+                    .into_iter()
+                    .map(|candidate| (candidate.projection, candidate.rank, candidate.file_name))
+                    .collect();
+                let semantic = scope
+                    .semantic_candidates(
+                        SemanticQueryVector::new(vec![1.0, 1.0]).unwrap(),
+                        HitLimit::new(10).unwrap(),
+                        None,
+                    )?
+                    .into_iter()
+                    .map(|candidate| (candidate.projection, candidate.rank))
+                    .collect();
+                Ok(FirstQueryResult {
+                    visible_epoch: scope.visible_epoch(),
+                    lexical,
+                    semantic,
+                })
+            })
+            .unwrap(),
+    }
+}
+
+#[test]
+fn prepared_generation_residency_never_exceeds_active_plus_one_pending() {
+    let mut fixture = Fixture::new_vectorized("prepared-generation-residency", 2);
+    let mut coordinator = QueryCoordinator::open(&fixture.data_dir).unwrap();
+    coordinator.prepare_current_generation().unwrap();
+    coordinator.with_query(|_| Ok(())).unwrap();
+    assert_eq!(coordinator.resident_generation_count(), 1);
+
+    fixture.replace_first_resume("Go");
+    fixture.publish_next();
+    let second = fixture.prepare_current_generation();
+    coordinator.install_prepared_generation(second).unwrap();
+    assert_eq!(coordinator.resident_generation_count(), 2);
+
+    fixture.replace_first_resume("Swift");
+    fixture.publish_next();
+    let third = fixture.prepare_current_generation();
+    let error = coordinator.install_prepared_generation(third).unwrap_err();
+
+    assert_eq!(error.code(), SearchRuntimeErrorCode::Unavailable);
+    assert_eq!(coordinator.resident_generation_count(), 2);
+}
+
 struct Fixture {
     store: OwnedMetaStore,
     _owner: DataDirectoryOwnerLease,
@@ -209,10 +373,27 @@ struct Fixture {
     data_dir: PathBuf,
     root: PathBuf,
     next_timestamp: i64,
+    vectorization: SearchPublicationVectorization,
 }
 
 impl Fixture {
     fn new(label: &str, count: usize) -> Self {
+        Self::new_with_vectorization(label, count, SearchPublicationVectorization::default())
+    }
+
+    fn new_vectorized(label: &str, count: usize) -> Self {
+        Self::new_with_vectorization(
+            label,
+            count,
+            SearchPublicationVectorization::enabled(Arc::new(SyntheticVectorizer)),
+        )
+    }
+
+    fn new_with_vectorization(
+        label: &str,
+        count: usize,
+        vectorization: SearchPublicationVectorization,
+    ) -> Self {
         let temp = TestDir::new(label);
         let data_dir = temp.path().join("data");
         let root = temp.path().join("resumes");
@@ -237,6 +418,7 @@ impl Fixture {
             data_dir,
             root,
             next_timestamp: 1_900_000_000,
+            vectorization,
         };
         fixture.publish_next();
         fixture
@@ -246,10 +428,25 @@ impl Fixture {
         fs::write(self.root.join("candidate-0.txt"), resume_text(0, skill)).unwrap();
     }
 
+    fn prepare_current_generation(&self) -> PreparedQueryGeneration {
+        let state = self.store.search_projection_state().unwrap();
+        let publication = state.publication.as_ref().unwrap();
+        let projections = self
+            .store
+            .with_search_metadata_snapshot(|snapshot| {
+                snapshot.validated_active_projections().map_err(|_| ())
+            })
+            .unwrap();
+        PreparedQueryGeneration::open(&self.data_dir, publication, &projections).unwrap()
+    }
+
     fn publish_next(&mut self) -> String {
         let now = UnixTimestamp::from_unix_seconds(self.next_timestamp);
         self.next_timestamp += 1;
-        let options = ImportOptions::default();
+        let options = ImportOptions {
+            search_vectorization: self.vectorization.clone(),
+            ..ImportOptions::default()
+        };
         let processing_contract = current_import_processing_contract(&options).unwrap();
         self.store
             .activate_migration_rebuild_contract(&processing_contract, now)
@@ -311,6 +508,43 @@ impl Fixture {
                 Ok::<_, ()>(snapshot.head().generation.clone())
             })
             .unwrap()
+    }
+}
+
+struct SyntheticVectorizer;
+
+impl SearchPublicationVectorizer for SyntheticVectorizer {
+    fn model_id(&self) -> &str {
+        "synthetic-handoff-v1"
+    }
+
+    fn dimension(&self) -> usize {
+        2
+    }
+
+    fn max_batch_inputs(&self) -> usize {
+        16
+    }
+
+    fn max_text_bytes(&self) -> usize {
+        65_536
+    }
+
+    fn embed_batch(
+        &self,
+        inputs: &[SearchPublicationEmbeddingInput],
+        _is_cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<SearchPublicationEmbeddingOutput>, SearchPublicationEmbeddingFailure> {
+        Ok(inputs
+            .iter()
+            .map(|input| {
+                SearchPublicationEmbeddingOutput::new(
+                    input.id(),
+                    self.model_id(),
+                    vec![1.0, input.text().len() as f32],
+                )
+            })
+            .collect())
     }
 }
 

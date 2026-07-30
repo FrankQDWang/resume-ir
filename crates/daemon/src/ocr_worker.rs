@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::io::Read;
 use std::path::Path;
@@ -6,7 +7,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use import_pipeline::{
-    detect_ocr_page_count, index_claimed_ocr_text_with_policy, ocr_preclaim_decision,
+    detect_ocr_page_count, index_claimed_ocr_text_with_policy_and_preparer, ocr_preclaim_decision,
     OcrPreclaimDecision,
 };
 use meta_store::{
@@ -35,6 +36,24 @@ pub(crate) fn run_ocr_worker_once(
     options: &RunOptions,
     claim_allowed: impl Fn() -> bool,
 ) -> Result<OcrWorkerSummary> {
+    run_ocr_worker_once_with_handoff(data_dir, store, options, claim_allowed, None)
+}
+
+pub(crate) fn run_ocr_worker_once_with_handoff(
+    data_dir: &Path,
+    store: &OwnedMetaStore,
+    options: &RunOptions,
+    claim_allowed: impl Fn() -> bool,
+    generation_handoff: Option<&crate::ipc::search_service::GenerationHandoff>,
+) -> Result<OcrWorkerSummary> {
+    if let Some(handoff) = generation_handoff {
+        let prepared = handoff.prepare_runtime().map_err(|_| {
+            DaemonError::control_plane("query runtime prepare control became unresponsive")
+        })?;
+        if !prepared {
+            return Ok(OcrWorkerSummary::default());
+        }
+    }
     let now = current_timestamp()?;
     match ocr_preclaim_decision(store).map_err(DaemonError::import)? {
         OcrPreclaimDecision::Ready => {}
@@ -99,7 +118,15 @@ pub(crate) fn run_ocr_worker_once(
         });
     }
 
-    let mut summary = match run_claimed_ocr_job(data_dir, store, &job, options, &runtime, now) {
+    let mut summary = match run_claimed_ocr_job(
+        data_dir,
+        store,
+        &job,
+        options,
+        &runtime,
+        now,
+        generation_handoff,
+    ) {
         Ok(summary) => summary,
         Err(error) => {
             mark_ocr_job_failed_retryable(store, &job, now)?;
@@ -179,19 +206,26 @@ impl Drop for ActiveOcrClaim {
     }
 }
 
-pub(crate) fn run_ocr_worker_batch(
+pub(crate) fn run_ocr_worker_batch_with_handoff(
     data_dir: &Path,
     store: &OwnedMetaStore,
     options: &RunOptions,
     jobs_per_tick: usize,
     claim_allowed: impl Fn() -> bool,
+    generation_handoff: Option<&crate::ipc::search_service::GenerationHandoff>,
 ) -> Result<OcrWorkerSummary> {
     let mut aggregate = OcrWorkerSummary::default();
     for _ in 0..jobs_per_tick {
         if !claim_allowed() {
             break;
         }
-        let summary = run_ocr_worker_once(data_dir, store, options, &claim_allowed)?;
+        let summary = run_ocr_worker_once_with_handoff(
+            data_dir,
+            store,
+            options,
+            &claim_allowed,
+            generation_handoff,
+        )?;
         let stop_after_summary = summary.paused
             || summary.runtime_unavailable.is_some()
             || summary.pdfium_unavailable.is_some()
@@ -211,6 +245,7 @@ fn run_claimed_ocr_job(
     options: &RunOptions,
     runtime: &PreparedOcrRuntime,
     now: UnixTimestamp,
+    generation_handoff: Option<&crate::ipc::search_service::GenerationHandoff>,
 ) -> Result<OcrWorkerSummary> {
     let Some(document) = store
         .document_by_id(&job.job.document_id)
@@ -564,7 +599,29 @@ fn run_claimed_ocr_job(
             });
         }
     }
-    let outcome = match index_claimed_ocr_text_with_policy(
+    let generation_control_unresponsive = Cell::new(false);
+    let prepare_generation =
+        |publication: &meta_store::SearchPublicationRecord,
+         projections: &[meta_store::ActiveSearchProjection]| {
+            let prepared =
+                search_runtime::PreparedQueryGeneration::open(data_dir, publication, projections)
+                    .map_err(|_| {
+                    import_pipeline::ImportPipelineError::query_generation_preparation()
+                })?;
+            let staged = generation_handoff.is_some_and(|handoff| match handoff.stage(prepared) {
+                Ok(staged) => staged,
+                Err(_) => {
+                    generation_control_unresponsive.set(true);
+                    false
+                }
+            });
+            if staged {
+                Ok(())
+            } else {
+                Err(import_pipeline::ImportPipelineError::query_generation_preparation())
+            }
+        };
+    let outcome = index_claimed_ocr_text_with_policy_and_preparer(
         data_dir,
         store,
         job,
@@ -574,7 +631,42 @@ fn run_claimed_ocr_job(
         now,
         &options.linear_promotion,
         &options.search_vectorization,
-    ) {
+        generation_handoff.map(|_| {
+            &prepare_generation
+                as &dyn Fn(
+                    &meta_store::SearchPublicationRecord,
+                    &[meta_store::ActiveSearchProjection],
+                ) -> import_pipeline::Result<()>
+        }),
+    );
+    if generation_control_unresponsive.get() {
+        return Err(DaemonError::control_plane(
+            "query generation install control became unresponsive",
+        ));
+    }
+    if let Some(generation_handoff) = generation_handoff {
+        let disposition = if matches!(
+            &outcome,
+            Ok(import_pipeline::OcrTextIndexOutcome::Committed(_))
+        ) {
+            crate::ipc::search_service::PublicationDisposition::Committed
+        } else {
+            crate::ipc::search_service::PublicationDisposition::Aborted
+        };
+        let finalized = generation_handoff
+            .finish_publication(disposition)
+            .map_err(|_| {
+                DaemonError::control_plane("query generation finalize control became unresponsive")
+            })?;
+        if disposition == crate::ipc::search_service::PublicationDisposition::Committed
+            && !finalized
+        {
+            return Err(DaemonError::control_plane(
+                "prepared query generation could not be activated",
+            ));
+        }
+    }
+    let outcome = match outcome {
         Ok(outcome) => outcome,
         Err(error) => return Err(DaemonError::import(error)),
     };

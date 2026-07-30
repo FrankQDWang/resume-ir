@@ -10,6 +10,8 @@ use meta_store::{
     SearchPublicationState, SourceRevision, UnixTimestamp,
 };
 
+use crate::index_claimed_ocr_text_with_policy_and_preparer;
+
 use super::*;
 
 struct CompetingPublicationVectorizer {
@@ -438,6 +440,103 @@ fn ocr_publication_session_excludes_competing_writer_and_commits_the_claim() {
             .status,
         IngestJobStatus::Completed
     );
+}
+
+#[test]
+fn ocr_generation_is_prepared_while_validated_and_before_visible_epoch_advances() {
+    let temp = TestDir::new("ocr-generation-prepared-before-commit");
+    let data_dir = temp.path().join("data");
+    fs::create_dir_all(&data_dir).unwrap();
+    let store = create_test_store(&data_dir);
+    initialize_ready_empty_search(
+        &data_dir,
+        &store,
+        UnixTimestamp::from_unix_seconds(1_700_001_025),
+    );
+    let head_before = ready_search_head(&store);
+    let document = test_document("ocr-precommit-generation", DocumentStatus::OcrRequired);
+    let claimed = claim_ocr_document(
+        &store,
+        &document,
+        UnixTimestamp::from_unix_seconds(1_700_001_026),
+    );
+    let prepare_called = AtomicBool::new(false);
+    let prepare_generation =
+        |publication: &meta_store::SearchPublicationRecord,
+         projections: &[meta_store::ActiveSearchProjection]| {
+            assert_eq!(publication.state, SearchPublicationState::Validated);
+            assert_eq!(ready_search_head(&store), head_before);
+            assert_eq!(projections.len(), 1);
+            prepare_called.store(true, Ordering::SeqCst);
+            Ok(())
+        };
+
+    let outcome = index_claimed_ocr_text_with_policy_and_preparer(
+        &data_dir,
+        &store,
+        &claimed,
+        &synthetic_resume_text("Precommit Generation", "Rust Search"),
+        Some(0.9),
+        Some(1),
+        UnixTimestamp::from_unix_seconds(1_700_001_027),
+        &resume_classifier::LinearPromotionPolicy::default(),
+        &SearchPublicationVectorization::default(),
+        Some(&prepare_generation),
+    )
+    .unwrap();
+
+    assert!(matches!(outcome, OcrTextIndexOutcome::Committed(_)));
+    assert!(prepare_called.load(Ordering::SeqCst));
+    let head_after = ready_search_head(&store);
+    assert_eq!(head_after.visible_epoch, head_before.visible_epoch + 1);
+    assert_ne!(head_after.generation, head_before.generation);
+}
+
+#[test]
+fn ocr_generation_preparation_failure_keeps_claim_and_search_head_retryable() {
+    let temp = TestDir::new("ocr-generation-preparation-failure");
+    let data_dir = temp.path().join("data");
+    fs::create_dir_all(&data_dir).unwrap();
+    let store = create_test_store(&data_dir);
+    initialize_ready_empty_search(
+        &data_dir,
+        &store,
+        UnixTimestamp::from_unix_seconds(1_700_001_028),
+    );
+    let head_before = ready_search_head(&store);
+    let document = test_document("ocr-preparation-failure", DocumentStatus::OcrRequired);
+    let claimed = claim_ocr_document(
+        &store,
+        &document,
+        UnixTimestamp::from_unix_seconds(1_700_001_029),
+    );
+    let fail_preparation = |_: &meta_store::SearchPublicationRecord,
+                            _: &[meta_store::ActiveSearchProjection]| {
+        Err(ImportPipelineError::query_generation_preparation())
+    };
+
+    let error = index_claimed_ocr_text_with_policy_and_preparer(
+        &data_dir,
+        &store,
+        &claimed,
+        &synthetic_resume_text("Preparation Failure", "Rust Search"),
+        Some(0.9),
+        Some(1),
+        UnixTimestamp::from_unix_seconds(1_700_001_030),
+        &resume_classifier::LinearPromotionPolicy::default(),
+        &SearchPublicationVectorization::default(),
+        Some(&fail_preparation),
+    )
+    .unwrap_err();
+
+    assert_eq!(error.class(), ImportPipelineErrorClass::FullText);
+    assert!(error.is_retryable());
+    assert_eq!(ready_search_head(&store), head_before);
+    assert!(store
+        .interrupted_search_publications(256)
+        .unwrap()
+        .is_empty());
+    assert_ocr_publication_facts_absent(&store, &document, &claimed, IngestJobStatus::Running);
 }
 
 #[test]

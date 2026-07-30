@@ -515,7 +515,11 @@ pub fn inspect_tesseract_language_availability(
     let Some(requested_languages) = ocr_language_components(language) else {
         return TesseractLanguageAvailability::Missing;
     };
-    let Ok(output) = Command::new(command_path).arg("--list-langs").output() else {
+    let Ok(output) = Command::new(command_path)
+        .arg("--list-langs")
+        .env("OMP_THREAD_LIMIT", "1")
+        .output()
+    else {
         return TesseractLanguageAvailability::Unknown;
     };
     if !output.status.success() {

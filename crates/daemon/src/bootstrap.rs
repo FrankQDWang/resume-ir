@@ -238,6 +238,7 @@ fn run_persistent_ipc_with_hooks(
                 shutdown: parent_shutdown.as_ref(),
                 worker_result_receiver: None,
                 artifact_fault_reporter: None,
+                generation_handoff: ipc::search_service::GenerationHandoff::default(),
                 control_state,
                 control_publisher: Some(control_publisher),
                 runtime_health_receiver: None,

@@ -88,8 +88,8 @@ pub use meta_store::{import_task_owner_lock_path, ImportTaskOwnerLock};
 pub use migration_artifacts::{prepare_migration_rebuild_artifacts, MigrationArtifactRetirement};
 pub use migration_rebuild::{ocr_preclaim_decision, OcrPreclaimDecision, OcrPreclaimNotReady};
 pub use ocr_publication::{
-    index_claimed_ocr_text, index_claimed_ocr_text_with_policy, OcrTextIndexOutcome,
-    OcrTextIndexSummary,
+    index_claimed_ocr_text, index_claimed_ocr_text_with_policy,
+    index_claimed_ocr_text_with_policy_and_preparer, OcrTextIndexOutcome, OcrTextIndexSummary,
 };
 pub use processing_contract::current_import_processing_contract;
 #[cfg(test)]
@@ -870,6 +870,12 @@ pub struct ImportPipelineError {
 }
 
 impl ImportPipelineError {
+    /// Returns a retryable publication failure when an exact query generation
+    /// could not be prepared before its metadata visibility commit.
+    pub fn query_generation_preparation() -> Self {
+        Self::index_io()
+    }
+
     fn store(error: meta_store::MetaStoreError) -> Self {
         let class = error.class();
         if class != meta_store::MetaStoreErrorClass::Storage {

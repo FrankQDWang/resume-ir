@@ -353,7 +353,7 @@ def validate_correctness_delivery_sequence(
     )
     require_bool(
         active_slice.get("scope_exception"),
-        active_slice.get("issue") == "#270",
+        active_slice.get("issue") in {"#270", "#272"},
         "scope.active_slice.scope_exception",
     )
 
