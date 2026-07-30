@@ -38,7 +38,13 @@ import {
 } from "./daemon"
 import { useDetailSession } from "./detail-session"
 import { DetailDrawer } from "./detail-drawer"
-import { daemonRetryControl, sourcePanelBanner, useDaemonRuntime } from "./daemon-runtime"
+import {
+  daemonRetryControl,
+  deletionReceiptUncertainPresentation,
+  rootsAfterDeletionAccepted,
+  sourcePanelBanner,
+  useDaemonRuntime,
+} from "./daemon-runtime"
 import { DiagnosticsContent, type DiagnosticsState } from "./diagnostics-panel"
 import {
   CapabilityMatrix,
@@ -294,7 +300,7 @@ export function App() {
           setMessage(body.error.code === "REPAIRING" ? "索引正在修复；现有结果已保留" : "查询服务暂时不可用；现有结果已保留")
         } else if (body.error.code === "SERVICE_INITIALIZING" || body.error.code === "SERVICE_BLOCKED" || body.error.code === "CAPABILITY_UNAVAILABLE") {
           setView(results.length > 0 ? previousView : "error")
-          setMessage(body.error.code === "SERVICE_INITIALIZING" ? "核心服务仍在初始化；现有结果已保留" : "当前操作能力不可用；现有结果已保留")
+          setMessage(body.error.code === "SERVICE_INITIALIZING" ? "正在打开当前本地数据或恢复未完成操作；现有结果已保留" : "当前操作能力不可用；现有结果已保留")
         } else if (body.error.code === "OVERLOADED") {
           setResultFreshness("current")
           setView(results.length > 0 ? previousView : "overload")
@@ -351,6 +357,21 @@ export function App() {
     try {
       const reply = await selectImportRoot()
       if (!reply) { setImportState("cancelled"); setImportMessage("未选择目录"); return }
+      if (reply.body.schema_version === "resume-ir.error.v3") {
+        if (reply.body.error.reason === "source_root_deleting") {
+          await refreshManagedRoots(true)
+          setImportState("active")
+          setImportMessage("该目录仍在删除本地派生数据；完成后可重新添加")
+        } else if (reply.body.error.code === "SERVICE_INITIALIZING") {
+          setImportState("submitting")
+          setImportMessage("正在打开当前本地数据或恢复未完成操作，目录尚未添加")
+        } else {
+          await refreshManagedRoots(true)
+          setImportState("error")
+          setImportMessage("daemon 未接受目录授权；已重新读取当前目录状态")
+        }
+        return
+      }
       const selected = reply.body.root
       setSelectedRoot(selected)
       await refreshManagedRoots()
@@ -375,8 +396,9 @@ export function App() {
       const reply = root.last_scan ? await rescanManagedRoot(root.root_id) : await importSelectedRoot(root.root_id)
       if (!capabilityAuthorityIsCurrent(authority, "text_import")) return
       if (!("root" in reply.body)) {
+        const deleting = reply.body.error.reason === "source_root_deleting"
         setImportState(reply.http_status === 409 ? "active" : "error")
-        setImportMessage(reply.http_status === 409 ? "该目录正在扫描，无需重复提交" : "daemon 未接受目录扫描任务")
+        setImportMessage(deleting ? "该目录仍在删除本地派生数据；完成后可重新添加" : reply.http_status === 409 ? "该目录正在扫描，无需重复提交" : "daemon 未接受目录扫描任务")
         return
       }
       const updatedRoot = reply.body.root
@@ -419,8 +441,9 @@ export function App() {
       const reply = await controlManagedRoot(root.root_id, action)
       if (!actionAuthorityIsCurrent(authority)) return
       if (reply.body.schema_version === "resume-ir.error.v3") {
-        setImportState("error")
-        setImportMessage("daemon 未接受目录监控操作，可重试读取状态")
+        const deleting = reply.body.error.reason === "source_root_deleting"
+        setImportState(deleting ? "active" : "error")
+        setImportMessage(deleting ? "该目录仍在删除本地派生数据；完成后可重新添加" : "daemon 未接受目录监控操作，可重试读取状态")
         return
       }
       const updated = reply.body.root
@@ -458,9 +481,7 @@ export function App() {
         return
       }
       const affectedDocuments = reply.body.affected_documents
-      setManagedRoots((current) => current.map((candidate) => (
-        candidate.root_id === root.root_id ? { ...candidate, state: "deleting" } : candidate
-      )))
+      setManagedRoots((current) => rootsAfterDeletionAccepted(current, root.root_id))
       setPendingDeletions((current) => ({
         ...current,
         [root.root_id]: {
@@ -472,10 +493,13 @@ export function App() {
       setImportMessage(`正在删除“${root.display_label}”的本地派生数据；源文件不会改动`)
       await refreshManagedRoots()
       await refreshStatus()
-    } catch (error) {
+    } catch {
       if (!actionAuthorityIsCurrent(authority)) return
-      setImportState(bridgeFailureKind(error) === "overload" ? "overload" : "error")
-      setImportMessage(bridgeError(error).message)
+      const uncertain = deletionReceiptUncertainPresentation()
+      setImportState(uncertain.state)
+      setImportMessage(uncertain.message)
+      await refreshManagedRoots(true)
+      await refreshStatus()
     }
   }
 

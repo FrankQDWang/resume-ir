@@ -28,7 +28,7 @@ export function lifecycleLabel(
   if (runtimeView === "service_unknown") return "服务状态未知"
   if (snapshot.state === "running") {
     if (service === "ready") return "daemon 可用"
-    if (service === "initializing") return "daemon 初始化中"
+    if (service === "initializing") return "daemon 正在打开本地数据"
     if (service === "migrating") return "daemon 正在迁移数据"
     if (service === "repairing") return "daemon 修复中"
     if (service === "blocked") return "daemon 服务已阻塞"
@@ -50,7 +50,7 @@ export function indexServicePresentation(
 ): { title: string; message: string } {
   if (service === "ready") return { title: "索引可用", message: "daemon 可用" }
   if (service === "unknown") return { title: "服务状态未知", message: "状态读取失败，所有数据面操作已撤销" }
-  if (service === "initializing") return { title: "服务初始化中", message: "daemon 控制面已就绪，正在打开当前本地数据" }
+  if (service === "initializing") return { title: "正在打开本地数据", message: "daemon 控制面已就绪，正在打开当前本地数据并恢复未完成操作" }
   if (service === "migrating") return { title: "正在升级本地数据", message: "原数据保持不变，正在创建并验证当前 schema 副本" }
   if (service === "repairing") {
     if (coreReason === "migration_rebuild") return { title: "索引修复中", message: "正在重建当前索引" }
@@ -102,7 +102,7 @@ const runtimeLabels = { embedding: "语义运行时", ocr: "OCR 运行时", clas
 const capabilityLabels = { keyword_search: "关键词检索", detail: "详情", semantic_search: "语义检索", hybrid_search: "混合检索", text_import: "文本导入", pdf_import: "PDF 导入", ocr_import: "OCR 导入", index_publication: "索引发布" } as const
 const runtimeReasonLabels: Record<OptionalRuntimeReason, string> = { missing: "缺失", invalid: "完整性无效", start_failed: "启动失败", not_configured: "未配置" }
 const capabilityReasonLabels: Record<CapabilityReason, string> = {
-  core_initializing: "核心初始化中",
+  core_initializing: "本地数据尚未打开",
   core_blocked: "核心已阻塞",
   embedding_unavailable: "语义运行时不可用",
   ocr_unavailable: "OCR 运行时不可用",
@@ -111,7 +111,7 @@ const capabilityReasonLabels: Record<CapabilityReason, string> = {
   writer_unavailable: "写入服务不可用",
   writer_transitioning: "写入服务切换中",
 }
-const coreReasonLabels: Record<CoreReason, string> = { metadata_initializing: "元数据初始化中", metadata_migrating: "本地数据正在升级", migration_rebuild: "索引重建中", artifact_unavailable: "索引产物不可用", source_unavailable: "来源不可用", runtime_invariant: "运行时不变量失败", unsupported_store_schema: "存储 schema 不受支持", metadata_unavailable: "元数据不可用" }
+const coreReasonLabels: Record<CoreReason, string> = { metadata_initializing: "正在打开本地数据", metadata_migrating: "本地数据正在升级", migration_rebuild: "索引重建中", artifact_unavailable: "索引产物不可用", source_unavailable: "来源不可用", runtime_invariant: "运行时不变量失败", unsupported_store_schema: "存储 schema 不受支持", metadata_unavailable: "元数据不可用" }
 
 const transitionReasonLabels: Record<DaemonTransitionReason, string> = {
   initial_start: "首次启动",

@@ -230,6 +230,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
                 .map_err(MetaStoreError::storage)?;
         }
         transaction.commit().map_err(MetaStoreError::storage)?;
+        drop(connection);
         self.source_root_deletion(root_id)?
             .ok_or_else(MetaStoreError::storage_invariant)
     }
@@ -494,6 +495,7 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
             return Err(MetaStoreError::invalid_transition());
         }
         transaction.commit().map_err(MetaStoreError::storage)?;
+        drop(connection);
         self.source_root_deletion(root_id)?
             .ok_or_else(MetaStoreError::storage_invariant)
     }

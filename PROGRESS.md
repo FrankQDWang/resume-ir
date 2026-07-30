@@ -5,6 +5,23 @@ system design docs, the execution docs, and this running evidence log. Obsolete
 preliminary checklists are historical execution context only, not the
 production-ready scope source.
 
+## macOS source-root deletion and startup recovery
+
+Installed 0.1.9 reproduced `RefCell already mutably borrowed`: both receipt
+methods retained the connection borrow through commit; both now release it first.
+
+- Delete persists `requested`, returns 202 before worker start despite sink
+  failure, and retries typed failures on the same receipt with bounded backoff;
+  non-fatal stderr and panic-as-recovery are forbidden.
+- Native IPC proves A's closed fence, B control, bounded completion and
+  same-generation re-registration; Requested/Publishing resumes the same receipt.
+- Desktop opening/recovery copy is truthful; 202 marks only the selected card,
+  while an uncertain receipt forces authoritative root/status refresh.
+- Fresh core gates pass: daemon 104, Tauri 62, Vitest 40, native deletion,
+  two-root and Requested/Publishing recovery. The incremental watcher twice
+  failed its existing `payment` assertion after processing work; deletion is not
+  exercised. Exact macOS install/Computer Use acceptance remains outstanding.
+
 ## Current-main import attribution contract reconciliation
 
 Issue #270 is the single execution owner for current-main installed-equivalent

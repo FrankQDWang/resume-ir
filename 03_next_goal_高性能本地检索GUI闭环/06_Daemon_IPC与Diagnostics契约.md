@@ -583,3 +583,10 @@ During schema migration `core=migrating`. During a durable root deletion the
 control plane and unrelated search remain available, the affected root is
 projected as `deleting`, all new claims for that root are fenced, and retries
 resume the same receipt rather than creating a second deletion.
+
+After durable `requested` commits, the route writes 202 before background work;
+sink failure does not cancel it. Until completion, same-path registration returns
+error-v3 HTTP 409 with closed tuple
+`CONFLICT/retry/source_root_deleting`; unrelated conflicts retain `reason=null`.
+Retryable failures use bounded same-receipt backoff without non-fatal stderr;
+stderr remains reserved for `resume-ir.daemon-fatal.v1`.

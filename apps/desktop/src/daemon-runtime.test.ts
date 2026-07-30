@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest"
 
 import {
   daemonRetryControl,
+  deletionReceiptUncertainPresentation,
   managedRootsReadFailureAfterRefresh,
+  rootsAfterDeletionAccepted,
   sourcePanelBanner,
 } from "./daemon-runtime"
+import type { SourceRoot } from "./daemon"
 import {
   captureLifecycleReadability,
   initialLifecycleReadability,
@@ -75,6 +78,30 @@ describe("managed source-root read recovery", () => {
     expect(sourcePanelBanner("error", "daemon 未接受目录监控操作，可重试读取状态", null)).toEqual({
       state: "error",
       message: "daemon 未接受目录监控操作，可重试读取状态",
+    })
+  })
+
+  it("projects a 202 receipt as deleting without changing an unrelated root", () => {
+    const root = (id: string, watcher_state: SourceRoot["watcher_state"]): SourceRoot => ({
+      root_id: `root-${id.repeat(32)}`,
+      display_label: `Synthetic ${id.toUpperCase()}`,
+      state: "active",
+      watcher_state,
+      current_counts: { discovered: 0, searchable: 0, non_resume: 0, needs_review: 0, ocr: 0, failed: 0 },
+      last_scan: null,
+    })
+    const roots = [root("a", "active"), root("b", "paused")]
+
+    expect(rootsAfterDeletionAccepted(roots, roots[0].root_id)).toEqual([
+      { ...roots[0], state: "deleting" },
+      roots[1],
+    ])
+  })
+
+  it("uses an authoritative-refresh state when the delete receipt is uncertain", () => {
+    expect(deletionReceiptUncertainPresentation()).toEqual({
+      state: "submitting",
+      message: "目录删除接收状态未确认，正在重新读取授权目录",
     })
   })
 })

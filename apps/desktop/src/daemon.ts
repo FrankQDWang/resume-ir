@@ -35,6 +35,7 @@ export type OptionalRuntimeReason = "missing" | "invalid" | "start_failed" | "no
 export type CapabilityState = "initializing" | "available" | "degraded" | "unavailable" | "blocked"
 export type CapabilityReason = "core_initializing" | "core_blocked" | "embedding_unavailable" | "ocr_unavailable" | "classifier_unavailable" | "pdfium_unavailable" | "writer_unavailable" | "writer_transitioning"
 export type CapabilityName = "keyword_search" | "detail" | "semantic_search" | "hybrid_search" | "text_import" | "pdf_import" | "ocr_import" | "index_publication"
+export type SourceRootReason = "source_root_deleting"
 
 export interface OptionalRuntimeStatus {
   state: OptionalRuntimeState
@@ -66,7 +67,7 @@ export interface DaemonServiceError {
   action: "authenticate" | "correct_request" | "refresh_search" | "reduce_page_size" | "select_supported_mode" | "wait_for_repair" | "wait_for_service" | "retry" | "repair_required" | "rescan_source" | "select_supported_view" | "reopen_preview"
   retry_after_ms?: number
   capability: CapabilityName | null
-  reason: CoreReason | CapabilityReason | null
+  reason: CoreReason | CapabilityReason | SourceRootReason | null
 }
 
 export interface DaemonServiceErrorBody {
@@ -611,8 +612,8 @@ export async function hydrateDetail(requestId: string, selection: SearchSelectio
   })
 }
 
-export async function selectImportRoot(): Promise<DaemonReply<SourceRootMutation> | null> {
-  return invoke<DaemonReply<SourceRootMutation> | null>("select_import_root")
+export async function selectImportRoot(): Promise<DaemonReply<SourceRootMutation | DaemonFailureBody> | null> {
+  return invoke<DaemonReply<SourceRootMutation | DaemonFailureBody> | null>("select_import_root")
 }
 
 export async function listManagedRoots(): Promise<DaemonReply<ManagedRoots>> {

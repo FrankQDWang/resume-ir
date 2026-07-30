@@ -111,6 +111,7 @@ enum FailureReason {
     RuntimeInvariant,
     UnsupportedStoreSchema,
     MetadataUnavailable,
+    SourceRootDeleting,
 }
 
 pub(super) fn project_error(
@@ -376,6 +377,15 @@ fn context_matches(error: &UnifiedError, expected: &ExpectedResponse) -> bool {
             error.capability.is_some()
                 && capability_reason_matches(expected, error.capability, error.reason)
         }
+        UnifiedErrorCode::Conflict => {
+            error.capability.is_none()
+                && match expected {
+                    ExpectedResponse::SourceRoots => {
+                        matches!(error.reason, None | Some(FailureReason::SourceRootDeleting))
+                    }
+                    _ => error.reason.is_none(),
+                }
+        }
         _ => error.capability.is_none() && error.reason.is_none(),
     }
 }
@@ -527,5 +537,15 @@ mod tests {
             max_results: 10,
         };
         assert!(project_error(initializing, 503, &search).is_ok());
+    }
+
+    #[test]
+    fn source_root_conflict_accepts_only_the_closed_deletion_reason() {
+        let deleting = br#"{"schema_version":"resume-ir.error.v3","status":"error","error":{"code":"CONFLICT","action":"retry","capability":null,"reason":"source_root_deleting"}}"#;
+        assert!(project_error(deleting, 409, &ExpectedResponse::SourceRoots).is_ok());
+        assert!(project_error(deleting, 409, &ExpectedResponse::RootDeletion).is_err());
+
+        let unknown = br#"{"schema_version":"resume-ir.error.v3","status":"error","error":{"code":"CONFLICT","action":"retry","capability":null,"reason":"still_deleting"}}"#;
+        assert!(project_error(unknown, 409, &ExpectedResponse::SourceRoots).is_err());
     }
 }
