@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import subprocess
 import sys
 import tomllib
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-
 
 CORRECTNESS_DELIVERY_TRANSITIONS = {
     "select_merge_method": {
@@ -58,6 +58,7 @@ CORRECTNESS_DELIVERY_TRANSITIONS = {
     "build_and_install_exact_merged_main": {
         "from": ["branch_cleaned_main_synced"],
         "to": "merged_main_0_1_2_installed",
+        "owner_issues": ["#217"],
         "required_permissions": ["local_install_allowed"],
         "required_evidence": [
             "fresh_remote_main",
@@ -158,6 +159,8 @@ CORRECTNESS_DELIVERY_OUTGOING = {
     "pr_merged": {"cleanup_branch_and_sync_main", "regress_deployed_failure"},
     "branch_cleaned_main_synced": {
         "build_and_install_exact_merged_main",
+        "authorize_current_main_import_attribution",
+        "block_current_main_import_attribution_missing_roots",
         "regress_deployed_failure",
     },
     "merged_main_0_1_2_installed": {
@@ -295,6 +298,8 @@ def require_transition_exact(transitions: list, name: str, expected: dict) -> No
         "required_evidence",
         "allowed_actions",
     }
+    if "owner_issues" in expected:
+        expected_keys.add("owner_issues")
     observed_keys = set(transition)
     if observed_keys != expected_keys:
         fail(
@@ -308,8 +313,9 @@ def require_transition_exact(transitions: list, name: str, expected: dict) -> No
         "required_permissions",
         "required_evidence",
         "allowed_actions",
+        "owner_issues",
     ]:
-        if transition.get(key) != expected[key]:
+        if key in expected and transition.get(key) != expected[key]:
             fail(
                 f"autonomous_delivery.transitions.{name}.{key}: "
                 f"expected {expected[key]!r}"
@@ -447,11 +453,8 @@ def main() -> int:
         True,
         "scope.active_slice.home_mixed_root_requires_explicit_user_authorization",
     )
-    require_bool(
-        active_slice.get("home_mixed_root_authorized"),
-        True,
-        "scope.active_slice.home_mixed_root_authorized",
-    )
+    if not isinstance(active_slice.get("home_mixed_root_authorized"), bool):
+        fail("scope.active_slice.home_mixed_root_authorized: expected boolean")
     require_non_empty_string(
         active_slice.get("unconfigured_private_run_terminal"),
         "scope.active_slice.unconfigured_private_run_terminal",
@@ -475,6 +478,59 @@ def main() -> int:
         fail("scope.active_slice.allowed_paths: production slice requires a production path")
     if active_slice.get("production_code_allowed") is False and production_paths:
         fail("scope.active_slice.allowed_paths: non-production slice cannot allow production paths")
+    if active_issue == "#270":
+        expected_slice = {
+            "name": "current_main_installed_equivalent_import_attribution",
+            "production_code_allowed": False, "private_benchmark_allowed": True,
+            "configured_private_roots_required": True,
+            "home_mixed_root_authorized": False,
+            "unconfigured_private_run_terminal":
+                "blocked_missing_configured_private_roots",
+        }
+        for key, expected in expected_slice.items():
+            if active_slice.get(key) != expected:
+                fail(f"scope.active_slice.{key}: expected {expected!r}")
+        attribution = active_slice.get("attribution")
+        if not isinstance(attribution, dict):
+            fail("scope.active_slice.attribution: expected table")
+        expected_attribution = {
+            "owner_kind": "attribution_evidence",
+            "primary_benchmark_lane": "full_import_ocr_backlog",
+            "milestones": ["first_searchable", "keyword_ready",
+                           "embedding_complete", "ocr_backlog_full_import"],
+            "milestone_claim_mixing_allowed": False,
+            "optimization_or_profile_issue": False,
+            "app_dmg_or_installed_acceptance_in_contract_slice_allowed": False,
+            "exact_current_main_required": True,
+            "current_phase": "contract_reconciliation",
+            "post_merge_phase": "attribution_execution",
+            "same_issue_owner_required": True,
+            "fresh_merged_main_observation_required": True,
+        }
+        for key, expected in expected_attribution.items():
+            if attribution.get(key) != expected:
+                fail(f"scope.active_slice.attribution.{key}: expected {expected!r}")
+        reconciliation = attribution.get("contract_reconciliation")
+        execution = attribution.get("attribution_execution")
+        if reconciliation != {"evidence_lane": "w0_docs",
+                              "benchmark_or_profile_execution_allowed": False,
+                              "production_code_allowed": False}:
+            fail("scope.active_slice.attribution.contract_reconciliation mismatch")
+        for key, expected in {
+            "evidence_lane": "w1_private",
+            "benchmark_or_profile_execution_allowed": True,
+            "production_code_allowed": False,
+            "authorization_transition": "authorize_current_main_import_attribution",
+            "missing_roots_transition":
+                "block_current_main_import_attribution_missing_roots",
+        }.items():
+            if not isinstance(execution, dict) or execution.get(key) != expected:
+                fail(f"scope.active_slice.attribution.attribution_execution.{key} mismatch")
+        if set(execution["allowed_actions"]) != {
+            "observe_current_main", "attest_runtime_capabilities", "run_benchmark",
+            "run_profile", "write_redacted_evidence", "reduce_current_state",
+        } or len(execution["public_output_paths"]) != 4:
+            fail("scope.active_slice.attribution.attribution_execution scope mismatch")
 
     gui = active_goal.get("gui")
     if not isinstance(gui, dict):
@@ -527,6 +583,16 @@ def main() -> int:
         fail("perf/acceptance-matrix.toml: missing [platform_lanes]")
     if matrix_platform_lanes.get("allowed") != contracts.PLATFORM_LANES:
         fail("matrix.platform_lanes.allowed mismatch")
+    require_string(
+        matrix_platform_lanes.get("current_delivery"),
+        "macos_only",
+        "matrix.platform_lanes.current_delivery",
+    )
+    require_bool(
+        matrix_platform_lanes.get("non_macos_failure_blocks_current_delivery"),
+        False,
+        "matrix.platform_lanes.non_macos_failure_blocks_current_delivery",
+    )
     require_string(matrix_platform_lanes.get("primary_discovery"), contracts.PLATFORM_LANES[0], "matrix.platform_lanes.primary_discovery")
     require_string(matrix_platform_lanes.get("weak_host_validation"), contracts.PLATFORM_LANES[1], "matrix.platform_lanes.weak_host_validation")
     require_string(matrix_platform_lanes.get("ci_smoke"), contracts.PLATFORM_LANES[2], "matrix.platform_lanes.ci_smoke")
@@ -693,8 +759,44 @@ def main() -> int:
             values = require_list(transition.get(key), f"autonomous_delivery.transitions[{index}].{key}")
             if key in {"from", "allowed_actions"} and not values:
                 fail(f"autonomous_delivery.transitions[{index}].{key}: expected non-empty list")
+        if "owner_issues" in transition:
+            owner_issues = require_list(
+                transition.get("owner_issues"),
+                f"autonomous_delivery.transitions[{index}].owner_issues",
+            )
+            if not owner_issues or any(
+                not isinstance(issue, str) or not issue.startswith("#")
+                for issue in owner_issues
+            ):
+                fail(
+                    f"autonomous_delivery.transitions[{index}].owner_issues: "
+                    "expected non-empty issue refs"
+                )
 
     validate_correctness_delivery_sequence(autonomous, active_slice, transitions)
+    require_transition_shape(
+        transitions, name="reconcile_current_main_import_attribution_contract",
+        expected_from=["pr_opened", "contract_conflict"],
+        expected_to="evidence_review",
+        required_evidence=["live_main_sha", "unique_issue_owner", "privacy_boundary"],
+    )
+    execution_edges = {
+        "authorize_current_main_import_attribution": (
+            ["branch_cleaned_main_synced", "blocked_permission"],
+            "goal_authorized", {"configured_private_roots", "fresh_remote_main_sha"},
+        ),
+        "block_current_main_import_attribution_missing_roots": (
+            ["branch_cleaned_main_synced"], "blocked_permission",
+            {"missing_configured_private_roots",
+             "terminal_reason_blocked_missing_configured_private_roots"},
+        ),
+    }
+    for name, (sources, target, evidence) in execution_edges.items():
+        edge = require_transition(transitions, name)
+        if (edge.get("from"), edge.get("to"), edge.get("owner_issues")) != (
+            sources, target, ["#270"]
+        ) or not evidence <= set(edge.get("required_evidence", [])):
+            fail(f"autonomous_delivery.transitions.{name}: attribution edge mismatch")
 
     require_transition_shape(
         transitions,
@@ -719,6 +821,10 @@ def main() -> int:
         required_permissions={"private_benchmark_allowed"},
         required_evidence={"baseline_command", "redacted_baseline_artifact"},
     )
+    if "run_profile" not in require_transition(transitions, "capture_baseline").get(
+        "allowed_actions", []
+    ):
+        fail("autonomous_delivery.transitions.capture_baseline: run_profile missing")
     open_profile_issue = require_transition_contains(
         transitions,
         name="open_profile_issue",
@@ -743,6 +849,15 @@ def main() -> int:
             "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md: "
             "inline allowed path list is a stale mirror; use ACTIVE_GOAL.toml [scope.active_slice].allowed_paths"
         )
+    reducer_path = str(ROOT / "scripts" / "loop" / "reduce-current-loop-state.py")
+    for mode in ("--check", "--self-test"):
+        reducer = subprocess.run(
+            [sys.executable, reducer_path, mode], cwd=ROOT,
+            capture_output=True, text=True, check=False,
+        )
+        if reducer.returncode:
+            detail = reducer.stderr.strip() or reducer.stdout.strip()
+            fail(f"derived loop-state reducer {mode} failed: {detail}")
     print("check-autonomous-goal.py passed")
     return 0
 

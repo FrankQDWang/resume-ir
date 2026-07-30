@@ -5,6 +5,22 @@ system design docs, the execution docs, and this running evidence log. Obsolete
 preliminary checklists are historical execution context only, not the
 production-ready scope source.
 
+## Current-main import attribution contract reconciliation
+
+Issue #270 is the single execution owner for current-main installed-equivalent
+import attribution; #217 remains an open umbrella. Contracts use schema v35,
+the `full_import_ocr_backlog` lane and four independent milestones.
+
+- Reconciliation forbids execution. After normal merge/cleanup, #270 may enter
+  `goal_authorized` after fresh-main/root/capability evidence, or records
+  `blocked_missing_configured_private_roots`.
+- #217 → #270 is v2 umbrella delegation, while generic terminal handoffs remain
+  v1. Events 554/555 stay immutable; reducer self-tests cover continuous 556+,
+  illegal edges, broken hashes, gaps and routing compatibility.
+- Snapshot `git_head_sha` is observed base, never live-current authority.
+- Contract/privacy gates pass. No private read, benchmark/profile, business
+  code, App/DMG, installed acceptance, W1/D10K or goal-complete claim occurred.
+
 ## Persistent file-observation fast path (v35 / #268)
 
 The second import-performance layer now gives recurring macOS source-root

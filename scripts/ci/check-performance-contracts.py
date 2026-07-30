@@ -154,7 +154,10 @@ FORWARD_MIGRATION_FEATURE_TRAIN_IDENTITY = {
     "contract": "resume-ir.forward-migration-feature-train.v1",
     "schema_migration": "continuous_encrypted_cow_from_v29",
     "train_base_schema": 29,
-    "train_final_schema": 34,
+    "train_final_schema": 35,
+    "intermediate_schema_versions": [34],
+    "current_product_version": "0.1.9",
+    "current_metadata_schema": 35,
     "pre_v29_runtime_migration_allowed": False,
     "future_schema_read_allowed": False,
     "migration_dual_reader_allowed": False,
@@ -167,7 +170,7 @@ FORWARD_MIGRATION_FEATURE_TRAIN_IDENTITY = {
     ),
     "product_version_source": "apps/desktop/package.json",
     "feature_versions": ["0.1.3", "0.1.4", "0.1.5", "0.1.6", "0.1.7", "0.1.8", "0.1.9"],
-    "feature_schemas": [30, 31, 32, 33, 33, 33, 34],
+    "feature_schemas": [30, 31, 32, 33, 33, 33, 35],
     "per_feature_installed_acceptance_required": False,
     "business_implementation_precedes_validation": True,
     "collect_all_validation_failures_before_repair": True,
@@ -293,6 +296,7 @@ FEATURE_TRAIN_INSTALLED_ACCEPTANCE = {
     "macos_installed_acceptance_cow_cleanup": (
         "verified_parent_inode_random_quarantine_revalidate_before_delete"
     ),
+    "macos_installed_acceptance_schema_current": 35,
 }
 
 FEATURE_TRAIN_FINAL_DELIVERY = {
@@ -520,10 +524,12 @@ def validate_current_loop_contract_pins(state: Mapping[str, object]) -> None:
                 "perf/current-loop-state.json.contract_pins."
                 f"{key}: expected {expected} from {rel_path}, got {observed}"
             )
-    head = pins.get("git_head_sha")
-    if head == "working-tree":
+    observed_base = pins.get("git_head_sha")
+    if observed_base == "working-tree":
         fail("perf/current-loop-state.json.contract_pins.git_head_sha: working-tree placeholder is not allowed")
-    require_git_commit_reachable_from_origin_main(head, "perf/current-loop-state.json.contract_pins.git_head_sha")
+    require_git_commit_reachable_from_origin_main(
+        observed_base, "perf/current-loop-state.json.contract_pins.git_head_sha",
+    )
 
 
 def validate_current_file_contract_pins(value: object, path: str) -> Mapping[str, object]:
@@ -534,10 +540,10 @@ def validate_current_file_contract_pins(value: object, path: str) -> Mapping[str
         expected = sha256_file(ROOT / rel_path)
         if observed != expected:
             fail(f"{path}.{key}: expected {expected} from {rel_path}, got {observed}")
-    head = pins.get("git_head_sha")
-    if head == "working-tree":
+    source_commit = pins.get("git_head_sha")
+    if source_commit == "working-tree":
         fail(f"{path}.git_head_sha: working-tree placeholder is not allowed")
-    require_git_commit_exists(head, f"{path}.git_head_sha")
+    require_git_commit_exists(source_commit, f"{path}.git_head_sha")
     return pins
 
 
@@ -560,8 +566,8 @@ def validate_contract_pins(value: object, path: str) -> None:
         require_hex64(pins.get(key), f"{path}.{key}")
     if "synthetic_smoke_artifact_manifest_schema_sha256" in pins:
         require_hex64(pins.get("synthetic_smoke_artifact_manifest_schema_sha256"), f"{path}.synthetic_smoke_artifact_manifest_schema_sha256")
-    head = pins.get("git_head_sha")
-    if not isinstance(head, str) or not head:
+    source_commit = pins.get("git_head_sha")
+    if not isinstance(source_commit, str) or not source_commit:
         fail(f"{path}.git_head_sha: expected git sha or working-tree")
 
 
@@ -755,6 +761,19 @@ def validate_forward_migration_feature_train(matrix: Mapping[str, object]) -> No
                 f"matrix.forward_migration_feature_train_v1.{key}: "
                 f"expected {expected!r}, got {observed!r}"
             )
+
+
+def validate_current_metadata_schema_source() -> None:
+    schema_source = (
+        ROOT / "crates" / "meta-store" / "src" / "schema_v35.rs"
+    ).read_text(encoding="utf-8")
+    if "pub(super) const VERSION: u32 = 35;" not in schema_source:
+        fail("crates/meta-store/src/schema_v35.rs: expected schema version 35")
+    lib_source = (
+        ROOT / "crates" / "meta-store" / "src" / "lib.rs"
+    ).read_text(encoding="utf-8")
+    if "pub const CURRENT_SCHEMA_VERSION: u32 = schema_v35::VERSION;" not in lib_source:
+        fail("crates/meta-store/src/lib.rs: CURRENT_SCHEMA_VERSION must use schema_v35")
 
 
 def validate_exact_contract_section(
@@ -987,6 +1006,13 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
     platform_lanes = require_mapping(matrix.get("platform_lanes"), "matrix.platform_lanes")
     if platform_lanes.get("allowed") != PLATFORM_LANES:
         fail("matrix.platform_lanes.allowed mismatch")
+    if platform_lanes.get("current_delivery") != "macos_only":
+        fail("matrix.platform_lanes.current_delivery mismatch")
+    require_bool(
+        platform_lanes.get("non_macos_failure_blocks_current_delivery"),
+        False,
+        "matrix.platform_lanes.non_macos_failure_blocks_current_delivery",
+    )
     require_bool(platform_lanes.get("macos_m4_can_close_windows_gate"), False, "matrix.platform_lanes.macos_m4_can_close_windows_gate")
     require_bool(
         platform_lanes.get("cross_os_ci_smoke_can_replace_weak_host_perf"),
@@ -1010,6 +1036,55 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
         True,
         "matrix.gui_stack.toolkit_bakeoff_requires_blocker_issue",
     )
+
+    attribution = require_mapping(
+        matrix.get("current_main_installed_equivalent_import_attribution"),
+        "matrix.current_main_installed_equivalent_import_attribution",
+    )
+    expected_attribution = {
+        "owner_issue": "#270",
+        "owner_kind": "attribution_evidence",
+        "primary_benchmark_lane": "full_import_ocr_backlog",
+        "current_schema_source": "crates/meta-store/src/lib.rs::CURRENT_SCHEMA_VERSION",
+        "current_metadata_schema": 35,
+        "milestones": ["first_searchable", "keyword_ready", "embedding_complete",
+                       "ocr_backlog_full_import"],
+        "milestone_claim_mixing_allowed": False,
+        "optimization_or_profile_issue": False,
+        "app_dmg_or_installed_acceptance_in_contract_slice_allowed": False,
+        "configured_private_roots_required_for_attribution": True,
+        "unconfigured_private_run_terminal": "blocked_missing_configured_private_roots",
+        "public_evidence": "bounded_redacted_aggregate_only",
+        "current_phase": "contract_reconciliation",
+        "post_merge_phase": "attribution_execution",
+        "same_issue_owner_required": True,
+        "fresh_merged_main_observation_required": True,
+    }
+    for key, expected in expected_attribution.items():
+        if attribution.get(key) != expected:
+            fail(f"matrix attribution.{key}: expected {expected!r}")
+    reconciliation = require_mapping(
+        attribution.get("contract_reconciliation"), "matrix attribution reconciliation"
+    )
+    if reconciliation != {"evidence_lane": "w0_docs",
+                          "benchmark_or_profile_execution_allowed": False,
+                          "production_code_allowed": False}:
+        fail("matrix attribution reconciliation mismatch")
+    execution = require_mapping(
+        attribution.get("attribution_execution"), "matrix attribution execution"
+    )
+    for key, expected in {
+        "evidence_lane": "w1_private",
+        "benchmark_or_profile_execution_allowed": True,
+        "production_code_allowed": False,
+        "authorization_transition": "authorize_current_main_import_attribution",
+        "missing_roots_transition":
+            "block_current_main_import_attribution_missing_roots",
+    }.items():
+        if execution.get(key) != expected:
+            fail(f"matrix attribution execution.{key} mismatch")
+    if len(execution.get("public_output_paths", [])) != 4 or "run_profile" not in execution.get("allowed_actions", []):
+        fail("matrix attribution execution scope mismatch")
 
     gui_visual_redlines = require_mapping(matrix.get("gui_visual_redlines"), "matrix.gui_visual_redlines")
     require_bool_fields(
@@ -1665,6 +1740,7 @@ def validate_fixture(path: pathlib.Path, matrix: Mapping[str, object]) -> None:
 
 def main() -> int:
     matrix = load_toml(PERF / "acceptance-matrix.toml")
+    validate_current_metadata_schema_source()
     validate_matrix(matrix)
     mixed_module = runpy.run_path(str(ROOT / "scripts" / "ci" / "check-mixed-import-contracts.py"))
     mixed_main = mixed_module.get("main")

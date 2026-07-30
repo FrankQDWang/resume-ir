@@ -1,6 +1,6 @@
 schema_version = "resume-ir.perf.acceptance-matrix.v2"
 goal_id = "resume-ir.performance-gui-loop.2026-06"
-date = "2026-07-21"
+date = "2026-07-30"
 
 [evidence_lanes.smoke]
 data = "synthetic_or_public_tiny"
@@ -79,6 +79,8 @@ allowed = ["macos_m4_discovery", "windows_weak_host_validation", "cross_os_ci_sm
 primary_discovery = "macos_m4_discovery"
 weak_host_validation = "windows_weak_host_validation"
 ci_smoke = "cross_os_ci_smoke"
+current_delivery = "macos_only"
+non_macos_failure_blocks_current_delivery = false
 macos_m4_can_close_windows_gate = false
 cross_os_ci_smoke_can_replace_weak_host_perf = false
 
@@ -181,9 +183,10 @@ raw_query_stream_local_only = true
 contract = "resume-ir.forward-migration-feature-train.v1"
 schema_migration = "continuous_encrypted_cow_from_v29"
 train_base_schema = 29
-train_final_schema = 34
+train_final_schema = 35
+intermediate_schema_versions = [34]
 current_product_version = "0.1.9"
-current_metadata_schema = 34
+current_metadata_schema = 35
 current_manifest_contract = "resume-ir.metadata-active.v2"
 current_migration_receipt_contract = "resume-ir.metadata-forward-migration-receipt.v1"
 current_initialization_receipt_contract = "resume-ir.metadata-initialization-receipt.v1"
@@ -200,7 +203,7 @@ migration_source_ciphertext_may_change = false
 migration_predecessor_retention_count = 1
 product_version_source = "apps/desktop/package.json"
 feature_versions = ["0.1.3", "0.1.4", "0.1.5", "0.1.6", "0.1.7", "0.1.8", "0.1.9"]
-feature_schemas = [30, 31, 32, 33, 33, 33, 34]
+feature_schemas = [30, 31, 32, 33, 33, 33, 35]
 per_feature_installed_acceptance_required = false
 business_implementation_precedes_validation = true
 collect_all_validation_failures_before_repair = true
@@ -310,7 +313,7 @@ macos_installed_acceptance_cold_gate = "direct_v29_to_current_preserved_control_
 macos_installed_acceptance_pre_upgrade_canary = "v29_writer_synthetic_legacy_canary_searchable_during_transition"
 macos_installed_acceptance_target_contract_attestation = "path_redacted_task_completion_publication_transition_binding"
 macos_installed_acceptance_writer_transition_restart = "same_transition_id_zero_hard_cut_zero_task_purge"
-macos_installed_acceptance_schema_current = 34
+macos_installed_acceptance_schema_current = 35
 macos_installed_acceptance_search_witness = "owner_only_public_canary_daemon_import_nonzero_exact_epoch"
 macos_installed_acceptance_artifact_digest = "streaming_ciphertext_sha256_owner_mode_inode_stable"
 macos_installed_acceptance_strong_kill_evidence = "current_receipt_boundary_next_ready_generation"
@@ -740,6 +743,50 @@ cannot_claim = ["ocr_completion_performance", "goal_complete"]
 [autonomous_delivery_lanes.full_import_ocr_backlog]
 may_claim = ["ocr_queue_throughput", "ocr_failure_recovery", "background_scheduling"]
 cannot_claim = ["query_p95_success", "goal_complete"]
+
+[current_main_installed_equivalent_import_attribution]
+owner_issue = "#270"
+owner_kind = "attribution_evidence"
+primary_benchmark_lane = "full_import_ocr_backlog"
+current_schema_source = "crates/meta-store/src/lib.rs::CURRENT_SCHEMA_VERSION"
+current_metadata_schema = 35
+milestones = ["first_searchable", "keyword_ready", "embedding_complete", "ocr_backlog_full_import"]
+milestone_claim_mixing_allowed = false
+optimization_or_profile_issue = false
+app_dmg_or_installed_acceptance_in_contract_slice_allowed = false
+configured_private_roots_required_for_attribution = true
+unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
+public_evidence = "bounded_redacted_aggregate_only"
+current_phase = "contract_reconciliation"
+post_merge_phase = "attribution_execution"
+same_issue_owner_required = true
+fresh_merged_main_observation_required = true
+
+[current_main_installed_equivalent_import_attribution.contract_reconciliation]
+evidence_lane = "w0_docs"
+benchmark_or_profile_execution_allowed = false
+production_code_allowed = false
+
+[current_main_installed_equivalent_import_attribution.attribution_execution]
+evidence_lane = "w1_private"
+benchmark_or_profile_execution_allowed = true
+production_code_allowed = false
+authorization_transition = "authorize_current_main_import_attribution"
+missing_roots_transition = "block_current_main_import_attribution_missing_roots"
+allowed_actions = [
+  "observe_current_main",
+  "attest_runtime_capabilities",
+  "run_benchmark",
+  "run_profile",
+  "write_redacted_evidence",
+  "reduce_current_state",
+]
+public_output_paths = [
+  "PROGRESS.md",
+  "perf/current-loop-state.json",
+  "perf/runs/<run_id>/events/<state_version>.json",
+  "perf/runs/<run_id>/redacted/<artifact>.json",
+]
 
 [autonomous_delivery_lanes.query_hot_path]
 may_claim = ["hot_index_latency", "stage_latency", "resident_daemon_performance"]

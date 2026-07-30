@@ -1,71 +1,78 @@
 schema_version = "resume-ir.active-goal.v1"
 goal_id = "resume-ir.performance-gui-loop.2026-06"
-date = "2026-07-24"
+date = "2026-07-30"
 
 [authority]
 root_goal = "GOAL.md"
 active_goal_docs_root = "03_next_goal_高性能本地检索GUI闭环"
-spec = "docs/superpowers/specs/2026-07-27-processing-contract-upgrade-coordinator.md"
-plan = "docs/superpowers/plans/2026-07-27-processing-contract-upgrade-coordinator.md"
+spec = "docs/superpowers/plans/2026-07-30-current-main-import-attribution-contract.md"
+plan = "docs/superpowers/plans/2026-07-30-current-main-import-attribution-contract.md"
 review_ledger = "03_next_goal_高性能本地检索GUI闭环/12_Review问题映射与修复责任.md"
 loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md"
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#217"
-name = "v0_1_3_to_v0_1_8_business_feature_train"
+issue = "#270"
+name = "current_main_installed_equivalent_import_attribution"
 contract_change_allowed = true
-production_code_allowed = true
-private_benchmark_allowed = false
-configured_private_roots_required = false
+production_code_allowed = false
+private_benchmark_allowed = true
+configured_private_roots_required = true
 home_mixed_root_requires_explicit_user_authorization = true
-home_mixed_root_authorized = true
+home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = true
-scope_exception_reason = "Issue #217 is the umbrella owner for the approved v0.1.3-v0.1.8 feature train. The train deliberately replaces current-v29-only storage with continuous encrypted COW forward migration beginning at v29, then adds database-owned source roots, path-truth reconciliation, durable root deletion, PDFium plus resumable OCR, selection-bound original-PDF preview and selection-bound native reveal. The six versions are one atomic business implementation train: production code, contracts, packaging declarations and UI are completed first, without intermediate test, build, installer, Linux or delivery runs. After all business changes are complete, one resumable macOS delivery matrix collects every failure before repair; only failed, invalidated and previously unrun cells are rerun. There is no dual reader, dual write, downgrade read, compatibility flag or request replay. v27/v28/future/corrupt authorities remain fail-closed and byte-preserved. Public evidence is synthetic or bounded redacted aggregate only. Existing launch binding, lifecycle v2, search-selection and atomic publication semantics remain fixed. Windows native evidence, signing, updater, scale and stable release are not claimed."
+scope_exception_reason = "Issue #270 owns one W0 contract-reconciliation phase plus the later attribution-execution phase. Review repair must update the loop schema and required autonomous-delivery docs so post-merge authorization, append-only reduction, umbrella routing and observed-base semantics are machine-verifiable. It changes no production code, threshold, benchmark workload or runtime state. Attribution remains blocked_missing_configured_private_roots until an authorized root is explicitly configured and cannot claim optimization, App/DMG, installed acceptance, W1, D10K or goal completion."
 allowed_paths = [
-  "AGENTS.md",
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
-  "03_next_goal_高性能本地检索GUI闭环/03_数据模型与存储协议.md",
-  "03_next_goal_高性能本地检索GUI闭环/04_数据流与状态机.md",
-  "design-qa.md",
-  "03_next_goal_高性能本地检索GUI闭环/05_Query_Benchmark与真实Query种子.md",
-  "03_next_goal_高性能本地检索GUI闭环/06_Daemon_IPC与Diagnostics契约.md",
-  "03_next_goal_高性能本地检索GUI闭环/07_GUI与手工Codex闭环.md",
-  "03_next_goal_高性能本地检索GUI闭环/08_失败模式与恢复策略.md",
-  "03_next_goal_高性能本地检索GUI闭环/10_实施切片与验收门槛.md",
-  "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md",
-  "03_next_goal_高性能本地检索GUI闭环/15_性能观测与Profiling工具链.md",
-  "Cargo.toml",
-  "Cargo.lock",
-  "docs/superpowers/specs/",
-  "docs/superpowers/plans/",
-  "docs/reports/",
-  "docs/runbooks/release-blockers.md",
-  "UI-reference/",
-  "apps/",
-  "crates/benchmark-runner/",
-  "crates/cli/",
-  "crates/core-domain/",
-  "crates/daemon-contract/",
-  "crates/daemon/",
-  "crates/embedding-runtime/",
-  "crates/embedding-protocol/",
-  "crates/embedder/",
-  "crates/import-pipeline/",
-  "crates/index-fulltext/",
-  "crates/index-vector/",
-  "crates/ocr-client/",
-  "crates/meta-store/",
-  "crates/pdf-render-runtime/",
-  "crates/privacy/",
-  "crates/process-containment/",
-  "scripts/ci/",
+  "docs/superpowers/plans/2026-07-30-current-main-import-attribution-contract.md",
+  "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md",
   "perf/acceptance-matrix.toml",
+  "perf/active-slice-transition.json",
   "perf/current-loop-state.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+  "perf/runs/contract-reconciliation-2026-07-30/events/554.json",
+  "perf/runs/contract-reconciliation-2026-07-30/events/555.json",
+  "scripts/ci/check-autonomous-goal.py",
+  "scripts/ci/check-gate-integrity.py",
+  "scripts/ci/check-performance-contracts.py",
+  "scripts/loop/reduce-current-loop-state.py",
+]
+
+[scope.active_slice.attribution]
+owner_kind = "attribution_evidence"
+primary_benchmark_lane = "full_import_ocr_backlog"
+milestones = ["first_searchable", "keyword_ready", "embedding_complete", "ocr_backlog_full_import"]
+milestone_claim_mixing_allowed = false
+optimization_or_profile_issue = false
+app_dmg_or_installed_acceptance_in_contract_slice_allowed = false
+exact_current_main_required = true
+current_phase = "contract_reconciliation"
+post_merge_phase = "attribution_execution"
+same_issue_owner_required = true
+fresh_merged_main_observation_required = true
+
+[scope.active_slice.attribution.contract_reconciliation]
+evidence_lane = "w0_docs"
+benchmark_or_profile_execution_allowed = false
+production_code_allowed = false
+
+[scope.active_slice.attribution.attribution_execution]
+evidence_lane = "w1_private"
+benchmark_or_profile_execution_allowed = true
+production_code_allowed = false
+authorization_transition = "authorize_current_main_import_attribution"
+missing_roots_transition = "block_current_main_import_attribution_missing_roots"
+allowed_actions = [
+  "observe_current_main", "attest_runtime_capabilities", "run_benchmark",
+  "run_profile", "write_redacted_evidence", "reduce_current_state",
+]
+public_output_paths = [
+  "PROGRESS.md", "perf/current-loop-state.json",
+  "perf/runs/<run_id>/events/<state_version>.json",
+  "perf/runs/<run_id>/redacted/<artifact>.json",
 ]
 
 [contracts]
@@ -88,7 +95,8 @@ synthetic_smoke_artifact_manifest_schema = "perf/synthetic-smoke-artifact-manife
 [feature_train]
 umbrella_issue = "#217"
 versions = ["0.1.3", "0.1.4", "0.1.5", "0.1.6", "0.1.7", "0.1.8", "0.1.9"]
-schemas = [30, 31, 32, 33, 33, 33, 34]
+schemas = [30, 31, 32, 33, 33, 33, 35]
+intermediate_schemas = [34]
 maximum_open_issues = 2
 one_feature_issue_at_a_time = true
 per_version_dmg_required = false
@@ -266,7 +274,7 @@ from = ["goal_authorized"]
 to = "baseline_captured"
 required_permissions = ["private_benchmark_allowed"]
 required_evidence = ["baseline_command", "redacted_baseline_artifact"]
-allowed_actions = ["run_benchmark", "write_redacted_evidence"]
+allowed_actions = ["run_benchmark", "run_profile", "write_redacted_evidence"]
 
 [[autonomous_delivery.transitions]]
 name = "open_profile_issue"
@@ -381,6 +389,14 @@ required_evidence = ["linked_issue", "failing_regression"]
 allowed_actions = ["edit", "test", "commit"]
 
 [[autonomous_delivery.transitions]]
+name = "reconcile_current_main_import_attribution_contract"
+from = ["pr_opened", "contract_conflict"]
+to = "evidence_review"
+required_permissions = ["github_issue_write_allowed"]
+required_evidence = ["live_main_sha", "merged_prior_prs", "current_schema_v35", "unique_issue_owner", "primary_lane", "private_input_capability", "privacy_boundary"]
+allowed_actions = ["create_issue", "comment_issue", "edit_contracts", "run_tests", "write_redacted_evidence", "reduce_current_state"]
+
+[[autonomous_delivery.transitions]]
 name = "open_pr"
 from = ["evidence_review"]
 to = "pr_opened"
@@ -453,9 +469,28 @@ required_evidence = ["merged_commit", "local_main_equals_remote_main", "feature_
 allowed_actions = ["fetch_base", "sync_main", "remove_worktree", "delete_branch"]
 
 [[autonomous_delivery.transitions]]
+name = "authorize_current_main_import_attribution"
+from = ["branch_cleaned_main_synced", "blocked_permission"]
+to = "goal_authorized"
+owner_issues = ["#270"]
+required_permissions = ["private_benchmark_allowed", "private_resume_root_read_allowed"]
+required_evidence = ["owner_issue_270_open", "fresh_remote_main_sha", "clean_main_equals_remote_main", "configured_private_roots", "runtime_capability_attestation", "primary_lane_full_import_ocr_backlog", "phase_attribution_execution", "privacy_boundary"]
+allowed_actions = ["observe_current_main", "attest_runtime_capabilities", "activate_attribution_phase"]
+
+[[autonomous_delivery.transitions]]
+name = "block_current_main_import_attribution_missing_roots"
+from = ["branch_cleaned_main_synced"]
+to = "blocked_permission"
+owner_issues = ["#270"]
+required_permissions = []
+required_evidence = ["owner_issue_270_open", "fresh_remote_main_sha", "clean_main_equals_remote_main", "missing_configured_private_roots", "terminal_reason_blocked_missing_configured_private_roots", "privacy_boundary"]
+allowed_actions = ["observe_current_main", "attest_runtime_capabilities", "record_terminal_state"]
+
+[[autonomous_delivery.transitions]]
 name = "build_and_install_exact_merged_main"
 from = ["branch_cleaned_main_synced"]
 to = "merged_main_0_1_2_installed"
+owner_issues = ["#217"]
 required_permissions = ["local_install_allowed"]
 required_evidence = ["fresh_remote_main", "clean_merged_main", "stable_serial_source_authority", "exact_commit_isolated_build_source", "exact_version_0_1_2", "verified_bundle_dmg_receipt_commit_equality", "installed_app_commit_equality"]
 allowed_actions = ["build_release", "verify_release", "install_local"]
@@ -548,7 +583,7 @@ require_issue_closure_comment = true
 require_machine_anchors = true
 
 [autonomous_delivery.contract_integrity]
-goal_version = "2026-06-25-autonomous-c"
+goal_version = "2026-07-30-contract-reconciliation-a"
 contract_schema_version = "v1"
 require_goal_contract_hash = true
 require_acceptance_matrix_hash = true
