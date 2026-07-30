@@ -117,7 +117,7 @@ pub(super) fn publish_vector_generation(
         let root = VectorSnapshotRoot::new(data_dir.join("vector-index"));
         let base_reader = root.and_then(|root| {
             let lease = root.acquire_read_lease()?;
-            root.open_generation_with_lease(
+            root.open_generation_for_republication_with_lease(
                 base.generation
                     .as_deref()
                     .ok_or(index_vector::VectorIndexError::GenerationNotFound)?,
@@ -147,7 +147,7 @@ pub(super) fn publish_vector_generation(
                 )
                 .map_err(ImportPipelineError::vector)?;
                 return vector_store
-                    .publish_generation_from_with_control(
+                    .publish_generation_from_publication_reader_with_control(
                         base_reader,
                         generation,
                         update,

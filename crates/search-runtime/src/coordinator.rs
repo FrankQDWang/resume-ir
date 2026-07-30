@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,8 +16,6 @@ use meta_store::{
 use crate::error::SearchRuntimeError;
 use crate::scope::{LexicalQueryScope, QueryScope};
 
-const PREPARED_GENERATION_CAPACITY: usize = 2;
-
 pub struct QueryCoordinator {
     data_dir: PathBuf,
     store: ReadMetaStore,
@@ -26,7 +23,7 @@ pub struct QueryCoordinator {
     vector_root: VectorSnapshotRoot,
     fulltext_cache: Option<ValidatedFullTextGeneration>,
     vector_cache: Option<ValidatedVectorGeneration>,
-    prepared_generations: VecDeque<PreparedQueryGeneration>,
+    pending_generation: Option<PreparedQueryGeneration>,
     pending_artifact_fault: Option<SearchArtifactFaultKey>,
 }
 
@@ -97,7 +94,7 @@ impl QueryCoordinator {
             vector_root,
             fulltext_cache: None,
             vector_cache: None,
-            prepared_generations: VecDeque::with_capacity(PREPARED_GENERATION_CAPACITY),
+            pending_generation: None,
             pending_artifact_fault: None,
         })
     }
@@ -115,7 +112,10 @@ impl QueryCoordinator {
             })
             .map_err(map_transaction_error)?;
         let prepared = PreparedQueryGeneration::open(&self.data_dir, &publication, &projections)?;
-        self.install_prepared_generation(prepared)
+        self.fulltext_cache = Some(prepared.fulltext);
+        self.vector_cache = Some(prepared.vector);
+        self.pending_generation = None;
+        Ok(())
     }
 
     pub fn install_prepared_generation(
@@ -125,18 +125,67 @@ impl QueryCoordinator {
         if prepared.data_dir != self.data_dir {
             return Err(SearchRuntimeError::integrity());
         }
-        if let Some(position) = self
-            .prepared_generations
-            .iter()
-            .position(|existing| existing.fulltext.key == prepared.fulltext.key)
-        {
-            self.prepared_generations.remove(position);
+        if self.pending_generation.is_some() {
+            return Err(SearchRuntimeError::unavailable());
         }
-        self.prepared_generations.push_back(prepared);
-        while self.prepared_generations.len() > PREPARED_GENERATION_CAPACITY {
-            self.prepared_generations.pop_front();
-        }
+        self.pending_generation = Some(prepared);
         Ok(())
+    }
+
+    /// Atomically replaces the active readers with the exact pending
+    /// generation after its metadata publication is committed.
+    pub fn activate_prepared_generation(&mut self) -> Result<(), SearchRuntimeError> {
+        let key = self
+            .store
+            .with_search_metadata_snapshot(|snapshot| {
+                cache_key(snapshot.head().publication.clone())
+            })
+            .map_err(map_transaction_error)?;
+        if let Some(prepared) = self.pending_generation.take() {
+            if prepared.fulltext.key != key || prepared.vector.key != key {
+                return Err(SearchRuntimeError::integrity());
+            }
+            self.fulltext_cache = Some(prepared.fulltext);
+            self.vector_cache = Some(prepared.vector);
+            return Ok(());
+        }
+        let active_matches = self
+            .fulltext_cache
+            .as_ref()
+            .is_some_and(|cached| cached.key == key)
+            && self
+                .vector_cache
+                .as_ref()
+                .is_some_and(|cached| cached.key == key);
+        active_matches
+            .then_some(())
+            .ok_or_else(SearchRuntimeError::unavailable)
+    }
+
+    /// Drops a publication that did not commit, releasing its complete reader
+    /// pair before another generation may be prepared.
+    pub fn discard_prepared_generation(&mut self) {
+        self.pending_generation = None;
+    }
+
+    /// Counts distinct immutable search generations whose readers are resident.
+    ///
+    /// This is a bounded resource invariant, not a corpus or query diagnostic:
+    /// callers can prove reader ownership without exposing generation identity.
+    pub fn resident_generation_count(&self) -> usize {
+        let mut keys = Vec::<&CacheKey>::new();
+        if let Some(cached) = self.fulltext_cache.as_ref() {
+            keys.push(&cached.key);
+        }
+        if let Some(cached) = self.vector_cache.as_ref() {
+            keys.push(&cached.key);
+        }
+        if let Some(prepared) = self.pending_generation.as_ref() {
+            keys.push(&prepared.fulltext.key);
+        }
+        keys.sort_by(|left, right| left.generation.cmp(&right.generation));
+        keys.dedup_by(|left, right| *left == *right);
+        keys.len()
     }
 
     /// Takes the most recent exact publication fault produced while opening
@@ -164,12 +213,12 @@ impl QueryCoordinator {
         let vector_root = &self.vector_root;
         let fulltext_cache = &mut self.fulltext_cache;
         let vector_cache = &mut self.vector_cache;
-        let prepared_generations = &mut self.prepared_generations;
+        let pending_generation = &mut self.pending_generation;
         let pending_artifact_fault = &mut self.pending_artifact_fault;
         self.store
             .with_search_metadata_snapshot(|snapshot| {
                 let key = cache_key(snapshot.head().publication.clone())?;
-                adopt_prepared_generation(&key, prepared_generations, fulltext_cache, vector_cache);
+                adopt_pending_generation(&key, pending_generation, fulltext_cache, vector_cache)?;
                 let fulltext_changed = fulltext_cache
                     .as_ref()
                     .is_none_or(|cached| cached.key != key);
@@ -183,8 +232,11 @@ impl QueryCoordinator {
                 } else {
                     None
                 };
-                if fulltext_changed {
+                if fulltext_changed || vector_changed {
                     *fulltext_cache = None;
+                    *vector_cache = None;
+                }
+                if fulltext_changed {
                     let validated = match validate_fulltext_generation(
                         snapshot,
                         fulltext_root,
@@ -206,7 +258,6 @@ impl QueryCoordinator {
                     drop(fulltext_lease.take());
                 }
                 if vector_changed {
-                    *vector_cache = None;
                     let validated = match validate_vector_generation(
                         snapshot,
                         vector_root,
@@ -254,17 +305,18 @@ impl QueryCoordinator {
         let fulltext_root = &self.fulltext_root;
         let fulltext_cache = &mut self.fulltext_cache;
         let vector_cache = &mut self.vector_cache;
-        let prepared_generations = &mut self.prepared_generations;
+        let pending_generation = &mut self.pending_generation;
         let pending_artifact_fault = &mut self.pending_artifact_fault;
         self.store
             .with_search_metadata_snapshot(|snapshot| {
                 let key = cache_key(snapshot.head().publication.clone())?;
-                adopt_prepared_generation(&key, prepared_generations, fulltext_cache, vector_cache);
+                adopt_pending_generation(&key, pending_generation, fulltext_cache, vector_cache)?;
                 if fulltext_cache
                     .as_ref()
                     .is_none_or(|cached| cached.key != key)
                 {
                     *fulltext_cache = None;
+                    *vector_cache = None;
                     let projections = snapshot
                         .validated_active_projections()
                         .map_err(|_| SearchRuntimeError::integrity())?;
@@ -354,23 +406,30 @@ impl PreparedQueryGeneration {
     }
 }
 
-fn adopt_prepared_generation(
+fn adopt_pending_generation(
     key: &CacheKey,
-    prepared_generations: &mut VecDeque<PreparedQueryGeneration>,
-    fulltext_cache: &mut Option<ValidatedFullTextGeneration>,
-    vector_cache: &mut Option<ValidatedVectorGeneration>,
-) {
-    let Some(position) = prepared_generations
-        .iter()
-        .position(|prepared| prepared.fulltext.key == *key && prepared.vector.key == *key)
-    else {
-        return;
-    };
-    let prepared = prepared_generations
-        .remove(position)
-        .expect("matching prepared generation exists");
-    *fulltext_cache = Some(prepared.fulltext);
-    *vector_cache = Some(prepared.vector);
+    pending: &mut Option<PreparedQueryGeneration>,
+    fulltext: &mut Option<ValidatedFullTextGeneration>,
+    vector: &mut Option<ValidatedVectorGeneration>,
+) -> Result<(), SearchRuntimeError> {
+    let active_matches = fulltext.as_ref().is_some_and(|cached| cached.key == *key)
+        && vector.as_ref().is_some_and(|cached| cached.key == *key);
+    if active_matches {
+        return Ok(());
+    }
+    let prepared_matches = pending
+        .as_ref()
+        .is_some_and(|prepared| prepared.fulltext.key == *key && prepared.vector.key == *key);
+    if prepared_matches {
+        let prepared = pending.take().expect("matching pending generation exists");
+        *fulltext = Some(prepared.fulltext);
+        *vector = Some(prepared.vector);
+        return Ok(());
+    }
+    if pending.is_some() {
+        return Err(SearchRuntimeError::unavailable());
+    }
+    Ok(())
 }
 
 enum GenerationValidationError {

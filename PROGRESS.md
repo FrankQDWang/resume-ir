@@ -7,56 +7,70 @@ production-ready scope source.
 
 ## OCR publication first-query handoff
 
-The macOS OCR publication path now prepares the exact validated fulltext and
-vector generation before committing its visible epoch. Preparation performs the
-same projection, identity, digest, decryption, model and ANN checks as a cold
-query open, then stages a generation-pinned reader pair in a two-generation
-daemon handoff. The query worker adopts only an exact metadata key match. A
-condition-variable fence covers only the stage-to-commit window and is capped
-by the request's original deadline; while deep preparation is running, queries
-continue against the still-current Ready epoch.
+The macOS OCR publication path now installs one fully validated generation on
+the search worker before visibility, while the worker remains the only owner of
+complete query readers. The daemon can hold at most one active plus one pending
+generation. Metadata commit no longer fences interactive work: queries that
+start before commit retain the old snapshot, and a query that races finalize
+after commit performs only an O(1) move of the already prepared reader pair.
+No request performs projection enumeration, decryption, or HNSW construction.
 
-- RED reproduced that `QueryCoordinator::open` left both readers empty and that
-  the first query after an epoch change deep-opened the generation. GREEN
-  prepares outside the request, corrupts both encrypted on-disk payloads after
-  preparation, and proves the first lexical and enabled semantic/composite
-  reads still return the new exact epoch, identity and ordering.
-- OCR publication preparation runs while the journal record is `Validated` and
-  the old head is still Ready. Preparation failure retires the abandoned
-  generation, leaves the visible head unchanged and keeps the OCR claim
-  retryable. Claim/publication supersession and atomic visibility tests remain
-  green.
-- The daemon handoff is bounded to current-plus-next generations. Interactive
-  requests wait only for an in-flight metadata commit, never beyond their
-  existing deadline; overload recovery and cancellation tests remain green.
-  Tesseract language discovery is restricted to one OpenMP thread.
-- An isolated macOS witness used the public synthetic scanned-PDF fixture,
-  reviewed local runtime packs and a temporary data directory. After one real
-  OCR publication and a 250 ms query-idle window, the first fulltext, semantic
-  and hybrid requests all returned HTTP 200, `status=ok`, `partial=false` and
-  the new visible epoch under a 2,000 ms per-request redline. PID, launch ID and
-  instance ID were unchanged and the foreground daemon never exited. The
-  witness has no supervisor, so heartbeat/restart counters are structurally not
-  present rather than inferred.
-- Request-path resource proof is deterministic rather than machine-load based:
-  fulltext/vector deep opens and ANN construction complete before visibility,
-  the handoff holds at most two reader pairs, and the commit fence cannot extend
-  a deadline. No process CPU/RSS peak is promoted from this shared-machine run.
-- Privacy remained synthetic-only. No installed app or live daemon was
-  controlled, restarted, queried or changed; no user OCR queue, real resume,
-  raw user query, private path or diagnostic bundle entered the witness.
-- Public-repo guard, workspace all-target/all-feature clippy, the macOS-relevant
-  workspace test set, daemon closed-loop, daemon incremental-import and license
-  checks pass. `verify-local.sh` itself stops at the unchanged active-goal
-  governance mutation fixture: tampering
-  `scope.active_slice.scope_exception` is not rejected. `ACTIVE_GOAL.toml` and
-  that governance checker are byte-identical to HEAD and outside this slice.
-  Windows package/evidence commands later in that script were not run under the
-  current macOS-only delivery boundary.
-- This slice closes the user-visible first-query loader but does not yet batch
-  multiple OCR completions into one publication. Bounded OCR publication
-  coalescing remains a separate dependent optimization; crash recovery,
-  supersession and atomic visibility must be retained when it is implemented.
+- RED first proved the previous coordinator plus handoff layout could retain
+  active plus two coordinator generations plus two handoff generations. GREEN
+  replaces both queues with one synchronous transfer slot and one coordinator
+  `Option`; direct residency coverage observes `1 -> 2 -> 1`, rejects a third
+  install, and proves query-raced adoption plus finalize are idempotent.
+- RED also proved that sequential fulltext then semantic then hybrid checks
+  tested only one actual first query. At the search-runtime boundary, each
+  independent mode corrupts both encrypted artifacts after preparation and
+  still returns the exact expected identity/order from the installed readers,
+  proving that the first request did not deep-open either artifact. Three
+  separate native synthetic stores and Daemons also warm the selected old mode,
+  publish one OCR result, then make that same mode the first new-epoch request;
+  each preserves identity/order, rank, visible epoch and non-partial status
+  under the existing 120/500/250 ms query acceptance redline.
+- Publication is enabled only after both the Ready front door and search-worker
+  prewarm are complete. A failed prewarm keeps OCR claims queued until a later
+  successful runtime open. Queries continue on the old exact snapshot during
+  commit; control messages retain priority, and post-commit adoption never
+  deep-opens artifacts.
+- Incremental vector publication now opens a generation-pinned,
+  integrity-checked republication reader without constructing the old
+  query-only ANN. Its update consumes validated base documents instead of
+  cloning the full generation. Query readers share one document owner with
+  their ANN and no longer duplicate `all` and same-model shards; the exact
+  single-model filter contract and ranking tests remain green.
+- The completely synthetic 7,328-document load witness reproduced the review
+  blocker before the final scheduling change: semantic and hybrid requests
+  reached about 1,002 ms and returned `partial=true`,
+  `deadline_exceeded`. The unchanged witness is now GREEN over 7,331 total
+  documents, three consecutive same-tick OCR publications and 909 rotating
+  interactive requests: p95 fulltext/semantic/hybrid was 62/62/61 ms, peak
+  Daemon RSS 489.6 MiB, peak CPU 121.7%, heartbeat failures 0, automatic restart
+  attempts 0, and launch/instance identity unchanged.
+- The load witness uses production heartbeat timing (5 s interval, 2 s
+  timeout, three-failure restart threshold) and a generation-bound isolated
+  foreground child. It is a supervision-equivalent synthetic witness, not an
+  installed-app or Tauri GUI acceptance run; no production supervisor or
+  installed Daemon was controlled.
+- Evidence did not require OCR coalescing in this slice: three continuous
+  single-document publications at the observed 7.3k scale remain within query,
+  CPU and RSS redlines after ownership and scheduling were corrected. Future
+  batching remains optional throughput work and must preserve crash recovery,
+  claim supersession, privacy and atomic visibility.
+- Privacy remained synthetic-only. Runtime-generated image PDFs, generated
+  resume text and temporary data directories contain no real resume, user
+  query, private path, token, diagnostic package or installed runtime data.
+  Failed synthetic runs were used only for enum/count diagnostics.
+- Focused search-runtime, index-vector, import-pipeline and daemon tests pass,
+  including the three independent native first-query witnesses and the 7.3k
+  load witness. Affected-crate all-target/all-feature Clippy, the complete
+  `resume-daemon` test package, the nine desktop supervisor actor contract
+  tests, formatting and the public-repository guard also pass.
+  `verify-local.sh` still stops at the pre-existing governance mutation failure
+  for tampered `scope.active_slice.scope_exception`; the active-goal file,
+  checker and mutation test are byte-identical to `main`. No Windows or Linux
+  work is part of the current macOS boundary.
 
 ## macOS source-root deletion and startup recovery
 

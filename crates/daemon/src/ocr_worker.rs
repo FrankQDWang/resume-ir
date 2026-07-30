@@ -45,6 +45,9 @@ pub(crate) fn run_ocr_worker_once_with_handoff(
     claim_allowed: impl Fn() -> bool,
     generation_handoff: Option<&crate::ipc::search_service::GenerationHandoff>,
 ) -> Result<OcrWorkerSummary> {
+    if generation_handoff.is_some_and(|handoff| !handoff.publication_enabled()) {
+        return Ok(OcrWorkerSummary::default());
+    }
     let now = current_timestamp()?;
     match ocr_preclaim_decision(store).map_err(DaemonError::import)? {
         OcrPreclaimDecision::Ready => {}
@@ -207,7 +210,9 @@ pub(crate) fn run_ocr_worker_batch_with_handoff(
 ) -> Result<OcrWorkerSummary> {
     let mut aggregate = OcrWorkerSummary::default();
     for _ in 0..jobs_per_tick {
-        if !claim_allowed() {
+        if !claim_allowed()
+            || generation_handoff.is_some_and(|handoff| !handoff.publication_enabled())
+        {
             break;
         }
         let summary = run_ocr_worker_once_with_handoff(
@@ -624,7 +629,16 @@ fn run_claimed_ocr_job(
         }),
     );
     if let Some(generation_handoff) = generation_handoff {
-        generation_handoff.finish_publication();
+        let committed = matches!(
+            &outcome,
+            Ok(import_pipeline::OcrTextIndexOutcome::Committed(_))
+        );
+        let finalized = generation_handoff.finish_publication(committed);
+        if committed && !finalized {
+            return Err(DaemonError::control_plane(
+                "prepared query generation could not be activated",
+            ));
+        }
     }
     let outcome = match outcome {
         Ok(outcome) => outcome,

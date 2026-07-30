@@ -451,6 +451,54 @@ fn publish_from_releases_base_pin_before_returning_publication_busy() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[test]
+fn publication_reader_reuses_exact_documents_without_query_ann_owner() {
+    let root = temp_dir("publication-reader-successor");
+    let contract = VectorModelContract::enabled("model", 4).unwrap();
+    let store = VectorSnapshotStore::new(&root, contract.clone()).unwrap();
+    let base_document = document("base", "base", "base");
+    store
+        .publish_generation(
+            "generation-base",
+            [projection(&base_document)],
+            [base_document.clone()],
+        )
+        .unwrap();
+    let snapshot_root = VectorSnapshotRoot::new(&root).unwrap();
+    let base_reader = snapshot_root
+        .open_generation_for_republication_with_lease(
+            "generation-base",
+            &contract,
+            snapshot_root.acquire_read_lease().unwrap(),
+        )
+        .unwrap();
+    let update = VectorSnapshotUpdate::new(
+        vec![projection(&base_document)],
+        Vec::new(),
+        BTreeSet::new(),
+    )
+    .unwrap();
+
+    store
+        .publish_generation_from_publication_reader_with_control(
+            base_reader,
+            "generation-next",
+            update,
+            VectorSnapshotPublishControl::disabled(),
+        )
+        .unwrap();
+
+    let next = snapshot_root
+        .open_generation_with_lease(
+            "generation-next",
+            &contract,
+            snapshot_root.acquire_read_lease().unwrap(),
+        )
+        .unwrap();
+    assert_eq!(next.documents(), &[base_document]);
+    let _ = fs::remove_dir_all(root);
+}
+
 fn projection(document: &VectorDocument) -> ActiveSearchProjection {
     ActiveSearchProjection {
         document_id: DocumentId::from_str(document.document_id()).unwrap(),

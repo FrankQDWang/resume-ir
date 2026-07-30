@@ -240,6 +240,7 @@ impl BoundServer {
             source_file_service.abort_for_process_exit();
             return Err(DaemonFatalError::ControlPlaneFailure);
         }
+        query_service.enable_publication();
         let status_updater = StatusUpdater::start(
             context.data_dir,
             control_publisher,

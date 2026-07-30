@@ -56,7 +56,7 @@ impl SearchService {
         artifact_fault_reporter: Option<ArtifactFaultReporter>,
         generation_handoff: GenerationHandoff,
     ) -> crate::Result<Self> {
-        let queue = Arc::new(SearchQueue::default());
+        let queue = generation_handoff.queue();
         let admission = Arc::new(AdmissionState::new());
         let batch_active = Arc::new(AtomicBool::new(false));
         let cancellations = Arc::new(CancellationRegistry::default());
@@ -69,7 +69,6 @@ impl SearchService {
             Arc::clone(&cancellations),
             deadline_sender.clone(),
             artifact_fault_reporter,
-            generation_handoff,
         );
         Ok(Self {
             queue,
@@ -133,6 +132,10 @@ impl SearchService {
             ));
         }
         Ok(())
+    }
+
+    pub(crate) fn enable_publication(&self) {
+        self.queue.enable_publication();
     }
 
     fn dispatch_reply(

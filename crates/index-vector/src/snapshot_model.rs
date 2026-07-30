@@ -259,6 +259,24 @@ impl VectorSnapshotUpdate {
         base: &[VectorDocument],
         control: VectorSnapshotPublishControl<'_>,
     ) -> Result<(Vec<ActiveSearchProjection>, Vec<VectorDocument>), VectorIndexError> {
+        self.apply_documents_with_control(base.len(), base.iter().cloned(), control)
+    }
+
+    pub(crate) fn apply_owned_with_control(
+        self,
+        base: Vec<VectorDocument>,
+        control: VectorSnapshotPublishControl<'_>,
+    ) -> Result<(Vec<ActiveSearchProjection>, Vec<VectorDocument>), VectorIndexError> {
+        let base_len = base.len();
+        self.apply_documents_with_control(base_len, base, control)
+    }
+
+    fn apply_documents_with_control(
+        self,
+        base_len: usize,
+        base: impl IntoIterator<Item = VectorDocument>,
+        control: VectorSnapshotPublishControl<'_>,
+    ) -> Result<(Vec<ActiveSearchProjection>, Vec<VectorDocument>), VectorIndexError> {
         control.check()?;
         let mut active_versions = BTreeMap::new();
         for (index, entry) in self.active_projection.iter().enumerate() {
@@ -274,15 +292,15 @@ impl VectorSnapshotUpdate {
             control.check_after_record(index + 1)?;
         }
         let mut documents =
-            Vec::with_capacity(base.len().saturating_add(self.replacement_documents.len()));
-        for (index, document) in base.iter().enumerate() {
+            Vec::with_capacity(base_len.saturating_add(self.replacement_documents.len()));
+        for (index, document) in base.into_iter().enumerate() {
             if active_versions
                 .get(document.document_id())
                 .is_some_and(|version| version == document.resume_version_id())
                 && !self.removed_vector_ids.contains(document.vector_id())
                 && !replacement_ids.contains(document.vector_id())
             {
-                documents.push(document.clone());
+                documents.push(document);
             }
             control.check_after_record(index + 1)?;
         }

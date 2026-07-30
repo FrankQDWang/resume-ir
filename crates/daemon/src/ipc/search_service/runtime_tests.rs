@@ -71,6 +71,8 @@ fn queued_search_task(
 #[test]
 fn worker_prewarm_opens_query_artifacts_before_the_first_request() {
     let queue = Arc::new(SearchQueue::default());
+    queue.enable_publication();
+    assert!(!queue.publication_enabled());
     let _ = queue.close_and_cancel();
     let cancellations = Arc::new(CancellationRegistry::default());
     let (deadline_sender, _deadline_receiver) = mpsc::channel();
@@ -78,11 +80,10 @@ fn worker_prewarm_opens_query_artifacts_before_the_first_request() {
 
     run_search_worker(
         crate::search_runtime_config::SearchRuntimeConfig::new(None, None, None, 100),
-        queue,
+        Arc::clone(&queue),
         cancellations,
         deadline_sender,
         None,
-        GenerationHandoff::default(),
         || {
             open_count.fetch_add(1, AtomicOrdering::SeqCst);
             None
@@ -91,44 +92,62 @@ fn worker_prewarm_opens_query_artifacts_before_the_first_request() {
     .unwrap();
 
     assert_eq!(open_count.load(AtomicOrdering::SeqCst), 1);
+    assert!(!queue.publication_enabled());
 }
 
 #[test]
-fn generation_handoff_waits_only_for_the_publication_commit_window() {
-    let handoff = GenerationHandoff::default();
-    {
-        let (state, _) = &*handoff.state;
-        state.lock().unwrap().publication_commit_in_flight = true;
-    }
-    let completing_handoff = handoff.clone();
-    let completion = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(20));
-        completing_handoff.finish_publication();
-    });
+fn publication_requires_both_front_door_and_prepared_runtime() {
+    let queue = SearchQueue::default();
 
-    let started = Instant::now();
-    assert!(handoff
-        .take_ready(started + Duration::from_secs(1))
-        .is_empty());
-    assert!(started.elapsed() >= Duration::from_millis(10));
-    assert!(started.elapsed() < Duration::from_secs(1));
-    completion.join().unwrap();
+    queue.enable_publication();
+    assert!(!queue.publication_enabled());
+    queue.set_runtime_prepared(true);
+    assert!(queue.publication_enabled());
+    queue.set_runtime_prepared(false);
+    assert!(!queue.publication_enabled());
 }
 
 #[test]
-fn generation_handoff_never_waits_beyond_the_interactive_deadline() {
+fn publication_commit_keeps_old_generation_queries_runnable() {
     let handoff = GenerationHandoff::default();
+    let queue = handoff.queue();
+    let admission = Arc::new(AdmissionState::new());
+    let (_client, task) = queued_search_task("publication-fenced", &admission);
+    assert!(queue.push(task));
     {
-        let (state, _) = &*handoff.state;
-        state.lock().unwrap().publication_commit_in_flight = true;
+        let mut state = queue.state.lock().unwrap();
+        state.publication_commit_in_flight = true;
+    }
+    assert!(matches!(queue.pop().unwrap(), SearchWork::Query(_)));
+    queue.complete_generation_transfer();
+}
+
+#[test]
+fn generation_finalize_control_precedes_queued_interactive_query() {
+    let handoff = GenerationHandoff::default();
+    let queue = handoff.queue();
+    let admission = Arc::new(AdmissionState::new());
+    let (_client, task) = queued_search_task("queued-behind-finalize", &admission);
+    assert!(queue.push(task));
+    let (reply, response) = mpsc::sync_channel(1);
+    {
+        let mut state = queue.state.lock().unwrap();
+        state.publication_commit_in_flight = true;
+        state.generation_control = Some(GenerationControl::Finalize {
+            committed: true,
+            reply,
+        });
     }
 
-    let started = Instant::now();
-    assert!(handoff
-        .take_ready(started + Duration::from_millis(20))
-        .is_empty());
-    assert!(started.elapsed() < Duration::from_millis(200));
-    handoff.finish_publication();
+    let control = queue.pop().unwrap();
+    let SearchWork::Generation(GenerationControl::Finalize { committed, reply }) = control else {
+        panic!("generation finalize must have priority")
+    };
+    assert!(committed);
+    reply.send(true).unwrap();
+    assert!(response.recv().unwrap());
+    queue.complete_generation_transfer();
+    assert!(matches!(queue.pop().unwrap(), SearchWork::Query(_)));
 }
 
 #[test]
@@ -176,7 +195,7 @@ fn shutdown_cancels_active_task_and_never_executes_queued_task() {
     let worker_executed = Arc::clone(&executed);
     let (active_entered_sender, active_entered_receiver) = mpsc::sync_channel(1);
     let worker = thread::spawn(move || {
-        while let Some(task) = worker_queue.pop() {
+        while let Some(SearchWork::Query(task)) = worker_queue.pop() {
             worker_executed.fetch_add(1, AtomicOrdering::SeqCst);
             active_entered_sender.send(()).unwrap();
             while !task.control.cancellation.is_cancelled() {
@@ -225,7 +244,7 @@ fn request_limit_drain_completes_active_and_queued_tasks_without_cancellation() 
     let (active_entered_sender, active_entered_receiver) = mpsc::sync_channel(1);
     let (active_release_sender, active_release_receiver) = mpsc::sync_channel(1);
     let worker = thread::spawn(move || {
-        while let Some(task) = worker_queue.pop() {
+        while let Some(SearchWork::Query(task)) = worker_queue.pop() {
             let execution_index = worker_executed.fetch_add(1, AtomicOrdering::SeqCst);
             if execution_index == 0 {
                 active_entered_sender.send(()).unwrap();

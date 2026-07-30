@@ -204,29 +204,47 @@ fn metadata_head_unavailable_does_not_report_an_artifact_fault() {
     assert_eq!(coordinator.take_artifact_fault(), None);
 }
 
+#[derive(Clone, Copy)]
+enum FirstQueryMode {
+    Lexical,
+    Semantic,
+    Hybrid,
+}
+
+#[derive(Debug, PartialEq)]
+struct FirstQueryResult {
+    visible_epoch: u64,
+    lexical: Vec<(core_domain::ActiveSearchProjection, usize, String)>,
+    semantic: Vec<(core_domain::ActiveSearchProjection, usize)>,
+}
+
 #[test]
-fn prepared_publication_keeps_first_lexical_and_composite_queries_off_deep_open() {
-    let mut fixture = Fixture::new_vectorized("prepared-generation-handoff", 2);
+fn prepared_publication_keeps_first_lexical_query_off_deep_open() {
+    assert_prepared_first_query(FirstQueryMode::Lexical, "prepared-lexical-first");
+}
+
+#[test]
+fn prepared_publication_keeps_first_semantic_query_off_deep_open() {
+    assert_prepared_first_query(FirstQueryMode::Semantic, "prepared-semantic-first");
+}
+
+#[test]
+fn prepared_publication_keeps_first_hybrid_query_off_deep_open() {
+    assert_prepared_first_query(FirstQueryMode::Hybrid, "prepared-hybrid-first");
+}
+
+fn assert_prepared_first_query(mode: FirstQueryMode, label: &str) {
+    let mut fixture = Fixture::new_vectorized(label, 2);
     let mut coordinator = QueryCoordinator::open(&fixture.data_dir).unwrap();
-    coordinator
-        .with_query(|scope| {
-            assert_eq!(scope.visible_epoch(), 1);
-            Ok(())
-        })
-        .unwrap();
+    coordinator.prepare_current_generation().unwrap();
+    assert_eq!(coordinator.resident_generation_count(), 1);
 
     fixture.replace_first_resume("Go");
     let generation = fixture.publish_next();
     let state = fixture.store.search_projection_state().unwrap();
-    let publication = state.publication.as_ref().unwrap();
-    let projections = fixture
-        .store
-        .with_search_metadata_snapshot(|snapshot| {
-            snapshot.validated_active_projections().map_err(|_| ())
-        })
-        .unwrap();
-    let prepared =
-        PreparedQueryGeneration::open(&fixture.data_dir, publication, &projections).unwrap();
+    let mut baseline = QueryCoordinator::open(&fixture.data_dir).unwrap();
+    let expected = execute_first_query(&mut baseline, mode);
+    let prepared = fixture.prepare_current_generation();
 
     fs::write(
         fixture
@@ -247,43 +265,105 @@ fn prepared_publication_keeps_first_lexical_and_composite_queries_off_deep_open(
     )
     .unwrap();
     coordinator.install_prepared_generation(prepared).unwrap();
+    assert_eq!(coordinator.resident_generation_count(), 2);
 
-    let lexical_epoch = coordinator
-        .with_lexical_query(|scope| {
-            assert_eq!(
-                scope
+    let actual = execute_first_query(&mut coordinator, mode);
+
+    assert_eq!(coordinator.resident_generation_count(), 1);
+    coordinator.activate_prepared_generation().unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(actual.visible_epoch, state.visible_epoch);
+    assert!(
+        !actual.lexical.is_empty() || !actual.semantic.is_empty(),
+        "synthetic result identity and ordering must be meaningful"
+    );
+    assert_eq!(coordinator.take_artifact_fault(), None);
+}
+
+fn execute_first_query(
+    coordinator: &mut QueryCoordinator,
+    mode: FirstQueryMode,
+) -> FirstQueryResult {
+    match mode {
+        FirstQueryMode::Lexical => coordinator
+            .with_lexical_query(|scope| {
+                let lexical = scope
                     .fulltext_candidates("Go", HitLimit::new(10).unwrap(), None)?
-                    .len(),
-                1
-            );
-            Ok(scope.visible_epoch())
-        })
-        .unwrap();
-    let composite_epoch = coordinator
-        .with_query(|scope| {
-            assert_eq!(
-                scope
-                    .fulltext_candidates("Go", HitLimit::new(10).unwrap(), None)?
-                    .len(),
-                1
-            );
-            assert_eq!(
-                scope
+                    .into_iter()
+                    .map(|candidate| (candidate.projection, candidate.rank, candidate.file_name))
+                    .collect();
+                Ok(FirstQueryResult {
+                    visible_epoch: scope.visible_epoch(),
+                    lexical,
+                    semantic: Vec::new(),
+                })
+            })
+            .unwrap(),
+        FirstQueryMode::Semantic => coordinator
+            .with_query(|scope| {
+                let semantic = scope
                     .semantic_candidates(
                         SemanticQueryVector::new(vec![1.0, 1.0]).unwrap(),
                         HitLimit::new(10).unwrap(),
                         None,
                     )?
-                    .len(),
-                2
-            );
-            Ok(scope.visible_epoch())
-        })
-        .unwrap();
+                    .into_iter()
+                    .map(|candidate| (candidate.projection, candidate.rank))
+                    .collect();
+                Ok(FirstQueryResult {
+                    visible_epoch: scope.visible_epoch(),
+                    lexical: Vec::new(),
+                    semantic,
+                })
+            })
+            .unwrap(),
+        FirstQueryMode::Hybrid => coordinator
+            .with_query(|scope| {
+                let lexical = scope
+                    .fulltext_candidates("Go", HitLimit::new(10).unwrap(), None)?
+                    .into_iter()
+                    .map(|candidate| (candidate.projection, candidate.rank, candidate.file_name))
+                    .collect();
+                let semantic = scope
+                    .semantic_candidates(
+                        SemanticQueryVector::new(vec![1.0, 1.0]).unwrap(),
+                        HitLimit::new(10).unwrap(),
+                        None,
+                    )?
+                    .into_iter()
+                    .map(|candidate| (candidate.projection, candidate.rank))
+                    .collect();
+                Ok(FirstQueryResult {
+                    visible_epoch: scope.visible_epoch(),
+                    lexical,
+                    semantic,
+                })
+            })
+            .unwrap(),
+    }
+}
 
-    assert_eq!(lexical_epoch, state.visible_epoch);
-    assert_eq!(composite_epoch, state.visible_epoch);
-    assert_eq!(coordinator.take_artifact_fault(), None);
+#[test]
+fn prepared_generation_residency_never_exceeds_active_plus_one_pending() {
+    let mut fixture = Fixture::new_vectorized("prepared-generation-residency", 2);
+    let mut coordinator = QueryCoordinator::open(&fixture.data_dir).unwrap();
+    coordinator.prepare_current_generation().unwrap();
+    coordinator.with_query(|_| Ok(())).unwrap();
+    assert_eq!(coordinator.resident_generation_count(), 1);
+
+    fixture.replace_first_resume("Go");
+    fixture.publish_next();
+    let second = fixture.prepare_current_generation();
+    coordinator.install_prepared_generation(second).unwrap();
+    assert_eq!(coordinator.resident_generation_count(), 2);
+
+    fixture.replace_first_resume("Swift");
+    fixture.publish_next();
+    let third = fixture.prepare_current_generation();
+    let error = coordinator.install_prepared_generation(third).unwrap_err();
+
+    assert_eq!(error.code(), SearchRuntimeErrorCode::Unavailable);
+    assert_eq!(coordinator.resident_generation_count(), 2);
 }
 
 struct Fixture {
@@ -346,6 +426,18 @@ impl Fixture {
 
     fn replace_first_resume(&self, skill: &str) {
         fs::write(self.root.join("candidate-0.txt"), resume_text(0, skill)).unwrap();
+    }
+
+    fn prepare_current_generation(&self) -> PreparedQueryGeneration {
+        let state = self.store.search_projection_state().unwrap();
+        let publication = state.publication.as_ref().unwrap();
+        let projections = self
+            .store
+            .with_search_metadata_snapshot(|snapshot| {
+                snapshot.validated_active_projections().map_err(|_| ())
+            })
+            .unwrap();
+        PreparedQueryGeneration::open(&self.data_dir, publication, &projections).unwrap()
     }
 
     fn publish_next(&mut self) -> String {

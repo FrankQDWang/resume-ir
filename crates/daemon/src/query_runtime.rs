@@ -104,6 +104,16 @@ impl DaemonQueryRuntime {
             .map_err(map_runtime_error)
     }
 
+    pub(crate) fn activate_prepared_generation(&mut self) -> Result<(), QueryFailure> {
+        self.coordinator
+            .activate_prepared_generation()
+            .map_err(map_runtime_error)
+    }
+
+    pub(crate) fn discard_prepared_generation(&mut self) {
+        self.coordinator.discard_prepared_generation();
+    }
+
     pub(crate) fn take_artifact_fault(&mut self) -> Option<SearchArtifactFaultKey> {
         self.coordinator.take_artifact_fault()
     }
