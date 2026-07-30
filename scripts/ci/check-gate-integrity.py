@@ -47,9 +47,6 @@ NEXT_ISSUE_CONTRACT_PATHS = {
     "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
     "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
     "03_next_goal_高性能本地检索GUI闭环/10_实施切片与验收门槛.md",
-    "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md",
-    "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md",
-    "03_next_goal_高性能本地检索GUI闭环/18_Autonomous_Delivery与Issue_Led_Slice_Train.md",
 }
 CLASSIFIER_CORE_PATHS = {
     "ACTIVE_GOAL.toml",
@@ -261,7 +258,11 @@ def validate_declared_successor_transition(
         "transition_id",
         "from_issue",
         "to_issue",
-        "predecessor_terminal_evidence_ref",
+        "routing_kind",
+        "source_issue_role",
+        "source_issue_remains_open",
+        "source_issue_terminal_claim",
+        "routing_evidence_ref",
         "successor_issue_ref",
         "base_active_goal_sha256",
         "state_paths",
@@ -273,7 +274,7 @@ def validate_declared_successor_transition(
     }
     if set(raw) != expected_keys:
         fail(f"{SUCCESSOR_TRANSITION_RECORD}: keys mismatch")
-    if raw.get("schema_version") != "resume-ir.active-slice-transition.v1":
+    if raw.get("schema_version") != "resume-ir.active-slice-transition.v2":
         fail(f"{SUCCESSOR_TRANSITION_RECORD}.schema_version: mismatch")
     require_non_empty_string(raw.get("transition_id"), f"{SUCCESSOR_TRANSITION_RECORD}.transition_id")
     base_slice = base_goal.get("scope", {}).get("active_slice", {})
@@ -285,14 +286,23 @@ def validate_declared_successor_transition(
     expected_successor_ref = f"https://github.com/FrankQDWang/resume-ir/issues/{head_issue[1:]}"
     if raw.get("successor_issue_ref") != expected_successor_ref:
         fail(f"{SUCCESSOR_TRANSITION_RECORD}.successor_issue_ref: mismatch")
+    routing = {
+        "routing_kind": "umbrella_to_bounded_execution_owner",
+        "source_issue_role": "umbrella",
+        "source_issue_remains_open": True,
+        "source_issue_terminal_claim": False,
+    }
+    for key, expected in routing.items():
+        if raw.get(key) != expected:
+            fail(f"{SUCCESSOR_TRANSITION_RECORD}.{key}: mismatch")
     evidence_ref = require_non_empty_string(
-        raw.get("predecessor_terminal_evidence_ref"),
-        f"{SUCCESSOR_TRANSITION_RECORD}.predecessor_terminal_evidence_ref",
+        raw.get("routing_evidence_ref"),
+        f"{SUCCESSOR_TRANSITION_RECORD}.routing_evidence_ref",
     )
     if not evidence_ref.startswith(
         f"https://github.com/FrankQDWang/resume-ir/issues/{base_issue[1:]}#issuecomment-"
     ):
-        fail(f"{SUCCESSOR_TRANSITION_RECORD}.predecessor_terminal_evidence_ref: mismatch")
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.routing_evidence_ref: mismatch")
     base_goal_source = subprocess.check_output(
         ["git", "show", f"{merge_base}:ACTIVE_GOAL.toml"], cwd=ROOT
     )
@@ -323,22 +333,15 @@ def validate_declared_successor_transition(
     for key, value in privacy.items():
         require_bool(value, False, f"{SUCCESSOR_TRANSITION_RECORD}.privacy.{key}")
     require_bool(base_slice.get("contract_change_allowed"), True, "base.scope.active_slice.contract_change_allowed")
-    require_bool(
-        head_slice.get("scope_exception"),
-        current_main_attribution,
-        "head.scope.active_slice.scope_exception",
-    )
+    require_bool(head_slice.get("scope_exception"), current_main_attribution,
+                 "head.scope.active_slice.scope_exception")
     allowed_paths = head_slice.get("allowed_paths")
     if not isinstance(allowed_paths, list) or not all(isinstance(path, str) and path for path in allowed_paths):
         fail("successor active slice requires non-empty allowed_paths")
     if len(set(allowed_paths)) != len(allowed_paths):
         fail("successor active slice allowed_paths must be unique")
     if current_main_attribution and set(allowed_paths) != CURRENT_MAIN_ATTRIBUTION_FINAL_PATHS:
-        fail(
-            "successor active slice allowed_paths mismatch: expected "
-            f"{sorted(CURRENT_MAIN_ATTRIBUTION_FINAL_PATHS)!r}, "
-            f"found {sorted(allowed_paths)!r}"
-        )
+        fail("successor active slice allowed_paths mismatch")
     bootstrap = raw.get("bootstrap_gate_change")
     require_bool(bootstrap, bootstrap is True, f"{SUCCESSOR_TRANSITION_RECORD}.bootstrap_gate_change")
     if bootstrap:
@@ -347,12 +350,7 @@ def validate_declared_successor_transition(
                 frozenset(CURRENT_MAIN_ATTRIBUTION_PRE_PR_PATHS),
                 frozenset(CURRENT_MAIN_ATTRIBUTION_FINAL_PATHS),
             }:
-                fail(
-                    "current-main attribution transition path mismatch: expected "
-                    f"{sorted(CURRENT_MAIN_ATTRIBUTION_PRE_PR_PATHS)!r} before PR "
-                    f"or {sorted(CURRENT_MAIN_ATTRIBUTION_FINAL_PATHS)!r} after PR, "
-                    f"found {sorted(changed)!r}"
-                )
+                fail("current-main attribution transition path mismatch")
         elif (base_issue, head_issue) != ("#170", "#173"):
             fail("successor transition bootstrap is restricted to #170 -> #173 or #217 -> #270")
         elif changed != SUCCESSOR_TRANSITION_BOOTSTRAP_PATHS:

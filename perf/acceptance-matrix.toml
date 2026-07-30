@@ -753,11 +753,40 @@ current_metadata_schema = 35
 milestones = ["first_searchable", "keyword_ready", "embedding_complete", "ocr_backlog_full_import"]
 milestone_claim_mixing_allowed = false
 optimization_or_profile_issue = false
-benchmark_or_profile_execution_in_contract_slice_allowed = false
 app_dmg_or_installed_acceptance_in_contract_slice_allowed = false
 configured_private_roots_required_for_attribution = true
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 public_evidence = "bounded_redacted_aggregate_only"
+current_phase = "contract_reconciliation"
+post_merge_phase = "attribution_execution"
+same_issue_owner_required = true
+fresh_merged_main_observation_required = true
+
+[current_main_installed_equivalent_import_attribution.contract_reconciliation]
+evidence_lane = "w0_docs"
+benchmark_or_profile_execution_allowed = false
+production_code_allowed = false
+
+[current_main_installed_equivalent_import_attribution.attribution_execution]
+evidence_lane = "w1_private"
+benchmark_or_profile_execution_allowed = true
+production_code_allowed = false
+authorization_transition = "authorize_current_main_import_attribution"
+missing_roots_transition = "block_current_main_import_attribution_missing_roots"
+allowed_actions = [
+  "observe_current_main",
+  "attest_runtime_capabilities",
+  "run_benchmark",
+  "run_profile",
+  "write_redacted_evidence",
+  "reduce_current_state",
+]
+public_output_paths = [
+  "PROGRESS.md",
+  "perf/current-loop-state.json",
+  "perf/runs/<run_id>/events/<state_version>.json",
+  "perf/runs/<run_id>/redacted/<artifact>.json",
+]
 
 [autonomous_delivery_lanes.query_hot_path]
 may_claim = ["hot_index_latency", "stage_latency", "resident_daemon_performance"]

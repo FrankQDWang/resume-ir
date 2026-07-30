@@ -524,10 +524,12 @@ def validate_current_loop_contract_pins(state: Mapping[str, object]) -> None:
                 "perf/current-loop-state.json.contract_pins."
                 f"{key}: expected {expected} from {rel_path}, got {observed}"
             )
-    head = pins.get("git_head_sha")
-    if head == "working-tree":
+    observed_base = pins.get("git_head_sha")
+    if observed_base == "working-tree":
         fail("perf/current-loop-state.json.contract_pins.git_head_sha: working-tree placeholder is not allowed")
-    require_git_commit_reachable_from_origin_main(head, "perf/current-loop-state.json.contract_pins.git_head_sha")
+    require_git_commit_reachable_from_origin_main(
+        observed_base, "perf/current-loop-state.json.contract_pins.git_head_sha",
+    )
 
 
 def validate_current_file_contract_pins(value: object, path: str) -> Mapping[str, object]:
@@ -538,10 +540,10 @@ def validate_current_file_contract_pins(value: object, path: str) -> Mapping[str
         expected = sha256_file(ROOT / rel_path)
         if observed != expected:
             fail(f"{path}.{key}: expected {expected} from {rel_path}, got {observed}")
-    head = pins.get("git_head_sha")
-    if head == "working-tree":
+    source_commit = pins.get("git_head_sha")
+    if source_commit == "working-tree":
         fail(f"{path}.git_head_sha: working-tree placeholder is not allowed")
-    require_git_commit_exists(head, f"{path}.git_head_sha")
+    require_git_commit_exists(source_commit, f"{path}.git_head_sha")
     return pins
 
 
@@ -564,8 +566,8 @@ def validate_contract_pins(value: object, path: str) -> None:
         require_hex64(pins.get(key), f"{path}.{key}")
     if "synthetic_smoke_artifact_manifest_schema_sha256" in pins:
         require_hex64(pins.get("synthetic_smoke_artifact_manifest_schema_sha256"), f"{path}.synthetic_smoke_artifact_manifest_schema_sha256")
-    head = pins.get("git_head_sha")
-    if not isinstance(head, str) or not head:
+    source_commit = pins.get("git_head_sha")
+    if not isinstance(source_commit, str) or not source_commit:
         fail(f"{path}.git_head_sha: expected git sha or working-tree")
 
 
@@ -1039,52 +1041,50 @@ def validate_matrix(matrix: Mapping[str, object]) -> None:
         matrix.get("current_main_installed_equivalent_import_attribution"),
         "matrix.current_main_installed_equivalent_import_attribution",
     )
-    expected_attribution_strings = {
+    expected_attribution = {
         "owner_issue": "#270",
         "owner_kind": "attribution_evidence",
         "primary_benchmark_lane": "full_import_ocr_backlog",
         "current_schema_source": "crates/meta-store/src/lib.rs::CURRENT_SCHEMA_VERSION",
+        "current_metadata_schema": 35,
+        "milestones": ["first_searchable", "keyword_ready", "embedding_complete",
+                       "ocr_backlog_full_import"],
+        "milestone_claim_mixing_allowed": False,
+        "optimization_or_profile_issue": False,
+        "app_dmg_or_installed_acceptance_in_contract_slice_allowed": False,
+        "configured_private_roots_required_for_attribution": True,
         "unconfigured_private_run_terminal": "blocked_missing_configured_private_roots",
         "public_evidence": "bounded_redacted_aggregate_only",
+        "current_phase": "contract_reconciliation",
+        "post_merge_phase": "attribution_execution",
+        "same_issue_owner_required": True,
+        "fresh_merged_main_observation_required": True,
     }
-    for key, expected in expected_attribution_strings.items():
+    for key, expected in expected_attribution.items():
         if attribution.get(key) != expected:
-            fail(
-                "matrix.current_main_installed_equivalent_import_attribution."
-                f"{key}: expected {expected!r}"
-            )
-    if attribution.get("current_metadata_schema") != 35:
-        fail(
-            "matrix.current_main_installed_equivalent_import_attribution."
-            "current_metadata_schema: expected 35"
-        )
-    if attribution.get("milestones") != [
-        "first_searchable",
-        "keyword_ready",
-        "embedding_complete",
-        "ocr_backlog_full_import",
-    ]:
-        fail(
-            "matrix.current_main_installed_equivalent_import_attribution."
-            "milestones mismatch"
-        )
-    require_bool_fields(
-        attribution,
-        [
-            "milestone_claim_mixing_allowed",
-            "optimization_or_profile_issue",
-            "benchmark_or_profile_execution_in_contract_slice_allowed",
-            "app_dmg_or_installed_acceptance_in_contract_slice_allowed",
-        ],
-        False,
-        "matrix.current_main_installed_equivalent_import_attribution",
+            fail(f"matrix attribution.{key}: expected {expected!r}")
+    reconciliation = require_mapping(
+        attribution.get("contract_reconciliation"), "matrix attribution reconciliation"
     )
-    require_bool(
-        attribution.get("configured_private_roots_required_for_attribution"),
-        True,
-        "matrix.current_main_installed_equivalent_import_attribution."
-        "configured_private_roots_required_for_attribution",
+    if reconciliation != {"evidence_lane": "w0_docs",
+                          "benchmark_or_profile_execution_allowed": False,
+                          "production_code_allowed": False}:
+        fail("matrix attribution reconciliation mismatch")
+    execution = require_mapping(
+        attribution.get("attribution_execution"), "matrix attribution execution"
     )
+    for key, expected in {
+        "evidence_lane": "w1_private",
+        "benchmark_or_profile_execution_allowed": True,
+        "production_code_allowed": False,
+        "authorization_transition": "authorize_current_main_import_attribution",
+        "missing_roots_transition":
+            "block_current_main_import_attribution_missing_roots",
+    }.items():
+        if execution.get(key) != expected:
+            fail(f"matrix attribution execution.{key} mismatch")
+    if len(execution.get("public_output_paths", [])) != 4 or "run_profile" not in execution.get("allowed_actions", []):
+        fail("matrix attribution execution scope mismatch")
 
     gui_visual_redlines = require_mapping(matrix.get("gui_visual_redlines"), "matrix.gui_visual_redlines")
     require_bool_fields(

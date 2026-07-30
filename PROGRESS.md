@@ -8,31 +8,26 @@ production-ready scope source.
 ## Current-main import attribution contract reconciliation
 
 Issue #270 is the single execution owner for current-main installed-equivalent
-import attribution. Live observation bound this W0 slice to remote `main`
-`0387506bc381aaa04ded9eb67cc213ffcd9c6797`: PRs #249, #267, and #269 are
-merged, #268 is closed, #217 remains the umbrella, and #37 retains its older
-PR #35/D10K context. The owner uses one primary lane,
-`full_import_ocr_backlog`, with independent first-searchable, keyword-ready,
-embedding-complete, and OCR-backlog/full-import milestones.
+import attribution. The observed base was
+`0387506bc381aaa04ded9eb67cc213ffcd9c6797`; PRs #249/#267/#269 are merged,
+#268 is closed, #217 remains an umbrella and #37 is historical. Contracts and
+checkers now agree on schema v35 and the `full_import_ocr_backlog` primary lane
+with four independent milestones.
 
-- Active policy, acceptance policy, code authority, fixtures, and checker
-  constants now agree on current metadata schema v35. Historical schema v34
-  remains an intermediate feature-train step.
-- Active and goal-level private-benchmark permissions now agree. No configured
-  private root was present, so later attribution records
-  `blocked_missing_configured_private_roots`; this contract slice did not guess
-  a path, scan `HOME`, or read private input.
-- The #217 → #270 routing is explicit. Event 554 records the reconciliation;
-  event 555 records live draft PR #271 at its observed head. The deterministic
-  reducer reproduces the final `pr_opened` snapshot and #270/#271 ledger
-  byte-for-byte from the main-reachable legacy snapshot plus those events.
-- `check-performance-contracts.py`, `check-autonomous-goal.py`,
-  `check-loop-state.py`, the reducer check, the public-repository guard, Python
-  compilation, and `git diff --check` pass. No import, OCR, embedding, index,
-  classifier, query, GUI, benchmark, profile, App/DMG, install, installed
-  acceptance, soak, Windows, or Linux work ran.
-- This is a partial contract-reconciliation result only. It does not claim W1,
-  D10K, performance attribution, installed acceptance, or goal completion.
+- Reconciliation forbids execution. After normal merge/cleanup, #270 may enter
+  `goal_authorized` only after fresh merged-main, configured-root and runtime
+  capability evidence; otherwise it records `blocked_permission` with
+  `blocked_missing_configured_private_roots`.
+- The #217 → #270 record is umbrella delegation, not terminal evidence.
+  Events 554/555 remain immutable. The graph-driven reducer accepts continuous
+  556+ events; focused tests reject illegal edges, broken hashes and gaps.
+- The legacy-named snapshot `git_head_sha` is only the observed base. Fresh
+  live Git is mandatory authority for later attribution, avoiding a
+  self-staling follow-up PR.
+- Reducer, performance, autonomous, loop, integrity and public guards pass.
+  No private read, benchmark/profile, business code, App/DMG, install,
+  acceptance, soak, Windows/Linux work, W1/D10K attribution or goal-complete
+  claim occurred.
 
 ## Persistent file-observation fast path (v35 / #268)
 

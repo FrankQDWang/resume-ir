@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = true
-scope_exception_reason = "Issue #270 owns one W0 contract-reconciliation slice plus the later attribution-only handoff. This slice updates public policy/checker/state contracts so current main schema v35, the unique issue ledger, effective private-benchmark permission, macOS-only delivery boundary and append-only reducer evidence agree. It changes no production code, threshold, benchmark workload or runtime state. The future attribution step remains blocked_missing_configured_private_roots until an authorized root is explicitly configured and cannot claim optimization, App/DMG, installed acceptance, W1, D10K or goal completion."
+scope_exception_reason = "Issue #270 owns one W0 contract-reconciliation phase plus the later attribution-execution phase. Review repair must update the loop schema and required autonomous-delivery docs so post-merge authorization, append-only reduction, umbrella routing and observed-base semantics are machine-verifiable. It changes no production code, threshold, benchmark workload or runtime state. Attribution remains blocked_missing_configured_private_roots until an authorized root is explicitly configured and cannot claim optimization, App/DMG, installed acceptance, W1, D10K or goal completion."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -47,9 +47,33 @@ primary_benchmark_lane = "full_import_ocr_backlog"
 milestones = ["first_searchable", "keyword_ready", "embedding_complete", "ocr_backlog_full_import"]
 milestone_claim_mixing_allowed = false
 optimization_or_profile_issue = false
-benchmark_or_profile_execution_in_contract_slice_allowed = false
 app_dmg_or_installed_acceptance_in_contract_slice_allowed = false
 exact_current_main_required = true
+current_phase = "contract_reconciliation"
+post_merge_phase = "attribution_execution"
+same_issue_owner_required = true
+fresh_merged_main_observation_required = true
+
+[scope.active_slice.attribution.contract_reconciliation]
+evidence_lane = "w0_docs"
+benchmark_or_profile_execution_allowed = false
+production_code_allowed = false
+
+[scope.active_slice.attribution.attribution_execution]
+evidence_lane = "w1_private"
+benchmark_or_profile_execution_allowed = true
+production_code_allowed = false
+authorization_transition = "authorize_current_main_import_attribution"
+missing_roots_transition = "block_current_main_import_attribution_missing_roots"
+allowed_actions = [
+  "observe_current_main", "attest_runtime_capabilities", "run_benchmark",
+  "run_profile", "write_redacted_evidence", "reduce_current_state",
+]
+public_output_paths = [
+  "PROGRESS.md", "perf/current-loop-state.json",
+  "perf/runs/<run_id>/events/<state_version>.json",
+  "perf/runs/<run_id>/redacted/<artifact>.json",
+]
 
 [contracts]
 query_semantics = "simple_text_required_all_terms_v1"
@@ -250,7 +274,7 @@ from = ["goal_authorized"]
 to = "baseline_captured"
 required_permissions = ["private_benchmark_allowed"]
 required_evidence = ["baseline_command", "redacted_baseline_artifact"]
-allowed_actions = ["run_benchmark", "write_redacted_evidence"]
+allowed_actions = ["run_benchmark", "run_profile", "write_redacted_evidence"]
 
 [[autonomous_delivery.transitions]]
 name = "open_profile_issue"
@@ -445,9 +469,28 @@ required_evidence = ["merged_commit", "local_main_equals_remote_main", "feature_
 allowed_actions = ["fetch_base", "sync_main", "remove_worktree", "delete_branch"]
 
 [[autonomous_delivery.transitions]]
+name = "authorize_current_main_import_attribution"
+from = ["branch_cleaned_main_synced", "blocked_permission"]
+to = "goal_authorized"
+owner_issues = ["#270"]
+required_permissions = ["private_benchmark_allowed", "private_resume_root_read_allowed"]
+required_evidence = ["owner_issue_270_open", "fresh_remote_main_sha", "clean_main_equals_remote_main", "configured_private_roots", "runtime_capability_attestation", "primary_lane_full_import_ocr_backlog", "phase_attribution_execution", "privacy_boundary"]
+allowed_actions = ["observe_current_main", "attest_runtime_capabilities", "activate_attribution_phase"]
+
+[[autonomous_delivery.transitions]]
+name = "block_current_main_import_attribution_missing_roots"
+from = ["branch_cleaned_main_synced"]
+to = "blocked_permission"
+owner_issues = ["#270"]
+required_permissions = []
+required_evidence = ["owner_issue_270_open", "fresh_remote_main_sha", "clean_main_equals_remote_main", "missing_configured_private_roots", "terminal_reason_blocked_missing_configured_private_roots", "privacy_boundary"]
+allowed_actions = ["observe_current_main", "attest_runtime_capabilities", "record_terminal_state"]
+
+[[autonomous_delivery.transitions]]
 name = "build_and_install_exact_merged_main"
 from = ["branch_cleaned_main_synced"]
 to = "merged_main_0_1_2_installed"
+owner_issues = ["#217"]
 required_permissions = ["local_install_allowed"]
 required_evidence = ["fresh_remote_main", "clean_merged_main", "stable_serial_source_authority", "exact_commit_isolated_build_source", "exact_version_0_1_2", "verified_bundle_dmg_receipt_commit_equality", "installed_app_commit_equality"]
 allowed_actions = ["build_release", "verify_release", "install_local"]

@@ -1,35 +1,13 @@
-# Current-Main Import Attribution Contract Reconciliation Plan
+# Current-Main Import Attribution Contract Plan
 
-Linked spec:
-`docs/superpowers/specs/2026-07-30-current-main-import-attribution-contract.md`
+Spec: `docs/superpowers/specs/2026-07-30-current-main-import-attribution-contract.md`
+Assumption: live Git/GitHub and code are execution truth; this W0 repair needs no private input or product behavior.
 
-## Assumption and ordered work
+1. Keep #270 as the sole owner and #217 as an open umbrella.
+2. Align schema v35, macOS-only delivery, private permission, primary lane and four non-substitutable milestones.
+3. Split reconciliation from post-merge attribution; require fresh merged main, configured roots and runtime capability, otherwise record `blocked_missing_configured_private_roots`.
+4. Preserve 554/555; make the reducer graph-driven for continuous 556+ events with executable illegal-edge/hash/version negative tests.
+5. Mark routing as delegation and the snapshot SHA as observed base, not live-current authority.
+6. Run reducer/performance/autonomous/loop/integrity/public guards within 15 files/800 net lines, then commit/push/update the draft PR. Do not merge.
 
-Remote `main`, live GitHub, and code are execution truth. This is public W0
-contract work; no private input or product behavior is needed.
-
-1. Observe main, issues/PRs, protection, schema, pins, and configured-root
-   capability without reading private values.
-2. Create one bounded owner: #270. Keep #217 as umbrella, #37 historical, and
-   #268 closed.
-3. Bind the active goal and matrix to #270, one lane, four independent
-   milestones, schema v35, consistent private permission, and the missing-root
-   terminal.
-4. Record #217 → #270 and event 554, then derive the snapshot via the reducer.
-5. Run reducer/compiler checks, performance/autonomous/loop gates, public
-   guard, staged integrity, and diff review.
-6. Commit/push, open a draft PR, append event 555, re-derive, reverify, and push
-   the final state. Do not merge.
-
-The exact 15-path budget is in `ACTIVE_GOAL.toml`; it contains no production,
-workload, installer, or private-evidence path and remains under five commits
-and 800 net lines.
-
-## Success and rollback
-
-Success means reproducible state points to #270 and the live draft PR, binds
-current main/schema v35, and records
-`blocked_missing_configured_private_roots` without a private claim.
-
-Rollback reverts both commits and closes #270 as `not planned`; main, merged
-PRs, user data, runtime state, and installed software remain untouched.
+Success is a reproducible snapshot and reachable attribution phase with no private claim. Rollback reverts the contract commits and closes #270 as `not planned`, without touching main, user data, runtime or installed apps.
