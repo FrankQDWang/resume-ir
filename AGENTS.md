@@ -19,21 +19,9 @@
   Read the full goal-doc directory only when changing goal contracts,
   acceptance schemas, cross-module architecture, or when the current slice
   explicitly depends on multiple goal documents.
-- Use Superpowers as the default engineering workflow. Use only the local
-  gstack-lite gates for product, scope, plan, and readiness decisions:
-  - Direction: use `office-hours-lite` first; use `ceo-review-lite` only when
-    scope, ambition, or premise challenge is needed. Stop before planning unless
-    the user asks to continue.
-  - Planning: use Superpowers planning directly. Use `plan-review-lite` before
-    build for non-trivial plans or plans touching contracts, storage, UI,
-    migrations, or multiple crates/modules.
-  - Build, debug, review, and finish: use Superpowers direct skills plus these
-    repository-local instructions. Do not load raw upstream gstack or old
-    curated `fw-*` wrappers unless the user explicitly requests them.
-  - Readiness: use `ship-readiness-lite` for readiness reports only.
-    Except for operations covered by the conditional autonomous delivery
-    exception below, push, PR, merge, deploy, release, canary, and branch cleanup
-    require separate explicit approval.
+- Except for operations covered by the conditional autonomous delivery
+  exception below, push, PR, merge, deploy, release, canary, and branch cleanup
+  require separate explicit approval.
 - Conditional autonomous delivery exception: when the active goal's
   `ACTIVE_GOAL.toml` explicitly enables autonomous delivery for a future
   implementation run, the run has passed runtime capability attestation, and
