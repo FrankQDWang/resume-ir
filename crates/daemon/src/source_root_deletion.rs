@@ -20,6 +20,14 @@ pub(crate) struct DeletionRequest {
     pub(crate) receipt: SourceRootDeletion,
 }
 
+const RETRY_DELAYS: [Duration; 5] = [
+    Duration::from_millis(250),
+    Duration::from_secs(1),
+    Duration::from_secs(4),
+    Duration::from_secs(15),
+    Duration::from_secs(30),
+];
+
 static ACTIVE_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 struct WorkerRegistration {
@@ -92,26 +100,28 @@ pub(crate) fn spawn_worker(
         .name("source-root-deletion".to_string())
         .spawn(move || {
             let _registration = registration;
-            let mut retry_index = 0_usize;
-            loop {
-                match resume(&data_dir, &store, &processing_contract, &root_id) {
-                    Ok(_) => return,
-                    Err(_) => {
-                        const RETRY_DELAYS: [Duration; 5] = [
-                            Duration::from_millis(250),
-                            Duration::from_secs(1),
-                            Duration::from_secs(4),
-                            Duration::from_secs(15),
-                            Duration::from_secs(30),
-                        ];
-                        thread::sleep(RETRY_DELAYS[retry_index.min(RETRY_DELAYS.len() - 1)]);
-                        retry_index = retry_index.saturating_add(1);
-                    }
-                }
-            }
+            drive_worker_until_complete(
+                || resume(&data_dir, &store, &processing_contract, &root_id).map(|_| ()),
+                thread::sleep,
+            );
         })
         .map(|_| ())
         .map_err(|_| CommandFailure::Internal)
+}
+
+fn drive_worker_until_complete(
+    mut attempt: impl FnMut() -> Result<(), CommandFailure>,
+    mut wait: impl FnMut(Duration),
+) {
+    let mut retry_index = 0_usize;
+    loop {
+        if let Ok(()) = attempt() {
+            return;
+        }
+        let delay = RETRY_DELAYS[retry_index.min(RETRY_DELAYS.len() - 1)];
+        retry_index = retry_index.saturating_add(1);
+        wait(delay);
+    }
 }
 
 pub(crate) fn spawn_pending(
@@ -226,10 +236,11 @@ fn resume(
     if phase != SourceRootDeletionPhase::Verifying {
         return Err(CommandFailure::Internal);
     }
-    finish_root_data_cleanup(store, root_id)?;
+    finish_root_data_cleanup(store, root_id)
+        .map_err(|_| CommandFailure::ServiceUnavailable("privacy_cleanup"))?;
     let receipt = store
         .complete_source_root_deletion(root_id, now)
-        .map_err(|_| CommandFailure::Internal)?;
+        .map_err(|_| CommandFailure::ServiceUnavailable("receipt_completion"))?;
     drop(task_owners);
     Ok(receipt)
 }
@@ -340,4 +351,32 @@ fn acquire_root_task_quiescence(
         }
     }
     Ok(owners)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::Cell, time::Duration};
+
+    use super::drive_worker_until_complete;
+    use crate::command_failure::CommandFailure;
+
+    #[test]
+    fn typed_worker_failures_retry_with_capped_backoff() {
+        let attempts = Cell::new(0_u8);
+        let mut delays = Vec::new();
+
+        drive_worker_until_complete(
+            || {
+                attempts.set(attempts.get() + 1);
+                (attempts.get() > 6)
+                    .then_some(())
+                    .ok_or(CommandFailure::ServiceUnavailable("synthetic retry"))
+            },
+            |delay| delays.push(delay),
+        );
+
+        assert_eq!(attempts.get(), 7);
+        let expected_ms = [250, 1_000, 4_000, 15_000, 30_000, 30_000];
+        assert_eq!(delays, expected_ms.map(Duration::from_millis));
+    }
 }

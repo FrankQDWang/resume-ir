@@ -125,6 +125,13 @@ pub(super) fn register(
     let Some(canonical_path) = canonical.to_str() else {
         return write_invalid(stream);
     };
+    match source_root_path_is_deleting(store, canonical_path) {
+        Ok(true) => return write_source_root_deleting(stream),
+        Ok(false) => {}
+        Err(()) => {
+            return write_service_unavailable(stream, ServiceErrorCode::MetadataUnavailable);
+        }
+    }
     let now = match crate::current_timestamp() {
         Ok(now) => now,
         Err(_) => return write_service_unavailable(stream, ServiceErrorCode::MetadataUnavailable),
@@ -136,6 +143,12 @@ pub(super) fn register(
         now,
     ) {
         Ok(root) => root,
+        Err(error)
+            if error.class() == MetaStoreErrorClass::InvalidTransition
+                && source_root_path_is_deleting(store, canonical_path) == Ok(true) =>
+        {
+            return write_source_root_deleting(stream);
+        }
         Err(error) => return write_registration_failure(stream, &error),
     };
     write_root(stream, store, processing_contract, root)
@@ -209,7 +222,23 @@ pub(super) fn migrate_legacy(
         Ok(now) => now,
         Err(_) => return write_service_unavailable(stream, ServiceErrorCode::MetadataUnavailable),
     };
+    for registration in &registrations {
+        match source_root_path_is_deleting(store, &registration.canonical_path) {
+            Ok(true) => return write_source_root_deleting(stream),
+            Ok(false) => {}
+            Err(()) => {
+                return write_service_unavailable(stream, ServiceErrorCode::MetadataUnavailable);
+            }
+        }
+    }
     if let Err(error) = store.register_source_roots_atomically(&registrations, now) {
+        if error.class() == MetaStoreErrorClass::InvalidTransition
+            && registrations.iter().any(|registration| {
+                source_root_path_is_deleting(store, &registration.canonical_path) == Ok(true)
+            })
+        {
+            return write_source_root_deleting(stream);
+        }
         return write_registration_failure(stream, &error);
     }
     list(store, processing_contract, auth_token, request, stream)
@@ -238,7 +267,7 @@ pub(super) fn scan(
         return write_source_unavailable(stream);
     }
     match store.source_root_deletion_in_progress(&root_id) {
-        Ok(true) => return write_conflict(stream),
+        Ok(true) => return write_source_root_deleting(stream),
         Ok(false) => {}
         Err(_) => return write_service_unavailable(stream, ServiceErrorCode::MetadataUnavailable),
     }
@@ -284,7 +313,7 @@ pub(super) fn control(
         Err(_) => return write_service_unavailable(stream, ServiceErrorCode::MetadataUnavailable),
     };
     match store.source_root_deletion_in_progress(&root_id) {
-        Ok(true) => return write_conflict(stream),
+        Ok(true) => return write_source_root_deleting(stream),
         Ok(false) => {}
         Err(_) => return write_service_unavailable(stream, ServiceErrorCode::MetadataUnavailable),
     }
@@ -369,30 +398,35 @@ pub(super) fn delete(
         Ok(deletion) => deletion,
         Err(error) => return write_command_failure(stream, error),
     };
-    if crate::source_root_deletion::spawn_worker(
-        data_dir.to_path_buf(),
-        sibling,
-        processing_contract.clone(),
-        root_id,
+    let body = serde_json::json!({
+        "schema_version": "resume-ir.root-deletion-receipt.v1",
+        "status": "deleting",
+        "root_id": deletion.receipt.root_id.as_str(),
+        "affected_documents": deletion.receipt.affected_documents,
+        "removed_documents": deletion.receipt.removed_documents,
+        "source_files_deleted": false,
+    })
+    .to_string();
+    acknowledge_then_start_worker(
+        || write(stream, 202, "application/json", &body),
+        || {
+            crate::source_root_deletion::spawn_worker(
+                data_dir.to_path_buf(),
+                sibling,
+                processing_contract.clone(),
+                root_id,
+            )
+        },
     )
-    .is_err()
-    {
-        return write_service_unavailable(stream, ServiceErrorCode::MetadataUnavailable);
-    }
-    write(
-        stream,
-        202,
-        "application/json",
-        &serde_json::json!({
-            "schema_version": "resume-ir.root-deletion-receipt.v1",
-            "status": "deleting",
-            "root_id": deletion.receipt.root_id.as_str(),
-            "affected_documents": deletion.receipt.affected_documents,
-            "removed_documents": deletion.receipt.removed_documents,
-            "source_files_deleted": false,
-        })
-        .to_string(),
-    )
+}
+
+fn acknowledge_then_start_worker(
+    acknowledge: impl FnOnce() -> RouteResult,
+    start_worker: impl FnOnce() -> Result<(), CommandFailure>,
+) -> RouteResult {
+    let response = acknowledge();
+    let _ = start_worker();
+    response
 }
 
 fn write_root(
@@ -624,6 +658,31 @@ fn write_conflict(stream: &mut TcpStream) -> RouteResult {
     )
 }
 
+fn source_root_path_is_deleting(store: &OwnedMetaStore, canonical_path: &str) -> Result<bool, ()> {
+    let root = store
+        .source_root_by_canonical_path(canonical_path)
+        .map_err(|_| ())?;
+    root.map(|root| store.source_root_deletion_in_progress(&root.id))
+        .transpose()
+        .map(|deleting| deleting.unwrap_or(false))
+        .map_err(|_| ())
+}
+
+fn write_source_root_deleting(stream: &mut TcpStream) -> RouteResult {
+    write(
+        stream,
+        409,
+        "application/json",
+        &crate::ipc::response::service_error_body(
+            None,
+            "CONFLICT",
+            "retry",
+            None,
+            Some("source_root_deleting"),
+        ),
+    )
+}
+
 fn write_not_found(stream: &mut TcpStream) -> RouteResult {
     write(
         stream,
@@ -687,5 +746,36 @@ fn scan_completeness(completeness: meta_store::ScanCompleteness) -> &'static str
         meta_store::ScanCompleteness::Unknown => "unknown",
         meta_store::ScanCompleteness::Complete => "complete",
         meta_store::ScanCompleteness::Partial => "partial",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::acknowledge_then_start_worker;
+    use crate::command_failure::CommandFailure;
+    use crate::ipc::{RequestFailure, ResponseSinkError};
+
+    #[test]
+    fn deletion_acknowledgement_precedes_background_execution() {
+        let failure = RequestFailure::ResponseSink(ResponseSinkError::ClientDisconnected);
+        for (acknowledge_fails, worker_fails) in [(false, false), (true, false), (false, true)] {
+            let order = RefCell::new(Vec::new());
+            let result = acknowledge_then_start_worker(
+                || {
+                    order.borrow_mut().push("acknowledge");
+                    (!acknowledge_fails).then_some(()).ok_or(failure)
+                },
+                || {
+                    order.borrow_mut().push("start_worker");
+                    (!worker_fails)
+                        .then_some(())
+                        .ok_or(CommandFailure::Internal)
+                },
+            );
+            assert_eq!(result, (!acknowledge_fails).then_some(()).ok_or(failure));
+            assert_eq!(*order.borrow(), ["acknowledge", "start_worker"]);
+        }
     }
 }

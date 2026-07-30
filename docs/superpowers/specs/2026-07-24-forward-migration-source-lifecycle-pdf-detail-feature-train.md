@@ -128,6 +128,11 @@ root uses them. Privacy deletion destroys any retained predecessor containing
 the deleted root before reporting completion. `source-roots.v2`, deletion
 receipt v1 and diagnostics v7 are closed contracts.
 
+After durable requested commits, IPC returns 202 before background deletion.
+Until completion, closed reason `source_root_deleting` fences that path while
+other roots/control remain available. Typed failures retry the receipt with
+bounded backoff and no non-fatal stderr; panics are not recoverable.
+
 ## v0.1.6 — schema v33 PDFium and recoverable OCR
 
 A reviewed, statically linked PDFium runtime becomes the only production PDF

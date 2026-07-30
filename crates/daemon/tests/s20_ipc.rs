@@ -14,7 +14,8 @@ use import_pipeline::{
 };
 use meta_store::{
     ImportRootControlStatus, ImportRootKind, ImportRootPreset, ImportScanProfile, ImportScanScope,
-    ImportTask, ImportTaskId, ImportTaskStatus, OwnedMetaStore, ReadMetaStore, UnixTimestamp,
+    ImportTask, ImportTaskId, ImportTaskStatus, OwnedMetaStore, ReadMetaStore,
+    SourceRootDeletionPhase, UnixTimestamp,
 };
 
 mod support;
@@ -251,6 +252,270 @@ fn daemon_serves_only_authenticated_redacted_v4_diagnostics() {
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());
     remove_dir(&data_dir);
+}
+
+#[test]
+#[cfg_attr(not(feature = "native-runtime-tests"), ignore)]
+fn source_root_delete_returns_accepted_without_restarting_or_blocking_a_second_root() {
+    const DELETION_POLL_REQUEST_BUDGET: usize = 80;
+    const TEXT_IMPORT_READINESS_REQUEST_BUDGET: usize = 120;
+    const DELETE_REQUEST_SCHEMA: &str = "resume-ir.source-root-delete-request.v1";
+    const CONTROL_REQUEST_SCHEMA: &str = "resume-ir.source-root-control-request.v1";
+
+    let runtime_capacity = support::import_runtime_capacity_lease();
+    let data_dir = temp_dir("ipc-source-root-delete-data");
+    seed_reviewed_snapshot_state(&data_dir);
+    let source_a = data_dir.join("synthetic-source-a");
+    let source_b = data_dir.join("synthetic-source-b");
+    fs::create_dir_all(&source_a).unwrap();
+    fs::create_dir_all(&source_b).unwrap();
+    let canonical_source_a = fs::canonicalize(&source_a).unwrap();
+    let canonical_source_b = fs::canonicalize(&source_b).unwrap();
+    let now = UnixTimestamp::from_unix_seconds(1_800_300_200);
+    let [root_a, root_b] = {
+        let store = open_owned_store(&data_dir);
+        [
+            (&canonical_source_a, "Synthetic source A"),
+            (&canonical_source_b, "Synthetic source B"),
+        ]
+        .map(|(path, label)| {
+            store
+                .register_source_root(path_str(path), path_str(path), label, now)
+                .unwrap()
+        })
+    };
+    let root_a_id = root_a.id.as_str();
+    let root_b_id = root_b.id.as_str();
+    let active_task = seed_running_import_task(
+        &data_dir,
+        "source-root-delete-quiescence",
+        &canonical_source_a,
+        now.as_unix_seconds().saturating_sub(1),
+    );
+    let task_owner = ImportTaskOwnerLock::acquire(&data_dir, &active_task).unwrap();
+    let mut child = start_import_capable_ipc_daemon(
+        &runtime_capacity,
+        &data_dir,
+        DELETION_POLL_REQUEST_BUDGET + TEXT_IMPORT_READINESS_REQUEST_BUDGET + 6,
+    );
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
+    let token = read_ipc_auth_token(&data_dir);
+    let (child_id, instance_id) = daemon_identity(&child, &data_dir);
+    let readiness_deadline = Instant::now() + Duration::from_secs(15);
+    let mut remaining_readiness_requests = TEXT_IMPORT_READINESS_REQUEST_BUDGET;
+    loop {
+        assert!(
+            remaining_readiness_requests > 0 && Instant::now() < readiness_deadline,
+            "text import did not become available within the time and request budgets"
+        );
+        remaining_readiness_requests -= 1;
+        let status = http_get(&endpoint, &token);
+        if response_json(&status)["capabilities"]["text_import"]["state"] == "available" {
+            assert_text_import_available_without_ocr(&status);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
+
+    let deletion = http_post_json(
+        &endpoint,
+        "/source-roots/delete",
+        &token,
+        serde_json::json!({"schema_version": DELETE_REQUEST_SCHEMA, "root_id": root_a_id}),
+    );
+    assert!(deletion.starts_with("HTTP/1.1 202 Accepted"), "{deletion}");
+    assert_eq!(
+        response_json(&deletion),
+        serde_json::json!({
+            "schema_version": "resume-ir.root-deletion-receipt.v1",
+            "status": "deleting",
+            "root_id": root_a_id,
+            "affected_documents": 0,
+            "removed_documents": 0,
+            "source_files_deleted": false,
+        })
+    );
+    assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
+
+    let deleting_error = post_source_root_register(
+        &endpoint,
+        &token,
+        root_a.canonical_path.as_str(),
+        "Synthetic source A duplicate",
+        "HTTP/1.1 409 Conflict",
+    );
+    assert_eq!(deleting_error["schema_version"], "resume-ir.error.v3");
+    assert_eq!(deleting_error["error"]["code"], "CONFLICT");
+    assert_eq!(deleting_error["error"]["action"], "retry");
+    assert_eq!(deleting_error["error"]["reason"], "source_root_deleting");
+
+    let roots_during_delete = source_roots_json(&endpoint, &token);
+    assert_eq!(
+        listed_source_root(&roots_during_delete, root_a_id).unwrap()["state"],
+        "deleting"
+    );
+    assert!(listed_source_root(&roots_during_delete, root_b_id).is_some());
+
+    let second_root_control = http_post_json(
+        &endpoint,
+        "/source-roots/control",
+        &token,
+        serde_json::json!({
+            "schema_version": CONTROL_REQUEST_SCHEMA,
+            "root_id": root_b_id,
+            "action": "pause"
+        }),
+    );
+    assert!(second_root_control.starts_with("HTTP/1.1 200 OK"));
+    assert_eq!(
+        response_json(&second_root_control)["root"]["watcher_state"],
+        "paused"
+    );
+    assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
+
+    drop(task_owner);
+    let (remaining_poll_requests, roots_after_delete) =
+        wait_for_source_root_absent(&endpoint, &token, root_a_id, DELETION_POLL_REQUEST_BUDGET);
+    assert!(listed_source_root(&roots_after_delete, root_b_id).is_some());
+
+    let replacement = post_source_root_register(
+        &endpoint,
+        &token,
+        root_a.canonical_path.as_str(),
+        "Synthetic source A replacement",
+        "HTTP/1.1 200 OK",
+    );
+    assert_ne!(replacement["root"]["root_id"].as_str().unwrap(), root_a_id);
+    assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
+    assert!([source_a, source_b].iter().all(|source| source.is_dir()));
+
+    for _ in 0..=remaining_poll_requests + remaining_readiness_requests {
+        assert_ready_status(&http_get(&endpoint, &token));
+    }
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty(), "stderr:\n{}", output.stderr);
+    remove_dir(&data_dir);
+}
+
+#[test]
+#[cfg_attr(not(feature = "native-runtime-tests"), ignore)]
+fn ready_daemon_registers_and_scans_two_non_overlapping_roots() {
+    const SCAN_REQUEST_SCHEMA: &str = "resume-ir.source-root-scan-request.v1";
+    let runtime_capacity = support::import_runtime_capacity_lease();
+    let data_dir = temp_dir("ipc-two-source-roots-data");
+    seed_reviewed_snapshot_state(&data_dir);
+    let source_a = temp_dir("ipc-two-source-root-a");
+    let source_b = temp_dir("ipc-two-source-root-b");
+    let canonical_source_a = fs::canonicalize(&source_a).unwrap();
+    let canonical_source_b = fs::canonicalize(&source_b).unwrap();
+    let mut child = start_import_capable_ipc_daemon(&runtime_capacity, &data_dir, 5);
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
+    let token = read_ipc_auth_token(&data_dir);
+    let (child_id, instance_id) = daemon_identity(&child, &data_dir);
+    assert_text_import_available_without_ocr(&http_get(&endpoint, &token));
+
+    let [root_a, root_b] = [
+        (&canonical_source_a, "Synthetic source A"),
+        (&canonical_source_b, "Synthetic source B"),
+    ]
+    .map(|(path, label)| {
+        let response =
+            post_source_root_register(&endpoint, &token, path_str(path), label, "HTTP/1.1 200 OK");
+        response["root"]["root_id"].as_str().unwrap().to_string()
+    });
+    assert_ne!(root_a, root_b);
+
+    for root_id in [&root_a, &root_b] {
+        let scan = http_post_json(
+            &endpoint,
+            "/source-roots/scan",
+            &token,
+            serde_json::json!({"schema_version": SCAN_REQUEST_SCHEMA, "root_id": root_id}),
+        );
+        assert!(scan.starts_with("HTTP/1.1 200 OK"), "{scan}");
+        assert_eq!(response_json(&scan)["root"]["last_scan"]["phase"], "queued");
+    }
+    assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
+
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty(), "stderr:\n{}", output.stderr);
+    let store = open_owned_store(&data_dir);
+    assert_eq!(store.source_roots().unwrap().len(), 2);
+    assert!(store.status_summary().unwrap().searchable_documents > 0);
+    drop(store);
+    remove_dir(&data_dir);
+    remove_dir(&source_a);
+    remove_dir(&source_b);
+}
+
+#[test]
+fn startup_recovers_source_root_deletion_with_the_same_receipt() {
+    for (fixture_name, seeded_phase) in [
+        ("requested", None),
+        ("publishing", Some(SourceRootDeletionPhase::Publishing)),
+    ] {
+        let data_dir = temp_dir(&format!("ipc-source-root-recovery-{fixture_name}-data"));
+        seed_snapshot_state(&data_dir);
+        let source = data_dir.join("synthetic-source");
+        fs::create_dir_all(&source).unwrap();
+        let started_at = UnixTimestamp::from_unix_seconds(1_700_300_210);
+        let receipt = {
+            let store = open_owned_store(&data_dir);
+            let source_path = path_str(&source);
+            let root = store
+                .register_source_root(
+                    source_path,
+                    source_path,
+                    "Synthetic recovery source",
+                    started_at,
+                )
+                .unwrap();
+            let receipt = store
+                .begin_source_root_deletion(&root.id, started_at)
+                .unwrap();
+            if let Some(terminal_phase) = seeded_phase {
+                for phase in [SourceRootDeletionPhase::Quiescing, terminal_phase] {
+                    store
+                        .set_source_root_deletion_phase(&root.id, phase, started_at)
+                        .unwrap();
+                }
+            }
+            receipt
+        };
+
+        const REQUEST_BUDGET: usize = 32;
+        let mut child = start_ipc_daemon(&data_dir, REQUEST_BUDGET);
+        let endpoint = read_ipc_endpoint(&mut child, &data_dir);
+        let token = read_ipc_auth_token(&data_dir);
+        let (child_id, instance_id) = daemon_identity(&child, &data_dir);
+        let (remaining_requests, _) = wait_for_source_root_absent(
+            &endpoint,
+            &token,
+            receipt.root_id.as_str(),
+            REQUEST_BUDGET - 1,
+        );
+        assert_same_daemon_instance(&mut child, &data_dir, child_id, &instance_id);
+        drain_status_requests(&endpoint, remaining_requests + 1);
+
+        let output = wait_child(child);
+        assert!(output.success, "stderr:\n{}", output.stderr);
+        let store = open_owned_store(&data_dir);
+        let recovered_receipt = store
+            .source_root_deletion(&receipt.root_id)
+            .unwrap()
+            .unwrap();
+        assert!(output.stderr.is_empty(), "stderr:\n{}", output.stderr);
+        assert_eq!(recovered_receipt.phase, SourceRootDeletionPhase::Complete);
+        assert_eq!(recovered_receipt.started_at, receipt.started_at);
+        assert_eq!(recovered_receipt.root_id, receipt.root_id);
+        assert!(store.source_root(&receipt.root_id).unwrap().is_none());
+        assert!(source.is_dir());
+        drop(store);
+        remove_dir(&data_dir);
+    }
 }
 
 #[test]
@@ -2214,6 +2479,75 @@ fn http_post_json(
     )
 }
 
+fn post_source_root_register(
+    endpoint: &str,
+    token: &str,
+    requested_path: &str,
+    display_label: &str,
+    expected_status: &str,
+) -> serde_json::Value {
+    let response = http_post_json(
+        endpoint,
+        "/source-roots/register",
+        token,
+        serde_json::json!({
+            "schema_version": "resume-ir.source-root-register-request.v1",
+            "requested_path": requested_path,
+            "display_label": display_label
+        }),
+    );
+    assert!(response.starts_with(expected_status), "{response}");
+    response_json(&response)
+}
+
+fn source_roots_json(endpoint: &str, token: &str) -> serde_json::Value {
+    let response = raw_ipc_request(
+        endpoint,
+        &authenticated_get_request(endpoint, "/source-roots", token),
+    );
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    response_json(&response)
+}
+
+fn listed_source_root<'a>(
+    response: &'a serde_json::Value,
+    root_id: &str,
+) -> Option<&'a serde_json::Value> {
+    response["roots"]
+        .as_array()?
+        .iter()
+        .find(|root| root["root_id"] == root_id)
+}
+
+fn wait_for_source_root_absent(
+    endpoint: &str,
+    token: &str,
+    root_id: &str,
+    request_budget: usize,
+) -> (usize, serde_json::Value) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    for used_requests in 1..=request_budget {
+        let roots = source_roots_json(endpoint, token);
+        if listed_source_root(&roots, root_id).is_none() {
+            return (request_budget - used_requests, roots);
+        }
+        assert!(
+            used_requests < request_budget && Instant::now() < deadline,
+            "source root deletion did not complete within the time and request budgets"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    unreachable!("positive request budget loop must return or panic")
+}
+
+fn daemon_identity(child: &Child, data_dir: &Path) -> (u32, String) {
+    let instance_id = read_ipc_owner_file(data_dir, "ipc.endpoints.json")["instance_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    (child.id(), instance_id)
+}
+
 fn authenticated_get_request(endpoint: &str, request_path: &str, token: &str) -> Vec<u8> {
     let addr = endpoint_address(endpoint);
     format!(
@@ -2679,6 +3013,26 @@ fn assert_fatal_event(stderr: &str, class: &str, disposition: &str) {
 }
 
 fn seed_snapshot_state(data_dir: &Path) {
+    seed_snapshot_state_with(
+        data_dir,
+        ImportOptions::default(),
+        support::insert_import_task,
+    );
+}
+
+fn seed_reviewed_snapshot_state(data_dir: &Path) {
+    seed_snapshot_state_with(
+        data_dir,
+        support::reviewed_import_options(),
+        support::insert_import_task_with_reviewed_contract,
+    );
+}
+
+fn seed_snapshot_state_with(
+    data_dir: &Path,
+    import_options: ImportOptions,
+    bind_task: fn(&OwnedMetaStore, &ImportTask) -> meta_store::ImportProcessingContract,
+) {
     let root = data_dir.join("synthetic-status-corpus");
     fs::create_dir_all(&root).unwrap();
     fs::write(
@@ -2703,16 +3057,8 @@ fn seed_snapshot_state(data_dir: &Path) {
         finished_at: None,
         updated_at: now,
     };
-    support::insert_import_task(&store, &task);
-    import_root_with_options(
-        data_dir,
-        &store,
-        &task,
-        &root,
-        now,
-        ImportOptions::default(),
-    )
-    .unwrap();
+    bind_task(&store, &task);
+    import_root_with_options(data_dir, &store, &task, &root, now, import_options).unwrap();
 }
 
 fn seed_queued_import_task(

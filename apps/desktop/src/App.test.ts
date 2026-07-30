@@ -2,7 +2,7 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { describe, expect, it } from "vitest"
 
-import { CapabilityMatrix, IndexServiceSummary, indexServicePresentation } from "./daemon-health"
+import { CapabilityMatrix, IndexServiceSummary, indexServicePresentation, lifecycleLabel } from "./daemon-health"
 import type { StatusBody } from "./daemon"
 
 const running = {
@@ -29,8 +29,13 @@ describe("visible daemon health", () => {
 
   it("does not describe an exact-v30 open as a v29 migration", () => {
     expect(indexServicePresentation("initializing", null)).toEqual({
-      title: "服务初始化中",
-      message: "daemon 控制面已就绪，正在打开当前本地数据",
+      title: "正在打开本地数据",
+      message: "daemon 控制面已就绪，正在打开当前本地数据并恢复未完成操作",
+    })
+    expect(lifecycleLabel(running, "initializing")).toBe("daemon 正在打开本地数据")
+    expect(indexServicePresentation("ready", null)).toEqual({
+      title: "索引可用",
+      message: "daemon 可用",
     })
   })
 

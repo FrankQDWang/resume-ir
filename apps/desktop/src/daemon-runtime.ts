@@ -59,6 +59,23 @@ export function sourcePanelBanner(
   return { state: importState, message: importMessage }
 }
 
+export function rootsAfterDeletionAccepted(
+  roots: SourceRoot[],
+  rootId: string,
+): SourceRoot[] {
+  return roots.map((root) => root.root_id === rootId ? { ...root, state: "deleting" } : root)
+}
+
+export function deletionReceiptUncertainPresentation(): {
+  state: "submitting"
+  message: string
+} {
+  return {
+    state: "submitting",
+    message: "目录删除接收状态未确认，正在重新读取授权目录",
+  }
+}
+
 interface ResultSnapshot {
   generation: number
   visibleEpoch: number
