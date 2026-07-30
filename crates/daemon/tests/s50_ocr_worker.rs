@@ -5,7 +5,7 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, ExitStatus, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use import_pipeline::import_root_with_options;
 use meta_store::{
@@ -402,6 +402,133 @@ fn reviewed_ocr_pack_remains_available_across_fresh_daemon_generations() {
 }
 
 #[test]
+fn ocr_publication_keeps_first_queries_on_one_ready_daemon_generation() {
+    let runtime_capacity = support::import_runtime_capacity_lease();
+    let scanned_fixture = fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/resumes/synthetic-scanned-resume.pdf"),
+    )
+    .unwrap();
+    let now = UnixTimestamp::from_unix_seconds(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64,
+    );
+    let data_dir =
+        data_dir_with_queued_ocr_bytes_at("ocr-publication-first-query", &scanned_fixture, now);
+    assert_eq!(
+        queued_ocr_job_status(&data_dir),
+        IngestJobStatus::Queued,
+        "synthetic scanned fixture must enter the OCR queue"
+    );
+    let before = ReadMetaStore::open_data_dir(&data_dir)
+        .unwrap()
+        .search_projection_state()
+        .unwrap();
+    let mut daemon = support::fully_capable_daemon_command(&runtime_capacity);
+    daemon
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--parent-lifecycle-stdin",
+            "--launch-id",
+            "5151515151515151515151515151515151515151515151515151515151515151",
+            "--work-ocr",
+            "--work-index",
+            "--worker-interval-ms",
+            "5000",
+            "--ipc-listen",
+            "127.0.0.1:0",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    let mut child = ContainedChild::spawn(&mut daemon).unwrap();
+    let daemon_pid = child.id();
+    let parent_stdin = child.take_stdin().unwrap();
+    let generation = wait_for_generation(&mut child, &data_dir);
+    let initial = wait_for_resolved_status(&mut child, &generation);
+    assert_eq!(initial["core"]["state"], "ready");
+    assert_eq!(
+        initial["capabilities"]["ocr_import"]["state"], "available",
+        "{initial}"
+    );
+
+    let publication_deadline = Instant::now() + Duration::from_secs(120);
+    let witness_store = ReadMetaStore::open_data_dir(&data_dir).unwrap();
+    let after = loop {
+        let job = witness_store.ingest_jobs().unwrap().remove(0);
+        let state = witness_store.search_projection_state().unwrap();
+        if job.status == IngestJobStatus::Completed && state.visible_epoch > before.visible_epoch {
+            break state;
+        }
+        assert!(
+            !matches!(
+                job.status,
+                IngestJobStatus::FailedRetryable
+                    | IngestJobStatus::FailedPermanent
+                    | IngestJobStatus::Interrupted
+            ),
+            "synthetic OCR publication reached terminal status {:?}",
+            job.status
+        );
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "daemon exited during synthetic OCR publication"
+        );
+        assert!(
+            Instant::now() < publication_deadline,
+            "synthetic OCR publication timed out with job status {:?} and projection state {:?}",
+            job.status,
+            state
+        );
+        thread::sleep(Duration::from_millis(20));
+    };
+    let publication_status = wait_for_status(&mut child, &generation, |status| {
+        status["capabilities"]["semantic_search"]["state"] == "available"
+            && status["capabilities"]["hybrid_search"]["state"] == "available"
+    });
+    assert_eq!(publication_status["core"]["state"], "ready");
+    thread::sleep(Duration::from_millis(250));
+
+    for mode in ["fulltext", "semantic", "hybrid"] {
+        let started = Instant::now();
+        let response = authenticated_search(
+            &generation.search_endpoint,
+            &generation.token,
+            &format!("ocr-first-{mode}"),
+            mode,
+        );
+        let elapsed = started.elapsed();
+        let payload = response_payload(&response);
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        assert_eq!(payload["status"], "ok", "{payload}");
+        assert_eq!(payload["visible_epoch"], after.visible_epoch);
+        assert_eq!(payload["partial"], false, "{payload}");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "first {mode} query took {elapsed:?}"
+        );
+        assert_eq!(child.id(), daemon_pid);
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "daemon exited after first {mode} query"
+        );
+    }
+    let current_generation = wait_for_generation(&mut child, &data_dir);
+    assert_eq!(current_generation.launch_id, generation.launch_id);
+    assert_eq!(current_generation.instance_id, generation.instance_id);
+
+    drop(parent_stdin);
+    let (status, stderr) = wait_contained_with_stderr(child);
+    assert!(status.success(), "{stderr}");
+    remove_dir(&data_dir);
+}
+
+#[test]
 fn ready_daemon_downgrades_tampered_ocr_runtime_without_losing_core_reads() {
     let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = ready_data_dir("ocr-runtime-tamper-degrades");
@@ -488,6 +615,9 @@ fn status_from(
 struct Generation {
     token: String,
     status_endpoint: String,
+    search_endpoint: String,
+    launch_id: String,
+    instance_id: String,
 }
 
 fn wait_for_generation(child: &mut impl PollDaemonChild, data_dir: &Path) -> Generation {
@@ -504,6 +634,9 @@ fn wait_for_generation(child: &mut impl PollDaemonChild, data_dir: &Path) -> Gen
                 return Generation {
                     token: auth["token"].as_str().unwrap().to_string(),
                     status_endpoint: endpoints["status"].as_str().unwrap().to_string(),
+                    search_endpoint: endpoints["search"].as_str().unwrap().to_string(),
+                    launch_id: endpoints["launch_id"].as_str().unwrap().to_string(),
+                    instance_id: endpoints["instance_id"].as_str().unwrap().to_string(),
                 };
             }
         }
@@ -602,6 +735,40 @@ fn authenticated_get(endpoint: &str, token: &str) -> String {
     response
 }
 
+fn authenticated_search(endpoint: &str, token: &str, request_id: &str, mode: &str) -> String {
+    let (address, path) = endpoint
+        .strip_prefix("http://")
+        .unwrap()
+        .split_once('/')
+        .unwrap();
+    let body = serde_json::json!({
+        "schema_version": "resume-ir.ipc-request.v3",
+        "request_id": request_id,
+        "client_capability": "codex_validation",
+        "deadline_ms": 5_000,
+        "payload": {
+            "query": "synthetic witness",
+            "mode": mode,
+            "top_k": 10
+        }
+    })
+    .to_string();
+    let mut stream = TcpStream::connect(address).unwrap();
+    write!(
+        stream,
+        "POST /{path} HTTP/1.1\r\nHost: {address}\r\nContent-Type: application/json\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    response
+}
+
+fn response_payload(response: &str) -> serde_json::Value {
+    serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap()
+}
+
 fn ready_data_dir(label: &str) -> PathBuf {
     let data_dir = temp_dir(label);
     let store = open_owned_store(&data_dir);
@@ -626,17 +793,20 @@ fn ready_data_dir(label: &str) -> PathBuf {
 }
 
 fn data_dir_with_queued_ocr(label: &str) -> PathBuf {
+    data_dir_with_queued_ocr_bytes_at(
+        label,
+        &single_page_pdf(),
+        UnixTimestamp::from_unix_seconds(1_800_050_000),
+    )
+}
+
+fn data_dir_with_queued_ocr_bytes_at(label: &str, pdf: &[u8], now: UnixTimestamp) -> PathBuf {
     let data_dir = temp_dir(label);
     let private_root = data_dir.join("synthetic-scanned-resumes");
     fs::create_dir_all(&private_root).unwrap();
-    fs::write(
-        private_root.join("synthetic-scanned.pdf"),
-        single_page_pdf(),
-    )
-    .unwrap();
+    fs::write(private_root.join("synthetic-scanned.pdf"), pdf).unwrap();
     let canonical_root = fs::canonicalize(&private_root).unwrap();
     let store = open_owned_store(&data_dir);
-    let now = UnixTimestamp::from_unix_seconds(1_800_050_000);
     let task = ImportTask {
         id: ImportTaskId::from_non_secret_parts(&["s50", label]),
         root_path: path_str(&canonical_root).to_string(),

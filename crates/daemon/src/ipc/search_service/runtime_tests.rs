@@ -82,6 +82,7 @@ fn worker_prewarm_opens_query_artifacts_before_the_first_request() {
         cancellations,
         deadline_sender,
         None,
+        GenerationHandoff::default(),
         || {
             open_count.fetch_add(1, AtomicOrdering::SeqCst);
             None
@@ -90,6 +91,44 @@ fn worker_prewarm_opens_query_artifacts_before_the_first_request() {
     .unwrap();
 
     assert_eq!(open_count.load(AtomicOrdering::SeqCst), 1);
+}
+
+#[test]
+fn generation_handoff_waits_only_for_the_publication_commit_window() {
+    let handoff = GenerationHandoff::default();
+    {
+        let (state, _) = &*handoff.state;
+        state.lock().unwrap().publication_commit_in_flight = true;
+    }
+    let completing_handoff = handoff.clone();
+    let completion = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(20));
+        completing_handoff.finish_publication();
+    });
+
+    let started = Instant::now();
+    assert!(handoff
+        .take_ready(started + Duration::from_secs(1))
+        .is_empty());
+    assert!(started.elapsed() >= Duration::from_millis(10));
+    assert!(started.elapsed() < Duration::from_secs(1));
+    completion.join().unwrap();
+}
+
+#[test]
+fn generation_handoff_never_waits_beyond_the_interactive_deadline() {
+    let handoff = GenerationHandoff::default();
+    {
+        let (state, _) = &*handoff.state;
+        state.lock().unwrap().publication_commit_in_flight = true;
+    }
+
+    let started = Instant::now();
+    assert!(handoff
+        .take_ready(started + Duration::from_millis(20))
+        .is_empty());
+    assert!(started.elapsed() < Duration::from_millis(200));
+    handoff.finish_publication();
 }
 
 #[test]

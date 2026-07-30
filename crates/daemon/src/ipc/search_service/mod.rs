@@ -32,6 +32,7 @@ use crate::search_runtime_config::SearchRuntimeConfig;
 
 use admission::AdmissionState;
 use cancellation::{CancelStatus, CancellationRegistry, RegistryLookup, RequestControl};
+pub(crate) use runtime::GenerationHandoff;
 use runtime::{
     run_deadline_scheduler, start_search_worker, DeadlineCommand, ScheduledDeadline, SearchQueue,
     SearchTask,
@@ -53,6 +54,7 @@ impl SearchService {
         data_dir: &Path,
         config: SearchRuntimeConfig,
         artifact_fault_reporter: Option<ArtifactFaultReporter>,
+        generation_handoff: GenerationHandoff,
     ) -> crate::Result<Self> {
         let queue = Arc::new(SearchQueue::default());
         let admission = Arc::new(AdmissionState::new());
@@ -67,6 +69,7 @@ impl SearchService {
             Arc::clone(&cancellations),
             deadline_sender.clone(),
             artifact_fault_reporter,
+            generation_handoff,
         );
         Ok(Self {
             queue,

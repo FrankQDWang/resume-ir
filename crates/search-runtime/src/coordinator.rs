@@ -1,4 +1,6 @@
+use std::collections::VecDeque;
 use std::fmt;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use core_domain::{ActiveSearchProjection, ContentDigest};
@@ -8,19 +10,34 @@ use index_vector::{
 };
 use meta_store::{
     MetaStoreError, MetaStoreErrorClass, ReadMetaStore, SearchMetadataSnapshot,
-    SearchMetadataTransactionError, SearchPublicationRecord, VectorSnapshotMode,
+    SearchMetadataTransactionError, SearchPublicationRecord, SearchPublicationState,
+    VectorSnapshotMode,
 };
 
 use crate::error::SearchRuntimeError;
 use crate::scope::{LexicalQueryScope, QueryScope};
 
+const PREPARED_GENERATION_CAPACITY: usize = 2;
+
 pub struct QueryCoordinator {
+    data_dir: PathBuf,
     store: ReadMetaStore,
     fulltext_root: PathBuf,
     vector_root: VectorSnapshotRoot,
     fulltext_cache: Option<ValidatedFullTextGeneration>,
     vector_cache: Option<ValidatedVectorGeneration>,
+    prepared_generations: VecDeque<PreparedQueryGeneration>,
     pending_artifact_fault: Option<SearchArtifactFaultKey>,
+}
+
+/// Exact generation-pinned query readers prepared before publication becomes
+/// visible. Construction performs the same deep artifact and projection
+/// validation as a cold query; installation never makes the generation visible
+/// without a matching metadata publication key.
+pub struct PreparedQueryGeneration {
+    data_dir: PathBuf,
+    fulltext: ValidatedFullTextGeneration,
+    vector: ValidatedVectorGeneration,
 }
 
 /// Exact immutable publication identity whose payload failed deep validation.
@@ -68,18 +85,58 @@ struct CacheKey {
 
 impl QueryCoordinator {
     pub fn open(data_dir: &Path) -> Result<Self, SearchRuntimeError> {
-        let store = ReadMetaStore::open_data_dir(data_dir).map_err(map_store_error)?;
+        let data_dir = fs::canonicalize(data_dir).map_err(|_| SearchRuntimeError::unavailable())?;
+        let store = ReadMetaStore::open_data_dir(&data_dir).map_err(map_store_error)?;
         let fulltext_root = data_dir.join("search-index");
         let vector_root = VectorSnapshotRoot::new(data_dir.join("vector-index"))
             .map_err(|_| SearchRuntimeError::unavailable())?;
         Ok(Self {
+            data_dir,
             store,
             fulltext_root,
             vector_root,
             fulltext_cache: None,
             vector_cache: None,
+            prepared_generations: VecDeque::with_capacity(PREPARED_GENERATION_CAPACITY),
             pending_artifact_fault: None,
         })
+    }
+
+    pub fn prepare_current_generation(&mut self) -> Result<(), SearchRuntimeError> {
+        let (publication, projections) = self
+            .store
+            .with_search_metadata_snapshot(|snapshot| {
+                Ok::<_, SearchRuntimeError>((
+                    snapshot.head().publication.clone(),
+                    snapshot
+                        .validated_active_projections()
+                        .map_err(|_| SearchRuntimeError::integrity())?,
+                ))
+            })
+            .map_err(map_transaction_error)?;
+        let prepared = PreparedQueryGeneration::open(&self.data_dir, &publication, &projections)?;
+        self.install_prepared_generation(prepared)
+    }
+
+    pub fn install_prepared_generation(
+        &mut self,
+        prepared: PreparedQueryGeneration,
+    ) -> Result<(), SearchRuntimeError> {
+        if prepared.data_dir != self.data_dir {
+            return Err(SearchRuntimeError::integrity());
+        }
+        if let Some(position) = self
+            .prepared_generations
+            .iter()
+            .position(|existing| existing.fulltext.key == prepared.fulltext.key)
+        {
+            self.prepared_generations.remove(position);
+        }
+        self.prepared_generations.push_back(prepared);
+        while self.prepared_generations.len() > PREPARED_GENERATION_CAPACITY {
+            self.prepared_generations.pop_front();
+        }
+        Ok(())
     }
 
     /// Takes the most recent exact publication fault produced while opening
@@ -107,10 +164,12 @@ impl QueryCoordinator {
         let vector_root = &self.vector_root;
         let fulltext_cache = &mut self.fulltext_cache;
         let vector_cache = &mut self.vector_cache;
+        let prepared_generations = &mut self.prepared_generations;
         let pending_artifact_fault = &mut self.pending_artifact_fault;
         self.store
             .with_search_metadata_snapshot(|snapshot| {
                 let key = cache_key(snapshot.head().publication.clone())?;
+                adopt_prepared_generation(&key, prepared_generations, fulltext_cache, vector_cache);
                 let fulltext_changed = fulltext_cache
                     .as_ref()
                     .is_none_or(|cached| cached.key != key);
@@ -194,10 +253,13 @@ impl QueryCoordinator {
         );
         let fulltext_root = &self.fulltext_root;
         let fulltext_cache = &mut self.fulltext_cache;
+        let vector_cache = &mut self.vector_cache;
+        let prepared_generations = &mut self.prepared_generations;
         let pending_artifact_fault = &mut self.pending_artifact_fault;
         self.store
             .with_search_metadata_snapshot(|snapshot| {
                 let key = cache_key(snapshot.head().publication.clone())?;
+                adopt_prepared_generation(&key, prepared_generations, fulltext_cache, vector_cache);
                 if fulltext_cache
                     .as_ref()
                     .is_none_or(|cached| cached.key != key)
@@ -231,6 +293,84 @@ impl QueryCoordinator {
             })
             .map_err(map_transaction_error)
     }
+}
+
+impl PreparedQueryGeneration {
+    pub fn generation(&self) -> &str {
+        &self.fulltext.key.generation
+    }
+
+    pub fn open(
+        data_dir: &Path,
+        publication: &SearchPublicationRecord,
+        projections: &[ActiveSearchProjection],
+    ) -> Result<Self, SearchRuntimeError> {
+        if !matches!(
+            publication.state,
+            SearchPublicationState::Validated | SearchPublicationState::Ready
+        ) {
+            return Err(SearchRuntimeError::unavailable());
+        }
+        let data_dir = fs::canonicalize(data_dir).map_err(|_| SearchRuntimeError::unavailable())?;
+        let key = cache_key(publication.clone())?;
+        let fulltext_descriptor = publication
+            .fulltext
+            .as_ref()
+            .ok_or_else(SearchRuntimeError::integrity)?;
+        let vector_descriptor = publication
+            .vector
+            .as_ref()
+            .ok_or_else(SearchRuntimeError::integrity)?;
+        let fulltext_root = data_dir.join("search-index");
+        let fulltext_lease = SnapshotReadLease::acquire(&fulltext_root)
+            .map_err(|_| SearchRuntimeError::unavailable())?
+            .ok_or_else(SearchRuntimeError::unavailable)?;
+        let vector_root = VectorSnapshotRoot::new(data_dir.join("vector-index"))
+            .map_err(|_| SearchRuntimeError::unavailable())?;
+        let vector_lease = vector_root
+            .acquire_read_lease()
+            .map_err(|_| SearchRuntimeError::unavailable())?;
+        let fulltext = open_fulltext_generation(
+            &fulltext_root,
+            fulltext_lease,
+            key.clone(),
+            fulltext_descriptor,
+            projections,
+        )
+        .map_err(generation_validation_error)?;
+        let vector = open_vector_generation(
+            &vector_root,
+            vector_lease,
+            key,
+            vector_descriptor,
+            projections,
+        )
+        .map_err(generation_validation_error)?;
+        Ok(Self {
+            data_dir,
+            fulltext,
+            vector,
+        })
+    }
+}
+
+fn adopt_prepared_generation(
+    key: &CacheKey,
+    prepared_generations: &mut VecDeque<PreparedQueryGeneration>,
+    fulltext_cache: &mut Option<ValidatedFullTextGeneration>,
+    vector_cache: &mut Option<ValidatedVectorGeneration>,
+) {
+    let Some(position) = prepared_generations
+        .iter()
+        .position(|prepared| prepared.fulltext.key == *key && prepared.vector.key == *key)
+    else {
+        return;
+    };
+    let prepared = prepared_generations
+        .remove(position)
+        .expect("matching prepared generation exists");
+    *fulltext_cache = Some(prepared.fulltext);
+    *vector_cache = Some(prepared.vector);
 }
 
 enum GenerationValidationError {
@@ -267,6 +407,13 @@ fn record_generation_error(
     }
 }
 
+fn generation_validation_error(error: GenerationValidationError) -> SearchRuntimeError {
+    match error {
+        GenerationValidationError::Metadata(error)
+        | GenerationValidationError::Artifact { error, .. } => error,
+    }
+}
+
 fn validate_fulltext_generation(
     snapshot: &SearchMetadataSnapshot<'_>,
     fulltext_root: &Path,
@@ -286,6 +433,22 @@ fn validate_fulltext_generation(
             SearchRuntimeError::integrity(),
         ));
     }
+    open_fulltext_generation(
+        fulltext_root,
+        fulltext_lease,
+        key,
+        fulltext_descriptor,
+        projections,
+    )
+}
+
+fn open_fulltext_generation(
+    fulltext_root: &Path,
+    fulltext_lease: SnapshotReadLease,
+    key: CacheKey,
+    fulltext_descriptor: &meta_store::FullTextSnapshotDescriptor,
+    projections: &[ActiveSearchProjection],
+) -> Result<ValidatedFullTextGeneration, GenerationValidationError> {
     let fulltext =
         FullTextIndex::open_snapshot_with_lease(fulltext_root, &key.generation, fulltext_lease)
             .map_err(|_| GenerationValidationError::Artifact {
@@ -325,6 +488,22 @@ fn validate_vector_generation(
             SearchRuntimeError::integrity(),
         ));
     }
+    open_vector_generation(
+        vector_root,
+        vector_lease,
+        key,
+        vector_descriptor,
+        projections,
+    )
+}
+
+fn open_vector_generation(
+    vector_root: &VectorSnapshotRoot,
+    vector_lease: VectorSnapshotReadLease,
+    key: CacheKey,
+    vector_descriptor: &meta_store::VectorSnapshotDescriptor,
+    projections: &[ActiveSearchProjection],
+) -> Result<ValidatedVectorGeneration, GenerationValidationError> {
     let vector_contract =
         vector_contract(vector_descriptor.mode()).map_err(GenerationValidationError::Metadata)?;
     let vector = vector_root

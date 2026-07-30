@@ -22,6 +22,70 @@ use super::cancellation::{CancelStatus, CancellationRegistry, RequestControl};
 use super::wire::{RequestEnvelope, SearchReply};
 
 const DEADLINE_SCHEDULER_POLL: Duration = Duration::from_millis(10);
+const PREPARED_GENERATION_CAPACITY: usize = 2;
+
+#[derive(Clone, Default)]
+pub(crate) struct GenerationHandoff {
+    state: Arc<(Mutex<GenerationHandoffState>, Condvar)>,
+}
+
+#[derive(Default)]
+struct GenerationHandoffState {
+    prepared: VecDeque<search_runtime::PreparedQueryGeneration>,
+    publication_commit_in_flight: bool,
+}
+
+impl GenerationHandoff {
+    pub(crate) fn stage(&self, prepared: search_runtime::PreparedQueryGeneration) -> bool {
+        let (state, _) = &*self.state;
+        let Ok(mut state) = state.lock() else {
+            return false;
+        };
+        if let Some(position) = state
+            .prepared
+            .iter()
+            .position(|existing| existing.generation() == prepared.generation())
+        {
+            state.prepared.remove(position);
+        }
+        state.prepared.push_back(prepared);
+        while state.prepared.len() > PREPARED_GENERATION_CAPACITY {
+            state.prepared.pop_front();
+        }
+        state.publication_commit_in_flight = true;
+        true
+    }
+
+    pub(crate) fn finish_publication(&self) {
+        let (state, changed) = &*self.state;
+        let Ok(mut state) = state.lock() else {
+            return;
+        };
+        state.publication_commit_in_flight = false;
+        changed.notify_all();
+    }
+
+    fn take_ready(&self, deadline: Instant) -> VecDeque<search_runtime::PreparedQueryGeneration> {
+        let (state, changed) = &*self.state;
+        let Ok(mut state) = state.lock() else {
+            return VecDeque::new();
+        };
+        while state.publication_commit_in_flight {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return VecDeque::new();
+            }
+            let Ok((next, timeout)) = changed.wait_timeout(state, remaining) else {
+                return VecDeque::new();
+            };
+            state = next;
+            if timeout.timed_out() && state.publication_commit_in_flight {
+                return VecDeque::new();
+            }
+        }
+        std::mem::take(&mut state.prepared)
+    }
+}
 
 pub(super) struct SearchTask {
     pub(super) reply: SearchReply,
@@ -159,6 +223,7 @@ pub(super) fn start_search_worker(
     cancellations: Arc<CancellationRegistry>,
     deadline_waker: Sender<DeadlineCommand>,
     artifact_fault_reporter: Option<ArtifactFaultReporter>,
+    generation_handoff: GenerationHandoff,
 ) -> JoinHandle<crate::Result<()>> {
     thread::spawn(move || {
         run_search_worker(
@@ -167,6 +232,7 @@ pub(super) fn start_search_worker(
             cancellations,
             deadline_waker,
             artifact_fault_reporter,
+            generation_handoff,
             || crate::query_runtime::DaemonQueryRuntime::open(&data_dir).ok(),
         )
     })
@@ -178,6 +244,7 @@ fn run_search_worker(
     cancellations: Arc<CancellationRegistry>,
     deadline_waker: Sender<DeadlineCommand>,
     artifact_fault_reporter: Option<ArtifactFaultReporter>,
+    generation_handoff: GenerationHandoff,
     mut open_runtime: impl FnMut() -> Option<crate::query_runtime::DaemonQueryRuntime>,
 ) -> crate::Result<()> {
     // Prewarm on the dedicated worker so encrypted-store validation does not
@@ -203,6 +270,15 @@ fn run_search_worker(
         };
         if query_runtime.is_none() {
             query_runtime = open_runtime();
+        }
+        let generation_install_failed = query_runtime.as_mut().is_some_and(|runtime| {
+            generation_handoff
+                .take_ready(task.deadline.expires_at())
+                .into_iter()
+                .any(|prepared| runtime.install_prepared_generation(prepared).is_err())
+        });
+        if generation_install_failed {
+            query_runtime = None;
         }
         let result = match query_runtime.as_mut() {
             Some(query_runtime) => execute_search_command(&execution, &config, query_runtime),

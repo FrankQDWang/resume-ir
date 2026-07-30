@@ -5,6 +5,59 @@ system design docs, the execution docs, and this running evidence log. Obsolete
 preliminary checklists are historical execution context only, not the
 production-ready scope source.
 
+## OCR publication first-query handoff
+
+The macOS OCR publication path now prepares the exact validated fulltext and
+vector generation before committing its visible epoch. Preparation performs the
+same projection, identity, digest, decryption, model and ANN checks as a cold
+query open, then stages a generation-pinned reader pair in a two-generation
+daemon handoff. The query worker adopts only an exact metadata key match. A
+condition-variable fence covers only the stage-to-commit window and is capped
+by the request's original deadline; while deep preparation is running, queries
+continue against the still-current Ready epoch.
+
+- RED reproduced that `QueryCoordinator::open` left both readers empty and that
+  the first query after an epoch change deep-opened the generation. GREEN
+  prepares outside the request, corrupts both encrypted on-disk payloads after
+  preparation, and proves the first lexical and enabled semantic/composite
+  reads still return the new exact epoch, identity and ordering.
+- OCR publication preparation runs while the journal record is `Validated` and
+  the old head is still Ready. Preparation failure retires the abandoned
+  generation, leaves the visible head unchanged and keeps the OCR claim
+  retryable. Claim/publication supersession and atomic visibility tests remain
+  green.
+- The daemon handoff is bounded to current-plus-next generations. Interactive
+  requests wait only for an in-flight metadata commit, never beyond their
+  existing deadline; overload recovery and cancellation tests remain green.
+  Tesseract language discovery is restricted to one OpenMP thread.
+- An isolated macOS witness used the public synthetic scanned-PDF fixture,
+  reviewed local runtime packs and a temporary data directory. After one real
+  OCR publication and a 250 ms query-idle window, the first fulltext, semantic
+  and hybrid requests all returned HTTP 200, `status=ok`, `partial=false` and
+  the new visible epoch under a 2,000 ms per-request redline. PID, launch ID and
+  instance ID were unchanged and the foreground daemon never exited. The
+  witness has no supervisor, so heartbeat/restart counters are structurally not
+  present rather than inferred.
+- Request-path resource proof is deterministic rather than machine-load based:
+  fulltext/vector deep opens and ANN construction complete before visibility,
+  the handoff holds at most two reader pairs, and the commit fence cannot extend
+  a deadline. No process CPU/RSS peak is promoted from this shared-machine run.
+- Privacy remained synthetic-only. No installed app or live daemon was
+  controlled, restarted, queried or changed; no user OCR queue, real resume,
+  raw user query, private path or diagnostic bundle entered the witness.
+- Public-repo guard, workspace all-target/all-feature clippy, the macOS-relevant
+  workspace test set, daemon closed-loop, daemon incremental-import and license
+  checks pass. `verify-local.sh` itself stops at the unchanged active-goal
+  governance mutation fixture: tampering
+  `scope.active_slice.scope_exception` is not rejected. `ACTIVE_GOAL.toml` and
+  that governance checker are byte-identical to HEAD and outside this slice.
+  Windows package/evidence commands later in that script were not run under the
+  current macOS-only delivery boundary.
+- This slice closes the user-visible first-query loader but does not yet batch
+  multiple OCR completions into one publication. Bounded OCR publication
+  coalescing remains a separate dependent optimization; crash recovery,
+  supersession and atomic visibility must be retained when it is implemented.
+
 ## macOS source-root deletion and startup recovery
 
 Installed 0.1.9 reproduced `RefCell already mutably borrowed`: both receipt

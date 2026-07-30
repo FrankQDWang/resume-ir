@@ -16,7 +16,7 @@ use crate::rescan_schedule::CompletedRootRescanSchedule;
 use crate::{
     current_timestamp, migration_repair, print_import_worker_summary, print_ocr_worker_summary,
     print_search_artifact_worker_summary, recover_stale_import_tasks,
-    run_import_worker_once_with_retry_due, run_ocr_worker_batch, run_search_artifact_worker_once,
+    run_import_worker_once_with_retry_due, run_search_artifact_worker_once,
     search_artifact_recovery_has_activity, timestamp_minus_seconds, ImportWatcher,
     ImportWorkerSummary, RunOptions, DEFAULT_IMPORT_RESCAN_MIN_AGE_SECONDS,
     DEFAULT_OCR_JOBS_PER_TICK, IMPORT_RETRY_BACKOFF_SECONDS, STALE_IMPORT_TASK_SECONDS,
@@ -31,6 +31,7 @@ pub(crate) struct WorkerLoopRuntime {
     pub(crate) summary_output: WorkerSummaryOutput,
     pub(crate) capability_state: Option<ipc::ControlPlaneState>,
     pub(crate) runtime_health_reporter: Option<ipc::RuntimeHealthReporter>,
+    pub(crate) generation_handoff: Option<ipc::search_service::GenerationHandoff>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -342,7 +343,7 @@ fn run_worker_tick(
                 state.initial_import_tick_pending = false;
             }
             if runtime_gates(options, runtime.capability_state.as_ref()).ocr {
-                let ocr_summary = run_ocr_worker_batch(
+                let ocr_summary = crate::ocr_worker::run_ocr_worker_batch_with_handoff(
                     data_dir,
                     store,
                     options,
@@ -350,6 +351,7 @@ fn run_worker_tick(
                         .ocr_jobs_per_tick
                         .unwrap_or(DEFAULT_OCR_JOBS_PER_TICK),
                     || runtime_gates(options, runtime.capability_state.as_ref()).ocr,
+                    runtime.generation_handoff.as_ref(),
                 )?;
                 if let Some(reason) = ocr_summary.runtime_unavailable {
                     if let Some(reporter) = runtime.runtime_health_reporter.as_ref() {

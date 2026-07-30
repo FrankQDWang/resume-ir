@@ -42,6 +42,7 @@ pub(crate) struct Context<'a> {
     pub(crate) shutdown: Option<&'a Arc<AtomicBool>>,
     pub(crate) worker_result_receiver: Option<&'a Receiver<Result<(), DaemonFatalError>>>,
     pub(crate) artifact_fault_reporter: Option<ArtifactFaultReporter>,
+    pub(crate) generation_handoff: crate::ipc::search_service::GenerationHandoff,
     pub(crate) control_state: ControlPlaneState,
     pub(crate) control_publisher: Option<ControlPlanePublisher>,
     pub(crate) runtime_health_receiver: Option<RuntimeHealthReceiver>,
@@ -203,6 +204,7 @@ impl BoundServer {
                     context.data_dir,
                     context.search_runtime_config.clone(),
                     context.artifact_fault_reporter.clone(),
+                    context.generation_handoff.clone(),
                 )
             },
         )? {

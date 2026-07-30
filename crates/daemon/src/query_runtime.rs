@@ -88,8 +88,19 @@ enum FoldIdentity {
 
 impl DaemonQueryRuntime {
     pub(crate) fn open(data_dir: &Path) -> Result<Self, QueryFailure> {
-        QueryCoordinator::open(data_dir)
-            .map(|coordinator| Self { coordinator })
+        let mut coordinator = QueryCoordinator::open(data_dir).map_err(map_runtime_error)?;
+        coordinator
+            .prepare_current_generation()
+            .map_err(map_runtime_error)?;
+        Ok(Self { coordinator })
+    }
+
+    pub(crate) fn install_prepared_generation(
+        &mut self,
+        prepared: search_runtime::PreparedQueryGeneration,
+    ) -> Result<(), QueryFailure> {
+        self.coordinator
+            .install_prepared_generation(prepared)
             .map_err(map_runtime_error)
     }
 

@@ -59,7 +59,7 @@ use import_watcher::ImportWatcher;
 use import_worker::{
     recover_stale_import_tasks, run_import_worker_once, run_import_worker_once_with_retry_due,
 };
-use ocr_worker::{run_ocr_worker_batch, run_ocr_worker_once};
+use ocr_worker::run_ocr_worker_once;
 use parent_lifecycle::ParentLifecycleMode;
 use run_options::RunOptions;
 use search_artifact_worker::run_search_artifact_worker_once;
@@ -288,6 +288,7 @@ fn run_command(data_dir: &Path, args: &[String]) -> Result<()> {
                 summary_output: WorkerSummaryOutput::Stdout,
                 capability_state: None,
                 runtime_health_reporter: None,
+                generation_handoff: None,
             },
         )?;
         return Ok(());

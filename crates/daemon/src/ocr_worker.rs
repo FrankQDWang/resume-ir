@@ -6,7 +6,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use import_pipeline::{
-    detect_ocr_page_count, index_claimed_ocr_text_with_policy, ocr_preclaim_decision,
+    detect_ocr_page_count, index_claimed_ocr_text_with_policy_and_preparer, ocr_preclaim_decision,
     OcrPreclaimDecision,
 };
 use meta_store::{
@@ -34,6 +34,16 @@ pub(crate) fn run_ocr_worker_once(
     store: &OwnedMetaStore,
     options: &RunOptions,
     claim_allowed: impl Fn() -> bool,
+) -> Result<OcrWorkerSummary> {
+    run_ocr_worker_once_with_handoff(data_dir, store, options, claim_allowed, None)
+}
+
+pub(crate) fn run_ocr_worker_once_with_handoff(
+    data_dir: &Path,
+    store: &OwnedMetaStore,
+    options: &RunOptions,
+    claim_allowed: impl Fn() -> bool,
+    generation_handoff: Option<&crate::ipc::search_service::GenerationHandoff>,
 ) -> Result<OcrWorkerSummary> {
     let now = current_timestamp()?;
     match ocr_preclaim_decision(store).map_err(DaemonError::import)? {
@@ -99,7 +109,15 @@ pub(crate) fn run_ocr_worker_once(
         });
     }
 
-    let mut summary = match run_claimed_ocr_job(data_dir, store, &job, options, &runtime, now) {
+    let mut summary = match run_claimed_ocr_job(
+        data_dir,
+        store,
+        &job,
+        options,
+        &runtime,
+        now,
+        generation_handoff,
+    ) {
         Ok(summary) => summary,
         Err(error) => {
             mark_ocr_job_failed_retryable(store, &job, now)?;
@@ -179,19 +197,26 @@ impl Drop for ActiveOcrClaim {
     }
 }
 
-pub(crate) fn run_ocr_worker_batch(
+pub(crate) fn run_ocr_worker_batch_with_handoff(
     data_dir: &Path,
     store: &OwnedMetaStore,
     options: &RunOptions,
     jobs_per_tick: usize,
     claim_allowed: impl Fn() -> bool,
+    generation_handoff: Option<&crate::ipc::search_service::GenerationHandoff>,
 ) -> Result<OcrWorkerSummary> {
     let mut aggregate = OcrWorkerSummary::default();
     for _ in 0..jobs_per_tick {
         if !claim_allowed() {
             break;
         }
-        let summary = run_ocr_worker_once(data_dir, store, options, &claim_allowed)?;
+        let summary = run_ocr_worker_once_with_handoff(
+            data_dir,
+            store,
+            options,
+            &claim_allowed,
+            generation_handoff,
+        )?;
         let stop_after_summary = summary.paused
             || summary.runtime_unavailable.is_some()
             || summary.pdfium_unavailable.is_some()
@@ -211,6 +236,7 @@ fn run_claimed_ocr_job(
     options: &RunOptions,
     runtime: &PreparedOcrRuntime,
     now: UnixTimestamp,
+    generation_handoff: Option<&crate::ipc::search_service::GenerationHandoff>,
 ) -> Result<OcrWorkerSummary> {
     let Some(document) = store
         .document_by_id(&job.job.document_id)
@@ -564,7 +590,22 @@ fn run_claimed_ocr_job(
             });
         }
     }
-    let outcome = match index_claimed_ocr_text_with_policy(
+    let prepare_generation =
+        |publication: &meta_store::SearchPublicationRecord,
+         projections: &[meta_store::ActiveSearchProjection]| {
+            let prepared =
+                search_runtime::PreparedQueryGeneration::open(data_dir, publication, projections)
+                    .map_err(|_| {
+                    import_pipeline::ImportPipelineError::query_generation_preparation()
+                })?;
+            let staged = generation_handoff.is_some_and(|handoff| handoff.stage(prepared));
+            if staged {
+                Ok(())
+            } else {
+                Err(import_pipeline::ImportPipelineError::query_generation_preparation())
+            }
+        };
+    let outcome = index_claimed_ocr_text_with_policy_and_preparer(
         data_dir,
         store,
         job,
@@ -574,7 +615,18 @@ fn run_claimed_ocr_job(
         now,
         &options.linear_promotion,
         &options.search_vectorization,
-    ) {
+        generation_handoff.map(|_| {
+            &prepare_generation
+                as &dyn Fn(
+                    &meta_store::SearchPublicationRecord,
+                    &[meta_store::ActiveSearchProjection],
+                ) -> import_pipeline::Result<()>
+        }),
+    );
+    if let Some(generation_handoff) = generation_handoff {
+        generation_handoff.finish_publication();
+    }
+    let outcome = match outcome {
         Ok(outcome) => outcome,
         Err(error) => return Err(DaemonError::import(error)),
     };

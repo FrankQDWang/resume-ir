@@ -53,6 +53,8 @@ pub(crate) fn run(runtime: Runtime<'_>) -> Result<()> {
     let worker_capability_state = control_state.clone();
     let (runtime_health_reporter, runtime_health_receiver) = ipc::runtime_health_channel();
     let worker_processing_contract = processing_contract.clone();
+    let generation_handoff = ipc::search_service::GenerationHandoff::default();
+    let worker_generation_handoff = generation_handoff.clone();
     let (artifact_fault_reporter, artifact_fault_receiver) = if options.work_index {
         let (reporter, receiver) = ipc::search_service::artifact_fault_latch();
         (Some(reporter), Some(receiver))
@@ -74,6 +76,7 @@ pub(crate) fn run(runtime: Runtime<'_>) -> Result<()> {
                 summary_output: WorkerSummaryOutput::Suppressed,
                 capability_state: Some(worker_capability_state),
                 runtime_health_reporter: Some(runtime_health_reporter),
+                generation_handoff: Some(worker_generation_handoff),
             },
         );
         let _ = worker_result_sender.send(result.map(|_| ()));
@@ -95,6 +98,7 @@ pub(crate) fn run(runtime: Runtime<'_>) -> Result<()> {
             shutdown: Some(&stop_worker),
             worker_result_receiver: Some(&worker_result_receiver),
             artifact_fault_reporter,
+            generation_handoff,
             control_state,
             control_publisher: Some(control_publisher),
             runtime_health_receiver: Some(runtime_health_receiver),
