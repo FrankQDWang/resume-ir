@@ -17,6 +17,9 @@ PINS = {
 PRIVACY = {"contains_raw_resume_text", "contains_raw_query_text",
            "contains_candidate_results", "contains_local_paths",
            "contains_tokens", "contains_diagnostics_package"}
+ATTRIBUTION_OWNER_ISSUE = "#270"
+ATTRIBUTION_PRIMARY_LANE = "full_import_ocr_backlog"
+ATTRIBUTION_UNCONFIGURED_TERMINAL = "blocked_missing_configured_private_roots"
 
 
 def require(ok, message):
@@ -56,7 +59,16 @@ def contracts(goal):
     return result
 
 
-def validate(record, previous_hash, expected_version, goal, graph):
+def validate(
+    record,
+    previous_hash,
+    expected_version,
+    goal,
+    graph,
+    owner_issue,
+    primary_benchmark_lane,
+    unconfigured_private_terminal,
+):
     path, event, _ = record
     version = event.get("state_version")
     require(
@@ -99,20 +111,19 @@ def validate(record, previous_hash, expected_version, goal, graph):
         ),
         f"{path}: verification mismatch",
     )
-    active = goal["scope"]["active_slice"]
-    attr = active["attribution"]
     observation = event.get("observation", {})
     require(
-        observation.get("owner_issue") == active["issue"]
-        and observation.get("primary_benchmark_lane") == attr["primary_benchmark_lane"]
-        and observation.get("private_input_capability") in {active["unconfigured_private_run_terminal"], "configured_private_roots"}
-        and observation.get("current_slice", "").startswith(active["issue"] + " ")
+        observation.get("owner_issue") == owner_issue
+        and observation.get("primary_benchmark_lane") == primary_benchmark_lane
+        and observation.get("private_input_capability")
+        in {unconfigured_private_terminal, "configured_private_roots"}
+        and observation.get("current_slice", "").startswith(owner_issue + " ")
         and isinstance(observation.get("active_prs"), list)
         and observation.get("transition_evidence_ref"),
         f"{path}: observation mismatch",
     )
     if "owner_issues" in contract:
-        require(active["issue"] in contract["owner_issues"], f"{path}: owner not authorized")
+        require(owner_issue in contract["owner_issues"], f"{path}: owner not authorized")
     permissions = goal["autonomous_delivery"]["permissions"]
     require(
         all(permissions.get(name) is True for name in contract["required_permissions"]),
@@ -122,6 +133,54 @@ def validate(record, previous_hash, expected_version, goal, graph):
         missing = set(contract["required_evidence"]) - set(event.get("evidence", {}))
         require(not missing, f"{path}: missing evidence {sorted(missing)}")
     return contract
+
+
+def validate_archived_events(records, goal):
+    graph = contracts(goal)
+    base = records[0][1]["observation"]["live_main_sha"]
+    require(len(base) == 40, "base sha mismatch")
+    git("merge-base", "--is-ancestor", base, "HEAD")
+    base_bytes = git("show", f"{base}:perf/current-loop-state.json")
+    base_state = json.loads(base_bytes)
+    version, previous_hash = len(base_state["transition_history"]), sha(base_bytes)
+    require(
+        base_state["workflow_state"] == records[0][1]["transition"]["from"],
+        "base state mismatch",
+    )
+    for record in records:
+        validate(
+            record,
+            previous_hash,
+            version,
+            goal,
+            graph,
+            ATTRIBUTION_OWNER_ISSUE,
+            ATTRIBUTION_PRIMARY_LANE,
+            ATTRIBUTION_UNCONFIGURED_TERMINAL,
+        )
+        version = record[1]["state_version"]
+        previous_hash = sha(record[2])
+
+
+def validate_successor_snapshot(records, goal):
+    active_issue = goal["scope"]["active_slice"]["issue"]
+    require(active_issue != ATTRIBUTION_OWNER_ISSUE, "successor issue required")
+    validate_archived_events(records, goal)
+    snapshot = json.loads(SNAPSHOT.read_bytes())
+    require(
+        snapshot.get("current_slice", "").startswith(active_issue + " "),
+        "successor snapshot current_slice mismatch",
+    )
+    require(
+        snapshot.get("github_ledger", {}).get("primary_issue") == active_issue,
+        "successor snapshot primary issue mismatch",
+    )
+    expected_goal_hash = sha((ROOT / "ACTIVE_GOAL.toml").read_bytes())
+    require(
+        snapshot.get("contract_pins", {}).get("active_goal_sha256")
+        == expected_goal_hash,
+        "successor snapshot active-goal pin mismatch",
+    )
 
 
 def replace(text, old, new, label):
@@ -185,6 +244,8 @@ def apply(text, event, contract, goal, state_hash):
 def reduce(records=None):
     goal, graph = load_goal(), contracts(load_goal())
     records = records or load_events()
+    active = goal["scope"]["active_slice"]
+    attr = active["attribution"]
     base = records[0][1]["observation"]["live_main_sha"]
     require(len(base) == 40, "base sha mismatch")
     git("merge-base", "--is-ancestor", base, "HEAD")
@@ -193,7 +254,16 @@ def reduce(records=None):
     version, previous_hash = len(state["transition_history"]), sha(base_bytes)
     require(state["workflow_state"] == records[0][1]["transition"]["from"], "base state mismatch")
     for record in records:
-        contract = validate(record, previous_hash, version, goal, graph)
+        contract = validate(
+            record,
+            previous_hash,
+            version,
+            goal,
+            graph,
+            active["issue"],
+            attr["primary_benchmark_lane"],
+            active["unconfigured_private_run_terminal"],
+        )
         text = apply(text, record[1], contract, goal, sha(text.encode()))
         pins = {key: sha(path.read_bytes()) for key, path in PINS.items()}
         pins["git_head_sha"] = base
@@ -226,22 +296,45 @@ def follow_up(records):
 
 
 def self_test():
-    records, failures = load_events(), []
-    next_event = follow_up(records)
-    state = json.loads(reduce([*records, next_event]))
-    require(state["state_version"] == 556 and state["workflow_state"] == "base_synced", "556 did not advance")
-    for label, mutate in (
-        ("transition", lambda item: item["transition"].update(from_="bad")),
-        ("hash", lambda item: item.update(previous_event_hash="0" * 64)),
-        ("version", lambda item: item.update(state_version=557)),
+    records, failures, goal = load_events(), [], load_goal()
+    validate_archived_events(records, goal)
+    if goal["scope"]["active_slice"]["issue"] == ATTRIBUTION_OWNER_ISSUE:
+        next_event = follow_up(records)
+        state = json.loads(reduce([*records, next_event]))
+        require(
+            state["state_version"] == 556
+            and state["workflow_state"] == "base_synced",
+            "556 did not advance",
+        )
+        for label, mutate in (
+            ("transition", lambda item: item["transition"].update(from_="bad")),
+            ("hash", lambda item: item.update(previous_event_hash="0" * 64)),
+            ("version", lambda item: item.update(state_version=557)),
+        ):
+            event = copy.deepcopy(next_event[1])
+            if label == "transition":
+                event["transition"]["from"] = "bad"
+            else:
+                mutate(event)
+            try:
+                reduce([*records, (next_event[0], event, json.dumps(event).encode())])
+            except ValueError:
+                continue
+            failures.append(label)
+    for label, key, value in (
+        ("archive owner", "owner_issue", "#999"),
+        ("archive hash", "previous_event_hash", "0" * 64),
+        ("archive version", "state_version", 999),
     ):
-        event = copy.deepcopy(next_event[1])
-        if label == "transition":
-            event["transition"]["from"] = "bad"
+        altered = copy.deepcopy(records)
+        path, event, _ = altered[-1]
+        if key in event["observation"]:
+            event["observation"][key] = value
         else:
-            mutate(event)
+            event[key] = value
+        altered[-1] = (path, event, json.dumps(event).encode())
         try:
-            reduce([*records, (next_event[0], event, json.dumps(event).encode())])
+            validate_archived_events(altered, goal)
         except ValueError:
             continue
         failures.append(label)
@@ -254,8 +347,12 @@ def main():
     for mode in ("check", "write", "self-test"):
         modes.add_argument(f"--{mode}", action="store_true")
     args = parser.parse_args()
+    goal = load_goal()
     if args.self_test:
         self_test()
+    elif goal["scope"]["active_slice"]["issue"] != ATTRIBUTION_OWNER_ISSUE:
+        require(not args.write, "successor snapshots cannot be written from archived events")
+        validate_successor_snapshot(load_events(), goal)
     else:
         output = reduce()
         if args.write:
