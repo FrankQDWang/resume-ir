@@ -1,0 +1,64 @@
+{
+  "schema_version": "resume-ir.loop-reconciliation-event.v2",
+  "run_id": "current-main-import-attribution-2026-07-31",
+  "state_version": 565,
+  "previous_event_hash": "8394d44554a4e0e10a0a65e9339502baafe9b83ada3fe38a978a918dd8abb3c7",
+  "observed_at": "2026-07-31T06:00:00Z",
+  "lease_owner": "codex-current-main-import-attribution",
+  "lease_expires_at": "2026-07-31T07:00:00Z",
+  "heartbeat_at": "2026-07-31T06:00:00Z",
+  "action_id": "defer-attribution-until-post-merge",
+  "idempotency_key": "resume-ir-270-pre-merge-attribution-deferred-2026-07-31",
+  "expected_state_version": 564,
+  "last_confirmed_side_effect": "pre_merge_attribution_execution_deferred",
+  "next_wake_at": "2026-07-31T06:15:00Z",
+  "transition": {
+    "name": "defer_current_main_import_attribution_pre_merge",
+    "from": "goal_authorized",
+    "to": "contract_conflict"
+  },
+  "result": "passed",
+  "evidence_refs": [
+    "https://github.com/FrankQDWang/resume-ir/pull/278",
+    "https://github.com/FrankQDWang/resume-ir/issues/270"
+  ],
+  "evidence": {
+    "owner_issue_270_open": "true",
+    "fresh_remote_main_sha": "c4bdd1a98aeaac41b68765f0a4d96fefe86620ab",
+    "pre_merge_contract_reconciliation": "true",
+    "pre_merge_execution_not_allowed": "true",
+    "pre_merge_diagnostic_not_final_evidence": "true",
+    "privacy_boundary": "bounded_redacted_contract_state_only"
+  },
+  "observation": {
+    "live_main_sha": "c4bdd1a98aeaac41b68765f0a4d96fefe86620ab",
+    "merged_prior_prs": ["#271", "#276", "#277"],
+    "current_schema": 35,
+    "owner_issue": "#270",
+    "primary_benchmark_lane": "full_import_ocr_backlog",
+    "private_input_capability": "configured_private_roots",
+    "current_slice": "#270 current-main installed-equivalent import attribution contract",
+    "active_prs": ["#278"],
+    "transition_evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/278"
+  },
+  "verification": [
+    {
+      "command": "gh pr view 278 --json state,isDraft,baseRefName,headRefName",
+      "exit_code": 0,
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/278"
+    },
+    {
+      "command": "pre-merge contract-only phase and provenance-bound post-merge execution reviewed",
+      "exit_code": 0,
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/270"
+    }
+  ],
+  "privacy": {
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false
+  }
+}

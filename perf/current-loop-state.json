@@ -1,18 +1,18 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
+  "workflow_state": "contract_conflict",
   "experiment_state": "contract_locked",
-  "evidence_lane": "gui_manual",
+  "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "ba98e3140e60f306c229e26ebab543c6f82eb919037ab4008818b6efbc5bf54f",
+    "active_goal_sha256": "53055ab5833b2f270757e09786498d16ecc2f31d57a1e90d2aa3f404638559f8",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "fd289fbaa64e060781e2b2bff3f35365b1c8e8e5"
+    "git_head_sha": "0387506bc381aaa04ded9eb67cc213ffcd9c6797"
   },
-  "current_slice": "#272 source-root deletion runtime recovery",
+  "current_slice": "#270 current-main installed-equivalent import attribution contract",
   "transition_history": [
     {
       "from": "slice_selected",
@@ -697,8 +697,16 @@
     {"from":"verification_active","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/248"},
     {"from":"pr_opened","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"},
     {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
-    {"from":"pr_opened","to":"blocked_permission","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270#issuecomment-5127055615"},
-    {"from":"blocked_permission","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/272"}
+    {"from":"pr_opened","to":"base_synced","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"base_synced","to":"pr_review_ready","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"pr_review_ready","to":"ci_green","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"ci_green","to":"local_gate_green","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"local_gate_green","to":"privacy_gate_green","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"privacy_gate_green","to":"merge_method_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"merge_method_selected","to":"pr_merged","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"pr_merged","to":"branch_cleaned_main_synced","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"branch_cleaned_main_synced","to":"goal_authorized","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"},
+    {"from":"goal_authorized","to":"contract_conflict","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/278"}
   ],
   "verification": {
     "commands": [
@@ -2931,7 +2939,20 @@
       {"command":"python3 scripts/ci/check-performance-contracts.py","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
       {"command":"python3 scripts/ci/check-autonomous-goal.py","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
       {"command":"python3 scripts/ci/check-loop-state.py","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
-      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"}
+      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
+      {"command":"git fetch --prune origin main; git rev-parse origin/main","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/commit/c4bdd1a98aeaac41b68765f0a4d96fefe86620ab"},
+      {"command":"gh pr view 271 --json state,mergeCommit","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"gh pr view 271 --json state,mergeCommit,body","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"gh pr view 271 --json statusCheckRollup","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"python3 scripts/ci/check-autonomous-goal.py; python3 scripts/ci/check-loop-state.py; ./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"gh pr view 271 --json mergeCommit,baseRefName","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"gh pr view 271 --json state,mergeCommit,mergedAt","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"git fetch --prune origin main; git status --short --branch; gh api git/ref/heads/codex/contract-reconcile-import-attribution >/dev/null 2>&1; test $? -eq 1","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"gh issue view 270 --json state; git rev-parse origin/main; xctrace list templates","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"},
+      {"command":"private-root capability attestation with redacted result only","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"},
+      {"command":"gh pr view 278 --json state,isDraft,baseRefName,headRefName","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/278"},
+      {"command":"pre-merge contract-only phase and provenance-bound post-merge execution reviewed","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"}
     ],
     "all_required_commands_ran": true,
     "claim": "partial"
@@ -2944,9 +2965,21 @@
     "contains_tokens": false,
     "contains_diagnostics_package": false
   },
+  "platform_lane": "macos_m4_discovery",
+  "run_id": "current-main-import-attribution-2026-07-31",
+  "state_version": 565,
+  "previous_state_hash": "20057a76c14252392421e61e80d4fd2b36fd8b39610f03f2e9e460f84fb433f2",
+  "expected_state_version": 565,
+  "last_confirmed_side_effect": "pre_merge_attribution_execution_deferred",
+  "blocked_count": 0,
+  "same_blocker_key": "pre_merge_attribution_execution_deferred",
   "github_ledger": {
-    "primary_issue": "#272",
-    "active_prs": [],
-    "open_blockers": []
+    "primary_issue": "#270",
+    "active_prs": [
+      "#278"
+    ],
+    "open_blockers": [
+      "#270"
+    ]
   }
 }

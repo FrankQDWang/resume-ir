@@ -1,0 +1,54 @@
+{
+  "schema_version": "resume-ir.loop-reconciliation-event.v2",
+  "run_id": "current-main-import-attribution-2026-07-31",
+  "state_version": 557,
+  "previous_event_hash": "b256f8f108398cecf4e6cd876b08c69691c06d4c2a94812a7d5559e160b8d1db",
+  "observed_at": "2026-07-31T04:31:00Z",
+  "lease_owner": "codex-current-main-import-attribution",
+  "lease_expires_at": "2026-07-31T05:31:00Z",
+  "heartbeat_at": "2026-07-31T04:31:00Z",
+  "action_id": "confirm-contract-pr-review-ready",
+  "idempotency_key": "resume-ir-270-contract-pr-review-ready-2026-07-31",
+  "expected_state_version": 556,
+  "last_confirmed_side_effect": "contract_pr_271_review_ready_evidence_observed",
+  "next_wake_at": "2026-07-31T04:46:00Z",
+  "transition": {
+    "name": "mark_review_ready",
+    "from": "base_synced",
+    "to": "pr_review_ready"
+  },
+  "result": "passed",
+  "evidence_refs": [
+    "https://github.com/FrankQDWang/resume-ir/pull/271"
+  ],
+  "evidence": {
+    "base_sha": "c4bdd1a98aeaac41b68765f0a4d96fefe86620ab",
+    "pr_template_complete": "passed"
+  },
+  "observation": {
+    "live_main_sha": "c4bdd1a98aeaac41b68765f0a4d96fefe86620ab",
+    "merged_prior_prs": ["#271", "#276", "#277"],
+    "current_schema": 35,
+    "owner_issue": "#270",
+    "primary_benchmark_lane": "full_import_ocr_backlog",
+    "private_input_capability": "configured_private_roots",
+    "current_slice": "#270 current-main installed-equivalent import attribution contract",
+    "active_prs": [],
+    "transition_evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/271"
+  },
+  "verification": [
+    {
+      "command": "gh pr view 271 --json state,mergeCommit,body",
+      "exit_code": 0,
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/271"
+    }
+  ],
+  "privacy": {
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false
+  }
+}

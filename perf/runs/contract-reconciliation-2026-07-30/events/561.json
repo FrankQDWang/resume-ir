@@ -1,0 +1,55 @@
+{
+  "schema_version": "resume-ir.loop-reconciliation-event.v2",
+  "run_id": "current-main-import-attribution-2026-07-31",
+  "state_version": 561,
+  "previous_event_hash": "6f3311a92579695e89cc5d0bf9d2eb0937812e8fa0402e32d2759b4c3eb59055",
+  "observed_at": "2026-07-31T04:35:00Z",
+  "lease_owner": "codex-current-main-import-attribution",
+  "lease_expires_at": "2026-07-31T05:35:00Z",
+  "heartbeat_at": "2026-07-31T04:35:00Z",
+  "action_id": "confirm-contract-pr-merge-method",
+  "idempotency_key": "resume-ir-270-contract-pr-merge-method-2026-07-31",
+  "expected_state_version": 560,
+  "last_confirmed_side_effect": "contract_pr_271_squash_merge_method_observed",
+  "next_wake_at": "2026-07-31T04:50:00Z",
+  "transition": {
+    "name": "select_merge_method",
+    "from": "privacy_gate_green",
+    "to": "merge_method_selected"
+  },
+  "result": "passed",
+  "evidence_refs": [
+    "https://github.com/FrankQDWang/resume-ir/pull/271"
+  ],
+  "evidence": {
+    "merge_method": "squash",
+    "branch_protection_satisfied": "true",
+    "admin_bypass_absent": "true"
+  },
+  "observation": {
+    "live_main_sha": "c4bdd1a98aeaac41b68765f0a4d96fefe86620ab",
+    "merged_prior_prs": ["#271", "#276", "#277"],
+    "current_schema": 35,
+    "owner_issue": "#270",
+    "primary_benchmark_lane": "full_import_ocr_backlog",
+    "private_input_capability": "configured_private_roots",
+    "current_slice": "#270 current-main installed-equivalent import attribution contract",
+    "active_prs": [],
+    "transition_evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/271"
+  },
+  "verification": [
+    {
+      "command": "gh pr view 271 --json mergeCommit,baseRefName",
+      "exit_code": 0,
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/271"
+    }
+  ],
+  "privacy": {
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false
+  }
+}
