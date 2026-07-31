@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tomllib
@@ -165,17 +166,45 @@ CURRENT_MAIN_ATTRIBUTION_REACTIVATION_SUPPORT_PATHS = {
     "scripts/ci/check-autonomous-goal.py",
     "scripts/loop/reduce-current-loop-state.py",
 }
-CURRENT_MAIN_ATTRIBUTION_REACTIVATION_ALLOWED_PATHS = (
+CURRENT_MAIN_ATTRIBUTION_REACTIVATION_PR_PATHS = (
     SUCCESSOR_TRANSITION_PATHS
     | {"scripts/ci/check-gate-integrity.py"}
     | CURRENT_MAIN_ATTRIBUTION_REACTIVATION_EVENT_PATHS
     | CURRENT_MAIN_ATTRIBUTION_REACTIVATION_SUPPORT_PATHS
 )
-CURRENT_MAIN_ATTRIBUTION_PUBLIC_OUTPUT_PATHS = [
+CURRENT_MAIN_ATTRIBUTION_REACTIVATION_PR_PATHS_ROLE = "exact_changed_paths_for_reactivation_pr"
+CURRENT_MAIN_ATTRIBUTION_ACTIVE_ALLOWED_PATHS_ROLE = "reactivation_pr_paths"
+CURRENT_MAIN_ATTRIBUTION_POST_MERGE_EVIDENCE_PATH_TEMPLATES = [
     "PROGRESS.md",
     "perf/current-loop-state.json",
     "perf/runs/<run_id>/events/<state_version>.json",
     "perf/runs/<run_id>/redacted/<artifact>.json",
+]
+CURRENT_MAIN_ATTRIBUTION_POST_MERGE_EVIDENCE_PATHS_ROLE = "post_merge_execution_evidence_templates"
+CURRENT_MAIN_ATTRIBUTION_POST_MERGE_EVIDENCE_PATH_PATTERNS = (
+    ("progress", re.compile(r"PROGRESS\.md")),
+    ("derived_state", re.compile(r"perf/current-loop-state\.json")),
+    (
+        "append_only_event",
+        re.compile(r"perf/runs/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/events/[0-9]{1,9}\.json"),
+    ),
+    (
+        "redacted_aggregate",
+        re.compile(r"perf/runs/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/redacted/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json"),
+    ),
+)
+CURRENT_MAIN_ATTRIBUTION_MILESTONES = [
+    "first_searchable",
+    "keyword_ready",
+    "embedding_complete",
+    "ocr_backlog_full_import",
+]
+CURRENT_MAIN_ATTRIBUTION_REQUIRED_RUNTIME_PROVENANCE = [
+    "source_commit",
+    "cli_build_provenance",
+    "daemon_build_provenance",
+    "sidecar_build_provenance",
+    "command_shape",
 ]
 CURRENT_MAIN_REACTIVATION_CONTRACT_KEYS = {"reactivation_contract"}
 
@@ -349,9 +378,11 @@ def validate_current_main_reactivation_contract(raw: dict, head_slice: dict) -> 
         "post_merge_phase",
         "pre_merge_benchmark_or_profile_allowed",
         "post_merge_benchmark_or_profile_allowed",
-        "post_reactivation_allowed_paths",
+        "reactivation_pr_paths",
+        "reactivation_pr_paths_role",
         "reactivation_event_paths",
         "public_output_paths",
+        "public_output_paths_role",
     }
     if set(contract) != expected_keys:
         fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract: keys mismatch")
@@ -364,24 +395,34 @@ def validate_current_main_reactivation_contract(raw: dict, head_slice: dict) -> 
     if contract["post_merge_benchmark_or_profile_allowed"] is not True:
         fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract.post_merge_benchmark_or_profile_allowed: expected true")
 
-    allowed_paths = contract["post_reactivation_allowed_paths"]
-    if allowed_paths != sorted(CURRENT_MAIN_ATTRIBUTION_REACTIVATION_ALLOWED_PATHS):
-        fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract.post_reactivation_allowed_paths: mismatch")
+    if contract["reactivation_pr_paths_role"] != CURRENT_MAIN_ATTRIBUTION_REACTIVATION_PR_PATHS_ROLE:
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract.reactivation_pr_paths_role: mismatch")
+    allowed_paths = contract["reactivation_pr_paths"]
+    if allowed_paths != sorted(CURRENT_MAIN_ATTRIBUTION_REACTIVATION_PR_PATHS):
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract.reactivation_pr_paths: mismatch")
+    if head_slice.get("allowed_paths_role") != CURRENT_MAIN_ATTRIBUTION_ACTIVE_ALLOWED_PATHS_ROLE:
+        fail("successor active slice allowed_paths must declare the reactivation PR path role")
     if head_slice.get("allowed_paths") != allowed_paths:
-        fail("successor active slice allowed_paths must equal the post-reactivation contract")
+        fail("successor active slice allowed_paths must equal the reactivation PR path contract")
 
     event_paths = contract["reactivation_event_paths"]
     if event_paths != sorted(CURRENT_MAIN_ATTRIBUTION_REACTIVATION_EVENT_PATHS):
         fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract.reactivation_event_paths: mismatch")
 
     public_output_paths = contract["public_output_paths"]
-    if public_output_paths != CURRENT_MAIN_ATTRIBUTION_PUBLIC_OUTPUT_PATHS:
+    if contract["public_output_paths_role"] != CURRENT_MAIN_ATTRIBUTION_POST_MERGE_EVIDENCE_PATHS_ROLE:
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract.public_output_paths_role: mismatch")
+    if public_output_paths != CURRENT_MAIN_ATTRIBUTION_POST_MERGE_EVIDENCE_PATH_TEMPLATES:
         fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract.public_output_paths: mismatch")
     attribution = head_slice.get("attribution")
     if not isinstance(attribution, dict):
         fail("successor active slice attribution: expected table")
     execution = attribution.get("attribution_execution")
-    if not isinstance(execution, dict) or execution.get("public_output_paths") != public_output_paths:
+    if (
+        not isinstance(execution, dict)
+        or execution.get("public_output_paths") != public_output_paths
+        or execution.get("public_output_paths_role") != CURRENT_MAIN_ATTRIBUTION_POST_MERGE_EVIDENCE_PATHS_ROLE
+    ):
         fail("attribution execution public_output_paths must equal the reactivation contract")
 
 
@@ -391,19 +432,25 @@ def self_test_current_main_reactivation_contract() -> None:
         "post_merge_phase": "attribution_execution",
         "pre_merge_benchmark_or_profile_allowed": False,
         "post_merge_benchmark_or_profile_allowed": True,
-        "post_reactivation_allowed_paths": sorted(CURRENT_MAIN_ATTRIBUTION_REACTIVATION_ALLOWED_PATHS),
+        "reactivation_pr_paths": sorted(CURRENT_MAIN_ATTRIBUTION_REACTIVATION_PR_PATHS),
+        "reactivation_pr_paths_role": CURRENT_MAIN_ATTRIBUTION_REACTIVATION_PR_PATHS_ROLE,
         "reactivation_event_paths": sorted(CURRENT_MAIN_ATTRIBUTION_REACTIVATION_EVENT_PATHS),
-        "public_output_paths": CURRENT_MAIN_ATTRIBUTION_PUBLIC_OUTPUT_PATHS.copy(),
+        "public_output_paths": CURRENT_MAIN_ATTRIBUTION_POST_MERGE_EVIDENCE_PATH_TEMPLATES.copy(),
+        "public_output_paths_role": CURRENT_MAIN_ATTRIBUTION_POST_MERGE_EVIDENCE_PATHS_ROLE,
     }
     raw = {"reactivation_contract": contract}
     head_slice = {
-        "allowed_paths": contract["post_reactivation_allowed_paths"].copy(),
-        "attribution": {"attribution_execution": {"public_output_paths": contract["public_output_paths"].copy()}},
+        "allowed_paths_role": CURRENT_MAIN_ATTRIBUTION_ACTIVE_ALLOWED_PATHS_ROLE,
+        "allowed_paths": contract["reactivation_pr_paths"].copy(),
+        "attribution": {"attribution_execution": {
+            "public_output_paths": contract["public_output_paths"].copy(),
+            "public_output_paths_role": contract["public_output_paths_role"],
+        }},
     }
     validate_current_main_reactivation_contract(raw, head_slice)
     for label, mutate in (
-        ("extra allowed path", lambda item: item["reactivation_contract"]["post_reactivation_allowed_paths"].append("extra")),
-        ("missing allowed path", lambda item: item["reactivation_contract"]["post_reactivation_allowed_paths"].pop()),
+        ("extra allowed path", lambda item: item["reactivation_contract"]["reactivation_pr_paths"].append("extra")),
+        ("missing allowed path", lambda item: item["reactivation_contract"]["reactivation_pr_paths"].pop()),
         ("extra reactivation event", lambda item: item["reactivation_contract"]["reactivation_event_paths"].append("extra")),
         ("missing reactivation event", lambda item: item["reactivation_contract"]["reactivation_event_paths"].pop()),
     ):
@@ -414,6 +461,61 @@ def self_test_current_main_reactivation_contract() -> None:
         except ValueError:
             continue
         fail(f"reactivation contract self-test accepted {label}")
+
+
+def classify_current_main_post_merge_evidence_path(path: str) -> str | None:
+    if not isinstance(path, str):
+        return None
+    for kind, pattern in CURRENT_MAIN_ATTRIBUTION_POST_MERGE_EVIDENCE_PATH_PATTERNS:
+        if pattern.fullmatch(path):
+            return kind
+    return None
+
+
+def validate_current_main_same_issue_evidence_scope(head_slice: dict, changed: set[str]) -> None:
+    if not changed:
+        fail("same-issue #270 evidence changes require at least one bounded public-output path")
+    if head_slice.get("allowed_paths_role") != CURRENT_MAIN_ATTRIBUTION_ACTIVE_ALLOWED_PATHS_ROLE:
+        fail("same-issue #270 evidence requires the reactivation PR path role")
+    if set(head_slice.get("allowed_paths", [])) != CURRENT_MAIN_ATTRIBUTION_REACTIVATION_PR_PATHS:
+        fail("same-issue #270 evidence cannot expand or replace reactivation PR allowed_paths")
+    require_bool(
+        head_slice.get("production_code_allowed"),
+        False,
+        "head.scope.active_slice.production_code_allowed",
+    )
+    require_bool(
+        head_slice.get("private_benchmark_allowed"),
+        False,
+        "head.scope.active_slice.private_benchmark_allowed",
+    )
+    attribution = head_slice.get("attribution")
+    if not isinstance(attribution, dict) or attribution.get("milestones") != CURRENT_MAIN_ATTRIBUTION_MILESTONES:
+        fail("same-issue #270 evidence must preserve the ordered milestone contract")
+    execution = attribution.get("attribution_execution")
+    if not isinstance(execution, dict):
+        fail("same-issue #270 evidence requires attribution execution contract")
+    for key, expected in {
+        "evidence_lane": "w1_private",
+        "benchmark_or_profile_execution_allowed": True,
+        "production_code_allowed": False,
+        "execution_boundary": "post_merge_only",
+        "requires_fresh_merged_main": True,
+        "requires_executable_provenance": True,
+        "required_runtime_provenance": CURRENT_MAIN_ATTRIBUTION_REQUIRED_RUNTIME_PROVENANCE,
+        "authorization_transition": "authorize_current_main_import_attribution",
+        "missing_roots_transition": "block_current_main_import_attribution_missing_roots",
+        "public_output_paths": CURRENT_MAIN_ATTRIBUTION_POST_MERGE_EVIDENCE_PATH_TEMPLATES,
+        "public_output_paths_role": CURRENT_MAIN_ATTRIBUTION_POST_MERGE_EVIDENCE_PATHS_ROLE,
+    }.items():
+        if execution.get(key) != expected:
+            fail(f"same-issue #270 evidence contract {key} mismatch")
+    for path in sorted(changed):
+        if classify_current_main_post_merge_evidence_path(path) is None:
+            fail(
+                "same-issue #270 evidence path is outside bounded public-output templates: "
+                f"{path!r}"
+            )
 
 
 def validate_declared_successor_transition(
@@ -477,7 +579,7 @@ def validate_declared_successor_transition(
         fail("successor active slice allowed_paths must be unique")
     if current_main_attribution and set(allowed_paths) != CURRENT_MAIN_ATTRIBUTION_FINAL_PATHS:
         fail("successor active slice allowed_paths mismatch")
-    if current_main_reactivation and set(allowed_paths) != CURRENT_MAIN_ATTRIBUTION_REACTIVATION_ALLOWED_PATHS:
+    if current_main_reactivation and set(allowed_paths) != CURRENT_MAIN_ATTRIBUTION_REACTIVATION_PR_PATHS:
         fail("current-main reactivation allowed_paths mismatch")
     bootstrap = raw.get("bootstrap_gate_change")
     require_bool(bootstrap, bootstrap is True, f"{SUCCESSOR_TRANSITION_RECORD}.bootstrap_gate_change")
@@ -496,7 +598,7 @@ def validate_declared_successor_transition(
                 f"{sorted(SUCCESSOR_TRANSITION_BOOTSTRAP_PATHS)!r}, found {sorted(changed)!r}"
             )
     elif current_main_reactivation:
-        expected = CURRENT_MAIN_ATTRIBUTION_REACTIVATION_ALLOWED_PATHS
+        expected = CURRENT_MAIN_ATTRIBUTION_REACTIVATION_PR_PATHS
         if changed != expected:
             fail(
                 "current-main attribution reactivation path mismatch: expected "
@@ -656,6 +758,8 @@ def validate_transition_scope(base_goal: dict, head_goal: dict, merge_base: str,
                     "same-issue #159 path mismatch: expected exact ACTIVE_GOAL allowed_paths "
                     f"{sorted(expected_paths)!r}, found {sorted(changed)!r}"
                 )
+        if head_issue == "#270":
+            validate_current_main_same_issue_evidence_scope(head_slice, changed)
         return
 
     if (base_issue, head_issue) == ("#140", "#143"):
@@ -774,6 +878,64 @@ def validate_transition_scope(base_goal: dict, head_goal: dict, merge_base: str,
     fail(f"unauthorized active-slice transition: {base_issue!r} -> {head_issue!r}")
 
 
+def self_test_current_main_same_issue_evidence_scope() -> None:
+    base_goal = {"scope": {"active_slice": {"issue": "#270"}}}
+    head_goal = {
+        "scope": {"active_slice": {
+            "issue": "#270",
+            "allowed_paths_role": CURRENT_MAIN_ATTRIBUTION_ACTIVE_ALLOWED_PATHS_ROLE,
+            "allowed_paths": sorted(CURRENT_MAIN_ATTRIBUTION_REACTIVATION_PR_PATHS),
+            "production_code_allowed": False,
+            "private_benchmark_allowed": False,
+            "attribution": {
+                "milestones": CURRENT_MAIN_ATTRIBUTION_MILESTONES.copy(),
+                "attribution_execution": {
+                    "evidence_lane": "w1_private",
+                    "benchmark_or_profile_execution_allowed": True,
+                    "production_code_allowed": False,
+                    "execution_boundary": "post_merge_only",
+                    "requires_fresh_merged_main": True,
+                    "requires_executable_provenance": True,
+                    "required_runtime_provenance": CURRENT_MAIN_ATTRIBUTION_REQUIRED_RUNTIME_PROVENANCE.copy(),
+                    "authorization_transition": "authorize_current_main_import_attribution",
+                    "missing_roots_transition": "block_current_main_import_attribution_missing_roots",
+                    "public_output_paths": CURRENT_MAIN_ATTRIBUTION_POST_MERGE_EVIDENCE_PATH_TEMPLATES.copy(),
+                    "public_output_paths_role": CURRENT_MAIN_ATTRIBUTION_POST_MERGE_EVIDENCE_PATHS_ROLE,
+                },
+            },
+        }},
+    }
+    valid_paths = {
+        "PROGRESS.md",
+        "perf/current-loop-state.json",
+        "perf/runs/run-2026-07/events/566.json",
+        "perf/runs/run-2026-07/redacted/import-profile.json",
+    }
+    validate_transition_scope(base_goal, head_goal, "unused", valid_paths)
+    for path, expected_kind in (
+        ("PROGRESS.md", "progress"),
+        ("perf/current-loop-state.json", "derived_state"),
+        ("perf/runs/run-2026-07/events/566.json", "append_only_event"),
+        ("perf/runs/run-2026-07/redacted/import-profile.json", "redacted_aggregate"),
+    ):
+        if classify_current_main_post_merge_evidence_path(path) != expected_kind:
+            fail(f"same-issue #270 evidence classifier misclassified {path!r}")
+    for label, changed in (
+        ("production path", {"crates/meta-store/src/lib.rs"}),
+        ("arbitrary docs", {"docs/unrelated.md"}),
+        ("checker", {"scripts/ci/check-gate-integrity.py"}),
+        ("active goal", {"ACTIVE_GOAL.toml"}),
+        ("transition contract", {SUCCESSOR_TRANSITION_RECORD}),
+        ("malformed event", {"perf/runs/run-2026-07/events/not-state.json"}),
+        ("nested redacted path", {"perf/runs/run-2026-07/redacted/private/profile.json"}),
+    ):
+        try:
+            validate_transition_scope(base_goal, head_goal, "unused", changed)
+        except ValueError:
+            continue
+        fail(f"same-issue #270 evidence self-test accepted {label}")
+
+
 def is_gate_path(path: str) -> bool:
     if path.startswith(".github/workflows/"):
         return True
@@ -793,6 +955,7 @@ def is_gate_path(path: str) -> bool:
 def main() -> int:
     self_test_transition_record_shapes()
     self_test_current_main_reactivation_contract()
+    self_test_current_main_same_issue_evidence_scope()
     if sys.argv[1:]:
         if sys.argv[1:] == ["--self-test"]:
             print("check-gate-integrity.py self-test passed")

@@ -484,6 +484,7 @@ def main() -> int:
             "production_code_allowed": False, "private_benchmark_allowed": False,
             "configured_private_roots_required": True,
             "home_mixed_root_authorized": False,
+            "allowed_paths_role": "reactivation_pr_paths",
             "unconfigured_private_run_terminal":
                 "blocked_missing_configured_private_roots",
         }
@@ -529,6 +530,7 @@ def main() -> int:
                 "source_commit", "cli_build_provenance", "daemon_build_provenance",
                 "sidecar_build_provenance", "command_shape",
             ],
+            "public_output_paths_role": "post_merge_execution_evidence_templates",
             "authorization_transition": "authorize_current_main_import_attribution",
             "missing_roots_transition":
                 "block_current_main_import_attribution_missing_roots",
@@ -542,7 +544,7 @@ def main() -> int:
             "PROGRESS.md", "perf/current-loop-state.json",
             "perf/runs/<run_id>/events/<state_version>.json",
             "perf/runs/<run_id>/redacted/<artifact>.json",
-        ]:
+        ] or execution["public_output_paths_role"] != "post_merge_execution_evidence_templates":
             fail("scope.active_slice.attribution.attribution_execution scope mismatch")
 
     gui = active_goal.get("gui")

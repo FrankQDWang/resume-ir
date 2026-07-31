@@ -30,7 +30,7 @@
     "post_merge_phase": "attribution_execution",
     "pre_merge_benchmark_or_profile_allowed": false,
     "post_merge_benchmark_or_profile_allowed": true,
-    "post_reactivation_allowed_paths": [
+    "reactivation_pr_paths": [
       "ACTIVE_GOAL.toml",
       "perf/active-slice-transition.json",
       "perf/current-loop-state.json",
@@ -50,6 +50,7 @@
       "scripts/ci/check-gate-integrity.py",
       "scripts/loop/reduce-current-loop-state.py"
     ],
+    "reactivation_pr_paths_role": "exact_changed_paths_for_reactivation_pr",
     "reactivation_event_paths": [
       "perf/runs/contract-reconciliation-2026-07-30/events/556.json",
       "perf/runs/contract-reconciliation-2026-07-30/events/557.json",
@@ -67,6 +68,7 @@
       "perf/current-loop-state.json",
       "perf/runs/<run_id>/events/<state_version>.json",
       "perf/runs/<run_id>/redacted/<artifact>.json"
-    ]
+    ],
+    "public_output_paths_role": "post_merge_execution_evidence_templates"
   }
 }

@@ -43,6 +43,7 @@ allowed_paths = [
   "scripts/ci/check-gate-integrity.py",
   "scripts/loop/reduce-current-loop-state.py",
 ]
+allowed_paths_role = "reactivation_pr_paths"
 
 [scope.active_slice.attribution]
 owner_kind = "attribution_evidence"
@@ -86,6 +87,7 @@ public_output_paths = [
   "perf/runs/<run_id>/events/<state_version>.json",
   "perf/runs/<run_id>/redacted/<artifact>.json",
 ]
+public_output_paths_role = "post_merge_execution_evidence_templates"
 
 [contracts]
 query_semantics = "simple_text_required_all_terms_v1"

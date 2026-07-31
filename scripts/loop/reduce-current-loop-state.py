@@ -355,6 +355,39 @@ def self_test():
             and state["workflow_state"] == next_event[1]["transition"]["to"],
             "follow-up event did not advance",
         )
+        if next_event[1]["transition"]["to"] == "goal_authorized":
+            active_slice = goal["scope"]["active_slice"]
+            attribution = active_slice["attribution"]
+            execution = attribution["attribution_execution"]
+            require(
+                next_event[1]["transition"] == {
+                    "name": "authorize_current_main_import_attribution",
+                    "from": "contract_conflict",
+                    "to": "goal_authorized",
+                },
+                "fresh-main authorization transition mismatch",
+            )
+            require(state["evidence_lane"] == "w1_private", "authorization did not enter w1_private")
+            require(
+                attribution["milestones"] == [
+                    "first_searchable", "keyword_ready", "embedding_complete", "ocr_backlog_full_import",
+                ],
+                "authorization changed ordered milestone contract",
+            )
+            require(execution["execution_boundary"] == "post_merge_only", "authorization bypassed post-merge boundary")
+            require(execution["requires_fresh_merged_main"] is True, "authorization removed fresh-main requirement")
+            require(execution["requires_executable_provenance"] is True, "authorization removed executable provenance requirement")
+            require(
+                execution["required_runtime_provenance"] == [
+                    "source_commit", "cli_build_provenance", "daemon_build_provenance",
+                    "sidecar_build_provenance", "command_shape",
+                ],
+                "authorization changed executable provenance contract",
+            )
+            require(
+                active_slice["allowed_paths"] != execution["public_output_paths"],
+                "authorization expanded evidence output paths into active-slice write paths",
+            )
         for label, mutate in (
             ("transition", lambda item: item["transition"].update(from_="bad")),
             ("hash", lambda item: item.update(previous_event_hash="0" * 64)),
