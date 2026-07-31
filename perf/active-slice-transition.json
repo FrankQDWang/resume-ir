@@ -48,6 +48,7 @@
       "perf/runs/contract-reconciliation-2026-07-30/events/565.json",
       "scripts/ci/check-autonomous-goal.py",
       "scripts/ci/check-gate-integrity.py",
+      "scripts/ci/check-private-evidence-redaction.py",
       "scripts/loop/reduce-current-loop-state.py"
     ],
     "reactivation_pr_paths_role": "exact_changed_paths_for_reactivation_pr",
@@ -67,7 +68,7 @@
       "PROGRESS.md",
       "perf/current-loop-state.json",
       "perf/runs/<run_id>/events/<state_version>.json",
-      "perf/runs/<run_id>/redacted/<artifact>.json"
+      "perf/runs/<run_id>/redacted/<aggregate>.json"
     ],
     "public_output_paths_role": "post_merge_execution_evidence_templates"
   }

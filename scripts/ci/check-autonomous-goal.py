@@ -543,7 +543,7 @@ def main() -> int:
         } or execution["public_output_paths"] != [
             "PROGRESS.md", "perf/current-loop-state.json",
             "perf/runs/<run_id>/events/<state_version>.json",
-            "perf/runs/<run_id>/redacted/<artifact>.json",
+            "perf/runs/<run_id>/redacted/<aggregate>.json",
         ] or execution["public_output_paths_role"] != "post_merge_execution_evidence_templates":
             fail("scope.active_slice.attribution.attribution_execution scope mismatch")
 

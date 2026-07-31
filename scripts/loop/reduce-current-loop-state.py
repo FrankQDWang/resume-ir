@@ -20,11 +20,35 @@ PRIVACY = {"contains_raw_resume_text", "contains_raw_query_text",
 ATTRIBUTION_OWNER_ISSUE = "#270"
 ATTRIBUTION_PRIMARY_LANE = "full_import_ocr_backlog"
 ATTRIBUTION_UNCONFIGURED_TERMINAL = "blocked_missing_configured_private_roots"
+AUTHORIZATION_EVENT_NAME = "authorize_current_main_import_attribution"
+REACTIVATION_PR = "#278"
+AUTHORIZATION_EVIDENCE = {
+    "owner_issue_270_open",
+    "fresh_remote_main_sha",
+    "clean_main_equals_remote_main",
+    "configured_private_roots",
+    "runtime_capability_attestation",
+    "primary_lane_full_import_ocr_backlog",
+    "phase_attribution_execution",
+    "privacy_boundary",
+    "reactivation_pr_merged",
+    "merged_reactivation_pr",
+    "merged_reactivation_head_sha",
+    "post_merge_base_sha",
+    "base_snapshot_workflow_state",
+    "active_prs_empty",
+}
 
 
 def require(ok, message):
     if not ok:
         raise ValueError(message)
+
+
+def require_sha(value, path):
+    require(isinstance(value, str) and len(value) == 40 and all(char in "0123456789abcdef" for char in value),
+            f"{path}: expected lowercase commit SHA")
+    return value
 
 
 def sha(data):
@@ -132,7 +156,88 @@ def validate(
     if event["schema_version"].endswith(".v2"):
         missing = set(contract["required_evidence"]) - set(event.get("evidence", {}))
         require(not missing, f"{path}: missing evidence {sorted(missing)}")
+    if edge.get("name") == AUTHORIZATION_EVENT_NAME and edge.get("from") == "contract_conflict":
+        validate_post_merge_authorization(event)
     return contract
+
+
+def validate_post_merge_authorization(event):
+    observation = event.get("observation", {})
+    evidence = event.get("evidence", {})
+    require(isinstance(observation, dict), "post-merge authorization observation must be an object")
+    require(isinstance(evidence, dict), "post-merge authorization evidence must be an object")
+    require(set(evidence) == AUTHORIZATION_EVIDENCE,
+            "post-merge authorization evidence set is incomplete or expanded")
+    require(observation.get("base_snapshot_workflow_state") == "contract_conflict",
+            "post-merge authorization base snapshot must be contract_conflict")
+    require(observation.get("active_prs") == [],
+            "post-merge authorization requires an empty active_prs observation")
+    require(observation.get("active_prs_empty") is True,
+            "post-merge authorization requires active_prs_empty=true")
+    require(observation.get("reactivation_pr_merged") is True,
+            "post-merge authorization requires merged reactivation identity")
+    require(observation.get("merged_reactivation_pr") == REACTIVATION_PR,
+            "post-merge authorization requires the #278 reactivation identity")
+    live_sha = require_sha(observation.get("live_main_sha"), "observation.live_main_sha")
+    require_sha(observation.get("merged_reactivation_head_sha"), "observation.merged_reactivation_head_sha")
+    require(observation.get("post_merge_base_sha") == live_sha,
+            "post-merge authorization base SHA must equal observation live_main_sha")
+    require(observation.get("private_input_capability") == "configured_private_roots",
+            "post-merge authorization requires configured private roots")
+    require(evidence.get("owner_issue_270_open") == "true", "post-merge authorization owner evidence mismatch")
+    require(evidence.get("fresh_remote_main_sha") == live_sha,
+            "post-merge authorization fresh_remote_main_sha mismatch")
+    require(evidence.get("post_merge_base_sha") == live_sha,
+            "post-merge authorization evidence base SHA mismatch")
+    require(evidence.get("clean_main_equals_remote_main") == "true_at_merged_base_observation",
+            "post-merge authorization clean-main evidence mismatch")
+    require(evidence.get("reactivation_pr_merged") is True,
+            "post-merge authorization merged PR evidence mismatch")
+    require(evidence.get("merged_reactivation_pr") == REACTIVATION_PR,
+            "post-merge authorization merged PR identity mismatch")
+    require(evidence.get("merged_reactivation_head_sha") == observation["merged_reactivation_head_sha"],
+            "post-merge authorization merged head SHA mismatch")
+    require(evidence.get("base_snapshot_workflow_state") == "contract_conflict",
+            "post-merge authorization base-state evidence mismatch")
+    require(evidence.get("active_prs_empty") is True,
+            "post-merge authorization active-pr evidence mismatch")
+    require(evidence.get("configured_private_roots") == "configured_private_roots_readable",
+            "post-merge authorization private-root evidence mismatch")
+    require(isinstance(evidence.get("runtime_capability_attestation"), str)
+            and evidence["runtime_capability_attestation"].startswith("macOS"),
+            "post-merge authorization runtime evidence must identify macOS")
+    require(evidence.get("primary_lane_full_import_ocr_backlog") == "true",
+            "post-merge authorization primary lane evidence mismatch")
+    require(evidence.get("phase_attribution_execution") == "authorized_by_current_goal_contract",
+            "post-merge authorization phase evidence mismatch")
+    require(evidence.get("privacy_boundary") == "bounded_redacted_aggregates_only; no raw/private artifacts",
+            "post-merge authorization privacy evidence mismatch")
+    git("merge-base", "--is-ancestor", observation["merged_reactivation_head_sha"], live_sha)
+
+
+def build_post_merge_authorization_evidence(observation):
+    evidence = {
+        "owner_issue_270_open": "true",
+        "fresh_remote_main_sha": observation["live_main_sha"],
+        "clean_main_equals_remote_main": "true_at_merged_base_observation",
+        "configured_private_roots": "configured_private_roots_readable",
+        "runtime_capability_attestation": observation.get("runtime_capability_attestation", ""),
+        "primary_lane_full_import_ocr_backlog": "true",
+        "phase_attribution_execution": "authorized_by_current_goal_contract",
+        "privacy_boundary": "bounded_redacted_aggregates_only; no raw/private artifacts",
+        "reactivation_pr_merged": observation["reactivation_pr_merged"],
+        "merged_reactivation_pr": observation["merged_reactivation_pr"],
+        "merged_reactivation_head_sha": observation["merged_reactivation_head_sha"],
+        "post_merge_base_sha": observation["post_merge_base_sha"],
+        "base_snapshot_workflow_state": observation["base_snapshot_workflow_state"],
+        "active_prs_empty": observation["active_prs_empty"],
+    }
+    candidate = {
+        "observation": observation,
+        "evidence": evidence,
+    }
+    validate_post_merge_authorization(candidate)
+    return evidence
 
 
 def validate_archived_events(records, goal):
@@ -306,20 +411,11 @@ def follow_up(records):
         }
     elif prior[1]["transition"]["to"] == "contract_conflict":
         transition = {
-            "name": "authorize_current_main_import_attribution",
+            "name": AUTHORIZATION_EVENT_NAME,
             "from": "contract_conflict",
             "to": "goal_authorized",
         }
-        evidence = {
-            "owner_issue_270_open": "test",
-            "fresh_remote_main_sha": "test",
-            "clean_main_equals_remote_main": "test",
-            "configured_private_roots": "test",
-            "runtime_capability_attestation": "test",
-            "primary_lane_full_import_ocr_backlog": "test",
-            "phase_attribution_execution": "test",
-            "privacy_boundary": "test",
-        }
+        evidence = build_post_merge_authorization_evidence(observation)
     else:
         transition = {
             "name": "sync_base",
@@ -348,8 +444,46 @@ def self_test():
     records, failures, goal = load_events(), [], load_goal()
     validate_archived_events(records, goal)
     if goal["scope"]["active_slice"]["issue"] == ATTRIBUTION_OWNER_ISSUE:
-        next_event = follow_up(records)
-        state = json.loads(reduce([*records, next_event]))
+        try:
+            follow_up(records)
+        except (KeyError, ValueError):
+            pass
+        else:
+            failures.append("stale pre-merge authorization observation")
+
+        merged_records = copy.deepcopy(records)
+        merged_observation = merged_records[-1][1]["observation"]
+        merged_sha = git("rev-parse", "HEAD").strip().decode()
+        merged_observation.update({
+            "live_main_sha": merged_sha,
+            "active_prs": [],
+            "active_prs_empty": True,
+            "reactivation_pr_merged": True,
+            "merged_reactivation_pr": REACTIVATION_PR,
+            "merged_reactivation_head_sha": merged_sha,
+            "post_merge_base_sha": merged_sha,
+            "base_snapshot_workflow_state": "contract_conflict",
+            "runtime_capability_attestation": "macOS_arm64; runtime capabilities attested",
+        })
+        path, event, _ = merged_records[-1]
+        merged_records[-1] = (path, event, json.dumps(event, sort_keys=True).encode())
+
+        for label, mutate in (
+            ("stale main SHA", lambda item: item["observation"].update(live_main_sha=records[-1][1]["observation"]["live_main_sha"])),
+            ("active reactivation PR", lambda item: item["observation"].update(active_prs=[REACTIVATION_PR], active_prs_empty=False)),
+            ("missing merged identity", lambda item: item["observation"].pop("merged_reactivation_pr", None)),
+        ):
+            altered = copy.deepcopy(merged_records)
+            mutate(altered[-1][1])
+            altered[-1] = (altered[-1][0], altered[-1][1], json.dumps(altered[-1][1], sort_keys=True).encode())
+            try:
+                follow_up(altered)
+            except (KeyError, ValueError):
+                continue
+            failures.append(label)
+
+        next_event = follow_up(merged_records)
+        state = json.loads(reduce([*merged_records, next_event]))
         require(
             state["state_version"] == next_event[1]["state_version"]
             and state["workflow_state"] == next_event[1]["transition"]["to"],
@@ -361,7 +495,7 @@ def self_test():
             execution = attribution["attribution_execution"]
             require(
                 next_event[1]["transition"] == {
-                    "name": "authorize_current_main_import_attribution",
+                    "name": AUTHORIZATION_EVENT_NAME,
                     "from": "contract_conflict",
                     "to": "goal_authorized",
                 },
@@ -399,7 +533,7 @@ def self_test():
             else:
                 mutate(event)
             try:
-                reduce([*records, (next_event[0], event, json.dumps(event).encode())])
+                reduce([*merged_records, (next_event[0], event, json.dumps(event).encode())])
             except ValueError:
                 continue
             failures.append(label)
