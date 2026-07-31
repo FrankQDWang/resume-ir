@@ -22,8 +22,10 @@ use process_containment::VerifiedParentProcess;
 use std::{thread, time::Duration};
 use tokenizers::{AddedToken, PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
 
+mod batch;
 mod runtime_pack;
 
+use batch::{mean_pool_batch, tokenized_batch};
 #[cfg(test)]
 use runtime_pack::AssetIdentity;
 use runtime_pack::{FileRole, RuntimePack};
@@ -157,15 +159,17 @@ fn run_resident() -> Result<(), RuntimeError> {
             continue;
         }
 
-        let vectors = request
+        let texts = request
             .inputs
             .iter()
-            .map(|input| {
-                model
-                    .embed(&prefixed_resident_text(input.role, &input.text))
-                    .and_then(normalize_vector)
-            })
-            .collect::<Result<Vec<_>, _>>();
+            .map(|input| prefixed_resident_text(input.role, &input.text))
+            .collect::<Vec<_>>();
+        let vectors = model.embed_batch(&texts).and_then(|vectors| {
+            vectors
+                .into_iter()
+                .map(normalize_vector)
+                .collect::<Result<Vec<_>, _>>()
+        });
         let vectors = match vectors {
             Ok(vectors) => vectors,
             Err(error) => {
@@ -346,6 +350,59 @@ impl NativeEmbeddingModel {
             .map_err(|_| RuntimeError::OutputInvalid)?;
         mean_pool(&shape[..], values, &attention_mask)
     }
+
+    fn embed_batch(&mut self, texts: &[String]) -> Result<Vec<Vec<f32>>, RuntimeError> {
+        if texts.is_empty() || texts.len() > MAX_INPUTS {
+            return Err(RuntimeError::InferenceFailed);
+        }
+        let encodings = self
+            .tokenizer
+            .encode_batch(texts.iter().map(String::as_str).collect(), true)
+            .map_err(|_| RuntimeError::InferenceFailed)?;
+        if encodings.len() != texts.len() {
+            return Err(RuntimeError::InferenceFailed);
+        }
+        let tokenized = tokenized_batch(&encodings)?;
+        let attention_mask = tokenized
+            .attention_masks
+            .iter()
+            .flatten()
+            .copied()
+            .collect::<Vec<_>>();
+        let mut inputs = ort::inputs![
+            "input_ids" => Tensor::from_array((
+                [texts.len(), tokenized.sequence_length],
+                tokenized.input_ids,
+            ))
+            .map_err(|_| RuntimeError::InferenceFailed)?,
+            "attention_mask" => Tensor::from_array((
+                [texts.len(), tokenized.sequence_length],
+                attention_mask,
+            ))
+            .map_err(|_| RuntimeError::InferenceFailed)?,
+        ];
+        if self.need_token_type_ids {
+            inputs.push((
+                "token_type_ids".into(),
+                Tensor::from_array((
+                    [texts.len(), tokenized.sequence_length],
+                    tokenized.token_type_ids,
+                ))
+                .map_err(|_| RuntimeError::InferenceFailed)?
+                .into(),
+            ));
+        }
+        let outputs = self
+            .session
+            .run(inputs)
+            .map_err(|_| RuntimeError::InferenceFailed)?;
+        let (shape, values) = outputs
+            .get("last_hidden_state")
+            .ok_or(RuntimeError::OutputInvalid)?
+            .try_extract_tensor::<f32>()
+            .map_err(|_| RuntimeError::OutputInvalid)?;
+        mean_pool_batch(&shape[..], values, &tokenized.attention_masks)
+    }
 }
 
 fn mean_pool(
@@ -353,36 +410,9 @@ fn mean_pool(
     values: &[f32],
     attention_mask: &[i64],
 ) -> Result<Vec<f32>, RuntimeError> {
-    match shape {
-        [1, dimension] if *dimension == DIMENSION as i64 && values.len() == DIMENSION => {
-            Ok(values.to_vec())
-        }
-        [1, sequence_length, dimension]
-            if *sequence_length == attention_mask.len() as i64
-                && *dimension == DIMENSION as i64
-                && values.len() == attention_mask.len() * DIMENSION =>
-        {
-            let mut pooled = vec![0.0_f32; DIMENSION];
-            let mut included = 0_u32;
-            for (token, mask) in values.chunks_exact(DIMENSION).zip(attention_mask) {
-                if *mask == 0 {
-                    continue;
-                }
-                included = included.saturating_add(1);
-                for (output, value) in pooled.iter_mut().zip(token) {
-                    *output += value;
-                }
-            }
-            if included == 0 {
-                return Err(RuntimeError::OutputInvalid);
-            }
-            for value in &mut pooled {
-                *value /= included as f32;
-            }
-            Ok(pooled)
-        }
-        _ => Err(RuntimeError::OutputInvalid),
-    }
+    mean_pool_batch(shape, values, &[attention_mask.to_vec()])?
+        .pop()
+        .ok_or(RuntimeError::OutputInvalid)
 }
 
 fn load_tokenizer(pack: &RuntimePack) -> Result<Tokenizer, RuntimeError> {

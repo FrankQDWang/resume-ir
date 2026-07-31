@@ -5,6 +5,42 @@ system design docs, the execution docs, and this running evidence log. Obsolete
 preliminary checklists are historical execution context only, not the
 production-ready scope source.
 
+## Resident embedding tensor batching (#279)
+
+Production optimization code now exists in the resident embedding runtime. The
+runtime keeps the existing single resident process and `MAX_INPUTS=4` request
+bound, but tokenizes a request batch with batch-longest padding, builds one
+`input_ids`/`attention_mask` tensor (and `token_type_ids` only when the model
+requires it), performs one ONNX `session.run`, mean-pools each row with its own
+attention mask, and normalizes each output vector. Input order, query/passage
+prefixes, model identity, dimension checks, non-finite rejection, error
+behavior, publication ownership, queue capacity, deadlines, cancellation and
+query isolation remain unchanged.
+
+- Focused runtime tests cover batch sizes 1, 2 and 4, variable-length padding,
+  row order, type IDs, and equality with the previous per-row pooling result.
+  Runtime, embedder resident, embedding-protocol, formatting and warnings-as-
+  errors checks pass.
+- The short public synthetic base-vs-head resident microbenchmark uses the
+  reviewed CPU runtime pack and 12 repetitions per batch size. In the latest
+  release run, p50 was batch 1 `6.9535 -> 12.5014 ms`, batch 2
+  `14.2618 -> 13.0128 ms`, and batch 4 `27.4478 -> 24.8458 ms`; mean
+  speedups were `0.4282x`, `1.0857x`, and `0.9651x`. Bounded vector parity
+  was cosine `1.0000`, `0.9976`, `0.9979` with maximum absolute deltas
+  `0.0000`, `0.0100`, `0.0128` for batches 1, 2 and 4. These are local
+  inference-only measurements, not product or installed acceptance evidence;
+  the result is too noisy for a material throughput claim, so batching is
+  not expanded further.
+- The accepted product baseline remains a real manual non-OCR full import of
+  12–13+ minutes; the earlier roughly 120-second measurement was only the
+  parse/DB/fulltext front half. No full baseline was rerun and no OCR was run.
+  The single installed-equivalent non-OCR end-to-end witness is terminally
+  bounded at `blocked_missing_configured_private_roots` because the configured
+  private roots and exact current-build provenance are unavailable. No private
+  corpus, raw query, local path, or OCR evidence was read or committed. A
+  subsequent authorized witness must split embedding inference from vector
+  publication before selecting the next smallest optimization slice.
+
 ## OCR publication first-query handoff
 
 The macOS OCR publication path now installs one fully validated generation on
