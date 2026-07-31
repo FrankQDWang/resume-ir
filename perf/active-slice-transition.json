@@ -24,5 +24,49 @@
     "contains_local_paths": false,
     "contains_tokens": false,
     "contains_diagnostics_package": false
+  },
+  "reactivation_contract": {
+    "pre_merge_phase": "contract_reconciliation",
+    "post_merge_phase": "attribution_execution",
+    "pre_merge_benchmark_or_profile_allowed": false,
+    "post_merge_benchmark_or_profile_allowed": true,
+    "post_reactivation_allowed_paths": [
+      "ACTIVE_GOAL.toml",
+      "perf/active-slice-transition.json",
+      "perf/current-loop-state.json",
+      "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
+      "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/556.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/557.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/558.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/559.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/560.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/561.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/562.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/563.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/564.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/565.json",
+      "scripts/ci/check-autonomous-goal.py",
+      "scripts/ci/check-gate-integrity.py",
+      "scripts/loop/reduce-current-loop-state.py"
+    ],
+    "reactivation_event_paths": [
+      "perf/runs/contract-reconciliation-2026-07-30/events/556.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/557.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/558.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/559.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/560.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/561.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/562.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/563.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/564.json",
+      "perf/runs/contract-reconciliation-2026-07-30/events/565.json"
+    ],
+    "public_output_paths": [
+      "PROGRESS.md",
+      "perf/current-loop-state.json",
+      "perf/runs/<run_id>/events/<state_version>.json",
+      "perf/runs/<run_id>/redacted/<artifact>.json"
+    ]
   }
 }

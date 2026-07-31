@@ -16,25 +16,19 @@ issue = "#270"
 name = "current_main_installed_equivalent_import_attribution"
 contract_change_allowed = true
 production_code_allowed = false
-private_benchmark_allowed = true
+private_benchmark_allowed = false
 configured_private_roots_required = true
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = true
-scope_exception_reason = "This state-only reactivation returns the unfinished #270 attribution lane after #272 completed; it changes no production code, thresholds, benchmark workload or private data."
+scope_exception_reason = "This contract-only reactivation returns the unfinished #270 attribution lane after #272 completed; it changes no production code, thresholds, benchmark workload or private data. Any pre-merge local diagnostic is not #270 evidence."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
-  "PROGRESS.md",
-  "docs/superpowers/plans/2026-07-30-current-main-import-attribution-contract.md",
-  "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md",
-  "perf/acceptance-matrix.toml",
   "perf/active-slice-transition.json",
   "perf/current-loop-state.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-  "perf/runs/contract-reconciliation-2026-07-30/events/554.json",
-  "perf/runs/contract-reconciliation-2026-07-30/events/555.json",
   "perf/runs/contract-reconciliation-2026-07-30/events/556.json",
   "perf/runs/contract-reconciliation-2026-07-30/events/557.json",
   "perf/runs/contract-reconciliation-2026-07-30/events/558.json",
@@ -44,9 +38,9 @@ allowed_paths = [
   "perf/runs/contract-reconciliation-2026-07-30/events/562.json",
   "perf/runs/contract-reconciliation-2026-07-30/events/563.json",
   "perf/runs/contract-reconciliation-2026-07-30/events/564.json",
+  "perf/runs/contract-reconciliation-2026-07-30/events/565.json",
   "scripts/ci/check-autonomous-goal.py",
   "scripts/ci/check-gate-integrity.py",
-  "scripts/ci/check-performance-contracts.py",
   "scripts/loop/reduce-current-loop-state.py",
 ]
 
@@ -66,12 +60,21 @@ fresh_merged_main_observation_required = true
 [scope.active_slice.attribution.contract_reconciliation]
 evidence_lane = "w0_docs"
 benchmark_or_profile_execution_allowed = false
+pre_merge_local_diagnostic_is_final_evidence = false
+phase_boundary = "pre_merge_only"
 production_code_allowed = false
 
 [scope.active_slice.attribution.attribution_execution]
 evidence_lane = "w1_private"
 benchmark_or_profile_execution_allowed = true
 production_code_allowed = false
+execution_boundary = "post_merge_only"
+requires_fresh_merged_main = true
+requires_executable_provenance = true
+required_runtime_provenance = [
+  "source_commit", "cli_build_provenance", "daemon_build_provenance",
+  "sidecar_build_provenance", "command_shape",
+]
 authorization_transition = "authorize_current_main_import_attribution"
 missing_roots_transition = "block_current_main_import_attribution_missing_roots"
 allowed_actions = [
@@ -478,8 +481,21 @@ required_evidence = ["merged_commit", "local_main_equals_remote_main", "feature_
 allowed_actions = ["fetch_base", "sync_main", "remove_worktree", "delete_branch"]
 
 [[autonomous_delivery.transitions]]
+name = "defer_current_main_import_attribution_pre_merge"
+from = ["goal_authorized"]
+to = "contract_conflict"
+owner_issues = ["#270"]
+required_permissions = []
+required_evidence = [
+  "owner_issue_270_open", "fresh_remote_main_sha",
+  "pre_merge_contract_reconciliation", "pre_merge_execution_not_allowed",
+  "pre_merge_diagnostic_not_final_evidence", "privacy_boundary",
+]
+allowed_actions = ["observe_current_main", "record_terminal_state", "reduce_current_state"]
+
+[[autonomous_delivery.transitions]]
 name = "authorize_current_main_import_attribution"
-from = ["branch_cleaned_main_synced", "blocked_permission"]
+from = ["branch_cleaned_main_synced", "blocked_permission", "contract_conflict"]
 to = "goal_authorized"
 owner_issues = ["#270"]
 required_permissions = ["private_benchmark_allowed", "private_resume_root_read_allowed"]

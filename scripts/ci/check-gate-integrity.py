@@ -10,6 +10,7 @@ import pathlib
 import subprocess
 import sys
 import tomllib
+from copy import deepcopy
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -158,11 +159,25 @@ CURRENT_MAIN_ATTRIBUTION_STATE_PATHS = {
 CURRENT_MAIN_ATTRIBUTION_REACTIVATION = ("#272", "#270")
 CURRENT_MAIN_ATTRIBUTION_REACTIVATION_EVENT_PATHS = {
     f"perf/runs/contract-reconciliation-2026-07-30/events/{version}.json"
-    for version in range(556, 565)
+    for version in range(556, 566)
 }
 CURRENT_MAIN_ATTRIBUTION_REACTIVATION_SUPPORT_PATHS = {
+    "scripts/ci/check-autonomous-goal.py",
     "scripts/loop/reduce-current-loop-state.py",
 }
+CURRENT_MAIN_ATTRIBUTION_REACTIVATION_ALLOWED_PATHS = (
+    SUCCESSOR_TRANSITION_PATHS
+    | {"scripts/ci/check-gate-integrity.py"}
+    | CURRENT_MAIN_ATTRIBUTION_REACTIVATION_EVENT_PATHS
+    | CURRENT_MAIN_ATTRIBUTION_REACTIVATION_SUPPORT_PATHS
+)
+CURRENT_MAIN_ATTRIBUTION_PUBLIC_OUTPUT_PATHS = [
+    "PROGRESS.md",
+    "perf/current-loop-state.json",
+    "perf/runs/<run_id>/events/<state_version>.json",
+    "perf/runs/<run_id>/redacted/<artifact>.json",
+]
+CURRENT_MAIN_REACTIVATION_CONTRACT_KEYS = {"reactivation_contract"}
 
 
 def fail(message: str) -> None:
@@ -263,6 +278,7 @@ def load_toml_at_revision(revision: str, path: str) -> dict:
 
 def validate_transition_record_shape(raw: dict, base_issue: str, head_issue: str) -> bool:
     current_main_attribution = (base_issue, head_issue) == ("#217", "#270")
+    current_main_reactivation = (base_issue, head_issue) == CURRENT_MAIN_ATTRIBUTION_REACTIVATION
     if current_main_attribution:
         routing_keys = {
             "routing_kind", "source_issue_role", "source_issue_remains_open",
@@ -283,7 +299,8 @@ def validate_transition_record_shape(raw: dict, base_issue: str, head_issue: str
         evidence_key = "predecessor_terminal_evidence_ref"
     if raw.get("schema_version") != schema:
         fail(f"{SUCCESSOR_TRANSITION_RECORD}.schema_version: mismatch")
-    if set(raw) != TRANSITION_COMMON_KEYS | routing_keys:
+    extra_keys = CURRENT_MAIN_REACTIVATION_CONTRACT_KEYS if current_main_reactivation else set()
+    if set(raw) != TRANSITION_COMMON_KEYS | routing_keys | extra_keys:
         fail(f"{SUCCESSOR_TRANSITION_RECORD}: keys mismatch")
     evidence_ref = require_non_empty_string(
         raw.get(evidence_key), f"{SUCCESSOR_TRANSITION_RECORD}.{evidence_key}"
@@ -323,6 +340,82 @@ def self_test_transition_record_shapes() -> None:
         fail(f"transition shape self-test accepted {label}")
 
 
+def validate_current_main_reactivation_contract(raw: dict, head_slice: dict) -> None:
+    contract = raw.get("reactivation_contract")
+    if not isinstance(contract, dict):
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract: expected object")
+    expected_keys = {
+        "pre_merge_phase",
+        "post_merge_phase",
+        "pre_merge_benchmark_or_profile_allowed",
+        "post_merge_benchmark_or_profile_allowed",
+        "post_reactivation_allowed_paths",
+        "reactivation_event_paths",
+        "public_output_paths",
+    }
+    if set(contract) != expected_keys:
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract: keys mismatch")
+    if contract["pre_merge_phase"] != "contract_reconciliation":
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract.pre_merge_phase: mismatch")
+    if contract["post_merge_phase"] != "attribution_execution":
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract.post_merge_phase: mismatch")
+    if contract["pre_merge_benchmark_or_profile_allowed"] is not False:
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract.pre_merge_benchmark_or_profile_allowed: expected false")
+    if contract["post_merge_benchmark_or_profile_allowed"] is not True:
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract.post_merge_benchmark_or_profile_allowed: expected true")
+
+    allowed_paths = contract["post_reactivation_allowed_paths"]
+    if allowed_paths != sorted(CURRENT_MAIN_ATTRIBUTION_REACTIVATION_ALLOWED_PATHS):
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract.post_reactivation_allowed_paths: mismatch")
+    if head_slice.get("allowed_paths") != allowed_paths:
+        fail("successor active slice allowed_paths must equal the post-reactivation contract")
+
+    event_paths = contract["reactivation_event_paths"]
+    if event_paths != sorted(CURRENT_MAIN_ATTRIBUTION_REACTIVATION_EVENT_PATHS):
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract.reactivation_event_paths: mismatch")
+
+    public_output_paths = contract["public_output_paths"]
+    if public_output_paths != CURRENT_MAIN_ATTRIBUTION_PUBLIC_OUTPUT_PATHS:
+        fail(f"{SUCCESSOR_TRANSITION_RECORD}.reactivation_contract.public_output_paths: mismatch")
+    attribution = head_slice.get("attribution")
+    if not isinstance(attribution, dict):
+        fail("successor active slice attribution: expected table")
+    execution = attribution.get("attribution_execution")
+    if not isinstance(execution, dict) or execution.get("public_output_paths") != public_output_paths:
+        fail("attribution execution public_output_paths must equal the reactivation contract")
+
+
+def self_test_current_main_reactivation_contract() -> None:
+    contract = {
+        "pre_merge_phase": "contract_reconciliation",
+        "post_merge_phase": "attribution_execution",
+        "pre_merge_benchmark_or_profile_allowed": False,
+        "post_merge_benchmark_or_profile_allowed": True,
+        "post_reactivation_allowed_paths": sorted(CURRENT_MAIN_ATTRIBUTION_REACTIVATION_ALLOWED_PATHS),
+        "reactivation_event_paths": sorted(CURRENT_MAIN_ATTRIBUTION_REACTIVATION_EVENT_PATHS),
+        "public_output_paths": CURRENT_MAIN_ATTRIBUTION_PUBLIC_OUTPUT_PATHS.copy(),
+    }
+    raw = {"reactivation_contract": contract}
+    head_slice = {
+        "allowed_paths": contract["post_reactivation_allowed_paths"].copy(),
+        "attribution": {"attribution_execution": {"public_output_paths": contract["public_output_paths"].copy()}},
+    }
+    validate_current_main_reactivation_contract(raw, head_slice)
+    for label, mutate in (
+        ("extra allowed path", lambda item: item["reactivation_contract"]["post_reactivation_allowed_paths"].append("extra")),
+        ("missing allowed path", lambda item: item["reactivation_contract"]["post_reactivation_allowed_paths"].pop()),
+        ("extra reactivation event", lambda item: item["reactivation_contract"]["reactivation_event_paths"].append("extra")),
+        ("missing reactivation event", lambda item: item["reactivation_contract"]["reactivation_event_paths"].pop()),
+    ):
+        mutated = deepcopy(raw)
+        mutate(mutated)
+        try:
+            validate_current_main_reactivation_contract(mutated, head_slice)
+        except ValueError:
+            continue
+        fail(f"reactivation contract self-test accepted {label}")
+
+
 def validate_declared_successor_transition(
     base_goal: dict,
     head_goal: dict,
@@ -338,6 +431,8 @@ def validate_declared_successor_transition(
     head_issue = require_issue_ref(head_slice.get("issue"), "head.scope.active_slice.issue")
     current_main_attribution = validate_transition_record_shape(raw, base_issue, head_issue)
     current_main_reactivation = (base_issue, head_issue) == CURRENT_MAIN_ATTRIBUTION_REACTIVATION
+    if current_main_reactivation:
+        validate_current_main_reactivation_contract(raw, head_slice)
     require_non_empty_string(raw.get("transition_id"), f"{SUCCESSOR_TRANSITION_RECORD}.transition_id")
     if raw.get("from_issue") != base_issue or raw.get("to_issue") != head_issue:
         fail(f"{SUCCESSOR_TRANSITION_RECORD}: issue transition mismatch")
@@ -382,6 +477,8 @@ def validate_declared_successor_transition(
         fail("successor active slice allowed_paths must be unique")
     if current_main_attribution and set(allowed_paths) != CURRENT_MAIN_ATTRIBUTION_FINAL_PATHS:
         fail("successor active slice allowed_paths mismatch")
+    if current_main_reactivation and set(allowed_paths) != CURRENT_MAIN_ATTRIBUTION_REACTIVATION_ALLOWED_PATHS:
+        fail("current-main reactivation allowed_paths mismatch")
     bootstrap = raw.get("bootstrap_gate_change")
     require_bool(bootstrap, bootstrap is True, f"{SUCCESSOR_TRANSITION_RECORD}.bootstrap_gate_change")
     if bootstrap:
@@ -399,12 +496,7 @@ def validate_declared_successor_transition(
                 f"{sorted(SUCCESSOR_TRANSITION_BOOTSTRAP_PATHS)!r}, found {sorted(changed)!r}"
             )
     elif current_main_reactivation:
-        expected = (
-            SUCCESSOR_TRANSITION_PATHS
-            | {"scripts/ci/check-gate-integrity.py"}
-            | CURRENT_MAIN_ATTRIBUTION_REACTIVATION_EVENT_PATHS
-            | CURRENT_MAIN_ATTRIBUTION_REACTIVATION_SUPPORT_PATHS
-        )
+        expected = CURRENT_MAIN_ATTRIBUTION_REACTIVATION_ALLOWED_PATHS
         if changed != expected:
             fail(
                 "current-main attribution reactivation path mismatch: expected "
@@ -700,6 +792,7 @@ def is_gate_path(path: str) -> bool:
 
 def main() -> int:
     self_test_transition_record_shapes()
+    self_test_current_main_reactivation_contract()
     if sys.argv[1:]:
         if sys.argv[1:] == ["--self-test"]:
             print("check-gate-integrity.py self-test passed")

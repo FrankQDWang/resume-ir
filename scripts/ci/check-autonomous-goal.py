@@ -446,7 +446,7 @@ def main() -> int:
     for key in ["production_code_allowed", "private_benchmark_allowed", "configured_private_roots_required"]:
         if not isinstance(active_slice.get(key), bool):
             fail(f"scope.active_slice.{key}: expected boolean")
-    if active_slice.get("private_benchmark_allowed") != active_slice.get("configured_private_roots_required"):
+    if active_issue != "#270" and active_slice.get("private_benchmark_allowed") != active_slice.get("configured_private_roots_required"):
         fail("scope.active_slice: private benchmark and configured-root requirement must match")
     require_bool(
         active_slice.get("home_mixed_root_requires_explicit_user_authorization"),
@@ -481,7 +481,7 @@ def main() -> int:
     if active_issue == "#270":
         expected_slice = {
             "name": "current_main_installed_equivalent_import_attribution",
-            "production_code_allowed": False, "private_benchmark_allowed": True,
+            "production_code_allowed": False, "private_benchmark_allowed": False,
             "configured_private_roots_required": True,
             "home_mixed_root_authorized": False,
             "unconfigured_private_run_terminal":
@@ -514,12 +514,21 @@ def main() -> int:
         execution = attribution.get("attribution_execution")
         if reconciliation != {"evidence_lane": "w0_docs",
                               "benchmark_or_profile_execution_allowed": False,
+                              "pre_merge_local_diagnostic_is_final_evidence": False,
+                              "phase_boundary": "pre_merge_only",
                               "production_code_allowed": False}:
             fail("scope.active_slice.attribution.contract_reconciliation mismatch")
         for key, expected in {
             "evidence_lane": "w1_private",
             "benchmark_or_profile_execution_allowed": True,
             "production_code_allowed": False,
+            "execution_boundary": "post_merge_only",
+            "requires_fresh_merged_main": True,
+            "requires_executable_provenance": True,
+            "required_runtime_provenance": [
+                "source_commit", "cli_build_provenance", "daemon_build_provenance",
+                "sidecar_build_provenance", "command_shape",
+            ],
             "authorization_transition": "authorize_current_main_import_attribution",
             "missing_roots_transition":
                 "block_current_main_import_attribution_missing_roots",
@@ -529,7 +538,11 @@ def main() -> int:
         if set(execution["allowed_actions"]) != {
             "observe_current_main", "attest_runtime_capabilities", "run_benchmark",
             "run_profile", "write_redacted_evidence", "reduce_current_state",
-        } or len(execution["public_output_paths"]) != 4:
+        } or execution["public_output_paths"] != [
+            "PROGRESS.md", "perf/current-loop-state.json",
+            "perf/runs/<run_id>/events/<state_version>.json",
+            "perf/runs/<run_id>/redacted/<artifact>.json",
+        ]:
             fail("scope.active_slice.attribution.attribution_execution scope mismatch")
 
     gui = active_goal.get("gui")
@@ -782,7 +795,7 @@ def main() -> int:
     )
     execution_edges = {
         "authorize_current_main_import_attribution": (
-            ["branch_cleaned_main_synced", "blocked_permission"],
+            ["branch_cleaned_main_synced", "blocked_permission", "contract_conflict"],
             "goal_authorized", {"configured_private_roots", "fresh_remote_main_sha"},
         ),
         "block_current_main_import_attribution_missing_roots": (
@@ -797,6 +810,23 @@ def main() -> int:
             sources, target, ["#270"]
         ) or not evidence <= set(edge.get("required_evidence", [])):
             fail(f"autonomous_delivery.transitions.{name}: attribution edge mismatch")
+
+    require_transition_shape(
+        transitions,
+        name="defer_current_main_import_attribution_pre_merge",
+        expected_from=["goal_authorized"],
+        expected_to="contract_conflict",
+        required_evidence=[
+            "owner_issue_270_open", "fresh_remote_main_sha",
+            "pre_merge_contract_reconciliation", "pre_merge_execution_not_allowed",
+            "pre_merge_diagnostic_not_final_evidence", "privacy_boundary",
+        ],
+    )
+    deferred = require_transition(transitions, "defer_current_main_import_attribution_pre_merge")
+    if deferred.get("owner_issues") != ["#270"] or deferred.get("required_permissions") != [] or deferred.get(
+        "allowed_actions"
+    ) != ["observe_current_main", "record_terminal_state", "reduce_current_state"]:
+        fail("autonomous_delivery.transitions.defer_current_main_import_attribution_pre_merge scope mismatch")
 
     require_transition_shape(
         transitions,

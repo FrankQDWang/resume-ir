@@ -202,7 +202,13 @@ def render(key, value):
 def apply(text, event, contract, goal, state_hash):
     observation, edge = event["observation"], event["transition"]; current = json.loads(text); text = scalar(text, "workflow_state", edge["from"], edge["to"])
     actions = contract["allowed_actions"]
-    phase = "contract_reconciliation" if "edit_contracts" in actions else "attribution_execution" if "activate_attribution_phase" in actions else None
+    phase = (
+        "contract_reconciliation"
+        if edge["to"] == "contract_conflict" or "edit_contracts" in actions
+        else "attribution_execution"
+        if "activate_attribution_phase" in actions
+        else None
+    )
     if phase:
         lane = goal["scope"]["active_slice"]["attribution"][phase]["evidence_lane"]
         if lane != current["evidence_lane"]:
@@ -225,7 +231,14 @@ def apply(text, event, contract, goal, state_hash):
         ("expected_state_version", event["state_version"]),
         ("last_confirmed_side_effect", event["last_confirmed_side_effect"]),
         ("blocked_count", 0),
-        ("same_blocker_key", observation["private_input_capability"] if observation["private_input_capability"] != "configured_private_roots" else ""),
+        (
+            "same_blocker_key",
+            "pre_merge_attribution_execution_deferred"
+            if edge["to"] == "contract_conflict"
+            else observation["private_input_capability"]
+            if observation["private_input_capability"] != "configured_private_roots"
+            else "",
+        ),
     ]
     block = "\n".join(f'  "{key}": {json.dumps(value)},' for key, value in runtime)
     ledger_at = text.rfind('  "github_ledger": {')
@@ -235,7 +248,9 @@ def apply(text, event, contract, goal, state_hash):
     else:
         text = text[:ledger_at] + block + "\n" + text[ledger_at:]
     ledger = {"primary_issue": observation["owner_issue"],
-              "active_prs": observation["active_prs"], "open_blockers": []}
+              "active_prs": observation["active_prs"],
+              "open_blockers": [observation["owner_issue"]]
+              if edge["to"] == "contract_conflict" else []}
     ledger_at = text.rfind('  "github_ledger": {')
     require(text.endswith("  }\n}\n"), "ledger anchor mismatch")
     return text[:ledger_at] + render("github_ledger", ledger) + "\n}\n"
@@ -287,6 +302,22 @@ def follow_up(records):
         evidence = {
             "synthetic_smoke_report": "test",
             "synthetic_smoke_artifact_manifest": "test",
+            "privacy_boundary": "test",
+        }
+    elif prior[1]["transition"]["to"] == "contract_conflict":
+        transition = {
+            "name": "authorize_current_main_import_attribution",
+            "from": "contract_conflict",
+            "to": "goal_authorized",
+        }
+        evidence = {
+            "owner_issue_270_open": "test",
+            "fresh_remote_main_sha": "test",
+            "clean_main_equals_remote_main": "test",
+            "configured_private_roots": "test",
+            "runtime_capability_attestation": "test",
+            "primary_lane_full_import_ocr_backlog": "test",
+            "phase_attribution_execution": "test",
             "privacy_boundary": "test",
         }
     else:
