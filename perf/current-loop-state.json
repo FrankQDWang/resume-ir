@@ -1,18 +1,18 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
+  "workflow_state": "pr_opened",
   "experiment_state": "contract_locked",
-  "evidence_lane": "gui_manual",
+  "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "ba98e3140e60f306c229e26ebab543c6f82eb919037ab4008818b6efbc5bf54f",
+    "active_goal_sha256": "f402cb6baf7415b8570d8c33def39145f5158b31059532721f9f3ae5e7db1c45",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "fd289fbaa64e060781e2b2bff3f35365b1c8e8e5"
+    "git_head_sha": "0387506bc381aaa04ded9eb67cc213ffcd9c6797"
   },
-  "current_slice": "#272 source-root deletion runtime recovery",
+  "current_slice": "#270 current-main installed-equivalent import attribution contract",
   "transition_history": [
     {
       "from": "slice_selected",
@@ -696,9 +696,7 @@
     {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ready-control-plane-independence-repair-f25--2026-07-27"},
     {"from":"verification_active","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/248"},
     {"from":"pr_opened","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"},
-    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
-    {"from":"pr_opened","to":"blocked_permission","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270#issuecomment-5127055615"},
-    {"from":"blocked_permission","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/272"}
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"}
   ],
   "verification": {
     "commands": [
@@ -2944,9 +2942,19 @@
     "contains_tokens": false,
     "contains_diagnostics_package": false
   },
+  "platform_lane": "macos_m4_discovery",
+  "run_id": "contract-reconciliation-2026-07-30",
+  "state_version": 555,
+  "previous_state_hash": "b7b3546f5f093b1e7629616066b854aa1e43ec1af2d86976452aaccc0c460b24",
+  "expected_state_version": 555,
+  "last_confirmed_side_effect": "draft_pr_271_created_at_1b55835ae3d5550a35faaafd540ee95abdb6d46b",
+  "blocked_count": 0,
+  "same_blocker_key": "blocked_missing_configured_private_roots",
   "github_ledger": {
-    "primary_issue": "#272",
-    "active_prs": [],
+    "primary_issue": "#270",
+    "active_prs": [
+      "#271"
+    ],
     "open_blockers": []
   }
 }

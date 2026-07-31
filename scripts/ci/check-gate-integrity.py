@@ -155,6 +155,7 @@ CURRENT_MAIN_ATTRIBUTION_STATE_PATHS = {
     "perf/runs/contract-reconciliation-2026-07-30/events/554.json",
     "scripts/loop/reduce-current-loop-state.py",
 }
+CURRENT_MAIN_ATTRIBUTION_REACTIVATION = ("#272", "#270")
 
 
 def fail(message: str) -> None:
@@ -329,6 +330,7 @@ def validate_declared_successor_transition(
     base_issue = require_issue_ref(base_slice.get("issue"), "base.scope.active_slice.issue")
     head_issue = require_issue_ref(head_slice.get("issue"), "head.scope.active_slice.issue")
     current_main_attribution = validate_transition_record_shape(raw, base_issue, head_issue)
+    current_main_reactivation = (base_issue, head_issue) == CURRENT_MAIN_ATTRIBUTION_REACTIVATION
     require_non_empty_string(raw.get("transition_id"), f"{SUCCESSOR_TRANSITION_RECORD}.transition_id")
     if raw.get("from_issue") != base_issue or raw.get("to_issue") != head_issue:
         fail(f"{SUCCESSOR_TRANSITION_RECORD}: issue transition mismatch")
@@ -364,7 +366,7 @@ def validate_declared_successor_transition(
     for key, value in privacy.items():
         require_bool(value, False, f"{SUCCESSOR_TRANSITION_RECORD}.privacy.{key}")
     require_bool(base_slice.get("contract_change_allowed"), True, "base.scope.active_slice.contract_change_allowed")
-    require_bool(head_slice.get("scope_exception"), current_main_attribution,
+    require_bool(head_slice.get("scope_exception"), current_main_attribution or current_main_reactivation,
                  "head.scope.active_slice.scope_exception")
     allowed_paths = head_slice.get("allowed_paths")
     if not isinstance(allowed_paths, list) or not all(isinstance(path, str) and path for path in allowed_paths):
@@ -388,6 +390,13 @@ def validate_declared_successor_transition(
             fail(
                 "successor transition bootstrap path mismatch: expected "
                 f"{sorted(SUCCESSOR_TRANSITION_BOOTSTRAP_PATHS)!r}, found {sorted(changed)!r}"
+            )
+    elif current_main_reactivation:
+        expected = SUCCESSOR_TRANSITION_PATHS | {"scripts/ci/check-gate-integrity.py"}
+        if changed != expected:
+            fail(
+                "current-main attribution reactivation path mismatch: expected "
+                f"{sorted(expected)!r}, found {sorted(changed)!r}"
             )
     elif changed != SUCCESSOR_TRANSITION_PATHS:
         fail(

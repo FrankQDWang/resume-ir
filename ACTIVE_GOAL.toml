@@ -5,45 +5,83 @@ date = "2026-07-30"
 [authority]
 root_goal = "GOAL.md"
 active_goal_docs_root = "03_next_goal_高性能本地检索GUI闭环"
-spec = "docs/superpowers/specs/2026-07-24-forward-migration-source-lifecycle-pdf-detail-feature-train.md"
-plan = "docs/superpowers/plans/2026-07-24-forward-migration-source-lifecycle-pdf-detail-feature-train.md"
+spec = "docs/superpowers/plans/2026-07-30-current-main-import-attribution-contract.md"
+plan = "docs/superpowers/plans/2026-07-30-current-main-import-attribution-contract.md"
 review_ledger = "03_next_goal_高性能本地检索GUI闭环/12_Review问题映射与修复责任.md"
 loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineering状态机.md"
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#272"
-name = "source_root_deletion_runtime_recovery"
+issue = "#270"
+name = "current_main_installed_equivalent_import_attribution"
 contract_change_allowed = true
-production_code_allowed = true
-private_benchmark_allowed = false
-configured_private_roots_required = false
+production_code_allowed = false
+private_benchmark_allowed = true
+configured_private_roots_required = true
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = true
-scope_exception_reason = "This first-idle-query and OCR-publication repair cannot be split safely because generation prepare/install/finalize, ANN residency, daemon/OCR/import/search-runtime contracts, and the concurrency and 7.3k synthetic witness tests must land atomically. The exception does not lower thresholds, mix benchmark lanes, or include private data; auto-merge, admin bypass, and direct pushes to main remain forbidden."
+scope_exception_reason = "This state-only reactivation returns the unfinished #270 attribution lane after #272 completed; it changes no production code, thresholds, benchmark workload or private data."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
-  "03_next_goal_高性能本地检索GUI闭环/06_Daemon_IPC与Diagnostics契约.md",
   "PROGRESS.md",
-  "apps/desktop/src-tauri/src/daemon_response/error.rs",
-  "apps/desktop/src/App.test.ts",
-  "apps/desktop/src/App.tsx",
-  "apps/desktop/src/daemon-health.tsx",
-  "apps/desktop/src/daemon-runtime.test.ts",
-  "apps/desktop/src/daemon-runtime.ts",
-  "apps/desktop/src/daemon.ts",
-  "crates/daemon/src/ipc/routes/source_roots.rs",
-  "crates/daemon/src/source_root_deletion.rs",
-  "crates/daemon/tests/s20_ipc.rs",
-  "crates/meta-store/src/source_root_deletion.rs",
-  "crates/meta-store/tests/source_root_deletion.rs",
-  "docs/superpowers/specs/2026-07-24-forward-migration-source-lifecycle-pdf-detail-feature-train.md",
+  "docs/superpowers/plans/2026-07-30-current-main-import-attribution-contract.md",
+  "03_next_goal_高性能本地检索GUI闭环/17_机器可读Goal与Experiment协议.md",
+  "perf/acceptance-matrix.toml",
   "perf/active-slice-transition.json",
   "perf/current-loop-state.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+  "perf/runs/contract-reconciliation-2026-07-30/events/554.json",
+  "perf/runs/contract-reconciliation-2026-07-30/events/555.json",
+  "perf/runs/contract-reconciliation-2026-07-30/events/556.json",
+  "perf/runs/contract-reconciliation-2026-07-30/events/557.json",
+  "perf/runs/contract-reconciliation-2026-07-30/events/558.json",
+  "perf/runs/contract-reconciliation-2026-07-30/events/559.json",
+  "perf/runs/contract-reconciliation-2026-07-30/events/560.json",
+  "perf/runs/contract-reconciliation-2026-07-30/events/561.json",
+  "perf/runs/contract-reconciliation-2026-07-30/events/562.json",
+  "perf/runs/contract-reconciliation-2026-07-30/events/563.json",
+  "perf/runs/contract-reconciliation-2026-07-30/events/564.json",
+  "scripts/ci/check-autonomous-goal.py",
+  "scripts/ci/check-gate-integrity.py",
+  "scripts/ci/check-performance-contracts.py",
+  "scripts/loop/reduce-current-loop-state.py",
+]
+
+[scope.active_slice.attribution]
+owner_kind = "attribution_evidence"
+primary_benchmark_lane = "full_import_ocr_backlog"
+milestones = ["first_searchable", "keyword_ready", "embedding_complete", "ocr_backlog_full_import"]
+milestone_claim_mixing_allowed = false
+optimization_or_profile_issue = false
+app_dmg_or_installed_acceptance_in_contract_slice_allowed = false
+exact_current_main_required = true
+current_phase = "contract_reconciliation"
+post_merge_phase = "attribution_execution"
+same_issue_owner_required = true
+fresh_merged_main_observation_required = true
+
+[scope.active_slice.attribution.contract_reconciliation]
+evidence_lane = "w0_docs"
+benchmark_or_profile_execution_allowed = false
+production_code_allowed = false
+
+[scope.active_slice.attribution.attribution_execution]
+evidence_lane = "w1_private"
+benchmark_or_profile_execution_allowed = true
+production_code_allowed = false
+authorization_transition = "authorize_current_main_import_attribution"
+missing_roots_transition = "block_current_main_import_attribution_missing_roots"
+allowed_actions = [
+  "observe_current_main", "attest_runtime_capabilities", "run_benchmark",
+  "run_profile", "write_redacted_evidence", "reduce_current_state",
+]
+public_output_paths = [
+  "PROGRESS.md", "perf/current-loop-state.json",
+  "perf/runs/<run_id>/events/<state_version>.json",
+  "perf/runs/<run_id>/redacted/<artifact>.json",
 ]
 
 [contracts]
