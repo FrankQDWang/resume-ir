@@ -1,18 +1,18 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "contract_conflict",
+  "workflow_state": "slice_selected",
   "experiment_state": "contract_locked",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "53055ab5833b2f270757e09786498d16ecc2f31d57a1e90d2aa3f404638559f8",
+    "active_goal_sha256": "c159c073cc3efa911eb13a831c4e1935c14e5c58f6a7589eb3d265a83e28599e",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "0387506bc381aaa04ded9eb67cc213ffcd9c6797"
+    "git_head_sha": "042679a1fc27c2c369fc62c6815868cfa848637d"
   },
-  "current_slice": "#270 current-main installed-equivalent import attribution contract",
+  "current_slice": "#279 non-OCR embedding tail batching",
   "transition_history": [
     {
       "from": "slice_selected",
@@ -2970,16 +2970,12 @@
   "state_version": 565,
   "previous_state_hash": "20057a76c14252392421e61e80d4fd2b36fd8b39610f03f2e9e460f84fb433f2",
   "expected_state_version": 565,
-  "last_confirmed_side_effect": "pre_merge_attribution_execution_deferred",
+  "last_confirmed_side_effect": "issue_279_slice_selected",
   "blocked_count": 0,
-  "same_blocker_key": "pre_merge_attribution_execution_deferred",
+  "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#270",
-    "active_prs": [
-      "#278"
-    ],
-    "open_blockers": [
-      "#270"
-    ]
+    "primary_issue": "#279",
+    "active_prs": [],
+    "open_blockers": []
   }
 }

@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-272-to-270-reactivate-attribution-2026-07-31",
-  "from_issue": "#272",
-  "to_issue": "#270",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/272#issuecomment-5128071119",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/270",
-  "base_active_goal_sha256": "ba98e3140e60f306c229e26ebab543c6f82eb919037ab4008818b6efbc5bf54f",
+  "transition_id": "issue-270-to-279-embedding-batching-2026-07-31",
+  "from_issue": "#270",
+  "to_issue": "#279",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/270#issuecomment-5140406523",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/279",
+  "base_active_goal_sha256": "53055ab5833b2f270757e09786498d16ecc2f31d57a1e90d2aa3f404638559f8",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
@@ -24,52 +24,5 @@
     "contains_local_paths": false,
     "contains_tokens": false,
     "contains_diagnostics_package": false
-  },
-  "reactivation_contract": {
-    "pre_merge_phase": "contract_reconciliation",
-    "post_merge_phase": "attribution_execution",
-    "pre_merge_benchmark_or_profile_allowed": false,
-    "post_merge_benchmark_or_profile_allowed": true,
-    "reactivation_pr_paths": [
-      "ACTIVE_GOAL.toml",
-      "perf/active-slice-transition.json",
-      "perf/current-loop-state.json",
-      "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
-      "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/556.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/557.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/558.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/559.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/560.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/561.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/562.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/563.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/564.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/565.json",
-      "scripts/ci/check-autonomous-goal.py",
-      "scripts/ci/check-gate-integrity.py",
-      "scripts/ci/check-private-evidence-redaction.py",
-      "scripts/loop/reduce-current-loop-state.py"
-    ],
-    "reactivation_pr_paths_role": "exact_changed_paths_for_reactivation_pr",
-    "reactivation_event_paths": [
-      "perf/runs/contract-reconciliation-2026-07-30/events/556.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/557.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/558.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/559.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/560.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/561.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/562.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/563.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/564.json",
-      "perf/runs/contract-reconciliation-2026-07-30/events/565.json"
-    ],
-    "public_output_paths": [
-      "PROGRESS.md",
-      "perf/current-loop-state.json",
-      "perf/runs/<run_id>/events/<state_version>.json",
-      "perf/runs/<run_id>/redacted/<aggregate>.json"
-    ],
-    "public_output_paths_role": "post_merge_execution_evidence_templates"
   }
 }
