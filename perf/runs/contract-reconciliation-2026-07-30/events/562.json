@@ -1,0 +1,59 @@
+{
+  "schema_version": "resume-ir.loop-reconciliation-event.v2",
+  "run_id": "current-main-import-attribution-2026-07-31",
+  "state_version": 562,
+  "previous_event_hash": "de7518af035748a46ac98498bd340aa51275dde33e84320a419aee75e7ef9f00",
+  "observed_at": "2026-07-31T04:36:00Z",
+  "lease_owner": "codex-current-main-import-attribution",
+  "lease_expires_at": "2026-07-31T05:36:00Z",
+  "heartbeat_at": "2026-07-31T04:36:00Z",
+  "action_id": "confirm-contract-pr-merged",
+  "idempotency_key": "resume-ir-270-contract-pr-merged-2026-07-31",
+  "expected_state_version": 561,
+  "last_confirmed_side_effect": "contract_pr_271_squash_merge_observed",
+  "next_wake_at": "2026-07-31T04:51:00Z",
+  "transition": {
+    "name": "merge_scope_exception_pr",
+    "from": "merge_method_selected",
+    "to": "pr_merged"
+  },
+  "result": "passed",
+  "evidence_refs": [
+    "https://github.com/FrankQDWang/resume-ir/pull/271",
+    "https://github.com/FrankQDWang/resume-ir/commit/4819d656367634523177305c7b7fcf6b5eaf0ef4"
+  ],
+  "evidence": {
+    "ci_green": "true",
+    "local_gate_green": "true",
+    "privacy_gate_green": "true",
+    "branch_protection_satisfied": "true",
+    "scope_exception_normal_merge": "true",
+    "admin_bypass_absent": "true"
+  },
+  "observation": {
+    "live_main_sha": "c4bdd1a98aeaac41b68765f0a4d96fefe86620ab",
+    "merged_prior_prs": ["#271", "#276", "#277"],
+    "current_schema": 35,
+    "owner_issue": "#270",
+    "primary_benchmark_lane": "full_import_ocr_backlog",
+    "private_input_capability": "configured_private_roots",
+    "current_slice": "#270 current-main installed-equivalent import attribution contract",
+    "active_prs": [],
+    "transition_evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/271"
+  },
+  "verification": [
+    {
+      "command": "gh pr view 271 --json state,mergeCommit,mergedAt",
+      "exit_code": 0,
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/271"
+    }
+  ],
+  "privacy": {
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false
+  }
+}

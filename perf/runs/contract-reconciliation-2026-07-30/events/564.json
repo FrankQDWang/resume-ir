@@ -1,0 +1,66 @@
+{
+  "schema_version": "resume-ir.loop-reconciliation-event.v2",
+  "run_id": "current-main-import-attribution-2026-07-31",
+  "state_version": 564,
+  "previous_event_hash": "5b1fc8ca1ffe5216e4f970d8eb3edc41981f155d287b73531c924f05c1582094",
+  "observed_at": "2026-07-31T04:40:00Z",
+  "lease_owner": "codex-current-main-import-attribution",
+  "lease_expires_at": "2026-07-31T05:40:00Z",
+  "heartbeat_at": "2026-07-31T04:40:00Z",
+  "action_id": "authorize-current-main-import-attribution",
+  "idempotency_key": "resume-ir-270-authorize-attribution-2026-07-31",
+  "expected_state_version": 563,
+  "last_confirmed_side_effect": "current_main_attribution_phase_authorized",
+  "next_wake_at": "2026-07-31T04:55:00Z",
+  "transition": {
+    "name": "authorize_current_main_import_attribution",
+    "from": "branch_cleaned_main_synced",
+    "to": "goal_authorized"
+  },
+  "result": "passed",
+  "evidence_refs": [
+    "https://github.com/FrankQDWang/resume-ir/issues/270",
+    "https://github.com/FrankQDWang/resume-ir/commit/c4bdd1a98aeaac41b68765f0a4d96fefe86620ab"
+  ],
+  "evidence": {
+    "owner_issue_270_open": "true",
+    "fresh_remote_main_sha": "c4bdd1a98aeaac41b68765f0a4d96fefe86620ab",
+    "clean_main_equals_remote_main": "true_at_fresh_base_observation_before_contract_branch",
+    "configured_private_roots": "private_resume_root_configured_readable; mixed_source_root_not_used",
+    "runtime_capability_attestation": "macOS_arm64; workspace/network/GitHub/git/private-root/xctrace capabilities available",
+    "primary_lane_full_import_ocr_backlog": "true",
+    "phase_attribution_execution": "authorized_by_current_goal_contract",
+    "privacy_boundary": "bounded_redacted_aggregates_only; no raw/private artifacts"
+  },
+  "observation": {
+    "live_main_sha": "c4bdd1a98aeaac41b68765f0a4d96fefe86620ab",
+    "merged_prior_prs": ["#271", "#276", "#277"],
+    "current_schema": 35,
+    "owner_issue": "#270",
+    "primary_benchmark_lane": "full_import_ocr_backlog",
+    "private_input_capability": "configured_private_roots",
+    "current_slice": "#270 current-main installed-equivalent import attribution contract",
+    "active_prs": [],
+    "transition_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/270"
+  },
+  "verification": [
+    {
+      "command": "gh issue view 270 --json state; git rev-parse origin/main; xctrace list templates",
+      "exit_code": 0,
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/270"
+    },
+    {
+      "command": "private-root capability attestation with redacted result only",
+      "exit_code": 0,
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/270"
+    }
+  ],
+  "privacy": {
+    "contains_raw_resume_text": false,
+    "contains_raw_query_text": false,
+    "contains_candidate_results": false,
+    "contains_local_paths": false,
+    "contains_tokens": false,
+    "contains_diagnostics_package": false
+  }
+}

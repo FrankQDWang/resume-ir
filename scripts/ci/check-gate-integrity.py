@@ -156,6 +156,13 @@ CURRENT_MAIN_ATTRIBUTION_STATE_PATHS = {
     "scripts/loop/reduce-current-loop-state.py",
 }
 CURRENT_MAIN_ATTRIBUTION_REACTIVATION = ("#272", "#270")
+CURRENT_MAIN_ATTRIBUTION_REACTIVATION_EVENT_PATHS = {
+    f"perf/runs/contract-reconciliation-2026-07-30/events/{version}.json"
+    for version in range(556, 565)
+}
+CURRENT_MAIN_ATTRIBUTION_REACTIVATION_SUPPORT_PATHS = {
+    "scripts/loop/reduce-current-loop-state.py",
+}
 
 
 def fail(message: str) -> None:
@@ -392,7 +399,12 @@ def validate_declared_successor_transition(
                 f"{sorted(SUCCESSOR_TRANSITION_BOOTSTRAP_PATHS)!r}, found {sorted(changed)!r}"
             )
     elif current_main_reactivation:
-        expected = SUCCESSOR_TRANSITION_PATHS | {"scripts/ci/check-gate-integrity.py"}
+        expected = (
+            SUCCESSOR_TRANSITION_PATHS
+            | {"scripts/ci/check-gate-integrity.py"}
+            | CURRENT_MAIN_ATTRIBUTION_REACTIVATION_EVENT_PATHS
+            | CURRENT_MAIN_ATTRIBUTION_REACTIVATION_SUPPORT_PATHS
+        )
         if changed != expected:
             fail(
                 "current-main attribution reactivation path mismatch: expected "

@@ -278,6 +278,24 @@ def follow_up(records):
     prior = records[-1]
     version = prior[1]["state_version"] + 1
     observation = copy.deepcopy(prior[1]["observation"])
+    if prior[1]["transition"]["to"] == "goal_authorized":
+        transition = {
+            "name": "capture_synthetic_smoke_baseline",
+            "from": "goal_authorized",
+            "to": "baseline_captured",
+        }
+        evidence = {
+            "synthetic_smoke_report": "test",
+            "synthetic_smoke_artifact_manifest": "test",
+            "privacy_boundary": "test",
+        }
+    else:
+        transition = {
+            "name": "sync_base",
+            "from": "pr_opened",
+            "to": "base_synced",
+        }
+        evidence = {"base_sha": 1, "head_sha": 1, "reconciliation_status": 1}
     event = {
         "schema_version": "resume-ir.loop-reconciliation-event.v2",
         "run_id": prior[1]["run_id"], "state_version": version,
@@ -285,9 +303,9 @@ def follow_up(records):
         "observed_at": "test", "lease_owner": "test", "lease_expires_at": "test",
         "heartbeat_at": "test", "action_id": "test", "idempotency_key": "test",
         "last_confirmed_side_effect": "test", "next_wake_at": "test",
-        "transition": {"name": "sync_base", "from": "pr_opened", "to": "base_synced"},
+        "transition": transition,
         "result": "passed", "evidence_refs": ["test"],
-        "evidence": {"base_sha": 1, "head_sha": 1, "reconciliation_status": 1},
+        "evidence": evidence,
         "observation": observation, "verification": [],
         "privacy": {key: False for key in PRIVACY},
     }
@@ -302,9 +320,9 @@ def self_test():
         next_event = follow_up(records)
         state = json.loads(reduce([*records, next_event]))
         require(
-            state["state_version"] == 556
-            and state["workflow_state"] == "base_synced",
-            "556 did not advance",
+            state["state_version"] == next_event[1]["state_version"]
+            and state["workflow_state"] == next_event[1]["transition"]["to"],
+            "follow-up event did not advance",
         )
         for label, mutate in (
             ("transition", lambda item: item["transition"].update(from_="bad")),

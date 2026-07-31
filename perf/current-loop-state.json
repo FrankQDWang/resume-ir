@@ -1,9 +1,9 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "pr_opened",
+  "workflow_state": "goal_authorized",
   "experiment_state": "contract_locked",
-  "evidence_lane": "w0_docs",
+  "evidence_lane": "w1_private",
   "contract_pins": {
     "active_goal_sha256": "f402cb6baf7415b8570d8c33def39145f5158b31059532721f9f3ae5e7db1c45",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
@@ -696,7 +696,16 @@
     {"from":"pr_opened","to":"verification_active","evidence_ref":"docs/reports/2026-07-24-feature-train-verification-ledger.md#ready-control-plane-independence-repair-f25--2026-07-27"},
     {"from":"verification_active","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/248"},
     {"from":"pr_opened","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"},
-    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"}
+    {"from":"evidence_review","to":"pr_opened","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"pr_opened","to":"base_synced","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"base_synced","to":"pr_review_ready","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"pr_review_ready","to":"ci_green","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"ci_green","to":"local_gate_green","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"local_gate_green","to":"privacy_gate_green","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"privacy_gate_green","to":"merge_method_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"merge_method_selected","to":"pr_merged","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"pr_merged","to":"branch_cleaned_main_synced","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+    {"from":"branch_cleaned_main_synced","to":"goal_authorized","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"}
   ],
   "verification": {
     "commands": [
@@ -2929,7 +2938,18 @@
       {"command":"python3 scripts/ci/check-performance-contracts.py","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
       {"command":"python3 scripts/ci/check-autonomous-goal.py","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
       {"command":"python3 scripts/ci/check-loop-state.py","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
-      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"}
+      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"PROGRESS.md#current-main-import-attribution-contract-reconciliation"},
+      {"command":"git fetch --prune origin main; git rev-parse origin/main","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/commit/c4bdd1a98aeaac41b68765f0a4d96fefe86620ab"},
+      {"command":"gh pr view 271 --json state,mergeCommit","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"gh pr view 271 --json state,mergeCommit,body","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"gh pr view 271 --json statusCheckRollup","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"python3 scripts/ci/check-autonomous-goal.py; python3 scripts/ci/check-loop-state.py; ./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"./scripts/ci/guard-public-repo.sh","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"gh pr view 271 --json mergeCommit,baseRefName","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"gh pr view 271 --json state,mergeCommit,mergedAt","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"git fetch --prune origin main; git status --short --branch; gh api git/ref/heads/codex/contract-reconcile-import-attribution >/dev/null 2>&1; test $? -eq 1","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
+      {"command":"gh issue view 270 --json state; git rev-parse origin/main; xctrace list templates","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"},
+      {"command":"private-root capability attestation with redacted result only","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"}
     ],
     "all_required_commands_ran": true,
     "claim": "partial"
@@ -2943,18 +2963,16 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "contract-reconciliation-2026-07-30",
-  "state_version": 555,
-  "previous_state_hash": "b7b3546f5f093b1e7629616066b854aa1e43ec1af2d86976452aaccc0c460b24",
-  "expected_state_version": 555,
-  "last_confirmed_side_effect": "draft_pr_271_created_at_1b55835ae3d5550a35faaafd540ee95abdb6d46b",
+  "run_id": "current-main-import-attribution-2026-07-31",
+  "state_version": 564,
+  "previous_state_hash": "53040494d21ccd54df7a898da745cac8a182cdda87e5f33d4581ec274a5ff2ec",
+  "expected_state_version": 564,
+  "last_confirmed_side_effect": "current_main_attribution_phase_authorized",
   "blocked_count": 0,
-  "same_blocker_key": "blocked_missing_configured_private_roots",
+  "same_blocker_key": "",
   "github_ledger": {
     "primary_issue": "#270",
-    "active_prs": [
-      "#271"
-    ],
+    "active_prs": [],
     "open_blockers": []
   }
 }
