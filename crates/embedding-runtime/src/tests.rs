@@ -8,6 +8,10 @@ use std::{
 
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+use tokenizers::{
+    models::wordlevel::WordLevel, pre_tokenizers::whitespace::Whitespace, Encoding, PaddingParams,
+    PaddingStrategy, Tokenizer,
+};
 
 use super::*;
 
@@ -248,6 +252,108 @@ fn mean_pool_applies_attention_mask_and_validates_shape() {
         mean_pool(&[1, 2, DIMENSION as i64], &values[..2 * DIMENSION], &[0, 0]),
         Err(RuntimeError::OutputInvalid)
     ));
+}
+
+#[test]
+fn batched_mean_pool_matches_previous_single_item_results_for_batch_1_2_and_4() {
+    for masks in [
+        vec![vec![1, 1, 0]],
+        vec![vec![1, 1, 0], vec![1, 0, 0]],
+        vec![vec![1, 1, 1], vec![1, 0, 0], vec![1, 1, 0], vec![1, 1, 1]],
+    ] {
+        let batch_size = masks.len();
+        let sequence_length = masks[0].len();
+        let values = (0..batch_size)
+            .flat_map(|batch_index| {
+                (0..sequence_length).flat_map(move |token_index| {
+                    vec![(batch_index + token_index + 1) as f32; DIMENSION]
+                })
+            })
+            .collect::<Vec<_>>();
+        let shape = [batch_size as i64, sequence_length as i64, DIMENSION as i64];
+
+        let batched = mean_pool_batch(&shape, &values, &masks).unwrap();
+        assert_eq!(batched.len(), batch_size);
+        for (batch_index, mask) in masks.iter().enumerate() {
+            let row_start = batch_index * sequence_length * DIMENSION;
+            let row_end = row_start + sequence_length * DIMENSION;
+            let single = mean_pool(
+                &[1, sequence_length as i64, DIMENSION as i64],
+                &values[row_start..row_end],
+                mask,
+            )
+            .unwrap();
+            assert_eq!(batched[batch_index], single);
+        }
+    }
+}
+
+#[test]
+fn tokenized_batch_preserves_order_padding_and_type_ids() {
+    let encodings = vec![
+        Encoding::new(
+            vec![10, 11, 0],
+            vec![0, 0, 0],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![1, 1, 0],
+            vec![],
+            Default::default(),
+        ),
+        Encoding::new(
+            vec![20, 0, 0],
+            vec![0, 1, 1],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![1, 0, 0],
+            vec![],
+            Default::default(),
+        ),
+    ];
+
+    let batch = tokenized_batch(&encodings).unwrap();
+    assert_eq!(batch.sequence_length, 3);
+    assert_eq!(batch.input_ids, vec![10, 11, 0, 20, 0, 0]);
+    assert_eq!(batch.attention_masks, vec![vec![1, 1, 0], vec![1, 0, 0]]);
+    assert_eq!(batch.token_type_ids, vec![0, 0, 0, 0, 1, 1]);
+}
+
+#[test]
+fn tokenizer_batch_uses_batch_longest_padding_and_keeps_input_order() {
+    let model = WordLevel::builder()
+        .vocab(
+            [
+                ("[UNK]".to_string(), 0_u32),
+                ("short".to_string(), 1_u32),
+                ("long".to_string(), 2_u32),
+                ("words".to_string(), 3_u32),
+            ]
+            .into_iter()
+            .collect(),
+        )
+        .unk_token("[UNK]".to_string())
+        .build()
+        .unwrap();
+    let mut tokenizer = Tokenizer::new(model);
+    tokenizer.with_pre_tokenizer(Some(Whitespace));
+    tokenizer.with_padding(Some(PaddingParams {
+        strategy: PaddingStrategy::BatchLongest,
+        pad_token: "[UNK]".to_string(),
+        pad_id: 0,
+        ..Default::default()
+    }));
+
+    let encodings = tokenizer
+        .encode_batch(vec!["short", "long words"], false)
+        .unwrap();
+    let batch = tokenized_batch(&encodings).unwrap();
+    assert_eq!(batch.sequence_length, 2);
+    assert_eq!(batch.input_ids, vec![1, 0, 2, 3]);
+    assert_eq!(batch.attention_masks, vec![vec![1, 0], vec![1, 1]]);
 }
 
 #[test]
