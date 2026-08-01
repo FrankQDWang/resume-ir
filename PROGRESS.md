@@ -41,6 +41,13 @@ hotspot attribution, does not claim a performance result, and does not complete
 the broader performance/GUI goal. CPU arena, thread tuning, ORT upgrade, model
 artifact changes, graph pooling and CoreML remain outside #286.
 
+Post-revert witness self-tests, embedding runtime, resident embedder, focused
+daemon embedding integration, formatting, warnings-as-errors Clippy and
+rust-analyzer analysis passed. The first full local verification run hit the
+unchanged daemon install-timeout timing test; its exact rerun passed, and the
+complete warmed local verification rerun then passed, including contract,
+release-build, privacy and public-repository gates.
+
 ## Task-bound import attribution instrumentation (#282)
 
 The additive embedding-stream v1 telemetry now attributes resident queue/IPC,

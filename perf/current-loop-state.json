@@ -2967,7 +2967,9 @@
       {"command":"pre-merge contract-only phase and provenance-bound post-merge execution reviewed","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"},
       {"command":"python3 scripts/local/embedding-prepacking-benchmark.py --self-test","exit_code":0,"evidence_ref":"PROGRESS.md#issue-286-onnx-weight-prepacking-negative-closeout"},
       {"command":"Issue #286 resident exact-vector correctness gate","exit_code":1,"evidence_ref":"PROGRESS.md#issue-286-onnx-weight-prepacking-negative-closeout"},
-      {"command":"post-revert focused Rust, Clippy, format and rust-analyzer checks","exit_code":0,"evidence_ref":"PROGRESS.md#issue-286-onnx-weight-prepacking-negative-closeout"}
+      {"command":"post-revert focused Rust, Clippy, format and rust-analyzer checks","exit_code":0,"evidence_ref":"PROGRESS.md#issue-286-onnx-weight-prepacking-negative-closeout"},
+      {"command":"exact unchanged daemon install-timeout timing test rerun","exit_code":0,"evidence_ref":"PROGRESS.md#issue-286-onnx-weight-prepacking-negative-closeout"},
+      {"command":"./scripts/ci/verify-local.sh warmed full rerun","exit_code":0,"evidence_ref":"PROGRESS.md#issue-286-onnx-weight-prepacking-negative-closeout"}
     ],
     "all_required_commands_ran": true,
     "claim": "partial"
