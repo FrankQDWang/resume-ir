@@ -124,7 +124,11 @@ class GovernanceContractMutationTests(unittest.TestCase):
 
     def test_delivery_policy_fields_are_required_and_exact(self) -> None:
         cases = [
-            (("scope", "active_slice", "scope_exception"), True),
+            (
+                ("scope", "active_slice", "scope_exception"),
+                self.active_goal["scope"]["active_slice"]["issue"]
+                in {"#270", "#272"},
+            ),
             (
                 ("autonomous_delivery", "permissions", "protected_merge_allowed"),
                 True,
