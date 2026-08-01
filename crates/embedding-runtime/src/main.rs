@@ -5,11 +5,12 @@ use std::{
     io::{self, BufReader, BufWriter},
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
+    time::{Duration, Instant},
 };
 
 use embedding_protocol::{
-    read_frame, write_frame, EmbedRequest, EmbeddingRole, ResidentErrorCode, ResidentResponse,
-    MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
+    read_frame, write_frame, EmbedRequest, EmbeddingRole, EmbeddingTelemetry, ResidentErrorCode,
+    ResidentResponse, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
 };
 use ort::{
     ep::CPU,
@@ -19,7 +20,7 @@ use ort::{
 #[cfg(unix)]
 use process_containment::VerifiedParentProcess;
 #[cfg(unix)]
-use std::{thread, time::Duration};
+use std::thread;
 use tokenizers::{AddedToken, PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
 
 mod batch;
@@ -159,19 +160,8 @@ fn run_resident() -> Result<(), RuntimeError> {
             continue;
         }
 
-        let texts = request
-            .inputs
-            .iter()
-            .map(|input| prefixed_resident_text(input.role, &input.text))
-            .collect::<Vec<_>>();
-        let vectors = model.embed_batch(&texts).and_then(|vectors| {
-            vectors
-                .into_iter()
-                .map(normalize_vector)
-                .collect::<Result<Vec<_>, _>>()
-        });
-        let vectors = match vectors {
-            Ok(vectors) => vectors,
+        let response = match resident_success_response(&mut model, &request) {
+            Ok(response) => response,
             Err(error) => {
                 write_frame(
                     &mut writer,
@@ -186,13 +176,38 @@ fn run_resident() -> Result<(), RuntimeError> {
                 return Err(error);
             }
         };
-        write_frame(
-            &mut writer,
-            &ResidentResponse::result(request.request_id, vectors),
-            MAX_RESPONSE_BYTES,
-        )
-        .map_err(|_| RuntimeError::OutputInvalid)?;
+        write_frame(&mut writer, &response, MAX_RESPONSE_BYTES)
+            .map_err(|_| RuntimeError::OutputInvalid)?;
     }
+}
+
+struct ResidentBatchOutput {
+    vectors: Vec<Vec<f32>>,
+    telemetry: EmbeddingTelemetry,
+}
+
+trait ResidentBatchModel {
+    fn embed_resident_batch(
+        &mut self,
+        texts: &[String],
+    ) -> Result<ResidentBatchOutput, RuntimeError>;
+}
+
+fn resident_success_response(
+    model: &mut impl ResidentBatchModel,
+    request: &EmbedRequest,
+) -> Result<ResidentResponse, RuntimeError> {
+    let texts = request
+        .inputs
+        .iter()
+        .map(|input| prefixed_resident_text(input.role, &input.text))
+        .collect::<Vec<_>>();
+    let output = model.embed_resident_batch(&texts)?;
+    Ok(ResidentResponse::result_with_telemetry(
+        request.request_id,
+        output.vectors,
+        output.telemetry,
+    ))
 }
 
 #[cfg(unix)]
@@ -350,11 +365,18 @@ impl NativeEmbeddingModel {
             .map_err(|_| RuntimeError::OutputInvalid)?;
         mean_pool(&shape[..], values, &attention_mask)
     }
+}
 
-    fn embed_batch(&mut self, texts: &[String]) -> Result<Vec<Vec<f32>>, RuntimeError> {
+impl ResidentBatchModel for NativeEmbeddingModel {
+    fn embed_resident_batch(
+        &mut self,
+        texts: &[String],
+    ) -> Result<ResidentBatchOutput, RuntimeError> {
         if texts.is_empty() || texts.len() > MAX_INPUTS {
             return Err(RuntimeError::InferenceFailed);
         }
+        let child_started = Instant::now();
+        let phase_started = Instant::now();
         let encodings = self
             .tokenizer
             .encode_batch(texts.iter().map(String::as_str).collect(), true)
@@ -362,7 +384,21 @@ impl NativeEmbeddingModel {
         if encodings.len() != texts.len() {
             return Err(RuntimeError::InferenceFailed);
         }
+        let tokenize = phase_started.elapsed();
+
+        let phase_started = Instant::now();
         let tokenized = tokenized_batch(&encodings)?;
+        let active_token_count = tokenized
+            .attention_masks
+            .iter()
+            .flatten()
+            .filter(|value| **value != 0)
+            .count();
+        let padded_token_count = tokenized
+            .attention_masks
+            .iter()
+            .map(Vec::len)
+            .fold(0_usize, usize::saturating_add);
         let attention_mask = tokenized
             .attention_masks
             .iter()
@@ -392,6 +428,9 @@ impl NativeEmbeddingModel {
                 .into(),
             ));
         }
+        let tensor = phase_started.elapsed();
+
+        let phase_started = Instant::now();
         let outputs = self
             .session
             .run(inputs)
@@ -401,8 +440,65 @@ impl NativeEmbeddingModel {
             .ok_or(RuntimeError::OutputInvalid)?
             .try_extract_tensor::<f32>()
             .map_err(|_| RuntimeError::OutputInvalid)?;
-        mean_pool_batch(&shape[..], values, &tokenized.attention_masks)
+        let onnx = phase_started.elapsed();
+
+        let phase_started = Instant::now();
+        let vectors = mean_pool_batch(&shape[..], values, &tokenized.attention_masks)?;
+        let pool = phase_started.elapsed();
+
+        let phase_started = Instant::now();
+        let vectors = vectors
+            .into_iter()
+            .map(normalize_vector)
+            .collect::<Result<Vec<_>, _>>()?;
+        let normalize = phase_started.elapsed();
+        Ok(ResidentBatchOutput {
+            vectors,
+            telemetry: build_embedding_telemetry(
+                texts.len(),
+                active_token_count,
+                padded_token_count,
+                [tokenize, tensor, onnx, pool, normalize],
+                child_started.elapsed(),
+            ),
+        })
     }
+}
+
+fn build_embedding_telemetry(
+    input_count: usize,
+    active_token_count: usize,
+    padded_token_count: usize,
+    phases: [Duration; 5],
+    child_total: Duration,
+) -> EmbeddingTelemetry {
+    let [tokenize_us, tensor_us, onnx_us, pool_us, normalize_us] = phases.map(saturated_micros);
+    let phase_total = tokenize_us
+        .saturating_add(tensor_us)
+        .saturating_add(onnx_us)
+        .saturating_add(pool_us)
+        .saturating_add(normalize_us);
+    EmbeddingTelemetry {
+        input_count: usize_to_u64(input_count),
+        active_token_count: usize_to_u64(active_token_count),
+        padded_token_count: usize_to_u64(padded_token_count),
+        tokenize_us,
+        tensor_us,
+        onnx_us,
+        pool_us,
+        normalize_us,
+        child_total_us: saturated_micros(child_total).max(phase_total),
+        queue_wait_us: 0,
+        ipc_wall_us: 0,
+    }
+}
+
+fn saturated_micros(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
+}
+
+fn usize_to_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
 }
 
 fn mean_pool(

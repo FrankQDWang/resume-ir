@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::time::Instant;
 
 use index_fulltext::{FullTextIndex, IndexDocument, PublishedSnapshotMetadata};
 use index_vector::{VectorModelContract, VectorSnapshotReader, VectorSnapshotSummary};
@@ -613,7 +614,8 @@ fn prepare_search_publication<'session>(
         {
             return Err(ImportPipelineError::store_invariant());
         }
-        let vector = match publish_vector_generation(
+        let vector_started = Instant::now();
+        let vector_result = publish_vector_generation(
             data_dir,
             store,
             generation,
@@ -622,7 +624,11 @@ fn prepare_search_publication<'session>(
             staged_version_texts,
             vectorization,
             ensure_not_cancelled,
-        ) {
+        );
+        if let Some(vectorizer) = vectorization.vectorizer() {
+            vectorizer.record_vector_publication_wall(vector_started.elapsed());
+        }
+        let vector = match vector_result {
             Ok(vector) => {
                 failed_artifacts.record_vector_published();
                 vector

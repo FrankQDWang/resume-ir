@@ -8,8 +8,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use embedding_protocol::{
-    read_frame, write_frame, EmbedRequest, ResidentInput, ResidentResponse, MAX_REQUEST_BYTES,
-    MAX_RESPONSE_BYTES,
+    read_frame, write_frame, EmbedRequest, EmbeddingTelemetry, ResidentInput, ResidentResponse,
+    MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
 };
 use process_containment::OwnedLeafChild;
 
@@ -173,6 +173,18 @@ impl ResidentEmbeddingClient {
         timeout_ms: u64,
         is_cancelled: impl Fn() -> bool,
     ) -> Result<Vec<EmbeddingVector>, EmbeddingError> {
+        self.embed_batch_with_telemetry(priority, inputs, budget, timeout_ms, is_cancelled)
+            .map(|(vectors, _)| vectors)
+    }
+
+    pub fn embed_batch_with_telemetry(
+        &self,
+        priority: EmbeddingPriority,
+        inputs: &[EmbeddingInput],
+        budget: EmbeddingBudget,
+        timeout_ms: u64,
+        is_cancelled: impl Fn() -> bool,
+    ) -> Result<(Vec<EmbeddingVector>, EmbeddingTelemetry), EmbeddingError> {
         super::validate_embedding_inputs(inputs, budget)?;
         if inputs.is_empty() || inputs.len() > embedding_protocol::MAX_INPUTS || timeout_ms == 0 {
             return Err(EmbeddingError::InvalidRequest);
@@ -184,6 +196,7 @@ impl ResidentEmbeddingClient {
         let (response_sender, response_receiver) = mpsc::sync_channel(1);
         let task = EmbeddingTask {
             inputs: inputs.to_vec(),
+            enqueued_at: Instant::now(),
             deadline,
             cancellation: Arc::clone(&cancellation),
             response_sender,
@@ -228,9 +241,10 @@ impl fmt::Debug for ResidentEmbeddingClient {
 
 struct EmbeddingTask {
     inputs: Vec<EmbeddingInput>,
+    enqueued_at: Instant,
     deadline: Instant,
     cancellation: Arc<AtomicU8>,
-    response_sender: SyncSender<Result<Vec<EmbeddingVector>, EmbeddingError>>,
+    response_sender: SyncSender<Result<(Vec<EmbeddingVector>, EmbeddingTelemetry), EmbeddingError>>,
 }
 
 struct Supervisor {
@@ -279,7 +293,9 @@ impl Supervisor {
                 child = self.spawn_child().ok();
             }
             let result = match child.as_mut() {
-                Some(runtime) => self.execute_task(runtime, &task),
+                Some(runtime) => {
+                    self.execute_task(runtime, &task, saturated_micros(task.enqueued_at.elapsed()))
+                }
                 None => Err(EmbeddingError::WorkerUnavailable),
             };
             if result.is_err() {
@@ -391,7 +407,9 @@ impl Supervisor {
         &self,
         runtime: &mut ResidentChild,
         task: &EmbeddingTask,
-    ) -> Result<Vec<EmbeddingVector>, EmbeddingError> {
+        queue_wait_us: u64,
+    ) -> Result<(Vec<EmbeddingVector>, EmbeddingTelemetry), EmbeddingError> {
+        let ipc_started = Instant::now();
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
         let request = EmbedRequest::new(
             request_id,
@@ -422,17 +440,25 @@ impl Supervisor {
                     response
                         .validate_result(request_id, task.inputs.len(), self.spec.command.dimension)
                         .map_err(|_| EmbeddingError::EngineFailed)?;
-                    let ResidentResponse::Result { vectors, .. } = response else {
+                    let ResidentResponse::Result {
+                        vectors,
+                        mut telemetry,
+                        ..
+                    } = response
+                    else {
                         return Err(EmbeddingError::EngineFailed);
                     };
-                    return task
+                    let vectors = task
                         .inputs
                         .iter()
                         .zip(vectors)
                         .map(|(input, values)| {
                             EmbeddingVector::new(input.id(), &self.spec.command.model_id, values)
                         })
-                        .collect();
+                        .collect::<Result<Vec<_>, _>>()?;
+                    telemetry.queue_wait_us = queue_wait_us;
+                    telemetry.ipc_wall_us = saturated_micros(ipc_started.elapsed());
+                    return Ok((vectors, telemetry));
                 }
                 Ok(Err(error)) => return Err(error),
                 Err(RecvTimeoutError::Disconnected) => return Err(EmbeddingError::EngineFailed),
@@ -448,6 +474,10 @@ impl Supervisor {
     fn set_status(&self, status: ResidentEmbeddingStatus) {
         self.status.store(status as u8, Ordering::Release);
     }
+}
+
+fn saturated_micros(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
 fn cancellation_error(task: &EmbeddingTask) -> Option<EmbeddingError> {

@@ -357,6 +357,67 @@ fn tokenizer_batch_uses_batch_longest_padding_and_keeps_input_order() {
 }
 
 #[test]
+fn resident_runtime_telemetry_preserves_b1_b2_b4_phase_and_token_relationships() {
+    for input_count in [1_usize, 2, 4] {
+        let request = EmbedRequest::new(
+            41,
+            MODEL_ID,
+            2,
+            (0..input_count)
+                .map(|index| embedding_protocol::ResidentInput {
+                    role: EmbeddingRole::Passage,
+                    text: format!("synthetic runtime input {index}"),
+                })
+                .collect(),
+        );
+        let response = resident_success_response(&mut MockResidentBatchModel, &request).unwrap();
+        response.validate_result(41, input_count, 2).unwrap();
+        let telemetry = response.telemetry().unwrap();
+
+        assert_eq!(telemetry.input_count, input_count as u64);
+        assert_eq!(telemetry.active_token_count, (input_count * 3) as u64);
+        assert_eq!(telemetry.padded_token_count, (input_count * 4) as u64);
+        assert!(telemetry.active_token_count <= telemetry.padded_token_count);
+        let phase_total = telemetry
+            .tokenize_us
+            .saturating_add(telemetry.tensor_us)
+            .saturating_add(telemetry.onnx_us)
+            .saturating_add(telemetry.pool_us)
+            .saturating_add(telemetry.normalize_us);
+        assert!(telemetry.child_total_us >= phase_total);
+    }
+
+    assert_eq!(saturated_micros(Duration::from_secs(u64::MAX)), u64::MAX);
+}
+
+struct MockResidentBatchModel;
+
+impl ResidentBatchModel for MockResidentBatchModel {
+    fn embed_resident_batch(
+        &mut self,
+        texts: &[String],
+    ) -> Result<ResidentBatchOutput, RuntimeError> {
+        assert!(texts.iter().all(|text| text.starts_with("passage: ")));
+        Ok(ResidentBatchOutput {
+            vectors: vec![vec![1.0, 0.0]; texts.len()],
+            telemetry: build_embedding_telemetry(
+                texts.len(),
+                texts.len().saturating_mul(3),
+                texts.len().saturating_mul(4),
+                [
+                    Duration::from_micros(1),
+                    Duration::from_micros(2),
+                    Duration::from_micros(3),
+                    Duration::from_micros(4),
+                    Duration::from_micros(5),
+                ],
+                Duration::from_micros(16),
+            ),
+        })
+    }
+}
+
+#[test]
 fn output_rejects_non_finite_and_normalizes_vectors() {
     let request = EmbeddingRequest {
         model_id: MODEL_ID.to_string(),

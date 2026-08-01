@@ -1,9 +1,11 @@
 use std::net::TcpStream;
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use import_pipeline::ImportSummary;
 use meta_store::{
-    ImportScanProfile, ImportScanScope, MetaStoreErrorClass, ReadMetaStore,
+    ImportScanProfile, ImportScanScope, ImportTaskId, MetaStoreErrorClass, ReadMetaStore,
     SearchProjectionServiceState,
 };
 
@@ -17,6 +19,77 @@ use super::super::{CoreReason, OptionalRuntimeHealth, OptionalRuntimeReason};
 use super::{authorized, unauthorized_body, write, RouteResult};
 
 type MetadataReadResult<T> = Result<T, MetaStoreErrorClass>;
+static LATEST_IMPORT_ATTRIBUTION: OnceLock<Mutex<Option<serde_json::Value>>> = OnceLock::new();
+
+pub(crate) fn record_latest_import_attribution(task_id: &ImportTaskId, summary: &ImportSummary) {
+    let metrics = &summary.worker_metrics.attribution;
+    let embedding = &metrics.vectorization;
+    let fulltext = &summary.worker_metrics.index_publication_timings;
+    let value = serde_json::json!({
+        "schema_version": "daemon.import_attribution.v1",
+        "task_id": task_id.as_str(),
+        "searchable_documents": summary.searchable_documents,
+        "changed_projection_count": metrics.changed_projection_count,
+        "ocr": {
+            "required_documents": summary.ocr_required_documents,
+            "jobs_queued": summary.ocr_jobs_queued,
+        },
+        "embedding": {
+            "batch_count": embedding.embedding_calls,
+            "input_count": embedding.embedding_inputs,
+            "active_token_count": embedding.active_token_count,
+            "padded_token_count": embedding.padded_token_count,
+            "queue_wait_us": embedding.embedding_queue_wait_us,
+            "ipc_wall_us": embedding.embedding_ipc_wall_us,
+            "request_wall_us": embedding.embedding_queue_wait_us
+                .saturating_add(embedding.embedding_ipc_wall_us),
+            "child_total_us": embedding.embedding_child_total_us,
+            "tokenize_us": embedding.embedding_tokenize_us,
+            "tensor_us": embedding.embedding_tensor_us,
+            "onnx_us": embedding.embedding_onnx_us,
+            "pool_us": embedding.embedding_pool_us,
+            "normalize_us": embedding.embedding_normalize_us,
+        },
+        "vector": {
+            "publication_wall_us": embedding.vector_publication_wall_us,
+            "non_embedding_wall_us": embedding.vector_publication_wall_us
+                .saturating_sub(embedding.embedding_queue_wait_us
+                    .saturating_add(embedding.embedding_ipc_wall_us)),
+        },
+        "publication": {
+            "owner_wait_us": duration_us(metrics.publication_owner_wait),
+            "metadata_decision_commit_us": duration_us(metrics.metadata_decision_commit),
+            "fulltext": {
+                "setup_us": duration_us(fulltext.setup),
+                "documents_us": duration_us(fulltext.documents),
+                "commit_us": duration_us(fulltext.commit),
+                "plaintext_validation_us": duration_us(fulltext.plaintext_validation),
+                "encrypted_publication_us": duration_us(fulltext.encrypted_publication),
+                "encrypted_validation_us": duration_us(fulltext.encrypted_validation),
+                "atomic_publication_us": duration_us(fulltext.atomic_publication),
+            },
+        },
+    });
+    *latest_import_attribution_slot()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(value);
+}
+
+fn latest_import_attribution_slot() -> &'static Mutex<Option<serde_json::Value>> {
+    LATEST_IMPORT_ATTRIBUTION.get_or_init(|| Mutex::new(None))
+}
+
+pub(crate) fn latest_import_attribution_json() -> serde_json::Value {
+    latest_import_attribution_slot()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .unwrap_or(serde_json::Value::Null)
+}
+
+fn duration_us(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
+}
 
 pub(super) fn status(
     state: &ControlPlaneState,
@@ -286,6 +359,7 @@ pub(super) fn import_progress_event_json(store: &ReadMetaStore) -> MetadataReadR
         "schema_version": "daemon.import_progress.v1",
         "event": "snapshot",
         "latest_import_scan": latest_import_scan,
+        "latest_import_attribution": latest_import_attribution_json(),
     })
     .to_string())
 }
@@ -313,8 +387,17 @@ fn latest_import_scan_json(scope: &ImportScanScope) -> serde_json::Value {
 #[cfg(test)]
 mod contract_tests {
     use std::collections::BTreeSet;
+    use std::time::Duration;
 
-    use super::render_without_store;
+    use import_pipeline::{
+        ImportAttributionMetrics, ImportSummary, ImportWorkerMetrics,
+        SearchPublicationTelemetrySnapshot,
+    };
+    use meta_store::ImportTaskId;
+
+    use super::{
+        latest_import_attribution_json, record_latest_import_attribution, render_without_store,
+    };
     use crate::ipc::{
         CapabilityMatrix, CoreHealth, CoreState, OptionalRuntimeHealth, OptionalRuntimeMatrix,
         WriterHealth,
@@ -360,6 +443,59 @@ mod contract_tests {
             object_keys(&rendered["capabilities"]),
             object_keys(&fixture["capabilities"])
         );
+    }
+
+    #[test]
+    fn latest_import_attribution_is_single_slot_task_bound_and_redacted() {
+        let first = ImportTaskId::from_non_secret_parts(&["attribution", "first"]);
+        let second = ImportTaskId::from_non_secret_parts(&["attribution", "second"]);
+        record_latest_import_attribution(&first, &ImportSummary::default());
+
+        let summary = ImportSummary {
+            searchable_documents: 3,
+            ocr_required_documents: 2,
+            ocr_jobs_queued: 2,
+            worker_metrics: ImportWorkerMetrics {
+                attribution: ImportAttributionMetrics {
+                    changed_projection_count: 3,
+                    publication_owner_wait: Duration::from_micros(11),
+                    metadata_decision_commit: Duration::from_micros(12),
+                    vectorization: SearchPublicationTelemetrySnapshot {
+                        embedding_calls: 1,
+                        embedding_inputs: 3,
+                        active_token_count: 7,
+                        padded_token_count: 9,
+                        embedding_queue_wait_us: 4,
+                        embedding_ipc_wall_us: 6,
+                        embedding_child_total_us: 20,
+                        embedding_onnx_us: 8,
+                        vector_publication_wall_us: 30,
+                        ..SearchPublicationTelemetrySnapshot::default()
+                    },
+                },
+                ..ImportWorkerMetrics::default()
+            },
+            ..ImportSummary::default()
+        };
+        record_latest_import_attribution(&second, &summary);
+
+        let payload = latest_import_attribution_json();
+        assert_eq!(payload["schema_version"], "daemon.import_attribution.v1");
+        assert_eq!(payload["task_id"], second.as_str());
+        assert_eq!(payload["embedding"]["batch_count"], 1);
+        assert_eq!(payload["embedding"]["onnx_us"], 8);
+        assert_eq!(payload["embedding"]["request_wall_us"], 10);
+        assert_eq!(payload["vector"]["non_embedding_wall_us"], 20);
+        assert_eq!(payload["ocr"]["required_documents"], 2);
+        assert_eq!(payload["ocr"]["jobs_queued"], 2);
+        let object = payload.as_object().unwrap();
+        for forbidden in ["path", "name", "text", "hash", "vectors", "values"] {
+            assert!(!object.contains_key(forbidden));
+        }
+        let serialized = payload.to_string();
+        assert!(!serialized.contains("attribution/first"));
+        assert!(!serialized.contains("generation"));
+        assert!(!serialized.contains("epoch"));
     }
 
     fn object_keys(value: &serde_json::Value) -> BTreeSet<&str> {

@@ -44,6 +44,16 @@ fn timeout_reaps_the_generation_and_the_next_request_recovers() {
             EmbeddingPriority::Interactive,
             std::slice::from_ref(&input),
             EmbeddingBudget::new(1, 64),
+            1_000,
+            || true,
+        ),
+        Err(EmbeddingError::Cancelled)
+    ));
+    assert!(matches!(
+        client.embed_batch_with_cancel(
+            EmbeddingPriority::Interactive,
+            std::slice::from_ref(&input),
+            EmbeddingBudget::new(1, 64),
             30,
             || false,
         ),
@@ -151,7 +161,7 @@ fn interactive_queue_is_selected_before_waiting_background_work() {
     }
     let second_client = client.clone();
     let second = std::thread::spawn(move || {
-        second_client.embed_batch_with_cancel(
+        second_client.embed_batch_with_telemetry(
             EmbeddingPriority::Background,
             &[EmbeddingInput::new("background-2", "synthetic passage two")],
             EmbeddingBudget::new(1, 64),
@@ -171,7 +181,18 @@ fn interactive_queue_is_selected_before_waiting_background_work() {
     });
     first.join().unwrap().unwrap();
     interactive.join().unwrap().unwrap();
-    second.join().unwrap().unwrap();
+    let (vectors, telemetry) = second.join().unwrap().unwrap();
+    assert_eq!(vectors.len(), 1);
+    assert!(telemetry.queue_wait_us >= 100_000);
+    assert!(telemetry.ipc_wall_us >= 100_000);
+    assert_eq!(
+        embedding_protocol::EmbeddingTelemetry {
+            queue_wait_us: 0,
+            ipc_wall_us: 0,
+            ..telemetry
+        },
+        Default::default()
+    );
     assert_eq!(worker.order(), ["passage", "query", "passage"]);
 }
 

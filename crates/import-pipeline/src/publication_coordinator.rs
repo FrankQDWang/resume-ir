@@ -195,9 +195,11 @@ pub(super) fn flush_pending_searchable_documents(
     set_cancel_phase(ImportCancelCheckPhase::IndexPublication);
     let index_started = Instant::now();
     ensure_not_cancelled()?;
+    let owner_wait_started = Instant::now();
     let publication_session = store
         .wait_for_search_publication_session()
         .map_err(ImportPipelineError::store)?;
+    summary.worker_metrics.attribution.publication_owner_wait += owner_wait_started.elapsed();
     let publication_store = publication_session.owned_store();
     let projection_state = publication_store
         .search_projection_state()
@@ -239,6 +241,11 @@ pub(super) fn flush_pending_searchable_documents(
         return Ok(false);
     }
 
+    let telemetry_before = search_vectorization
+        .vectorizer()
+        .map(|vectorizer| vectorizer.telemetry_snapshot())
+        .unwrap_or_default();
+
     let removed_document_ids = pending_excluded_doc_ids.document_ids();
     let searchable_before = summary.searchable_documents;
     let (mut pending_documents, pending_replacements) =
@@ -254,6 +261,14 @@ pub(super) fn flush_pending_searchable_documents(
         document.updated_at = now;
     }
     let new_searchable_count = pending_documents.len();
+    summary.worker_metrics.attribution.changed_projection_count = summary
+        .worker_metrics
+        .attribution
+        .changed_projection_count
+        .saturating_add(
+            u64::try_from(new_searchable_count.saturating_add(removed_document_ids.len()))
+                .unwrap_or(u64::MAX),
+        );
     pending_documents.extend(pending_excluded_doc_ids.publication_documents().cloned());
 
     let index_elapsed = RefCell::new(None);
@@ -275,16 +290,26 @@ pub(super) fn flush_pending_searchable_documents(
         |publication| {
             *index_elapsed.borrow_mut() = Some(index_started.elapsed());
             set_cancel_phase(ImportCancelCheckPhase::DbWrite);
-            measure_result_stage(&mut summary.stage_timings.db, || {
+            let metadata_started = Instant::now();
+            let result = measure_result_stage(&mut summary.stage_timings.db, || {
                 decide_search_publication_cancellable(
                     publication,
                     now,
                     &pending_documents,
                     ensure_not_cancelled,
                 )
-            })
+            });
+            summary.worker_metrics.attribution.metadata_decision_commit +=
+                metadata_started.elapsed();
+            result
         },
     );
+    let telemetry_after = search_vectorization
+        .vectorizer()
+        .map(|vectorizer| vectorizer.telemetry_snapshot())
+        .unwrap_or_default();
+    phase_worker_metrics.borrow_mut().attribution.vectorization =
+        telemetry_after.saturating_delta(telemetry_before);
     summary.stage_timings.index += index_elapsed
         .into_inner()
         .unwrap_or_else(|| index_started.elapsed());

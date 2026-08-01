@@ -108,7 +108,8 @@ use search_artifacts::write_incremental_search_artifacts_for_test;
 use search_publication::commit_prepared_search_publication_for_test;
 pub use search_vectorizer::{
     SearchPublicationEmbeddingFailure, SearchPublicationEmbeddingInput,
-    SearchPublicationEmbeddingOutput, SearchPublicationVectorization, SearchPublicationVectorizer,
+    SearchPublicationEmbeddingOutput, SearchPublicationTelemetrySnapshot,
+    SearchPublicationVectorization, SearchPublicationVectorizer,
 };
 #[cfg(test)]
 use source_dispositions::{ImportDispositionBatches, ProcessedFile};
@@ -442,6 +443,14 @@ pub struct ImportSummary {
     pub worker_metrics: ImportWorkerMetrics,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ImportAttributionMetrics {
+    pub changed_projection_count: u64,
+    pub publication_owner_wait: Duration,
+    pub metadata_decision_commit: Duration,
+    pub vectorization: SearchPublicationTelemetrySnapshot,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ImportIoMetrics {
     pub discovery_content_open_count: u64,
@@ -658,6 +667,7 @@ pub struct ImportWorkerMetrics {
     pub index_publication_timings: ImportIndexPublicationTimings,
     pub pdf_parse_metrics: PdfTextExtractionMetrics,
     pub post_parser_timings: ImportPostParserTimings,
+    pub attribution: ImportAttributionMetrics,
 }
 
 impl ImportWorkerMetrics {
@@ -680,6 +690,15 @@ impl ImportWorkerMetrics {
         self.pdf_parse_metrics.add_assign(&next.pdf_parse_metrics);
         self.post_parser_timings
             .add_assign(&next.post_parser_timings);
+        self.attribution.changed_projection_count = self
+            .attribution
+            .changed_projection_count
+            .saturating_add(next.attribution.changed_projection_count);
+        self.attribution.publication_owner_wait += next.attribution.publication_owner_wait;
+        self.attribution.metadata_decision_commit += next.attribution.metadata_decision_commit;
+        self.attribution
+            .vectorization
+            .saturating_add_assign(next.attribution.vectorization);
     }
 
     fn record_parse_worker_count(&mut self, count: usize) {
@@ -1291,9 +1310,9 @@ mod tests {
         PendingProjectionRemovals, PendingSearchableDocument, PendingSearchablePublicationKind,
         PipelineRunControl, ProcessedFile, SearchProjectionRemoval, SearchProjectionRemovalReason,
         SearchPublicationEmbeddingFailure, SearchPublicationEmbeddingInput,
-        SearchPublicationEmbeddingOutput, SearchPublicationVectorization,
-        SearchPublicationVectorizer, Sectionizer, SnapshotPublishPhase, BYTES_PER_GIB,
-        H2_INDEX_WRITER_HEAP_BYTES,
+        SearchPublicationEmbeddingOutput, SearchPublicationTelemetrySnapshot,
+        SearchPublicationVectorization, SearchPublicationVectorizer, Sectionizer,
+        SnapshotPublishPhase, BYTES_PER_GIB, H2_INDEX_WRITER_HEAP_BYTES,
     };
 
     #[path = "no_op_publication_tests.rs"]
@@ -1444,6 +1463,40 @@ mod tests {
                 })
                 .collect())
         }
+    }
+
+    #[test]
+    fn vectorizer_telemetry_defaults_and_deltas_are_bounded_and_saturating() {
+        let vectorizer = TestPublicationVectorizer { fail: false };
+        assert_eq!(
+            vectorizer.telemetry_snapshot(),
+            SearchPublicationTelemetrySnapshot::default()
+        );
+        vectorizer.record_vector_publication_wall(Duration::from_micros(7));
+        assert_eq!(
+            vectorizer.telemetry_snapshot(),
+            SearchPublicationTelemetrySnapshot::default()
+        );
+
+        let before = SearchPublicationTelemetrySnapshot {
+            embedding_calls: 9,
+            embedding_inputs: u64::MAX - 1,
+            embedding_child_total_us: 20,
+            vector_publication_wall_us: 30,
+            ..SearchPublicationTelemetrySnapshot::default()
+        };
+        let after = SearchPublicationTelemetrySnapshot {
+            embedding_calls: 8,
+            embedding_inputs: u64::MAX,
+            embedding_child_total_us: 25,
+            vector_publication_wall_us: 27,
+            ..SearchPublicationTelemetrySnapshot::default()
+        };
+        let delta = after.saturating_delta(before);
+        assert_eq!(delta.embedding_calls, 0);
+        assert_eq!(delta.embedding_inputs, 1);
+        assert_eq!(delta.embedding_child_total_us, 5);
+        assert_eq!(delta.vector_publication_wall_us, 0);
     }
 
     #[cfg(unix)]

@@ -14,6 +14,18 @@ system design docs, the execution docs, and this running evidence log. Obsolete
 preliminary checklists are historical execution context only, not the
 production-ready scope source.
 
+## Task-bound import attribution instrumentation (#282)
+
+The additive embedding-stream v1 telemetry now attributes resident queue/IPC,
+tokenize/tensor/ONNX/pool/normalize and child wall time without changing batch
+size or scheduling. Import publication aggregates vector wall, request-excluded
+vector wall, owner wait, existing fulltext phases and metadata decision/commit.
+`daemon.import_progress.v1` exposes only the latest fixed-size redacted task
+aggregate; `/source-roots` complete remains the terminal task fence. Focused
+contract/unit checks pass; the native daemon E2E currently exits at its existing
+core-ready request budget before reaching the new assertions. No private or OCR
+drain benchmark was run, so the <=3% overhead acceptance remains unmeasured.
+
 ## Resident embedding tensor batching (#279)
 
 Production optimization code now exists in the resident embedding runtime. The

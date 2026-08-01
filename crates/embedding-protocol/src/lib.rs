@@ -103,6 +103,47 @@ pub enum ResidentErrorCode {
     RuntimeUnavailable,
 }
 
+/// Fixed-size, content-free measurements produced by one resident batch.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EmbeddingTelemetry {
+    pub input_count: u64,
+    pub active_token_count: u64,
+    pub padded_token_count: u64,
+    pub tokenize_us: u64,
+    pub tensor_us: u64,
+    pub onnx_us: u64,
+    pub pool_us: u64,
+    pub normalize_us: u64,
+    pub child_total_us: u64,
+    /// Owner-side enqueue-to-service delay; zero on the child wire response.
+    pub queue_wait_us: u64,
+    /// Owner-side request-write through validated-response wall time.
+    pub ipc_wall_us: u64,
+}
+
+impl EmbeddingTelemetry {
+    fn validate(self, expected_input_count: usize) -> Result<(), ProtocolError> {
+        if self == Self::default() {
+            return Ok(());
+        }
+        let expected_input_count = u64::try_from(expected_input_count).unwrap_or(u64::MAX);
+        let phase_total = self
+            .tokenize_us
+            .saturating_add(self.tensor_us)
+            .saturating_add(self.onnx_us)
+            .saturating_add(self.pool_us)
+            .saturating_add(self.normalize_us);
+        if self.input_count != expected_input_count
+            || self.active_token_count > self.padded_token_count
+            || self.child_total_us < phase_total
+        {
+            return Err(ProtocolError::InvalidPayload);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ResidentResponse {
@@ -115,6 +156,8 @@ pub enum ResidentResponse {
         schema_version: String,
         request_id: u64,
         vectors: Vec<Vec<f32>>,
+        #[serde(default)]
+        telemetry: EmbeddingTelemetry,
     },
     Error {
         schema_version: String,
@@ -134,10 +177,19 @@ impl ResidentResponse {
     }
 
     pub fn result(request_id: u64, vectors: Vec<Vec<f32>>) -> Self {
+        Self::result_with_telemetry(request_id, vectors, EmbeddingTelemetry::default())
+    }
+
+    pub fn result_with_telemetry(
+        request_id: u64,
+        vectors: Vec<Vec<f32>>,
+        telemetry: EmbeddingTelemetry,
+    ) -> Self {
         Self::Result {
             schema_version: SCHEMA_VERSION.to_string(),
             request_id,
             vectors,
+            telemetry,
         }
     }
 
@@ -178,6 +230,7 @@ impl ResidentResponse {
                 schema_version,
                 request_id: actual_request_id,
                 vectors,
+                telemetry,
             } => {
                 if schema_version != SCHEMA_VERSION
                     || *actual_request_id != request_id
@@ -188,9 +241,16 @@ impl ResidentResponse {
                 {
                     return Err(ProtocolError::InvalidPayload);
                 }
-                Ok(())
+                telemetry.validate(input_count)
             }
             _ => Err(ProtocolError::InvalidPayload),
+        }
+    }
+
+    pub fn telemetry(&self) -> Option<EmbeddingTelemetry> {
+        match self {
+            Self::Result { telemetry, .. } => Some(*telemetry),
+            Self::Ready { .. } | Self::Error { .. } => None,
         }
     }
 }
@@ -212,11 +272,13 @@ impl fmt::Debug for ResidentResponse {
                 schema_version,
                 request_id,
                 vectors,
+                telemetry,
             } => formatter
                 .debug_struct("Result")
                 .field("schema_version", schema_version)
                 .field("request_id", request_id)
                 .field("vector_count", &vectors.len())
+                .field("telemetry", telemetry)
                 .finish(),
             Self::Error {
                 schema_version,
@@ -436,5 +498,36 @@ mod tests {
         let invalid = ResidentResponse::result(1, vec![vec![f32::NAN]]);
         assert!(invalid.validate_result(1, 1, 1).is_err());
         assert!(!format!("{invalid:?}").contains("NaN"));
+    }
+
+    #[test]
+    fn result_telemetry_is_fixed_size_and_v1_compatible() {
+        let telemetry = EmbeddingTelemetry {
+            input_count: 4,
+            active_token_count: 17,
+            padded_token_count: 20,
+            tokenize_us: 11,
+            tensor_us: 12,
+            onnx_us: 13,
+            pool_us: 14,
+            normalize_us: 15,
+            child_total_us: 65,
+            queue_wait_us: 0,
+            ipc_wall_us: 0,
+        };
+        let result = ResidentResponse::result_with_telemetry(
+            9,
+            vec![vec![1.0], vec![1.0], vec![1.0], vec![1.0]],
+            telemetry,
+        );
+        result.validate_result(9, 4, 1).unwrap();
+        assert_eq!(result.telemetry(), Some(telemetry));
+
+        let legacy: ResidentResponse = serde_json::from_str(
+            r#"{"type":"result","schema_version":"resume-ir.embedding-stream.v1","request_id":9,"vectors":[[1.0]]}"#,
+        )
+        .unwrap();
+        legacy.validate_result(9, 1, 1).unwrap();
+        assert_eq!(legacy.telemetry(), Some(EmbeddingTelemetry::default()));
     }
 }
