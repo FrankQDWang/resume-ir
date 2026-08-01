@@ -1,5 +1,105 @@
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SearchPublicationTelemetrySnapshot {
+    pub embedding_calls: u64,
+    pub embedding_inputs: u64,
+    pub active_token_count: u64,
+    pub padded_token_count: u64,
+    pub embedding_queue_wait_us: u64,
+    pub embedding_ipc_wall_us: u64,
+    pub embedding_child_total_us: u64,
+    pub embedding_tokenize_us: u64,
+    pub embedding_tensor_us: u64,
+    pub embedding_onnx_us: u64,
+    pub embedding_pool_us: u64,
+    pub embedding_normalize_us: u64,
+    pub vector_publication_wall_us: u64,
+}
+
+impl SearchPublicationTelemetrySnapshot {
+    pub fn saturating_delta(self, before: Self) -> Self {
+        Self {
+            embedding_calls: self.embedding_calls.saturating_sub(before.embedding_calls),
+            embedding_inputs: self
+                .embedding_inputs
+                .saturating_sub(before.embedding_inputs),
+            active_token_count: self
+                .active_token_count
+                .saturating_sub(before.active_token_count),
+            padded_token_count: self
+                .padded_token_count
+                .saturating_sub(before.padded_token_count),
+            embedding_queue_wait_us: self
+                .embedding_queue_wait_us
+                .saturating_sub(before.embedding_queue_wait_us),
+            embedding_ipc_wall_us: self
+                .embedding_ipc_wall_us
+                .saturating_sub(before.embedding_ipc_wall_us),
+            embedding_child_total_us: self
+                .embedding_child_total_us
+                .saturating_sub(before.embedding_child_total_us),
+            embedding_tokenize_us: self
+                .embedding_tokenize_us
+                .saturating_sub(before.embedding_tokenize_us),
+            embedding_tensor_us: self
+                .embedding_tensor_us
+                .saturating_sub(before.embedding_tensor_us),
+            embedding_onnx_us: self
+                .embedding_onnx_us
+                .saturating_sub(before.embedding_onnx_us),
+            embedding_pool_us: self
+                .embedding_pool_us
+                .saturating_sub(before.embedding_pool_us),
+            embedding_normalize_us: self
+                .embedding_normalize_us
+                .saturating_sub(before.embedding_normalize_us),
+            vector_publication_wall_us: self
+                .vector_publication_wall_us
+                .saturating_sub(before.vector_publication_wall_us),
+        }
+    }
+
+    pub(crate) fn saturating_add_assign(&mut self, next: Self) {
+        self.embedding_calls = self.embedding_calls.saturating_add(next.embedding_calls);
+        self.embedding_inputs = self.embedding_inputs.saturating_add(next.embedding_inputs);
+        self.active_token_count = self
+            .active_token_count
+            .saturating_add(next.active_token_count);
+        self.padded_token_count = self
+            .padded_token_count
+            .saturating_add(next.padded_token_count);
+        self.embedding_queue_wait_us = self
+            .embedding_queue_wait_us
+            .saturating_add(next.embedding_queue_wait_us);
+        self.embedding_ipc_wall_us = self
+            .embedding_ipc_wall_us
+            .saturating_add(next.embedding_ipc_wall_us);
+        self.embedding_child_total_us = self
+            .embedding_child_total_us
+            .saturating_add(next.embedding_child_total_us);
+        self.embedding_tokenize_us = self
+            .embedding_tokenize_us
+            .saturating_add(next.embedding_tokenize_us);
+        self.embedding_tensor_us = self
+            .embedding_tensor_us
+            .saturating_add(next.embedding_tensor_us);
+        self.embedding_onnx_us = self
+            .embedding_onnx_us
+            .saturating_add(next.embedding_onnx_us);
+        self.embedding_pool_us = self
+            .embedding_pool_us
+            .saturating_add(next.embedding_pool_us);
+        self.embedding_normalize_us = self
+            .embedding_normalize_us
+            .saturating_add(next.embedding_normalize_us);
+        self.vector_publication_wall_us = self
+            .vector_publication_wall_us
+            .saturating_add(next.vector_publication_wall_us);
+    }
+}
 
 /// Produces bounded document embeddings for one atomic search publication.
 ///
@@ -18,6 +118,12 @@ pub trait SearchPublicationVectorizer: Send + Sync {
         inputs: &[SearchPublicationEmbeddingInput],
         is_cancelled: &dyn Fn() -> bool,
     ) -> std::result::Result<Vec<SearchPublicationEmbeddingOutput>, SearchPublicationEmbeddingFailure>;
+
+    fn telemetry_snapshot(&self) -> SearchPublicationTelemetrySnapshot {
+        SearchPublicationTelemetrySnapshot::default()
+    }
+
+    fn record_vector_publication_wall(&self, _elapsed: Duration) {}
 }
 
 #[derive(Clone)]

@@ -1903,6 +1903,10 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
     wait_for_ready_control_plane(&mut child, &endpoint, &token);
     let response = http_post_import_command(&endpoint, Some(&token), &fixture_root, None);
     assert!(response.contains("HTTP/1.1 202 Accepted"));
+    let task_id = response_json(&response)["task_ids"][0]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     let (worker_requests, completed_response) = wait_for_searchable_documents(
         &mut child,
@@ -1911,7 +1915,60 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
         2,
         IMPORT_WORKER_SEARCHABLE_MAX_REQUESTS,
     );
-    let used_requests = 1 + worker_requests;
+    let mut fence_requests = 0;
+    let source_root = loop {
+        fence_requests += 1;
+        let roots = source_roots_json(&endpoint, &token);
+        let root = roots["roots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|root| root["last_scan"]["scan_id"] == task_id)
+            .cloned();
+        if root
+            .as_ref()
+            .is_some_and(|root| root["last_scan"]["phase"] == "complete")
+        {
+            break root.unwrap();
+        }
+        assert!(
+            fence_requests < 20,
+            "source-root completion fence timed out"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    assert_eq!(source_root["last_scan"]["completeness"], "complete");
+    let progress = http_get_import_progress(&endpoint, Some(&token));
+    let event: serde_json::Value = serde_json::from_str(
+        progress
+            .split("\r\n\r\n")
+            .nth(1)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(event["schema_version"], "daemon.import_progress.v1");
+    assert_eq!(
+        event["latest_import_attribution"]["schema_version"],
+        "daemon.import_attribution.v1"
+    );
+    assert_eq!(event["latest_import_attribution"]["task_id"], task_id);
+    assert!(event["latest_import_attribution"]["ocr"]["jobs_queued"]
+        .as_u64()
+        .is_some_and(|count| count > 0));
+    let attribution = event["latest_import_attribution"].to_string();
+    for forbidden in [
+        "canonical_root",
+        "path",
+        "raw_text",
+        "content_hash",
+        "vectors",
+    ] {
+        assert!(!attribution.contains(forbidden), "{attribution}");
+    }
+    let used_requests = 2 + worker_requests + fence_requests;
     drain_status_requests(&endpoint, request_limit - used_requests);
 
     let output = wait_child(child);
@@ -1925,7 +1982,9 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
         .unwrap()
         .unwrap();
     assert_eq!(task.status, ImportTaskStatus::Completed);
-    assert_eq!(store.status_summary().unwrap().searchable_documents, 2);
+    let status = store.status_summary().unwrap();
+    assert_eq!(status.searchable_documents, 2);
+    assert!(status.ocr_queue_depth > 0, "OCR endpoint waited for drain");
     assert!(!response.contains(path_str(&data_dir)));
     assert!(!response.contains(path_str(&fixture_root)));
     assert!(!response.contains(path_str(&canonical_fixture_root)));

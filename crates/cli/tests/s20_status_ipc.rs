@@ -176,8 +176,9 @@ fn status_watch_import_ipc_auto_streams_redacted_progress_without_local_store() 
         let progress_request = read_http_request(&mut progress_stream);
         assert!(progress_request.starts_with("GET /imports/progress HTTP/1.1"));
         assert!(progress_request.contains(&format!("Authorization: Bearer {token}")));
-        let first = "{\"schema_version\":\"daemon.import_progress.v1\",\"event\":\"snapshot\",\"latest_import_scan\":{\"scan_profile\":\"explicit\",\"files_discovered\":7,\"ignored_entries\":1,\"scan_errors\":0,\"searchable_documents\":3,\"ocr_required_documents\":2,\"ocr_jobs_queued\":2,\"failed_documents\":0,\"deleted_documents\":0,\"scan_budget_observed\":7,\"scan_budget_limit\":9,\"scan_budget_exhausted\":false}}\n";
-        let second = "{\"schema_version\":\"daemon.import_progress.v1\",\"event\":\"snapshot\",\"latest_import_scan\":{\"scan_profile\":\"explicit\",\"files_discovered\":8,\"ignored_entries\":1,\"scan_errors\":0,\"searchable_documents\":4,\"ocr_required_documents\":2,\"ocr_jobs_queued\":2,\"failed_documents\":0,\"deleted_documents\":0,\"scan_budget_observed\":8,\"scan_budget_limit\":9,\"scan_budget_exhausted\":false}}\n";
+        let attribution = "\"latest_import_attribution\":{\"schema_version\":\"daemon.import_attribution.v1\",\"task_id\":\"opaque-attribution-task\",\"embedding\":{\"batch_count\":1,\"onnx_us\":3}}";
+        let first = format!("{{\"schema_version\":\"daemon.import_progress.v1\",\"event\":\"snapshot\",\"latest_import_scan\":{{\"scan_profile\":\"explicit\",\"files_discovered\":7,\"ignored_entries\":1,\"scan_errors\":0,\"searchable_documents\":3,\"ocr_required_documents\":2,\"ocr_jobs_queued\":2,\"failed_documents\":0,\"deleted_documents\":0,\"scan_budget_observed\":7,\"scan_budget_limit\":9,\"scan_budget_exhausted\":false}},{attribution}}}\n");
+        let second = format!("{{\"schema_version\":\"daemon.import_progress.v1\",\"event\":\"snapshot\",\"latest_import_scan\":{{\"scan_profile\":\"explicit\",\"files_discovered\":8,\"ignored_entries\":1,\"scan_errors\":0,\"searchable_documents\":4,\"ocr_required_documents\":2,\"ocr_jobs_queued\":2,\"failed_documents\":0,\"deleted_documents\":0,\"scan_budget_observed\":8,\"scan_budget_limit\":9,\"scan_budget_exhausted\":false}},{attribution}}}\n");
         let body = format!("{first}{second}");
         write!(
             progress_stream,
@@ -217,6 +218,7 @@ fn status_watch_import_ipc_auto_streams_redacted_progress_without_local_store() 
     assert!(!stdout.contains(path_str(&data_dir)));
     assert!(!stdout.contains("ipc.auth"));
     assert!(!stdout.contains(token));
+    assert!(!stdout.contains("opaque-attribution-task"));
     assert!(!data_dir.join("metadata.sqlite3").exists());
 
     remove_dir(&data_dir);

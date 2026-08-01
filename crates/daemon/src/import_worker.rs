@@ -235,6 +235,7 @@ pub(crate) fn run_import_worker_once_with_retry_due(
             }
         };
 
+        crate::ipc::routes::status::record_latest_import_attribution(&task.id, &import_summary);
         finish_source_scan_success(
             store,
             &scope.canonical_root_path,
