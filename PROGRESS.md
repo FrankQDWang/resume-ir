@@ -14,6 +14,35 @@ system design docs, the execution docs, and this running evidence log. Obsolete
 preliminary checklists are historical execution context only, not the
 production-ready scope source.
 
+## Issue #295 embedding artifact-matrix contract
+
+Issue #295 is the sole L1 follow-up selected by the accepted #293 operator
+profile. It compares the exact current dynamic-U8S8 artifact with exact-revision
+FP32, static-QDQ-S8S8 and static-QOperator-U8S8 candidates while retaining the
+current tokenizer, native ORT 1.27.0 runtime, Batch-4 bound, three-thread H2
+policy and every production session flag. The candidates are local experimental
+artifacts only; this slice cannot replace the production pack or model ID.
+
+The public-synthetic matrix uses 100 deterministic calibration inputs across
+8/32/96/256/512-token buckets and eight balanced Latin-square blocks containing
+32 independent release resident sessions. A candidate must improve the primary
+512-token ONNX median by at least 10 percent with positive paired ONNX and wall
+time intervals, avoid sensitivity regressions above 3 percent, and pass the
+pre-registered vector stability, startup, single-file packaging, H0 512 MiB and
+H2 1536 MiB gates. Statistical ties remain inconclusive.
+
+Only one unique matrix winner may receive five ORT captures and one xctrace or
+`sample` cross-check. A winner may open one later production migration Issue;
+otherwise the current dynamic artifact is retained. Downloaded/generated model
+bytes, local manifests, raw samples, traces, paths, PIDs, inputs, tokens and
+vectors remain temporary and local-only. This Issue cannot claim a full-product
+speedup, W1, scale, release or goal completion.
+
+The contract transition must merge before candidate generation, runtime-mode
+implementation or formal measurement. Contract, autonomous-goal, Loop-state,
+governance-mutation, public-repository and diff gates are required for this
+contract-only PR.
+
 ## Issue #293 resident ONNX operator-profile contract
 
 Issue #293 is the L0 observation successor to the rejected and reverted
