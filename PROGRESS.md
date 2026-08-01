@@ -14,6 +14,40 @@ system design docs, the execution docs, and this running evidence log. Obsolete
 preliminary checklists are historical execution context only, not the
 production-ready scope source.
 
+## Issue #286 ONNX weight-prepacking negative closeout
+
+Issue #286 tested one production variable only: the resident CPU ONNX session
+used `with_prepacking(true)` instead of the retained
+`with_prepacking(false)`. The control release binary was built from exact
+revision `97b08127637f1495f1c77b11579b76cec925e41d`; the candidate was built
+from exact revision `5dfb6187c6b751e143c2030663e34590898966fc`. Model, runtime pack,
+Batch 4, H2 three-thread policy, tokenizer, queue/worker behavior and product
+semantics were unchanged.
+
+The dedicated macOS witness self-tests cover seeded balanced AB/BA order,
+Batch 4 workload bounds, normalized ONNX metrics, exact elementwise vector
+comparison, launch-to-Ready limits, RSS and physical-footprint parsing, paired
+bootstrap intervals, bounded output and privacy fail-closed behavior. Both
+variants independently passed the model ID, 384-dimension, four-input and
+2,048 active/padded-token response contracts. The first formal paired block
+then failed the required elementwise vector equality check. No paired latency
+sample was accepted, startup and resource acceptance were not claimed, and the
+private full-product experiment was not run.
+
+The candidate Boolean was restored to `with_prepacking(false)` before closeout;
+the final branch has no embedding-runtime production diff from `main`. This is
+a rejected and reverted L3 hypothesis only. It does not invalidate #282's
+hotspot attribution, does not claim a performance result, and does not complete
+the broader performance/GUI goal. CPU arena, thread tuning, ORT upgrade, model
+artifact changes, graph pooling and CoreML remain outside #286.
+
+Post-revert witness self-tests, embedding runtime, resident embedder, focused
+daemon embedding integration, formatting, warnings-as-errors Clippy and
+rust-analyzer analysis passed. The first full local verification run hit the
+unchanged daemon install-timeout timing test; its exact rerun passed, and the
+complete warmed local verification rerun then passed, including contract,
+release-build, privacy and public-repository gates.
+
 ## Task-bound import attribution instrumentation (#282)
 
 The additive embedding-stream v1 telemetry now attributes resident queue/IPC,

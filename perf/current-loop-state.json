@@ -1,8 +1,8 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
-  "experiment_state": "contract_locked",
+  "workflow_state": "next_issue_or_goal_complete",
+  "experiment_state": "reverted",
   "evidence_lane": "w0_docs",
   "contract_pins": {
     "active_goal_sha256": "7ac0d7c76cad7c416a0427bf4cd6751b9c102bed68c4df5e63f13b6651a101fe",
@@ -10,9 +10,18 @@
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "8c9d3fcf4dad4dbbee5ac132c05fce05dd073317"
+    "git_head_sha": "97b08127637f1495f1c77b11579b76cec925e41d"
   },
   "current_slice": "#286 ONNX weight prepacking",
+  "hypothesis": {
+    "id": "issue-286-onnx-weight-prepacking",
+    "acceptance_cell": "full_import_ocr_backlog",
+    "expected_effect": "resident raw and normalized ONNX medians improve at least 10 percent before a gated full-product paired median improvement above 3 percent",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/286",
+    "after_measurement_ref": "PROGRESS.md#issue-286-onnx-weight-prepacking-negative-closeout",
+    "reprofile_ref": "not_run_correctness_gate_failed",
+    "decision": "reverted"
+  },
   "transition_history": [
     {
       "from": "slice_selected",
@@ -706,7 +715,10 @@
     {"from":"merge_method_selected","to":"pr_merged","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
     {"from":"pr_merged","to":"branch_cleaned_main_synced","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/271"},
     {"from":"branch_cleaned_main_synced","to":"goal_authorized","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"},
-    {"from":"goal_authorized","to":"contract_conflict","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/278"}
+    {"from":"goal_authorized","to":"contract_conflict","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/278"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#issue-286-onnx-weight-prepacking-negative-closeout"},
+    {"from":"implementation_active","to":"evidence_review","evidence_ref":"PROGRESS.md#issue-286-onnx-weight-prepacking-negative-closeout"},
+    {"from":"evidence_review","to":"next_issue_or_goal_complete","evidence_ref":"PROGRESS.md#issue-286-onnx-weight-prepacking-negative-closeout"}
   ],
   "verification": {
     "commands": [
@@ -2952,7 +2964,12 @@
       {"command":"gh issue view 270 --json state; git rev-parse origin/main; xctrace list templates","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"},
       {"command":"private-root capability attestation with redacted result only","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"},
       {"command":"gh pr view 278 --json state,isDraft,baseRefName,headRefName","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/278"},
-      {"command":"pre-merge contract-only phase and provenance-bound post-merge execution reviewed","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"}
+      {"command":"pre-merge contract-only phase and provenance-bound post-merge execution reviewed","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/270"},
+      {"command":"python3 scripts/local/embedding-prepacking-benchmark.py --self-test","exit_code":0,"evidence_ref":"PROGRESS.md#issue-286-onnx-weight-prepacking-negative-closeout"},
+      {"command":"Issue #286 resident exact-vector correctness gate","exit_code":1,"evidence_ref":"PROGRESS.md#issue-286-onnx-weight-prepacking-negative-closeout"},
+      {"command":"post-revert focused Rust, Clippy, format and rust-analyzer checks","exit_code":0,"evidence_ref":"PROGRESS.md#issue-286-onnx-weight-prepacking-negative-closeout"},
+      {"command":"exact unchanged daemon install-timeout timing test rerun","exit_code":0,"evidence_ref":"PROGRESS.md#issue-286-onnx-weight-prepacking-negative-closeout"},
+      {"command":"./scripts/ci/verify-local.sh warmed full rerun","exit_code":0,"evidence_ref":"PROGRESS.md#issue-286-onnx-weight-prepacking-negative-closeout"}
     ],
     "all_required_commands_ran": true,
     "claim": "partial"
@@ -2966,11 +2983,11 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "current-main-import-attribution-2026-07-31",
-  "state_version": 565,
-  "previous_state_hash": "20057a76c14252392421e61e80d4fd2b36fd8b39610f03f2e9e460f84fb433f2",
-  "expected_state_version": 565,
-  "last_confirmed_side_effect": "issue_286_slice_selected",
+  "run_id": "issue-286-prepacking-negative-2026-08-01",
+  "state_version": 566,
+  "previous_state_hash": "ed7c9d516be26f5aa140be81d0aa2de41badcde8571925f8789a27d7578d5447",
+  "expected_state_version": 566,
+  "last_confirmed_side_effect": "issue_286_resident_gate_failed_reverted",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
