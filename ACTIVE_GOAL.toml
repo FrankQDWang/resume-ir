@@ -1,6 +1,6 @@
 schema_version = "resume-ir.active-goal.v1"
 goal_id = "resume-ir.performance-gui-loop.2026-06"
-date = "2026-07-30"
+date = "2026-08-01"
 
 [authority]
 root_goal = "GOAL.md"
@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#279"
-name = "non_ocr_embedding_tail_batching"
+issue = "#282"
+name = "ocr_on_non_ocr_import_attribution"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = true
@@ -22,18 +22,52 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = false
-scope_exception_reason = "This bounded #279 slice changes only resident embedding inference batching up to the existing MAX_INPUTS=4; it excludes OCR, larger batches, model-process changes, query semantics, privacy hardening, GUI work, and non-macOS lanes."
+scope_exception_reason = "This bounded #282 slice authorizes post-merge instrumentation only: normal daemon IPC with OCR enabled measures non-OCR completion without waiting for OCR drain and distinguishes embedding inference from generation publication at <=3% overhead; it excludes implementation in this contract PR, larger batches, extra workers or queues, extra model processes, OCR drain waiting, query hot-path changes, gate weakening, Windows/Linux, and privacy expansion."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
-  "crates/embedder/tests/resident.rs",
-  "crates/embedding-runtime/src/main.rs",
-  "crates/embedding-runtime/src/tests.rs",
   "perf/current-loop-state.json",
   "perf/active-slice-transition.json",
-  "scripts/local/embedding-batch-benchmark.py",
+  "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
+  "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+  "crates/embedding-protocol/src/lib.rs",
+  "crates/embedding-runtime/src/main.rs",
+  "crates/embedding-runtime/src/tests.rs",
+  "crates/embedder/src/resident.rs",
+  "crates/embedder/tests/resident.rs",
+  "crates/import-pipeline/src/lib.rs",
+  "crates/import-pipeline/src/search_vectorizer.rs",
+  "crates/import-pipeline/src/search_publication_vector.rs",
+  "crates/import-pipeline/src/search_publication.rs",
+  "crates/import-pipeline/src/search_publication_commit.rs",
+  "crates/import-pipeline/src/publication_coordinator.rs",
+  "crates/import-pipeline/src/import_run/orchestrator.rs",
+  "crates/import-pipeline/src/tests/no_op_publication_tests.rs",
+  "crates/daemon/src/embedding_runtime.rs",
+  "crates/daemon/src/import_worker.rs",
+  "crates/daemon/src/worker_output.rs",
+  "crates/daemon/src/ipc/routes/status.rs",
+  "crates/daemon/tests/s20_ipc.rs",
+  "crates/cli/src/daemon_ipc_contract/status.rs",
+  "crates/cli/src/daemon_ipc_contract_tests.rs",
+  "crates/cli/tests/s20_status_ipc.rs",
+  "scripts/local/ocr-on-import-attribution.py",
 ]
-allowed_paths_role = "optimization_slice_paths"
+allowed_paths_role = "ocr_on_non_ocr_import_attribution_paths"
+primary_benchmark_lane = "full_import_ocr_backlog"
+hypothesis = "bounded instrumentation can distinguish embedding inference from generation publication with <=3% overhead"
+implementation_boundary = "contract_only_pre_merge; production instrumentation is post_merge_only"
+ocr_endpoint_contract = "OCR runtime enabled; OCR-required documents are durably queued; endpoint completion does not wait for OCR drain"
+ocr_overlap_evidence_required = false
+forbidden_scope = [
+  "larger_batch",
+  "additional_worker_or_queue",
+  "additional_model_process",
+  "wait_for_ocr_drain",
+  "windows_or_linux",
+  "query_hot_path_change",
+  "gate_weakening",
+]
 
 [contracts]
 query_semantics = "simple_text_required_all_terms_v1"
