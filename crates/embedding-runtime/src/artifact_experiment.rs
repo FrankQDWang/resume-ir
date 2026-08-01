@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsStr,
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -90,6 +91,10 @@ impl ArtifactExperiment {
     pub(super) fn load_from_environment() -> Result<Self, RuntimeError> {
         let value = std::env::var_os(ARTIFACT_EXPERIMENT_MANIFEST_ENV)
             .ok_or(RuntimeError::EnvironmentInvalid)?;
+        Self::load_environment_value(&value)
+    }
+
+    fn load_environment_value(value: &OsStr) -> Result<Self, RuntimeError> {
         let path = PathBuf::from(value);
         let text = path.to_str().ok_or(RuntimeError::EnvironmentInvalid)?;
         if !path.is_absolute() || text.len() > MAX_RUNTIME_PATH_BYTES {

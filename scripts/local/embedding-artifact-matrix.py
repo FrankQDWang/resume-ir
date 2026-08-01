@@ -106,6 +106,7 @@ class Resident:
         if profile: env["RESUME_IR_EMBEDDING_PROFILE_OUTPUT_PREFIX"] = str(profile)
         mode = "--resident" if candidate is None else "--resident-artifact-matrix"
         if profile: mode = "--resident-artifact-profile"
+        # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit -- shell=False with a resolved, explicit local binary.
         started=time.perf_counter_ns(); self.process = subprocess.Popen([str(binary), mode], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL); self.request_id = 0; self.model_id=VARIANTS[variant]
         if self.process.stdin is None or self.process.stdout is None or PROF.read_frame(self.process.stdout, 60) != {"type":"ready","schema_version":STREAM,"model_id":VARIANTS[variant],"dimension":DIMENSION}: self.stop(); raise RuntimeError("resident_start_failed")
         self.ready_ms=(time.perf_counter_ns()-started)/1_000_000

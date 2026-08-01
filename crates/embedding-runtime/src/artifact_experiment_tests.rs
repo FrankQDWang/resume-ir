@@ -106,3 +106,35 @@ fn rejects_relative_manifest_path() {
     assert!(ArtifactExperiment::load(Path::new("experiment.json")).is_err());
     assert!(path.is_absolute());
 }
+
+#[test]
+fn environment_value_gate_accepts_only_bounded_absolute_utf8_paths() {
+    let (_root, path) = fp32_fixture();
+    assert_eq!(
+        ArtifactExperiment::load_environment_value(path.as_os_str())
+            .unwrap()
+            .model_path(),
+        path.parent()
+            .unwrap()
+            .canonicalize()
+            .unwrap()
+            .join("model.onnx")
+    );
+    for value in [
+        "experiment.json".to_string(),
+        format!("/{}", "x".repeat(MAX_RUNTIME_PATH_BYTES)),
+    ] {
+        assert!(matches!(
+            ArtifactExperiment::load_environment_value(value.as_ref()),
+            Err(RuntimeError::EnvironmentInvalid)
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt as _};
+        assert!(matches!(
+            ArtifactExperiment::load_environment_value(&OsString::from_vec(vec![0xff])),
+            Err(RuntimeError::EnvironmentInvalid)
+        ));
+    }
+}
