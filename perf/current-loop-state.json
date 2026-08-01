@@ -5,14 +5,14 @@
   "experiment_state": "contract_locked",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "c159c073cc3efa911eb13a831c4e1935c14e5c58f6a7589eb3d265a83e28599e",
+    "active_goal_sha256": "651c010357016e378bca556cefdf690925b7ce54d3c31a860c27fc2f9d7c7608",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "042679a1fc27c2c369fc62c6815868cfa848637d"
+    "git_head_sha": "e4631567e65e28c268113a2f5fa8b777f9223e31"
   },
-  "current_slice": "#279 non-OCR embedding tail batching",
+  "current_slice": "#282 OCR-on non-OCR import attribution",
   "transition_history": [
     {
       "from": "slice_selected",
@@ -2970,11 +2970,11 @@
   "state_version": 565,
   "previous_state_hash": "20057a76c14252392421e61e80d4fd2b36fd8b39610f03f2e9e460f84fb433f2",
   "expected_state_version": 565,
-  "last_confirmed_side_effect": "issue_279_slice_selected",
+  "last_confirmed_side_effect": "issue_282_slice_selected",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#279",
+    "primary_issue": "#282",
     "active_prs": [],
     "open_blockers": []
   }

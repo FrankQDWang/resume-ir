@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-270-to-279-embedding-batching-2026-07-31",
-  "from_issue": "#270",
-  "to_issue": "#279",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/270#issuecomment-5140406523",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/279",
-  "base_active_goal_sha256": "53055ab5833b2f270757e09786498d16ecc2f31d57a1e90d2aa3f404638559f8",
+  "transition_id": "issue-279-to-282-after-pr-281-merged-2026-08-01",
+  "from_issue": "#279",
+  "to_issue": "#282",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/279#issuecomment-5140869353",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/282",
+  "base_active_goal_sha256": "c159c073cc3efa911eb13a831c4e1935c14e5c58f6a7589eb3d265a83e28599e",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
