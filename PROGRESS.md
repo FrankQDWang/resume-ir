@@ -21,10 +21,27 @@ tokenize/tensor/ONNX/pool/normalize and child wall time without changing batch
 size or scheduling. Import publication aggregates vector wall, request-excluded
 vector wall, owner wait, existing fulltext phases and metadata decision/commit.
 `daemon.import_progress.v1` exposes only the latest fixed-size redacted task
-aggregate; `/source-roots` complete remains the terminal task fence. Focused
-contract/unit checks pass; the native daemon E2E currently exits at its existing
-core-ready request budget before reaching the new assertions. No private or OCR
-drain benchmark was run, so the <=3% overhead acceptance remains unmeasured.
+aggregate; `/source-roots` complete remains the terminal task fence.
+
+The current-main `96a40d9` product-path profile completed 8,720 discovered and
+processed files in `1,212.971s`, with 7,328 searchable/indexed, 265 OCR-required
+and durably queued, 4 failed, and 49 ignored. OCR remained enabled, but the
+endpoint did not wait for OCR drain. Source/task binding, publication coverage,
+visibility, atomicity, OCR durability, and the Batch 4 bound all passed.
+ONNX inference consumed `1,001.288s` (`82.548%`); queue wait consumed `19.792s`
+(`1.632%`), tokenization `11.225s` (`0.925%`), fulltext publication `13.123s`
+(`1.082%`), and metadata decision/commit `2.950s` (`0.243%`). The 7,328 inputs
+formed 1,833 batches (`99.945%` fill), while active/padded tokens were
+3,716,172/3,751,936 (`99.046%` utilization). This is a hotspot attribution run,
+not a stable causal before/after claim; normalized host-load drift was `0.492`.
+
+Exact pre-instrumentation/current AB and BA short witnesses each used 24
+repetitions. Current Batch 4 was `1.7%` and `3.3%` faster respectively, with
+exactly equal vectors, so no positive instrumentation overhead was observed and
+the `<=3%` guard passed. #282 therefore selects CPU ONNX inference as the
+dominant next target. Follow-up #286 owns the single-variable weight-prepacking
+hypothesis, its `>=10%` local ONNX gate, paired full-product confirmation, and
+rollback conditions; #282 does not implement that optimization.
 
 ## Resident embedding tensor batching (#279)
 
