@@ -156,7 +156,7 @@ def quality_workload() -> list[dict[str, str]]:
         "sales operations customer success",
         "database storage reliability sql",
     )
-    repetitions = (1, 4, 12, 40, 160)
+    repetitions = (1, 4, 12, 24, 80)
     inputs: list[dict[str, str]] = []
     for index in range(QUALITY_QUERY_COUNT + QUALITY_PASSAGE_COUNT):
         role = "query" if index < QUALITY_QUERY_COUNT else "passage"
@@ -1002,6 +1002,12 @@ def parse_args() -> argparse.Namespace:
     for revision in (args.control_revision, args.candidate_revision):
         if not isinstance(revision, str) or re.fullmatch(r"[0-9a-f]{40}", revision) is None:
             parser.error("revisions must be exact lowercase 40-character Git SHAs")
+    for name in ("control_bin", "candidate_bin", "runtime_dir"):
+        try:
+            setattr(args, name, getattr(args, name).resolve(strict=True))
+        except OSError:
+            parser.error(f"{name.replace('_', '-')} must resolve")
+    args.out = args.out.resolve(strict=False)
     return args
 
 
