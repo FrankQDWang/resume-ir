@@ -33,21 +33,9 @@ gh repo edit "$FULL_NAME" \
 main_sha="$(git rev-parse main)"
 protection_payload=$(cat <<EOF
 {
-  "required_status_checks": {
-    "strict": true,
-    "contexts": [
-      "rust workspace",
-      "public repository guard",
-      "license policy",
-      "dependency tree"
-    ]
-  },
+  "required_status_checks": null,
   "enforce_admins": true,
-  "required_pull_request_reviews": {
-    "dismiss_stale_reviews": true,
-    "require_code_owner_reviews": true,
-    "required_approving_review_count": 1
-  },
+  "required_pull_request_reviews": null,
   "restrictions": null,
   "allow_force_pushes": false,
   "allow_deletions": false,

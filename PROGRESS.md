@@ -1,5 +1,14 @@
 # Progress
 
+## Local-only merge verification
+
+GitHub-hosted PR, security, platform, model-evaluation, and scheduled benchmark
+workflows were retired because they repeated the repository's local verification
+surface and added merge latency for this single-maintainer project. The
+repository keeps only the explicitly dispatched release workflow. Main no
+longer requires hosted status checks; local focused checks, the parallel local
+verification entrypoint, and the public-repository guard remain authoritative.
+
 This file tracks long-running production Goal execution against `GOAL.md`, the
 system design docs, the execution docs, and this running evidence log. Obsolete
 preliminary checklists are historical execution context only, not the

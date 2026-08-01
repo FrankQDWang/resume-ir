@@ -28,9 +28,12 @@ reject_text() {
   fi
 }
 
-pr_workflow=".github/workflows/pr.yml"
-nightly_workflow=".github/workflows/bench-nightly.yml"
-platform_workflow=".github/workflows/ci-platform.yml"
+reject_file() {
+  if [ -e "$1" ]; then
+    fail "retired GitHub CI workflow must remain absent: $1"
+  fi
+}
+
 release_workflow=".github/workflows/release.yml"
 verify_script="scripts/ci/verify-local.sh"
 parallel_verify_script="scripts/ci/verify-local-parallel.py"
@@ -55,64 +58,30 @@ local_ocr_runtime_script="scripts/ci/check-local-ocr-runtime.sh"
 local_diagnostics_evidence_script="scripts/ci/check-local-diagnostics-release-evidence.sh"
 local_quality_evidence_script="scripts/ci/check-local-quality-release-evidence.sh"
 
-for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow" "$verify_script" "$parallel_verify_script" "$parallel_verify_support" "$parallel_verify_manifest" "$parallel_verify_test" "$search_runtime_boundary_script" "$governance_mutation_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$daemon_incremental_script" "$benchmark_smoke_script" "$runtime_bundle_policy_script" "$runtime_bundle_manifest_script" "$runtime_bundle_payload_script" "$runtime_bundle_sbom_script" "$runtime_bundle_package_script" "$current_stage_handoff_script" "$current_stage_validation_script" "$current_stage_observability_script" "$local_ocr_runtime_script" "$local_diagnostics_evidence_script" "$local_quality_evidence_script"; do
+for file in \
+  .github/workflows/pr.yml \
+  .github/workflows/security.yml \
+  .github/workflows/ci-platform.yml \
+  .github/workflows/bench-nightly.yml \
+  .github/workflows/model-eval.yml
+do
+  reject_file "$file"
+done
+
+unexpected_workflows=$(find .github/workflows -maxdepth 1 -type f ! -name release.yml -print)
+if [ -n "$unexpected_workflows" ]; then
+  printf '%s\n' "$unexpected_workflows" >&2
+  fail "automatic or duplicate GitHub workflows are not allowed; local verification is authoritative"
+fi
+
+for file in "$release_workflow" "$verify_script" "$parallel_verify_script" "$parallel_verify_support" "$parallel_verify_manifest" "$parallel_verify_test" "$search_runtime_boundary_script" "$governance_mutation_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$daemon_incremental_script" "$benchmark_smoke_script" "$runtime_bundle_policy_script" "$runtime_bundle_manifest_script" "$runtime_bundle_payload_script" "$runtime_bundle_sbom_script" "$runtime_bundle_package_script" "$current_stage_handoff_script" "$current_stage_validation_script" "$current_stage_observability_script" "$local_ocr_runtime_script" "$local_diagnostics_evidence_script" "$local_quality_evidence_script"; do
   require_file "$file"
 done
 
-require_text "$pr_workflow" "CLI closed-loop check"
-require_text "$pr_workflow" "./scripts/ci/check-cli-closed-loop.sh"
-require_text "$pr_workflow" "Daemon closed-loop check"
-require_text "$pr_workflow" "./scripts/ci/check-daemon-closed-loop.sh"
-reject_text "$pr_workflow" "Daemon incremental import check"
-reject_text "$pr_workflow" "./scripts/ci/check-daemon-incremental-import.sh"
-require_text "$pr_workflow" "Benchmark smoke"
-require_text "$pr_workflow" "./scripts/ci/check-benchmark-smoke.sh"
-require_text "$pr_workflow" "Current-stage handoff check"
-require_text "$pr_workflow" "./scripts/ci/check-current-stage-handoff.sh"
-require_text "$pr_workflow" "Search runtime boundary check"
-require_text "$pr_workflow" "python3 scripts/ci/check-search-runtime-boundary.py"
-require_text "$pr_workflow" "Restore reviewed macOS PDFium static pack"
-require_text "$pr_workflow" "actions/cache/restore@v4"
-require_text "$pr_workflow" ".cache/resume-ir-macos-pdfium-static-pack"
-require_text "$pr_workflow" "Build reviewed macOS PDFium static pack"
-require_text "$pr_workflow" "steps.pdfium-cache.outputs.cache-hit != 'true'"
-require_text "$pr_workflow" "Verify reviewed macOS PDFium static pack"
-require_text "$pr_workflow" "npm run verify:macos:pdfium"
-require_text "$pr_workflow" "Save reviewed macOS PDFium static pack"
-require_text "$pr_workflow" "actions/cache/save@v4"
-require_text "$pr_workflow" "steps.pdfium-cache.outputs.cache-primary-key"
-require_text "$pr_workflow" "Install desktop dependencies"
-require_text "$pr_workflow" "npm ci --ignore-scripts --no-audit --no-fund"
-require_text "$pr_workflow" "Desktop frontend build"
-require_text "$pr_workflow" "npm run build"
-require_text "$pr_workflow" 'if: ${{ !cancelled() }}'
-require_text "$pr_workflow" "if: \${{ !cancelled() && steps.pdfium-verify.outcome == 'success' }}"
-require_text "$pr_workflow" "cargo test --workspace --locked --no-fail-fast"
-require_text "$pr_workflow" "check-workflows.sh"
-require_text "$pr_workflow" "actions/checkout@v6"
-
-require_text "$nightly_workflow" "resume-benchmark --locked -- synthetic-query"
-require_text "$nightly_workflow" "resume-benchmark --locked -- gate"
-require_text "$nightly_workflow" "resume-benchmark --locked -- ocr-throughput"
-require_text "$nightly_workflow" "resume-benchmark --locked -- ocr-gate"
-require_text "$nightly_workflow" "ocr-benchmark-smoke.json"
-require_text "$nightly_workflow" "resume-benchmark --locked -- vector-quality"
-require_text "$nightly_workflow" "resume-benchmark --locked -- vector-gate"
-require_text "$nightly_workflow" "vector-benchmark-smoke.json"
-require_text "$nightly_workflow" "--allow-synthetic"
-require_text "$nightly_workflow" "actions/checkout@v6"
-require_text "$nightly_workflow" "actions/upload-artifact@v7"
-require_text "$nightly_workflow" "Check benchmark artifact boundary"
-require_text "$nightly_workflow" "nightly benchmark smoke report leaked a local path or runtime-data marker"
-require_text "$nightly_workflow" "nightly OCR benchmark smoke report leaked a local path or runtime-data marker"
-require_text "$nightly_workflow" "nightly vector benchmark smoke report leaked a local path or runtime-data marker"
-
-require_text "$platform_workflow" "macos-latest"
-reject_text "$platform_workflow" "windows-latest"
-reject_text "$platform_workflow" "pull_request:"
-require_text "$platform_workflow" "cargo build --workspace --locked"
-require_text "$platform_workflow" "cargo test --workspace --locked"
-require_text "$platform_workflow" "actions/checkout@v6"
+require_text "$release_workflow" "workflow_dispatch:"
+reject_text "$release_workflow" "pull_request:"
+reject_text "$release_workflow" "schedule:"
+reject_text "$release_workflow" "push:"
 
 require_text "$verify_script" "./scripts/ci/check-workflows.sh"
 require_text "$verify_script" "python3 scripts/ci/check-search-runtime-boundary.py"
@@ -343,9 +312,9 @@ require_text "$release_workflow" "actions/checkout@v6"
 require_text "$release_workflow" "actions/upload-artifact@v7"
 require_text "$release_workflow" "Signing, notarization, installer lifecycle validation"
 
-for file in "$pr_workflow" "$nightly_workflow" "$platform_workflow" "$release_workflow"; do
+for file in "$release_workflow"; do
   reject_text "$file" "actions/checkout@v4"
   reject_text "$file" "actions/upload-artifact@v4"
 done
 
-printf '%s\n' "workflow check passed"
+printf '%s\n' "local-only workflow policy check passed"
