@@ -24,9 +24,11 @@ use std::thread;
 use tokenizers::{AddedToken, PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
 
 mod batch;
+mod profiling;
 mod runtime_pack;
 
 use batch::{mean_pool_batch, tokenized_batch};
+use profiling::{parse_run_mode, ProfilingMode, RunMode, PROFILE_OUTPUT_PREFIX_ENV};
 #[cfg(test)]
 use runtime_pack::AssetIdentity;
 use runtime_pack::{FileRole, RuntimePack};
@@ -67,10 +69,9 @@ fn run_with_panic_boundary(
 
 fn run() -> Result<(), RuntimeError> {
     let args = env::args().skip(1).collect::<Vec<_>>();
-    match args.as_slice() {
-        [] => run_one_shot(),
-        [mode] if mode == "--resident" => run_resident(),
-        _ => Err(RuntimeError::EnvironmentInvalid),
+    match parse_run_mode(&args, || env::var_os(PROFILE_OUTPUT_PREFIX_ENV))? {
+        RunMode::OneShot => run_one_shot(),
+        RunMode::Resident(profiling) => run_resident(profiling),
     }
 }
 
@@ -88,7 +89,7 @@ fn run_one_shot() -> Result<(), RuntimeError> {
         return Err(RuntimeError::IdentityMismatch);
     }
 
-    let mut model = initialize_model(&pack, environment.intra_threads)?;
+    let mut model = initialize_model(&pack, environment.intra_threads, ProfilingMode::Disabled)?;
     let texts = request.inputs.iter().map(prefixed_text).collect::<Vec<_>>();
     let mut vectors = Vec::with_capacity(texts.len());
     for text in &texts {
@@ -99,14 +100,14 @@ fn run_one_shot() -> Result<(), RuntimeError> {
     Ok(())
 }
 
-fn run_resident() -> Result<(), RuntimeError> {
+fn run_resident(profiling: ProfilingMode) -> Result<(), RuntimeError> {
     start_resident_parent_death_guard()?;
     let environment = ResidentEnvironment::read()?;
     let pack = RuntimePack::load(&environment.runtime_dir)?;
     if environment.model_id != pack.model_id() || environment.dimension != pack.dimension() {
         return Err(RuntimeError::IdentityMismatch);
     }
-    let mut model = initialize_model(&pack, environment.intra_threads)?;
+    let mut model = initialize_model(&pack, environment.intra_threads, profiling)?;
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut reader = BufReader::new(stdin.lock());
@@ -121,7 +122,10 @@ fn run_resident() -> Result<(), RuntimeError> {
     loop {
         let request = match read_frame::<EmbedRequest>(&mut reader, MAX_REQUEST_BYTES) {
             Ok(Some(request)) => request,
-            Ok(None) => return Ok(()),
+            Ok(None) => {
+                model.finish_profiling()?;
+                return Ok(());
+            }
             Err(embedding_protocol::ProtocolError::InvalidPayload) => {
                 write_frame(
                     &mut writer,
@@ -233,6 +237,7 @@ fn start_resident_parent_death_guard() -> Result<(), RuntimeError> {
 fn initialize_model(
     pack: &RuntimePack,
     intra_threads: usize,
+    profiling: ProfilingMode,
 ) -> Result<NativeEmbeddingModel, RuntimeError> {
     if !ort::init_from(pack.file(FileRole::RuntimeLibrary)?)
         .map_err(|_| RuntimeError::RuntimeUnavailable)?
@@ -241,7 +246,7 @@ fn initialize_model(
         return Err(RuntimeError::RuntimeUnavailable);
     }
     tokenizers::utils::parallelism::set_parallelism(false);
-    NativeEmbeddingModel::load(pack, intra_threads)
+    NativeEmbeddingModel::load(pack, intra_threads, profiling)
 }
 
 fn prefixed_text(input: &EmbeddingRuntimeInput) -> String {
@@ -265,12 +270,17 @@ struct NativeEmbeddingModel {
     tokenizer: Tokenizer,
     session: Session,
     need_token_type_ids: bool,
+    profiling: ProfilingMode,
 }
 
 impl NativeEmbeddingModel {
-    fn load(pack: &RuntimePack, intra_threads: usize) -> Result<Self, RuntimeError> {
+    fn load(
+        pack: &RuntimePack,
+        intra_threads: usize,
+        profiling: ProfilingMode,
+    ) -> Result<Self, RuntimeError> {
         let builder_error = |_| RuntimeError::ModelUnavailable;
-        let session = Session::builder()
+        let builder = Session::builder()
             .map_err(|_| RuntimeError::ModelUnavailable)?
             .with_execution_providers([CPU::default().with_arena_allocator(false).build()])
             .map_err(builder_error)?
@@ -285,7 +295,9 @@ impl NativeEmbeddingModel {
             .with_intra_threads(intra_threads)
             .map_err(builder_error)?
             .with_inter_threads(1)
-            .map_err(builder_error)?
+            .map_err(builder_error)?;
+        let session = profiling
+            .configure_builder(builder)?
             .commit_from_file(pack.file(FileRole::Model)?)
             .map_err(|_| RuntimeError::ModelUnavailable)?;
         let need_token_type_ids = session
@@ -310,7 +322,12 @@ impl NativeEmbeddingModel {
             tokenizer,
             session,
             need_token_type_ids,
+            profiling,
         })
+    }
+
+    fn finish_profiling(&mut self) -> Result<(), RuntimeError> {
+        self.profiling.finish(&mut self.session)
     }
 
     fn embed(&mut self, text: &str) -> Result<Vec<f32>, RuntimeError> {
