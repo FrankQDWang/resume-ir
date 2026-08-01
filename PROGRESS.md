@@ -43,6 +43,33 @@ implementation or formal measurement. Contract, autonomous-goal, Loop-state,
 governance-mutation, public-repository and diff gates are required for this
 contract-only PR.
 
+### Issue #295 embedding artifact matrix result
+
+The exact macOS M4/native ORT 1.27.0 release matrix completed all eight
+balanced Latin-square blocks and 32 independent public-synthetic resident
+sessions. Against the current Dynamic U8S8 control's 332881.75 microsecond
+Batch-4 x 512 ONNX median, FP32 was 32.059 percent slower, Static QDQ S8S8 was
+23.436 percent slower, and Static QOperator U8S8 was 21.746 percent slower.
+Every paired ONNX and resident-wall 95 percent interval was negative, while
+the maximum sensitivity regression was respectively 77.097, 34.500, and
+31.676 percent.
+
+All three candidates also failed the pre-registered control-referenced quality,
+Ready, and H0 memory gates. Their H2 Ready times were 1567.865, 1483.528, and
+1482.311 milliseconds versus 638.170 for control; H0 physical footprints were
+868451672, 807421176, and 806487312 bytes versus 490111912 for control. The
+deterministic candidate sizes were 470268510, 406839158, and 406779405 bytes.
+
+The result is therefore `lost`: no candidate receives winner profiling, no
+production migration Issue is opened, and the current Dynamic INT8 artifact
+remains unchanged. The 20-test combined witness suite and focused Rust tests
+pass, as does the complete local verification suite. Generated models,
+manifests, vectors, inputs, raw samples, paths, and PIDs were deleted with
+their owner-only temporary directories. This remains a
+bounded L1 resident experiment and makes no product-speedup, W1, scale,
+release, or goal-complete claim. The public result is recorded in
+[#295](https://github.com/FrankQDWang/resume-ir/issues/295#issuecomment-5152670658).
+
 ## Issue #293 resident ONNX operator-profile contract
 
 Issue #293 is the L0 observation successor to the rejected and reverted
