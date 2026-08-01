@@ -278,7 +278,7 @@ impl NativeEmbeddingModel {
             .map_err(builder_error)?
             .with_memory_pattern(false)
             .map_err(builder_error)?
-            .with_prepacking(false)
+            .with_prepacking(true)
             .map_err(builder_error)?
             .with_parallel_execution(false)
             .map_err(builder_error)?
