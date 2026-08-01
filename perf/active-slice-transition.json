@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-290-to-293-onnx-operator-profile-attribution-2026-08-01",
-  "from_issue": "#290",
-  "to_issue": "#293",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/290#issuecomment-5151596708",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/293",
-  "base_active_goal_sha256": "888ff7779ea63f98e4d5be0531fb90464ceb2e203751bbe2a5bb9708f636f1e4",
+  "transition_id": "issue-293-to-295-embedding-artifact-matrix-2026-08-02",
+  "from_issue": "#293",
+  "to_issue": "#295",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/293#issuecomment-5152318044",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/295",
+  "base_active_goal_sha256": "f4b9b6872e2186193d4052b2bce0fdd8aa149132dd19101e0f0603b628055e9b",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",

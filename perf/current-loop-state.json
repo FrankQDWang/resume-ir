@@ -1,26 +1,26 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
-  "experiment_state": "bottleneck_selected",
+  "workflow_state": "slice_selected",
+  "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "f4b9b6872e2186193d4052b2bce0fdd8aa149132dd19101e0f0603b628055e9b",
+    "active_goal_sha256": "d619df2f49a6d27b75c1edfa7438a2bc2ffbc42cc0d010137af649b718d50979",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "f35b860f373f6cbd680cf9ca1c99292254a6e5bf"
+    "git_head_sha": "53677d36c17201a197dc1601573be087efbf10b5"
   },
-  "current_slice": "#293 resident CPU ONNX operator attribution",
+  "current_slice": "#295 embedding artifact matrix",
   "hypothesis": {
-    "id": "issue-293-onnx-operator-profile-attribution",
+    "id": "issue-295-embedding-artifact-matrix",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "one stable operator family has median measured-node share at least 20 percent, ranks first in at least four of five primary captures, and remains top-two across five token buckets",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/282",
-    "after_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/293#issuecomment-5152318044",
-    "reprofile_ref": "https://github.com/FrankQDWang/resume-ir/issues/295",
-    "decision": "accepted"
+    "expected_effect": "one unique FP32, static-QDQ-S8S8, or static-QOperator-U8S8 artifact improves the primary unprofiled resident ONNX median by at least 10 percent with positive paired intervals, no sensitivity regression above 3 percent, and every integrity, quality, startup, packaging, and memory gate passing",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/293#issuecomment-5152318044",
+    "after_measurement_ref": null,
+    "reprofile_ref": null,
+    "decision": "active"
   },
   "transition_history": [
     {
@@ -728,7 +728,8 @@
     {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-attribution-result"},
     {"from":"baseline_validated","to":"profile_captured","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/293#issuecomment-5152318044"},
     {"from":"profile_captured","to":"bottleneck_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/295"},
-    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-attribution-result"}
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-attribution-result"},
+    {"from":"bottleneck_selected","to":"hypothesis_registered","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/295"}
   ],
   "verification": {
     "commands": [
@@ -3014,15 +3015,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-293-onnx-operator-profile-2026-08-01",
-  "state_version": 570,
-  "previous_state_hash": "126d4db414919d3ba42a9eddfc749fc61b2a01ab204a9780a184b6920d7ba689",
-  "expected_state_version": 570,
-  "last_confirmed_side_effect": "issue_295_created_after_issue_293_bottleneck_selected",
+  "run_id": "issue-295-embedding-artifact-matrix-2026-08-02",
+  "state_version": 571,
+  "previous_state_hash": "7b9fc7b8a9c7ccf62127c211d3ab7687453f7b1196902f33c79508d1623cb9e4",
+  "expected_state_version": 571,
+  "last_confirmed_side_effect": "issue_295_contract_selected",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#293",
+    "primary_issue": "#295",
     "active_prs": [],
     "open_blockers": []
   }

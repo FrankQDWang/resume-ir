@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#293"
-name = "onnx_operator_profile_attribution"
+issue = "#295"
+name = "embedding_artifact_matrix"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = false
@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "not_applicable_public_synthetic_only"
 scope_exception = false
-scope_exception_reason = "This bounded #293 L0 observation slice adds an explicit local-only resident ORT profiling mode and a public-synthetic operator-aggregation witness; it selects at most one follow-up hypothesis and excludes every runtime, model, graph, allocator, thread, batch, queue, worker, OCR, query, non-macOS, gate, and privacy optimization."
+scope_exception_reason = "This bounded #295 L1 model/runtime architecture experiment compares the exact current dynamic-U8S8 artifact with FP32, static-QDQ-S8S8, and static-QOperator-U8S8 artifacts through an explicit local-only resident mode and public-synthetic witness; it does not replace the production pack or combine any allocator, thread, runtime-version, graph-optimizer, pooling, CoreML, batch, queue, worker, OCR, query, non-macOS, gate, or privacy change."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -33,28 +33,35 @@ allowed_paths = [
   "crates/embedding-runtime/src/main.rs",
   "crates/embedding-runtime/src/profiling.rs",
   "crates/embedding-runtime/src/profiling_tests.rs",
-  "scripts/local/embedding-onnx-operator-profile.py",
+  "crates/embedding-runtime/src/artifact_experiment.rs",
+  "crates/embedding-runtime/src/artifact_experiment_tests.rs",
+  "scripts/local/embedding-artifact-matrix.py",
   "scripts/ci/test-governance-contract-mutations.py",
 ]
-allowed_paths_role = "onnx_operator_profile_attribution_paths"
+allowed_paths_role = "embedding_artifact_matrix_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "L0"
-optimization_layer_selected = false
-hypothesis = "the exact current resident CPU ONNX workload has one stable operator family with median measured-node share >=20%, first rank in >=4 of 5 primary captures, and top-two rank across five token buckets"
-expected_delta = "none; attribution-only profile selects one later L1-L4 optimization hypothesis without claiming a speedup"
-negative_control = "the exact same release binary in ordinary --resident mode with profiling disabled"
-implementation_boundary = "the contract transition merges before the resident profiling mode, formal capture, or follow-up optimization issue"
-resident_workload = "public synthetic only; five independent Batch-4 512-active-token sessions; H2 three-thread policy; 30-second warmup plus 20 measured requests; one sensitivity capture each at 8, 32, 96, 256, and 512 active tokens"
-resident_acceptance = "5 of 5 primary traces parse with exact measured-request counts; profiled and unprofiled vectors are elementwise equal; the same family ranks first in >=4 of 5 captures with median share >=20% and stays top-two in every sensitivity bucket; xctrace or sample does not conflict"
+observation_stage = "L1_artifact_matrix"
+optimization_layer = "L1"
+optimization_layer_selected = true
+hypothesis = "one of the exact-revision FP32, static-QDQ-S8S8, or static-QOperator-U8S8 artifacts reduces unprofiled Batch-4 x 512 resident ONNX median by at least 10 percent with a positive paired bootstrap interval, no token-bucket regression above 3 percent, and all integrity, control-referenced quality, startup, packaging, and memory gates passing"
+expected_delta = "a unique candidate improves the primary ONNX median by >=10% and resident wall time with positive paired 95% intervals while preserving every pre-registered quality and resource guard"
+negative_control = "the exact current dynamic-U8S8 runtime pack in ordinary --resident mode, repeated in the same seeded balanced Latin-square blocks"
+implementation_boundary = "this contract transition merges before downloading or generating candidates, adding the explicit local-only artifact modes, running the formal matrix, or opening a production model-migration issue"
+candidate_artifacts = "current dynamic-U8S8 control; exact upstream FP32; static QDQ S8S8 MinMax MatMul-only; static QOperator U8S8 MinMax MatMul-only; all use upstream revision 614241f622f53c4eeff9890bdc4f31cfecc418b3 and the current tokenizer"
+calibration_workload = "100 deterministic public-synthetic inputs; 20 each at 8, 32, 96, 256, and 512 active tokens; query and passage roles balanced"
+resident_workload = "public synthetic only; eight seeded balanced Latin-square blocks and 32 independent release resident sessions; Batch 4; H2 three-thread policy; 30-second Batch-4 x 512 warmup; 20 primary 512-token measured requests plus 10 measured requests at each 8, 32, 96, and 256-token sensitivity bucket per session"
+resident_acceptance = "primary ONNX median improves >=10% with paired bootstrap 95% lower bound >0; resident wall-time interval is positive; no sensitivity bucket regresses >3%; model identity, dimension, token accounting, finite normalized vectors, control-referenced quality, startup, single-file packaging, H0 512MiB, and H2 1536MiB gates pass; multiple passing candidates require a positive paired interval over the runner-up"
 full_product_acceptance = "not authorized; no private root, full import, W1, product speedup, scale, release, or goal-complete claim"
-profile_overhead_boundary = "overhead is reported separately; above 3% remains hotspot attribution only and cannot become before-after performance evidence"
-raw_profile_boundary = "raw ORT and Instruments or sample captures remain in owner-only temporary storage and are deleted after bounded aggregation"
-rollback_condition = "any normal resident behavior change, vector drift, malformed or unbounded report, raw trace or private-data leak, or unstable/conflicting attribution ends #293 as inconclusive without an optimization issue"
+winner_reprofile = "only one unique matrix winner receives five Batch-4 x 512 ORT captures and one 20-second unprofiled xctrace or sample cross-check; profiled and unprofiled winner vectors remain elementwise equal and the new operator attribution must be stable and non-conflicting"
+raw_profile_boundary = "downloaded and generated models, manifests with local paths, raw latency samples, ORT traces, xctrace or sample captures, inputs, tokens, and vectors remain in owner-only temporary storage and are deleted after bounded aggregation"
+rollback_condition = "retain the current production artifact and open no migration issue if no candidate clears every gate, candidates tie statistically, profiling is unstable or conflicting, ordinary resident behavior changes, the report is malformed or unbounded, or any raw/private material leaks"
 forbidden_scope = [
   "cpu_arena_change",
   "thread_policy_change",
   "ort_upgrade",
-  "model_or_graph_change",
+  "production_runtime_pack_change",
+  "production_model_id_change",
+  "production_vector_reindex",
   "pooling_change",
   "larger_batch",
   "additional_worker_or_queue",
