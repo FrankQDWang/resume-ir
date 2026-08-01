@@ -1,34 +1,33 @@
 # CI/CD 与发布打包
 
-## 1. CI/CD 平台
+## 1. 验证与发布平台
 
-首选 GitHub Actions。
+当前仓库由单人维护，合并验证以本机为唯一执行面。GitHub Actions 不再
+运行 PR、push、定时、安全、模型或 benchmark CI，避免与本机验证重复。
 
-原因：
+本机验证入口：
 
-1. 与 GitHub PR、CODEOWNERS、branch protection 集成最直接。
-2. 支持 Windows/macOS/Linux runner。
-3. 支持 workflow matrix。
-4. 支持 artifact、cache、release、环境密钥。
-5. 支持安全扫描、CodeQL、依赖更新等生态。
+```bash
+./scripts/ci/verify-local.sh --parallel
+```
+
+小切片先跑受影响的 focused checks，合并前再跑一次适当范围的本机验证。
+发布仍保留显式手动触发的 GitHub Actions workflow；它不是合并门禁。
 
 ## 2. Workflow 总览
 
 ```text
 .github/workflows/
-  pr.yml              # 每个 PR 必跑
-  ci-platform.yml     # 跨平台构建和测试
-  bench-nightly.yml   # 夜间基准测试
-  release.yml         # tag 发布
-  model-eval.yml      # 模型转换、量化、质量评估
-  security.yml        # 安全扫描、依赖审计、SBOM
+  release.yml         # 仅手动发布
 ```
 
-## 3. PR workflow
+## 3. 本地合并验证
 
-触发：`pull_request`。
+不配置 `pull_request`、`push` 或 `schedule` workflow，也不配置 required
+status checks。PR 用于保留可审核 diff 和合并历史，不重复执行本机已经完成的
+测试。
 
-必跑 job：
+本地验证覆盖：
 
 1. `cargo fmt --check`
 2. `cargo clippy --all-targets --all-features -D warnings`
@@ -40,32 +39,17 @@
 8. changed docs check
 9. minimal benchmark smoke test
 
-PR workflow 只跑小数据，不能跑百万级压测。
+本地常规验证只跑合成或小数据；真实目录 profile 和长时压测按性能合同单独执行。
 
-## 4. 跨平台 CI
+## 4. 平台边界
 
-矩阵建议：
+当前交付目标仅为本机 macOS。平台构建、测试、安装和性能证据都在本机完成；
+Windows 与 Linux 不属于当前交付门禁。
 
-```yaml
-strategy:
-  fail-fast: false
-  matrix:
-    os: [windows-latest, macos-latest]
-    profile: [release]
-```
+## 5. 性能基准
 
-扩展矩阵：
-
-1. Windows x86_64。
-2. macOS arm64。
-3. macOS x86_64，如果仍要支持 Intel Mac。
-4. Linux 仅用于工具链和服务器式基准，不作为用户目标平台。
-
-如果 GitHub-hosted runner 对 Apple Silicon 覆盖不足，准备自托管 M 系列 runner。
-
-## 5. 夜间基准
-
-触发：`schedule` + 手动 `workflow_dispatch`。
+不运行夜间或定时 GitHub benchmark。性能实验在受控的本机实验窗口中显式运行，
+并按当前 performance contract 记录基线、A/B 顺序、资源干扰和脱敏聚合证据。
 
 任务：
 
@@ -77,7 +61,7 @@ strategy:
 6. 索引大小和内存峰值。
 7. 与上一夜对比，超过阈值 fail。
 
-产物：
+本地私有产物：
 
 ```text
 bench-results/
@@ -155,14 +139,11 @@ bench-results/
 
 合并到 main 的门禁：
 
-1. PR 必须通过必跑 CI。
-2. 至少 1 名 code owner approval。
-3. 涉及安全/隐私需 security owner approval。
-4. 涉及索引 schema 需 index owner approval。
-5. 涉及 release/installer 需 platform owner approval。
-6. 不允许直接 push main。
-7. 不允许合并 failing checks。
-8. 重大性能 regression 不允许合并。
+1. 按改动风险完成 focused checks，并在合并前完成适当范围的本机验证。
+2. 公开推送前运行 `./scripts/ci/guard-public-repo.sh`。
+3. PR 保留 diff 与合并记录，但不等待 GitHub status checks。
+4. 不允许直接 push main。
+5. 重大性能 regression 不允许合并。
 
 ## 10. CI 工具建议
 
