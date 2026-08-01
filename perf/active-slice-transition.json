@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-286-to-290-onnx-prepacking-drift-tradeoff-2026-08-01",
-  "from_issue": "#286",
-  "to_issue": "#290",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/286#issuecomment-5151217948",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/290",
-  "base_active_goal_sha256": "7ac0d7c76cad7c416a0427bf4cd6751b9c102bed68c4df5e63f13b6651a101fe",
+  "transition_id": "issue-290-to-293-onnx-operator-profile-attribution-2026-08-01",
+  "from_issue": "#290",
+  "to_issue": "#293",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/290#issuecomment-5151596708",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/293",
+  "base_active_goal_sha256": "888ff7779ea63f98e4d5be0531fb90464ceb2e203751bbe2a5bb9708f636f1e4",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",

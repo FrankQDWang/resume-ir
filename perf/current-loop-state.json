@@ -1,26 +1,26 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "next_issue_or_goal_complete",
-  "experiment_state": "reverted",
+  "workflow_state": "slice_selected",
+  "experiment_state": "baseline_validated",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "888ff7779ea63f98e4d5be0531fb90464ceb2e203751bbe2a5bb9708f636f1e4",
+    "active_goal_sha256": "f4b9b6872e2186193d4052b2bce0fdd8aa149132dd19101e0f0603b628055e9b",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "7eb7a30a1c6013bdf70d06e9e5e8f36ed8566ddc"
+    "git_head_sha": "f35b860f373f6cbd680cf9ca1c99292254a6e5bf"
   },
-  "current_slice": "#290 ONNX prepacking drift trade-off",
+  "current_slice": "#293 resident CPU ONNX operator attribution",
   "hypothesis": {
-    "id": "issue-290-onnx-prepacking-drift-tradeoff",
+    "id": "issue-293-onnx-operator-profile-attribution",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "bounded numerical drift preserves control-referenced retrieval stability while resident raw and normalized ONNX medians improve at least 10 percent before a gated full-product paired median improvement above 3 percent",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/290",
-    "after_measurement_ref": "PROGRESS.md#issue-290-onnx-prepacking-drift-trade-off-negative-closeout",
-    "reprofile_ref": "resident_gate_failed_private_product_not_run",
-    "decision": "reverted"
+    "expected_effect": "one stable operator family has median measured-node share at least 20 percent, ranks first in at least four of five primary captures, and remains top-two across five token buckets",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/282",
+    "after_measurement_ref": null,
+    "reprofile_ref": null,
+    "decision": "active"
   },
   "transition_history": [
     {
@@ -722,7 +722,8 @@
     {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/290"},
     {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#issue-290-onnx-prepacking-drift-trade-off-negative-closeout"},
     {"from":"implementation_active","to":"evidence_review","evidence_ref":"PROGRESS.md#issue-290-onnx-prepacking-drift-trade-off-negative-closeout"},
-    {"from":"evidence_review","to":"next_issue_or_goal_complete","evidence_ref":"PROGRESS.md#issue-290-onnx-prepacking-drift-trade-off-negative-closeout"}
+    {"from":"evidence_review","to":"next_issue_or_goal_complete","evidence_ref":"PROGRESS.md#issue-290-onnx-prepacking-drift-trade-off-negative-closeout"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/293"}
   ],
   "verification": {
     "commands": [
@@ -2987,7 +2988,11 @@
       {"command":"rust-analyzer diagnostics .","exit_code":0,"evidence_ref":"PROGRESS.md#issue-290-onnx-prepacking-drift-trade-off-negative-closeout"},
       {"command":"exact unchanged daemon install-handoff timeout test rerun","exit_code":0,"evidence_ref":"PROGRESS.md#issue-290-onnx-prepacking-drift-trade-off-negative-closeout"},
       {"command":"exact unchanged PDF minimal-timeout test rerun","exit_code":0,"evidence_ref":"PROGRESS.md#issue-290-onnx-prepacking-drift-trade-off-negative-closeout"},
-      {"command":"three post-revert ./scripts/ci/verify-local.sh attempts stopped by unchanged timing races","exit_code":1,"evidence_ref":"PROGRESS.md#issue-290-onnx-prepacking-drift-trade-off-negative-closeout"}
+      {"command":"three post-revert ./scripts/ci/verify-local.sh attempts stopped by unchanged timing races","exit_code":1,"evidence_ref":"PROGRESS.md#issue-290-onnx-prepacking-drift-trade-off-negative-closeout"},
+      {"command":"python3 scripts/ci/check-performance-contracts.py","exit_code":0,"evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-profile-contract"},
+      {"command":"python3 scripts/ci/check-autonomous-goal.py","exit_code":0,"evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-profile-contract"},
+      {"command":"python3 scripts/ci/check-loop-state.py","exit_code":0,"evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-profile-contract"},
+      {"command":"python3 scripts/ci/test-governance-contract-mutations.py and public-repository guard","exit_code":0,"evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-profile-contract"}
     ],
     "all_required_commands_ran": true,
     "claim": "partial"
@@ -3001,15 +3006,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-290-prepacking-negative-2026-08-01",
-  "state_version": 568,
-  "previous_state_hash": "2647af7683c245499dc7466453eff44666a192d1ad902a177b3666fb725890c7",
-  "expected_state_version": 568,
-  "last_confirmed_side_effect": "issue_290_resident_gate_failed_reverted",
+  "run_id": "issue-293-onnx-operator-profile-2026-08-01",
+  "state_version": 569,
+  "previous_state_hash": "5eb86ea6bbb320c9d257b5165bd4edc67ece4ca913575af01a3e5fa7e3fa12e8",
+  "expected_state_version": 569,
+  "last_confirmed_side_effect": "issue_293_created_contract_selected",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#290",
+    "primary_issue": "#293",
     "active_prs": [],
     "open_blockers": []
   }
