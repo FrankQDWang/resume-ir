@@ -14,6 +14,33 @@ system design docs, the execution docs, and this running evidence log. Obsolete
 preliminary checklists are historical execution context only, not the
 production-ready scope source.
 
+## Issue #293 resident ONNX operator-profile contract
+
+Issue #293 is the L0 observation successor to the rejected and reverted
+prepacking experiments in #286 and #290. It retains the exact current model,
+runtime, Batch-4 bound, three-thread H2 policy and every production session
+flag. The only implementation surface it authorizes is an explicit local-only
+resident profiling mode plus a bounded public-synthetic aggregation witness;
+ordinary resident execution must remain unchanged.
+
+The primary capture uses five independent release sessions with four
+512-active-token inputs, a 30-second warmup and 20 measured requests. Five
+public-synthetic token buckets provide shape sensitivity. Success requires
+exact profiled/unprofiled vectors, complete bounded traces, a stable operator
+family with at least 20 percent median measured-node share, and a non-conflicting
+macOS Time Profiler or `sample` cross-check. Raw trace, node, symbol, path, PID,
+text, token and vector data remain temporary and local-only.
+
+This contract is attribution-only. It does not authorize a private root read,
+full-product benchmark, CPU arena, thread, ORT, model, graph, pooling, CoreML or
+other optimization, and cannot make W1, product-speedup, scale, release or
+goal-complete claims. A stable result may open exactly one later optimization
+Issue; an unstable or conflicting result closes #293 as inconclusive.
+
+The performance, autonomous-goal and loop-state contracts, governance mutation
+suite, public-repository guard and diff check pass for this contract-only
+transition. No production code or profiler was run before the transition.
+
 ## Issue #290 ONNX prepacking drift trade-off negative closeout
 
 The bounded public-synthetic resident experiment completed all 24 seeded

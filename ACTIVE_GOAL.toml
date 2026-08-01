@@ -12,17 +12,17 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#290"
-name = "onnx_prepacking_drift_tradeoff"
+issue = "#293"
+name = "onnx_operator_profile_attribution"
 contract_change_allowed = true
 production_code_allowed = true
-private_benchmark_allowed = true
-configured_private_roots_required = true
+private_benchmark_allowed = false
+configured_private_roots_required = false
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
-unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
+unconfigured_private_run_terminal = "not_applicable_public_synthetic_only"
 scope_exception = false
-scope_exception_reason = "This bounded #290 L3 slice evaluates ONNX Runtime weight prepacking against explicit numerical and control-referenced retrieval-stability budgets before retaining the single production Boolean; it excludes CPU arena, thread-policy, ORT/model/graph/pooling, batch, worker/queue/process, OCR endpoint, query-latency claims, non-macOS, unrelated gate, and privacy changes."
+scope_exception_reason = "This bounded #293 L0 observation slice adds an explicit local-only resident ORT profiling mode and a public-synthetic operator-aggregation witness; it selects at most one follow-up hypothesis and excludes every runtime, model, graph, allocator, thread, batch, queue, worker, OCR, query, non-macOS, gate, and privacy optimization."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -31,23 +31,25 @@ allowed_paths = [
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
   "crates/embedding-runtime/src/main.rs",
-  "scripts/local/embedding-prepacking-benchmark.py",
-  "scripts/local/ocr-on-import-attribution.py",
+  "crates/embedding-runtime/src/profiling.rs",
+  "crates/embedding-runtime/src/profiling_tests.rs",
+  "scripts/local/embedding-onnx-operator-profile.py",
   "scripts/ci/test-governance-contract-mutations.py",
 ]
-allowed_paths_role = "onnx_prepacking_drift_tradeoff_paths"
+allowed_paths_role = "onnx_operator_profile_attribution_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-hypothesis = "restoring ONNX Runtime weight prepacking reduces resident CPU inference by at least 10% and full-product elapsed time by more than 3% while bounded numerical drift preserves control-referenced retrieval stability"
-optimization_layer = "L3"
-expected_delta = "resident raw and normalized ONNX medians improve >=10%; gated full-product paired median improves >3%"
-negative_control = "exact release binary from current main with SessionBuilder::with_prepacking(false)"
-implementation_boundary = "contract transition merges before the single-Boolean production change or private benchmark"
-ocr_endpoint_contract = "OCR runtime enabled; OCR-required documents are durably queued; endpoint completion does not wait for OCR drain"
-ocr_overlap_evidence_required = false
-resident_workload = "public synthetic 20-query/40-passage five-token-bucket stability matrix plus 24 seeded balanced AB/BA performance pairs; Batch 4; 512 active tokens per performance input; one excluded warmup plus four measured requests per launch"
-resident_acceptance = "minimum per-vector cosine >=0.99999; max absolute delta <=1e-4; mean absolute delta <=1e-6; aggregate top-10 overlap >=99.5%; per-query top-10 overlap >=90%; top-1 agreement >=99.5%; control-referenced NDCG@10 drop <=0.2 percentage points; zero-result count does not increase; three ONNX medians improve >=10% with positive paired bootstrap interval; launch-to-ready regression <=10% and <=1000ms; H0 physical footprint <=512MiB; H2 <=1536MiB"
-full_product_acceptance = "five valid paired runs; median elapsed improvement >3%; bootstrap 95% interval excludes zero; daemon embedding-ready regression <=10% and <=1000ms; semantic and hybrid control-referenced top-10 stability stays within the resident budget; H2 private/anonymous <=1536MiB"
-rollback_condition = "any resident gate failure stops the private run; any full-product correctness, stability, performance, startup, attestation, validity, or memory failure restores prepacking=false and closes #290 with a bounded negative or inconclusive result"
+observation_stage = "L0"
+optimization_layer_selected = false
+hypothesis = "the exact current resident CPU ONNX workload has one stable operator family with median measured-node share >=20%, first rank in >=4 of 5 primary captures, and top-two rank across five token buckets"
+expected_delta = "none; attribution-only profile selects one later L1-L4 optimization hypothesis without claiming a speedup"
+negative_control = "the exact same release binary in ordinary --resident mode with profiling disabled"
+implementation_boundary = "the contract transition merges before the resident profiling mode, formal capture, or follow-up optimization issue"
+resident_workload = "public synthetic only; five independent Batch-4 512-active-token sessions; H2 three-thread policy; 30-second warmup plus 20 measured requests; one sensitivity capture each at 8, 32, 96, 256, and 512 active tokens"
+resident_acceptance = "5 of 5 primary traces parse with exact measured-request counts; profiled and unprofiled vectors are elementwise equal; the same family ranks first in >=4 of 5 captures with median share >=20% and stays top-two in every sensitivity bucket; xctrace or sample does not conflict"
+full_product_acceptance = "not authorized; no private root, full import, W1, product speedup, scale, release, or goal-complete claim"
+profile_overhead_boundary = "overhead is reported separately; above 3% remains hotspot attribution only and cannot become before-after performance evidence"
+raw_profile_boundary = "raw ORT and Instruments or sample captures remain in owner-only temporary storage and are deleted after bounded aggregation"
+rollback_condition = "any normal resident behavior change, vector drift, malformed or unbounded report, raw trace or private-data leak, or unstable/conflicting attribution ends #293 as inconclusive without an optimization issue"
 forbidden_scope = [
   "cpu_arena_change",
   "thread_policy_change",
@@ -60,6 +62,9 @@ forbidden_scope = [
   "wait_for_ocr_drain",
   "windows_or_linux",
   "query_hot_path_change",
+  "private_root_read",
+  "full_product_benchmark",
+  "performance_improvement_claim",
   "gate_weakening",
   "coreml",
 ]
