@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#286"
-name = "onnx_weight_prepacking"
+issue = "#290"
+name = "onnx_prepacking_drift_tradeoff"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = true
@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = false
-scope_exception_reason = "This bounded #286 L3 slice changes only ONNX Runtime weight prepacking for the resident CPU embedding session after a synthetic paired gate; it excludes CPU arena, thread-policy, ORT/model/graph/pooling, batch, worker/queue/process, OCR endpoint, query hot-path, non-macOS, gate, and privacy changes."
+scope_exception_reason = "This bounded #290 L3 slice evaluates ONNX Runtime weight prepacking against explicit numerical and control-referenced retrieval-stability budgets before retaining the single production Boolean; it excludes CPU arena, thread-policy, ORT/model/graph/pooling, batch, worker/queue/process, OCR endpoint, query-latency claims, non-macOS, unrelated gate, and privacy changes."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -35,19 +35,19 @@ allowed_paths = [
   "scripts/local/ocr-on-import-attribution.py",
   "scripts/ci/test-governance-contract-mutations.py",
 ]
-allowed_paths_role = "onnx_weight_prepacking_paths"
+allowed_paths_role = "onnx_prepacking_drift_tradeoff_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-hypothesis = "restoring ONNX Runtime weight prepacking reduces resident CPU inference by at least 10% and full-product elapsed time by more than 3% without correctness, startup, or memory regression"
+hypothesis = "restoring ONNX Runtime weight prepacking reduces resident CPU inference by at least 10% and full-product elapsed time by more than 3% while bounded numerical drift preserves control-referenced retrieval stability"
 optimization_layer = "L3"
 expected_delta = "resident raw and normalized ONNX medians improve >=10%; gated full-product paired median improves >3%"
 negative_control = "exact release binary from current main with SessionBuilder::with_prepacking(false)"
 implementation_boundary = "contract transition merges before the single-Boolean production change or private benchmark"
 ocr_endpoint_contract = "OCR runtime enabled; OCR-required documents are durably queued; endpoint completion does not wait for OCR drain"
 ocr_overlap_evidence_required = false
-resident_workload = "24 seeded balanced AB/BA pairs; Batch 4; 512 active tokens per input; one excluded warmup plus four measured requests per launch"
-resident_acceptance = "exact vectors; three ONNX medians improve >=10%; launch-to-ready regression <=10% and <=1000ms; H0 physical footprint <=512MiB"
-full_product_acceptance = "five valid paired runs; median elapsed improvement >3%; bootstrap 95% interval excludes zero; daemon embedding-ready regression <=10% and <=1000ms; H2 private/anonymous <=1536MiB"
-rollback_condition = "any resident gate failure stops the private run; any full-product correctness, performance, startup, attestation, or memory failure restores prepacking=false and closes #286 with a bounded negative result"
+resident_workload = "public synthetic 20-query/40-passage five-token-bucket stability matrix plus 24 seeded balanced AB/BA performance pairs; Batch 4; 512 active tokens per performance input; one excluded warmup plus four measured requests per launch"
+resident_acceptance = "minimum per-vector cosine >=0.99999; max absolute delta <=1e-4; mean absolute delta <=1e-6; aggregate top-10 overlap >=99.5%; per-query top-10 overlap >=90%; top-1 agreement >=99.5%; control-referenced NDCG@10 drop <=0.2 percentage points; zero-result count does not increase; three ONNX medians improve >=10% with positive paired bootstrap interval; launch-to-ready regression <=10% and <=1000ms; H0 physical footprint <=512MiB; H2 <=1536MiB"
+full_product_acceptance = "five valid paired runs; median elapsed improvement >3%; bootstrap 95% interval excludes zero; daemon embedding-ready regression <=10% and <=1000ms; semantic and hybrid control-referenced top-10 stability stays within the resident budget; H2 private/anonymous <=1536MiB"
+rollback_condition = "any resident gate failure stops the private run; any full-product correctness, stability, performance, startup, attestation, validity, or memory failure restores prepacking=false and closes #290 with a bounded negative or inconclusive result"
 forbidden_scope = [
   "cpu_arena_change",
   "thread_policy_change",

@@ -14,6 +14,34 @@ system design docs, the execution docs, and this running evidence log. Obsolete
 preliminary checklists are historical execution context only, not the
 production-ready scope source.
 
+## Issue #290 ONNX prepacking trade-off contract and witness
+
+Issue #290 follows the exact-equality negative result from #286 without
+rewriting it. The new L3 contract retains the single production candidate
+`with_prepacking(false) -> true`, but evaluates the complete resident sample
+set against bounded numerical drift and control-referenced retrieval stability
+before deciding whether the performance gain is acceptable.
+
+The dedicated macOS witness now separates a public-synthetic 20-query,
+40-passage, five-token-bucket quality matrix from the 24 seeded balanced AB/BA
+Batch-4 performance blocks. It reports only bounded aggregates for cosine,
+absolute deltas, Top-10 overlap, Top-1 agreement and control-referenced NDCG;
+raw vectors and synthetic text never enter the report. Numerical differences
+do not fail fast, while identity, dimension, token accounting, non-finite
+outputs and protocol failures remain hard stops.
+
+This contract/witness slice leaves the resident production session at
+`with_prepacking(false)`. It does not claim a performance or human relevance
+result and does not authorize the private full-product run until all resident
+stability, latency, startup and memory gates pass.
+
+The witness's 11 focused self-tests, performance/autonomous/loop contract
+checks, governance mutation suite, public-repository guard and diff check pass.
+The first full `verify-local` run hit the existing PDF timeout timing boundary;
+the exact unchanged test passed immediately, and the warmed full rerun then
+passed, including Rust tests, Clippy, formatting, release build and macOS
+repository gates.
+
 ## Issue #286 ONNX weight-prepacking negative closeout
 
 Issue #286 tested one production variable only: the resident CPU ONNX session

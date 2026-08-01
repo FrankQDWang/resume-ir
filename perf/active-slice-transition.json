@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-282-to-286-onnx-weight-prepacking-2026-08-01",
-  "from_issue": "#282",
-  "to_issue": "#286",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/282#issuecomment-5150903774",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/286",
-  "base_active_goal_sha256": "651c010357016e378bca556cefdf690925b7ce54d3c31a860c27fc2f9d7c7608",
+  "transition_id": "issue-286-to-290-onnx-prepacking-drift-tradeoff-2026-08-01",
+  "from_issue": "#286",
+  "to_issue": "#290",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/286#issuecomment-5151217948",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/290",
+  "base_active_goal_sha256": "7ac0d7c76cad7c416a0427bf4cd6751b9c102bed68c4df5e63f13b6651a101fe",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",

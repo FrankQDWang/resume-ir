@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the bounded Issue #286 resident ONNX prepacking experiment."""
+"""Run the bounded Issue #290 resident ONNX prepacking trade-off experiment."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from typing import Callable
 
 
 STREAM_SCHEMA = "resume-ir.embedding-stream.v1"
-REPORT_SCHEMA = "resume-ir.embedding-prepacking-witness.v1"
+REPORT_SCHEMA = "resume-ir.embedding-prepacking-witness.v2"
 MODEL_ID = "intfloat-multilingual-e5-small-qint8-r1"
 DIMENSION = 384
 PAIR_COUNT = 24
@@ -35,6 +35,18 @@ MIN_ONNX_IMPROVEMENT_PCT = 10.0
 MAX_READY_REGRESSION_PCT = 10.0
 MAX_READY_REGRESSION_MS = 1_000.0
 H0_FOOTPRINT_LIMIT_BYTES = 512 * 1024 * 1024
+H2_MEMORY_LIMIT_BYTES = 1_536 * 1024 * 1024
+QUALITY_QUERY_COUNT = 20
+QUALITY_PASSAGE_COUNT = 40
+QUALITY_TOP_K = 10
+MIN_VECTOR_COSINE = 0.99999
+MAX_ABSOLUTE_DELTA = 1e-4
+MAX_MEAN_ABSOLUTE_DELTA = 1e-6
+MIN_TOP_K_OVERLAP = 0.995
+MIN_PER_QUERY_TOP_K_OVERLAP = 0.90
+MIN_TOP_1_AGREEMENT = 0.995
+MAX_NDCG_DROP = 0.002
+MAX_VECTOR_NORM_ERROR = 1e-4
 PRIVACY = {
     "contains_raw_resume_text": False,
     "contains_raw_query": False,
@@ -64,6 +76,13 @@ class LaunchResult:
     ready_ms: float
     onnx_us: tuple[int, ...]
     vectors: tuple[tuple[tuple[float, ...], ...], ...]
+
+
+@dataclass(frozen=True)
+class QualityResult:
+    vectors: tuple[tuple[float, ...], ...]
+    token_buckets: tuple[int, ...]
+    telemetry_signatures: tuple[tuple[int, int, int], ...]
 
 
 @dataclass(frozen=True)
@@ -124,6 +143,30 @@ def workload() -> list[dict[str, str]]:
     ]
 
 
+def quality_workload() -> list[dict[str, str]]:
+    topics = (
+        "distributed systems rust backend",
+        "machine learning python ranking",
+        "产品经理 用户研究 数据分析",
+        "软件工程 云平台 性能优化",
+        "financial reporting risk controls",
+        "mobile application ios swift",
+        "自然语言处理 搜索 推荐系统",
+        "security privacy identity access",
+        "sales operations customer success",
+        "database storage reliability sql",
+    )
+    repetitions = (1, 4, 12, 40, 160)
+    inputs: list[dict[str, str]] = []
+    for index in range(QUALITY_QUERY_COUNT + QUALITY_PASSAGE_COUNT):
+        role = "query" if index < QUALITY_QUERY_COUNT else "passage"
+        topic = topics[index % len(topics)]
+        qualifier = f"synthetic profile {index % 7}"
+        text = " ".join([f"{topic} {qualifier}"] * repetitions[index % 5])
+        inputs.append({"role": role, "text": text})
+    return inputs
+
+
 def balanced_orders(seed: int, pairs: int = PAIR_COUNT) -> tuple[str, ...]:
     if pairs <= 0 or pairs % 2:
         raise WitnessError("pair_count_not_balanced")
@@ -156,15 +199,19 @@ def validate_ready(response: dict[str, object]) -> None:
 
 
 def validate_result(
-    response: dict[str, object], request_id: int
-) -> tuple[int, tuple[tuple[float, ...], ...]]:
+    response: dict[str, object],
+    request_id: int,
+    expected_inputs: int = EXPECTED_INPUTS,
+    expected_active_tokens: int | None = EXPECTED_ACTIVE_TOKENS,
+    expected_padded_tokens: int | None = EXPECTED_ACTIVE_TOKENS,
+) -> tuple[int, tuple[tuple[float, ...], ...], tuple[int, int, int]]:
     vectors, telemetry = response.get("vectors"), response.get("telemetry")
     if (
         response.get("type") != "result"
         or response.get("schema_version") != STREAM_SCHEMA
         or response.get("request_id") != request_id
         or not isinstance(vectors, list)
-        or len(vectors) != EXPECTED_INPUTS
+        or len(vectors) != expected_inputs
         or not isinstance(telemetry, dict)
     ):
         raise WitnessError("result_contract_mismatch")
@@ -181,18 +228,41 @@ def validate_result(
             )
         ):
             raise WitnessError("vector_contract_mismatch")
-        checked.append(tuple(float(value) for value in vector))
-    expected = {
-        "input_count": EXPECTED_INPUTS,
-        "active_token_count": EXPECTED_ACTIVE_TOKENS,
-        "padded_token_count": EXPECTED_ACTIVE_TOKENS,
-    }
-    if any(telemetry.get(key) != value for key, value in expected.items()):
+        checked_vector = tuple(float(value) for value in vector)
+        norm = math.sqrt(sum(value * value for value in checked_vector))
+        if abs(norm - 1.0) > MAX_VECTOR_NORM_ERROR:
+            raise WitnessError("vector_normalization_mismatch")
+        checked.append(checked_vector)
+    telemetry_values = tuple(
+        telemetry.get(key)
+        for key in ("input_count", "active_token_count", "padded_token_count")
+    )
+    if (
+        telemetry_values[0] != expected_inputs
+        or not isinstance(telemetry_values[1], int)
+        or isinstance(telemetry_values[1], bool)
+        or telemetry_values[1] <= 0
+        or not isinstance(telemetry_values[2], int)
+        or isinstance(telemetry_values[2], bool)
+        or telemetry_values[2] < telemetry_values[1]
+        or (
+            expected_active_tokens is not None
+            and telemetry_values[1] != expected_active_tokens
+        )
+        or (
+            expected_padded_tokens is not None
+            and telemetry_values[2] != expected_padded_tokens
+        )
+    ):
         raise WitnessError("workload_token_contract_mismatch")
     onnx_us = telemetry.get("onnx_us")
     if not isinstance(onnx_us, int) or isinstance(onnx_us, bool) or onnx_us <= 0:
         raise WitnessError("onnx_telemetry_invalid")
-    return onnx_us, tuple(checked)
+    return (
+        onnx_us,
+        tuple(checked),
+        (expected_inputs, int(telemetry_values[1]), int(telemetry_values[2])),
+    )
 
 
 def stop_process(process: subprocess.Popen[bytes]) -> None:
@@ -252,7 +322,7 @@ def launch_variant(
             request["request_id"] = request_id
             write_frame(process.stdin, request)
             response = read_frame(process.stdout, timeout)
-            onnx_us, response_vectors = validate_result(response, request_id)
+            onnx_us, response_vectors, _ = validate_result(response, request_id)
             samples.append(onnx_us)
             vectors.append(response_vectors)
         process.stdin.close()
@@ -266,8 +336,206 @@ def launch_variant(
         stderr.close()
 
 
+def quality_variant(
+    variant: Variant, runtime_dir: Path, timeout: float
+) -> QualityResult:
+    inputs = quality_workload()
+    stderr = tempfile.TemporaryFile()
+    try:
+        process = subprocess.Popen(
+            [str(variant.binary), "--resident"],
+            env=environment(runtime_dir, 3),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=stderr,
+            start_new_session=True,
+        )
+    except OSError:
+        stderr.close()
+        raise WitnessError("resident_start_failed") from None
+    try:
+        if process.stdin is None or process.stdout is None:
+            raise WitnessError("resident_pipe_unavailable")
+        validate_ready(read_frame(process.stdout, timeout))
+        request_id = 1
+        token_buckets: list[int] = []
+        for representative in inputs[:5]:
+            request = {
+                "schema_version": STREAM_SCHEMA,
+                "request_id": request_id,
+                "model_id": MODEL_ID,
+                "dimension": DIMENSION,
+                "inputs": [representative],
+            }
+            write_frame(process.stdin, request)
+            _, _, telemetry = validate_result(
+                read_frame(process.stdout, timeout),
+                request_id,
+                expected_inputs=1,
+                expected_active_tokens=None,
+                expected_padded_tokens=None,
+            )
+            token_buckets.append(telemetry[1])
+            request_id += 1
+        if len(set(token_buckets)) != 5 or token_buckets != sorted(token_buckets):
+            raise WitnessError("quality_token_buckets_invalid")
+
+        vectors: list[tuple[float, ...]] = []
+        signatures: list[tuple[int, int, int]] = []
+        for offset in range(0, len(inputs), EXPECTED_INPUTS):
+            batch = inputs[offset : offset + EXPECTED_INPUTS]
+            request = {
+                "schema_version": STREAM_SCHEMA,
+                "request_id": request_id,
+                "model_id": MODEL_ID,
+                "dimension": DIMENSION,
+                "inputs": batch,
+            }
+            write_frame(process.stdin, request)
+            _, response_vectors, telemetry = validate_result(
+                read_frame(process.stdout, timeout),
+                request_id,
+                expected_inputs=len(batch),
+                expected_active_tokens=None,
+                expected_padded_tokens=None,
+            )
+            vectors.extend(response_vectors)
+            signatures.append(telemetry)
+            request_id += 1
+        process.stdin.close()
+        if process.wait(timeout=5) != 0:
+            raise WitnessError("resident_exit_failed")
+        return QualityResult(tuple(vectors), tuple(token_buckets), tuple(signatures))
+    except (OSError, subprocess.SubprocessError):
+        raise WitnessError("resident_io_failed") from None
+    finally:
+        stop_process(process)
+        stderr.close()
+
+
 def exact_vectors_equal(control: LaunchResult, candidate: LaunchResult) -> bool:
     return control.vectors == candidate.vectors
+
+
+def cosine_similarity(left: tuple[float, ...], right: tuple[float, ...]) -> float:
+    if len(left) != len(right) or not left:
+        raise WitnessError("vector_shape_mismatch")
+    dot = sum(base * head for base, head in zip(left, right))
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if left_norm <= 0.0 or right_norm <= 0.0:
+        raise WitnessError("vector_norm_invalid")
+    return dot / (left_norm * right_norm)
+
+
+def ranked_passages(
+    query: tuple[float, ...], passages: tuple[tuple[float, ...], ...]
+) -> tuple[int, ...]:
+    scores = [cosine_similarity(query, passage) for passage in passages]
+    return tuple(sorted(range(len(scores)), key=lambda index: (-scores[index], index)))
+
+
+def control_referenced_ndcg(
+    control: tuple[int, ...], candidate: tuple[int, ...], top_k: int
+) -> float:
+    relevance = {
+        passage: top_k - rank for rank, passage in enumerate(control[:top_k])
+    }
+
+    def dcg(order: tuple[int, ...]) -> float:
+        return sum(
+            relevance.get(passage, 0) / math.log2(rank + 2)
+            for rank, passage in enumerate(order[:top_k])
+        )
+
+    ideal = dcg(control)
+    if ideal <= 0.0:
+        raise WitnessError("ranking_reference_invalid")
+    return dcg(candidate) / ideal
+
+
+def quality_summary(
+    control: QualityResult, candidate: QualityResult
+) -> dict[str, object]:
+    if (
+        len(control.vectors) != QUALITY_QUERY_COUNT + QUALITY_PASSAGE_COUNT
+        or len(candidate.vectors) != len(control.vectors)
+        or control.token_buckets != candidate.token_buckets
+        or control.telemetry_signatures != candidate.telemetry_signatures
+    ):
+        raise WitnessError("quality_contract_mismatch")
+    cosine_values: list[float] = []
+    absolute_deltas: list[float] = []
+    exact_vectors = 0
+    for base, head in zip(control.vectors, candidate.vectors):
+        if base == head:
+            exact_vectors += 1
+        cosine_values.append(cosine_similarity(base, head))
+        absolute_deltas.extend(abs(base_value - head_value) for base_value, head_value in zip(base, head))
+
+    control_queries = control.vectors[:QUALITY_QUERY_COUNT]
+    control_passages = control.vectors[QUALITY_QUERY_COUNT:]
+    candidate_queries = candidate.vectors[:QUALITY_QUERY_COUNT]
+    candidate_passages = candidate.vectors[QUALITY_QUERY_COUNT:]
+    overlaps: list[float] = []
+    ndcg_values: list[float] = []
+    top_1_matches = 0
+    for base_query, head_query in zip(control_queries, candidate_queries):
+        base_ranking = ranked_passages(base_query, control_passages)
+        head_ranking = ranked_passages(head_query, candidate_passages)
+        base_top = set(base_ranking[:QUALITY_TOP_K])
+        head_top = set(head_ranking[:QUALITY_TOP_K])
+        overlaps.append(len(base_top & head_top) / QUALITY_TOP_K)
+        ndcg_values.append(
+            control_referenced_ndcg(base_ranking, head_ranking, QUALITY_TOP_K)
+        )
+        top_1_matches += int(base_ranking[0] == head_ranking[0])
+
+    minimum_cosine = min(cosine_values)
+    maximum_absolute_delta = max(absolute_deltas)
+    mean_absolute_delta = sum(absolute_deltas) / len(absolute_deltas)
+    aggregate_overlap = sum(overlaps) / len(overlaps)
+    minimum_query_overlap = min(overlaps)
+    top_1_agreement = top_1_matches / len(overlaps)
+    mean_ndcg = sum(ndcg_values) / len(ndcg_values)
+    ndcg_drop = 1.0 - mean_ndcg
+    passed = (
+        minimum_cosine >= MIN_VECTOR_COSINE
+        and maximum_absolute_delta <= MAX_ABSOLUTE_DELTA
+        and mean_absolute_delta <= MAX_MEAN_ABSOLUTE_DELTA
+        and aggregate_overlap >= MIN_TOP_K_OVERLAP
+        and minimum_query_overlap >= MIN_PER_QUERY_TOP_K_OVERLAP
+        and top_1_agreement >= MIN_TOP_1_AGREEMENT
+        and ndcg_drop <= MAX_NDCG_DROP
+    )
+    return {
+        "query_count": QUALITY_QUERY_COUNT,
+        "passage_count": QUALITY_PASSAGE_COUNT,
+        "top_k": QUALITY_TOP_K,
+        "observed_active_token_buckets": list(control.token_buckets),
+        "exact_vector_count": exact_vectors,
+        "vector_count": len(control.vectors),
+        "minimum_cosine_similarity": minimum_cosine,
+        "maximum_elementwise_absolute_delta": maximum_absolute_delta,
+        "mean_elementwise_absolute_delta": mean_absolute_delta,
+        "aggregate_top_k_overlap": aggregate_overlap,
+        "minimum_per_query_top_k_overlap": minimum_query_overlap,
+        "top_1_agreement": top_1_agreement,
+        "control_referenced_ndcg_at_k": mean_ndcg,
+        "control_referenced_ndcg_drop": ndcg_drop,
+        "control_zero_result_queries": 0,
+        "candidate_zero_result_queries": 0,
+        "thresholds": {
+            "minimum_cosine_similarity": MIN_VECTOR_COSINE,
+            "maximum_elementwise_absolute_delta": MAX_ABSOLUTE_DELTA,
+            "maximum_mean_elementwise_absolute_delta": MAX_MEAN_ABSOLUTE_DELTA,
+            "minimum_aggregate_top_k_overlap": MIN_TOP_K_OVERLAP,
+            "minimum_per_query_top_k_overlap": MIN_PER_QUERY_TOP_K_OVERLAP,
+            "minimum_top_1_agreement": MIN_TOP_1_AGREEMENT,
+            "maximum_control_referenced_ndcg_drop": MAX_NDCG_DROP,
+        },
+        "passed": passed,
+    }
 
 
 def median(values: list[float] | list[int]) -> float:
@@ -336,14 +604,18 @@ def resource_variant(
     variant: Variant, runtime_dir: Path, intra_threads: int, timeout: float
 ) -> ResourceResult:
     stderr = tempfile.TemporaryFile()
-    process = subprocess.Popen(
-        [str(variant.binary), "--resident"],
-        env=environment(runtime_dir, intra_threads),
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=stderr,
-        start_new_session=True,
-    )
+    try:
+        process = subprocess.Popen(
+            [str(variant.binary), "--resident"],
+            env=environment(runtime_dir, intra_threads),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=stderr,
+            start_new_session=True,
+        )
+    except OSError:
+        stderr.close()
+        raise WitnessError("resident_start_failed") from None
     rss_samples: list[int] = []
     footprint_peaks: list[int] = []
     try:
@@ -423,11 +695,12 @@ def build_report(
     orders: tuple[str, ...],
     controls: list[LaunchResult],
     candidates: list[LaunchResult],
+    quality: dict[str, object],
     resources: dict[str, ResourceResult],
 ) -> dict[str, object]:
     if len(controls) != PAIR_COUNT or len(candidates) != PAIR_COUNT:
         raise WitnessError("paired_sample_count_invalid")
-    vectors_equal = all(
+    performance_vectors_equal = all(
         exact_vectors_equal(base, head)
         for base, head in zip(controls, candidates)
     )
@@ -458,10 +731,28 @@ def build_report(
     performance_pass = all(
         value >= MIN_ONNX_IMPROVEMENT_PCT for value in improvements.values()
     )
-    accepted = vectors_equal and startup_pass and h0_pass and performance_pass
+    paired_control = [median(list(item.onnx_us)) for item in controls]
+    paired_candidate = [median(list(item.onnx_us)) for item in candidates]
+    confidence_interval = bootstrap_improvement_interval(
+        paired_control, paired_candidate, seed
+    )
+    confidence_pass = confidence_interval[0] > 0.0
+    h2_pass = (
+        resources["candidate_h2"].peak_physical_footprint_bytes
+        <= H2_MEMORY_LIMIT_BYTES
+    )
+    quality_pass = quality.get("passed") is True
+    accepted = (
+        quality_pass
+        and startup_pass
+        and h0_pass
+        and h2_pass
+        and performance_pass
+        and confidence_pass
+    )
     return {
         "schema_version": REPORT_SCHEMA,
-        "issue": 286,
+        "issue": 290,
         "source": "public_synthetic_workload",
         "claim": "resident_gate_passed" if accepted else "resident_gate_failed",
         "seed": seed,
@@ -486,15 +777,21 @@ def build_report(
         "resources": {
             name: resource_summary(value) for name, value in resources.items()
         },
+        "control_referenced_stability": quality,
         "gates": {
-            "vectors_elementwise_equal": vectors_equal,
+            "performance_vectors_elementwise_equal_informational": performance_vectors_equal,
             "onnx_improvement_pct": improvements,
             "minimum_onnx_improvement_pct": MIN_ONNX_IMPROVEMENT_PCT,
+            "paired_onnx_improvement_bootstrap_95pct": list(confidence_interval),
+            "paired_onnx_confidence_pass": confidence_pass,
             "startup_ready_regression_ms": ready_ms,
             "startup_ready_regression_pct": ready_pct,
             "startup_pass": startup_pass,
             "h0_footprint_limit_bytes": H0_FOOTPRINT_LIMIT_BYTES,
             "h0_footprint_pass": h0_pass,
+            "h2_memory_limit_bytes": H2_MEMORY_LIMIT_BYTES,
+            "h2_memory_pass": h2_pass,
+            "control_referenced_stability_pass": quality_pass,
             "resident_performance_pass": performance_pass,
             "accepted": accepted,
         },
@@ -505,6 +802,10 @@ def build_report(
 def run_experiment(args: argparse.Namespace) -> dict[str, object]:
     control = Variant("control", args.control_bin, args.control_revision)
     candidate = Variant("candidate", args.candidate_bin, args.candidate_revision)
+    quality = quality_summary(
+        quality_variant(control, args.runtime_dir, args.timeout_seconds),
+        quality_variant(candidate, args.runtime_dir, args.timeout_seconds),
+    )
     orders = balanced_orders(args.seed)
     results: dict[str, list[LaunchResult]] = {"control": [], "candidate": []}
     variants = {"A": control, "B": candidate}
@@ -515,8 +816,6 @@ def run_experiment(args: argparse.Namespace) -> dict[str, object]:
             pair[variant.label] = launch_variant(
                 variant, args.runtime_dir, 3, args.timeout_seconds
             )
-        if not exact_vectors_equal(pair["control"], pair["candidate"]):
-            raise WitnessError("vector_equality_failed")
         results["control"].append(pair["control"])
         results["candidate"].append(pair["candidate"])
     resources = {
@@ -535,6 +834,7 @@ def run_experiment(args: argparse.Namespace) -> dict[str, object]:
         orders,
         results["control"],
         results["candidate"],
+        quality,
         resources,
     )
 
@@ -550,8 +850,8 @@ def encode_report(report: dict[str, object], private_markers: tuple[str, ...]) -
 
 class SelfTests(unittest.TestCase):
     def test_sequence_is_balanced_and_reproducible(self) -> None:
-        first = balanced_orders(286)
-        self.assertEqual(first, balanced_orders(286))
+        first = balanced_orders(290)
+        self.assertEqual(first, balanced_orders(290))
         self.assertEqual(first.count("AB"), 12)
         self.assertEqual(first.count("BA"), 12)
 
@@ -559,6 +859,18 @@ class SelfTests(unittest.TestCase):
         inputs = workload()
         self.assertEqual(len(inputs), EXPECTED_INPUTS)
         self.assertTrue(all(len(item["text"].encode()) < 65_536 for item in inputs))
+
+    def test_quality_workload_covers_roles_and_five_length_tiers(self) -> None:
+        inputs = quality_workload()
+        self.assertEqual(len(inputs), QUALITY_QUERY_COUNT + QUALITY_PASSAGE_COUNT)
+        self.assertEqual(
+            sum(item["role"] == "query" for item in inputs), QUALITY_QUERY_COUNT
+        )
+        self.assertEqual(
+            sum(item["role"] == "passage" for item in inputs),
+            QUALITY_PASSAGE_COUNT,
+        )
+        self.assertEqual(len({len(item["text"]) for item in inputs[:5]}), 5)
 
     def test_normalized_metrics_and_startup_gate(self) -> None:
         summary = variant_summary([100, 120, 80], [900.0, 1_000.0, 1_100.0])
@@ -575,6 +887,68 @@ class SelfTests(unittest.TestCase):
         self.assertTrue(exact_vectors_equal(base, same))
         self.assertFalse(exact_vectors_equal(base, changed))
 
+    def test_result_requires_finite_normalized_vectors(self) -> None:
+        vector = [1.0, *([0.0] * (DIMENSION - 1))]
+        response = {
+            "type": "result",
+            "schema_version": STREAM_SCHEMA,
+            "request_id": 1,
+            "vectors": [vector],
+            "telemetry": {
+                "input_count": 1,
+                "active_token_count": 8,
+                "padded_token_count": 8,
+                "onnx_us": 1,
+            },
+        }
+        validate_result(
+            response,
+            1,
+            expected_inputs=1,
+            expected_active_tokens=8,
+            expected_padded_tokens=8,
+        )
+        response["vectors"] = [[2.0, *([0.0] * (DIMENSION - 1))]]
+        with self.assertRaisesRegex(
+            WitnessError, "vector_normalization_mismatch"
+        ):
+            validate_result(
+                response,
+                1,
+                expected_inputs=1,
+                expected_active_tokens=8,
+                expected_padded_tokens=8,
+            )
+
+    def test_quality_summary_accepts_identical_control_rankings(self) -> None:
+        vectors = tuple(
+            (math.cos(index), math.sin(index))
+            for index in range(QUALITY_QUERY_COUNT + QUALITY_PASSAGE_COUNT)
+        )
+        value = QualityResult(
+            vectors,
+            (8, 32, 96, 256, 512),
+            tuple((4, 100 + index, 400) for index in range(15)),
+        )
+        summary = quality_summary(value, value)
+        self.assertTrue(summary["passed"])
+        self.assertEqual(summary["aggregate_top_k_overlap"], 1.0)
+        self.assertEqual(summary["control_referenced_ndcg_drop"], 0.0)
+
+    def test_quality_summary_rejects_material_vector_drift(self) -> None:
+        vectors = tuple(
+            (math.cos(index), math.sin(index))
+            for index in range(QUALITY_QUERY_COUNT + QUALITY_PASSAGE_COUNT)
+        )
+        changed = list(vectors)
+        changed[0] = (-changed[0][0], changed[0][1])
+        telemetry = tuple((4, 100 + index, 400) for index in range(15))
+        control = QualityResult(vectors, (8, 32, 96, 256, 512), telemetry)
+        candidate = QualityResult(
+            tuple(changed), (8, 32, 96, 256, 512), telemetry
+        )
+        self.assertFalse(quality_summary(control, candidate)["passed"])
+
     def test_footprint_parser_and_limit(self) -> None:
         current, peak = parse_footprint(
             "phys_footprint: 100 B\nphys_footprint_peak: 200 B\n"
@@ -585,8 +959,11 @@ class SelfTests(unittest.TestCase):
     def test_bootstrap_paired_interval_is_reproducible(self) -> None:
         control = [100.0, 102.0, 104.0, 106.0, 108.0]
         candidate = [90.0, 91.0, 92.0, 93.0, 94.0]
-        first = bootstrap_improvement_interval(control, candidate, 286, draws=1_000)
-        self.assertEqual(first, bootstrap_improvement_interval(control, candidate, 286, draws=1_000))
+        first = bootstrap_improvement_interval(control, candidate, 290, draws=1_000)
+        self.assertEqual(
+            first,
+            bootstrap_improvement_interval(control, candidate, 290, draws=1_000),
+        )
         self.assertGreater(first[0], 0.0)
 
     def test_report_is_bounded_and_privacy_fail_closed(self) -> None:
@@ -604,7 +981,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--control-revision")
     parser.add_argument("--candidate-revision")
     parser.add_argument("--runtime-dir", type=Path)
-    parser.add_argument("--seed", type=int, default=286)
+    parser.add_argument("--seed", type=int, default=290)
     parser.add_argument("--timeout-seconds", type=float, default=60.0)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
