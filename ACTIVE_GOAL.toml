@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#282"
-name = "ocr_on_non_ocr_import_attribution"
+issue = "#286"
+name = "onnx_weight_prepacking"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = true
@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_missing_configured_private_roots"
 scope_exception = false
-scope_exception_reason = "This bounded #282 slice authorizes post-merge instrumentation only: normal daemon IPC with OCR enabled measures non-OCR completion without waiting for OCR drain and distinguishes embedding inference from generation publication at <=3% overhead; it excludes implementation in this contract PR, larger batches, extra workers or queues, extra model processes, OCR drain waiting, query hot-path changes, gate weakening, Windows/Linux, and privacy expansion."
+scope_exception_reason = "This bounded #286 L3 slice changes only ONNX Runtime weight prepacking for the resident CPU embedding session after a synthetic paired gate; it excludes CPU arena, thread-policy, ORT/model/graph/pooling, batch, worker/queue/process, OCR endpoint, query hot-path, non-macOS, gate, and privacy changes."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -30,36 +30,30 @@ allowed_paths = [
   "perf/active-slice-transition.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-  "crates/embedding-protocol/src/lib.rs",
   "crates/embedding-runtime/src/main.rs",
-  "crates/embedding-runtime/src/tests.rs",
-  "crates/embedder/src/resident.rs",
-  "crates/embedder/tests/resident.rs",
-  "crates/import-pipeline/src/lib.rs",
-  "crates/import-pipeline/src/search_vectorizer.rs",
-  "crates/import-pipeline/src/search_publication_vector.rs",
-  "crates/import-pipeline/src/search_publication.rs",
-  "crates/import-pipeline/src/search_publication_commit.rs",
-  "crates/import-pipeline/src/publication_coordinator.rs",
-  "crates/import-pipeline/src/import_run/orchestrator.rs",
-  "crates/import-pipeline/src/tests/no_op_publication_tests.rs",
-  "crates/daemon/src/embedding_runtime.rs",
-  "crates/daemon/src/import_worker.rs",
-  "crates/daemon/src/worker_output.rs",
-  "crates/daemon/src/ipc/routes/status.rs",
-  "crates/daemon/tests/s20_ipc.rs",
-  "crates/cli/src/daemon_ipc_contract/status.rs",
-  "crates/cli/src/daemon_ipc_contract_tests.rs",
-  "crates/cli/tests/s20_status_ipc.rs",
+  "scripts/local/embedding-prepacking-benchmark.py",
   "scripts/local/ocr-on-import-attribution.py",
+  "scripts/ci/test-governance-contract-mutations.py",
 ]
-allowed_paths_role = "ocr_on_non_ocr_import_attribution_paths"
+allowed_paths_role = "onnx_weight_prepacking_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-hypothesis = "bounded instrumentation can distinguish embedding inference from generation publication with <=3% overhead"
-implementation_boundary = "contract_only_pre_merge; production instrumentation is post_merge_only"
+hypothesis = "restoring ONNX Runtime weight prepacking reduces resident CPU inference by at least 10% and full-product elapsed time by more than 3% without correctness, startup, or memory regression"
+optimization_layer = "L3"
+expected_delta = "resident raw and normalized ONNX medians improve >=10%; gated full-product paired median improves >3%"
+negative_control = "exact release binary from current main with SessionBuilder::with_prepacking(false)"
+implementation_boundary = "contract transition merges before the single-Boolean production change or private benchmark"
 ocr_endpoint_contract = "OCR runtime enabled; OCR-required documents are durably queued; endpoint completion does not wait for OCR drain"
 ocr_overlap_evidence_required = false
+resident_workload = "24 seeded balanced AB/BA pairs; Batch 4; 512 active tokens per input; one excluded warmup plus four measured requests per launch"
+resident_acceptance = "exact vectors; three ONNX medians improve >=10%; launch-to-ready regression <=10% and <=1000ms; H0 physical footprint <=512MiB"
+full_product_acceptance = "five valid paired runs; median elapsed improvement >3%; bootstrap 95% interval excludes zero; daemon embedding-ready regression <=10% and <=1000ms; H2 private/anonymous <=1536MiB"
+rollback_condition = "any resident gate failure stops the private run; any full-product correctness, performance, startup, attestation, or memory failure restores prepacking=false and closes #286 with a bounded negative result"
 forbidden_scope = [
+  "cpu_arena_change",
+  "thread_policy_change",
+  "ort_upgrade",
+  "model_or_graph_change",
+  "pooling_change",
   "larger_batch",
   "additional_worker_or_queue",
   "additional_model_process",
@@ -67,6 +61,7 @@ forbidden_scope = [
   "windows_or_linux",
   "query_hot_path_change",
   "gate_weakening",
+  "coreml",
 ]
 
 [contracts]
