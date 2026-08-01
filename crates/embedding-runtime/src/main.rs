@@ -23,12 +23,17 @@ use process_containment::VerifiedParentProcess;
 use std::thread;
 use tokenizers::{AddedToken, PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
 
+mod artifact_experiment;
 mod batch;
 mod profiling;
 mod runtime_pack;
 
+use artifact_experiment::ArtifactExperiment;
 use batch::{mean_pool_batch, tokenized_batch};
-use profiling::{parse_run_mode, ProfilingMode, RunMode, PROFILE_OUTPUT_PREFIX_ENV};
+use profiling::{
+    parse_run_mode, ProfilingMode, ResidentMode, ResidentModelSource, RunMode,
+    PROFILE_OUTPUT_PREFIX_ENV,
+};
 #[cfg(test)]
 use runtime_pack::AssetIdentity;
 use runtime_pack::{FileRole, RuntimePack};
@@ -71,7 +76,7 @@ fn run() -> Result<(), RuntimeError> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     match parse_run_mode(&args, || env::var_os(PROFILE_OUTPUT_PREFIX_ENV))? {
         RunMode::OneShot => run_one_shot(),
-        RunMode::Resident(profiling) => run_resident(profiling),
+        RunMode::Resident(mode) => run_resident(mode),
     }
 }
 
@@ -100,21 +105,41 @@ fn run_one_shot() -> Result<(), RuntimeError> {
     Ok(())
 }
 
-fn run_resident(profiling: ProfilingMode) -> Result<(), RuntimeError> {
+fn run_resident(mode: ResidentMode) -> Result<(), RuntimeError> {
     start_resident_parent_death_guard()?;
     let environment = ResidentEnvironment::read()?;
     let pack = RuntimePack::load(&environment.runtime_dir)?;
-    if environment.model_id != pack.model_id() || environment.dimension != pack.dimension() {
+    let (model_id, dimension, model_path) = match mode.model_source {
+        ResidentModelSource::Production => (
+            pack.model_id().to_string(),
+            pack.dimension(),
+            pack.file(FileRole::Model)?.to_path_buf(),
+        ),
+        ResidentModelSource::ArtifactExperiment => {
+            let artifact = ArtifactExperiment::load_from_environment()?;
+            (
+                artifact.model_id().to_string(),
+                artifact.dimension(),
+                artifact.model_path().to_path_buf(),
+            )
+        }
+    };
+    if environment.model_id != model_id || environment.dimension != dimension {
         return Err(RuntimeError::IdentityMismatch);
     }
-    let mut model = initialize_model(&pack, environment.intra_threads, profiling)?;
+    let mut model = initialize_model_from_path(
+        &pack,
+        &model_path,
+        environment.intra_threads,
+        mode.profiling,
+    )?;
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut reader = BufReader::new(stdin.lock());
     let mut writer = BufWriter::new(stdout.lock());
     write_frame(
         &mut writer,
-        &ResidentResponse::ready(pack.model_id(), pack.dimension()),
+        &ResidentResponse::ready(&model_id, dimension),
         MAX_RESPONSE_BYTES,
     )
     .map_err(|_| RuntimeError::OutputInvalid)?;
@@ -150,7 +175,7 @@ fn run_resident(profiling: ProfilingMode) -> Result<(), RuntimeError> {
             .map_err(|_| RuntimeError::OutputInvalid)?;
             continue;
         }
-        if request.model_id != pack.model_id() || request.dimension != pack.dimension() {
+        if request.model_id != model_id || request.dimension != dimension {
             write_frame(
                 &mut writer,
                 &ResidentResponse::error(
@@ -239,6 +264,15 @@ fn initialize_model(
     intra_threads: usize,
     profiling: ProfilingMode,
 ) -> Result<NativeEmbeddingModel, RuntimeError> {
+    initialize_model_from_path(pack, pack.file(FileRole::Model)?, intra_threads, profiling)
+}
+
+fn initialize_model_from_path(
+    pack: &RuntimePack,
+    model_path: &Path,
+    intra_threads: usize,
+    profiling: ProfilingMode,
+) -> Result<NativeEmbeddingModel, RuntimeError> {
     if !ort::init_from(pack.file(FileRole::RuntimeLibrary)?)
         .map_err(|_| RuntimeError::RuntimeUnavailable)?
         .commit()
@@ -246,7 +280,7 @@ fn initialize_model(
         return Err(RuntimeError::RuntimeUnavailable);
     }
     tokenizers::utils::parallelism::set_parallelism(false);
-    NativeEmbeddingModel::load(pack, intra_threads, profiling)
+    NativeEmbeddingModel::load(pack, model_path, intra_threads, profiling)
 }
 
 fn prefixed_text(input: &EmbeddingRuntimeInput) -> String {
@@ -276,6 +310,7 @@ struct NativeEmbeddingModel {
 impl NativeEmbeddingModel {
     fn load(
         pack: &RuntimePack,
+        model_path: &Path,
         intra_threads: usize,
         profiling: ProfilingMode,
     ) -> Result<Self, RuntimeError> {
@@ -298,7 +333,7 @@ impl NativeEmbeddingModel {
             .map_err(builder_error)?;
         let session = profiling
             .configure_builder(builder)?
-            .commit_from_file(pack.file(FileRole::Model)?)
+            .commit_from_file(model_path)
             .map_err(|_| RuntimeError::ModelUnavailable)?;
         let need_token_type_ids = session
             .inputs()
