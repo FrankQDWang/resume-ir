@@ -192,7 +192,7 @@ fn invalid_runtime_library_failure_probe() {
         RuntimePack::load_with_expected_model_assets_for_test(fixture.root(), &TEST_MODEL_ASSETS)
             .unwrap();
     assert!(matches!(
-        initialize_model(&pack, /*intra_threads*/ 1),
+        initialize_model(&pack, /*intra_threads*/ 1, ProfilingMode::Disabled),
         Err(RuntimeError::RuntimeUnavailable)
     ));
 }
