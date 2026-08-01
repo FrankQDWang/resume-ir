@@ -14,6 +14,41 @@ system design docs, the execution docs, and this running evidence log. Obsolete
 preliminary checklists are historical execution context only, not the
 production-ready scope source.
 
+## Issue #290 ONNX prepacking drift trade-off negative closeout
+
+The bounded public-synthetic resident experiment completed all 24 seeded
+balanced pairs (12 AB and 12 BA), with 96 measured requests per variant. The
+control ONNX median was 335459.5 microseconds and the prepacking candidate was
+329387 microseconds: a 1.810 percent improvement, with a paired bootstrap 95
+percent interval of 0.637 to 2.509 percent. The interval showed a small positive
+effect, but the result was far below the required 10 percent resident gate.
+
+The observed drift also exceeded every material stability budget. Across 20
+public synthetic queries and 40 passages, minimum vector cosine was 0.987923,
+maximum elementwise absolute delta was 0.033670, mean absolute delta was
+0.003869, aggregate Top-10 overlap was 88 percent, minimum per-query Top-10
+overlap was 70 percent, Top-1 agreement was 55 percent, and control-referenced
+NDCG@10 fell by 4.401 percentage points. No zero-result query was introduced.
+These are control-relative measurements only and make no human relevance claim.
+
+Candidate Ready latency regressed by 18.339 milliseconds (2.815 percent), the
+H0 physical-footprint peak was 497877904 bytes, and the H2 peak was 486867856
+bytes, so the bounded resident startup and memory gates passed. They do not
+override the failed performance and stability gates. The private full-product
+experiment was therefore not run. The candidate production commit was reverted
+normally, and the resident session is again explicitly configured with
+`with_prepacking(false)`.
+
+Post-revert witness self-tests, embedding-runtime tests, warnings-denied
+Clippy, formatting, rust-analyzer diagnostics, performance/autonomous/loop
+contracts, governance mutation checks and the public-repository guard pass.
+Three post-revert full `verify-local` attempts reached only unchanged timing
+tests before stopping: one daemon install-handoff timeout race and two runs of
+the PDF parser's minimal timeout race. Each exact failing test passed on its
+immediate isolated rerun. The contract PR's warmed full run had already passed;
+the result PR retains no production-code diff and records the repeated suite
+instability without presenting it as a green post-revert full run.
+
 ## Issue #290 ONNX prepacking trade-off contract and witness
 
 Issue #290 follows the exact-equality negative result from #286 without
