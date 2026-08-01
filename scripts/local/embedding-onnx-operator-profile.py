@@ -48,7 +48,6 @@ def write_frame(stream: object, value: dict[str, object]) -> None:
         FRAMING["write_frame"](stream, value)  # type: ignore[operator]
     except RuntimeError:
         raise WitnessError("request_frame_invalid") from None
-
 def environment(runtime_dir: Path, profile_prefix: Path | None = None) -> dict[str, str]:
     result = os.environ.copy()
     result.update(
@@ -62,7 +61,6 @@ def environment(runtime_dir: Path, profile_prefix: Path | None = None) -> dict[s
     if profile_prefix is not None:
         result["RESUME_IR_EMBEDDING_PROFILE_OUTPUT_PREFIX"] = str(profile_prefix)
     return result
-
 class Resident:
     def __init__(
         self, binary: Path, runtime_dir: Path, timeout: float, profile_prefix: Path | None = None
@@ -164,10 +162,8 @@ class Resident:
         if getattr(self, "stderr", None) is not None:
             self.stderr.close()
             self.stderr = None
-
 def repeated_inputs(text: str) -> list[dict[str, str]]:
     return [{"role": "passage", "text": text} for _ in range(4)]
-
 def calibrate_workloads(binary: Path, runtime_dir: Path, timeout: float) -> dict[int, list[dict[str, str]]]:
     resident = Resident(binary, runtime_dir, timeout)
     result: dict[int, list[dict[str, str]]] = {}
@@ -195,7 +191,6 @@ def calibrate_workloads(binary: Path, runtime_dir: Path, timeout: float) -> dict
         return result
     finally:
         resident.stop()
-
 def warm_and_measure(resident: Resident, inputs: list[dict[str, str]], tokens: int, warmup: float, measured: int) -> tuple[tuple[tuple[float, ...], ...], list[int]]:
     deadline = time.monotonic() + warmup
     while time.monotonic() < deadline:
@@ -212,7 +207,6 @@ def warm_and_measure(resident: Resident, inputs: list[dict[str, str]], tokens: i
     if vectors is None:
         raise WitnessError("measured_request_missing")
     return vectors, samples
-
 def operator_family(name: str) -> str:
     if name in {"MatMul", "MatMulInteger", "QLinearMatMul", "Gemm"}:
         return "matrix"
@@ -225,12 +219,10 @@ def operator_family(name: str) -> str:
     if name in {"Cast", "Concat", "Expand", "Flatten", "Gather", "Reshape", "Shape", "Squeeze", "Transpose", "Unsqueeze"}:
         return "shape_data_movement"
     return "other"
-
 def finite_number(value: object) -> float:
     if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value < 0:
         raise WitnessError("trace_numeric_field_invalid")
     return float(value)
-
 def parse_trace(events: object, measured: int) -> dict[str, object]:
     if not isinstance(events, list):
         raise WitnessError("trace_root_invalid")
@@ -289,7 +281,6 @@ def parse_trace(events: object, measured: int) -> dict[str, object]:
             {"family": family, "duration_us": duration, "node_share": duration / node_duration} for family, duration in families
         ],
     }
-
 def read_trace(path: Path, measured: int) -> dict[str, object]:
     try:
         if path.stat().st_size > MAX_TRACE_BYTES:
@@ -297,7 +288,6 @@ def read_trace(path: Path, measured: int) -> dict[str, object]:
         return parse_trace(json.loads(path.read_bytes()), measured)
     except (OSError, json.JSONDecodeError):
         raise WitnessError("trace_read_failed") from None
-
 def profile_capture(binary: Path, runtime_dir: Path, inputs: list[dict[str, str]], tokens: int, timeout: float, warmup: float, measured: int) -> tuple[dict[str, object], tuple[tuple[float, ...], ...], list[int]]:
     with tempfile.TemporaryDirectory(prefix="resume-ir-operator-profile-") as raw:
         root = Path(raw)
@@ -312,7 +302,6 @@ def profile_capture(binary: Path, runtime_dir: Path, inputs: list[dict[str, str]
             return read_trace(traces[0], measured), vectors, samples
         finally:
             resident.stop()
-
 def normal_control(binary: Path, runtime_dir: Path, inputs: list[dict[str, str]], tokens: int, timeout: float, warmup: float, measured: int) -> tuple[tuple[tuple[float, ...], ...], list[int]]:
     resident = Resident(binary, runtime_dir, timeout)
     try:
@@ -321,10 +310,8 @@ def normal_control(binary: Path, runtime_dir: Path, inputs: list[dict[str, str]]
         return result
     finally:
         resident.stop()
-
 def family_shares(capture: dict[str, object]) -> dict[str, float]:
     return {str(item["family"]): float(item["node_share"]) for item in capture["families"]}  # type: ignore[index]
-
 def decide(primary: list[dict[str, object]], sensitivity: dict[int, dict[str, object]], cross_check: dict[str, object]) -> dict[str, object]:
     top = [str(capture["families"][0]["family"]) for capture in primary]  # type: ignore[index]
     family, count = Counter(top).most_common(1)[0]

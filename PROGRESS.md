@@ -41,6 +41,16 @@ The performance, autonomous-goal and loop-state contracts, governance mutation
 suite, public-repository guard and diff check pass for this contract-only
 transition. No production code or profiler was run before the transition.
 
+### Issue #293 resident ONNX operator-attribution result
+
+Exact release revision `cfa5e7dc301d301d05f8a10811112a32899e1e97` passed 5/5
+public-synthetic Batch-4 × 512-token captures with 20 measured requests each
+and exact profiled/unprofiled vectors. Dynamic quantization ranked first in all
+captures (51.35% median node share) and all five token buckets; xctrace reported
+ONNX Runtime with no conflict. Informational profiler overhead was 0.492%, raw
+captures were deleted, and the only selected follow-up is #295. This is L0
+attribution only: no product speedup, W1, scale, release or goal-complete claim.
+
 ## Issue #290 ONNX prepacking drift trade-off negative closeout
 
 The bounded public-synthetic resident experiment completed all 24 seeded

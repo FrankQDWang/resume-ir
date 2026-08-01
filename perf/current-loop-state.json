@@ -1,8 +1,8 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
-  "experiment_state": "baseline_validated",
+  "workflow_state": "evidence_review",
+  "experiment_state": "bottleneck_selected",
   "evidence_lane": "w0_docs",
   "contract_pins": {
     "active_goal_sha256": "f4b9b6872e2186193d4052b2bce0fdd8aa149132dd19101e0f0603b628055e9b",
@@ -18,9 +18,9 @@
     "acceptance_cell": "full_import_ocr_backlog",
     "expected_effect": "one stable operator family has median measured-node share at least 20 percent, ranks first in at least four of five primary captures, and remains top-two across five token buckets",
     "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/282",
-    "after_measurement_ref": null,
-    "reprofile_ref": null,
-    "decision": "active"
+    "after_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/293#issuecomment-5152318044",
+    "reprofile_ref": "https://github.com/FrankQDWang/resume-ir/issues/295",
+    "decision": "accepted"
   },
   "transition_history": [
     {
@@ -723,7 +723,12 @@
     {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#issue-290-onnx-prepacking-drift-trade-off-negative-closeout"},
     {"from":"implementation_active","to":"evidence_review","evidence_ref":"PROGRESS.md#issue-290-onnx-prepacking-drift-trade-off-negative-closeout"},
     {"from":"evidence_review","to":"next_issue_or_goal_complete","evidence_ref":"PROGRESS.md#issue-290-onnx-prepacking-drift-trade-off-negative-closeout"},
-    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/293"}
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/293"},
+    {"from":"slice_selected","to":"implementation_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/293"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-attribution-result"},
+    {"from":"baseline_validated","to":"profile_captured","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/293#issuecomment-5152318044"},
+    {"from":"profile_captured","to":"bottleneck_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/295"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-attribution-result"}
   ],
   "verification": {
     "commands": [
@@ -2992,7 +2997,10 @@
       {"command":"python3 scripts/ci/check-performance-contracts.py","exit_code":0,"evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-profile-contract"},
       {"command":"python3 scripts/ci/check-autonomous-goal.py","exit_code":0,"evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-profile-contract"},
       {"command":"python3 scripts/ci/check-loop-state.py","exit_code":0,"evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-profile-contract"},
-      {"command":"python3 scripts/ci/test-governance-contract-mutations.py and public-repository guard","exit_code":0,"evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-profile-contract"}
+      {"command":"python3 scripts/ci/test-governance-contract-mutations.py and public-repository guard","exit_code":0,"evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-profile-contract"},
+      {"command":"Issue #293 exact release resident profile, vector control and xctrace cross-check","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/293#issuecomment-5152318044"},
+      {"command":"./scripts/ci/verify-local.sh stopped on unchanged daemon timing and isolated-worktree pack availability","exit_code":101,"evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-attribution-result"},
+      {"command":"exact failed-test reruns and remaining macOS-only local verification subset","exit_code":0,"evidence_ref":"PROGRESS.md#issue-293-resident-onnx-operator-attribution-result"}
     ],
     "all_required_commands_ran": true,
     "claim": "partial"
@@ -3007,10 +3015,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-293-onnx-operator-profile-2026-08-01",
-  "state_version": 569,
-  "previous_state_hash": "5eb86ea6bbb320c9d257b5165bd4edc67ece4ca913575af01a3e5fa7e3fa12e8",
-  "expected_state_version": 569,
-  "last_confirmed_side_effect": "issue_293_created_contract_selected",
+  "state_version": 570,
+  "previous_state_hash": "126d4db414919d3ba42a9eddfc749fc61b2a01ab204a9780a184b6920d7ba689",
+  "expected_state_version": 570,
+  "last_confirmed_side_effect": "issue_295_created_after_issue_293_bottleneck_selected",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
