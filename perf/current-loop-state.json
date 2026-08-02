@@ -5,24 +5,34 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "a294ed608846df622d11b360bec86d936f5694d3924c9d0861a3e6d65380f40a",
+    "active_goal_sha256": "201d3f13cbaca3656772b11cec39351b6aef38543bbe7d5356cb64592ca3c775",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "ff3e895bf37db79504b719ebe04c3f5889b0b6c5"
+    "git_head_sha": "8c500ff7df7a211d5e98066a41a926fa0a77dfa8"
   },
-  "current_slice": "#317 whole-head and section-balanced embedding input-policy matrix",
+  "current_slice": "#319 interactive and bulk resident embedding role-isolation matrix",
   "hypothesis": {
-    "id": "issue-317-embedding-input-policy-matrix",
+    "id": "issue-319-resident-embedding-role-isolation",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "one frozen whole-head or section-balanced 384/256 input policy improves current whole-head 512 ONNX median by at least 10 percent with positive paired ONNX and wall-time confidence intervals while preserving frozen control-referenced quality, sensitivity, startup and memory gates",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/312#issuecomment-5157678376",
+    "expected_effect": "exactly one split resident topology improves public-synthetic bulk throughput and the paired full-product non-OCR endpoint by at least 8 percent with positive paired 95 percent confidence intervals while preserving every interactive latency, queue, memory, exact-vector and lifecycle guard",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/282#issuecomment-5150903774",
     "after_measurement_ref": null,
     "reprofile_ref": null,
     "decision": "active"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/319"
+    },
+    {
+      "from": "slice_selected",
+      "to": "evidence_review",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/317#issuecomment-5158788759"
+    },
     {
       "from": "evidence_review",
       "to": "slice_selected",
@@ -3061,15 +3071,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-317-embedding-input-policy-matrix-2026-08-02",
-  "state_version": 582,
-  "previous_state_hash": "c6678a52c1c4e238dd3bd1a505f83d288dccd93df0818f36617f0258ae97f6d2",
-  "expected_state_version": 582,
-  "last_confirmed_side_effect": "issue_317_input_policy_matrix_created",
+  "run_id": "issue-319-resident-embedding-role-isolation-2026-08-02",
+  "state_version": 583,
+  "previous_state_hash": "2f0ecb654f18c94044b0b8e6e5a5d6c73fcc45a90659b2c91ac67f392bb6b5ed",
+  "expected_state_version": 583,
+  "last_confirmed_side_effect": "issue_319_resident_embedding_role_isolation_created",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#317",
+    "primary_issue": "#319",
     "active_prs": [],
     "open_blockers": []
   }
