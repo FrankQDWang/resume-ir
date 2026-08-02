@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-317-to-319-resident-embedding-role-isolation-2026-08-02",
-  "from_issue": "#317",
-  "to_issue": "#319",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/317#issuecomment-5158788759",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/319",
-  "base_active_goal_sha256": "a294ed608846df622d11b360bec86d936f5694d3924c9d0861a3e6d65380f40a",
+  "transition_id": "issue-319-to-328-daemon-import-admission-2026-08-02",
+  "from_issue": "#319",
+  "to_issue": "#328",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/319#issuecomment-5159938108",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/328",
+  "base_active_goal_sha256": "6948233f2c6b9d2cf027092a00e56b887d77ef9e457aa7017609e671b2edc42e",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
