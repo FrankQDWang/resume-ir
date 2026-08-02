@@ -1,5 +1,13 @@
 # Progress
 
+## Issue #319 blocked rollback: report contract
+
+The second rollback removes the closed #319 report schema, checker and fixtures because no smoke
+or formal aggregate could be produced. The 64 KiB privacy boundary and every performance gate were
+never weakened; they are simply no longer an active contract without an executable matrix. This
+does not delete any measured result because no session reached t0, and it preserves the blocked
+classification recorded by the observer rollback.
+
 ## Issue #319 blocked rollback: aggregate observer
 
 The public smoke never entered a measured arm. Three independent load paths ended before
