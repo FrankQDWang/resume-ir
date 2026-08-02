@@ -906,7 +906,7 @@ fn daemon_rejects_import_before_mutation_when_writer_contract_is_unsupported() {
     let endpoint = read_ipc_endpoint(&mut child, &data_dir);
     let token = read_ipc_auth_token(&data_dir);
     wait_for_ready_control_plane(&mut child, &endpoint, &token);
-    let status_response = http_get(&endpoint, &token);
+    let status_response = wait_for_text_import_blocked_by_writer(&mut child, &endpoint, &token);
     let status = response_json(&status_response);
     assert_eq!(status["writer"]["state"], "unavailable");
     assert_eq!(status["writer"]["reason"], "unsupported_transition");
@@ -2436,6 +2436,42 @@ fn wait_for_ready_control_plane(child: &mut Child, endpoint: &str, token: &str) 
         std::thread::sleep(IPC_ENDPOINT_POLL_DELAY);
     }
     panic!("daemon control plane did not become ready: {last_state}");
+}
+
+fn wait_for_text_import_blocked_by_writer(
+    child: &mut Child,
+    endpoint: &str,
+    token: &str,
+) -> String {
+    let deadline = Instant::now() + IPC_CORE_INITIALIZATION_TIMEOUT;
+    let mut last_state = "unobserved".to_string();
+    while Instant::now() < deadline {
+        if let Some(status) = child.try_wait().expect("poll daemon capability state") {
+            let stderr = read_child_stderr(child);
+            panic!(
+                "daemon exited before text import reflected the writer barrier: {status}; last state={last_state}; stderr={stderr}"
+            );
+        }
+        match try_http_get_authenticated(endpoint, token) {
+            Ok(response) if response.starts_with("HTTP/1.1 200") => {
+                let payload = response_json(&response);
+                let state = payload["capabilities"]["text_import"]["state"]
+                    .as_str()
+                    .unwrap_or("invalid");
+                let reason = payload["capabilities"]["text_import"]["reason"]
+                    .as_str()
+                    .unwrap_or("none");
+                last_state = format!("{state}/{reason}");
+                if state == "blocked" && reason == "writer_unavailable" {
+                    return response;
+                }
+            }
+            Ok(response) => last_state = response,
+            Err(error) => last_state = error.to_string(),
+        }
+        std::thread::sleep(IPC_ENDPOINT_POLL_DELAY);
+    }
+    panic!("text import did not reflect the writer barrier: {last_state}");
 }
 
 fn wait_for_serving_control_plane(

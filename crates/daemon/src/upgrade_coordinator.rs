@@ -41,6 +41,7 @@ pub(crate) enum UpgradeCoordinatorOutcome {
     TargetCommitted,
     TransitionRequired,
     TransitionInProgress,
+    UnsupportedTransition,
     WriterUnavailable,
     HardCutActivated,
 }
@@ -90,8 +91,10 @@ pub(crate) fn observe_desired_contract(
         WriterContractTransitionOutcome::BlockedByRunningOwner => {
             Ok((UpgradeCoordinatorOutcome::TransitionInProgress, None))
         }
-        WriterContractTransitionOutcome::UnsupportedTransition
-        | WriterContractTransitionOutcome::RuntimeUnavailable
+        WriterContractTransitionOutcome::UnsupportedTransition => {
+            Ok((UpgradeCoordinatorOutcome::UnsupportedTransition, None))
+        }
+        WriterContractTransitionOutcome::RuntimeUnavailable
         | WriterContractTransitionOutcome::PersistedStateInvalid => {
             Ok((UpgradeCoordinatorOutcome::WriterUnavailable, None))
         }
@@ -174,7 +177,7 @@ pub(crate) fn bootstrap_writer_barrier(
                 }
             }
         }
-        UpgradeCoordinatorOutcome::WriterUnavailable => {
+        UpgradeCoordinatorOutcome::UnsupportedTransition => {
             store
                 .mark_writer_unsupported_transition(now)
                 .map_err(DaemonError::store)?;
@@ -211,9 +214,11 @@ pub(crate) fn admits_priority(
         WriterPriority::MetadataRecovery
         | WriterPriority::SearchArtifactRepair
         | WriterPriority::PrivacyDeletion => true,
-        WriterPriority::WriterContractTransition => {
-            !matches!(outcome, UpgradeCoordinatorOutcome::WriterUnavailable)
-        }
+        WriterPriority::WriterContractTransition => !matches!(
+            outcome,
+            UpgradeCoordinatorOutcome::UnsupportedTransition
+                | UpgradeCoordinatorOutcome::WriterUnavailable
+        ),
         WriterPriority::OrdinaryImport => public_writer_admitted(outcome),
     }
 }
