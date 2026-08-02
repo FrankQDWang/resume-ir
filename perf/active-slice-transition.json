@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-210-to-302-macos-pr-lite-gate-2026-08-02",
-  "from_issue": "#210",
-  "to_issue": "#302",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/301",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/302",
-  "base_active_goal_sha256": "84c8128b4a172efd65f473070c3df5db4dfc1bfa1483c89a05e91b09529543f1",
+  "transition_id": "issue-302-to-305-embedding-thread-sensitivity-2026-08-02",
+  "from_issue": "#302",
+  "to_issue": "#305",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/302#issuecomment-5154455930",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/305",
+  "base_active_goal_sha256": "42c325c71c4c807e86adc66723870449eaa743fb9428337612b71a92315cf430",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",

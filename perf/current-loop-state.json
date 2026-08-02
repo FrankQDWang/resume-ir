@@ -2,25 +2,25 @@
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
   "workflow_state": "slice_selected",
-  "experiment_state": "reverted",
+  "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "42c325c71c4c807e86adc66723870449eaa743fb9428337612b71a92315cf430",
+    "active_goal_sha256": "2ab76a738ac0548c80caa6137988bcc69d880d3ef616eb32010232f1112883b4",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "95d558bf68dcd81dbc13c76418f3bf67822b3481"
+    "git_head_sha": "7dd7de988334bbf40b8d4a1968da1a5235ca84f9"
   },
-  "current_slice": "#302 macOS PR Lite hosted gate",
+  "current_slice": "#305 resident ONNX intra-op thread sensitivity",
   "hypothesis": {
-    "id": "issue-302-macos-pr-lite-hosted-gate",
+    "id": "issue-305-embedding-intra-op-thread-sensitivity",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "one read-only macOS PR gate provides stable focused contract and embedding-unit coverage, passes ten consecutive exact-head attempts, and becomes a strict required main context",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/302",
-    "after_measurement_ref": "pending_pr_lite_exact_head_runs",
-    "reprofile_ref": "not_applicable_ci_gate",
-    "decision": "restore_gate"
+    "expected_effect": "one unique intra-op count from 1, 2, 3, 4, and 6 improves Batch-4 x 512 resident ONNX median by at least 10 percent versus three threads with positive paired ONNX and wall-time intervals and no accepted correctness, sensitivity, startup, or resource regression",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/293#issuecomment-5152318044",
+    "after_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/305",
+    "reprofile_ref": null,
+    "decision": "active"
   },
   "transition_history": [
     {
@@ -738,7 +738,9 @@
     {"from":"slice_selected","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/300"},
     {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/210"},
     {"from":"slice_selected","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/301"},
-    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/302"}
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/302"},
+    {"from":"reverted","to":"bottleneck_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305"},
+    {"from":"bottleneck_selected","to":"hypothesis_registered","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305"}
   ],
   "verification": {
     "commands": [
@@ -3029,15 +3031,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-302-macos-pr-lite-hosted-gate-2026-08-02",
-  "state_version": 575,
-  "previous_state_hash": "d9e5b7ea210faf0e2f55fc0c82325b8d520988bc0e79f26665041649c73d2319",
-  "expected_state_version": 575,
-  "last_confirmed_side_effect": "issue_210_closed_issue_302_created",
+  "run_id": "issue-305-embedding-thread-sensitivity-2026-08-02",
+  "state_version": 576,
+  "previous_state_hash": "2af8771efa2a6a19b06bf027d1e6f7585f16b7ff9913e53b3139cda2b34b7526",
+  "expected_state_version": 576,
+  "last_confirmed_side_effect": "issue_305_created_after_required_check_enabled",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#302",
+    "primary_issue": "#305",
     "active_prs": [],
     "open_blockers": []
   }

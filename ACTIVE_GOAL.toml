@@ -12,17 +12,17 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#302"
-name = "macos_pr_lite_hosted_gate"
+issue = "#305"
+name = "embedding_intra_op_thread_sensitivity"
 contract_change_allowed = true
-production_code_allowed = false
+production_code_allowed = true
 private_benchmark_allowed = false
 configured_private_roots_required = false
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "not_applicable_public_synthetic_only"
 scope_exception = false
-scope_exception_reason = "This bounded #302 CI slice restores one read-only macOS pull-request gate for contract and focused embedding-unit coverage, updates the exact workflow-policy and branch-protection configuration contracts, and does not build runtime packs, read private data, package or install the app, execute non-macOS work, or change production behavior."
+scope_exception_reason = "This bounded #305 L2 runtime-scheduling experiment measures only the current production embedding model and ORT runtime at intra-op counts 1, 2, 3, 4, and 6 through a default-off Cargo feature and public-synthetic local witness; it selects at most one production follow-up and does not change parser workers, the production inference policy, model, runtime pack, session flags, batch, queue, daemon, IPC, desktop, packaging, non-macOS work, gates, or privacy behavior."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -30,33 +30,42 @@ allowed_paths = [
   "perf/active-slice-transition.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-  ".github/workflows/pr-lite.yml",
-  "scripts/ci/check-workflows.sh",
-  "scripts/ci/configure-github-repo.sh",
+  "crates/embedding-runtime/Cargo.toml",
+  "crates/embedding-runtime/src/main.rs",
+  "crates/embedding-runtime/src/profiling.rs",
+  "crates/embedding-runtime/src/thread_experiment.rs",
+  "crates/embedding-runtime/src/thread_experiment_tests.rs",
+  "crates/embedding-runtime/tests/production_modes.rs",
+  "scripts/local/embedding-thread-matrix.py",
   "scripts/ci/test-governance-contract-mutations.py",
 ]
-allowed_paths_role = "macos_pr_lite_hosted_gate_paths"
+allowed_paths_role = "embedding_intra_op_thread_sensitivity_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "ci_gate_restoration"
-optimization_layer = "L0"
-optimization_layer_selected = false
-hypothesis = "one focused macOS hosted gate can catch contract and embedding-unit regressions without runtime packs, private data, packaging, installation, or duplicated full local verification"
-expected_delta = "no product-performance delta; the exact PR head passes ten consecutive hosted attempts and the context becomes a strict required main check"
-negative_control = "the current repository state with no required hosted status check"
-implementation_boundary = "add only pr-lite.yml and its policy/configuration contracts; retain release.yml as the only other workflow and keep full local verification authoritative for broad coverage"
-resident_workload = "focused public repository embedding-protocol, embedder, and embedding-runtime unit/integration tests only"
-resident_acceptance = "the exact context PR Lite / contract-and-unit passes ten consecutive attempts on one head, then branch-protection strict readback requires that context"
+observation_stage = "L2_intra_op_thread_sensitivity"
+optimization_layer = "L2"
+optimization_layer_selected = true
+hypothesis = "one intra-op count from 1, 2, 3, 4, and 6, selected independently from parser workers, improves Batch-4 x 512 resident ONNX median by at least 10 percent versus the current three-thread control with positive paired ONNX and wall-time intervals and no accepted correctness, sensitivity, startup, or resource regression"
+expected_delta = "a unique candidate improves the primary ONNX median by >=10% with paired bootstrap 95% lower bound >0, positive resident wall-time interval, no 32/96/256-token regression above 3%, no Batch-1 p95 regression above 5%, and mode overhead <=1%"
+negative_control = "the same feature-enabled release binary in ordinary --resident mode and --resident-thread-matrix mode at three threads, with exact vectors and unchanged current model, ORT, tokenizer, session flags, Batch, queue, and workers"
+implementation_boundary = "the contract PR merges before the default-off thread-experiment feature or formal matrix; the capability PR merges before formal measurement; resident evidence selects a candidate only and cannot change the production inference policy"
+experiment_seed = 20260802
+candidate_intra_op_threads = [1, 2, 3, 4, 6]
+resident_workload = "public synthetic only; ten Williams-balanced blocks and 50 independent release resident sessions; per session 30-second Batch-4 x 512 warmup, 20 measured Batch-4 x 512 requests, 10 each at Batch-4 x 32/96/256, and 50 Batch-1 x 32 query requests"
+resident_acceptance = "primary ONNX median improves >=10% with paired bootstrap 95% lower bound >0; resident wall-time interval is positive; no sensitivity bucket regresses >3%; Batch-1 p95 regresses <=5%; mode overhead <=1%; vectors are elementwise exact equal; quality, Ready, H0 512MiB, and H2 1536MiB gates pass; multiple passing candidates require a positive paired interval over the runner-up"
 full_product_acceptance = "not authorized; no private root, full import, W1, product speedup, scale, release, or goal-complete claim"
-raw_profile_boundary = "hosted output contains only repository-public build and test diagnostics; no runtime pack, private input, model cache, path-bearing private evidence, token, or credential is uploaded"
-rollback_condition = "remove the gate or keep it non-required if its exact head cannot pass ten consecutive hosted attempts, it depends on unavailable private/runtime/package state, permissions exceed read-only, or policy admits an additional workflow"
+winner_reprofile = "only one unique matrix winner receives five Batch-4 x 512 ORT captures and one 20-second unprofiled xctrace or sample cross-check; profiled and unprofiled vectors remain elementwise equal, dynamic quantization remains the stable top family, and no scheduling, idle, or oversubscription conflict appears"
+raw_profile_boundary = "raw request samples, inputs, tokens, vectors, ORT traces, xctrace or sample captures, local paths, and PIDs remain in owner-only temporary storage and are deleted after bounded aggregation; the public report is <=64KiB"
+rollback_condition = "retain the current production three-thread policy and delete the experiment feature, modes, environment variable, and witness if no candidate clears every gate, candidates tie statistically, profiling is unstable or conflicting, the report is malformed or unbounded, normal resident behavior changes, or any raw/private material leaks"
 forbidden_scope = [
   "cpu_arena_change",
-  "thread_policy_change",
+  "production_thread_policy_change",
+  "parser_worker_change",
   "ort_upgrade",
   "production_runtime_pack_change",
   "production_model_id_change",
   "production_vector_reindex",
   "pooling_change",
+  "transformer_optimizer_change",
   "larger_batch",
   "additional_worker_or_queue",
   "additional_model_process",
