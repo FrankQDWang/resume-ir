@@ -33,7 +33,10 @@ gh repo edit "$FULL_NAME" \
 main_sha="$(git rev-parse main)"
 protection_payload=$(cat <<EOF
 {
-  "required_status_checks": null,
+  "required_status_checks": {
+    "strict": true,
+    "contexts": ["PR Lite / contract-and-unit"]
+  },
   "enforce_admins": true,
   "required_pull_request_reviews": null,
   "restrictions": null,

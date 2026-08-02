@@ -1,0 +1,54 @@
+name: PR Lite
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-lite-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  contract-and-unit:
+    name: contract-and-unit
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Locked workspace metadata
+        run: cargo metadata --no-deps --locked --format-version 1 >/dev/null
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Focused embedding tests
+        run: cargo test -p embedding-protocol -p embedder -p resume-embedding-runtime --locked
+
+      - name: Focused warnings-denied Clippy
+        run: cargo clippy -p embedding-protocol -p embedder -p resume-embedding-runtime --all-targets --locked -- -D warnings
+
+      - name: Performance and delivery contracts
+        run: |
+          python3 scripts/ci/check-performance-contracts.py
+          python3 scripts/ci/check-autonomous-goal.py
+          python3 scripts/ci/check-loop-state.py
+          python3 scripts/ci/test-governance-contract-mutations.py
+
+      - name: Pull request budget
+        run: python3 scripts/ci/check-pr-budget.py
+
+      - name: Diff and public boundary
+        run: |
+          git diff --check origin/${{ github.base_ref }}...HEAD
+          ./scripts/ci/guard-public-repo.sh

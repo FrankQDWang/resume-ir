@@ -35,6 +35,8 @@ reject_file() {
 }
 
 release_workflow=".github/workflows/release.yml"
+pr_lite_workflow=".github/workflows/pr-lite.yml"
+github_config_script="scripts/ci/configure-github-repo.sh"
 verify_script="scripts/ci/verify-local.sh"
 parallel_verify_script="scripts/ci/verify-local-parallel.py"
 parallel_verify_support="scripts/ci/verify_local_parallel_support.py"
@@ -68,13 +70,13 @@ do
   reject_file "$file"
 done
 
-unexpected_workflows=$(find .github/workflows -maxdepth 1 -type f ! -name release.yml -print)
+unexpected_workflows=$(find .github/workflows -maxdepth 1 -type f ! -name release.yml ! -name pr-lite.yml -print)
 if [ -n "$unexpected_workflows" ]; then
   printf '%s\n' "$unexpected_workflows" >&2
-  fail "automatic or duplicate GitHub workflows are not allowed; local verification is authoritative"
+  fail "only the release and PR Lite GitHub workflows are allowed"
 fi
 
-for file in "$release_workflow" "$verify_script" "$parallel_verify_script" "$parallel_verify_support" "$parallel_verify_manifest" "$parallel_verify_test" "$search_runtime_boundary_script" "$governance_mutation_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$daemon_incremental_script" "$benchmark_smoke_script" "$runtime_bundle_policy_script" "$runtime_bundle_manifest_script" "$runtime_bundle_payload_script" "$runtime_bundle_sbom_script" "$runtime_bundle_package_script" "$current_stage_handoff_script" "$current_stage_validation_script" "$current_stage_observability_script" "$local_ocr_runtime_script" "$local_diagnostics_evidence_script" "$local_quality_evidence_script"; do
+for file in "$release_workflow" "$pr_lite_workflow" "$github_config_script" "$verify_script" "$parallel_verify_script" "$parallel_verify_support" "$parallel_verify_manifest" "$parallel_verify_test" "$search_runtime_boundary_script" "$governance_mutation_script" "$cli_closed_loop_script" "$daemon_closed_loop_script" "$daemon_incremental_script" "$benchmark_smoke_script" "$runtime_bundle_policy_script" "$runtime_bundle_manifest_script" "$runtime_bundle_payload_script" "$runtime_bundle_sbom_script" "$runtime_bundle_package_script" "$current_stage_handoff_script" "$current_stage_validation_script" "$current_stage_observability_script" "$local_ocr_runtime_script" "$local_diagnostics_evidence_script" "$local_quality_evidence_script"; do
   require_file "$file"
 done
 
@@ -82,6 +84,33 @@ require_text "$release_workflow" "workflow_dispatch:"
 reject_text "$release_workflow" "pull_request:"
 reject_text "$release_workflow" "schedule:"
 reject_text "$release_workflow" "push:"
+
+require_text "$pr_lite_workflow" "name: PR Lite"
+require_text "$pr_lite_workflow" "pull_request:"
+require_text "$pr_lite_workflow" "- main"
+require_text "$pr_lite_workflow" "contents: read"
+require_text "$pr_lite_workflow" "runs-on: macos-latest"
+require_text "$pr_lite_workflow" "name: contract-and-unit"
+require_text "$pr_lite_workflow" "cargo metadata --no-deps --locked --format-version 1"
+require_text "$pr_lite_workflow" "cargo fmt --all -- --check"
+require_text "$pr_lite_workflow" "cargo test -p embedding-protocol -p embedder -p resume-embedding-runtime --locked"
+require_text "$pr_lite_workflow" "cargo clippy -p embedding-protocol -p embedder -p resume-embedding-runtime --all-targets --locked -- -D warnings"
+require_text "$pr_lite_workflow" "python3 scripts/ci/check-performance-contracts.py"
+require_text "$pr_lite_workflow" "python3 scripts/ci/check-autonomous-goal.py"
+require_text "$pr_lite_workflow" "python3 scripts/ci/check-loop-state.py"
+require_text "$pr_lite_workflow" "python3 scripts/ci/test-governance-contract-mutations.py"
+require_text "$pr_lite_workflow" "python3 scripts/ci/check-pr-budget.py"
+require_text "$pr_lite_workflow" "git diff --check origin/\${{ github.base_ref }}...HEAD"
+require_text "$pr_lite_workflow" "./scripts/ci/guard-public-repo.sh"
+reject_text "$pr_lite_workflow" "workflow_dispatch:"
+reject_text "$pr_lite_workflow" "schedule:"
+reject_text "$pr_lite_workflow" "push:"
+reject_text "$pr_lite_workflow" "ubuntu-latest"
+reject_text "$pr_lite_workflow" "windows-latest"
+
+require_text "$github_config_script" '"required_status_checks": {'
+require_text "$github_config_script" '"strict": true'
+require_text "$github_config_script" '"PR Lite / contract-and-unit"'
 
 require_text "$verify_script" "./scripts/ci/check-workflows.sh"
 require_text "$verify_script" "python3 scripts/ci/check-search-runtime-boundary.py"

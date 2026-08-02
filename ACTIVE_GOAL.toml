@@ -12,17 +12,17 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#210"
-name = "deterministic_resident_eager_restart"
+issue = "#302"
+name = "macos_pr_lite_hosted_gate"
 contract_change_allowed = true
-production_code_allowed = true
+production_code_allowed = false
 private_benchmark_allowed = false
 configured_private_roots_required = false
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "not_applicable_public_synthetic_only"
 scope_exception = false
-scope_exception_reason = "This bounded #210 reliability repair makes a failed resident request return its original error before eagerly starting the next child generation, replaces a load-sensitive restart assertion with a deterministic ready-generation barrier, and preserves request deadlines, process containment, reaping, shutdown, model, runtime, and inference policy."
+scope_exception_reason = "This bounded #302 CI slice restores one read-only macOS pull-request gate for contract and focused embedding-unit coverage, updates the exact workflow-policy and branch-protection configuration contracts, and does not build runtime packs, read private data, package or install the app, execute non-macOS work, or change production behavior."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -30,25 +30,25 @@ allowed_paths = [
   "perf/active-slice-transition.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-  "crates/embedder/src/resident.rs",
-  "crates/embedder/tests/resident.rs",
-  "crates/embedding-protocol/tests/fixtures/resident_worker.rs",
+  ".github/workflows/pr-lite.yml",
+  "scripts/ci/check-workflows.sh",
+  "scripts/ci/configure-github-repo.sh",
   "scripts/ci/test-governance-contract-mutations.py",
 ]
-allowed_paths_role = "deterministic_resident_eager_restart_paths"
+allowed_paths_role = "macos_pr_lite_hosted_gate_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "runtime_reliability_repair"
-optimization_layer = "L2"
+observation_stage = "ci_gate_restoration"
+optimization_layer = "L0"
 optimization_layer_selected = false
-hypothesis = "eagerly spawning the next resident generation after returning the failed request removes the lazy-restart deadline coupling and permits deterministic generation-barrier tests under parallel load"
-expected_delta = "no performance claim; failed requests return their original error without waiting for restart, and the next generation reaches Ready before later work is admitted"
-negative_control = "the existing lazy-restart behavior and its fixed one-second follow-up request deadline"
-implementation_boundary = "change only resident supervisor restart ordering and synthetic fixture synchronization; add no public API, deadline relaxation, worker, queue, model, runtime, or inference-policy change"
-resident_workload = "public synthetic resident worker fixtures; default-parallel and serial stress only"
-resident_acceptance = "failure publishes Restarting, returns the original error before restart completion, eagerly reaches the second Ready generation, publishes Unavailable on eager spawn failure, preserves a later normal retry, and retains shutdown and reaping semantics"
+hypothesis = "one focused macOS hosted gate can catch contract and embedding-unit regressions without runtime packs, private data, packaging, installation, or duplicated full local verification"
+expected_delta = "no product-performance delta; the exact PR head passes ten consecutive hosted attempts and the context becomes a strict required main check"
+negative_control = "the current repository state with no required hosted status check"
+implementation_boundary = "add only pr-lite.yml and its policy/configuration contracts; retain release.yml as the only other workflow and keep full local verification authoritative for broad coverage"
+resident_workload = "focused public repository embedding-protocol, embedder, and embedding-runtime unit/integration tests only"
+resident_acceptance = "the exact context PR Lite / contract-and-unit passes ten consecutive attempts on one head, then branch-protection strict readback requires that context"
 full_product_acceptance = "not authorized; no private root, full import, W1, product speedup, scale, release, or goal-complete claim"
-raw_profile_boundary = "tests record only bounded synthetic generation, request, and status counts; no paths, PIDs, payload text, vectors, model data, or raw logs enter public evidence"
-rollback_condition = "revert if the failed caller waits for restart, the original error changes, shutdown or process reaping regresses, eager restart loops, a later retry is lost, or any private/raw material leaks"
+raw_profile_boundary = "hosted output contains only repository-public build and test diagnostics; no runtime pack, private input, model cache, path-bearing private evidence, token, or credential is uploaded"
+rollback_condition = "remove the gate or keep it non-required if its exact head cannot pass ten consecutive hosted attempts, it depends on unavailable private/runtime/package state, permissions exceed read-only, or policy admits an additional workflow"
 forbidden_scope = [
   "cpu_arena_change",
   "thread_policy_change",
@@ -59,7 +59,7 @@ forbidden_scope = [
   "pooling_change",
   "larger_batch",
   "additional_worker_or_queue",
-  "additional_concurrent_model_process",
+  "additional_model_process",
   "wait_for_ocr_drain",
   "windows_or_linux",
   "query_hot_path_change",
