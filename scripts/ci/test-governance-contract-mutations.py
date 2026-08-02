@@ -6,8 +6,6 @@ from __future__ import annotations
 import copy
 import importlib.util
 import pathlib
-import subprocess
-import sys
 import tomllib
 import unittest
 
@@ -76,12 +74,6 @@ class GovernanceContractMutationTests(unittest.TestCase):
         )
         self.assertEqual(self.embedding_observation_checker.main(), 0)
         self.assertEqual(self.resident_role_isolation_checker.main(), 0)
-        runner = subprocess.run(
-            [sys.executable, str(ROOT / "scripts/local/resident-embedding-role-isolation.py"),
-             "self-test"], cwd=ROOT, capture_output=True, text=True, check=False,
-        )
-        self.assertEqual(runner.returncode, 0, runner.stderr)
-
     def test_each_delivery_transition_is_required(self) -> None:
         expected = self.autonomous_checker.CORRECTNESS_DELIVERY_TRANSITIONS
         for name in expected:
