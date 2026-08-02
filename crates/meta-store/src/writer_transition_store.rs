@@ -87,6 +87,52 @@ impl<Access: MetadataStoreAccess> MetadataStore<Access> {
         Ok(changed == 1)
     }
 
+    /// Latches a coordinator-proven unsupported Desired-vs-committed writer
+    /// transition so public admission cannot diverge from the worker gate.
+    pub fn mark_writer_unsupported_transition(&self, now: UnixTimestamp) -> Result<bool>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
+        let connection = self.connection.borrow();
+        let changed = connection
+            .execute(
+                "UPDATE writer_authority_state
+                 SET health_state = 'unavailable',
+                     health_reason = 'unsupported_transition',
+                     updated_at_seconds = MAX(updated_at_seconds, ?1)
+                 WHERE state_key = 'default'
+                   AND health_state = 'ready'
+                   AND health_reason IS NULL
+                   AND active_transition_id IS NULL",
+                params![now.as_unix_seconds()],
+            )
+            .map_err(MetaStoreError::storage)?;
+        Ok(changed == 1)
+    }
+
+    /// Clears only the unsupported-transition latch before a new daemon
+    /// generation re-evaluates Desired against the committed writer contract.
+    pub fn clear_writer_unsupported_transition(&self, now: UnixTimestamp) -> Result<bool>
+    where
+        Access: MetadataStoreWriteAccess,
+    {
+        let connection = self.connection.borrow();
+        let changed = connection
+            .execute(
+                "UPDATE writer_authority_state
+                 SET health_state = 'ready',
+                     health_reason = NULL,
+                     updated_at_seconds = MAX(updated_at_seconds, ?1)
+                 WHERE state_key = 'default'
+                   AND health_state = 'unavailable'
+                   AND health_reason = 'unsupported_transition'
+                   AND active_transition_id IS NULL",
+                params![now.as_unix_seconds()],
+            )
+            .map_err(MetaStoreError::storage)?;
+        Ok(changed == 1)
+    }
+
     /// Writer-only barrier for a contended orphaned running task owner.
     pub fn mark_writer_blocked_by_running_owner(&self, now: UnixTimestamp) -> Result<()>
     where
