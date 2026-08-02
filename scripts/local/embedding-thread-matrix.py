@@ -16,20 +16,16 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-SCHEMA = "resume-ir.embedding-thread-matrix.v1"
-STREAM = "resume-ir.embedding-stream.v1"
+SCHEMA, STREAM = "resume-ir.embedding-thread-matrix.v1", "resume-ir.embedding-stream.v1"
 MODEL_ID = "intfloat-multilingual-e5-small-qint8-r1"
 DIMENSION = 384
 THREADS = (1, 2, 3, 4, 6)
-SEED = 20260802
-PRIMARY = "b4_512"
+SEED, PRIMARY = 20260802, "b4_512"
 BUCKETS = (PRIMARY, "b4_32", "b4_96", "b4_256", "b1_32_query")
 COUNTS = {PRIMARY: 20, "b4_32": 10, "b4_96": 10, "b4_256": 10, "b1_32_query": 50}
 TOKENS = {PRIMARY: 512, "b4_32": 32, "b4_96": 96, "b4_256": 256, "b1_32_query": 32}
-WARMUP_SECONDS = 30.0
-TIMEOUT_SECONDS = 90.0
-MAX_REPORT_BYTES = 64 * 1024
-MIB = 1024 * 1024
+WARMUP_SECONDS, TIMEOUT_SECONDS = 30.0, 90.0
+MAX_REPORT_BYTES, MIB = 64 * 1024, 1024 * 1024
 PRIVACY = {f"contains_{name}": False for name in (
     "raw_resume_text raw_query candidate_results local_paths vectors token_content "
     "runtime_or_model_bytes pids raw_symbols raw_profiler_data").split()}
@@ -69,13 +65,11 @@ def parse_cpu_time(text: str) -> int:
     match = re.fullmatch(r"(?:(\d+)-)?(\d+):(\d+):(\d+(?:\.\d+)?)|(\d+):(\d+(?:\.\d+)?)", text)
     if match is None:
         raise WitnessError("process_cpu_unavailable")
-    if match.group(5) is not None:
-        seconds = int(match.group(5)) * 60 + float(match.group(6))
-    else:
-        seconds = (((int(match.group(1) or 0) * 24 + int(match.group(2))) * 60
-                    + int(match.group(3))) * 60 + float(match.group(4)))
+    seconds = (int(match.group(5)) * 60 + float(match.group(6))
+               if match.group(5) is not None else
+               ((int(match.group(1) or 0) * 24 + int(match.group(2))) * 60
+                + int(match.group(3))) * 60 + float(match.group(4)))
     return round(seconds * 1_000_000)
-
 def cpu_time_us(pid: int) -> int:
     try:
         text = subprocess.run(["ps", "-o", "time=", "-p", str(pid)], check=True,
@@ -163,10 +157,7 @@ def calibrate_query(binary: Path, runtime: Path) -> list[dict[str, str]]:
             _, _, signature, _ = resident.request(inputs)
             if signature[1] == 32:
                 return inputs
-            if signature[1] < 32:
-                low = count + 1
-            else:
-                high = count - 1
+            low, high = (count + 1, high) if signature[1] < 32 else (low, count - 1)
         raise WitnessError("query_token_calibration_failed")
     finally:
         resident.stop()
@@ -216,11 +207,9 @@ def quality(binary: Path, runtime: Path, threads: int, *, ordinary: bool = False
     finally:
         resident.stop()
 def aggregate(sessions: list[SessionResult]) -> CandidateAggregate:
-    return CandidateAggregate(
-        sessions,
-        [statistics.median(session.onnx[PRIMARY]) for session in sessions],
-        [statistics.median(session.wall[PRIMARY]) for session in sessions],
-    )
+    return CandidateAggregate(sessions,
+                              [statistics.median(session.onnx[PRIMARY]) for session in sessions],
+                              [statistics.median(session.wall[PRIMARY]) for session in sessions])
 def improvement(control: float, candidate: float) -> float:
     if control <= 0 or candidate <= 0:
         raise WitnessError("metric_invalid")
@@ -272,15 +261,11 @@ def decide(values: dict[int, CandidateAggregate], quality_gates: dict[int, dict[
         ready = statistics.median(session.ready_ms for session in candidate.sessions)
         ready_delta = ready - control_ready
         ready_pass = ready_delta <= 1_000 and ready_delta * 100 / control_ready <= 10
-        resource_pass = (
-            max(session.footprint_bytes for session in values[1].sessions) <= 512 * MIB
-            and max(session.footprint_bytes for session in candidate.sessions) <= 1_536 * MIB
-        )
-        accepted = (
-            gain >= 10 and onnx_ci[0] > 0 and wall_ci[0] > 0 and sensitivity <= 3
-            and batch1_regression <= 5 and mode_overhead_pct <= 1 and mode_exact
-            and quality_gates[threads]["passed"] is True and ready_pass and resource_pass
-        )
+        resource_pass = (max(session.footprint_bytes for session in values[1].sessions) <= 512 * MIB
+                         and max(session.footprint_bytes for session in candidate.sessions) <= 1_536 * MIB)
+        accepted = (gain >= 10 and onnx_ci[0] > 0 and wall_ci[0] > 0 and sensitivity <= 3
+                    and batch1_regression <= 5 and mode_overhead_pct <= 1 and mode_exact
+                    and quality_gates[threads]["passed"] is True and ready_pass and resource_pass)
         gates[str(threads)] = {"primary_onnx_improvement_pct": gain,
                                "onnx_bootstrap_95pct": onnx_ci, "wall_bootstrap_95pct": wall_ci,
                                "maximum_sensitivity_regression_pct": sensitivity,
@@ -288,11 +273,9 @@ def decide(values: dict[int, CandidateAggregate], quality_gates: dict[int, dict[
                                "quality_pass": quality_gates[threads]["passed"],
                                "ready_pass": ready_pass, "resource_pass": resource_pass,
                                "accepted": accepted}
-        if accepted:
-            passing.append(threads)
+        if accepted: passing.append(threads)
     passing.sort(key=lambda threads: statistics.median(values[threads].primary_onnx_by_block))
-    if not passing:
-        return {"outcome": "lost", "winner": None, "gates": gates}
+    if not passing: return {"outcome": "lost", "winner": None, "gates": gates}
     if len(passing) > 1:
         fastest, runner_up = passing[:2]
         tie_ci = PRE["bootstrap_improvement_interval"](
@@ -355,8 +338,7 @@ def cross_check(binary: Path, runtime: Path, threads: int, inputs: list[dict[str
             exported = subprocess.run(["xcrun", "xctrace", "export", "--input", str(trace),
                                        "--xpath", '/trace-toc/run[@number="1"]/data/table'],
                                       capture_output=True, timeout=30, check=False)
-            if exported.returncode == 0:
-                family = PROF["symbol_family"](exported.stdout.decode(errors="ignore"))
+            if exported.returncode == 0: family = PROF["symbol_family"](exported.stdout.decode(errors="ignore"))
         if family is None:
             method = "sample_fallback"
             sample = root / "sample.txt"
@@ -377,8 +359,7 @@ def encode(report: dict[str, object], denied: tuple[str, ...]) -> bytes:
         raw = (json.dumps(report, sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n").encode()
     except (TypeError, ValueError):
         raise WitnessError("report_numeric_invalid") from None
-    if len(raw) > MAX_REPORT_BYTES:
-        raise WitnessError("report_size_exceeded")
+    if len(raw) > MAX_REPORT_BYTES: raise WitnessError("report_size_exceeded")
     if any(value and value.encode() in raw for value in denied) or any(
         marker in raw for marker in (b"/Users/", b"/private/", b"raw_trace", b"token_ids")
     ):
@@ -446,7 +427,6 @@ class SelfTests(unittest.TestCase):
                      "b4_256": [int(value)], "b1_32_query": [int(batch1)]}, 1, 1, 1, {})
                     for _ in range(10)]
         return aggregate(sessions)
-
     def test_williams_balances_positions_and_ordered_carryover(self) -> None:
         rows = williams(THREADS)
         self.assertEqual(len(rows), 10)
@@ -454,7 +434,6 @@ class SelfTests(unittest.TestCase):
             self.assertEqual(Counter(row[position] for row in rows), Counter({value: 2 for value in THREADS}))
         pairs = Counter((row[index], row[index + 1]) for row in rows for index in range(4))
         self.assertEqual(set(pairs.values()), {2})
-
     def test_decision_lost_unique_and_tied(self) -> None:
         quality_gates = {threads: {"passed": True} for threads in THREADS}
         values = {threads: self.fake(100) for threads in THREADS}
@@ -463,7 +442,6 @@ class SelfTests(unittest.TestCase):
         self.assertEqual(decide(values, quality_gates, 0, True)["winner"], 1)
         values[2] = self.fake(80)
         self.assertEqual(decide(values, quality_gates, 0, True)["outcome"], "inconclusive")
-
     def test_report_rejects_nan_paths_and_oversize(self) -> None:
         with self.assertRaisesRegex(WitnessError, "numeric"):
             encode({"value": float("nan")}, ())
@@ -471,7 +449,6 @@ class SelfTests(unittest.TestCase):
             encode({"value": "/private/root"}, ())
         with self.assertRaisesRegex(WitnessError, "size"):
             encode({"value": "x" * MAX_REPORT_BYTES}, ())
-
     def test_cpu_time_parser_contract_is_strict(self) -> None:
         self.assertEqual(parse_cpu_time("1:02.50"), 62_500_000)
         self.assertEqual(parse_cpu_time("1-02:03:04.5"), 93_784_500_000)
@@ -481,13 +458,10 @@ class SelfTests(unittest.TestCase):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
-    parser.add_argument("--binary", type=Path)
-    parser.add_argument("--runtime-dir", type=Path)
+    for name in ("--binary", "--runtime-dir", "--out"): parser.add_argument(name, type=Path)
     parser.add_argument("--revision")
-    parser.add_argument("--out", type=Path)
     args = parser.parse_args()
-    if args.self_test:
-        return args
+    if args.self_test: return args
     if not all((args.binary, args.runtime_dir, args.revision, args.out)):
         parser.error("binary, runtime-dir, revision, and out are required")
     if re.fullmatch(r"[0-9a-f]{40}", args.revision) is None:
@@ -511,8 +485,7 @@ def main() -> int:
         args.out.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         args.out.write_bytes(encoded)
         args.out.chmod(0o600)
-        print(encoded.decode(), end="")
-        return 0
+        print(encoded.decode(), end=""); return 0
     except (WitnessError, RuntimeError, ValueError) as error:
         print(json.dumps({"schema_version": SCHEMA, "error": str(error)}))
         return 1
