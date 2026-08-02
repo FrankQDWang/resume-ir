@@ -1,5 +1,14 @@
 # Progress
 
+## Issue #319 blocked rollback: aggregate observer
+
+The public smoke never entered a measured arm. Three independent load paths ended before
+publication: direct `/imports` tasks remained queued, source-root registration returned
+`METADATA_UNAVAILABLE`, and the restart-reconciliation path produced no B4 x 512 observer work
+before the 240-second bound. This is `blocked`, not a performance `lost` result, and no speedup is
+claimed. The first rollback removes only the experiment aggregate observer; shared 3t production
+behavior remains unchanged while the report contract and core capability are reverted separately.
+
 ## Issue #319 resident embedding role-isolation aggregate observer
 
 The runner prerequisite adds an experiment-only, environment-selected owner file for exact live
