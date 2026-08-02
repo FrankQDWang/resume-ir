@@ -1,5 +1,14 @@
 # Progress
 
+## 2026-08-02 — #312 read-only embedding-input observer core
+
+- Added a benchmark-only observer that reads the exact active search projection through one
+  immutable metadata snapshot and never changes production embedding, daemon, IPC, or storage.
+- Locked tokenization to the current production tokenizer digest, `passage:` prefix, no padding,
+  and pre-truncation encoding; aggregation retains no raw text, token IDs, paths, or per-document rows.
+- Added deterministic count reconciliation, fixed token buckets, section-family coverage at
+  512/384/256, explicit unassigned attribution, and the four conjunctive #312 trigger checks.
+
 ## Issue #312 pre-truncation token saturation observation contract
 
 Issue #312 is the next L0 observation after the resident thread experiment

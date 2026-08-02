@@ -29,6 +29,7 @@ use rank_fusion::{soft_dedupe_score, DedupeProfile};
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use sha2::{Digest, Sha256};
 
+mod embedding_input_observation;
 mod private_query_command_pipe;
 mod resident_query_client;
 mod resident_query_fixture;
@@ -37,6 +38,10 @@ mod synthetic_query_workload;
 
 use private_query_command_pipe::{BoundedPipeReadError, BoundedPipeReader};
 
+pub use embedding_input_observation::{
+    run_embedding_input_observation, EmbeddingInputObservationError,
+    EmbeddingInputObservationReport,
+};
 pub use resident_query_load::{
     run_resident_public_query_load, ResidentQueryLoadConfig, ResidentQueryLoadReport,
 };

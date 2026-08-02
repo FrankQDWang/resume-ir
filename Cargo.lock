@@ -223,10 +223,12 @@ dependencies = [
  "ocr-client",
  "process-containment",
  "rank-fusion",
+ "sectionizer",
  "serde",
  "serde_json",
  "sha2",
  "sysinfo",
+ "tokenizers",
 ]
 
 [[package]]
