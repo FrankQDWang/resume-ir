@@ -1,5 +1,21 @@
 # Progress
 
+## Issue #319 resident role-isolation public matrix runner restored
+
+The bounded macOS-only runner now composes attested release sidecars, calibrates B1 x 32 queries,
+proves exact vectors/counts/order across all three arms, starts each daemon from an empty store and
+requires strict `/imports` admission. It permits only the two observed startup partial flushes
+before warmup and requires every measured publication call to remain B4 x 512.
+
+One three-session public smoke passes the closed report checker: all sessions, thermal/load guards,
+query results, lifecycle semantics and cleanup are exact, with a 5,416-byte owner-only aggregate
+report. Its one-second metrics remain capability-only and make no speedup, winner, private-matrix or
+release claim. An unattested build and the former offline-store bootstrap both stopped before t0 and
+are recorded as harness corrections, not performance losses.
+
+The focused runner/report/governance checks and the complete `verify-local.sh` gate pass without any
+production default, schema, privacy boundary or performance-gate weakening.
+
 ## Issue #319 resident role-isolation aggregate observer restored after admission repair
 
 The default-off aggregate observer is restored only after the deterministic admission repair, core
