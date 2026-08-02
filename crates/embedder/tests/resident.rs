@@ -74,7 +74,7 @@ fn timeout_reaps_the_generation_and_the_next_request_recovers() {
 
 #[test]
 fn child_exit_restarts_before_a_later_request() {
-    let worker = TestWorker::compile("crash_once");
+    let worker = TestWorker::compile("crash_once_barrier_restart");
     let owner = worker.owner();
     let client = owner.client();
     wait_ready(&client);
@@ -89,6 +89,11 @@ fn child_exit_restarts_before_a_later_request() {
         ),
         Err(EmbeddingError::EngineFailed)
     ));
+    assert_eq!(worker.ready_count(), 1);
+    assert_eq!(client.status(), ResidentEmbeddingStatus::Restarting);
+    worker.release_restart();
+    worker.wait_for_ready_generation(2);
+    assert_eq!(client.status(), ResidentEmbeddingStatus::Ready);
     assert_eq!(
         client
             .embed_batch_with_cancel(
@@ -103,6 +108,38 @@ fn child_exit_restarts_before_a_later_request() {
         1
     );
     assert!(worker.spawn_count() >= 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_eager_restart_publishes_unavailable_and_preserves_a_later_retry() {
+    let worker = TestWorker::compile("remove_before_crash");
+    let owner = worker.owner();
+    let client = owner.client();
+    wait_ready(&client);
+    let input = EmbeddingInput::new("local-id", "synthetic passage");
+    assert!(matches!(
+        client.embed_batch_with_cancel(
+            EmbeddingPriority::Background,
+            std::slice::from_ref(&input),
+            EmbeddingBudget::new(1, 64),
+            1_000,
+            || false,
+        ),
+        Err(EmbeddingError::EngineFailed)
+    ));
+    wait_for_status(&client, ResidentEmbeddingStatus::Unavailable);
+    assert!(matches!(
+        client.embed_batch_with_cancel(
+            EmbeddingPriority::Interactive,
+            &[input],
+            EmbeddingBudget::new(1, 64),
+            1_000,
+            || false,
+        ),
+        Err(EmbeddingError::WorkerUnavailable)
+    ));
+    assert_eq!(client.status(), ResidentEmbeddingStatus::Unavailable);
 }
 
 #[test]
@@ -197,11 +234,15 @@ fn interactive_queue_is_selected_before_waiting_background_work() {
 }
 
 fn wait_ready(client: &embedder::ResidentEmbeddingClient) {
+    wait_for_status(client, ResidentEmbeddingStatus::Ready);
+}
+
+fn wait_for_status(client: &embedder::ResidentEmbeddingClient, expected: ResidentEmbeddingStatus) {
     let deadline = Instant::now() + Duration::from_secs(2);
-    while client.status() != ResidentEmbeddingStatus::Ready {
+    while client.status() != expected {
         assert!(
             Instant::now() < deadline,
-            "resident worker did not become ready"
+            "resident worker did not reach expected status"
         );
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -265,6 +306,32 @@ impl TestWorker {
             .unwrap_or_default()
             .lines()
             .count()
+    }
+
+    fn ready_count(&self) -> usize {
+        fs::read_to_string(self.executable.with_extension("ready"))
+            .unwrap_or_default()
+            .lines()
+            .count()
+    }
+
+    fn release_restart(&self) {
+        fs::write(
+            self.executable.with_extension("release_restart"),
+            b"release",
+        )
+        .unwrap();
+    }
+
+    fn wait_for_ready_generation(&self, generation: usize) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while self.ready_count() < generation {
+            assert!(
+                Instant::now() < deadline,
+                "resident worker did not publish the expected ready generation"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn order(&self) -> Vec<String> {

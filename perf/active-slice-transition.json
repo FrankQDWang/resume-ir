@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-295-to-299-artifact-experiment-closeout-2026-08-02",
-  "from_issue": "#295",
-  "to_issue": "#299",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/295#issuecomment-5152670658",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/299",
-  "base_active_goal_sha256": "d619df2f49a6d27b75c1edfa7438a2bc2ffbc42cc0d010137af649b718d50979",
+  "transition_id": "issue-299-to-210-resident-eager-restart-2026-08-02",
+  "from_issue": "#299",
+  "to_issue": "#210",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/300",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/210",
+  "base_active_goal_sha256": "d9e4286d24a617210689f4b295ed02cad9862bff595b48daf9940ced7b57cc59",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",

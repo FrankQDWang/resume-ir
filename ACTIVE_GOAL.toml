@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#299"
-name = "embedding_artifact_experiment_closeout"
+issue = "#210"
+name = "deterministic_resident_eager_restart"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = false
@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "not_applicable_public_synthetic_only"
 scope_exception = false
-scope_exception_reason = "This bounded #299 closeout removes the completed #295 local-only artifact experiment surface, records the rejected prepacking and model-artifact hypotheses, and reconciles historical issue reachability without changing the production runtime pack, model, session policy, parser, import path, query path, or any performance-sensitive setting."
+scope_exception_reason = "This bounded #210 reliability repair makes a failed resident request return its original error before eagerly starting the next child generation, replaces a load-sensitive restart assertion with a deterministic ready-generation barrier, and preserves request deadlines, process containment, reaping, shutdown, model, runtime, and inference policy."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -30,28 +30,25 @@ allowed_paths = [
   "perf/active-slice-transition.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-  "crates/embedding-runtime/src/main.rs",
-  "crates/embedding-runtime/src/profiling.rs",
-  "crates/embedding-runtime/src/profiling_tests.rs",
-  "crates/embedding-runtime/src/artifact_experiment.rs",
-  "crates/embedding-runtime/src/artifact_experiment_tests.rs",
-  "scripts/local/embedding-artifact-matrix.py",
+  "crates/embedder/src/resident.rs",
+  "crates/embedder/tests/resident.rs",
+  "crates/embedding-protocol/tests/fixtures/resident_worker.rs",
   "scripts/ci/test-governance-contract-mutations.py",
 ]
-allowed_paths_role = "embedding_artifact_experiment_closeout_paths"
+allowed_paths_role = "deterministic_resident_eager_restart_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "experiment_closeout"
-optimization_layer = "L1"
+observation_stage = "runtime_reliability_repair"
+optimization_layer = "L2"
 optimization_layer_selected = false
-hypothesis = "the completed prepacking and artifact-matrix experiment surfaces can be retired while preserving ordinary resident inference and the reusable resident operator-profiler capability"
-expected_delta = "no performance delta; this is lifecycle cleanup and machine-readable evidence reconciliation only"
-negative_control = "ordinary --resident and --resident-profile continue to use the exact current production runtime pack and model"
-implementation_boundary = "remove only the #295 artifact experiment modes, manifest loader, tests, and witness; retain #293 resident profiling; record rejected directions and main-reachable historical evidence"
-resident_workload = "no formal performance workload; focused public-synthetic resident contract tests only"
-resident_acceptance = "ordinary resident and resident-profile mode parsing and production-pack loading remain unchanged; retired artifact flags fail closed"
+hypothesis = "eagerly spawning the next resident generation after returning the failed request removes the lazy-restart deadline coupling and permits deterministic generation-barrier tests under parallel load"
+expected_delta = "no performance claim; failed requests return their original error without waiting for restart, and the next generation reaches Ready before later work is admitted"
+negative_control = "the existing lazy-restart behavior and its fixed one-second follow-up request deadline"
+implementation_boundary = "change only resident supervisor restart ordering and synthetic fixture synchronization; add no public API, deadline relaxation, worker, queue, model, runtime, or inference-policy change"
+resident_workload = "public synthetic resident worker fixtures; default-parallel and serial stress only"
+resident_acceptance = "failure publishes Restarting, returns the original error before restart completion, eagerly reaches the second Ready generation, publishes Unavailable on eager spawn failure, preserves a later normal retry, and retains shutdown and reaping semantics"
 full_product_acceptance = "not authorized; no private root, full import, W1, product speedup, scale, release, or goal-complete claim"
-raw_profile_boundary = "no models, manifests, traces, raw samples, inputs, tokens, vectors, paths, or PIDs are produced by this closeout"
-rollback_condition = "stop if ordinary resident/profile behavior changes, any artifact experiment path remains reachable, the historical ledger cannot be made machine-consistent, or any private/raw material leaks"
+raw_profile_boundary = "tests record only bounded synthetic generation, request, and status counts; no paths, PIDs, payload text, vectors, model data, or raw logs enter public evidence"
+rollback_condition = "revert if the failed caller waits for restart, the original error changes, shutdown or process reaping regresses, eager restart loops, a later retry is lost, or any private/raw material leaks"
 forbidden_scope = [
   "cpu_arena_change",
   "thread_policy_change",
@@ -62,7 +59,7 @@ forbidden_scope = [
   "pooling_change",
   "larger_batch",
   "additional_worker_or_queue",
-  "additional_model_process",
+  "additional_concurrent_model_process",
   "wait_for_ocr_drain",
   "windows_or_linux",
   "query_hot_path_change",

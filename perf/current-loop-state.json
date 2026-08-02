@@ -5,22 +5,22 @@
   "experiment_state": "reverted",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "d9e4286d24a617210689f4b295ed02cad9862bff595b48daf9940ced7b57cc59",
+    "active_goal_sha256": "84c8128b4a172efd65f473070c3df5db4dfc1bfa1483c89a05e91b09529543f1",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "60deeb77180b197949fd0039772e6a2a3f489590"
+    "git_head_sha": "a780e5dcadb853d7f5cd7653b1647573ca36ce72"
   },
-  "current_slice": "#299 embedding artifact experiment closeout",
+  "current_slice": "#210 deterministic resident eager restart",
   "hypothesis": {
-    "id": "issue-299-embedding-artifact-experiment-closeout",
+    "id": "issue-210-deterministic-resident-eager-restart",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "retire the completed artifact experiment surface, preserve ordinary resident and reusable operator-profile behavior, and make rejected hypotheses and main reachability machine explicit",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/295#issuecomment-5152670658",
-    "after_measurement_ref": "pending_closeout_merge",
-    "reprofile_ref": "not_applicable_closeout",
-    "decision": "reconcile"
+    "expected_effect": "return the original resident request failure before eagerly spawning the next generation, remove follow-up deadline coupling, and stabilize the restart test with a deterministic second-ready barrier",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/210",
+    "after_measurement_ref": "pending_issue_210_verification",
+    "reprofile_ref": "not_applicable_reliability_repair",
+    "decision": "repair"
   },
   "transition_history": [
     {
@@ -734,7 +734,9 @@
     {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
     {"from":"verification_active","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/295#issuecomment-5152670658"},
     {"from":"evidence_review","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/295#issuecomment-5152670658"},
-    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/299"}
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/299"},
+    {"from":"slice_selected","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/300"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/210"}
   ],
   "verification": {
     "commands": [
@@ -3025,15 +3027,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-299-embedding-artifact-experiment-closeout-2026-08-02",
-  "state_version": 573,
-  "previous_state_hash": "c7ed64ff441a168e2e6f94dec4bc0bb3579beba557341acdde818bc6a9e2ec3a",
-  "expected_state_version": 573,
-  "last_confirmed_side_effect": "issue_299_created_closeout_selected",
+  "run_id": "issue-210-deterministic-resident-eager-restart-2026-08-02",
+  "state_version": 574,
+  "previous_state_hash": "4d7f56780a525487f80f102cc7df60e150e6637e8f9c2fa00b19f796ad0852fe",
+  "expected_state_version": 574,
+  "last_confirmed_side_effect": "issue_299_closed_issue_210_selected",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#299",
+    "primary_issue": "#210",
     "active_prs": [],
     "open_blockers": []
   }

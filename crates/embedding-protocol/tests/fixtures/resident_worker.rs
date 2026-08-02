@@ -14,7 +14,15 @@ fn main() {
         .unwrap()
         .parse::<usize>()
         .unwrap();
-    append(&executable.with_extension("spawns"), b"spawn\n");
+    let spawn_path = executable.with_extension("spawns");
+    append(&spawn_path, b"spawn\n");
+    let generation = line_count(&spawn_path);
+    if name.contains("barrier_restart") && generation > 1 {
+        let release = executable.with_extension("release_restart");
+        while !release.exists() {
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
     write_frame(&format!(
         "{{\"type\":\"ready\",\"schema_version\":\"resume-ir.embedding-stream.v1\",\"model_id\":\"{model_id}\",\"dimension\":{dimension}}}"
     ));
@@ -28,6 +36,10 @@ fn main() {
             b"passage\n".as_slice()
         };
         append(&executable.with_extension("order"), order);
+        if name.contains("remove_before_crash") {
+            fs::remove_file(&executable).unwrap();
+            std::process::exit(3);
+        }
         if name.contains("crash_always") {
             std::process::exit(3);
         }
@@ -64,6 +76,13 @@ fn append(path: &Path, bytes: &[u8]) {
         .unwrap()
         .write_all(bytes)
         .unwrap();
+}
+
+fn line_count(path: &Path) -> usize {
+    fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .count()
 }
 
 fn read_frame() -> Option<String> {
