@@ -8,9 +8,11 @@ writes only bounded counters to an owner-only temporary file, and does not add I
 ordinary runtime behavior. This prerequisite runs no matrix, reads no private corpus and makes no
 throughput or latency claim; it only lets the future runner prove exact B4 x 512 publication work.
 
-Fresh verification passes the aggregate fixture test, all 115 feature-mode daemon unit tests and
-every runnable integration test, warnings-denied feature Clippy, the governance/privacy checks and
-the complete default `verify-local.sh` gate. The ordinary build remains observer-free.
+Fresh verification passes both aggregate observer tests, all 116 feature-mode daemon unit tests
+and every runnable integration test, warnings-denied feature Clippy, the governance/privacy checks
+and the complete default `verify-local.sh` gate. Poisoned observer state now fails the experimental
+publication closed instead of silently continuing with untrustworthy counters. The ordinary build
+remains observer-free.
 
 ## Issue #319 resident role-isolation report contract restored
 

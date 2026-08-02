@@ -344,10 +344,9 @@ impl ExperimentObserver {
     }
 
     fn record(&self, inputs: u64, active_tokens: u64) -> std::io::Result<()> {
-        let mut counters = self
-            .counters
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut counters = self.counters.lock().map_err(|_| {
+            std::io::Error::other("resident role-isolation observer counters are unavailable")
+        })?;
         counters.completed_calls = counters.completed_calls.saturating_add(1);
         counters.completed_inputs = counters.completed_inputs.saturating_add(inputs);
         counters.active_token_count = counters.active_token_count.saturating_add(active_tokens);
@@ -424,6 +423,27 @@ mod tests {
                 "nonconforming_calls": 1,
             })
         );
+    }
+
+    #[test]
+    fn experiment_observer_fails_closed_after_counter_poisoning() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("observer.json");
+        let observer = std::sync::Arc::new(ExperimentObserver {
+            path: path.clone(),
+            counters: std::sync::Mutex::new(ExperimentObserverCounters::default()),
+        });
+        let poisoner = std::sync::Arc::clone(&observer);
+        assert!(std::thread::spawn(move || {
+            let _guard = poisoner.counters.lock().unwrap();
+            panic!("synthetic observer failure");
+        })
+        .join()
+        .is_err());
+
+        let error = observer.record(4, 2_048).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        assert!(!path.exists());
     }
 
     #[test]
