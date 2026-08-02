@@ -1,6 +1,6 @@
 schema_version = "resume-ir.active-goal.v1"
 goal_id = "resume-ir.performance-gui-loop.2026-06"
-date = "2026-08-01"
+date = "2026-08-02"
 
 [authority]
 root_goal = "GOAL.md"
@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#305"
-name = "embedding_intra_op_thread_sensitivity"
+issue = "#208"
+name = "ort_registry_rc13_dependency_replacement"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = false
@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "not_applicable_public_synthetic_only"
 scope_exception = false
-scope_exception_reason = "This bounded #305 L2 runtime-scheduling experiment measures only the current production embedding model and ORT runtime at intra-op counts 1, 2, 3, 4, and 6 through a default-off Cargo feature and public-synthetic local witness; it selects at most one production follow-up and does not change parser workers, the production inference policy, model, runtime pack, session flags, batch, queue, daemon, IPC, desktop, packaging, non-macOS work, gates, or privacy behavior."
+scope_exception_reason = "This bounded #208 dependency-maintenance slice replaces the temporary immutable ort and ort-sys git revision with exact crates.io 2.0.0-rc.13 after confirming that release contains the upstream re-entrant load-dynamic initialization fix; it preserves the current native ORT 1.27.0 runtime pack, model, model ID, tokenizer, session flags, Batch, threads, queues, daemon, IPC, desktop, packaging, non-macOS boundary, gates, and privacy behavior."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -30,37 +30,29 @@ allowed_paths = [
   "perf/active-slice-transition.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
+  "Cargo.lock",
   "crates/embedding-runtime/Cargo.toml",
-  "crates/embedding-runtime/src/main.rs",
-  "crates/embedding-runtime/src/profiling.rs",
-  "crates/embedding-runtime/src/thread_experiment.rs",
-  "crates/embedding-runtime/src/thread_experiment_tests.rs",
-  "crates/embedding-runtime/tests/production_modes.rs",
-  "scripts/local/embedding-thread-matrix.py",
   "scripts/ci/test-governance-contract-mutations.py",
 ]
-allowed_paths_role = "embedding_intra_op_thread_sensitivity_paths"
+allowed_paths_role = "ort_registry_rc13_dependency_replacement_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "L2_intra_op_thread_sensitivity"
-optimization_layer = "L2"
-optimization_layer_selected = true
-hypothesis = "one intra-op count from 1, 2, 3, 4, and 6, selected independently from parser workers, improves Batch-4 x 512 resident ONNX median by at least 10 percent versus the current three-thread control with positive paired ONNX and wall-time intervals and no accepted correctness, sensitivity, startup, or resource regression"
-expected_delta = "a unique candidate improves the primary ONNX median by >=10% with paired bootstrap 95% lower bound >0, positive resident wall-time interval, no 32/96/256-token regression above 3%, no Batch-1 p95 regression above 5%, and mode overhead <=1%"
-negative_control = "the same feature-enabled release binary in ordinary --resident mode and --resident-thread-matrix mode at three threads, with exact vectors and unchanged current model, ORT, tokenizer, session flags, Batch, queue, and workers"
-implementation_boundary = "the contract PR merges before the default-off thread-experiment feature or formal matrix; the capability PR merges before formal measurement; resident evidence selects a candidate only and cannot change the production inference policy"
-experiment_seed = 20260802
-candidate_intra_op_threads = [1, 2, 3, 4, 6]
-resident_workload = "public synthetic only; ten Williams-balanced blocks and 50 independent release resident sessions; per session 30-second Batch-4 x 512 warmup, 20 measured Batch-4 x 512 requests, 10 each at Batch-4 x 32/96/256, and 50 Batch-1 x 32 query requests"
-resident_acceptance = "primary ONNX median improves >=10% with paired bootstrap 95% lower bound >0; resident wall-time interval is positive; no sensitivity bucket regresses >3%; Batch-1 p95 regresses <=5%; mode overhead <=1%; vectors are elementwise exact equal; quality, Ready, H0 512MiB, and H2 1536MiB gates pass; multiple passing candidates require a positive paired interval over the runner-up"
+observation_stage = "dependency_maintenance"
+optimization_layer = "L0"
+optimization_layer_selected = false
+hypothesis = "exact crates.io ort 2.0.0-rc.13 contains the upstream load-dynamic re-entrant initialization fix currently supplied by git revision 17ed727770746447620d0d76e9893ed1a3d7c221 and can restore registry checksums without changing embedding behavior"
+expected_delta = "no product-performance delta; no git source remains for ort or ort-sys, invalid dynamic-library failure remains bounded to two seconds, and current 384-dimensional native resident semantic, hybrid, and lifecycle behavior remains intact"
+negative_control = "the current exact ort and ort-sys git revision 17ed727770746447620d0d76e9893ed1a3d7c221 with the same native ORT 1.27.0 runtime pack and production embedding model"
+implementation_boundary = "the contract PR merges before dependency mutation; then only the embedding-runtime dependency declaration and lockfile may change unless the exact registry release fails closed, in which case the current git pin remains and the issue records the blocker"
+resident_workload = "public synthetic invalid-library regression plus current macOS native runtime-pack resident Ready, 384-dimensional semantic and hybrid search, and repeated lifecycle acceptance"
+resident_acceptance = "ort and ort-sys resolve only from exact crates.io 2.0.0-rc.13 with registry checksums and no unexpected transitive drift; invalid-library failure returns within two seconds; current native resident Ready, semantic, hybrid, and lifecycle checks pass"
 full_product_acceptance = "not authorized; no private root, full import, W1, product speedup, scale, release, or goal-complete claim"
-winner_reprofile = "only one unique matrix winner receives five Batch-4 x 512 ORT captures and one 20-second unprofiled xctrace or sample cross-check; profiled and unprofiled vectors remain elementwise equal, dynamic quantization remains the stable top family, and no scheduling, idle, or oversubscription conflict appears"
-raw_profile_boundary = "raw request samples, inputs, tokens, vectors, ORT traces, xctrace or sample captures, local paths, and PIDs remain in owner-only temporary storage and are deleted after bounded aggregation; the public report is <=64KiB"
-rollback_condition = "retain the current production three-thread policy and delete the experiment feature, modes, environment variable, and witness if no candidate clears every gate, candidates tie statistically, profiling is unstable or conflicting, the report is malformed or unbounded, normal resident behavior changes, or any raw/private material leaks"
+raw_profile_boundary = "test output and public evidence contain no runtime pack, model file, query, candidate data, local path, PID, credential, token, or private diagnostic output"
+rollback_condition = "retain the current immutable git pin and close this execution as blocked if rc.13 lacks the required fix, introduces incompatible API or transitive drift that cannot be repaired within the dependency-only boundary, breaks the two-second failure bound, changes vectors or product contracts, or fails native macOS acceptance"
 forbidden_scope = [
   "cpu_arena_change",
   "production_thread_policy_change",
   "parser_worker_change",
-  "ort_upgrade",
+  "native_ort_runtime_upgrade",
   "production_runtime_pack_change",
   "production_model_id_change",
   "production_vector_reindex",
@@ -75,6 +67,7 @@ forbidden_scope = [
   "private_root_read",
   "full_product_benchmark",
   "performance_improvement_claim",
+  "performance_hypothesis_reopen",
   "gate_weakening",
   "coreml",
 ]

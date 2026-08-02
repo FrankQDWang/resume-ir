@@ -1,28 +1,33 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "next_issue_or_goal_complete",
-  "experiment_state": "reverted",
+  "workflow_state": "slice_selected",
+  "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "2ab76a738ac0548c80caa6137988bcc69d880d3ef616eb32010232f1112883b4",
+    "active_goal_sha256": "f996ff766ef4f3661dc7a0a6df2f13f4e50043a21e148df66f3fdef9737aff1d",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "a24dec05f7621f0d1eac41b0c0f65d9f61c3749b"
+    "git_head_sha": "53d19642f1c7b7cffce27f9955925dc458b1d4b7"
   },
-  "current_slice": "#305 resident ONNX intra-op thread sensitivity",
+  "current_slice": "#208 exact crates.io ORT rc.13 dependency replacement",
   "hypothesis": {
-    "id": "issue-305-embedding-intra-op-thread-sensitivity",
+    "id": "issue-208-ort-registry-rc13-dependency-replacement",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "one unique intra-op count from 1, 2, 3, 4, and 6 improves Batch-4 x 512 resident ONNX median by at least 10 percent versus three threads with positive paired ONNX and wall-time intervals and no accepted correctness, sensitivity, startup, or resource regression",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/293#issuecomment-5152318044",
-    "after_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/305#issuecomment-5154979900",
-    "reprofile_ref": "no_unique_winner_profile_not_run",
-    "decision": "lost"
+    "expected_effect": "exact crates.io ort 2.0.0-rc.13 restores registry provenance and checksums while retaining the bounded upstream load-dynamic fix and unchanged native embedding behavior",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/208",
+    "after_measurement_ref": null,
+    "reprofile_ref": null,
+    "decision": "active"
   },
   "transition_history": [
+    {
+      "from": "next_issue_or_goal_complete",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/208"
+    },
     {
       "from": "slice_selected",
       "to": "implementation_active",
@@ -3033,15 +3038,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-305-embedding-thread-sensitivity-2026-08-02",
-  "state_version": 578,
-  "previous_state_hash": "698659bf1700e1b5c07b66e8c70734601fc8631f2dbd41ea17e6829b2d08f16b",
-  "expected_state_version": 578,
-  "last_confirmed_side_effect": "issue_305_matrix_lost_no_production_issue",
+  "run_id": "issue-208-ort-registry-rc13-2026-08-02",
+  "state_version": 579,
+  "previous_state_hash": "5b019f2f39a94d5ab67fac9e746786d0460a63974ea902f5074873ee2430144c",
+  "expected_state_version": 579,
+  "last_confirmed_side_effect": "issue_208_reused_after_exact_rc13_release_observed",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#305",
+    "primary_issue": "#208",
     "active_prs": [],
     "open_blockers": []
   }
