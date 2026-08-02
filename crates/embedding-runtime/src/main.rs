@@ -28,10 +28,7 @@ mod profiling;
 mod runtime_pack;
 
 use batch::{mean_pool_batch, tokenized_batch};
-use profiling::{
-    parse_run_mode, ProfilingMode, ResidentMode, ResidentThreadPolicy, RunMode,
-    PROFILE_OUTPUT_PREFIX_ENV,
-};
+use profiling::{parse_run_mode, ProfilingMode, ResidentMode, RunMode, PROFILE_OUTPUT_PREFIX_ENV};
 #[cfg(test)]
 use runtime_pack::AssetIdentity;
 use runtime_pack::{FileRole, RuntimePack};
@@ -105,7 +102,7 @@ fn run_one_shot() -> Result<(), RuntimeError> {
 
 fn run_resident(mode: ResidentMode) -> Result<(), RuntimeError> {
     start_resident_parent_death_guard()?;
-    let environment = ResidentEnvironment::read(mode.thread_policy)?;
+    let environment = ResidentEnvironment::read()?;
     let pack = RuntimePack::load(&environment.runtime_dir)?;
     let model_id = pack.model_id().to_string();
     let dimension = pack.dimension();
@@ -664,22 +661,14 @@ struct ResidentEnvironment {
 }
 
 impl ResidentEnvironment {
-    fn read(thread_policy: ResidentThreadPolicy) -> Result<Self, RuntimeError> {
+    fn read() -> Result<Self, RuntimeError> {
         let runtime_dir = absolute_environment_path("RESUME_IR_EMBEDDING_RUNTIME_DIR")?;
         let dimension = required_environment_usize("RESUME_IR_EMBEDDING_DIMENSION", 1, usize::MAX)?;
-        let intra_threads = match thread_policy {
-            ResidentThreadPolicy::Production => optional_environment_usize(
-                "RESUME_IR_EMBEDDING_INTRA_THREADS",
-                /*default*/ 1,
-                /*max*/ 3,
-            )?,
-            #[cfg(feature = "resident-role-isolation-experiment")]
-            ResidentThreadPolicy::RoleIsolationExperiment => required_environment_usize(
-                "RESUME_IR_EMBEDDING_INTRA_THREADS",
-                /*minimum*/ 1,
-                /*maximum*/ 4,
-            )?,
-        };
+        let intra_threads = optional_environment_usize(
+            "RESUME_IR_EMBEDDING_INTRA_THREADS",
+            /*default*/ 1,
+            /*max*/ 3,
+        )?;
         let model_id = env::var("RESUME_IR_EMBEDDING_MODEL_ID")
             .ok()
             .filter(|value| !value.is_empty() && value.len() <= 128)

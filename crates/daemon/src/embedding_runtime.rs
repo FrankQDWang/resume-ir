@@ -5,7 +5,6 @@ use std::time::Duration;
 use embedder::{
     EmbeddingBudget, EmbeddingError, EmbeddingInput, EmbeddingPriority, LocalEmbeddingCommandSpec,
     ResidentEmbeddingClient, ResidentEmbeddingOwner, ResidentEmbeddingSpec,
-    ResidentEmbeddingStatus,
 };
 use import_pipeline::{
     ImportResourcePolicy, SearchPublicationEmbeddingFailure, SearchPublicationEmbeddingInput,
@@ -14,49 +13,9 @@ use import_pipeline::{
 };
 
 use crate::daemon_error::{DaemonError, Result};
-#[cfg(feature = "resident-role-isolation-experiment")]
-use crate::run_options::ResidentRoleIsolationArm;
 use crate::run_options::{usage, RunOptions};
 
-pub(crate) enum ResidentEmbeddingTopologyOwner {
-    Shared(ResidentEmbeddingOwner),
-    #[cfg(feature = "resident-role-isolation-experiment")]
-    Split(SplitResidentEmbeddingOwners),
-}
-
-impl ResidentEmbeddingTopologyOwner {
-    pub(crate) fn statuses(&self) -> [ResidentEmbeddingStatus; 2] {
-        match self {
-            Self::Shared(owner) => [owner.client().status(); 2],
-            #[cfg(feature = "resident-role-isolation-experiment")]
-            Self::Split(owners) => [
-                owners.interactive.client().status(),
-                owners.bulk.client().status(),
-            ],
-        }
-    }
-}
-
-#[cfg(feature = "resident-role-isolation-experiment")]
-pub(crate) struct SplitResidentEmbeddingOwners {
-    interactive: ResidentEmbeddingOwner,
-    bulk: ResidentEmbeddingOwner,
-}
-
-#[cfg(feature = "resident-role-isolation-experiment")]
-impl Drop for SplitResidentEmbeddingOwners {
-    fn drop(&mut self) {
-        ResidentEmbeddingOwner::shutdown_role_isolation_pair(&mut self.interactive, &mut self.bulk);
-    }
-}
-
-struct StartedResidentEmbeddingTopology {
-    owner: ResidentEmbeddingTopologyOwner,
-    interactive_client: ResidentEmbeddingClient,
-    publication_client: ResidentEmbeddingClient,
-}
-
-pub(crate) fn start(options: &mut RunOptions) -> Result<Option<ResidentEmbeddingTopologyOwner>> {
+pub(crate) fn start(options: &mut RunOptions) -> Result<Option<ResidentEmbeddingOwner>> {
     if options.embedding_command.is_none() {
         return Ok(None);
     }
@@ -84,71 +43,21 @@ pub(crate) fn start(options: &mut RunOptions) -> Result<Option<ResidentEmbedding
             .with_timeout_ms(options.embedding_timeout_ms)
             .map_err(DaemonError::embedding)?;
     let inference_threads = ImportResourcePolicy::detect().parse_workers.get();
-    #[cfg(feature = "resident-role-isolation-experiment")]
-    let started = match options.resident_role_isolation_arm {
-        Some(ResidentRoleIsolationArm::SharedI3B4) => start_shared(command, 3),
-        Some(ResidentRoleIsolationArm::SplitI3Bulk3B4) => start_split(command, 3),
-        Some(ResidentRoleIsolationArm::SplitI3Bulk4B4) => start_split(command, 4),
-        None => start_shared(command, inference_threads),
-    }?;
-    #[cfg(not(feature = "resident-role-isolation-experiment"))]
-    let started = start_shared(command, inference_threads)?;
-
-    let publication_client = started.publication_client;
-    options.search_vectorization =
-        SearchPublicationVectorization::enabled(Arc::new(ResidentPublicationVectorizer {
-            client: publication_client.clone(),
-            timeout_ms: options.embedding_timeout_ms,
-            telemetry: std::array::from_fn(|_| AtomicU64::new(0)),
-        }));
-    options.resident_embedding = Some(started.interactive_client);
-    options.publication_resident_embedding = Some(publication_client);
-    Ok(Some(started.owner))
-}
-
-fn start_shared(
-    command: LocalEmbeddingCommandSpec,
-    intra_threads: usize,
-) -> Result<StartedResidentEmbeddingTopology> {
     let owner = ResidentEmbeddingOwner::start(
         ResidentEmbeddingSpec::new(command)
-            .with_intra_threads(intra_threads)
+            .with_intra_threads(inference_threads)
             .map_err(DaemonError::embedding)?,
     )
     .map_err(DaemonError::embedding)?;
     let client = owner.client();
-    Ok(StartedResidentEmbeddingTopology {
-        owner: ResidentEmbeddingTopologyOwner::Shared(owner),
-        interactive_client: client.clone(),
-        publication_client: client,
-    })
-}
-
-#[cfg(feature = "resident-role-isolation-experiment")]
-fn start_split(
-    command: LocalEmbeddingCommandSpec,
-    bulk_threads: usize,
-) -> Result<StartedResidentEmbeddingTopology> {
-    let interactive = ResidentEmbeddingOwner::start(
-        ResidentEmbeddingSpec::for_role_isolation_experiment(command.clone(), 3)
-            .map_err(DaemonError::embedding)?,
-    )
-    .map_err(DaemonError::embedding)?;
-    let bulk = ResidentEmbeddingOwner::start(
-        ResidentEmbeddingSpec::for_role_isolation_experiment(command, bulk_threads)
-            .map_err(DaemonError::embedding)?,
-    )
-    .map_err(DaemonError::embedding)?;
-    let interactive_client = interactive.client();
-    let publication_client = bulk.client();
-    Ok(StartedResidentEmbeddingTopology {
-        owner: ResidentEmbeddingTopologyOwner::Split(SplitResidentEmbeddingOwners {
-            interactive,
-            bulk,
-        }),
-        interactive_client,
-        publication_client,
-    })
+    options.search_vectorization =
+        SearchPublicationVectorization::enabled(Arc::new(ResidentPublicationVectorizer {
+            client: client.clone(),
+            timeout_ms: options.embedding_timeout_ms,
+            telemetry: std::array::from_fn(|_| AtomicU64::new(0)),
+        }));
+    options.resident_embedding = Some(client);
+    Ok(Some(owner))
 }
 
 struct ResidentPublicationVectorizer {
@@ -287,148 +196,5 @@ impl ResidentPublicationVectorizer {
             Ordering::Relaxed,
             |current| Some(current.saturating_add(value)),
         );
-    }
-}
-
-#[cfg(all(test, feature = "resident-role-isolation-experiment"))]
-mod tests {
-    use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::process::Command;
-    use std::time::{Duration, Instant};
-
-    use embedder::{
-        EmbeddingBudget, EmbeddingInput, EmbeddingPriority, LocalEmbeddingCommandSpec,
-        ResidentEmbeddingStatus,
-    };
-    use tempfile::TempDir;
-
-    use super::start_split;
-
-    #[test]
-    fn split_topology_runs_inflight_bulk_and_interactive_work_on_distinct_residents() {
-        let worker = TestWorker::compile();
-        let started = start_split(worker.command(), /*bulk_threads*/ 4).unwrap();
-        wait_ready(&started.owner);
-        assert_eq!(worker.spawn_count(), 2);
-
-        let publication = started.publication_client.clone();
-        let bulk_request = std::thread::spawn(move || {
-            publication.embed_batch_with_cancel(
-                EmbeddingPriority::Background,
-                &[EmbeddingInput::new("document", "synthetic passage")],
-                EmbeddingBudget::new(1, 64),
-                1_000,
-                || false,
-            )
-        });
-        worker.wait_for_request_count(1, Duration::from_secs(1));
-
-        let interactive = started.interactive_client.clone();
-        let query_request = std::thread::spawn(move || {
-            interactive.embed_batch_with_cancel(
-                EmbeddingPriority::Interactive,
-                &[EmbeddingInput::query("query", "synthetic query")],
-                EmbeddingBudget::new(1, 64),
-                1_000,
-                || false,
-            )
-        });
-        worker.wait_for_request_count(2, Duration::from_millis(150));
-        assert_eq!(bulk_request.join().unwrap().unwrap().len(), 1);
-        assert_eq!(query_request.join().unwrap().unwrap().len(), 1);
-
-        let interactive = started.interactive_client;
-        let publication = started.publication_client;
-        drop(started.owner);
-        wait_status(&interactive, ResidentEmbeddingStatus::Shutdown);
-        wait_status(&publication, ResidentEmbeddingStatus::Shutdown);
-    }
-
-    fn wait_ready(owner: &super::ResidentEmbeddingTopologyOwner) {
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while owner.statuses() != [ResidentEmbeddingStatus::Ready; 2] {
-            assert!(
-                Instant::now() < deadline,
-                "split topology did not become ready"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-
-    fn wait_status(client: &embedder::ResidentEmbeddingClient, expected: ResidentEmbeddingStatus) {
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while client.status() != expected {
-            assert!(Instant::now() < deadline, "resident did not stop");
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-
-    struct TestWorker {
-        _directory: TempDir,
-        executable: PathBuf,
-    }
-
-    impl TestWorker {
-        fn compile() -> Self {
-            let directory = tempfile::tempdir().unwrap();
-            let executable = directory.path().join(format!(
-                "resident_worker_slow_role_isolation{}",
-                std::env::consts::EXE_SUFFIX
-            ));
-            let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../embedding-protocol/tests/fixtures/resident_worker.rs");
-            let original = fs::read_to_string(fixture).unwrap();
-            let generated = original.replace(
-                "Some(\"--resident\")",
-                "Some(\"--resident-role-isolation-experiment\")",
-            );
-            assert_ne!(generated, original);
-            let source = directory.path().join("resident_worker.rs");
-            fs::write(&source, generated).unwrap();
-            let status = Command::new(option_env!("RUSTC").unwrap_or("rustc"))
-                .arg("--edition=2021")
-                .arg(source)
-                .arg("-o")
-                .arg(&executable)
-                .status()
-                .unwrap();
-            assert!(status.success());
-            Self {
-                _directory: directory,
-                executable,
-            }
-        }
-
-        fn command(&self) -> LocalEmbeddingCommandSpec {
-            LocalEmbeddingCommandSpec::new(
-                &self.executable,
-                Vec::<String>::new(),
-                "fixture-local-model",
-                4,
-            )
-            .unwrap()
-            .with_timeout_ms(2_000)
-            .unwrap()
-        }
-
-        fn spawn_count(&self) -> usize {
-            line_count(&self.executable.with_extension("spawns"))
-        }
-
-        fn wait_for_request_count(&self, count: usize, timeout: Duration) {
-            let deadline = Instant::now() + timeout;
-            while line_count(&self.executable.with_extension("requests")) < count {
-                assert!(
-                    Instant::now() < deadline,
-                    "requests did not run concurrently"
-                );
-                std::thread::sleep(Duration::from_millis(5));
-            }
-        }
-    }
-
-    fn line_count(path: &Path) -> usize {
-        fs::read_to_string(path).unwrap_or_default().lines().count()
     }
 }

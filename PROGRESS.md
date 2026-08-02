@@ -1,5 +1,13 @@
 # Progress
 
+## Issue #319 blocked rollback: core capability
+
+The final rollback removes the default-off split-resident topology, four-thread experiment mode and
+temporary daemon arm. No arm reached a measurement window, so there is no unique winner to retain
+or hand to a production migration Issue. Ordinary resident mode remains capped at three threads,
+the product remains one shared daemon-lifetime resident, and no model, input, Batch, IPC,
+persistence, index, desktop or packaging behavior changes in this closeout.
+
 ## Issue #319 blocked rollback: report contract
 
 The second rollback removes the closed #319 report schema, checker and fixtures because no smoke
