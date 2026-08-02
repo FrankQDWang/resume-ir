@@ -1,5 +1,27 @@
 # Progress
 
+## Issue #208 exact crates.io ORT rc.13 dependency contract
+
+Issue #208 is the bounded dependency-maintenance prerequisite before the next
+embedding-input performance observation. The temporary immutable `ort` and
+`ort-sys` git revision remains the production dependency until a later PR proves
+that exact crates.io `2.0.0-rc.13` contains the same upstream re-entrant
+`load-dynamic` initialization fix and preserves current native behavior.
+
+The implementation boundary permits only the embedding-runtime dependency
+declaration and workspace lockfile. The current native ORT 1.27.0 runtime pack,
+Dynamic U8S8 model, model ID, tokenizer, session flags, Batch, three-thread
+policy, queue, daemon, IPC, desktop and packaging contracts remain fixed. If the
+registry release cannot satisfy that dependency-only boundary, the current git
+pin is retained and the Issue records the blocker.
+
+Acceptance requires registry checksums with no git source for `ort` or
+`ort-sys`, the existing invalid-library regression returning within two seconds,
+and macOS native resident Ready, 384-dimensional semantic, hybrid and repeated
+lifecycle checks. This slice reads no private resume or query data, runs no full
+import, and cannot claim product acceleration, W1, scale, release or goal
+completion.
+
 ## Issue #305 resident ONNX intra-op thread-sensitivity contract
 
 Issue #305 is the sole next L2 runtime-scheduling experiment after #295 retained
