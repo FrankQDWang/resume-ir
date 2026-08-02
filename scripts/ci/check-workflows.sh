@@ -111,6 +111,7 @@ reject_text "$pr_lite_workflow" "windows-latest"
 require_text "$github_config_script" '"required_status_checks": {'
 require_text "$github_config_script" '"strict": true'
 require_text "$github_config_script" '"PR Lite / contract-and-unit"'
+require_text "$github_config_script" '"contexts": ["contract-and-unit"]'
 
 require_text "$verify_script" "./scripts/ci/check-workflows.sh"
 require_text "$verify_script" "python3 scripts/ci/check-search-runtime-boundary.py"
