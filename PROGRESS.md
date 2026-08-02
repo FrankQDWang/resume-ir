@@ -1,20 +1,21 @@
 # Progress
 
-## Issue #319 resident role-isolation public matrix runner restored
+## Issue #319 formal resident role-isolation matrix inconclusive; runner removed
 
-The bounded macOS-only runner now composes attested release sidecars, calibrates B1 x 32 queries,
-proves exact vectors/counts/order across all three arms, starts each daemon from an empty store and
-requires strict `/imports` admission. It permits only the two observed startup partial flushes
-before warmup and requires every measured publication call to remain B4 x 512.
+The exact-merged-main macOS M4/H2 matrix completed 10 balanced blocks and 30 independent release
+daemon sessions. Its 5,580-byte owner-only public-synthetic aggregate passes the closed checker.
+Split 3t reduced bulk throughput by 4.452% with a wholly negative paired 95% CI. Split 4t observed
+9.700% more bulk throughput with paired CI [+6.905%, +11.723%] and improved query p95/p99 by
+88.309%/61.674%, but recorded 145 query failures and a 552.907 ms maximum queue-wait upper bound.
 
-One three-session public smoke passes the closed report checker: all sessions, thermal/load guards,
-query results, lifecycle semantics and cleanup are exact, with a 5,416-byte owner-only aggregate
-report. Its one-second metrics remain capability-only and make no speedup, winner, private-matrix or
-release claim. An unattested build and the former offline-store bootstrap both stopped before t0 and
-are recorded as harness corrections, not performance losses.
-
-The focused runner/report/governance checks and the complete `verify-local.sh` gate pass without any
-production default, schema, privacy boundary or performance-gate weakening.
+Both candidates failed exact query results and the 200 ms queue-wait gate; the full run also failed
+the host-load guard. Vectors, counts, order, lifecycle and cleanup remained exact, thermal passed and
+each split process tree stayed below 1024 MiB. The closed decision is `inconclusive`: no winner and
+no private-matrix eligibility. The local runner and self-test pin are therefore removed first in the
+required reverse rollback; the production shared three-thread topology remains unchanged.
+Focused checks pass. A full branch verifier hit the unchanged daemon-handoff timing test and its
+exact rerun passed; exact unmodified main passed daemon, hit the unchanged PDF-timeout timing test,
+and its exact rerun passed. Neither timing gate was changed.
 
 ## Issue #319 resident role-isolation aggregate observer restored after admission repair
 
