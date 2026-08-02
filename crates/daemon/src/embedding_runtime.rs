@@ -327,7 +327,12 @@ impl ExperimentObserver {
         let Some(path) = std::env::var_os(EXPERIMENT_OBSERVER_ENV).map(PathBuf::from) else {
             return Ok(None);
         };
-        if !experiment_active || !path.is_absolute() || path.parent().is_none_or(|p| !p.is_dir()) {
+        if !experiment_active {
+            return Err(DaemonError::configuration_invalid(
+                "resident role-isolation observer requires an explicit experiment arm",
+            ));
+        }
+        if !path.is_absolute() || path.parent().is_none_or(|p| !p.is_dir()) {
             return Err(DaemonError::configuration_invalid(
                 "resident role-isolation observer path is invalid",
             ));
