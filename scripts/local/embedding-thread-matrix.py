@@ -153,7 +153,7 @@ def calibrate_query(binary: Path, runtime: Path) -> list[dict[str, str]]:
         low, high = 1, 1024
         while low <= high:
             count = (low + high) // 2
-            inputs = [{"role": "query", "text": " ".join(["alpha"] * count)}]
+            inputs = [{"role": "query", "text": " ".join(["a"] * count)}]
             _, _, signature, _ = resident.request(inputs)
             if signature[1] == 32:
                 return inputs
