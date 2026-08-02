@@ -9,10 +9,6 @@ publish.workspace = true
 name = "resume-embedding-runtime"
 path = "src/main.rs"
 
-[features]
-default = []
-thread-experiment = []
-
 [dependencies]
 embedding-protocol = { path = "../embedding-protocol" }
 ort = { git = "https://github.com/pykeio/ort.git", rev = "17ed727770746447620d0d76e9893ed1a3d7c221", version = "=2.0.0-rc.12", default-features = false, features = ["api-24", "load-dynamic", "ndarray", "std"] }

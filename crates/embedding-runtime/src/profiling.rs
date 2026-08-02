@@ -3,9 +3,6 @@ use std::{ffi::OsString, fs, path::PathBuf};
 use ort::session::{builder::SessionBuilder, Session};
 
 use super::{RuntimeError, MAX_RUNTIME_PATH_BYTES};
-use crate::thread_experiment::ResidentThreadPolicy;
-#[cfg(feature = "thread-experiment")]
-use crate::thread_experiment::{parse_thread_experiment_mode, ThreadExperimentProfiling};
 
 pub(super) const PROFILE_OUTPUT_PREFIX_ENV: &str = "RESUME_IR_EMBEDDING_PROFILE_OUTPUT_PREFIX";
 
@@ -18,7 +15,6 @@ pub(super) enum RunMode {
 #[derive(Debug, Eq, PartialEq)]
 pub(super) struct ResidentMode {
     pub(super) profiling: ProfilingMode,
-    pub(super) intra_threads: ResidentThreadPolicy,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -30,13 +26,11 @@ pub(super) enum ProfilingMode {
 pub(super) fn parse_run_mode(
     args: &[String],
     profile_output_prefix: impl FnOnce() -> Option<OsString>,
-    #[cfg(feature = "thread-experiment")] experiment_intra_threads: impl FnOnce() -> Option<OsString>,
 ) -> Result<RunMode, RuntimeError> {
     match args {
         [] => Ok(RunMode::OneShot),
         [mode] if mode == "--resident" => Ok(RunMode::Resident(ResidentMode {
             profiling: ProfilingMode::Disabled,
-            intra_threads: ResidentThreadPolicy::Production,
         })),
         [mode] if mode == "--resident-profile" => {
             let output_prefix = validate_output_prefix(
@@ -44,30 +38,9 @@ pub(super) fn parse_run_mode(
             )?;
             Ok(RunMode::Resident(ResidentMode {
                 profiling: ProfilingMode::OperatorTrace(output_prefix),
-                intra_threads: ResidentThreadPolicy::Production,
             }))
         }
-        _ => {
-            #[cfg(feature = "thread-experiment")]
-            {
-                let experiment = parse_thread_experiment_mode(args, experiment_intra_threads)?
-                    .ok_or(RuntimeError::EnvironmentInvalid)?;
-                let profiling = match experiment.profiling {
-                    ThreadExperimentProfiling::Disabled => ProfilingMode::Disabled,
-                    ThreadExperimentProfiling::Enabled => {
-                        ProfilingMode::OperatorTrace(validate_output_prefix(
-                            profile_output_prefix().ok_or(RuntimeError::EnvironmentInvalid)?,
-                        )?)
-                    }
-                };
-                Ok(RunMode::Resident(ResidentMode {
-                    profiling,
-                    intra_threads: ResidentThreadPolicy::Experiment(experiment.intra_threads),
-                }))
-            }
-            #[cfg(not(feature = "thread-experiment"))]
-            Err(RuntimeError::EnvironmentInvalid)
-        }
+        _ => Err(RuntimeError::EnvironmentInvalid),
     }
 }
 
