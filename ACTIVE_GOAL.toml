@@ -12,17 +12,17 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#208"
-name = "ort_registry_rc13_dependency_replacement"
+issue = "#312"
+name = "embedding_input_token_saturation_observation"
 contract_change_allowed = true
 production_code_allowed = true
-private_benchmark_allowed = false
-configured_private_roots_required = false
+private_benchmark_allowed = true
+configured_private_roots_required = true
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
-unconfigured_private_run_terminal = "not_applicable_public_synthetic_only"
+unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "This bounded #208 dependency-maintenance slice replaces the temporary immutable ort and ort-sys git revision with exact crates.io 2.0.0-rc.13 after confirming that release contains the upstream re-entrant load-dynamic initialization fix; it preserves the current native ORT 1.27.0 runtime pack, model, model ID, tokenizer, session flags, Batch, threads, queues, daemon, IPC, desktop, packaging, non-macOS boundary, gates, and privacy behavior."
+scope_exception_reason = "This bounded #312 L0 observation adds a local-only, read-only token and section coverage observer and runs it against an owner-only temporary import from the configured private resume root; it records only a bounded redacted aggregate and selects whether one later L1 input-policy matrix is justified without changing the production model, input identity, vectors, schema, ORT, session, Batch, threads, queues, daemon, IPC, desktop, packaging, non-macOS boundary, gates, or privacy behavior."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -31,23 +31,35 @@ allowed_paths = [
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
   "Cargo.lock",
-  "crates/embedding-runtime/Cargo.toml",
+  "crates/benchmark-runner/Cargo.toml",
+  "crates/benchmark-runner/src/bin/resume-benchmark.rs",
+  "crates/benchmark-runner/src/embedding_input_observation.rs",
+  "crates/benchmark-runner/src/embedding_input_observation_tests.rs",
+  "crates/benchmark-runner/src/lib.rs",
+  "crates/meta-store/Cargo.toml",
+  "crates/meta-store/src/embedding_input_observation.rs",
+  "crates/meta-store/src/embedding_input_observation_tests.rs",
+  "crates/meta-store/src/lib.rs",
+  "perf/embedding-input-observation.schema.json",
+  "perf/fixtures/embedding-input-observation/invalid-cases.json",
+  "perf/fixtures/embedding-input-observation/valid-public-report.json",
+  "scripts/ci/check-embedding-input-observation.py",
   "scripts/ci/test-governance-contract-mutations.py",
 ]
-allowed_paths_role = "ort_registry_rc13_dependency_replacement_paths"
+allowed_paths_role = "embedding_input_token_saturation_observation_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "dependency_maintenance"
+observation_stage = "L0_pre_truncation_token_and_section_coverage"
 optimization_layer = "L0"
 optimization_layer_selected = false
-hypothesis = "exact crates.io ort 2.0.0-rc.13 contains the upstream load-dynamic re-entrant initialization fix currently supplied by git revision 17ed727770746447620d0d76e9893ed1a3d7c221 and can restore registry checksums without changing embedding behavior"
-expected_delta = "no product-performance delta; no git source remains for ort or ort-sys, invalid dynamic-library failure remains bounded to two seconds, and current 384-dimensional native resident semantic, hybrid, and lifecycle behavior remains intact"
-negative_control = "the current exact ort and ort-sys git revision 17ed727770746447620d0d76e9893ed1a3d7c221 with the same native ORT 1.27.0 runtime pack and production embedding model"
-implementation_boundary = "the contract PR merges before dependency mutation; then only the embedding-runtime dependency declaration and lockfile may change unless the exact registry release fails closed, in which case the current git pin remains and the issue records the blocker"
-resident_workload = "public synthetic invalid-library regression plus current macOS native runtime-pack resident Ready, 384-dimensional semantic and hybrid search, and repeated lifecycle acceptance"
-resident_acceptance = "ort and ort-sys resolve only from exact crates.io 2.0.0-rc.13 with registry checksums and no unexpected transitive drift; invalid-library failure returns within two seconds; current native resident Ready, semantic, hybrid, and lifecycle checks pass"
-full_product_acceptance = "not authorized; no private root, full import, W1, product speedup, scale, release, or goal-complete claim"
-raw_profile_boundary = "test output and public evidence contain no runtime pack, model file, query, candidate data, local path, PID, credential, token, or private diagnostic output"
-rollback_condition = "retain the current immutable git pin and close this execution as blocked if rc.13 lacks the required fix, introduces incompatible API or transitive drift that cannot be repaired within the dependency-only boundary, breaks the two-second failure bound, changes vectors or product contracts, or fails native macOS acceptance"
+hypothesis = "the current whole-document head input is materially saturated at the 512-token E5 boundary and excludes enough experience, skill, or project coverage to justify one deterministic L1 input-policy matrix"
+expected_delta = "observation only; an L1 follow-up is eligible only when at least 1000 documents are observed, at least 25 percent exceed 512 pre-truncation active tokens, at least 10 percent of documents containing experience, skill, or project have that family completely excluded or retain less than half of its tokens at 512, and a 384 budget reduces aggregate active-token work by at least 10 percent versus 512"
+negative_control = "public synthetic token and section fixtures replayed with the same production passage prefix, tokenizer accounting, right-truncation budgets, current sectionizer, and explicit unassigned spans"
+implementation_boundary = "the contract PR merges before observer implementation or private execution; the implementation adds only a local benchmark observer and bounded report contract, and the formal run uses an owner-only temporary import with embedding disabled and no OCR drain before deleting raw and temporary artifacts"
+resident_workload = "not applicable; deterministic offline observation of successfully parsed clean text from the configured private resume root on macOS M4 H2"
+resident_acceptance = "not applicable; no ONNX session or product search benchmark runs in this L0 observation"
+full_product_acceptance = "temporary import only with embedding disabled and no OCR drain; no product speedup, W1 scale, release, or goal-complete claim"
+raw_profile_boundary = "raw text, section text, token IDs, per-document rows, paths, filenames, direct raw hashes, database files, logs, and temporary artifacts remain owner-only and are deleted; public output is a bounded aggregate no larger than 64 KiB"
+rollback_condition = "close as lost and retain whole-head 512 without an input-policy Issue if any trigger is false; close as inconclusive if section attribution is unstable; close as blocked only after the same external or tool blocker persists across three distinct evidence paths"
 forbidden_scope = [
   "cpu_arena_change",
   "production_thread_policy_change",
@@ -56,18 +68,21 @@ forbidden_scope = [
   "production_runtime_pack_change",
   "production_model_id_change",
   "production_vector_reindex",
+  "production_embedding_input_change",
+  "metadata_schema_change",
   "pooling_change",
   "transformer_optimizer_change",
   "larger_batch",
   "additional_worker_or_queue",
   "additional_model_process",
-  "wait_for_ocr_drain",
+  "ocr_drain",
   "windows_or_linux",
   "query_hot_path_change",
-  "private_root_read",
-  "full_product_benchmark",
+  "raw_private_output",
+  "private_query_read",
   "performance_improvement_claim",
-  "performance_hypothesis_reopen",
+  "l1_matrix_before_trigger",
+  "quality_or_retrieval_claim",
   "gate_weakening",
   "coreml",
 ]
