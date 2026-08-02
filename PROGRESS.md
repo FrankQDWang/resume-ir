@@ -1,5 +1,17 @@
 # Progress
 
+## Issue #319 resident role-isolation aggregate observer restored after admission repair
+
+The default-off aggregate observer is restored only after the deterministic admission repair, core
+capability and closed report contract merged. It remains feature-gated and environment-selected,
+writes only bounded counters to an owner-only temporary file, and does not add IPC, diagnostics or
+ordinary runtime behavior. This prerequisite runs no matrix, reads no private corpus and makes no
+throughput or latency claim; it only lets the future runner prove exact B4 x 512 publication work.
+
+Fresh verification passes the aggregate fixture test, all 115 feature-mode daemon unit tests and
+every runnable integration test, warnings-denied feature Clippy, the governance/privacy checks and
+the complete default `verify-local.sh` gate. The ordinary build remains observer-free.
+
 ## Issue #319 resident role-isolation report contract restored
 
 The closed 64 KiB aggregate schema, semantic checker and synthetic positive/negative fixtures are
