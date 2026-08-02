@@ -15,10 +15,12 @@ meta-store = { path = "../meta-store" }
 ocr-client = { path = "../ocr-client" }
 process-containment = { path = "../process-containment" }
 rank-fusion = { path = "../rank-fusion" }
+sectionizer = { path = "../sectionizer" }
 serde = "1"
 serde_json = "1"
 sha2 = "0.10"
 sysinfo = { version = "0.39.3", default-features = false, features = ["system"] }
+tokenizers = { version = "=0.22.2", default-features = false, features = ["fancy-regex"] }
 
 [lints]
 workspace = true
