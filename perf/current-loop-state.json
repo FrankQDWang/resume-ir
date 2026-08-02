@@ -1,8 +1,8 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
-  "experiment_state": "hypothesis_registered",
+  "workflow_state": "evidence_review",
+  "experiment_state": "accepted",
   "evidence_lane": "w0_docs",
   "contract_pins": {
     "active_goal_sha256": "f996ff766ef4f3661dc7a0a6df2f13f4e50043a21e148df66f3fdef9737aff1d",
@@ -18,11 +18,16 @@
     "acceptance_cell": "full_import_ocr_backlog",
     "expected_effect": "exact crates.io ort 2.0.0-rc.13 restores registry provenance and checksums while retaining the bounded upstream load-dynamic fix and unchanged native embedding behavior",
     "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/208",
-    "after_measurement_ref": null,
-    "reprofile_ref": null,
-    "decision": "active"
+    "after_measurement_ref": "PROGRESS.md#issue-208-exact-cratesio-ort-rc13-dependency-contract",
+    "reprofile_ref": "not_applicable_dependency_maintenance",
+    "decision": "accepted"
   },
   "transition_history": [
+    {
+      "from": "slice_selected",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-208-exact-cratesio-ort-rc13-dependency-contract"
+    },
     {
       "from": "next_issue_or_goal_complete",
       "to": "slice_selected",
@@ -3024,7 +3029,10 @@
       {"command":"combined artifact/prepacking/operator witness self-tests: 20 passed","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
       {"command":"focused embedding-runtime tests and warnings-denied Clippy","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
       {"command":"format, rust-analyzer, performance/autonomous/loop contracts, governance mutations, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
-      {"command":"./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"}
+      {"command":"./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
+      {"command":"cargo test and warnings-denied Clippy for resume-embedding-runtime","exit_code":0,"evidence_ref":"PROGRESS.md#issue-208-exact-cratesio-ort-rc13-dependency-contract"},
+      {"command":"exact pre-change main versus rc.13 resident vector control","exit_code":0,"evidence_ref":"PROGRESS.md#issue-208-exact-cratesio-ort-rc13-dependency-contract"},
+      {"command":"three attested synthetic import, index, semantic and hybrid lifecycle cycles","exit_code":0,"evidence_ref":"PROGRESS.md#issue-208-exact-cratesio-ort-rc13-dependency-contract"}
     ],
     "all_required_commands_ran": true,
     "claim": "partial"
@@ -3039,10 +3047,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-208-ort-registry-rc13-2026-08-02",
-  "state_version": 579,
-  "previous_state_hash": "5b019f2f39a94d5ab67fac9e746786d0460a63974ea902f5074873ee2430144c",
-  "expected_state_version": 579,
-  "last_confirmed_side_effect": "issue_208_reused_after_exact_rc13_release_observed",
+  "state_version": 580,
+  "previous_state_hash": "e759b292ff88ae8a187b5efc2d62bc351eec7f970b8ae942bdcb304ccae58fb9",
+  "expected_state_version": 580,
+  "last_confirmed_side_effect": "issue_208_rc13_compatibility_evidence_captured",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {

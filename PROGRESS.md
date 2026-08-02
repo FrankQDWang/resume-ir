@@ -22,6 +22,31 @@ lifecycle checks. This slice reads no private resume or query data, runs no full
 import, and cannot claim product acceleration, W1, scale, release or goal
 completion.
 
+The registry release is a strict descendant of the temporary pinned revision:
+the upstream rc.13 tag is 57 commits ahead and zero behind. The dependency diff
+contains only exact `ort` and `ort-sys` `2.0.0-rc.13` registry entries and their
+checksums; an unrelated lockfile edge selected by the initial Cargo update was
+removed, leaving no transitive package drift.
+
+Focused runtime verification passes 20 tests with one supervised child probe
+ignored by design, including the two-second invalid-library bound. A release
+control built from exact pre-change `main` and the rc.13 candidate both used the
+same reviewed native ORT 1.27.0 pack. Across Batch 1, 2 and 4 with eight measured
+requests per bucket, every output vector was elementwise exact equal, both
+residents reached Ready and both exited cleanly. A comparison against the
+installed App was rejected as evidence after its bundle composition proved it
+came from older commit `93b485d3ebb3b2bd4f38f969b9d9f63e375e803c`, rather
+than the exact control.
+
+The rc.13 candidate was then bound into the existing release executable
+attestation contract and exercised through three independent synthetic product
+cycles. Each cycle completed import, atomic vector publication, 384-dimensional
+semantic search and hybrid search with positive results, and reclaimed every
+resident process. Temporary data and raw command output were deleted; only
+bounded booleans, counts and exit codes were retained. This proves dependency
+replacement compatibility only and makes no speed, W1, scale, release or goal
+completion claim.
+
 ## Issue #305 resident ONNX intra-op thread-sensitivity contract
 
 Issue #305 is the sole next L2 runtime-scheduling experiment after #295 retained
