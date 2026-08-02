@@ -1,5 +1,32 @@
 # Progress
 
+## Issue #319 resident embedding role-isolation core capability
+
+The first implementation sub-slice adds only a default-off experiment topology. The ordinary
+daemon and embedding-runtime builds still expose one shared resident, ordinary `--resident` still
+rejects four intra-op threads, and no production default, IPC, persistence, model, input, Batch or
+index contract changes. When the matching Cargo features are compiled, the closed daemon flag
+accepts exactly `shared_i3_b4`, `split_i3_bulk3_b4` or `split_i3_bulk4_b4`; the split arms start a
+three-thread interactive resident and a separate three- or four-thread publication resident during
+bootstrap.
+
+Query vectorization is wired only to the interactive client and import publication only to the bulk
+client. Bootstrap publishes embedding Ready only after both resident supervisors are Ready, worker
+claims require both clients to remain Ready, and split teardown signals both supervisors before
+joining either one. Synthetic tests prove a slow in-flight bulk request does not prevent a query
+from entering the other resident, the two roles reach distinct worker processes, both owners shut
+down together, the experimental four-thread boundary is available only through the explicit mode,
+and default builds reject every experiment-only entry.
+
+Focused feature and default tests pass for `embedder`, `resume-embedding-runtime`, daemon arm
+parsing and daemon split concurrency; warnings-denied Clippy also passes for all three affected
+crates in feature mode, and a complete default `verify-local.sh` run passes. A separate feature-mode
+daemon suite passed 113 of 114 tests and stopped only at the unchanged
+`unconsumed_install_timeout_withdraws_and_allows_the_next_publication` timing flake already
+reproduced on exact main during the contract repair. This sub-slice has not added the runner, report
+schema or checker and has run no formal public matrix or private benchmark, so it makes no
+performance improvement claim.
+
 ## Issue #319 resident embedding role-isolation contract
 
 Execution kickoff found one contract-surface mismatch before production edits: the frozen

@@ -8,6 +8,7 @@ publish.workspace = true
 [features]
 default = []
 native-runtime-tests = []
+resident-role-isolation-experiment = ["embedder/resident-role-isolation-experiment"]
 
 [[bin]]
 name = "resume-daemon"
