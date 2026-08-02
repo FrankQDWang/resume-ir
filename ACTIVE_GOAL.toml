@@ -47,6 +47,8 @@ allowed_paths = [
   "crates/meta-store/src/lib.rs",
   "crates/meta-store/src/source_roots.rs",
   "crates/meta-store/src/source_roots_tests.rs",
+  "crates/meta-store/src/writer_transition_store.rs",
+  "crates/meta-store/src/writer_transition_store_tests.rs",
   "crates/meta-store/tests/s26_import_root_control.rs",
 ]
 allowed_paths_role = "daemon_import_admission_correctness_paths"

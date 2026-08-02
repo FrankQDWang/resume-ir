@@ -5,12 +5,12 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "fd140d2222bfe05a29316d4a4a2fbc6c7949b78842e31e7623a9b738d00f20fa",
+    "active_goal_sha256": "0dc118bd661372dc9b64d49435d4183b525cab3bb738bd0fdf5ccdff85e1a422",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "7c3664ba82e51e5b0aaddfe2cfeae42749374a32"
+    "git_head_sha": "15544dccbfa6eabcb080f76779e690373e4c7998"
   },
   "current_slice": "#328 deterministic daemon import admission and worker claim",
   "hypothesis": {
@@ -3082,10 +3082,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-328-daemon-import-admission-2026-08-02",
-  "state_version": 585,
-  "previous_state_hash": "b471e549f49dc9bebed95faf6593a60b2c76d09cbb4c1bf12627ebb0e5bd06fc",
-  "expected_state_version": 585,
-  "last_confirmed_side_effect": "issue_328_daemon_import_admission_created",
+  "state_version": 586,
+  "previous_state_hash": "63caec77822352b13344fddedf274cb477f86d2c25ebaf6adae143a502987a15",
+  "expected_state_version": 586,
+  "last_confirmed_side_effect": "issue_328_writer_authority_path_repair_registered",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
