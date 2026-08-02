@@ -1,28 +1,33 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
-  "experiment_state": "accepted",
+  "workflow_state": "slice_selected",
+  "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "f996ff766ef4f3661dc7a0a6df2f13f4e50043a21e148df66f3fdef9737aff1d",
+    "active_goal_sha256": "06b3d10d0571cabfe0b1abf18950aa907c56729affe958f38dd36467cf0c9a41",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "53d19642f1c7b7cffce27f9955925dc458b1d4b7"
+    "git_head_sha": "5f572265d5d7e44da59bcd50497f845bf2c0a31f"
   },
-  "current_slice": "#208 exact crates.io ORT rc.13 dependency replacement",
+  "current_slice": "#312 pre-truncation E5 token saturation and section coverage observation",
   "hypothesis": {
-    "id": "issue-208-ort-registry-rc13-dependency-replacement",
+    "id": "issue-312-embedding-input-token-saturation-observation",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "exact crates.io ort 2.0.0-rc.13 restores registry provenance and checksums while retaining the bounded upstream load-dynamic fix and unchanged native embedding behavior",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/208",
-    "after_measurement_ref": "PROGRESS.md#issue-208-exact-cratesio-ort-rc13-dependency-contract",
-    "reprofile_ref": "not_applicable_dependency_maintenance",
-    "decision": "accepted"
+    "expected_effect": "a bounded L0 observation determines whether whole-head 512 is materially saturated, loses priority-section coverage, and has at least 10 percent aggregate token-work reduction available at a 384 budget before any L1 input-policy experiment is authorized",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/312",
+    "after_measurement_ref": null,
+    "reprofile_ref": null,
+    "decision": "active"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/312"
+    },
     {
       "from": "slice_selected",
       "to": "evidence_review",
@@ -3046,15 +3051,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-208-ort-registry-rc13-2026-08-02",
-  "state_version": 580,
-  "previous_state_hash": "e759b292ff88ae8a187b5efc2d62bc351eec7f970b8ae942bdcb304ccae58fb9",
-  "expected_state_version": 580,
-  "last_confirmed_side_effect": "issue_208_rc13_compatibility_evidence_captured",
+  "run_id": "issue-312-embedding-input-observation-2026-08-02",
+  "state_version": 581,
+  "previous_state_hash": "655711ac1029ef25b96adf0ab6be5e477405755d1986e60dd2265edfb4654547",
+  "expected_state_version": 581,
+  "last_confirmed_side_effect": "issue_312_profile_issue_created",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#208",
+    "primary_issue": "#312",
     "active_prs": [],
     "open_blockers": []
   }

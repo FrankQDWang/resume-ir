@@ -1,5 +1,34 @@
 # Progress
 
+## Issue #312 pre-truncation token saturation observation contract
+
+Issue #312 is the next L0 observation after the resident thread experiment
+lost and exact crates.io ORT rc.13 replaced the temporary dependency pin. It
+tests no performance optimization. It measures whether the current
+whole-document `passage:` input is materially saturated before the production
+512-token right-truncation boundary and whether later experience, skill or
+project content is systematically underrepresented.
+
+The contract PR must merge before observer implementation or private execution.
+The later observer is local-only and read-only over an owner-only temporary
+import from `$RESUME_IR_PRIVATE_RESUME_ROOT`, with embedding disabled and no OCR
+drain. It reuses the current tokenizer and sectionizer, adds an explicit
+`unassigned` span for preamble and gaps, deletes raw and temporary artifacts,
+and emits only a bounded aggregate no larger than 64 KiB. No raw text, section
+text, token IDs, per-document rows, names, paths, filenames, direct raw hashes,
+database, logs or private manifests may enter git or GitHub.
+
+The L1 follow-up is conjunctively gated: at least 1,000 documents must be
+observed; at least 25 percent must exceed 512 pre-truncation active tokens; at
+least 10 percent of documents containing experience, skill or project must
+completely lose that family or retain less than half its tokens at 512; and a
+384 budget must reduce aggregate active-token work by at least 10 percent versus
+512. If any condition fails, the Issue closes `lost` and whole-head 512 remains.
+Only a passing result may open one six-arm input-policy matrix. This slice
+cannot change production input identity, vectors, model, ORT, schema, runtime
+policy, search behavior, or claim product speedup, W1, scale, release or goal
+completion.
+
 ## Issue #208 exact crates.io ORT rc.13 dependency contract
 
 Issue #208 is the bounded dependency-maintenance prerequisite before the next
