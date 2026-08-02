@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-293-to-295-embedding-artifact-matrix-2026-08-02",
-  "from_issue": "#293",
-  "to_issue": "#295",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/293#issuecomment-5152318044",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/295",
-  "base_active_goal_sha256": "f4b9b6872e2186193d4052b2bce0fdd8aa149132dd19101e0f0603b628055e9b",
+  "transition_id": "issue-295-to-299-artifact-experiment-closeout-2026-08-02",
+  "from_issue": "#295",
+  "to_issue": "#299",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/295#issuecomment-5152670658",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/299",
+  "base_active_goal_sha256": "d619df2f49a6d27b75c1edfa7438a2bc2ffbc42cc0d010137af649b718d50979",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
@@ -14,7 +14,7 @@
     "perf/fixtures/valid/synthetic-smoke-baseline-report.json"
   ],
   "bootstrap_gate_change": false,
-  "production_code_changed": false,
+  "production_code_changed": true,
   "blind_holdout_reread": false,
   "gate_weakening": false,
   "privacy": {

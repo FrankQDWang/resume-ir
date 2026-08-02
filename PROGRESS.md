@@ -1,5 +1,33 @@
 # Progress
 
+## Issue #299 embedding artifact experiment closeout
+
+Issue #299 is a bounded lifecycle-cleanup slice following the `lost` #295
+matrix. It removes the local-only artifact matrix/profile modes, their manifest
+loader, Rust tests, and Python witness while retaining ordinary `--resident`,
+the reusable `--resident-profile` entrypoint, and the #293 operator trace
+parser. The production Dynamic U8S8 model, ORT 1.27.0, Batch 4, H2 three-thread
+policy, and every session flag remain unchanged.
+
+The machine ledger now records ONNX prepacking, FP32, Static QDQ S8S8, and
+Static QOperator U8S8 as rejected hypotheses. They may be reopened only after a
+material ORT, model, kernel, or hardware-category change. The profile-Issue
+closure template also requires `landed_on_main_sha`, so a merged PR UI is no
+longer accepted as proof that implementation is reachable from `main`.
+
+This closeout performs no private-data read, candidate generation, formal
+benchmark, full import, or performance claim. After the closeout PR lands, the
+historical #236 record will be reconciled to the already main-reachable
+`b18d5ceaee684b43c59841a2bf0c94a8653ebc42` implementation and #211 will close
+as superseded by the daemon hard-cut test boundary.
+
+Focused embedding-runtime tests, warnings-denied Clippy, format, performance,
+autonomous, Loop, governance-mutation, diff, and public-repository checks pass.
+The first full local verification attempt encountered the unchanged
+load-sensitive PDF minimal-timeout race; its exact rerun passed, and the warmed
+complete `verify-local.sh` rerun passed without weakening or changing that
+test.
+
 ## Local-only merge verification
 
 GitHub-hosted PR, security, platform, model-evaluation, and scheduled benchmark

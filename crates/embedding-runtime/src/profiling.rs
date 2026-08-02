@@ -15,13 +15,6 @@ pub(super) enum RunMode {
 #[derive(Debug, Eq, PartialEq)]
 pub(super) struct ResidentMode {
     pub(super) profiling: ProfilingMode,
-    pub(super) model_source: ResidentModelSource,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub(super) enum ResidentModelSource {
-    Production,
-    ArtifactExperiment,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -38,7 +31,6 @@ pub(super) fn parse_run_mode(
         [] => Ok(RunMode::OneShot),
         [mode] if mode == "--resident" => Ok(RunMode::Resident(ResidentMode {
             profiling: ProfilingMode::Disabled,
-            model_source: ResidentModelSource::Production,
         })),
         [mode] if mode == "--resident-profile" => {
             let output_prefix = validate_output_prefix(
@@ -46,20 +38,6 @@ pub(super) fn parse_run_mode(
             )?;
             Ok(RunMode::Resident(ResidentMode {
                 profiling: ProfilingMode::OperatorTrace(output_prefix),
-                model_source: ResidentModelSource::Production,
-            }))
-        }
-        [mode] if mode == "--resident-artifact-matrix" => Ok(RunMode::Resident(ResidentMode {
-            profiling: ProfilingMode::Disabled,
-            model_source: ResidentModelSource::ArtifactExperiment,
-        })),
-        [mode] if mode == "--resident-artifact-profile" => {
-            let output_prefix = validate_output_prefix(
-                profile_output_prefix().ok_or(RuntimeError::EnvironmentInvalid)?,
-            )?;
-            Ok(RunMode::Resident(ResidentMode {
-                profiling: ProfilingMode::OperatorTrace(output_prefix),
-                model_source: ResidentModelSource::ArtifactExperiment,
             }))
         }
         _ => Err(RuntimeError::EnvironmentInvalid),
