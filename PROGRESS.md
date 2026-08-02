@@ -1,5 +1,26 @@
 # Progress
 
+## Issue #319 resident embedding role-isolation aggregate observer
+
+The runner prerequisite adds an experiment-only, environment-selected owner file for exact live
+publication counters. It is available only when the default-off daemon feature and one of the three
+closed role-isolation arms are both active; it does not add an IPC, diagnostics or production
+surface. Each successful publication request atomically replaces a mode-0600 JSON snapshot with
+only completed call, input, active-token and nonconforming-workload counts. A write failure fails
+the experimental vectorization request instead of allowing an unmeasured session.
+
+This closes the 60-second measurement blind spot in the ordinary status contract, whose searchable
+document count advances at atomic publication milestones rather than once per completed B4. The
+future runner can therefore prove that every measured call is B4 by 512 and calculate throughput
+from exact t0/t1 deltas. No matrix, private corpus or speedup claim is included in this prerequisite,
+and the temporary observer file remains local and is deleted with its owned daemon session.
+
+Feature-mode daemon tests (115 unit tests plus the runnable integration set), warnings-denied
+Clippy, focused governance checks and the public-repository guard pass. The broad local verifier
+passed its Rust and contract suites, then hit the existing daemon closed-loop `seed local import`
+failure; the focused closed loop passed on immediate retry, while an untouched detached worktree at
+exact main `1c36a7d15b8e8c68f372f089809ddad50c9b1c8d` reproduced the same failure.
+
 ## Issue #319 resident embedding role-isolation report contract
 
 The second implementation sub-slice adds only the closed public report schema, semantic checker and
