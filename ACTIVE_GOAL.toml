@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#312"
-name = "embedding_input_token_saturation_observation"
+issue = "#317"
+name = "embedding_input_policy_matrix"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = true
@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "This bounded #312 L0 observation adds a local-only, read-only token and section coverage observer and runs it against an owner-only temporary import from the configured private resume root; it records only a bounded redacted aggregate and selects whether one later L1 input-policy matrix is justified without changing the production model, input identity, vectors, schema, ORT, session, Batch, threads, queues, daemon, IPC, desktop, packaging, non-macOS boundary, gates, or privacy behavior."
+scope_exception_reason = "This bounded #317 L1 experiment compares the pre-registered whole-head and section-balanced input policies outside the production sidecar, records only bounded redacted aggregates, and selects at most one candidate for a later production migration Issue without changing the production model, input identity, vectors, schema, ORT, session, Batch, threads, queues, daemon, IPC, desktop, packaging, non-macOS boundary, gates, or privacy behavior."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -35,31 +35,37 @@ allowed_paths = [
   "crates/benchmark-runner/src/bin/resume-benchmark.rs",
   "crates/benchmark-runner/src/embedding_input_observation.rs",
   "crates/benchmark-runner/src/embedding_input_observation_tests.rs",
+  "crates/benchmark-runner/src/embedding_input_policy_experiment.rs",
+  "crates/benchmark-runner/src/embedding_input_policy_experiment_tests.rs",
   "crates/benchmark-runner/src/lib.rs",
   "crates/meta-store/Cargo.toml",
   "crates/meta-store/src/embedding_input_observation.rs",
   "crates/meta-store/src/embedding_input_observation_tests.rs",
   "crates/meta-store/src/lib.rs",
   "perf/embedding-input-observation.schema.json",
+  "perf/embedding-input-policy-experiment.schema.json",
   "perf/fixtures/embedding-input-observation/invalid-cases.json",
   "perf/fixtures/embedding-input-observation/valid-public-report.json",
+  "perf/fixtures/embedding-input-policy-experiment/invalid-cases.json",
+  "perf/fixtures/embedding-input-policy-experiment/valid-public-report.json",
   "scripts/ci/check-embedding-input-observation.py",
+  "scripts/ci/check-embedding-input-policy-experiment.py",
   "scripts/ci/test-governance-contract-mutations.py",
 ]
-allowed_paths_role = "embedding_input_token_saturation_observation_paths"
+allowed_paths_role = "embedding_input_policy_matrix_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "L0_pre_truncation_token_and_section_coverage"
-optimization_layer = "L0"
-optimization_layer_selected = false
-hypothesis = "the current whole-document head input is materially saturated at the 512-token E5 boundary and excludes enough experience, skill, or project coverage to justify one deterministic L1 input-policy matrix"
-expected_delta = "observation only; an L1 follow-up is eligible only when at least 1000 documents are observed, at least 25 percent exceed 512 pre-truncation active tokens, at least 10 percent of documents containing experience, skill, or project have that family completely excluded or retain less than half of its tokens at 512, and a 384 budget reduces aggregate active-token work by at least 10 percent versus 512"
-negative_control = "public synthetic token and section fixtures replayed with the same production passage prefix, tokenizer accounting, right-truncation budgets, current sectionizer, and explicit unassigned spans"
-implementation_boundary = "the contract PR merges before observer implementation or private execution; the implementation adds only a local benchmark observer and bounded report contract, and the formal run uses an owner-only temporary import with embedding disabled and no OCR drain before deleting raw and temporary artifacts"
-resident_workload = "not applicable; deterministic offline observation of successfully parsed clean text from the configured private resume root on macOS M4 H2"
-resident_acceptance = "not applicable; no ONNX session or product search benchmark runs in this L0 observation"
-full_product_acceptance = "temporary import only with embedding disabled and no OCR drain; no product speedup, W1 scale, release, or goal-complete claim"
-raw_profile_boundary = "raw text, section text, token IDs, per-document rows, paths, filenames, direct raw hashes, database files, logs, and temporary artifacts remain owner-only and are deleted; public output is a bounded aggregate no larger than 64 KiB"
-rollback_condition = "close as lost and retain whole-head 512 without an input-policy Issue if any trigger is false; close as inconclusive if section attribution is unstable; close as blocked only after the same external or tool blocker persists across three distinct evidence paths"
+observation_stage = "L1_embedding_input_representation_matrix"
+optimization_layer = "L1"
+optimization_layer_selected = true
+hypothesis = "one of the frozen whole-head or section-balanced 384/256 input policies can materially reduce current embedding token work while preserving control-referenced retrieval quality and priority-section representation"
+expected_delta = "a candidate is eligible only when it improves 512-control ONNX median by at least 10 percent with a positive paired bootstrap confidence interval, has a positive resident wall-time confidence interval, preserves the frozen control-referenced retrieval and resource gates, and has no pre-registered sensitivity regression; multiple eligible candidates require a statistically unique fastest winner"
+negative_control = "the current production whole_head_512 input using the same Dynamic U8S8 model, ORT 1.27.0 native runtime, Batch 4, three intra-op threads, passage prefix, tokenizer, pooling, session flags, and hardware"
+implementation_boundary = "the contract PR merges before capability work or formal execution; the six frozen arms are whole_head_512, whole_head_384, whole_head_256, section_balanced_512, section_balanced_384, and section_balanced_256; the experiment stays in the benchmark runner rather than expanding the production sidecar and opens at most one later production migration Issue"
+resident_workload = "balanced independent macOS M4 H2 release sessions over deterministic private local inputs, with the current whole_head_512 arm as control and frozen workload ordering, warmup exclusion, paired comparison, quality workload, and resource sampling defined by the #317 contract"
+resident_acceptance = "all six arms load through the current production runtime identity; outputs remain finite normalized 384-dimensional vectors; reports reconcile counts, remain within 64 KiB, and expose only aggregate performance, retrieval, section-coverage, startup, memory, and decision evidence"
+full_product_acceptance = "not authorized in #317; only a unique matrix winner may open one production migration Issue that separately handles vector identity, full reindex, private quality acceptance, and paired complete-product import evidence"
+raw_profile_boundary = "raw text, queries, candidate results, vectors, token IDs, per-document or per-query rows, paths, filenames, direct raw hashes, database files, logs, traces, and temporary artifacts remain owner-only and are deleted; public output is a bounded aggregate no larger than 64 KiB"
+rollback_condition = "retain production whole_head_512 and close as lost when no candidate passes every gate; close as inconclusive on statistical ties or unstable evidence; do not add arms or tune quotas after evidence; close as blocked only after the same external or tool blocker persists across three distinct evidence paths"
 forbidden_scope = [
   "cpu_arena_change",
   "production_thread_policy_change",
@@ -79,10 +85,11 @@ forbidden_scope = [
   "windows_or_linux",
   "query_hot_path_change",
   "raw_private_output",
-  "private_query_read",
+  "production_sidecar_experiment_mode",
   "performance_improvement_claim",
-  "l1_matrix_before_trigger",
-  "quality_or_retrieval_claim",
+  "seventh_matrix_arm",
+  "post_hoc_quota_tuning",
+  "production_quality_or_retrieval_claim",
   "gate_weakening",
   "coreml",
 ]

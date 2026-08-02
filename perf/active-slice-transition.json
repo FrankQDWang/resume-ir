@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-208-to-312-embedding-input-observation-2026-08-02",
-  "from_issue": "#208",
-  "to_issue": "#312",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/208#issuecomment-5156564636",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/312",
-  "base_active_goal_sha256": "f996ff766ef4f3661dc7a0a6df2f13f4e50043a21e148df66f3fdef9737aff1d",
+  "transition_id": "issue-312-to-317-embedding-input-policy-matrix-2026-08-02",
+  "from_issue": "#312",
+  "to_issue": "#317",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/312#issuecomment-5157678376",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/317",
+  "base_active_goal_sha256": "06b3d10d0571cabfe0b1abf18950aa907c56729affe958f38dd36467cf0c9a41",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",

@@ -1,12 +1,34 @@
 # Progress
 
+## Issue #317 embedding input-policy matrix contract
+
+Issue #312 closed `won` as an L0 eligibility observation, not as a performance or quality win. Its
+formal macOS M4/H2 run observed 1,424/1,424 documents with no oversize exclusions or failures:
+95.927% exceeded 512 pre-truncation active tokens, 81.601% of documents containing a priority
+family retained less than half of at least one priority family at 512, and a 384 budget reduced
+aggregate active-token work by 24.529%. All four frozen triggers passed; the bounded 4,809-byte
+aggregate has SHA-256 `4a5d37f0331ad0481e9df7a00d49f95ffa030aefcefeea0279216ae2adce9756`.
+Temporary database, import logs and raw artifacts were deleted, and the aggregate contains no raw
+text, token IDs, per-document rows, paths, names or direct raw hashes.
+
+Issue #317 is therefore the single authorized L1 follow-up. It freezes exactly six arms:
+`whole_head_512`, `whole_head_384`, `whole_head_256`, `section_balanced_512`,
+`section_balanced_384`, and `section_balanced_256`. The current whole-head 512 path is the negative
+control. Experiment capability must remain in the benchmark runner rather than expanding the
+production sidecar, and no formal matrix may run before this contract lands on `main`. The Issue
+selects at most one candidate; it cannot change production embedding identity, vectors, schema,
+model, ORT, runtime/session policy, Batch, threads, queues, workers, daemon, IPC, desktop or
+packaging. A unique winner may only open one later production migration Issue with separate vector
+identity, reindex, private quality and complete-product acceptance.
+
 ## 2026-08-02 — #312 macOS temporary-root observer smoke
 
 - Corrected the local observer's runtime-root check to reject a symlink leaf while accepting the
   standard macOS `/var` to `/private/var` parent canonicalization used by `mktemp`.
 - A release public-synthetic import observed exactly 2/2 searchable documents, produced a schema-
   valid aggregate `lost` smoke result, emitted no stderr, and deleted the owner-only scratch tree.
-- This is capability evidence only; the missing configured private roots still block the formal L0 decision.
+- This was capability evidence only; the later formal L0 run used the configured private roots and
+  produced the `l1_eligible` decision recorded above.
 
 ## 2026-08-02 — #312 local observer command and report contract
 

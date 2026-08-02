@@ -5,24 +5,34 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "06b3d10d0571cabfe0b1abf18950aa907c56729affe958f38dd36467cf0c9a41",
+    "active_goal_sha256": "a294ed608846df622d11b360bec86d936f5694d3924c9d0861a3e6d65380f40a",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "5f572265d5d7e44da59bcd50497f845bf2c0a31f"
+    "git_head_sha": "ff3e895bf37db79504b719ebe04c3f5889b0b6c5"
   },
-  "current_slice": "#312 pre-truncation E5 token saturation and section coverage observation",
+  "current_slice": "#317 whole-head and section-balanced embedding input-policy matrix",
   "hypothesis": {
-    "id": "issue-312-embedding-input-token-saturation-observation",
+    "id": "issue-317-embedding-input-policy-matrix",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "a bounded L0 observation determines whether whole-head 512 is materially saturated, loses priority-section coverage, and has at least 10 percent aggregate token-work reduction available at a 384 budget before any L1 input-policy experiment is authorized",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/312",
+    "expected_effect": "one frozen whole-head or section-balanced 384/256 input policy improves current whole-head 512 ONNX median by at least 10 percent with positive paired ONNX and wall-time confidence intervals while preserving frozen control-referenced quality, sensitivity, startup and memory gates",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/312#issuecomment-5157678376",
     "after_measurement_ref": null,
     "reprofile_ref": null,
     "decision": "active"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/317"
+    },
+    {
+      "from": "slice_selected",
+      "to": "evidence_review",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/312#issuecomment-5157678376"
+    },
     {
       "from": "evidence_review",
       "to": "slice_selected",
@@ -3051,15 +3061,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-312-embedding-input-observation-2026-08-02",
-  "state_version": 581,
-  "previous_state_hash": "655711ac1029ef25b96adf0ab6be5e477405755d1986e60dd2265edfb4654547",
-  "expected_state_version": 581,
-  "last_confirmed_side_effect": "issue_312_profile_issue_created",
+  "run_id": "issue-317-embedding-input-policy-matrix-2026-08-02",
+  "state_version": 582,
+  "previous_state_hash": "c6678a52c1c4e238dd3bd1a505f83d288dccd93df0818f36617f0258ae97f6d2",
+  "expected_state_version": 582,
+  "last_confirmed_side_effect": "issue_317_input_policy_matrix_created",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#312",
+    "primary_issue": "#317",
     "active_prs": [],
     "open_blockers": []
   }
