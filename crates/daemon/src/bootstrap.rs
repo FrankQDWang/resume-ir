@@ -7,11 +7,12 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
-use embedder::{ResidentEmbeddingOwner, ResidentEmbeddingStatus};
+use embedder::ResidentEmbeddingStatus;
 use import_pipeline::DataDirectoryOwnerLease;
 use meta_store::{ImportProcessingContract, OwnedMetaStore, ReadMetaStore};
 
 use crate::daemon_error::{DaemonError, Result};
+use crate::embedding_runtime::ResidentEmbeddingTopologyOwner;
 use crate::run_options::RunOptions;
 use crate::{import_processing, ipc};
 
@@ -22,7 +23,7 @@ struct PersistentRuntime {
     source_file_store: ReadMetaStore,
     processing_contract: ImportProcessingContract,
     startup_orphaned_recovered: usize,
-    _resident_embedding_owner: Option<ResidentEmbeddingOwner>,
+    _resident_embedding_owner: Option<ResidentEmbeddingTopologyOwner>,
 }
 
 pub(crate) fn run_persistent_ipc(
@@ -260,7 +261,10 @@ fn bootstrap_should_stop(
 
 pub(crate) fn resolve_standalone_runtimes(
     options: &mut RunOptions,
-) -> Result<(ipc::OptionalRuntimeMatrix, Option<ResidentEmbeddingOwner>)> {
+) -> Result<(
+    ipc::OptionalRuntimeMatrix,
+    Option<ResidentEmbeddingTopologyOwner>,
+)> {
     let requested_import = options.work_imports || options.work_imports_once;
     let requested_ocr = options.work_ocr || options.work_ocr_once;
     let requested_index = options.work_index || options.work_index_once;
@@ -286,7 +290,10 @@ pub(crate) fn resolve_standalone_runtimes(
 fn resolve_optional_runtimes(
     options: &mut RunOptions,
     shutdown: Option<&Arc<AtomicBool>>,
-) -> (ipc::OptionalRuntimeMatrix, Option<ResidentEmbeddingOwner>) {
+) -> (
+    ipc::OptionalRuntimeMatrix,
+    Option<ResidentEmbeddingTopologyOwner>,
+) {
     if shutdown_requested(shutdown) {
         return cancelled_optional_runtimes(options);
     }
@@ -480,7 +487,10 @@ fn start_classifier(
 
 fn cancelled_optional_runtimes(
     options: &mut RunOptions,
-) -> (ipc::OptionalRuntimeMatrix, Option<ResidentEmbeddingOwner>) {
+) -> (
+    ipc::OptionalRuntimeMatrix,
+    Option<ResidentEmbeddingTopologyOwner>,
+) {
     let unavailable =
         || ipc::OptionalRuntimeHealth::unavailable(ipc::OptionalRuntimeReason::StartFailed);
     let runtimes = ipc::OptionalRuntimeMatrix {
@@ -498,10 +508,13 @@ fn shutdown_requested(shutdown: Option<&Arc<AtomicBool>>) -> bool {
 }
 
 fn classify_embedding_start(
-    start: Result<Option<ResidentEmbeddingOwner>>,
+    start: Result<Option<ResidentEmbeddingTopologyOwner>>,
     timeout_ms: u64,
     shutdown: Option<&Arc<AtomicBool>>,
-) -> (ipc::OptionalRuntimeHealth, Option<ResidentEmbeddingOwner>) {
+) -> (
+    ipc::OptionalRuntimeHealth,
+    Option<ResidentEmbeddingTopologyOwner>,
+) {
     match start {
         Ok(Some(owner)) if wait_for_embedding_ready(&owner, timeout_ms, shutdown) => {
             (ipc::OptionalRuntimeHealth::available(), Some(owner))
@@ -542,6 +555,7 @@ fn apply_runtime_worker_gates(options: &mut RunOptions, runtimes: ipc::OptionalR
     }
     if !embedding_available {
         options.resident_embedding = None;
+        options.publication_resident_embedding = None;
         options.search_vectorization = Default::default();
         options.work_imports = false;
         options.work_imports_once = false;
@@ -553,7 +567,7 @@ fn apply_runtime_worker_gates(options: &mut RunOptions, runtimes: ipc::OptionalR
 }
 
 fn wait_for_embedding_ready(
-    owner: &ResidentEmbeddingOwner,
+    owner: &ResidentEmbeddingTopologyOwner,
     timeout_ms: u64,
     shutdown: Option<&Arc<AtomicBool>>,
 ) -> bool {
@@ -564,12 +578,17 @@ fn wait_for_embedding_ready(
         if shutdown.is_some_and(|shutdown| shutdown.load(Ordering::Acquire)) {
             return false;
         }
-        match owner.client().status() {
-            ResidentEmbeddingStatus::Ready => return true,
-            ResidentEmbeddingStatus::Unavailable | ResidentEmbeddingStatus::Shutdown => {
-                return false;
-            }
-            ResidentEmbeddingStatus::Starting | ResidentEmbeddingStatus::Restarting => {}
+        let statuses = owner.statuses();
+        if statuses == [ResidentEmbeddingStatus::Ready; 2] {
+            return true;
+        }
+        if statuses.iter().any(|status| {
+            matches!(
+                status,
+                ResidentEmbeddingStatus::Unavailable | ResidentEmbeddingStatus::Shutdown
+            )
+        }) {
+            return false;
         }
         if Instant::now() >= deadline {
             return false;

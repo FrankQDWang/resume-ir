@@ -10,6 +10,54 @@ use embedder::{
 use tempfile::TempDir;
 
 #[test]
+fn production_spec_rejects_four_threads() {
+    let worker = TestWorker::compile("production_limit");
+    assert!(matches!(
+        ResidentEmbeddingSpec::new(worker.command()).with_intra_threads(4),
+        Err(EmbeddingError::InvalidRequest)
+    ));
+}
+
+#[cfg(feature = "resident-role-isolation-experiment")]
+#[test]
+fn role_owners_route_to_distinct_workers_and_shutdown_together() {
+    let interactive_worker =
+        TestWorker::compile_for_mode("role_interactive", "--resident-role-isolation-experiment");
+    let bulk_worker =
+        TestWorker::compile_for_mode("role_bulk", "--resident-role-isolation-experiment");
+    let mut interactive_owner = interactive_worker.role_owner(/*threads*/ 3);
+    let mut bulk_owner = bulk_worker.role_owner(/*threads*/ 4);
+    let interactive = interactive_owner.client();
+    let bulk = bulk_owner.client();
+    wait_ready(&interactive);
+    wait_ready(&bulk);
+
+    interactive
+        .embed_batch_with_cancel(
+            EmbeddingPriority::Interactive,
+            &[EmbeddingInput::query("query", "synthetic query")],
+            EmbeddingBudget::new(1, 64),
+            1_000,
+            || false,
+        )
+        .unwrap();
+    bulk.embed_batch_with_cancel(
+        EmbeddingPriority::Background,
+        &[EmbeddingInput::new("document", "synthetic passage")],
+        EmbeddingBudget::new(1, 64),
+        1_000,
+        || false,
+    )
+    .unwrap();
+
+    assert_eq!(interactive_worker.order(), ["query"]);
+    assert_eq!(bulk_worker.order(), ["passage"]);
+    ResidentEmbeddingOwner::shutdown_role_isolation_pair(&mut interactive_owner, &mut bulk_owner);
+    wait_for_status(&interactive, ResidentEmbeddingStatus::Shutdown);
+    wait_for_status(&bulk, ResidentEmbeddingStatus::Shutdown);
+}
+
+#[test]
 fn repeated_requests_reuse_one_generation_and_keep_payloads_redacted() {
     let worker = TestWorker::compile("fast");
     let owner = worker.owner();
@@ -255,13 +303,30 @@ struct TestWorker {
 
 impl TestWorker {
     fn compile(behavior: &str) -> Self {
+        Self::compile_for_mode(behavior, "--resident")
+    }
+
+    fn compile_for_mode(behavior: &str, expected_mode: &str) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let executable = directory.path().join(format!(
             "resident_worker_{behavior}{}",
             std::env::consts::EXE_SUFFIX
         ));
-        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../embedding-protocol/tests/fixtures/resident_worker.rs");
+        let original = fs::read_to_string(fixture).unwrap();
+        let generated = if expected_mode == "--resident" {
+            original
+        } else {
+            let generated = original.replace(
+                "Some(\"--resident\")",
+                &format!("Some(\"{expected_mode}\")"),
+            );
+            assert_ne!(generated, original);
+            generated
+        };
+        let source = directory.path().join("resident_worker.rs");
+        fs::write(&source, generated).unwrap();
         let status = Command::new(option_env!("RUSTC").unwrap_or("rustc"))
             .arg("--edition=2021")
             .arg(source)
@@ -277,7 +342,16 @@ impl TestWorker {
     }
 
     fn owner(&self) -> ResidentEmbeddingOwner {
-        let command = LocalEmbeddingCommandSpec::new(
+        ResidentEmbeddingOwner::start(
+            ResidentEmbeddingSpec::new(self.command())
+                .with_intra_threads(1)
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn command(&self) -> LocalEmbeddingCommandSpec {
+        LocalEmbeddingCommandSpec::new(
             &self.executable,
             Vec::<String>::new(),
             "fixture-local-model",
@@ -285,11 +359,13 @@ impl TestWorker {
         )
         .unwrap()
         .with_timeout_ms(2_000)
-        .unwrap();
+        .unwrap()
+    }
+
+    #[cfg(feature = "resident-role-isolation-experiment")]
+    fn role_owner(&self, threads: usize) -> ResidentEmbeddingOwner {
         ResidentEmbeddingOwner::start(
-            ResidentEmbeddingSpec::new(command)
-                .with_intra_threads(1)
-                .unwrap(),
+            ResidentEmbeddingSpec::for_role_isolation_experiment(self.command(), threads).unwrap(),
         )
         .unwrap()
     }
