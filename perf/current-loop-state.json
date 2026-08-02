@@ -5,12 +5,12 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "201d3f13cbaca3656772b11cec39351b6aef38543bbe7d5356cb64592ca3c775",
+    "active_goal_sha256": "6948233f2c6b9d2cf027092a00e56b887d77ef9e457aa7017609e671b2edc42e",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "8c500ff7df7a211d5e98066a41a926fa0a77dfa8"
+    "git_head_sha": "6243ce45b9ba650547853a9e4334018ff0ebf508"
   },
   "current_slice": "#319 interactive and bulk resident embedding role-isolation matrix",
   "hypothesis": {
@@ -3072,10 +3072,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-319-resident-embedding-role-isolation-2026-08-02",
-  "state_version": 583,
-  "previous_state_hash": "2f0ecb654f18c94044b0b8e6e5a5d6c73fcc45a90659b2c91ac67f392bb6b5ed",
-  "expected_state_version": 583,
-  "last_confirmed_side_effect": "issue_319_resident_embedding_role_isolation_created",
+  "state_version": 584,
+  "previous_state_hash": "bc066a5c4a2d0ab8bae3fd1d9dcc5aef6fbf2d5b6b69335d4572fadc4d302180",
+  "expected_state_version": 584,
+  "last_confirmed_side_effect": "issue_319_runtime_surface_reconciled",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
