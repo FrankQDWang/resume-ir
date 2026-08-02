@@ -26,12 +26,16 @@ use tokenizers::{AddedToken, PaddingParams, PaddingStrategy, Tokenizer, Truncati
 mod batch;
 mod profiling;
 mod runtime_pack;
+mod thread_experiment;
 
 use batch::{mean_pool_batch, tokenized_batch};
 use profiling::{parse_run_mode, ProfilingMode, ResidentMode, RunMode, PROFILE_OUTPUT_PREFIX_ENV};
 #[cfg(test)]
 use runtime_pack::AssetIdentity;
 use runtime_pack::{FileRole, RuntimePack};
+use thread_experiment::ResidentThreadPolicy;
+#[cfg(feature = "thread-experiment")]
+use thread_experiment::THREAD_EXPERIMENT_INTRA_THREADS_ENV;
 
 const INPUT_SCHEMA: &str = "resume-ir-embedding-input-v1";
 const OUTPUT_SCHEMA: &str = "resume-ir-embedding-v1";
@@ -69,7 +73,13 @@ fn run_with_panic_boundary(
 
 fn run() -> Result<(), RuntimeError> {
     let args = env::args().skip(1).collect::<Vec<_>>();
-    match parse_run_mode(&args, || env::var_os(PROFILE_OUTPUT_PREFIX_ENV))? {
+    let mode = parse_run_mode(
+        &args,
+        || env::var_os(PROFILE_OUTPUT_PREFIX_ENV),
+        #[cfg(feature = "thread-experiment")]
+        || env::var_os(THREAD_EXPERIMENT_INTRA_THREADS_ENV),
+    )?;
+    match mode {
         RunMode::OneShot => run_one_shot(),
         RunMode::Resident(mode) => run_resident(mode),
     }
@@ -102,7 +112,7 @@ fn run_one_shot() -> Result<(), RuntimeError> {
 
 fn run_resident(mode: ResidentMode) -> Result<(), RuntimeError> {
     start_resident_parent_death_guard()?;
-    let environment = ResidentEnvironment::read()?;
+    let environment = ResidentEnvironment::read(mode.intra_threads)?;
     let pack = RuntimePack::load(&environment.runtime_dir)?;
     let model_id = pack.model_id().to_string();
     let dimension = pack.dimension();
@@ -661,14 +671,18 @@ struct ResidentEnvironment {
 }
 
 impl ResidentEnvironment {
-    fn read() -> Result<Self, RuntimeError> {
+    fn read(thread_policy: ResidentThreadPolicy) -> Result<Self, RuntimeError> {
         let runtime_dir = absolute_environment_path("RESUME_IR_EMBEDDING_RUNTIME_DIR")?;
         let dimension = required_environment_usize("RESUME_IR_EMBEDDING_DIMENSION", 1, usize::MAX)?;
-        let intra_threads = optional_environment_usize(
-            "RESUME_IR_EMBEDDING_INTRA_THREADS",
-            /*default*/ 1,
-            /*max*/ 3,
-        )?;
+        let intra_threads = match thread_policy {
+            ResidentThreadPolicy::Production => optional_environment_usize(
+                "RESUME_IR_EMBEDDING_INTRA_THREADS",
+                /*default*/ 1,
+                /*max*/ 3,
+            )?,
+            #[cfg(feature = "thread-experiment")]
+            ResidentThreadPolicy::Experiment(intra_threads) => intra_threads,
+        };
         let model_id = env::var("RESUME_IR_EMBEDDING_MODEL_ID")
             .ok()
             .filter(|value| !value.is_empty() && value.len() <= 128)
