@@ -29,7 +29,6 @@ const IPC_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(30);
 const IPC_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(10);
 const IPC_CORE_INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(120);
 const IPC_ENDPOINT_POLL_DELAY: Duration = Duration::from_millis(25);
-const IMPORT_WORKER_STATUS_REQUEST_LIMIT: usize = 320;
 const IMPORT_WORKER_SEARCHABLE_MAX_REQUESTS: usize = 260;
 const IMPORT_WORKER_SEARCHABLE_TIMEOUT: Duration = Duration::from_secs(20);
 const IMPORT_WORKER_STATUS_POLL_DELAY: Duration = Duration::from_millis(50);
@@ -860,6 +859,110 @@ fn daemon_authenticates_and_queues_import_command_over_ipc() {
         .unwrap();
     assert_eq!(task.status, ImportTaskStatus::Queued);
 
+    remove_dir(&data_dir);
+}
+
+#[test]
+#[cfg_attr(
+    not(feature = "native-runtime-tests"),
+    ignore = "requires reviewed native runtime packs"
+)]
+fn daemon_rejects_import_before_mutation_when_writer_contract_is_unsupported() {
+    #[cfg(unix)]
+    use std::os::unix::process::CommandExt;
+
+    let runtime_capacity = support::import_runtime_capacity_lease();
+    let data_dir = temp_dir("ipc-import-unsupported-writer-data");
+    seed_snapshot_state(&data_dir);
+    let fixture_root = fixture_root();
+    let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
+    let launch_id = "3".repeat(64);
+    let mut command = support::import_capable_daemon_command(&runtime_capacity);
+    command
+        .args([
+            "--data-dir",
+            path_str(&data_dir),
+            "run",
+            "--foreground",
+            "--parent-lifecycle-stdin",
+            "--launch-id",
+            launch_id.as_str(),
+            "--work-imports",
+            "--work-index",
+            "--worker-interval-ms",
+            "25",
+            "--ipc-listen",
+            "127.0.0.1:0",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command
+        .spawn()
+        .expect("start import daemon with an unsupported writer contract");
+
+    let endpoint = read_ipc_endpoint(&mut child, &data_dir);
+    let token = read_ipc_auth_token(&data_dir);
+    wait_for_ready_control_plane(&mut child, &endpoint, &token);
+    let status_response = http_get(&endpoint, &token);
+    let status = response_json(&status_response);
+    assert_eq!(status["writer"]["state"], "unavailable");
+    assert_eq!(status["writer"]["reason"], "unsupported_transition");
+    assert_eq!(status["capabilities"]["text_import"]["state"], "blocked");
+    assert_eq!(
+        status["capabilities"]["text_import"]["reason"],
+        "writer_unavailable"
+    );
+
+    let queued_before = ReadMetaStore::open_data_dir(&data_dir)
+        .unwrap()
+        .status_summary()
+        .unwrap()
+        .import_tasks_queued;
+    let import_response = http_post_import_command(&endpoint, Some(&token), &fixture_root, Some(1));
+    assert!(
+        import_response.starts_with("HTTP/1.1 503 Service Unavailable"),
+        "{import_response}"
+    );
+    let import_error = response_json(&import_response);
+    assert_eq!(import_error["error"]["code"], "CAPABILITY_UNAVAILABLE");
+    assert_eq!(import_error["error"]["capability"], "text_import");
+    assert_eq!(import_error["error"]["reason"], "writer_unavailable");
+
+    let registration_error = post_source_root_register(
+        &endpoint,
+        &token,
+        path_str(&canonical_fixture_root),
+        "Synthetic unsupported writer root",
+        "HTTP/1.1 503 Service Unavailable",
+    );
+    assert_eq!(
+        registration_error["error"]["code"],
+        "CAPABILITY_UNAVAILABLE"
+    );
+    assert_eq!(registration_error["error"]["capability"], "text_import");
+    assert_eq!(registration_error["error"]["reason"], "writer_unavailable");
+    let roots = source_roots_json(&endpoint, &token);
+    assert!(roots["roots"].as_array().unwrap().is_empty());
+
+    let queued_after = ReadMetaStore::open_data_dir(&data_dir)
+        .unwrap()
+        .status_summary()
+        .unwrap()
+        .import_tasks_queued;
+    assert_eq!(queued_after, queued_before);
+    assert!(!status_response.contains(path_str(&data_dir)));
+    assert!(!import_response.contains(path_str(&data_dir)));
+    assert!(!import_response.contains(path_str(&fixture_root)));
+    assert!(!import_response.contains(path_str(&canonical_fixture_root)));
+    assert!(!import_response.contains(&token));
+
+    drop(child.stdin.take());
+    let output = wait_child(child);
+    assert!(output.success, "stderr:\n{}", output.stderr);
+    assert!(output.stderr.is_empty(), "stderr:\n{}", output.stderr);
     remove_dir(&data_dir);
 }
 
@@ -1872,29 +1975,37 @@ fn daemon_rejects_import_command_for_running_root_without_rewriting_scope() {
     ignore = "requires reviewed native runtime packs"
 )]
 fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
+    #[cfg(unix)]
+    use std::os::unix::process::CommandExt;
+
     let runtime_capacity = support::import_runtime_capacity_lease();
     let data_dir = temp_dir("ipc-import-command-worker-data");
     let fixture_root = fixture_root();
     let canonical_fixture_root = fs::canonicalize(&fixture_root).unwrap();
-    let request_limit = IMPORT_WORKER_STATUS_REQUEST_LIMIT;
-    let request_limit_arg = request_limit.checked_add(1).unwrap().to_string();
-    let mut child = support::fully_capable_daemon_command(&runtime_capacity)
+    let launch_id = "6".repeat(64);
+    let mut command = support::fully_capable_daemon_command(&runtime_capacity);
+    command
         .args([
             "--data-dir",
             path_str(&data_dir),
             "run",
             "--foreground",
+            "--parent-lifecycle-stdin",
+            "--launch-id",
+            launch_id.as_str(),
             "--work-imports",
             "--work-index",
             "--worker-interval-ms",
             "25",
             "--ipc-listen",
             "127.0.0.1:0",
-            "--max-requests",
-            request_limit_arg.as_str(),
         ])
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command
         .spawn()
         .expect("start resume-daemon ipc plus import worker");
 
@@ -1908,36 +2019,13 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
         .unwrap()
         .to_string();
 
-    let (worker_requests, completed_response) = wait_for_searchable_documents(
+    let (_, completed_response) = wait_for_searchable_documents(
         &mut child,
         &data_dir,
         &endpoint,
         2,
         IMPORT_WORKER_SEARCHABLE_MAX_REQUESTS,
     );
-    let mut fence_requests = 0;
-    let source_root = loop {
-        fence_requests += 1;
-        let roots = source_roots_json(&endpoint, &token);
-        let root = roots["roots"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|root| root["last_scan"]["scan_id"] == task_id)
-            .cloned();
-        if root
-            .as_ref()
-            .is_some_and(|root| root["last_scan"]["phase"] == "complete")
-        {
-            break root.unwrap();
-        }
-        assert!(
-            fence_requests < 20,
-            "source-root completion fence timed out"
-        );
-        std::thread::sleep(Duration::from_millis(25));
-    };
-    assert_eq!(source_root["last_scan"]["completeness"], "complete");
     let progress = http_get_import_progress(&endpoint, Some(&token));
     let event: serde_json::Value = serde_json::from_str(
         progress
@@ -1968,9 +2056,7 @@ fn daemon_import_command_ipc_feeds_running_import_worker_loop() {
     ] {
         assert!(!attribution.contains(forbidden), "{attribution}");
     }
-    let used_requests = 2 + worker_requests + fence_requests;
-    drain_status_requests(&endpoint, request_limit - used_requests);
-
+    drop(child.stdin.take());
     let output = wait_child(child);
     assert!(output.success, "stderr:\n{}", output.stderr);
     assert!(output.stderr.is_empty());

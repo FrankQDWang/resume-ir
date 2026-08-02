@@ -1,5 +1,42 @@
 # Progress
 
+## Issue #328 deterministic daemon import admission
+
+The focused public-synthetic RED reproduced the split that blocked #319 before timing: a
+worker-enabled daemon could open a nonempty store whose committed default classifier contract
+cannot transition online to the reviewed classifier epoch, publish `writer=ready` and
+`text_import=available`, then leave the worker gate non-admitting. The repair now latches that
+coordinator-proven mismatch as durable `unsupported_transition` before the serving snapshot is
+published. Import and source-root registration therefore return bounded
+`CAPABILITY_UNAVAILABLE` before mutation, the queued-task count is unchanged, and source-root
+listing remains readable. A later daemon generation clears only this latch long enough to
+re-evaluate its Desired contract, so reverting to the committed contract can recover without a
+schema or IPC change.
+
+A genuinely fresh unpublished store follows the existing hard-cut activation path to establish its
+initial writer head instead of being classified as an unsupported online transition. The native
+fresh-daemon test now uses parent-lifecycle shutdown rather than spending a fixed request budget
+during runtime initialization; it proves one accepted import is claimed, reaches terminal state,
+and publishes two searchable synthetic documents while OCR remains asynchronous. Its former
+managed-root completion loop was invalid because `/imports` does not create the separate
+`source_root` product object; managed-root registration and scan completion remain covered by the
+dedicated two-root native test, which also passes.
+
+Focused verification passes warnings-denied Clippy for `meta-store` and `resume-daemon`, all 162
+meta-store unit tests, the non-native daemon IPC suite, the unsupported-writer pre-mutation test,
+the fresh accepted-import publication test, the managed two-root registration/scan test, and the
+existing lifecycle test that reclaims the same durable task after one restart. This is a
+correctness prerequisite only: no private root or performance matrix ran, no throughput or latency
+improvement is claimed, and #319 remains closed until a merged-main release smoke proves this
+admission boundary in the exact experiment composition.
+
+The full local verifier reaches an unrelated load-sensitive failure in
+`parser-pdf::pdf_parser_enforces_runtime_timeout_without_text_layer_operator`: the assertion
+expects `Timeout` but observes `Corrupted`. The same full verifier reproduces that exact failure on
+unmodified `main` at `5c16b33ccf07c86dec74d21ecf980f9d684a225a`, while the focused test and the
+complete `parser-pdf` suite pass when run outside the workspace load. No parser file is changed in
+this slice; the reproduced pre-existing failure is retained rather than weakened or repaired here.
+
 ## Issue #319 blocked rollback: core capability
 
 The final rollback removes the default-off split-resident topology, four-thread experiment mode and

@@ -61,6 +61,11 @@ pub(crate) fn observe_desired_contract(
     let committed = store
         .active_import_processing_contract()
         .map_err(DaemonError::store)?;
+    if committed.is_none() {
+        // A fresh unpublished store has no writer head yet. Bootstrap owns the
+        // existing hard-cut activation path; public enqueue must not invent it.
+        return Ok((UpgradeCoordinatorOutcome::TransitionRequired, None));
+    }
     let running = store
         .running_import_task_count()
         .map_err(DaemonError::store)?;
@@ -102,6 +107,9 @@ pub(crate) fn bootstrap_writer_barrier(
     store
         .reconcile_writer_runtime_availability(/*runtime_healthy*/ true, now)
         .map_err(DaemonError::store)?;
+    store
+        .clear_writer_unsupported_transition(now)
+        .map_err(DaemonError::store)?;
     let (outcome, token) = observe_desired_contract(store, desired)?;
     match outcome {
         UpgradeCoordinatorOutcome::AlreadyActive | UpgradeCoordinatorOutcome::TargetCommitted => {
@@ -127,8 +135,13 @@ pub(crate) fn bootstrap_writer_barrier(
                 WriterContractTransitionOutcome::TransitionInProgress => {
                     return Ok((UpgradeCoordinatorOutcome::TransitionInProgress, None));
                 }
+                WriterContractTransitionOutcome::UnsupportedTransition => {
+                    store
+                        .mark_writer_unsupported_transition(now)
+                        .map_err(DaemonError::store)?;
+                    return Ok((UpgradeCoordinatorOutcome::WriterUnavailable, None));
+                }
                 WriterContractTransitionOutcome::TransitionRequired
-                | WriterContractTransitionOutcome::UnsupportedTransition
                 | WriterContractTransitionOutcome::RuntimeUnavailable => {
                     return Ok((UpgradeCoordinatorOutcome::WriterUnavailable, None));
                 }
@@ -160,6 +173,12 @@ pub(crate) fn bootstrap_writer_barrier(
                     Ok((UpgradeCoordinatorOutcome::TransitionInProgress, None))
                 }
             }
+        }
+        UpgradeCoordinatorOutcome::WriterUnavailable => {
+            store
+                .mark_writer_unsupported_transition(now)
+                .map_err(DaemonError::store)?;
+            Ok((UpgradeCoordinatorOutcome::WriterUnavailable, None))
         }
         other => Ok((other, None)),
     }

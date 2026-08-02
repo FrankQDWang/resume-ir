@@ -98,6 +98,31 @@ fn runtime_unavailable_latch_clears_when_probe_recovers() {
 }
 
 #[test]
+fn unsupported_transition_latch_blocks_admission_until_the_next_recheck() {
+    let store = ready_store_with_contract("parser-v1");
+    let now = UnixTimestamp::from_unix_seconds(1_900_200_060);
+    assert!(store.mark_writer_unsupported_transition(now).unwrap());
+    let unavailable = store.writer_authority_snapshot().unwrap();
+    assert_eq!(
+        unavailable.health_state,
+        WriterAuthorityHealthState::Unavailable
+    );
+    assert_eq!(
+        unavailable.health_reason.as_deref(),
+        Some("unsupported_transition")
+    );
+    assert!(!store.public_writer_claims_admitted().unwrap());
+    assert!(!store.mark_writer_unsupported_transition(now).unwrap());
+
+    assert!(store.clear_writer_unsupported_transition(now).unwrap());
+    let ready = store.writer_authority_snapshot().unwrap();
+    assert_eq!(ready.health_state, WriterAuthorityHealthState::Ready);
+    assert_eq!(ready.health_reason, None);
+    assert!(store.public_writer_claims_admitted().unwrap());
+    assert!(!store.clear_writer_unsupported_transition(now).unwrap());
+}
+
+#[test]
 fn hard_cut_syncs_writer_authority_committed_contract() {
     let store = EphemeralMetaStore::open_in_memory().unwrap();
     store.run_migrations().unwrap();
