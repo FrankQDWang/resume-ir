@@ -1,5 +1,35 @@
 # Progress
 
+## Issue #305 resident ONNX intra-op thread-sensitivity contract
+
+Issue #305 is the sole next L2 runtime-scheduling experiment after #295 retained
+the current Dynamic U8S8 artifact. It tests intra-op counts 1, 2, 3, 4 and 6
+independently from parser concurrency while holding the production model, model
+ID, native ORT 1.27.0 runtime, tokenizer, session flags, Batch, queues and
+workers fixed. The production three-thread policy remains unchanged.
+
+The contract freezes seed `20260802` and ten Williams-balanced blocks, yielding
+50 independent release resident sessions. Every session receives a 30-second
+Batch 4 x 512 warmup, then measures 20 Batch 4 x 512 requests, ten requests at
+each Batch 4 x 32/96/256 sensitivity bucket, and fifty Batch 1 x 32 query
+requests. The same feature binary's ordinary resident mode and experimental
+three-thread mode form the mode-overhead and exact-vector controls.
+
+A candidate must improve the primary ONNX median by at least 10 percent with a
+positive paired bootstrap interval, improve resident wall time, stay within the
+3-percent sensitivity and 5-percent Batch-1 p95 regression guards, keep mode
+overhead at or below 1 percent, and pass exact-output, quality, Ready, H0 512
+MiB and H2 1536 MiB gates. A statistical tie is inconclusive and cannot expand
+the thread set.
+
+Delivery is split into contract, capability and result PRs. Formal measurement
+cannot start before the capability PR is merged. The experiment interface is
+compiled only by a default-off `thread-experiment` feature; ordinary and
+packaged binaries retain only the production modes. A unique winner may open
+one later production-policy Issue. Lost or inconclusive results remove all
+experiment capability and retain three threads. This resident experiment cannot
+claim private/full-product, W1, scale, release, or goal-complete evidence.
+
 ## Issue #302 macOS PR Lite hosted gate
 
 Issue #302 restores one read-only macOS pull-request workflow. GitHub renders
