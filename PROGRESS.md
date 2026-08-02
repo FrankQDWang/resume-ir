@@ -5,11 +5,14 @@
 Execution kickoff found one contract-surface mismatch before production edits: the frozen
 `split_i3_bulk4_b4` arm requires a four-thread bulk Session, but the ordinary embedding-runtime
 resident entry correctly rejects values above three and the initial #319 allowlist did not include
-the runtime. The contract therefore authorizes only a default-off, feature-gated experiment entry
-and its production-boundary tests. Ordinary `--resident` remains capped at three threads, the
-production default remains shared three-thread, and no formal measurement may start before this
-repair is merged. This is a contract repair, not a new arm, thread-policy change, performance result
-or gate relaxation.
+the runtime. The contract therefore authorizes only the default-off
+`resident-role-isolation-experiment` Cargo feature with the
+`--resident-role-isolation-experiment` runtime mode and its production-boundary tests. Ordinary
+`--resident` remains capped at three threads, the production default remains shared three-thread,
+and no formal measurement may start before this repair is merged. These runtime paths are temporary
+to #319 and leave the active allowlist at slice closure; loser or inconclusive cleanup deletes the
+experiment code, while a winner can hand it only to a linked production migration Issue. This is a
+contract repair, not a new arm, thread-policy change, performance result or gate relaxation.
 
 Pre-PR verification passed every focused governance, loop-state, privacy and public-repository
 gate. The broad `verify-local.sh` run reached the unchanged daemon tests and exposed the existing
