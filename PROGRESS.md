@@ -1,5 +1,19 @@
 # Progress
 
+## Issue #319 resident role-isolation report contract restored
+
+The closed 64 KiB aggregate schema, semantic checker and synthetic positive/negative fixtures are
+restored after the post-#328 core capability merged. This prerequisite emits no observation, reads
+no private corpus, changes no runtime behavior and makes no performance-improvement claim; it only
+fails closed on workload, gate, privacy, finiteness and decision drift before a runner may measure.
+
+The focused checker passes its valid fixture and 18 closed negative cases, governance mutation
+coverage, performance/autonomy/loop contracts, the public-repository guard and the PR budget. Two
+early full-verifier attempts hit unrelated load-sensitive failures in the unchanged PDF timeout and
+daemon publication-timeout tests; both focused tests passed immediately. An exact unmodified-main
+worktree then passed the full Rust workspace and repeated complete daemon suites, and a final
+captured run of `verify-local.sh` passed end to end on this branch without weakening either gate.
+
 ## Issue #319 resident role-isolation capability restored after admission repair
 
 The default-off three-arm capability is restored on merged main only after #328 proved that a
