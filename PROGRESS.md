@@ -1,5 +1,16 @@
 # Progress
 
+## Issue #319 resident role-isolation capability restored after admission repair
+
+The default-off three-arm capability is restored on merged main only after #328 proved that a
+fresh release daemon can admit, claim and publish a synthetic import and that an unsupported writer
+transition rejects both import entry points before mutation. The ordinary build still owns one
+shared three-thread resident; no production default, model, input, Batch, IPC, persistence, index,
+desktop or packaging contract changes. This prerequisite runs no formal matrix and makes no
+performance-improvement claim. Fresh verification passes the complete feature-mode daemon suite,
+the ordinary-build rejection checks, warnings-denied Clippy for all three affected crates, every
+governance/privacy check and the full local verifier on the post-#328 base.
+
 ## Issue #328 deterministic daemon import admission
 
 The focused public-synthetic RED reproduced the split that blocked #319 before timing: a
