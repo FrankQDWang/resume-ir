@@ -55,6 +55,24 @@ impl ResidentEmbeddingStatus {
 pub struct ResidentEmbeddingSpec {
     command: LocalEmbeddingCommandSpec,
     intra_threads: usize,
+    mode: ResidentEmbeddingMode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResidentEmbeddingMode {
+    Production,
+    #[cfg(feature = "resident-role-isolation-experiment")]
+    RoleIsolationExperiment,
+}
+
+impl ResidentEmbeddingMode {
+    fn argument(self) -> &'static str {
+        match self {
+            Self::Production => "--resident",
+            #[cfg(feature = "resident-role-isolation-experiment")]
+            Self::RoleIsolationExperiment => "--resident-role-isolation-experiment",
+        }
+    }
 }
 
 impl ResidentEmbeddingSpec {
@@ -62,6 +80,7 @@ impl ResidentEmbeddingSpec {
         Self {
             command,
             intra_threads: 1,
+            mode: ResidentEmbeddingMode::Production,
         }
     }
 
@@ -72,6 +91,21 @@ impl ResidentEmbeddingSpec {
         self.intra_threads = intra_threads;
         Ok(self)
     }
+
+    #[cfg(feature = "resident-role-isolation-experiment")]
+    pub fn for_role_isolation_experiment(
+        command: LocalEmbeddingCommandSpec,
+        intra_threads: usize,
+    ) -> Result<Self, EmbeddingError> {
+        if !(1..=4).contains(&intra_threads) {
+            return Err(EmbeddingError::InvalidRequest);
+        }
+        Ok(Self {
+            command,
+            intra_threads,
+            mode: ResidentEmbeddingMode::RoleIsolationExperiment,
+        })
+    }
 }
 
 impl fmt::Debug for ResidentEmbeddingSpec {
@@ -80,6 +114,7 @@ impl fmt::Debug for ResidentEmbeddingSpec {
             .debug_struct("ResidentEmbeddingSpec")
             .field("command", &self.command)
             .field("intra_threads", &self.intra_threads)
+            .field("mode", &self.mode)
             .finish()
     }
 }
@@ -132,14 +167,30 @@ impl ResidentEmbeddingOwner {
     pub fn client(&self) -> ResidentEmbeddingClient {
         self.client.clone()
     }
+
+    fn request_shutdown(&self) {
+        self.shutdown.store(true, Ordering::Release);
+    }
+
+    fn join_worker(&mut self) {
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+
+    #[cfg(feature = "resident-role-isolation-experiment")]
+    pub fn shutdown_role_isolation_pair(interactive: &mut Self, bulk: &mut Self) {
+        interactive.request_shutdown();
+        bulk.request_shutdown();
+        interactive.join_worker();
+        bulk.join_worker();
+    }
 }
 
 impl Drop for ResidentEmbeddingOwner {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Release);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
+        self.request_shutdown();
+        self.join_worker();
     }
 }
 
@@ -342,7 +393,7 @@ impl Supervisor {
         let mut command = Command::new(&self.spec.command.program);
         command
             .args(&self.spec.command.args)
-            .arg("--resident")
+            .arg(self.spec.mode.argument())
             .env("RESUME_IR_EMBEDDING_MODEL_ID", &self.spec.command.model_id)
             .env(
                 "RESUME_IR_EMBEDDING_DIMENSION",
