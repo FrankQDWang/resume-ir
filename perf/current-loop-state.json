@@ -5,22 +5,22 @@
   "experiment_state": "reverted",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "84c8128b4a172efd65f473070c3df5db4dfc1bfa1483c89a05e91b09529543f1",
+    "active_goal_sha256": "42c325c71c4c807e86adc66723870449eaa743fb9428337612b71a92315cf430",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "a780e5dcadb853d7f5cd7653b1647573ca36ce72"
+    "git_head_sha": "95d558bf68dcd81dbc13c76418f3bf67822b3481"
   },
-  "current_slice": "#210 deterministic resident eager restart",
+  "current_slice": "#302 macOS PR Lite hosted gate",
   "hypothesis": {
-    "id": "issue-210-deterministic-resident-eager-restart",
+    "id": "issue-302-macos-pr-lite-hosted-gate",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "return the original resident request failure before eagerly spawning the next generation, remove follow-up deadline coupling, and stabilize the restart test with a deterministic second-ready barrier",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/210",
-    "after_measurement_ref": "pending_issue_210_verification",
-    "reprofile_ref": "not_applicable_reliability_repair",
-    "decision": "repair"
+    "expected_effect": "one read-only macOS PR gate provides stable focused contract and embedding-unit coverage, passes ten consecutive exact-head attempts, and becomes a strict required main context",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/302",
+    "after_measurement_ref": "pending_pr_lite_exact_head_runs",
+    "reprofile_ref": "not_applicable_ci_gate",
+    "decision": "restore_gate"
   },
   "transition_history": [
     {
@@ -736,7 +736,9 @@
     {"from":"evidence_review","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/295#issuecomment-5152670658"},
     {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/299"},
     {"from":"slice_selected","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/300"},
-    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/210"}
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/210"},
+    {"from":"slice_selected","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/301"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/302"}
   ],
   "verification": {
     "commands": [
@@ -3027,15 +3029,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-210-deterministic-resident-eager-restart-2026-08-02",
-  "state_version": 574,
-  "previous_state_hash": "4d7f56780a525487f80f102cc7df60e150e6637e8f9c2fa00b19f796ad0852fe",
-  "expected_state_version": 574,
-  "last_confirmed_side_effect": "issue_299_closed_issue_210_selected",
+  "run_id": "issue-302-macos-pr-lite-hosted-gate-2026-08-02",
+  "state_version": 575,
+  "previous_state_hash": "d9e5b7ea210faf0e2f55fc0c82325b8d520988bc0e79f26665041649c73d2319",
+  "expected_state_version": 575,
+  "last_confirmed_side_effect": "issue_210_closed_issue_302_created",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#210",
+    "primary_issue": "#302",
     "active_prs": [],
     "open_blockers": []
   }

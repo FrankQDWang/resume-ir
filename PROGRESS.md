@@ -1,5 +1,21 @@
 # Progress
 
+## Issue #302 macOS PR Lite hosted gate
+
+Issue #302 restores one read-only macOS pull-request workflow with the exact
+context `PR Lite / contract-and-unit`. It runs locked metadata, format, focused
+embedding-protocol/embedder/embedding-runtime tests and warnings-denied Clippy,
+performance/autonomous/Loop/governance contracts, PR budget, diff, and public
+boundary checks. It does not require a runtime pack, private data, DMG, install
+environment, Windows, or Linux.
+
+The workflow-policy checker permits exactly `release.yml` and `pr-lite.yml` and
+asserts the latter's trigger, platform, permissions, commands, and prohibited
+triggers. The repository-configuration contract now names the same strict
+required context. The exact PR head must pass ten consecutive hosted attempts
+and local verification before normal merge; only after merge is branch
+protection changed and read back.
+
 ## Issue #210 deterministic resident eager restart
 
 Issue #210 repairs the existing lazy-restart boundary without changing any
@@ -55,14 +71,14 @@ load-sensitive PDF minimal-timeout race; its exact rerun passed, and the warmed
 complete `verify-local.sh` rerun passed without weakening or changing that
 test.
 
-## Local-only merge verification
+## Local plus PR Lite merge verification
 
-GitHub-hosted PR, security, platform, model-evaluation, and scheduled benchmark
-workflows were retired because they repeated the repository's local verification
-surface and added merge latency for this single-maintainer project. The
-repository keeps only the explicitly dispatched release workflow. Main no
-longer requires hosted status checks; local focused checks, the parallel local
-verification entrypoint, and the public-repository guard remain authoritative.
+GitHub-hosted security, platform, model-evaluation, and scheduled benchmark
+workflows remain retired. The repository keeps the explicitly dispatched
+release workflow plus one lightweight macOS pull-request gate. Main requires
+the exact `PR Lite / contract-and-unit` context after its stability canary;
+local focused checks, the parallel local verification entrypoint, and the
+public-repository guard remain authoritative for broader coverage.
 
 This file tracks long-running production Goal execution against `GOAL.md`, the
 system design docs, the execution docs, and this running evidence log. Obsolete
