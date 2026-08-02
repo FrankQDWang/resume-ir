@@ -2,6 +2,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(feature = "resident-role-isolation-experiment")]
+use std::fs::{self, OpenOptions};
+#[cfg(feature = "resident-role-isolation-experiment")]
+use std::io::Write as _;
+#[cfg(feature = "resident-role-isolation-experiment")]
+use std::os::unix::fs::OpenOptionsExt as _;
+#[cfg(feature = "resident-role-isolation-experiment")]
+use std::path::PathBuf;
+#[cfg(feature = "resident-role-isolation-experiment")]
+use std::sync::Mutex;
+
 use embedder::{
     EmbeddingBudget, EmbeddingError, EmbeddingInput, EmbeddingPriority, LocalEmbeddingCommandSpec,
     ResidentEmbeddingClient, ResidentEmbeddingOwner, ResidentEmbeddingSpec,
@@ -17,6 +28,9 @@ use crate::daemon_error::{DaemonError, Result};
 #[cfg(feature = "resident-role-isolation-experiment")]
 use crate::run_options::ResidentRoleIsolationArm;
 use crate::run_options::{usage, RunOptions};
+
+#[cfg(feature = "resident-role-isolation-experiment")]
+const EXPERIMENT_OBSERVER_ENV: &str = "RESUME_IR_RESIDENT_ROLE_ISOLATION_OBSERVER";
 
 pub(crate) enum ResidentEmbeddingTopologyOwner {
     Shared(ResidentEmbeddingOwner),
@@ -95,11 +109,16 @@ pub(crate) fn start(options: &mut RunOptions) -> Result<Option<ResidentEmbedding
     let started = start_shared(command, inference_threads)?;
 
     let publication_client = started.publication_client;
+    #[cfg(feature = "resident-role-isolation-experiment")]
+    let experiment_observer =
+        ExperimentObserver::from_environment(options.resident_role_isolation_arm.is_some())?;
     options.search_vectorization =
         SearchPublicationVectorization::enabled(Arc::new(ResidentPublicationVectorizer {
             client: publication_client.clone(),
             timeout_ms: options.embedding_timeout_ms,
             telemetry: std::array::from_fn(|_| AtomicU64::new(0)),
+            #[cfg(feature = "resident-role-isolation-experiment")]
+            experiment_observer,
         }));
     options.resident_embedding = Some(started.interactive_client);
     options.publication_resident_embedding = Some(publication_client);
@@ -155,6 +174,8 @@ struct ResidentPublicationVectorizer {
     client: ResidentEmbeddingClient,
     timeout_ms: u64,
     telemetry: [AtomicU64; Metric::Count as usize],
+    #[cfg(feature = "resident-role-isolation-experiment")]
+    experiment_observer: Option<ExperimentObserver>,
 }
 
 #[repr(usize)]
@@ -202,7 +223,8 @@ impl SearchPublicationVectorizer for ResidentPublicationVectorizer {
             .iter()
             .map(|input| EmbeddingInput::new(input.id(), input.text()))
             .collect::<Vec<_>>();
-        self.client
+        let (outputs, telemetry) = self
+            .client
             .embed_batch_with_telemetry(
                 EmbeddingPriority::Background,
                 &resident_inputs,
@@ -210,34 +232,6 @@ impl SearchPublicationVectorizer for ResidentPublicationVectorizer {
                 self.timeout_ms,
                 is_cancelled,
             )
-            .map(|(outputs, telemetry)| {
-                for (metric, value) in [
-                    (Metric::Calls, 1),
-                    (Metric::Inputs, telemetry.input_count),
-                    (Metric::ActiveTokens, telemetry.active_token_count),
-                    (Metric::PaddedTokens, telemetry.padded_token_count),
-                    (Metric::QueueWait, telemetry.queue_wait_us),
-                    (Metric::IpcWall, telemetry.ipc_wall_us),
-                    (Metric::ChildTotal, telemetry.child_total_us),
-                    (Metric::Tokenize, telemetry.tokenize_us),
-                    (Metric::Tensor, telemetry.tensor_us),
-                    (Metric::Onnx, telemetry.onnx_us),
-                    (Metric::Pool, telemetry.pool_us),
-                    (Metric::Normalize, telemetry.normalize_us),
-                ] {
-                    self.add(metric, value);
-                }
-                outputs
-                    .into_iter()
-                    .map(|output| {
-                        SearchPublicationEmbeddingOutput::new(
-                            output.id(),
-                            output.model_id(),
-                            output.values().to_vec(),
-                        )
-                    })
-                    .collect()
-            })
             .map_err(|error| match error {
                 EmbeddingError::Cancelled => SearchPublicationEmbeddingFailure::Cancelled,
                 EmbeddingError::InvalidDimension
@@ -250,7 +244,39 @@ impl SearchPublicationVectorizer for ResidentPublicationVectorizer {
                 | EmbeddingError::EngineFailed
                 | EmbeddingError::Overloaded
                 | EmbeddingError::Timeout => SearchPublicationEmbeddingFailure::RuntimeUnavailable,
+            })?;
+        for (metric, value) in [
+            (Metric::Calls, 1),
+            (Metric::Inputs, telemetry.input_count),
+            (Metric::ActiveTokens, telemetry.active_token_count),
+            (Metric::PaddedTokens, telemetry.padded_token_count),
+            (Metric::QueueWait, telemetry.queue_wait_us),
+            (Metric::IpcWall, telemetry.ipc_wall_us),
+            (Metric::ChildTotal, telemetry.child_total_us),
+            (Metric::Tokenize, telemetry.tokenize_us),
+            (Metric::Tensor, telemetry.tensor_us),
+            (Metric::Onnx, telemetry.onnx_us),
+            (Metric::Pool, telemetry.pool_us),
+            (Metric::Normalize, telemetry.normalize_us),
+        ] {
+            self.add(metric, value);
+        }
+        #[cfg(feature = "resident-role-isolation-experiment")]
+        if let Some(observer) = &self.experiment_observer {
+            observer
+                .record(telemetry.input_count, telemetry.active_token_count)
+                .map_err(|_| SearchPublicationEmbeddingFailure::RuntimeUnavailable)?;
+        }
+        Ok(outputs
+            .into_iter()
+            .map(|output| {
+                SearchPublicationEmbeddingOutput::new(
+                    output.id(),
+                    output.model_id(),
+                    output.values().to_vec(),
+                )
             })
+            .collect())
     }
 
     fn telemetry_snapshot(&self) -> SearchPublicationTelemetrySnapshot {
@@ -280,6 +306,74 @@ impl SearchPublicationVectorizer for ResidentPublicationVectorizer {
     }
 }
 
+#[cfg(feature = "resident-role-isolation-experiment")]
+struct ExperimentObserver {
+    path: PathBuf,
+    counters: Mutex<ExperimentObserverCounters>,
+}
+
+#[cfg(feature = "resident-role-isolation-experiment")]
+#[derive(Default)]
+struct ExperimentObserverCounters {
+    completed_calls: u64,
+    completed_inputs: u64,
+    active_token_count: u64,
+    nonconforming_calls: u64,
+}
+
+#[cfg(feature = "resident-role-isolation-experiment")]
+impl ExperimentObserver {
+    fn from_environment(experiment_active: bool) -> Result<Option<Self>> {
+        let Some(path) = std::env::var_os(EXPERIMENT_OBSERVER_ENV).map(PathBuf::from) else {
+            return Ok(None);
+        };
+        if !experiment_active {
+            return Err(DaemonError::configuration_invalid(
+                "resident role-isolation observer requires an explicit experiment arm",
+            ));
+        }
+        if !path.is_absolute() || path.parent().is_none_or(|p| !p.is_dir()) {
+            return Err(DaemonError::configuration_invalid(
+                "resident role-isolation observer path is invalid",
+            ));
+        }
+        Ok(Some(Self {
+            path,
+            counters: Mutex::new(ExperimentObserverCounters::default()),
+        }))
+    }
+
+    fn record(&self, inputs: u64, active_tokens: u64) -> std::io::Result<()> {
+        let mut counters = self.counters.lock().map_err(|_| {
+            std::io::Error::other("resident role-isolation observer counters are unavailable")
+        })?;
+        counters.completed_calls = counters.completed_calls.saturating_add(1);
+        counters.completed_inputs = counters.completed_inputs.saturating_add(inputs);
+        counters.active_token_count = counters.active_token_count.saturating_add(active_tokens);
+        if inputs != 4 || active_tokens != 4 * 512 {
+            counters.nonconforming_calls = counters.nonconforming_calls.saturating_add(1);
+        }
+        let body = serde_json::json!({
+            "schema_version": "resume-ir.resident-role-isolation-observer.v1",
+            "completed_calls": counters.completed_calls,
+            "completed_inputs": counters.completed_inputs,
+            "active_token_count": counters.active_token_count,
+            "nonconforming_calls": counters.nonconforming_calls,
+        });
+        let staging = self.path.with_extension("next");
+        let mut output = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&staging)?;
+        serde_json::to_writer(&mut output, &body).map_err(std::io::Error::other)?;
+        output.write_all(b"\n")?;
+        drop(output);
+        fs::rename(staging, &self.path)
+    }
+}
+
 impl ResidentPublicationVectorizer {
     fn add(&self, metric: Metric, value: u64) {
         let _ = self.telemetry[metric as usize].fetch_update(
@@ -303,7 +397,54 @@ mod tests {
     };
     use tempfile::TempDir;
 
-    use super::start_split;
+    use super::{start_split, ExperimentObserver, ExperimentObserverCounters};
+
+    #[test]
+    fn experiment_observer_publishes_only_bounded_aggregate_counters() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("observer.json");
+        let observer = ExperimentObserver {
+            path: path.clone(),
+            counters: std::sync::Mutex::new(ExperimentObserverCounters::default()),
+        };
+        for _ in 0..7 {
+            observer.record(4, 2_048).unwrap();
+        }
+        observer.record(1, 32).unwrap();
+
+        let value: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "schema_version": "resume-ir.resident-role-isolation-observer.v1",
+                "completed_calls": 8,
+                "completed_inputs": 29,
+                "active_token_count": 14_368,
+                "nonconforming_calls": 1,
+            })
+        );
+    }
+
+    #[test]
+    fn experiment_observer_fails_closed_after_counter_poisoning() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("observer.json");
+        let observer = std::sync::Arc::new(ExperimentObserver {
+            path: path.clone(),
+            counters: std::sync::Mutex::new(ExperimentObserverCounters::default()),
+        });
+        let poisoner = std::sync::Arc::clone(&observer);
+        assert!(std::thread::spawn(move || {
+            let _guard = poisoner.counters.lock().unwrap();
+            panic!("synthetic observer failure");
+        })
+        .join()
+        .is_err());
+
+        let error = observer.record(4, 2_048).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        assert!(!path.exists());
+    }
 
     #[test]
     fn split_topology_runs_inflight_bulk_and_interactive_work_on_distinct_residents() {
