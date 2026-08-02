@@ -34,26 +34,7 @@ The capability slice adds the default-off feature, exact local modes, lazy
 1..=6 validation, production-mode rejection tests and the bounded witness.
 Both runtime test paths, self-tests and strict Clippy pass; measurement waits for main.
 
-### Issue #305 resident ONNX intra-op thread-sensitivity result
-
-The exact-main `a24dec05f7621f0d1eac41b0c0f65d9f61c3749b` matrix completed all ten
-Williams-balanced blocks, 50 independent release sessions and five AB/BA
-ordinary-versus-experiment-three control pairs. Against the three-thread
-control's 338473 microsecond Batch-4 x 512 ONNX p50, one, two, four and six
-threads measured 752031, 442691, 288089 and 345966 microseconds respectively.
-
-Four threads improved the primary ONNX median by 14.314 percent with paired
-95-percent interval `[11.235%, 16.410%]`; resident wall time also had a positive
-interval and every Batch-4 sensitivity bucket improved. However, its Batch-1 x
-32 wall p95 regressed 27.741 percent versus the allowed 5 percent, so it is
-rejected. The other candidates failed the primary performance gate.
-
-The result is `lost`. Mode overhead was 0.461 percent with exact vectors, and
-all candidates passed control-referenced quality, Ready and resource gates.
-There is no winner reprofile and no production-policy Issue. The experiment
-feature, modes, environment variable, tests and witness are removed; production
-keeps the current three-thread Dynamic U8S8 resident unchanged. The bounded
-evidence is recorded in [#305](https://github.com/FrankQDWang/resume-ir/issues/305#issuecomment-5154979900).
+Issue #305 result: exact-main `a24dec05f7621f0d1eac41b0c0f65d9f61c3749b` completed 50 Williams-balanced sessions plus five AB/BA mode pairs; against three threads at 338473 microseconds, one/two/four/six measured 752031/442691/288089/345966, and four improved 14.314 percent (95-percent interval `[11.235%, 16.410%]`) but failed the 5-percent Batch-1 p95 gate with a 27.741-percent regression. The result is `lost`: 0.461-percent mode overhead, exact vectors, quality/Ready/resources passed, no winner profile or production Issue, experiment capability removed, and production remains three-thread Dynamic U8S8; bounded evidence is in [#305](https://github.com/FrankQDWang/resume-ir/issues/305#issuecomment-5154979900).
 
 ## Issue #302 macOS PR Lite hosted gate
 

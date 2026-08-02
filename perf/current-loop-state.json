@@ -742,9 +742,7 @@
     {"from":"reverted","to":"bottleneck_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305"},
     {"from":"bottleneck_selected","to":"hypothesis_registered","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305"},
     {"from":"hypothesis_registered","to":"implementation_active","evidence_ref":"PROGRESS.md#issue-305-resident-onnx-intra-op-thread-sensitivity-contract"},
-    {"from":"implementation_active","to":"verification_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305#issuecomment-5154979900"},
-    {"from":"verification_active","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305#issuecomment-5154979900"},
-    {"from":"evidence_review","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305#issuecomment-5154979900"}
+    {"from":"implementation_active","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305#issuecomment-5154979900"}
   ],
   "verification": {
     "commands": [
@@ -3021,11 +3019,7 @@
       {"command":"combined artifact/prepacking/operator witness self-tests: 20 passed","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
       {"command":"focused embedding-runtime tests and warnings-denied Clippy","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
       {"command":"format, rust-analyzer, performance/autonomous/loop contracts, governance mutations, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
-      {"command":"./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
-      {"command":"Issue #305 50-session Williams-balanced public-synthetic thread matrix","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305#issuecomment-5154979900"},
-      {"command":"Issue #305 mode-overhead exact-vector and control-referenced quality gates","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305#issuecomment-5154979900"},
-      {"command":"post-lost focused runtime, embedder, protocol, Clippy, release-mode rejection, format and rust-analyzer checks","exit_code":0,"evidence_ref":"PROGRESS.md#issue-305-resident-onnx-intra-op-thread-sensitivity-result"},
-      {"command":"RUST_TEST_THREADS=1 ./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"PROGRESS.md#issue-305-resident-onnx-intra-op-thread-sensitivity-result"}
+      {"command":"./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"}
     ],
     "all_required_commands_ran": true,
     "claim": "partial"
