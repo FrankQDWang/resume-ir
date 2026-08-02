@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-328-writer-authority-path-repair-2026-08-02",
+  "transition_id": "issue-328-to-319-resident-role-isolation-resume-2026-08-02",
   "from_issue": "#328",
-  "to_issue": "#328",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/328#issuecomment-5160044862",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/328",
-  "base_active_goal_sha256": "fd140d2222bfe05a29316d4a4a2fbc6c7949b78842e31e7623a9b738d00f20fa",
+  "to_issue": "#319",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/328#issuecomment-5160291128",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/319#issuecomment-5160295338",
+  "base_active_goal_sha256": "0dc118bd661372dc9b64d49435d4183b525cab3bb738bd0fdf5ccdff85e1a422",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",

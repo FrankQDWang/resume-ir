@@ -5,24 +5,34 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "0dc118bd661372dc9b64d49435d4183b525cab3bb738bd0fdf5ccdff85e1a422",
+    "active_goal_sha256": "6948233f2c6b9d2cf027092a00e56b887d77ef9e457aa7017609e671b2edc42e",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "15544dccbfa6eabcb080f76779e690373e4c7998"
+    "git_head_sha": "a7ae88a6de0fee896de9b3e1910da2d0ece7787b"
   },
-  "current_slice": "#328 deterministic daemon import admission and worker claim",
+  "current_slice": "#319 interactive and bulk resident embedding role-isolation matrix",
   "hypothesis": {
-    "id": "issue-328-ready-daemon-import-admission",
+    "id": "issue-319-resident-embedding-role-isolation",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "a ready daemon that accepts one public-synthetic import deterministically claims it and reaches the existing terminal and searchable-publication semantics both in a fresh process and after one restart while preserving source-root listability",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/319#issuecomment-5159938108",
+    "expected_effect": "exactly one split resident topology improves public-synthetic bulk throughput and the paired full-product non-OCR endpoint by at least 8 percent with positive paired 95 percent confidence intervals while preserving every interactive latency, queue, memory, exact-vector and lifecycle guard",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/282#issuecomment-5150903774",
     "after_measurement_ref": null,
     "reprofile_ref": null,
     "decision": "active"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/319#issuecomment-5160295338"
+    },
+    {
+      "from": "slice_selected",
+      "to": "evidence_review",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/328#issuecomment-5160291128"
+    },
     {
       "from": "evidence_review",
       "to": "slice_selected",
@@ -3081,15 +3091,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-328-daemon-import-admission-2026-08-02",
-  "state_version": 586,
-  "previous_state_hash": "63caec77822352b13344fddedf274cb477f86d2c25ebaf6adae143a502987a15",
-  "expected_state_version": 586,
-  "last_confirmed_side_effect": "issue_328_writer_authority_path_repair_registered",
+  "run_id": "issue-319-resident-embedding-role-isolation-resumed-2026-08-02",
+  "state_version": 587,
+  "previous_state_hash": "13596cf28290ac9109091d35afc08d8ad89bf3a47d096cf94f42e1dc4e328caa",
+  "expected_state_version": 587,
+  "last_confirmed_side_effect": "issue_319_reopened_after_328_release_smoke",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#328",
+    "primary_issue": "#319",
     "active_prs": [],
     "open_blockers": []
   }
