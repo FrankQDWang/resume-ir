@@ -247,9 +247,6 @@ fn canonical_direct_dir(path: &Path) -> Result<PathBuf, EmbeddingInputObservatio
     let canonical = path
         .canonicalize()
         .map_err(|_| EmbeddingInputObservationError::RuntimePackInvalid)?;
-    if canonical != path {
-        return Err(EmbeddingInputObservationError::RuntimePackInvalid);
-    }
     Ok(canonical)
 }
 

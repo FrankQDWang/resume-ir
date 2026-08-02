@@ -94,3 +94,19 @@ fn current_sectionizer_leaves_preamble_available_for_unassigned_attribution() {
         text.len()
     );
 }
+
+#[test]
+fn runtime_root_accepts_canonicalized_temp_parent_but_rejects_leaf_symlink() {
+    let temp = tempfile::tempdir().unwrap();
+    assert!(canonical_direct_dir(temp.path()).is_ok());
+    #[cfg(unix)]
+    {
+        let link = temp.path().with_extension("link");
+        std::os::unix::fs::symlink(temp.path(), &link).unwrap();
+        assert_eq!(
+            canonical_direct_dir(&link),
+            Err(EmbeddingInputObservationError::RuntimePackInvalid)
+        );
+        std::fs::remove_file(link).unwrap();
+    }
+}

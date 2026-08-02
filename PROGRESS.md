@@ -1,5 +1,13 @@
 # Progress
 
+## 2026-08-02 — #312 macOS temporary-root observer smoke
+
+- Corrected the local observer's runtime-root check to reject a symlink leaf while accepting the
+  standard macOS `/var` to `/private/var` parent canonicalization used by `mktemp`.
+- A release public-synthetic import observed exactly 2/2 searchable documents, produced a schema-
+  valid aggregate `lost` smoke result, emitted no stderr, and deleted the owner-only scratch tree.
+- This is capability evidence only; the missing configured private roots still block the formal L0 decision.
+
 ## 2026-08-02 — #312 local observer command and report contract
 
 - Added the explicit benchmark-only `embedding-input-observation` command with required absolute
