@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://resume-ir.invalid/schemas/embedding-input-observation.schema.json",
+  "title": "resume-ir embedding input observation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "artifact_id",
+    "scope",
+    "production_identity",
+    "documents",
+    "pre_truncation_active_tokens",
+    "aggregate_active_token_work",
+    "section_coverage",
+    "priority_coverage_512",
+    "triggers",
+    "decision",
+    "privacy",
+    "claims"
+  ],
+  "properties": {
+    "schema_version": { "const": "resume-ir.embedding-input-observation.v1" },
+    "artifact_id": { "const": "embedding-input-observation-issue-312" },
+    "scope": { "const": "private local clean-text token observation; bounded redacted aggregate only" },
+    "production_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime_pack_id", "model_id", "upstream_revision", "tokenizer_sha256", "prefix", "truncation"],
+      "properties": {
+        "runtime_pack_id": { "const": "intfloat-multilingual-e5-small-qint8-r1" },
+        "model_id": { "const": "intfloat-multilingual-e5-small-qint8-r1" },
+        "upstream_revision": { "const": "614241f622f53c4eeff9890bdc4f31cfecc418b3" },
+        "tokenizer_sha256": { "const": "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39" },
+        "prefix": { "const": "passage" },
+        "truncation": { "const": "right" }
+      }
+    },
+    "documents": { "$ref": "#/$defs/document_counts" },
+    "pre_truncation_active_tokens": { "$ref": "#/$defs/token_distribution" },
+    "aggregate_active_token_work": { "$ref": "#/$defs/token_work" },
+    "section_coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "experience", "skill", "project", "education", "certificate", "contact", "other", "unassigned"],
+      "properties": {
+        "profile": { "$ref": "#/$defs/family_coverage" },
+        "experience": { "$ref": "#/$defs/family_coverage" },
+        "skill": { "$ref": "#/$defs/family_coverage" },
+        "project": { "$ref": "#/$defs/family_coverage" },
+        "education": { "$ref": "#/$defs/family_coverage" },
+        "certificate": { "$ref": "#/$defs/family_coverage" },
+        "contact": { "$ref": "#/$defs/family_coverage" },
+        "other": { "$ref": "#/$defs/family_coverage" },
+        "unassigned": { "$ref": "#/$defs/family_coverage" }
+      }
+    },
+    "priority_coverage_512": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["documents_present", "documents_below_half", "below_half_ratio"],
+      "properties": {
+        "documents_present": { "$ref": "#/$defs/count" },
+        "documents_below_half": { "$ref": "#/$defs/count" },
+        "below_half_ratio": { "$ref": "#/$defs/ratio" }
+      }
+    },
+    "triggers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum_documents", "saturation_over_512", "priority_loss_at_512", "work_reduction_at_384", "all"],
+      "properties": {
+        "minimum_documents": { "type": "boolean" },
+        "saturation_over_512": { "type": "boolean" },
+        "priority_loss_at_512": { "type": "boolean" },
+        "work_reduction_at_384": { "type": "boolean" },
+        "all": { "type": "boolean" }
+      }
+    },
+    "decision": { "enum": ["l1_eligible", "lost"] },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contains_raw_text", "contains_token_ids", "contains_per_document_rows", "contains_paths", "contains_names", "contains_direct_raw_hashes"],
+      "properties": {
+        "contains_raw_text": { "const": false },
+        "contains_token_ids": { "const": false },
+        "contains_per_document_rows": { "const": false },
+        "contains_paths": { "const": false },
+        "contains_names": { "const": false },
+        "contains_direct_raw_hashes": { "const": false }
+      }
+    },
+    "claims": {
+      "const": ["observation_only", "no_product_speedup", "no_quality_claim", "no_release_claim"]
+    }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+    "document_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selected", "observed", "excluded_oversize", "failed"],
+      "properties": {
+        "selected": { "$ref": "#/$defs/count" },
+        "observed": { "$ref": "#/$defs/count" },
+        "excluded_oversize": { "$ref": "#/$defs/count" },
+        "failed": { "$ref": "#/$defs/count" }
+      }
+    },
+    "token_distribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["p50", "p75", "p90", "p95", "p99", "buckets", "exceed_256", "exceed_384", "exceed_512", "exceed_512_ratio"],
+      "properties": {
+        "p50": { "$ref": "#/$defs/count" },
+        "p75": { "$ref": "#/$defs/count" },
+        "p90": { "$ref": "#/$defs/count" },
+        "p95": { "$ref": "#/$defs/count" },
+        "p99": { "$ref": "#/$defs/count" },
+        "buckets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["le_256", "257_384", "385_512", "513_768", "769_1024", "gt_1024"],
+          "properties": {
+            "le_256": { "$ref": "#/$defs/count" },
+            "257_384": { "$ref": "#/$defs/count" },
+            "385_512": { "$ref": "#/$defs/count" },
+            "513_768": { "$ref": "#/$defs/count" },
+            "769_1024": { "$ref": "#/$defs/count" },
+            "gt_1024": { "$ref": "#/$defs/count" }
+          }
+        },
+        "exceed_256": { "$ref": "#/$defs/count" },
+        "exceed_384": { "$ref": "#/$defs/count" },
+        "exceed_512": { "$ref": "#/$defs/count" },
+        "exceed_512_ratio": { "$ref": "#/$defs/ratio" }
+      }
+    },
+    "token_work": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["budget_512", "budget_384", "budget_256", "reduction_384_vs_512", "reduction_256_vs_512"],
+      "properties": {
+        "budget_512": { "$ref": "#/$defs/count" },
+        "budget_384": { "$ref": "#/$defs/count" },
+        "budget_256": { "$ref": "#/$defs/count" },
+        "reduction_384_vs_512": { "$ref": "#/$defs/ratio" },
+        "reduction_256_vs_512": { "$ref": "#/$defs/ratio" }
+      }
+    },
+    "coverage_bucket": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["complete_loss", "partial_below_half", "partial_at_least_half", "complete_retained"],
+      "properties": {
+        "complete_loss": { "$ref": "#/$defs/count" },
+        "partial_below_half": { "$ref": "#/$defs/count" },
+        "partial_at_least_half": { "$ref": "#/$defs/count" },
+        "complete_retained": { "$ref": "#/$defs/count" }
+      }
+    },
+    "family_coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["present_documents", "budgets"],
+      "properties": {
+        "present_documents": { "$ref": "#/$defs/count" },
+        "budgets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["512", "384", "256"],
+          "properties": {
+            "512": { "$ref": "#/$defs/coverage_bucket" },
+            "384": { "$ref": "#/$defs/coverage_bucket" },
+            "256": { "$ref": "#/$defs/coverage_bucket" }
+          }
+        }
+      }
+    }
+  }
+}

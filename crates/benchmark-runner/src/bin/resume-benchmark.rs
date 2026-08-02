@@ -4,13 +4,13 @@ use std::path::PathBuf;
 use benchmark_runner::{
     evaluate_benchmark_gate_json, evaluate_dedupe_quality_gate_json,
     evaluate_field_quality_gate_json, evaluate_ocr_throughput_gate_json,
-    evaluate_vector_quality_gate_json, run_dedupe_quality_jsonl, run_field_quality_jsonl,
-    run_private_business_dedupe_quality_jsonl, run_private_business_field_quality_jsonl,
-    run_private_business_vector_quality_jsonl, run_private_ocr_throughput_benchmark,
-    run_private_query_benchmark, run_resident_public_query_load,
-    run_synthetic_ocr_throughput_benchmark, run_synthetic_query_benchmark,
-    run_vector_quality_jsonl, BenchmarkError, BenchmarkGateConfig, BenchmarkGateError,
-    DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
+    evaluate_vector_quality_gate_json, run_dedupe_quality_jsonl, run_embedding_input_observation,
+    run_field_quality_jsonl, run_private_business_dedupe_quality_jsonl,
+    run_private_business_field_quality_jsonl, run_private_business_vector_quality_jsonl,
+    run_private_ocr_throughput_benchmark, run_private_query_benchmark,
+    run_resident_public_query_load, run_synthetic_ocr_throughput_benchmark,
+    run_synthetic_query_benchmark, run_vector_quality_jsonl, BenchmarkError, BenchmarkGateConfig,
+    BenchmarkGateError, DedupeQualityGateConfig, FieldQualityGateConfig, OcrThroughputGateConfig,
     PrivateDedupeQualityManifestDigests, PrivateFieldQualityManifestDigests,
     PrivateOcrBenchmarkEngine, PrivateOcrManifestDigests, PrivateOcrThroughputConfig,
     PrivatePdfRenderEngine, PrivateQueryBenchmarkCommand, PrivateQueryBenchmarkConfig,
@@ -41,7 +41,17 @@ fn run() -> Result<(), CliError> {
         CliCommand::OcrGate(args) => run_ocr_gate(args),
         CliCommand::VectorQuality(args) => run_vector_quality(args),
         CliCommand::VectorGate(args) => run_vector_gate(args),
+        CliCommand::EmbeddingInputObservation(args) => run_embedding_input_observation_cli(args),
     }
+}
+
+fn run_embedding_input_observation_cli(
+    args: EmbeddingInputObservationArgs,
+) -> Result<(), CliError> {
+    let report = run_embedding_input_observation(&args.data_dir, &args.runtime_dir)
+        .map_err(|error| CliError::user(error.to_string()))?;
+    println!("{}", report.to_redacted_json());
+    Ok(())
 }
 
 fn run_resident_query_load(args: ResidentQueryLoadArgs) -> Result<(), CliError> {
@@ -397,9 +407,44 @@ where
             parse_vector_quality_args(&args[1..]).map(CliCommand::VectorQuality)
         }
         Some("vector-gate") => parse_vector_gate_args(&args[1..]).map(CliCommand::VectorGate),
+        Some("embedding-input-observation") => parse_embedding_input_observation_args(&args[1..])
+            .map(CliCommand::EmbeddingInputObservation),
         Some("gate") => parse_gate_args(&args[1..]).map(CliCommand::Gate),
         _ => parse_synthetic_query_args(&args).map(CliCommand::SyntheticQuery),
     }
+}
+
+fn parse_embedding_input_observation_args(
+    args: &[String],
+) -> Result<EmbeddingInputObservationArgs, CliError> {
+    let mut data_dir = None;
+    let mut runtime_dir = None;
+    let mut index = 0;
+    while index < args.len() {
+        let target = match args[index].as_str() {
+            "--data-dir" => &mut data_dir,
+            "--runtime-dir" => &mut runtime_dir,
+            "--json" => {
+                index += 1;
+                continue;
+            }
+            "--help" | "-h" => return Err(CliError::user(usage())),
+            _ => return Err(CliError::usage()),
+        };
+        let path = args
+            .get(index + 1)
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute() && path.as_os_str().len() <= 4_096)
+            .ok_or_else(CliError::usage)?;
+        if target.replace(path).is_some() {
+            return Err(CliError::usage());
+        }
+        index += 2;
+    }
+    Ok(EmbeddingInputObservationArgs {
+        data_dir: data_dir.ok_or_else(CliError::usage)?,
+        runtime_dir: runtime_dir.ok_or_else(CliError::usage)?,
+    })
 }
 
 fn parse_resident_query_load_args(args: &[String]) -> Result<ResidentQueryLoadArgs, CliError> {
@@ -1402,7 +1447,7 @@ fn parse_positive_f64(value: Option<&String>) -> Result<f64, CliError> {
 }
 
 fn usage() -> &'static str {
-    "usage: resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark resident-query-load --data-dir <empty-path> --daemon-command <path> --embedding-command <path> [--smoke] [--json] OR resume-benchmark private-query --query-set <jsonl> --resident-command <path> [--resident-command-arg <arg> ...] --corpus-summary <json> --dataset-manifest-sha256 <sha256> --model-manifest-sha256 <sha256> [--allow-partial-hot-index-for-smoke] [--synthetic-smoke-evidence] [--max-queries <n>] [--request-sample-count <n>] [--top-k <n>] [--timeout-ms <n>] [--index-size-bytes <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--allow-smoke-confidence] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--max-run-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--current-stage-baseline] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256> --model-manifest-sha256 <sha256>] [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
+    "usage: resume-benchmark embedding-input-observation --data-dir <absolute-path> --runtime-dir <absolute-path> [--json] OR resume-benchmark [synthetic-query] [--data-dir <path> | --index-dir <path>] [--documents <n>] [--queries <n>] [--top-k <n>] [--json] OR resume-benchmark resident-query-load --data-dir <empty-path> --daemon-command <path> --embedding-command <path> [--smoke] [--json] OR resume-benchmark private-query --query-set <jsonl> --resident-command <path> [--resident-command-arg <arg> ...] --corpus-summary <json> --dataset-manifest-sha256 <sha256> --model-manifest-sha256 <sha256> [--allow-partial-hot-index-for-smoke] [--synthetic-smoke-evidence] [--max-queries <n>] [--request-sample-count <n>] [--top-k <n>] [--timeout-ms <n>] [--index-size-bytes <n>] [--json] OR resume-benchmark gate --report <path> [--allow-synthetic] [--allow-smoke-confidence] [--require-private-real-corpus] [--require-million-scale] [--min-documents <n>] [--min-queries <n>] [--max-p95-ms <n>] [--max-zero-result-queries <n>] OR resume-benchmark field-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark field-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark dedupe-quality --dataset <jsonl> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256>] [--json] OR resume-benchmark dedupe-gate --report <path> [--require-private-business-labeled] [--min-pairs <n>] [--min-positive-pairs <n>] [--min-precision <n>] [--min-recall <n>] [--min-f1 <n>] OR resume-benchmark ocr-throughput (--command <path>|--tesseract-command <path>) [--pages <n>] [--page-timeout-ms <n>] [--render-dpi <n>] [--json] OR resume-benchmark private-ocr-throughput --root <path> (--renderer-command <path>|--pdftoppm-command <path>) (--command <path>|--tesseract-command <path>) --dataset-manifest-sha256 <sha256> --ocr-runtime-manifest-sha256 <sha256> --renderer-manifest-sha256 <sha256> --language-pack-manifest-sha256 <sha256> [--max-documents <n>] [--max-pages <n>] [--pages-per-document <n>] [--page-timeout-ms <n>] [--max-run-ms <n>] [--render-dpi <n>] [--ocr-lang <lang>] [--engine-profile <id>] [--json] OR resume-benchmark ocr-gate --report <path> [--allow-synthetic] [--require-private-real-corpus] [--current-stage-baseline] [--min-pages <n>] [--max-p95-ms <n>] [--min-pages-per-second <n>] OR resume-benchmark vector-quality --dataset <jsonl> --command <path> --model-id <id> --dimension <n> [--private-business-labeled --dataset-manifest-sha256 <sha256> --annotation-manifest-sha256 <sha256> --model-manifest-sha256 <sha256>] [--top-k <n>] [--timeout-ms <n>] [--max-text-bytes <n>] [--json] OR resume-benchmark vector-gate --report <path> [--require-private-business-labeled] [--min-samples <n>] [--min-recall-at-k <n>] [--min-mrr <n>] [--min-ndcg-at-k <n>] [--max-zero-recall-queries <n>]"
 }
 
 #[derive(Clone, Debug)]
@@ -1420,6 +1465,13 @@ enum CliCommand {
     OcrGate(OcrGateArgs),
     VectorQuality(VectorQualityArgs),
     VectorGate(VectorGateArgs),
+    EmbeddingInputObservation(EmbeddingInputObservationArgs),
+}
+
+#[derive(Clone, Debug)]
+struct EmbeddingInputObservationArgs {
+    data_dir: PathBuf,
+    runtime_dir: PathBuf,
 }
 
 #[derive(Clone, Debug)]
@@ -1610,3 +1662,35 @@ impl std::fmt::Display for CliError {
 }
 
 impl std::error::Error for CliError {}
+
+#[cfg(test)]
+mod embedding_input_observation_cli_tests {
+    use super::*;
+
+    #[test]
+    fn observation_mode_requires_two_unique_absolute_paths() {
+        let valid = vec![
+            "--data-dir".to_string(),
+            "/tmp/data".to_string(),
+            "--runtime-dir".to_string(),
+            "/tmp/runtime".to_string(),
+            "--json".to_string(),
+        ];
+        let parsed = parse_embedding_input_observation_args(&valid).unwrap();
+        assert_eq!(parsed.data_dir, PathBuf::from("/tmp/data"));
+        assert_eq!(parsed.runtime_dir, PathBuf::from("/tmp/runtime"));
+        for invalid in [
+            vec!["--data-dir".to_string(), "relative".to_string()],
+            vec![
+                "--data-dir".to_string(),
+                "/tmp/a".to_string(),
+                "--data-dir".to_string(),
+                "/tmp/b".to_string(),
+                "--runtime-dir".to_string(),
+                "/tmp/runtime".to_string(),
+            ],
+        ] {
+            assert!(parse_embedding_input_observation_args(&invalid).is_err());
+        }
+    }
+}
