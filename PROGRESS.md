@@ -2,19 +2,22 @@
 
 ## Issue #302 macOS PR Lite hosted gate
 
-Issue #302 restores one read-only macOS pull-request workflow with the exact
-context `PR Lite / contract-and-unit`. It runs locked metadata, format, focused
+Issue #302 restores one read-only macOS pull-request workflow. GitHub renders
+its workflow/check identity as `PR Lite / contract-and-unit`, while the Checks
+API and branch-protection context are `contract-and-unit`. It runs locked
+metadata, format, focused
 embedding-protocol/embedder/embedding-runtime tests and warnings-denied Clippy,
 performance/autonomous/Loop/governance contracts, PR budget, diff, and public
 boundary checks. It does not require a runtime pack, private data, DMG, install
 environment, Windows, or Linux.
 
 The workflow-policy checker permits exactly `release.yml` and `pr-lite.yml` and
-asserts the latter's trigger, platform, permissions, commands, and prohibited
-triggers. The repository-configuration contract now names the same strict
-required context. The exact PR head must pass ten consecutive hosted attempts
-and local verification before normal merge; only after merge is branch
-protection changed and read back.
+asserts the latter's trigger, platform, permissions, commands, prohibited
+triggers, and exact UI-to-API context mapping. The repository-configuration
+contract names the Checks API context required by branch protection. The exact
+PR head passed ten consecutive hosted attempts and local verification before
+normal merge; live API validation then caught and corrected the context mapping
+before branch protection was changed.
 
 ## Issue #210 deterministic resident eager restart
 

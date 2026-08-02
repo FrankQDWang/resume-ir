@@ -31,11 +31,13 @@ gh repo edit "$FULL_NAME" \
   --delete-branch-on-merge=true
 
 main_sha="$(git rev-parse main)"
+# GitHub renders the workflow/check pair as "PR Lite / contract-and-unit";
+# the branch-protection API requires the Check Run name.
 protection_payload=$(cat <<EOF
 {
   "required_status_checks": {
     "strict": true,
-    "contexts": ["PR Lite / contract-and-unit"]
+    "contexts": ["contract-and-unit"]
   },
   "enforce_admins": true,
   "required_pull_request_reviews": null,
