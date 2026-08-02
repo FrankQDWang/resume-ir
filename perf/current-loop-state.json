@@ -1,8 +1,8 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "implementation_active",
-  "experiment_state": "hypothesis_registered",
+  "workflow_state": "next_issue_or_goal_complete",
+  "experiment_state": "reverted",
   "evidence_lane": "w0_docs",
   "contract_pins": {
     "active_goal_sha256": "2ab76a738ac0548c80caa6137988bcc69d880d3ef616eb32010232f1112883b4",
@@ -10,7 +10,7 @@
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "47d69b04410d3d40336585ca1ba78d03062531b4"
+    "git_head_sha": "a24dec05f7621f0d1eac41b0c0f65d9f61c3749b"
   },
   "current_slice": "#305 resident ONNX intra-op thread sensitivity",
   "hypothesis": {
@@ -18,9 +18,9 @@
     "acceptance_cell": "full_import_ocr_backlog",
     "expected_effect": "one unique intra-op count from 1, 2, 3, 4, and 6 improves Batch-4 x 512 resident ONNX median by at least 10 percent versus three threads with positive paired ONNX and wall-time intervals and no accepted correctness, sensitivity, startup, or resource regression",
     "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/293#issuecomment-5152318044",
-    "after_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/305",
-    "reprofile_ref": null,
-    "decision": "active"
+    "after_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/305#issuecomment-5154979900",
+    "reprofile_ref": "no_unique_winner_profile_not_run",
+    "decision": "lost"
   },
   "transition_history": [
     {
@@ -741,7 +741,10 @@
     {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/302"},
     {"from":"reverted","to":"bottleneck_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305"},
     {"from":"bottleneck_selected","to":"hypothesis_registered","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305"},
-    {"from":"hypothesis_registered","to":"implementation_active","evidence_ref":"PROGRESS.md#issue-305-resident-onnx-intra-op-thread-sensitivity-contract"}
+    {"from":"hypothesis_registered","to":"implementation_active","evidence_ref":"PROGRESS.md#issue-305-resident-onnx-intra-op-thread-sensitivity-contract"},
+    {"from":"implementation_active","to":"verification_active","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305#issuecomment-5154979900"},
+    {"from":"verification_active","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305#issuecomment-5154979900"},
+    {"from":"evidence_review","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305#issuecomment-5154979900"}
   ],
   "verification": {
     "commands": [
@@ -3018,7 +3021,11 @@
       {"command":"combined artifact/prepacking/operator witness self-tests: 20 passed","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
       {"command":"focused embedding-runtime tests and warnings-denied Clippy","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
       {"command":"format, rust-analyzer, performance/autonomous/loop contracts, governance mutations, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
-      {"command":"./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"}
+      {"command":"./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
+      {"command":"Issue #305 50-session Williams-balanced public-synthetic thread matrix","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305#issuecomment-5154979900"},
+      {"command":"Issue #305 mode-overhead exact-vector and control-referenced quality gates","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/305#issuecomment-5154979900"},
+      {"command":"post-lost focused runtime, embedder, protocol, Clippy, release-mode rejection, format and rust-analyzer checks","exit_code":0,"evidence_ref":"PROGRESS.md#issue-305-resident-onnx-intra-op-thread-sensitivity-result"},
+      {"command":"RUST_TEST_THREADS=1 ./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"PROGRESS.md#issue-305-resident-onnx-intra-op-thread-sensitivity-result"}
     ],
     "all_required_commands_ran": true,
     "claim": "partial"
@@ -3033,10 +3040,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-305-embedding-thread-sensitivity-2026-08-02",
-  "state_version": 577,
-  "previous_state_hash": "37872e76d982c8df02dd821c2f1149bc3cc3f637482dc5e9ae0c407b227c9cf1",
-  "expected_state_version": 577,
-  "last_confirmed_side_effect": "issue_305_contract_landed_on_main",
+  "state_version": 578,
+  "previous_state_hash": "698659bf1700e1b5c07b66e8c70734601fc8631f2dbd41ea17e6829b2d08f16b",
+  "expected_state_version": 578,
+  "last_confirmed_side_effect": "issue_305_matrix_lost_no_production_issue",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {

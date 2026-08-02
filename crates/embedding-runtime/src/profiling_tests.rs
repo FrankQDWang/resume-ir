@@ -8,21 +8,9 @@ fn profile_args() -> [String; 1] {
     ["--resident-profile".to_string()]
 }
 
-fn parse_without_experiment(
-    args: &[String],
-    profile_output_prefix: impl FnOnce() -> Option<OsString>,
-) -> Result<RunMode, RuntimeError> {
-    parse_run_mode(
-        args,
-        profile_output_prefix,
-        #[cfg(feature = "thread-experiment")]
-        || None,
-    )
-}
-
 fn assert_invalid(value: Option<OsString>) {
     assert!(matches!(
-        parse_without_experiment(&profile_args(), || value),
+        parse_run_mode(&profile_args(), || value),
         Err(RuntimeError::EnvironmentInvalid)
     ));
 }
@@ -31,7 +19,7 @@ fn assert_invalid(value: Option<OsString>) {
 fn ordinary_modes_do_not_read_profile_output() {
     let read = Cell::new(false);
     let parse = |args: &[String]| {
-        parse_without_experiment(args, || {
+        parse_run_mode(args, || {
             read.set(true);
             None
         })
@@ -42,7 +30,6 @@ fn ordinary_modes_do_not_read_profile_output() {
         parse(&["--resident".into()]),
         RunMode::Resident(ResidentMode {
             profiling: ProfilingMode::Disabled,
-            intra_threads: ResidentThreadPolicy::Production,
         })
     );
     assert!(!read.get());
@@ -52,13 +39,11 @@ fn ordinary_modes_do_not_read_profile_output() {
 fn profiling_mode_requires_a_new_absolute_prefix_in_a_real_directory() {
     let directory = TempDir::new().unwrap();
     let prefix = directory.path().join("operator-profile");
-    let mode = parse_without_experiment(&profile_args(), || Some(prefix.clone().into_os_string()))
-        .unwrap();
+    let mode = parse_run_mode(&profile_args(), || Some(prefix.clone().into_os_string())).unwrap();
     assert_eq!(
         mode,
         RunMode::Resident(ResidentMode {
             profiling: ProfilingMode::OperatorTrace(prefix.clone()),
-            intra_threads: ResidentThreadPolicy::Production,
         })
     );
 
@@ -82,20 +67,17 @@ fn profiling_mode_rejects_missing_relative_and_oversized_prefixes() {
 
 #[test]
 fn unexpected_argument_shapes_remain_invalid() {
-    let invalid_args = [
+    for args in [
         vec!["--unknown".to_string()],
         vec!["--resident".to_string(), "extra".to_string()],
         vec!["--resident-profile".to_string(), "extra".to_string()],
         vec!["--resident-artifact-matrix".to_string()],
         vec!["--resident-artifact-profile".to_string()],
-        #[cfg(not(feature = "thread-experiment"))]
         vec!["--resident-thread-matrix".to_string()],
-        #[cfg(not(feature = "thread-experiment"))]
         vec!["--resident-thread-profile".to_string()],
-    ];
-    for args in invalid_args {
+    ] {
         assert!(matches!(
-            parse_without_experiment(&args, || Some(OsString::from("/unused"))),
+            parse_run_mode(&args, || Some(OsString::from("/unused"))),
             Err(RuntimeError::EnvironmentInvalid)
         ));
     }
