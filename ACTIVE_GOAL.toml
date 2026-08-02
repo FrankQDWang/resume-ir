@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#317"
-name = "embedding_input_policy_matrix"
+issue = "#319"
+name = "resident_embedding_role_isolation_matrix"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = true
@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "This bounded #317 L1 experiment compares the pre-registered whole-head and section-balanced input policies outside the production sidecar, records only bounded redacted aggregates, and selects at most one candidate for a later production migration Issue without changing the production model, input identity, vectors, schema, ORT, session, Batch, threads, queues, daemon, IPC, desktop, packaging, non-macOS boundary, gates, or privacy behavior."
+scope_exception_reason = "This bounded #319 L2 experiment compares exactly one shared and two split daemon-lifetime resident embedding topologies under frozen model, input, Batch, query and product-endpoint contracts; the default production topology remains unchanged until a later migration Issue."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -31,67 +31,69 @@ allowed_paths = [
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
   "Cargo.lock",
+  "crates/embedder/Cargo.toml",
+  "crates/embedder/src/resident.rs",
+  "crates/embedder/tests/resident.rs",
+  "crates/daemon/Cargo.toml",
+  "crates/daemon/src/bootstrap.rs",
+  "crates/daemon/src/embedding_runtime.rs",
+  "crates/daemon/src/run_options.rs",
+  "crates/daemon/src/search_runtime_config.rs",
+  "crates/daemon/src/worker_runtime.rs",
   "crates/benchmark-runner/Cargo.toml",
   "crates/benchmark-runner/src/bin/resume-benchmark.rs",
-  "crates/benchmark-runner/src/embedding_input_observation.rs",
-  "crates/benchmark-runner/src/embedding_input_observation_tests.rs",
-  "crates/benchmark-runner/src/embedding_input_policy_experiment.rs",
-  "crates/benchmark-runner/src/embedding_input_policy_experiment_tests.rs",
   "crates/benchmark-runner/src/lib.rs",
-  "crates/meta-store/Cargo.toml",
-  "crates/meta-store/src/embedding_input_observation.rs",
-  "crates/meta-store/src/embedding_input_observation_tests.rs",
-  "crates/meta-store/src/lib.rs",
-  "perf/embedding-input-observation.schema.json",
-  "perf/embedding-input-policy-experiment.schema.json",
-  "perf/fixtures/embedding-input-observation/invalid-cases.json",
-  "perf/fixtures/embedding-input-observation/valid-public-report.json",
-  "perf/fixtures/embedding-input-policy-experiment/invalid-cases.json",
-  "perf/fixtures/embedding-input-policy-experiment/valid-public-report.json",
-  "scripts/ci/check-embedding-input-observation.py",
-  "scripts/ci/check-embedding-input-policy-experiment.py",
+  "crates/benchmark-runner/src/resident_role_isolation.rs",
+  "crates/benchmark-runner/src/resident_role_isolation_tests.rs",
+  "perf/resident-embedding-role-isolation.schema.json",
+  "perf/fixtures/resident-embedding-role-isolation/invalid-cases.json",
+  "perf/fixtures/resident-embedding-role-isolation/valid-public-report.json",
+  "scripts/ci/check-resident-embedding-role-isolation.py",
   "scripts/ci/test-governance-contract-mutations.py",
+  "scripts/local/resident-embedding-role-isolation.py",
 ]
-allowed_paths_role = "embedding_input_policy_matrix_paths"
+allowed_paths_role = "resident_embedding_role_isolation_matrix_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "L1_embedding_input_representation_matrix"
-optimization_layer = "L1"
+observation_stage = "L2_resident_embedding_role_isolation_matrix"
+optimization_layer = "L2"
 optimization_layer_selected = true
-hypothesis = "one of the frozen whole-head or section-balanced 384/256 input policies can materially reduce current embedding token work while preserving control-referenced retrieval quality and priority-section representation"
-expected_delta = "a candidate is eligible only when it improves 512-control ONNX median by at least 10 percent with a positive paired bootstrap confidence interval, has a positive resident wall-time confidence interval, preserves the frozen control-referenced retrieval and resource gates, and has no pre-registered sensitivity regression; multiple eligible candidates require a statistically unique fastest winner"
-negative_control = "the current production whole_head_512 input using the same Dynamic U8S8 model, ORT 1.27.0 native runtime, Batch 4, three intra-op threads, passage prefix, tokenizer, pooling, session flags, and hardware"
-implementation_boundary = "the contract PR merges before capability work or formal execution; the six frozen arms are whole_head_512, whole_head_384, whole_head_256, section_balanced_512, section_balanced_384, and section_balanced_256; the experiment stays in the benchmark runner rather than expanding the production sidecar and opens at most one later production migration Issue"
-resident_workload = "balanced independent macOS M4 H2 release sessions over deterministic private local inputs, with the current whole_head_512 arm as control and frozen workload ordering, warmup exclusion, paired comparison, quality workload, and resource sampling defined by the #317 contract"
-resident_acceptance = "all six arms load through the current production runtime identity; outputs remain finite normalized 384-dimensional vectors; reports reconcile counts, remain within 64 KiB, and expose only aggregate performance, retrieval, section-coverage, startup, memory, and decision evidence"
-full_product_acceptance = "not authorized in #317; only a unique matrix winner may open one production migration Issue that separately handles vector identity, full reindex, private quality acceptance, and paired complete-product import evidence"
-raw_profile_boundary = "raw text, queries, candidate results, vectors, token IDs, per-document or per-query rows, paths, filenames, direct raw hashes, database files, logs, traces, and temporary artifacts remain owner-only and are deleted; public output is a bounded aggregate no larger than 64 KiB"
-rollback_condition = "retain production whole_head_512 and close as lost when no candidate passes every gate; close as inconclusive on statistical ties or unstable evidence; do not add arms or tune quotas after evidence; close as blocked only after the same external or tool blocker persists across three distinct evidence paths"
+hypothesis = "separating interactive Batch 1 and bulk Batch 4 resident Sessions removes non-preemptible shared-Session head-of-line blocking, and a bulk-only four-thread Session can improve throughput without the rejected #305 Batch-1 regression"
+expected_delta = "exactly one split candidate is eligible only when public-synthetic bulk throughput improves by at least 8 percent with a positive paired 95 percent confidence interval, query p95 and p99 regressions stay within 5 and 10 percent, maximum query queue wait stays within 200 ms, H2 private or anonymous process-tree peak stays within 1536 MiB, all correctness and lifecycle gates pass, and the paired private full-product endpoint later improves by at least 8 percent with a positive 95 percent confidence interval"
+negative_control = "shared_i3_b4: the current single daemon-lifetime three-thread resident shared by interactive Batch 1 and bulk Batch 4"
+implementation_boundary = "the contract PR merges before capability or formal measurement; capability is default-off and limited to the resident owner, daemon composition and worker gate, experiment runner, and closed schema, checker and fixtures; exactly three arms are allowed: shared_i3_b4, split_i3_bulk3_b4 and split_i3_bulk4_b4; both split residents start during daemon bootstrap and are reclaimed together on daemon exit; a winner may only open a later production migration Issue"
+resident_workload = "ten Williams-balanced blocks produce 30 independent macOS M4 H2 release daemon sessions; after 30 seconds of warmup each session runs 60 seconds of saturated bulk Batch 4 by 512 work while public-synthetic interactive Batch 1 by 32 queries arrive at fixed 2 QPS; seed, inputs, grouping and order are frozen before implementation"
+resident_acceptance = "bulk throughput improves by at least 8 percent with a positive paired 95 percent confidence interval; query p95 regression is at most 5 percent, p99 regression at most 10 percent and maximum interactive queue wait at most 200 ms; H2 private or anonymous process-tree peak is at most 1536 MiB; vectors are elementwise exact and counts, order, cancellation, timeout, restart, Ready and daemon-exit cleanup remain unchanged"
+full_product_acceptance = "only one unique public-synthetic winner may enter at least five randomized AB or BA pairs against shared_i3_b4 using #282's OCR-on no-OCR-drain endpoint; the frozen public-synthetic query workload runs from first vector-ready through the non-OCR endpoint; paired wall improvement must be at least 8 percent with a positive 95 percent confidence interval and every query, resource, correctness and privacy guard must pass; product acceptance requires a valid quiet-host or dedicated-host lane"
+raw_profile_boundary = "the public report is a closed aggregate no larger than 64 KiB and contains only arm identities, bounded counts, percentiles, confidence intervals, stage and resource aggregates, decision and privacy booleans; private paths, filenames, resume text, query text, candidate results, token IDs, vectors, PIDs, logs, traces, direct raw hashes, databases, index files and model caches remain owner-only and are deleted"
+rollback_condition = "remove the experiment capability and retain shared_i3_b4 when no unique candidate clears every gate; do not add arms or tune workloads or threads after evidence; close as blocked only after the same external or tool blocker persists across three distinct evidence paths"
 forbidden_scope = [
-  "cpu_arena_change",
+  "production_default_topology_change",
   "production_thread_policy_change",
-  "parser_worker_change",
-  "native_ort_runtime_upgrade",
-  "production_runtime_pack_change",
+  "production_embedding_input_change",
   "production_model_id_change",
   "production_vector_reindex",
-  "production_embedding_input_change",
+  "production_runtime_pack_change",
+  "native_ort_runtime_upgrade",
   "metadata_schema_change",
   "pooling_change",
-  "transformer_optimizer_change",
   "larger_batch",
-  "additional_worker_or_queue",
-  "additional_model_process",
+  "resident_pool",
+  "additional_matrix_arm",
+  "import_scoped_bulk_resident_lifecycle",
+  "idle_timeout_bulk_resident_lifecycle",
   "ocr_drain",
   "windows_or_linux",
   "query_hot_path_change",
+  "query_hot_path_acceptance_claim",
+  "ipc_or_diagnostics_contract_change",
+  "persistence_or_index_contract_change",
+  "desktop_or_packaging_change",
   "raw_private_output",
-  "production_sidecar_experiment_mode",
-  "performance_improvement_claim",
-  "seventh_matrix_arm",
-  "post_hoc_quota_tuning",
-  "production_quality_or_retrieval_claim",
+  "section_balanced_input_policy",
+  "post_hoc_workload_or_thread_tuning",
   "gate_weakening",
   "coreml",
+  "batch8_or_batch16",
 ]
 
 [[performance_history.closed_hypotheses]]

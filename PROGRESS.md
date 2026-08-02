@@ -1,6 +1,38 @@
 # Progress
 
-## Issue #317 embedding input-policy matrix contract
+## Issue #319 resident embedding role-isolation contract
+
+Issue #317 closed `cancelled_before_execution`, not as a measured performance `lost`. The six-arm
+matrix never ran and no experiment capability, private benchmark or production change was made.
+Issue #312 had already shown that 95.927% of observed documents exceed 512 active tokens and that
+81.601% of documents containing a priority family retain less than half of at least one such family
+at 512. Reducing whole-head input to 384 or 256 therefore conflicts with the product-quality goal;
+`section_balanced_512` remains a future quality-research direction without a new Issue in this slice.
+
+Issue #319 is now the sole active L2 slice. Its primary benchmark lane is
+`full_import_ocr_backlog`; concurrent public-synthetic queries are regression guards only and do not
+claim `query_hot_path` acceptance. The frozen control is `shared_i3_b4`, and the only candidates are
+`split_i3_bulk3_b4` and `split_i3_bulk4_b4`. All three keep whole-head 512, Dynamic U8S8, ORT 1.27,
+prepacking disabled, the current model/tokenizer/prefix/pooling identity, and Batch 4 grouping and
+order. Both split residents are daemon-lifetime and are reclaimed together on daemon exit.
+
+The public screen uses ten Williams-balanced blocks across 30 independent release daemon sessions.
+After 30 seconds of warmup, each session runs 60 seconds of saturated bulk Batch 4 by 512 work plus
+public-synthetic interactive Batch 1 by 32 queries at fixed 2 QPS. A unique candidate must improve
+bulk throughput by at least 8% with a positive paired 95% confidence interval while keeping query
+p95 regression within 5%, p99 within 10%, maximum queue wait within 200 ms, H2 private/anonymous
+process-tree peak within 1536 MiB, and all exact-vector and lifecycle semantics unchanged. Only that
+unique winner may enter at least five randomized private full-product AB/BA pairs against control,
+reusing #282's OCR-on, no-OCR-drain endpoint and the same query guards. A winner can only open a
+later production migration Issue; no default topology changes in the result PR.
+
+This transition changes contracts only: no Rust, production behavior, performance gate, private
+run, IPC, schema, model, input, Batch, index, desktop, packaging, Core ML, resident pool, B8/B16,
+Windows or Linux work is included. The future capability is restricted to the resident owner,
+daemon composition/worker gate, experiment runner, and a closed schema/checker/fixture surface. Its
+public report remains a redacted aggregate no larger than 64 KiB.
+
+## Issue #317 embedding input-policy matrix contract (cancelled before execution)
 
 Issue #312 closed `won` as an L0 eligibility observation, not as a performance or quality win. Its
 formal macOS M4/H2 run observed 1,424/1,424 documents with no oversize exclusions or failures:
@@ -11,15 +43,11 @@ aggregate has SHA-256 `4a5d37f0331ad0481e9df7a00d49f95ffa030aefcefeea0279216ae2a
 Temporary database, import logs and raw artifacts were deleted, and the aggregate contains no raw
 text, token IDs, per-document rows, paths, names or direct raw hashes.
 
-Issue #317 is therefore the single authorized L1 follow-up. It freezes exactly six arms:
+Issue #317 was selected as the L1 follow-up at that point. It froze exactly six arms:
 `whole_head_512`, `whole_head_384`, `whole_head_256`, `section_balanced_512`,
 `section_balanced_384`, and `section_balanced_256`. The current whole-head 512 path is the negative
-control. Experiment capability must remain in the benchmark runner rather than expanding the
-production sidecar, and no formal matrix may run before this contract lands on `main`. The Issue
-selects at most one candidate; it cannot change production embedding identity, vectors, schema,
-model, ORT, runtime/session policy, Batch, threads, queues, workers, daemon, IPC, desktop or
-packaging. A unique winner may only open one later production migration Issue with separate vector
-identity, reindex, private quality and complete-product acceptance.
+control. The matrix was cancelled before implementation or execution after the 512-token coverage
+loss was reclassified as a product-quality blocker rather than evidence to reduce the token budget.
 
 ## 2026-08-02 — #312 macOS temporary-root observer smoke
 

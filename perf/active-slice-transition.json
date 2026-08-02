@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-312-to-317-embedding-input-policy-matrix-2026-08-02",
-  "from_issue": "#312",
-  "to_issue": "#317",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/312#issuecomment-5157678376",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/317",
-  "base_active_goal_sha256": "06b3d10d0571cabfe0b1abf18950aa907c56729affe958f38dd36467cf0c9a41",
+  "transition_id": "issue-317-to-319-resident-embedding-role-isolation-2026-08-02",
+  "from_issue": "#317",
+  "to_issue": "#319",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/317#issuecomment-5158788759",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/319",
+  "base_active_goal_sha256": "a294ed608846df622d11b360bec86d936f5694d3924c9d0861a3e6d65380f40a",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
