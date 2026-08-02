@@ -49,6 +49,10 @@ class GovernanceContractMutationTests(unittest.TestCase):
             ROOT / "scripts" / "ci" / "check-embedding-input-observation.py",
             "embedding_observation_checker_under_test",
         )
+        cls.resident_role_isolation_checker = load_module(
+            ROOT / "scripts" / "ci" / "check-resident-embedding-role-isolation.py",
+            "resident_role_isolation_checker_under_test",
+        )
         with (ROOT / "ACTIVE_GOAL.toml").open("rb") as fh:
             cls.active_goal = tomllib.load(fh)
         with (ROOT / "perf" / "acceptance-matrix.toml").open("rb") as fh:
@@ -69,6 +73,7 @@ class GovernanceContractMutationTests(unittest.TestCase):
             copy.deepcopy(self.matrix)
         )
         self.assertEqual(self.embedding_observation_checker.main(), 0)
+        self.assertEqual(self.resident_role_isolation_checker.main(), 0)
 
     def test_each_delivery_transition_is_required(self) -> None:
         expected = self.autonomous_checker.CORRECTNESS_DELIVERY_TRANSITIONS
