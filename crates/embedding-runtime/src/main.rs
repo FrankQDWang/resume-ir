@@ -23,17 +23,12 @@ use process_containment::VerifiedParentProcess;
 use std::thread;
 use tokenizers::{AddedToken, PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
 
-mod artifact_experiment;
 mod batch;
 mod profiling;
 mod runtime_pack;
 
-use artifact_experiment::ArtifactExperiment;
 use batch::{mean_pool_batch, tokenized_batch};
-use profiling::{
-    parse_run_mode, ProfilingMode, ResidentMode, ResidentModelSource, RunMode,
-    PROFILE_OUTPUT_PREFIX_ENV,
-};
+use profiling::{parse_run_mode, ProfilingMode, ResidentMode, RunMode, PROFILE_OUTPUT_PREFIX_ENV};
 #[cfg(test)]
 use runtime_pack::AssetIdentity;
 use runtime_pack::{FileRole, RuntimePack};
@@ -109,21 +104,9 @@ fn run_resident(mode: ResidentMode) -> Result<(), RuntimeError> {
     start_resident_parent_death_guard()?;
     let environment = ResidentEnvironment::read()?;
     let pack = RuntimePack::load(&environment.runtime_dir)?;
-    let (model_id, dimension, model_path) = match mode.model_source {
-        ResidentModelSource::Production => (
-            pack.model_id().to_string(),
-            pack.dimension(),
-            pack.file(FileRole::Model)?.to_path_buf(),
-        ),
-        ResidentModelSource::ArtifactExperiment => {
-            let artifact = ArtifactExperiment::load_from_environment()?;
-            (
-                artifact.model_id().to_string(),
-                artifact.dimension(),
-                artifact.model_path().to_path_buf(),
-            )
-        }
-    };
+    let model_id = pack.model_id().to_string();
+    let dimension = pack.dimension();
+    let model_path = pack.file(FileRole::Model)?.to_path_buf();
     if environment.model_id != model_id || environment.dimension != dimension {
         return Err(RuntimeError::IdentityMismatch);
     }

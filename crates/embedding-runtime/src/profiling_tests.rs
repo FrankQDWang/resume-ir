@@ -30,14 +30,6 @@ fn ordinary_modes_do_not_read_profile_output() {
         parse(&["--resident".into()]),
         RunMode::Resident(ResidentMode {
             profiling: ProfilingMode::Disabled,
-            model_source: ResidentModelSource::Production,
-        })
-    );
-    assert_eq!(
-        parse(&["--resident-artifact-matrix".into()]),
-        RunMode::Resident(ResidentMode {
-            profiling: ProfilingMode::Disabled,
-            model_source: ResidentModelSource::ArtifactExperiment,
         })
     );
     assert!(!read.get());
@@ -52,7 +44,6 @@ fn profiling_mode_requires_a_new_absolute_prefix_in_a_real_directory() {
         mode,
         RunMode::Resident(ResidentMode {
             profiling: ProfilingMode::OperatorTrace(prefix.clone()),
-            model_source: ResidentModelSource::Production,
         })
     );
 
@@ -80,37 +71,14 @@ fn unexpected_argument_shapes_remain_invalid() {
         vec!["--unknown".to_string()],
         vec!["--resident".to_string(), "extra".to_string()],
         vec!["--resident-profile".to_string(), "extra".to_string()],
-        vec![
-            "--resident-artifact-matrix".to_string(),
-            "extra".to_string(),
-        ],
-        vec![
-            "--resident-artifact-profile".to_string(),
-            "extra".to_string(),
-        ],
+        vec!["--resident-artifact-matrix".to_string()],
+        vec!["--resident-artifact-profile".to_string()],
     ] {
         assert!(matches!(
             parse_run_mode(&args, || Some(OsString::from("/unused"))),
             Err(RuntimeError::EnvironmentInvalid)
         ));
     }
-}
-
-#[test]
-fn artifact_profile_requires_the_same_bounded_prefix() {
-    let directory = TempDir::new().unwrap();
-    let prefix = directory.path().join("artifact-profile");
-    let mode = parse_run_mode(&["--resident-artifact-profile".into()], || {
-        Some(prefix.clone().into_os_string())
-    })
-    .unwrap();
-    assert_eq!(
-        mode,
-        RunMode::Resident(ResidentMode {
-            profiling: ProfilingMode::OperatorTrace(prefix),
-            model_source: ResidentModelSource::ArtifactExperiment,
-        })
-    );
 }
 
 #[cfg(unix)]

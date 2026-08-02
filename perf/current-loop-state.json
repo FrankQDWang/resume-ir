@@ -1,26 +1,26 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "next_issue_or_goal_complete",
+  "workflow_state": "slice_selected",
   "experiment_state": "reverted",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "d619df2f49a6d27b75c1edfa7438a2bc2ffbc42cc0d010137af649b718d50979",
+    "active_goal_sha256": "d9e4286d24a617210689f4b295ed02cad9862bff595b48daf9940ced7b57cc59",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "9f4c6748bca91af0288d1bba6718a8fb548cd783"
+    "git_head_sha": "60deeb77180b197949fd0039772e6a2a3f489590"
   },
-  "current_slice": "#295 embedding artifact matrix",
+  "current_slice": "#299 embedding artifact experiment closeout",
   "hypothesis": {
-    "id": "issue-295-embedding-artifact-matrix",
+    "id": "issue-299-embedding-artifact-experiment-closeout",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "one unique FP32, static-QDQ-S8S8, or static-QOperator-U8S8 artifact improves the primary unprofiled resident ONNX median by at least 10 percent with positive paired intervals, no sensitivity regression above 3 percent, and every integrity, quality, startup, packaging, and memory gate passing",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/293#issuecomment-5152318044",
-    "after_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/295#issuecomment-5152670658",
-    "reprofile_ref": "no_unique_winner_profile_not_run",
-    "decision": "lost"
+    "expected_effect": "retire the completed artifact experiment surface, preserve ordinary resident and reusable operator-profile behavior, and make rejected hypotheses and main reachability machine explicit",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/295#issuecomment-5152670658",
+    "after_measurement_ref": "pending_closeout_merge",
+    "reprofile_ref": "not_applicable_closeout",
+    "decision": "reconcile"
   },
   "transition_history": [
     {
@@ -733,7 +733,8 @@
     {"from":"slice_selected","to":"implementation_active","evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
     {"from":"implementation_active","to":"verification_active","evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
     {"from":"verification_active","to":"evidence_review","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/295#issuecomment-5152670658"},
-    {"from":"evidence_review","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/295#issuecomment-5152670658"}
+    {"from":"evidence_review","to":"next_issue_or_goal_complete","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/295#issuecomment-5152670658"},
+    {"from":"next_issue_or_goal_complete","to":"slice_selected","evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/299"}
   ],
   "verification": {
     "commands": [
@@ -3024,15 +3025,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-295-embedding-artifact-matrix-lost-2026-08-02",
-  "state_version": 572,
-  "previous_state_hash": "33f011a3e3adb260a41ddecaa91e02ad1dfacaac5515fed84a9e14598beb5b27",
-  "expected_state_version": 572,
-  "last_confirmed_side_effect": "issue_295_matrix_lost_no_migration_issue",
+  "run_id": "issue-299-embedding-artifact-experiment-closeout-2026-08-02",
+  "state_version": 573,
+  "previous_state_hash": "c7ed64ff441a168e2e6f94dec4bc0bb3579beba557341acdde818bc6a9e2ec3a",
+  "expected_state_version": 573,
+  "last_confirmed_side_effect": "issue_299_created_closeout_selected",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#295",
+    "primary_issue": "#299",
     "active_prs": [],
     "open_blockers": []
   }

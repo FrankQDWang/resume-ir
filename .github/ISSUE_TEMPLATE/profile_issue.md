@@ -96,6 +96,7 @@ assignees: ""
 - [ ] Closing evidence:
 - [ ] Issue lifecycle after merge: <!-- closed_here | same_lane_continues | follow_up_issue_linked -->
 - [ ] Linked PRs merged:
+- [ ] `landed_on_main_sha`:
 - [ ] Follow-up issue linked, if any:
 - [ ] Success threshold met:
 - [ ] Regression guard passed:
