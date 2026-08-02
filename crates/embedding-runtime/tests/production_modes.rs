@@ -41,6 +41,36 @@ fn experiment_mode_accepts_four_thread_configuration_boundary() {
     );
 }
 
+#[cfg(feature = "resident-role-isolation-experiment")]
+#[test]
+fn experiment_mode_rejects_zero_threads() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = resident_command(
+        "--resident-role-isolation-experiment",
+        directory.path(),
+        /*threads*/ 0,
+    )
+    .output()
+    .unwrap();
+
+    assert_blocked(output, ENVIRONMENT_INVALID);
+}
+
+#[cfg(feature = "resident-role-isolation-experiment")]
+#[test]
+fn experiment_mode_rejects_five_threads() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = resident_command(
+        "--resident-role-isolation-experiment",
+        directory.path(),
+        /*threads*/ 5,
+    )
+    .output()
+    .unwrap();
+
+    assert_blocked(output, ENVIRONMENT_INVALID);
+}
+
 fn resident_command(mode: &str, runtime_dir: &std::path::Path, threads: usize) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_resume-embedding-runtime"));
     command
