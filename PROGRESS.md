@@ -1,5 +1,32 @@
 # Progress
 
+## Issue #210 deterministic resident eager restart
+
+Issue #210 repairs the existing lazy-restart boundary without changing any
+public API or inference setting. After a resident request fails, the supervisor
+terminates and reaps that child, publishes `Restarting`, returns the original
+error to the caller, and only then eagerly starts the next generation. A failed
+eager spawn publishes `Unavailable`; a later request retains one normal retry.
+
+The synthetic restart test now holds the second generation at an explicit
+barrier. This proves the failed request does not wait for restart, then releases
+the fixture and waits for the second `ready` generation event; wall-clock time
+is only a ten-second final fail-safe. The historical failure is described as
+load-sensitive with a real lazy-restart boundary in current code, not as newly
+reproduced in this run. No request deadline, containment, reaping, shutdown,
+queue, worker, model, runtime, or thread policy is relaxed.
+
+The focused six-test resident binary passes, including eager-success and
+eager-failure coverage. Twenty consecutive default-parallel runs and twenty
+consecutive serial runs also pass. This is stabilization evidence only; it does
+not claim that the historical intermittent failure reproduced during this
+execution.
+
+Two default-scheduling full local verification attempts stopped only on the
+unchanged parser-PDF minimal-timeout race; each exact failing test passed when
+rerun. A complete `RUST_TEST_THREADS=1 ./scripts/ci/verify-local.sh` run then
+passed, covering the full repository without skipping or weakening a test.
+
 ## Issue #299 embedding artifact experiment closeout
 
 Issue #299 is a bounded lifecycle-cleanup slice following the `lost` #295

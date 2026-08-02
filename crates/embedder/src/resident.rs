@@ -291,20 +291,31 @@ impl Supervisor {
             if child.is_none() {
                 self.set_status(ResidentEmbeddingStatus::Restarting);
                 child = self.spawn_child().ok();
+                if child.is_none() {
+                    self.set_status(ResidentEmbeddingStatus::Unavailable);
+                }
             }
+            let request_had_runtime = child.is_some();
             let result = match child.as_mut() {
                 Some(runtime) => {
                     self.execute_task(runtime, &task, saturated_micros(task.enqueued_at.elapsed()))
                 }
                 None => Err(EmbeddingError::WorkerUnavailable),
             };
-            if result.is_err() {
+            if result.is_err() && request_had_runtime {
                 if let Some(mut runtime) = child.take() {
                     runtime.terminate();
                 }
                 self.set_status(ResidentEmbeddingStatus::Restarting);
             }
+            let restart_after_response = result.is_err() && request_had_runtime;
             let _ = task.response_sender.send(result);
+            if restart_after_response && !self.shutdown.load(Ordering::Acquire) {
+                child = self.spawn_child().ok();
+                if child.is_none() {
+                    self.set_status(ResidentEmbeddingStatus::Unavailable);
+                }
+            }
         }
         if let Some(mut runtime) = child {
             runtime.terminate();

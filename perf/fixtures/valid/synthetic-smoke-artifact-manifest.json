@@ -7,7 +7,7 @@
   "evidence_lane": "smoke",
   "claim": "no_claim",
   "contract_pins": {
-    "active_goal_sha256": "d9e4286d24a617210689f4b295ed02cad9862bff595b48daf9940ced7b57cc59",
+    "active_goal_sha256": "84c8128b4a172efd65f473070c3df5db4dfc1bfa1483c89a05e91b09529543f1",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
@@ -23,7 +23,7 @@
     "contains_diagnostics_package": false,
     "trace_summary_redacted": true
   },
-  "report_sha256": "883f94118b0443c96dec1169a79bd8ebd7eeea56785526bf4a5af1f08e3bb957",
+  "report_sha256": "58fef875ce4d133d1731837288ebd52c7958fc7383ab64d8cd7c88ac73274668",
   "report_size_bytes": 4072,
   "artifacts": [
     {
