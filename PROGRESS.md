@@ -1,5 +1,19 @@
 # Progress
 
+## Issue #319 resident embedding role-isolation report contract
+
+The second implementation sub-slice adds only the closed public report schema, semantic checker and
+positive/negative synthetic fixtures needed before a runner may measure the three frozen arms. The
+checker fixes the 10-block/30-session formal design and keeps smoke at one three-session block; it
+reconciles Batch 4 and fixed-2-QPS counts, recomputes the query, memory, correctness and acceptance
+gates, rejects non-finite or oversized evidence, and permits private-matrix eligibility only for one
+unique formal winner. Smoke output remains capability-only even if its illustrative metrics cross a
+performance threshold.
+
+The fixture metrics are contract examples, not observations. This sub-slice runs no public matrix,
+reads no private corpus, changes no runtime or production behavior, and makes no speedup claim. The
+runner remains a separate default-off capability that must merge before any formal session starts.
+
 ## Issue #319 resident embedding role-isolation core capability
 
 The first implementation sub-slice adds only a default-off experiment topology. The ordinary
