@@ -1,5 +1,14 @@
 # Progress
 
+## 2026-08-02 — #312 local observer command and report contract
+
+- Added the explicit benchmark-only `embedding-input-observation` command with required absolute
+  data/runtime roots; ordinary benchmark and production commands do not read these arguments.
+- Added a closed 64 KiB aggregate schema plus valid and 11 negative fixtures covering malformed
+  counts, non-finite ratios, trigger/decision drift, privacy signals, and oversized output.
+- Wired the focused checker into the existing governance mutation gate; no private corpus has been
+  read and this capability still makes no product performance or quality claim.
+
 ## 2026-08-02 — #312 read-only embedding-input observer core
 
 - Added a benchmark-only observer that reads the exact active search projection through one
