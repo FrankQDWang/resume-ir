@@ -30,6 +30,10 @@ one later production-policy Issue. Lost or inconclusive results remove all
 experiment capability and retain three threads. This resident experiment cannot
 claim private/full-product, W1, scale, release, or goal-complete evidence.
 
+The capability slice adds the default-off feature, exact local modes, lazy
+1..=6 validation, production-mode rejection tests and the bounded witness.
+Both runtime test paths, self-tests and strict Clippy pass; measurement waits for main.
+
 ## Issue #302 macOS PR Lite hosted gate
 
 Issue #302 restores one read-only macOS pull-request workflow. GitHub renders
