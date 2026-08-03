@@ -499,9 +499,9 @@ pub(super) fn hardware_profile() -> (&'static str, u64) {
 
 fn hardware_profile_for_total_memory(total_memory_bytes: u64) -> (&'static str, u64) {
     match total_memory_bytes {
-        bytes if bytes > H1_MEMORY_CEILING_BYTES => ("H2_Aggressive", 1536),
-        bytes if bytes > H0_MEMORY_CEILING_BYTES => ("H1_Balanced", 1024),
-        _ => ("H0_Eco", 512),
+        bytes if bytes > H1_MEMORY_CEILING_BYTES => ("H2_Aggressive", 3072),
+        bytes if bytes > H0_MEMORY_CEILING_BYTES => ("H1_Balanced", 2048),
+        _ => ("H0_Eco", 1024),
     }
 }
 
@@ -512,11 +512,11 @@ mod tests {
     #[test]
     fn hardware_profile_uses_inclusive_12_and_20_gib_boundaries() {
         for (total_memory_bytes, expected_profile) in [
-            (0, ("H0_Eco", 512)),
-            (12 * BYTES_PER_GIB, ("H0_Eco", 512)),
-            (12 * BYTES_PER_GIB + 1, ("H1_Balanced", 1024)),
-            (20 * BYTES_PER_GIB, ("H1_Balanced", 1024)),
-            (20 * BYTES_PER_GIB + 1, ("H2_Aggressive", 1536)),
+            (0, ("H0_Eco", 1024)),
+            (12 * BYTES_PER_GIB, ("H0_Eco", 1024)),
+            (12 * BYTES_PER_GIB + 1, ("H1_Balanced", 2048)),
+            (20 * BYTES_PER_GIB, ("H1_Balanced", 2048)),
+            (20 * BYTES_PER_GIB + 1, ("H2_Aggressive", 3072)),
         ] {
             assert_eq!(
                 hardware_profile_for_total_memory(total_memory_bytes),

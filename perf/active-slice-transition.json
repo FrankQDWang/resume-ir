@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-361-to-364-bulk-memory-pattern-2026-08-03",
-  "from_issue": "#361",
-  "to_issue": "#364",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/363",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/364",
-  "base_active_goal_sha256": "fdb40a69d7f9bad6694371337279fbfb5f5bba0892ed727b8c4e09c2d3759e38",
+  "transition_id": "issue-364-to-366-persistent-memory-budgets-2026-08-03",
+  "from_issue": "#364",
+  "to_issue": "#366",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/365",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/366",
+  "base_active_goal_sha256": "5346493e6c5e19eb745387569be859878b75f36baf4a6f31e99878416b0ef092",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
