@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://resume-ir.invalid/schemas/ocr-query-publication.schema.json",
+  "title": "resume-ir OCR publication query diagnosis public report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "artifact_id", "issue", "source", "revision", "platform", "run", "fixed_workload", "observability", "stable_control", "epochs", "outcomes", "mode_aggregates", "diagnosis", "privacy", "claims"],
+  "properties": {
+    "schema_version": { "const": "resume-ir.ocr-query-publication.v1" },
+    "artifact_id": { "const": "ocr-query-publication-issue-342" },
+    "issue": { "const": "#342" },
+    "source": { "const": "public_synthetic_repeated_ocr_publication" },
+    "revision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "architecture", "machine", "governor", "memory_measurement"],
+      "properties": {
+        "os": { "const": "macos" },
+        "architecture": { "const": "arm64" },
+        "machine": { "const": "M4" },
+        "governor": { "const": "H2_Aggressive" },
+        "memory_measurement": { "const": "process_tree_rss_mib" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "seed", "publication_count", "query_attempts", "all_publications_observed", "epoch_steps_exact", "oracle_corruption_probe_passed", "transport_probe_passed", "protocol_probe_passed", "process_cleanup_passed", "host_load_guard_passed"],
+      "properties": {
+        "kind": { "enum": ["smoke", "formal_public_witness"] },
+        "seed": { "const": 20260803 },
+        "publication_count": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "query_attempts": { "$ref": "#/$defs/positive_integer" },
+        "all_publications_observed": { "type": "boolean" },
+        "epoch_steps_exact": { "type": "boolean" },
+        "oracle_corruption_probe_passed": { "type": "boolean" },
+        "transport_probe_passed": { "type": "boolean" },
+        "protocol_probe_passed": { "type": "boolean" },
+        "process_cleanup_passed": { "type": "boolean" },
+        "host_load_guard_passed": { "type": "boolean" }
+      }
+    },
+    "fixed_workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_id", "dimension", "resident_topology", "resident_threads", "interactive_batch", "publication_batch_bound", "ocr_jobs_per_tick", "query_modes", "top_k", "deadline_ms", "oracle", "publication_source", "mode_order_schedule", "client_excess_ms", "unclassified_excess_ms", "minimum_first_to_warm_ratio", "required_signal_epochs"],
+      "properties": {
+        "model_id": { "const": "intfloat-multilingual-e5-small-qint8-r1" },
+        "dimension": { "const": 384 },
+        "resident_topology": { "const": "shared_i3" },
+        "resident_threads": { "const": 3 },
+        "interactive_batch": { "const": 1 },
+        "publication_batch_bound": { "const": 4 },
+        "ocr_jobs_per_tick": { "const": 1 },
+        "query_modes": { "const": ["fulltext", "semantic", "hybrid"] },
+        "top_k": { "const": 1 },
+        "deadline_ms": { "const": 10000 },
+        "oracle": { "const": "stable_dominant_synthetic_anchor" },
+        "publication_source": { "const": "rasterized_public_synthetic_pdf" },
+        "mode_order_schedule": { "const": [["hybrid", "fulltext", "semantic"], ["fulltext", "semantic", "hybrid"], ["semantic", "hybrid", "fulltext"]] },
+        "client_excess_ms": { "const": 20 },
+        "unclassified_excess_ms": { "const": 15 },
+        "minimum_first_to_warm_ratio": { "const": 1.5 },
+        "required_signal_epochs": { "const": 2 }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["first_definition", "warm_definition", "residual_label", "direct_queue_wait_telemetry_available", "queue_wait_claimed", "mode_order_position_reported"],
+      "properties": {
+        "first_definition": { "const": "first_mode_local_request_after_visible_epoch_advance" },
+        "warm_definition": { "const": "immediate_same_mode_repeat_in_same_epoch" },
+        "residual_label": { "const": "unclassified_query_service_embedding_or_queue_wall" },
+        "direct_queue_wait_telemetry_available": { "const": false },
+        "queue_wait_claimed": { "const": false },
+        "mode_order_position_reported": { "const": true }
+      }
+    },
+    "stable_control": { "$ref": "#/$defs/observation_group" },
+    "epochs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "allOf": [
+          { "$ref": "#/$defs/observation_group" },
+          {
+            "type": "object",
+            "required": ["ordinal"],
+            "properties": { "ordinal": { "type": "integer", "minimum": 1, "maximum": 3 } }
+          }
+        ]
+      }
+    },
+    "outcomes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attempted", "counts", "completed_valid", "degraded_or_failed", "count_conserved"],
+      "properties": {
+        "attempted": { "$ref": "#/$defs/positive_integer" },
+        "counts": { "$ref": "#/$defs/outcome_counts" },
+        "completed_valid": { "$ref": "#/$defs/count" },
+        "degraded_or_failed": { "$ref": "#/$defs/count" },
+        "count_conserved": { "const": true }
+      }
+    },
+    "mode_aggregates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fulltext", "semantic", "hybrid"],
+      "properties": {
+        "fulltext": { "$ref": "#/$defs/mode_aggregate" },
+        "semantic": { "$ref": "#/$defs/mode_aggregate" },
+        "hybrid": { "$ref": "#/$defs/mode_aggregate" }
+      }
+    },
+    "diagnosis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "selected_next_action", "fulltext_signal", "semantic_or_hybrid_signal", "signal_epoch_counts", "outcome_integrity_passed", "no_speedup_claim", "no_query_hot_path_acceptance_claim"],
+      "properties": {
+        "status": { "enum": ["smoke_pass", "smoke_failed", "diagnosed", "not_reproduced", "inconclusive"] },
+        "selected_next_action": { "type": ["string", "null"], "enum": ["resident_isolation_rerun", "generation_publication_fix_issue", "combined_bounded_fix_issue", "no_reproduced_product_defect", null] },
+        "fulltext_signal": { "type": "boolean" },
+        "semantic_or_hybrid_signal": { "type": "boolean" },
+        "signal_epoch_counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["fulltext", "semantic", "hybrid"],
+          "properties": {
+            "fulltext": { "$ref": "#/$defs/count" },
+            "semantic": { "$ref": "#/$defs/count" },
+            "hybrid": { "$ref": "#/$defs/count" }
+          }
+        },
+        "outcome_integrity_passed": { "type": "boolean" },
+        "no_speedup_claim": { "const": true },
+        "no_query_hot_path_acceptance_claim": { "const": true }
+      }
+    },
+    "privacy": { "$ref": "#/$defs/privacy" },
+    "claims": { "const": ["diagnostic_only", "no_product_speedup", "no_query_hot_path_acceptance", "no_private_or_release_claim"] }
+  },
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "positive_integer": { "type": "integer", "minimum": 1 },
+    "number": { "type": "number" },
+    "nonnegative_number": { "type": "number", "minimum": 0 },
+    "outcome": { "enum": ["exact_expected", "valid_epoch_result_change", "deadline_partial", "semantic_partial", "overload", "http_error", "protocol_error", "transport_error", "cancelled"] },
+    "outcome_counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exact_expected", "valid_epoch_result_change", "deadline_partial", "semantic_partial", "overload", "http_error", "protocol_error", "transport_error", "cancelled"],
+      "properties": {
+        "exact_expected": { "$ref": "#/$defs/count" },
+        "valid_epoch_result_change": { "$ref": "#/$defs/count" },
+        "deadline_partial": { "$ref": "#/$defs/count" },
+        "semantic_partial": { "$ref": "#/$defs/count" },
+        "overload": { "$ref": "#/$defs/count" },
+        "http_error": { "$ref": "#/$defs/count" },
+        "protocol_error": { "$ref": "#/$defs/count" },
+        "transport_error": { "$ref": "#/$defs/count" },
+        "cancelled": { "$ref": "#/$defs/count" }
+      }
+    },
+    "stage_latency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parse", "prefilter", "bm25", "ann", "fusion", "bulk_hydrate", "snippet"],
+      "properties": {
+        "parse": { "$ref": "#/$defs/nonnegative_number" },
+        "prefilter": { "$ref": "#/$defs/nonnegative_number" },
+        "bm25": { "$ref": "#/$defs/nonnegative_number" },
+        "ann": { "$ref": "#/$defs/nonnegative_number" },
+        "fusion": { "$ref": "#/$defs/nonnegative_number" },
+        "bulk_hydrate": { "$ref": "#/$defs/nonnegative_number" },
+        "snippet": { "$ref": "#/$defs/nonnegative_number" }
+      }
+    },
+    "query_sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "client_wall_ms", "server_latency_ms", "stage_latency_ms", "unclassified_wall_ms"],
+      "properties": {
+        "outcome": { "$ref": "#/$defs/outcome" },
+        "client_wall_ms": { "type": "number", "exclusiveMinimum": 0 },
+        "server_latency_ms": { "type": ["number", "null"], "minimum": 0 },
+        "stage_latency_ms": { "oneOf": [{ "$ref": "#/$defs/stage_latency" }, { "type": "null" }] },
+        "unclassified_wall_ms": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "query_pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["first", "warm"],
+      "properties": {
+        "first": { "$ref": "#/$defs/query_sample" },
+        "warm": { "$ref": "#/$defs/query_sample" }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["process_tree_rss_mib", "normalized_one_minute_load", "status_embedding_queue_depth_before", "status_embedding_queue_depth_after", "ocr_queue_depth_after"],
+      "properties": {
+        "process_tree_rss_mib": { "$ref": "#/$defs/nonnegative_number" },
+        "normalized_one_minute_load": { "$ref": "#/$defs/nonnegative_number" },
+        "status_embedding_queue_depth_before": { "$ref": "#/$defs/count" },
+        "status_embedding_queue_depth_after": { "$ref": "#/$defs/count" },
+        "ocr_queue_depth_after": { "$ref": "#/$defs/count" }
+      }
+    },
+    "observation_group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode_order", "samples", "resources"],
+      "properties": {
+        "ordinal": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "mode_order": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": { "enum": ["fulltext", "semantic", "hybrid"] }
+        },
+        "samples": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["fulltext", "semantic", "hybrid"],
+          "properties": {
+            "fulltext": { "$ref": "#/$defs/query_pair" },
+            "semantic": { "$ref": "#/$defs/query_pair" },
+            "hybrid": { "$ref": "#/$defs/query_pair" }
+          }
+        },
+        "resources": { "$ref": "#/$defs/resources" }
+      }
+    },
+    "latency_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["p50", "p95", "p99", "max"],
+      "properties": {
+        "p50": { "$ref": "#/$defs/number" },
+        "p95": { "$ref": "#/$defs/number" },
+        "p99": { "$ref": "#/$defs/number" },
+        "max": { "$ref": "#/$defs/number" }
+      }
+    },
+    "mode_aggregate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["epoch_pairs", "complete_epoch_pairs", "first_client_ms", "warm_client_ms", "first_minus_warm_ms", "excess_over_control_ms", "unclassified_excess_over_control_ms", "signal_epochs"],
+      "properties": {
+        "epoch_pairs": { "$ref": "#/$defs/positive_integer" },
+        "complete_epoch_pairs": { "$ref": "#/$defs/count" },
+        "first_client_ms": { "$ref": "#/$defs/latency_summary" },
+        "warm_client_ms": { "$ref": "#/$defs/latency_summary" },
+        "first_minus_warm_ms": { "$ref": "#/$defs/latency_summary" },
+        "excess_over_control_ms": { "$ref": "#/$defs/latency_summary" },
+        "unclassified_excess_over_control_ms": { "$ref": "#/$defs/latency_summary" },
+        "signal_epochs": { "$ref": "#/$defs/count" }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contains_private_paths", "contains_filenames", "contains_resume_text", "contains_query_text", "contains_candidate_results", "contains_document_or_version_ids", "contains_token_ids", "contains_vectors", "contains_pids", "contains_logs_or_traces", "contains_direct_raw_hashes", "contains_databases_or_indexes", "contains_model_or_runtime_bytes"],
+      "properties": {
+        "contains_private_paths": { "const": false },
+        "contains_filenames": { "const": false },
+        "contains_resume_text": { "const": false },
+        "contains_query_text": { "const": false },
+        "contains_candidate_results": { "const": false },
+        "contains_document_or_version_ids": { "const": false },
+        "contains_token_ids": { "const": false },
+        "contains_vectors": { "const": false },
+        "contains_pids": { "const": false },
+        "contains_logs_or_traces": { "const": false },
+        "contains_direct_raw_hashes": { "const": false },
+        "contains_databases_or_indexes": { "const": false },
+        "contains_model_or_runtime_bytes": { "const": false }
+      }
+    }
+  }
+}

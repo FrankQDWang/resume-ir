@@ -49,6 +49,10 @@ class GovernanceContractMutationTests(unittest.TestCase):
             ROOT / "scripts" / "ci" / "check-embedding-input-observation.py",
             "embedding_observation_checker_under_test",
         )
+        cls.ocr_query_publication_checker = load_module(
+            ROOT / "scripts" / "ci" / "check-ocr-query-publication.py",
+            "ocr_query_publication_checker_under_test",
+        )
         with (ROOT / "ACTIVE_GOAL.toml").open("rb") as fh:
             cls.active_goal = tomllib.load(fh)
         with (ROOT / "perf" / "acceptance-matrix.toml").open("rb") as fh:
@@ -69,6 +73,7 @@ class GovernanceContractMutationTests(unittest.TestCase):
             copy.deepcopy(self.matrix)
         )
         self.assertEqual(self.embedding_observation_checker.main(), 0)
+        self.assertEqual(self.ocr_query_publication_checker.main([]), 0)
 
     def test_each_delivery_transition_is_required(self) -> None:
         expected = self.autonomous_checker.CORRECTNESS_DELIVERY_TRANSITIONS
