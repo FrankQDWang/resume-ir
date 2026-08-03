@@ -2,27 +2,67 @@
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
   "workflow_state": "evidence_review",
-  "experiment_state": "correctness_passed",
-  "evidence_lane": "w0_docs",
+  "experiment_state": "reverted",
+  "evidence_lane": "smoke",
   "contract_pins": {
-    "active_goal_sha256": "889300535daf1e0992a065403c11baec32ac5538b5752f7c5cf030285a3391fe",
+    "active_goal_sha256": "1580e8111af78df6342e855fb6e4eb59e22aa36629f987dc42e3d3f1455e985e",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "ece05f5e7001ffa573aa74e9c954b8fea1f18429"
+    "git_head_sha": "af81010be9fe762216ff1b9f03913f1f0a1c5c40"
   },
-  "current_slice": "#366 double persistent product memory budgets",
+  "current_slice": "#369 bulk embedding fixed B4x512 Session",
   "hypothesis": {
-    "id": "issue-366-double-persistent-memory-budgets",
+    "id": "issue-369-bulk-embedding-fixed-b4x512",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "persistent product memory budgets and their matching formal resource witnesses double exactly while hardware tier thresholds, concurrency and bounded payload safety contracts remain unchanged",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/366",
-    "after_measurement_ref": "PROGRESS.md#issue-366-persistent-product-memory-budgets-doubled",
-    "reprofile_ref": null,
-    "decision": "active"
+    "expected_effect": "the fixed B4x512 Session passed the synthetic performance and resource gates but failed exact-vector correctness, so the candidate was removed and the private OCR-on product run did not execute",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/369",
+    "after_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/369#issuecomment-5168708261",
+    "reprofile_ref": "https://github.com/FrankQDWang/resume-ir/issues/369#issuecomment-5168708261",
+    "decision": "reverted"
   },
   "transition_history": [
+    {
+      "from": "implementation_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-369-bulk-fixed-b4x512-negative-closeout"
+    },
+    {
+      "from": "branch_active",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/369"
+    },
+    {
+      "from": "slice_selected",
+      "to": "branch_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/369"
+    },
+    {
+      "from": "evidence_review",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/369"
+    },
+    {
+      "from": "implementation_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-368-bulk-only-cpu-arena-negative-closeout"
+    },
+    {
+      "from": "branch_active",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/368"
+    },
+    {
+      "from": "slice_selected",
+      "to": "branch_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/368"
+    },
+    {
+      "from": "evidence_review",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/368"
+    },
     {
       "from": "verification_active",
       "to": "evidence_review",
@@ -3170,7 +3210,13 @@
       {"command":"OCR-on 8720-document private import with redacted incremental first-query observations","exit_code":0,"evidence_ref":"PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review"},
       {"command":"./scripts/ci/verify-local.sh stopped on unchanged daemon handoff timing assertion","exit_code":101,"evidence_ref":"PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review"},
       {"command":"exact isolated unconsumed_install_timeout daemon test rerun","exit_code":0,"evidence_ref":"PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review"},
-      {"command":"format, licenses, performance/autonomous/loop contracts, governance mutations, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review"}
+      {"command":"format, licenses, performance/autonomous/loop contracts, governance mutations, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review"},
+      {"command":"Issue #368 100-request AB plus 100-request BA public-synthetic bulk CPU-arena witness","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/368#issuecomment-5168363252"},
+      {"command":"post-revert embedding-runtime tests and warnings-denied Clippy","exit_code":0,"evidence_ref":"PROGRESS.md#issue-368-bulk-only-cpu-arena-negative-closeout"},
+      {"command":"post-revert format, performance/autonomous/loop contracts, governance mutations, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-368-bulk-only-cpu-arena-negative-closeout"},
+      {"command":"Issue #369 exact B4x512 fixed-Session vector correctness gate","exit_code":1,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/369#issuecomment-5168708261"},
+      {"command":"post-revert embedding-runtime tests, production-mode tests, warnings-denied Clippy and format","exit_code":0,"evidence_ref":"PROGRESS.md#issue-369-bulk-fixed-b4x512-negative-closeout"},
+      {"command":"post-revert performance/autonomous/loop contracts, governance mutations, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-369-bulk-fixed-b4x512-negative-closeout"}
     ],
     "all_required_commands_ran": true,
     "claim": "partial"
@@ -3184,15 +3230,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-366-double-persistent-memory-budgets-2026-08-03",
-  "state_version": 598,
-  "previous_state_hash": "bc7eccd5a61ba4e2d2af5120c7409b4a29f397560a72f83ef17554bf27972185",
-  "expected_state_version": 598,
-  "last_confirmed_side_effect": "issue_366_verification_completed",
+  "run_id": "issue-369-bulk-embedding-fixed-b4x512-2026-08-03",
+  "state_version": 606,
+  "previous_state_hash": "52d61481f6b9929f89a2cd7f660f615e69a761591fd44f8d6385312df4ba6f74",
+  "expected_state_version": 606,
+  "last_confirmed_side_effect": "issue_369_result_commented_and_issue_closed",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#366",
+    "primary_issue": "#369",
     "active_prs": [],
     "open_blockers": []
   }
