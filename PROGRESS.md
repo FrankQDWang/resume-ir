@@ -1,5 +1,17 @@
 # Progress
 
+## Issue #341 blocked rollback: daemon observer removed
+
+The first three reverse steps removed the public matrix runner, its local
+support and the unused report contract. This fourth step removes the
+experiment-only daemon owner-file observer and its resident telemetry wiring.
+No content-free queue-wait owner file can now be emitted.
+
+The default-off split-resident composition and lower runtime primitives remain
+for the next ordered rollback steps. Production shared 3t is unchanged. This
+step runs no benchmark, retains no performance result and makes no production
+default, IPC, schema, model, input, Batch or index change.
+
 ## Issue #341 blocked rollback: report contract removed
 
 PRs #356 and #357 removed the public matrix runner and its support module. This
