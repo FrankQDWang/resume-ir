@@ -1,5 +1,25 @@
 # Progress
 
+## Issue #341 resident-pool public matrix runner
+
+The bounded local runner now composes the frozen one-control/two-candidate
+Williams schedule, independent release daemon sessions, one-second smoke and
+120-second/30-second/60-second formal protocol. It drives only temporary
+public-synthetic files, a unique 32-token anchor, complete B4 x 512 publication
+groups and B1 x 32 hybrid queries at fixed 2 QPS.
+
+Every session verifies exact direct vectors, complete grouping/order/counts,
+timeout/cancellation, daemon restart, one killed bulk child with unaffected
+interactive query and recovered publication, atomic query-visible epochs, direct
+interactive resident queue wait, process cleanup and H2 private/anonymous peak.
+Host load excludes the runner process tree and fails closed after three
+consecutive external CPU samples above 25% of logical-machine capacity; thermal
+or host invalidation aborts the matrix without replacing a block.
+
+The runner self-test and Pyright pass. No smoke or formal matrix has run yet, so
+this slice makes no throughput, query-latency, product or release claim. The
+runner must first merge, then execute against exact merged-main release binaries.
+
 ## Issue #341 resident-pool runner support prerequisite
 
 The public matrix needs one privacy-bounded owner for direct runtime preflight,
