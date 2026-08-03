@@ -29,6 +29,19 @@ pub enum EmbeddingPriority {
     Background,
 }
 
+/// Receives content-free telemetry for completed pool-experiment requests.
+///
+/// Implementations must keep observation bounded and must not retain inputs,
+/// vectors, model payloads, or other request content.
+#[cfg(feature = "resident-embedding-pool-experiment")]
+pub trait ResidentEmbeddingTelemetryObserver: Send + Sync {
+    fn observe(
+        &self,
+        priority: EmbeddingPriority,
+        telemetry: &EmbeddingTelemetry,
+    ) -> Result<(), EmbeddingError>;
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ResidentEmbeddingStatus {
@@ -156,6 +169,8 @@ impl ResidentEmbeddingOwner {
             status,
             model_id,
             dimension,
+            #[cfg(feature = "resident-embedding-pool-experiment")]
+            telemetry_observer: None,
         };
         Ok(Self {
             client,
@@ -203,6 +218,8 @@ pub struct ResidentEmbeddingClient {
     status: Arc<AtomicU8>,
     model_id: Arc<str>,
     dimension: usize,
+    #[cfg(feature = "resident-embedding-pool-experiment")]
+    telemetry_observer: Option<Arc<dyn ResidentEmbeddingTelemetryObserver>>,
 }
 
 impl ResidentEmbeddingClient {
@@ -216,6 +233,15 @@ impl ResidentEmbeddingClient {
 
     pub fn dimension(&self) -> usize {
         self.dimension
+    }
+
+    #[cfg(feature = "resident-embedding-pool-experiment")]
+    pub fn with_pool_experiment_telemetry_observer(
+        mut self,
+        observer: Arc<dyn ResidentEmbeddingTelemetryObserver>,
+    ) -> Self {
+        self.telemetry_observer = Some(observer);
+        self
     }
 
     pub fn embed_batch_with_cancel(
@@ -238,8 +264,14 @@ impl ResidentEmbeddingClient {
         timeout_ms: u64,
         is_cancelled: impl Fn() -> bool,
     ) -> Result<(Vec<EmbeddingVector>, EmbeddingTelemetry), EmbeddingError> {
-        self.enqueue_batch(priority, inputs, budget, timeout_ms)?
-            .wait_with_cancel(is_cancelled)
+        let result = self
+            .enqueue_batch(priority, inputs, budget, timeout_ms)?
+            .wait_with_cancel(is_cancelled)?;
+        #[cfg(feature = "resident-embedding-pool-experiment")]
+        if let Some(observer) = &self.telemetry_observer {
+            observer.observe(priority, &result.1)?;
+        }
+        Ok(result)
     }
 
     #[cfg(feature = "resident-embedding-pool-experiment")]
@@ -251,7 +283,11 @@ impl ResidentEmbeddingClient {
         timeout_ms: u64,
     ) -> Result<ResidentEmbeddingRequest, EmbeddingError> {
         self.enqueue_batch(priority, inputs, budget, timeout_ms)
-            .map(|pending| ResidentEmbeddingRequest { pending })
+            .map(|pending| ResidentEmbeddingRequest {
+                pending,
+                priority,
+                observer: self.telemetry_observer.clone(),
+            })
     }
 
     fn enqueue_batch(
@@ -298,6 +334,8 @@ impl ResidentEmbeddingClient {
 #[cfg(feature = "resident-embedding-pool-experiment")]
 pub struct ResidentEmbeddingRequest {
     pending: PendingEmbeddingRequest,
+    priority: EmbeddingPriority,
+    observer: Option<Arc<dyn ResidentEmbeddingTelemetryObserver>>,
 }
 
 #[cfg(feature = "resident-embedding-pool-experiment")]
@@ -306,7 +344,11 @@ impl ResidentEmbeddingRequest {
         self,
         is_cancelled: impl Fn() -> bool,
     ) -> Result<(Vec<EmbeddingVector>, EmbeddingTelemetry), EmbeddingError> {
-        self.pending.wait_with_cancel(is_cancelled)
+        let result = self.pending.wait_with_cancel(is_cancelled)?;
+        if let Some(observer) = &self.observer {
+            observer.observe(self.priority, &result.1)?;
+        }
+        Ok(result)
     }
 }
 

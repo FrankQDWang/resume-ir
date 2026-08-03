@@ -1,5 +1,37 @@
 # Progress
 
+## Issue #341 direct resident observer prerequisite
+
+The merged report contract requires a direct maximum interactive resident queue
+wait; client end-to-end latency cannot substitute for it. This default-off
+prerequisite therefore adds only an owner-file observer behind
+`resident-embedding-pool-experiment`. Ordinary builds and runs keep no observer,
+and supplying the owner-file environment selector without an explicit pool arm
+fails closed. No IPC, diagnostics, persistence, model, input, Batch or production
+topology contract changes.
+
+The separate interactive resident reports only completed content-free telemetry
+through a bounded feature-only observer. Its callback updates memory without
+performing query-path I/O. Each completed bulk request then atomically publishes
+a mode-0600 owner file containing aggregate bulk counters plus at most 512 direct
+interactive queue-wait samples and their retained sequence boundary. The file
+contains no inputs, queries, results, IDs, vectors, paths, PIDs or logs and is a
+temporary runner input, never a public report.
+
+Default and feature-enabled embedder suites pass all 14 and 16 tests. The daemon
+observer fixture and pool-composition test pass, as do warnings-denied Clippy in
+default and feature builds. Both complete daemon unit-suite attempts reached the
+unchanged `unconsumed_install_timeout_withdraws_and_allows_the_next_publication`
+timing assertion and stopped with 112/113 or 114/115 passing; its exact default
+and feature reruns pass. An earlier clean-main reproduction had reused this
+checkout's Cargo target directory and baked its subsequently removed temporary
+path into test binaries. Cleaning the complete derived Cargo cache rebuilt every
+test against this checkout and removed those stale-path failures. The ensuing
+full verifier advanced through those tests, then stopped only at the unchanged
+`parser-pdf` zero-millisecond timeout race: the full-suite attempt observed
+`Corrupted` instead of `Timeout`, while its exact rerun passed. No source,
+threshold or unrelated timing code is changed.
+
 ## Issue #341 resident-pool report contract
 
 The default-off runtime and daemon prerequisites merged through PRs #347 and

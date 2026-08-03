@@ -2,6 +2,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(feature = "resident-embedding-pool-experiment")]
+use embedder::ResidentEmbeddingTelemetryObserver;
 use embedder::{
     EmbeddingBudget, EmbeddingError, EmbeddingInput, EmbeddingPriority, EmbeddingVector,
     LocalEmbeddingCommandSpec, ResidentEmbeddingClient, ResidentEmbeddingOwner,
@@ -17,6 +19,12 @@ use crate::daemon_error::{DaemonError, Result};
 #[cfg(feature = "resident-embedding-pool-experiment")]
 use crate::run_options::ResidentEmbeddingPoolArm;
 use crate::run_options::{usage, RunOptions};
+
+#[cfg(feature = "resident-embedding-pool-experiment")]
+#[path = "embedding_pool.rs"]
+mod embedding_pool;
+#[cfg(feature = "resident-embedding-pool-experiment")]
+use embedding_pool::ResidentPoolObserver;
 
 pub(crate) enum ResidentEmbeddingTopologyOwner {
     Shared(ResidentEmbeddingOwner),
@@ -112,7 +120,10 @@ pub(crate) fn start(options: &mut RunOptions) -> Result<Option<ResidentEmbedding
             .map_err(DaemonError::embedding)?;
     let inference_threads = ImportResourcePolicy::detect().parse_workers.get();
     #[cfg(feature = "resident-embedding-pool-experiment")]
-    let started = match options.resident_embedding_pool_arm {
+    let experiment_observer =
+        ResidentPoolObserver::from_environment(options.resident_embedding_pool_arm.is_some())?;
+    #[cfg(feature = "resident-embedding-pool-experiment")]
+    let mut started = match options.resident_embedding_pool_arm {
         Some(ResidentEmbeddingPoolArm::I3Bulk1x4B4) => start_pool(command, &[4]),
         Some(ResidentEmbeddingPoolArm::I3Bulk2x2B4) => start_pool(command, &[2, 2]),
         Some(ResidentEmbeddingPoolArm::I3Bulk2x3B4) => start_pool(command, &[3, 3]),
@@ -120,11 +131,20 @@ pub(crate) fn start(options: &mut RunOptions) -> Result<Option<ResidentEmbedding
     }?;
     #[cfg(not(feature = "resident-embedding-pool-experiment"))]
     let started = start_shared(command, inference_threads)?;
+    #[cfg(feature = "resident-embedding-pool-experiment")]
+    if let Some(observer) = &experiment_observer {
+        let telemetry_observer: Arc<dyn ResidentEmbeddingTelemetryObserver> = observer.clone();
+        started.interactive_client = started
+            .interactive_client
+            .with_pool_experiment_telemetry_observer(telemetry_observer);
+    }
 
     options.search_vectorization =
         SearchPublicationVectorization::enabled(Arc::new(ResidentPublicationVectorizer::new(
             started.publication_clients.clone(),
             options.embedding_timeout_ms,
+            #[cfg(feature = "resident-embedding-pool-experiment")]
+            experiment_observer,
         )));
     options.resident_embedding = Some(started.interactive_client);
     options.publication_resident_embeddings = started.publication_clients;
@@ -188,6 +208,8 @@ struct ResidentPublicationVectorizer {
     clients: Vec<ResidentEmbeddingClient>,
     timeout_ms: u64,
     telemetry: [AtomicU64; Metric::Count as usize],
+    #[cfg(feature = "resident-embedding-pool-experiment")]
+    experiment_observer: Option<Arc<ResidentPoolObserver>>,
 }
 
 #[repr(usize)]
@@ -278,7 +300,13 @@ impl SearchPublicationVectorizer for ResidentPublicationVectorizer {
 }
 
 impl ResidentPublicationVectorizer {
-    fn new(clients: Vec<ResidentEmbeddingClient>, timeout_ms: u64) -> Self {
+    fn new(
+        clients: Vec<ResidentEmbeddingClient>,
+        timeout_ms: u64,
+        #[cfg(feature = "resident-embedding-pool-experiment")] experiment_observer: Option<
+            Arc<ResidentPoolObserver>,
+        >,
+    ) -> Self {
         assert!(
             !clients.is_empty(),
             "resident vectorizer requires one client"
@@ -287,6 +315,8 @@ impl ResidentPublicationVectorizer {
             clients,
             timeout_ms,
             telemetry: std::array::from_fn(|_| AtomicU64::new(0)),
+            #[cfg(feature = "resident-embedding-pool-experiment")]
+            experiment_observer,
         }
     }
 
@@ -306,7 +336,8 @@ impl ResidentPublicationVectorizer {
         if self.clients.len() > 1 {
             return self.embed_pool_batch(inputs, is_cancelled);
         }
-        self.primary_client()
+        let (outputs, telemetry) = self
+            .primary_client()
             .embed_batch_with_telemetry(
                 EmbeddingPriority::Background,
                 inputs,
@@ -314,11 +345,9 @@ impl ResidentPublicationVectorizer {
                 self.timeout_ms,
                 is_cancelled,
             )
-            .map(|(outputs, telemetry)| {
-                self.record_telemetry(&telemetry);
-                outputs
-            })
-            .map_err(Self::map_error)
+            .map_err(Self::map_error)?;
+        self.record_telemetry(&telemetry)?;
+        Ok(outputs)
     }
 
     #[cfg(feature = "resident-embedding-pool-experiment")]
@@ -349,13 +378,16 @@ impl ResidentPublicationVectorizer {
             let (batch, telemetry) = request
                 .wait_with_cancel(is_cancelled)
                 .map_err(Self::map_error)?;
-            self.record_telemetry(&telemetry);
+            self.record_telemetry(&telemetry)?;
             outputs.extend(batch);
         }
         Ok(outputs)
     }
 
-    fn record_telemetry(&self, telemetry: &embedding_protocol::EmbeddingTelemetry) {
+    fn record_telemetry(
+        &self,
+        telemetry: &embedding_protocol::EmbeddingTelemetry,
+    ) -> std::result::Result<(), SearchPublicationEmbeddingFailure> {
         for (metric, value) in [
             (Metric::Calls, 1),
             (Metric::Inputs, telemetry.input_count),
@@ -372,6 +404,13 @@ impl ResidentPublicationVectorizer {
         ] {
             self.add(metric, value);
         }
+        #[cfg(feature = "resident-embedding-pool-experiment")]
+        if let Some(observer) = &self.experiment_observer {
+            observer
+                .record_bulk(telemetry)
+                .map_err(|_| SearchPublicationEmbeddingFailure::RuntimeUnavailable)?;
+        }
+        Ok(())
     }
 
     fn map_error(error: EmbeddingError) -> SearchPublicationEmbeddingFailure {
@@ -426,6 +465,7 @@ mod tests {
         let vectorizer = Arc::new(ResidentPublicationVectorizer::new(
             started.publication_clients.clone(),
             /*timeout_ms*/ 2_000,
+            None,
         ));
         assert_eq!(vectorizer.max_batch_inputs(), 8);
         let inputs = (0..8)
