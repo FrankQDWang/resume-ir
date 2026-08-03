@@ -1,5 +1,21 @@
 # Progress
 
+## Issue #341 blocked rollback: public matrix runner removed
+
+Exact merged-main smoke never produced an acceptable report. Attested branch
+and exact-main attempts reached the fixed resident-pool sessions without a
+functional recovery error, but the unchanged external host-load guard
+invalidated every matrix. A separate 120-second observation reproduced the
+same host-load failure while thermal state remained nominal. No formal or
+private matrix ran, and no throughput, latency, memory, confidence-interval or
+winner claim exists.
+
+The first reverse rollback removes the local public matrix orchestrator and its
+performance-contract self-test hook. It does not change Rust or the production
+shared-three-thread resident. The lower experiment-only support, observer,
+report and runtime composition layers remain only until their ordered rollback
+PRs land.
+
 ## Issue #341 resident-pool public matrix runner
 
 The bounded local runner now composes the frozen one-control/two-candidate
