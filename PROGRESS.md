@@ -1,5 +1,71 @@
 # Progress
 
+## Issue #372 fixed B4x512 production-migration contract
+
+Issue #371 closed without claiming its pre-registered comparative NDCG, MRR or
+Recall gate. The available installed index had different corpus and build
+provenance, so its attempted comparison was invalidated rather than published.
+The product owner then explicitly directed a current-candidate result sanity
+decision and accepted the small fixed-route numerical drift for production
+migration. #372 is the bounded migration owner; it does not retroactively mark
+#371's comparative retrieval-equivalence gate as passed.
+
+The retained local aggregate shows the candidate completed the OCR-enabled
+8,720-document no-OCR-drain endpoint in 513.675 seconds versus the retained
+#364 baseline of 610.483 seconds: a 15.858% wall-time reduction and 18.847%
+throughput increase. Counts remained 8,720 discovered, 7,328 searchable and
+indexed, 265 OCR queued, 4 failed, 49 ignored and 0 scan errors. The earlier
+public-synthetic signal was a 7.319% mean wall reduction, equivalent to 7.90%
+higher throughput, with a 6.645% median reduction. The conservative three-
+resident footprint was 1,781.191 MiB, below the persistent 3,072 MiB limit.
+
+Two authorized real queries were run against the completed candidate index in
+both semantic and hybrid modes. All four searches returned successful,
+non-partial, non-empty results and manual inspection found no obvious top-result
+relevance anomaly. This is an owner-directed product sanity decision, not a
+comparative NDCG/MRR/Recall or `query_hot_path` claim. Raw queries, filenames,
+snippets, selections, paths and temporary indexes stayed local and were deleted
+after inspection.
+
+The production migration remains limited to a second fixed B4x512 Session in
+the existing bulk role. Only actual B4x512 tensors select it; B1, B2, B3,
+non-512 and all other modes retain the dynamic Session. Model ID, tokenizer,
+inputs, pooling, Batch composition/order, memory-pattern and CPU-arena policy,
+resident topology, threads, IPC, persistence, indexing and OCR are unchanged.
+
+## Issue #371 fixed B4x512 retrieval-equivalence closeout
+
+#369 established that a bulk-only fixed B4x512 Session is not elementwise
+identical to the dynamic Session, but also established a real performance
+signal: mean wall time fell 7.319%, equivalent to 7.90% higher throughput, and
+median wall time fell 6.645%. The product owner then clarified that small
+numerical drift is acceptable when actual retrieval quality remains effectively
+unchanged. #371 therefore replaces the exact-vector acceptance gate with a
+retrieval-equivalence gate; it does not retroactively claim #369 succeeded.
+
+The single implementation variable remains the fixed B4x512 bulk Session.
+Interactive B1 queries, the dynamic fallback, model ID, tokenizer, prefixes,
+whole-head 512, Dynamic U8S8, pooling, Batch grouping/order, memory patterns,
+CPU arena, topology and lifecycle remain fixed. Small fixed-route vector drift
+is reported as a diagnostic. Acceptance requires both semantic and hybrid
+real-query NDCG@10, MRR@10 and Recall@20 to remain within 1% relative of the
+control, with no query failure or zero-result regression. Top-10 overlap and
+rank movement are stability diagnostics, not substitutes for relevance.
+
+Only after the synthetic performance/resource checks pass may the candidate
+run the OCR-enabled 8,720-document product import, using the #364 610.483-second
+result as the retained baseline. It must reach the same aggregate endpoint in
+at most 579.959 seconds and remain under the persistent 3,072 MiB H2 physical-
+footprint budget. Failure removes the candidate; success may only open a
+separate production migration issue. Public evidence remains bounded redacted
+aggregates, while queries, results, vectors, paths and indexes stay local.
+
+The planned comparative quality matrix was not completed because the only
+available old installed index was not a valid control. Issue #371 closed as
+superseded with `follow_up_issue_linked` to #372. No comparative quality metric
+is claimed; the owner-approved production decision is recorded separately
+above.
+
 ## Issue #369 bulk fixed B4x512 negative closeout
 
 Issue #369 tested one fixed-shape ONNX Runtime hypothesis after rejecting the
@@ -13,8 +79,9 @@ resident topology and three-thread policy were fixed.
 The focused RED/GREEN tests passed after implementation, and the release
 public-synthetic comparison showed a real compute improvement. Across 100
 exact B4x512 repetitions, control mean wall time was 301.001 ms and candidate
-mean was 278.972 ms, a 7.90% reduction. Median fell from 300.135 ms to
-280.192 ms, a 6.645% reduction. Candidate Ready time rose from 685.543 ms to
+mean was 278.972 ms, a 7.319% reduction and equivalent 7.90% throughput
+increase. Median fell from 300.135 ms to 280.192 ms, a 6.645% reduction.
+Candidate Ready time rose from 685.543 ms to
 822.779 ms. Its 662.798 MiB physical-footprint peak implies a conservative
 1,781.191 MiB total with the retained 455.595 MiB interactive resident and two
 candidate bulk residents, below the persistent 3,072 MiB H2 budget.
