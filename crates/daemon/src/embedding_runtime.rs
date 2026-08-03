@@ -114,7 +114,7 @@ pub(crate) fn start(options: &mut RunOptions) -> Result<Option<ResidentEmbedding
             .map_err(DaemonError::embedding)?;
     let inference_threads = ImportResourcePolicy::detect().parse_workers.get();
     #[cfg(feature = "resident-embedding-pool-experiment")]
-    let started = match options.resident_embedding_pool_arm {
+    let started = match selected_pool_arm(options.resident_embedding_pool_arm) {
         Some(ResidentEmbeddingPoolArm::I3Bulk1x4B4) => start_pool(command, &[4]),
         Some(ResidentEmbeddingPoolArm::I3Bulk2x2B4) => start_pool(command, &[2, 2]),
         Some(ResidentEmbeddingPoolArm::I3Bulk2x3B4) => start_pool(command, &[3, 3]),
@@ -131,6 +131,23 @@ pub(crate) fn start(options: &mut RunOptions) -> Result<Option<ResidentEmbedding
     options.resident_embedding = Some(started.interactive_client);
     options.publication_resident_embeddings = started.publication_clients;
     Ok(Some(started.owner))
+}
+
+#[cfg(feature = "resident-embedding-pool-experiment")]
+fn selected_pool_arm(
+    configured: Option<ResidentEmbeddingPoolArm>,
+) -> Option<ResidentEmbeddingPoolArm> {
+    if configured.is_some() {
+        return configured;
+    }
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        Some(ResidentEmbeddingPoolArm::I3Bulk2x3B4)
+    }
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+    {
+        None
+    }
 }
 
 fn start_shared(
@@ -424,7 +441,23 @@ mod tests {
     use import_pipeline::{SearchPublicationEmbeddingInput, SearchPublicationVectorizer as _};
     use tempfile::TempDir;
 
-    use super::{start_pool, ResidentPublicationVectorizer};
+    use super::{selected_pool_arm, start_pool, ResidentPublicationVectorizer};
+
+    #[test]
+    fn production_default_selects_the_winning_pool_only_on_macos_arm() {
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        assert_eq!(
+            selected_pool_arm(None),
+            Some(super::ResidentEmbeddingPoolArm::I3Bulk2x3B4)
+        );
+        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        assert_eq!(selected_pool_arm(None), None);
+
+        assert_eq!(
+            selected_pool_arm(Some(super::ResidentEmbeddingPoolArm::I3Bulk2x2B4)),
+            Some(super::ResidentEmbeddingPoolArm::I3Bulk2x2B4)
+        );
+    }
 
     #[test]
     fn two_bulk_residents_run_complete_b4s_concurrently_and_reassemble_in_order() {

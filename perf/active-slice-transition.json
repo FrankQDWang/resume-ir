@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-342-to-341-fixed-b4-resident-pool-2026-08-03",
-  "from_issue": "#342",
-  "to_issue": "#341",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/342#issuecomment-5162032649",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/341#issuecomment-5162039221",
-  "base_active_goal_sha256": "372aa4e429d39a9cb5fbfe2d7b0912f2eeccc6f6e140dc69a6b22982af7c7d75",
+  "transition_id": "issue-341-to-360-resident-pool-production-migration-2026-08-03",
+  "from_issue": "#341",
+  "to_issue": "#360",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/341#issuecomment-5164156287",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/360",
+  "base_active_goal_sha256": "7f7474e0ccc4cd94aa3d0384e8d65674f9e30938953c22d2054be13e8ccbdbe6",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
@@ -14,7 +14,7 @@
     "perf/fixtures/valid/synthetic-smoke-baseline-report.json"
   ],
   "bootstrap_gate_change": false,
-  "production_code_changed": false,
+  "production_code_changed": true,
   "blind_holdout_reread": false,
   "gate_weakening": false,
   "privacy": {

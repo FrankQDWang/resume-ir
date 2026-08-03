@@ -10,7 +10,7 @@ name = "resume-embedding-runtime"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["resident-embedding-pool-experiment"]
 resident-embedding-pool-experiment = []
 
 [dependencies]
