@@ -1,5 +1,35 @@
 # Progress
 
+## Issue #375 CPU INT4 weight-only bulk-embedding experiment contract
+
+#375 is the only active performance slice after #372 landed the fixed B4x512
+bulk Session and established the exact current-main OCR-enabled 8,720-document
+non-OCR endpoint at 513.675 seconds. The new L1 hypothesis changes only the
+model weight representation: one exact upstream revision is Transformer-
+preoptimized and quantized as symmetric INT4 weight-only QOperator
+`MatMulNBits` with block size 128 for CPU EP execution.
+
+The public-synthetic B4x512 entry gate requires at least 10% throughput
+improvement, bounded finite normalized vectors, coherent token accounting,
+unchanged order and lifecycle semantics, and a conservative process-tree
+private or anonymous peak no higher than 3,072 MiB. Only a passing synthetic
+candidate may read the authorized private corpus.
+
+The product gate reuses the retained baseline only after exact `main` and
+workload reconciliation. OCR remains enabled throughout the complete managed-
+daemon import. Completion is the existing no-OCR-drain endpoint: all non-OCR
+work is complete while a durable OCR backlog may remain. The candidate must
+finish at or below 472.581 seconds, at least 8% below 513.675 seconds, with
+coherent aggregate counts.
+
+At least ten authorized real queries must then succeed against the candidate
+index in both semantic and hybrid modes. Manual review checks for failures,
+partial or empty responses and obvious relevance anomalies; it is not an NDCG
+benchmark or a `query_hot_path` claim. Raw queries, results, paths, resume text,
+tokens, vectors, logs, private hashes, indexes and model artifacts remain local.
+Any failed gate removes the experiment capability and artifact; a winner may
+only open a separate production-migration Issue.
+
 ## Issue #372 fixed B4x512 production-migration contract
 
 Issue #371 closed without claiming its pre-registered comparative NDCG, MRR or
