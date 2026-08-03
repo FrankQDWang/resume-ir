@@ -29,8 +29,8 @@ mod runtime_pack;
 
 use batch::{mean_pool_batch, tokenized_batch};
 use profiling::{
-    parse_run_mode, MemoryPatternPolicy, ProfilingMode, ResidentMode, ResidentThreadPolicy,
-    RunMode, PROFILE_OUTPUT_PREFIX_ENV,
+    parse_run_mode, FixedShapePolicy, MemoryPatternPolicy, ProfilingMode, ResidentMode,
+    ResidentThreadPolicy, RunMode, PROFILE_OUTPUT_PREFIX_ENV,
 };
 #[cfg(test)]
 use runtime_pack::AssetIdentity;
@@ -109,6 +109,7 @@ fn run_resident(mode: ResidentMode) -> Result<(), RuntimeError> {
         profiling,
         thread_policy,
         memory_pattern,
+        fixed_shape,
     } = mode;
     let environment = ResidentEnvironment::read(thread_policy)?;
     let pack = RuntimePack::load(&environment.runtime_dir)?;
@@ -124,6 +125,7 @@ fn run_resident(mode: ResidentMode) -> Result<(), RuntimeError> {
         environment.intra_threads,
         profiling,
         memory_pattern,
+        fixed_shape,
     )?;
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -262,6 +264,7 @@ fn initialize_model(
         intra_threads,
         profiling,
         MemoryPatternPolicy::Disabled,
+        FixedShapePolicy::Disabled,
     )
 }
 
@@ -271,6 +274,7 @@ fn initialize_model_from_path(
     intra_threads: usize,
     profiling: ProfilingMode,
     memory_pattern: MemoryPatternPolicy,
+    fixed_shape: FixedShapePolicy,
 ) -> Result<NativeEmbeddingModel, RuntimeError> {
     if !ort::init_from(pack.file(FileRole::RuntimeLibrary)?)
         .map_err(|_| RuntimeError::RuntimeUnavailable)?
@@ -279,7 +283,14 @@ fn initialize_model_from_path(
         return Err(RuntimeError::RuntimeUnavailable);
     }
     tokenizers::utils::parallelism::set_parallelism(false);
-    NativeEmbeddingModel::load(pack, model_path, intra_threads, profiling, memory_pattern)
+    NativeEmbeddingModel::load(
+        pack,
+        model_path,
+        intra_threads,
+        profiling,
+        memory_pattern,
+        fixed_shape,
+    )
 }
 
 fn prefixed_text(input: &EmbeddingRuntimeInput) -> String {
@@ -302,6 +313,7 @@ fn prefixed_resident_text(role: EmbeddingRole, text: &str) -> String {
 struct NativeEmbeddingModel {
     tokenizer: Tokenizer,
     session: Session,
+    fixed_b4x512_session: Option<Session>,
     need_token_type_ids: bool,
     profiling: ProfilingMode,
 }
@@ -313,49 +325,55 @@ impl NativeEmbeddingModel {
         intra_threads: usize,
         profiling: ProfilingMode,
         memory_pattern: MemoryPatternPolicy,
+        fixed_shape: FixedShapePolicy,
     ) -> Result<Self, RuntimeError> {
         let builder_error = |_| RuntimeError::ModelUnavailable;
-        let builder = Session::builder()
-            .map_err(|_| RuntimeError::ModelUnavailable)?
-            .with_execution_providers([CPU::default().with_arena_allocator(false).build()])
-            .map_err(builder_error)?
-            .with_optimization_level(GraphOptimizationLevel::Level3)
-            .map_err(builder_error)?
-            .with_memory_pattern(memory_pattern.enabled())
-            .map_err(builder_error)?
-            .with_prepacking(false)
-            .map_err(builder_error)?
-            .with_parallel_execution(false)
-            .map_err(builder_error)?
-            .with_intra_threads(intra_threads)
-            .map_err(builder_error)?
-            .with_inter_threads(1)
-            .map_err(builder_error)?;
+        let build_session = || {
+            Session::builder()
+                .map_err(|_| RuntimeError::ModelUnavailable)?
+                .with_execution_providers([CPU::default().with_arena_allocator(false).build()])
+                .map_err(builder_error)?
+                .with_optimization_level(GraphOptimizationLevel::Level3)
+                .map_err(builder_error)?
+                .with_memory_pattern(memory_pattern.enabled())
+                .map_err(builder_error)?
+                .with_prepacking(false)
+                .map_err(builder_error)?
+                .with_parallel_execution(false)
+                .map_err(builder_error)?
+                .with_intra_threads(intra_threads)
+                .map_err(builder_error)?
+                .with_inter_threads(1)
+                .map_err(builder_error)
+        };
+        let builder = build_session()?;
         let session = profiling
             .configure_builder(builder)?
             .commit_from_file(model_path)
             .map_err(|_| RuntimeError::ModelUnavailable)?;
-        let need_token_type_ids = session
-            .inputs()
-            .iter()
-            .any(|input| input.name() == "token_type_ids");
-        let required_inputs = ["input_ids", "attention_mask"];
-        if required_inputs.iter().any(|required| {
-            !session
-                .inputs()
-                .iter()
-                .any(|input| input.name() == *required)
-        }) || !session
-            .outputs()
-            .iter()
-            .any(|output| output.name() == "last_hidden_state")
-        {
-            return Err(RuntimeError::ModelUnavailable);
+        let need_token_type_ids = validate_session_contract(&session)?;
+        let fixed_b4x512_session = fixed_shape
+            .enabled()
+            .then(|| {
+                build_session()?
+                    .with_dimension_override("batch_size", 4)
+                    .map_err(builder_error)?
+                    .with_dimension_override("sequence_length", 512)
+                    .map_err(builder_error)?
+                    .commit_from_file(model_path)
+                    .map_err(|_| RuntimeError::ModelUnavailable)
+            })
+            .transpose()?;
+        if let Some(fixed_session) = &fixed_b4x512_session {
+            if validate_session_contract(fixed_session)? != need_token_type_ids {
+                return Err(RuntimeError::ModelUnavailable);
+            }
         }
         let tokenizer = load_tokenizer(pack)?;
         Ok(Self {
             tokenizer,
             session,
+            fixed_b4x512_session,
             need_token_type_ids,
             profiling,
         })
@@ -419,6 +437,34 @@ impl NativeEmbeddingModel {
     }
 }
 
+fn validate_session_contract(session: &Session) -> Result<bool, RuntimeError> {
+    let required_inputs = ["input_ids", "attention_mask"];
+    if required_inputs.iter().any(|required| {
+        !session
+            .inputs()
+            .iter()
+            .any(|input| input.name() == *required)
+    }) || !session
+        .outputs()
+        .iter()
+        .any(|output| output.name() == "last_hidden_state")
+    {
+        return Err(RuntimeError::ModelUnavailable);
+    }
+    Ok(session
+        .inputs()
+        .iter()
+        .any(|input| input.name() == "token_type_ids"))
+}
+
+fn use_fixed_b4x512_session(
+    input_count: usize,
+    sequence_length: usize,
+    fixed_session_available: bool,
+) -> bool {
+    fixed_session_available && input_count == 4 && sequence_length == 512
+}
+
 impl ResidentBatchModel for NativeEmbeddingModel {
     fn embed_resident_batch(
         &mut self,
@@ -457,6 +503,11 @@ impl ResidentBatchModel for NativeEmbeddingModel {
             .flatten()
             .copied()
             .collect::<Vec<_>>();
+        let use_fixed_session = use_fixed_b4x512_session(
+            texts.len(),
+            tokenized.sequence_length,
+            self.fixed_b4x512_session.is_some(),
+        );
         let mut inputs = ort::inputs![
             "input_ids" => Tensor::from_array((
                 [texts.len(), tokenized.sequence_length],
@@ -483,8 +534,14 @@ impl ResidentBatchModel for NativeEmbeddingModel {
         let tensor = phase_started.elapsed();
 
         let phase_started = Instant::now();
-        let outputs = self
-            .session
+        let session = if use_fixed_session {
+            self.fixed_b4x512_session
+                .as_mut()
+                .ok_or(RuntimeError::RuntimeUnavailable)?
+        } else {
+            &mut self.session
+        };
+        let outputs = session
             .run(inputs)
             .map_err(|_| RuntimeError::InferenceFailed)?;
         let (shape, values) = outputs

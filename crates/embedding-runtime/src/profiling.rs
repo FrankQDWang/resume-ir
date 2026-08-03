@@ -17,6 +17,7 @@ pub(super) struct ResidentMode {
     pub(super) profiling: ProfilingMode,
     pub(super) thread_policy: ResidentThreadPolicy,
     pub(super) memory_pattern: MemoryPatternPolicy,
+    pub(super) fixed_shape: FixedShapePolicy,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +44,23 @@ impl MemoryPatternPolicy {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum FixedShapePolicy {
+    Disabled,
+    #[cfg(feature = "resident-embedding-pool-experiment")]
+    BulkB4x512,
+}
+
+impl FixedShapePolicy {
+    pub(super) fn enabled(self) -> bool {
+        match self {
+            Self::Disabled => false,
+            #[cfg(feature = "resident-embedding-pool-experiment")]
+            Self::BulkB4x512 => true,
+        }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum ProfilingMode {
     Disabled,
@@ -59,6 +77,7 @@ pub(super) fn parse_run_mode(
             profiling: ProfilingMode::Disabled,
             thread_policy: ResidentThreadPolicy::Production,
             memory_pattern: MemoryPatternPolicy::Disabled,
+            fixed_shape: FixedShapePolicy::Disabled,
         })),
         [mode] if mode == "--resident-profile" => {
             let output_prefix = validate_output_prefix(
@@ -68,6 +87,7 @@ pub(super) fn parse_run_mode(
                 profiling: ProfilingMode::OperatorTrace(output_prefix),
                 thread_policy: ResidentThreadPolicy::Production,
                 memory_pattern: MemoryPatternPolicy::Disabled,
+                fixed_shape: FixedShapePolicy::Disabled,
             }))
         }
         #[cfg(feature = "resident-embedding-pool-experiment")]
@@ -76,6 +96,7 @@ pub(super) fn parse_run_mode(
                 profiling: ProfilingMode::Disabled,
                 thread_policy: ResidentThreadPolicy::PoolExperiment,
                 memory_pattern: MemoryPatternPolicy::Disabled,
+                fixed_shape: FixedShapePolicy::Disabled,
             }))
         }
         #[cfg(feature = "resident-embedding-pool-experiment")]
@@ -87,6 +108,7 @@ pub(super) fn parse_run_mode(
                 profiling: ProfilingMode::Disabled,
                 thread_policy: ResidentThreadPolicy::PoolExperiment,
                 memory_pattern: MemoryPatternPolicy::Disabled,
+                fixed_shape: FixedShapePolicy::Disabled,
             }))
         }
         #[cfg(feature = "resident-embedding-pool-experiment")]
@@ -98,6 +120,7 @@ pub(super) fn parse_run_mode(
                 profiling: ProfilingMode::Disabled,
                 thread_policy: ResidentThreadPolicy::PoolExperiment,
                 memory_pattern: MemoryPatternPolicy::Enabled,
+                fixed_shape: FixedShapePolicy::BulkB4x512,
             }))
         }
         _ => Err(RuntimeError::EnvironmentInvalid),

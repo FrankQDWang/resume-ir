@@ -32,6 +32,7 @@ fn ordinary_modes_do_not_read_profile_output() {
             profiling: ProfilingMode::Disabled,
             thread_policy: ResidentThreadPolicy::Production,
             memory_pattern: MemoryPatternPolicy::Disabled,
+            fixed_shape: FixedShapePolicy::Disabled,
         })
     );
     assert!(!read.get());
@@ -48,6 +49,7 @@ fn profiling_mode_requires_a_new_absolute_prefix_in_a_real_directory() {
             profiling: ProfilingMode::OperatorTrace(prefix.clone()),
             thread_policy: ResidentThreadPolicy::Production,
             memory_pattern: MemoryPatternPolicy::Disabled,
+            fixed_shape: FixedShapePolicy::Disabled,
         })
     );
 
@@ -71,6 +73,7 @@ fn pool_mode_is_explicit_and_does_not_read_profile_output() {
             profiling: ProfilingMode::Disabled,
             thread_policy: ResidentThreadPolicy::PoolExperiment,
             memory_pattern: MemoryPatternPolicy::Disabled,
+            fixed_shape: FixedShapePolicy::Disabled,
         })
     );
     assert!(!read.get());
@@ -78,7 +81,7 @@ fn pool_mode_is_explicit_and_does_not_read_profile_output() {
 
 #[cfg(feature = "resident-embedding-pool-experiment")]
 #[test]
-fn only_the_bulk_pool_role_enables_memory_patterns() {
+fn only_the_bulk_pool_role_enables_memory_patterns_and_fixed_shape() {
     let parse_role = |role: &str| {
         parse_run_mode(
             &[
@@ -96,6 +99,7 @@ fn only_the_bulk_pool_role_enables_memory_patterns() {
             profiling: ProfilingMode::Disabled,
             thread_policy: ResidentThreadPolicy::PoolExperiment,
             memory_pattern: MemoryPatternPolicy::Disabled,
+            fixed_shape: FixedShapePolicy::Disabled,
         })
     );
     assert_eq!(
@@ -104,6 +108,7 @@ fn only_the_bulk_pool_role_enables_memory_patterns() {
             profiling: ProfilingMode::Disabled,
             thread_policy: ResidentThreadPolicy::PoolExperiment,
             memory_pattern: MemoryPatternPolicy::Enabled,
+            fixed_shape: FixedShapePolicy::BulkB4x512,
         })
     );
 }
