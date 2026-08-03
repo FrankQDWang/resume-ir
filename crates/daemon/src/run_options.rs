@@ -19,26 +19,6 @@ const DEFAULT_OCR_PAGE_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT: u32 = 100;
 const DEFAULT_EMBEDDING_TIMEOUT_MS: u64 = 30_000;
 
-#[cfg(feature = "resident-role-isolation-experiment")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ResidentRoleIsolationArm {
-    SharedI3B4,
-    SplitI3Bulk3B4,
-    SplitI3Bulk4B4,
-}
-
-#[cfg(feature = "resident-role-isolation-experiment")]
-impl ResidentRoleIsolationArm {
-    fn parse(value: &str) -> Option<Self> {
-        match value {
-            "shared_i3_b4" => Some(Self::SharedI3B4),
-            "split_i3_bulk3_b4" => Some(Self::SplitI3Bulk3B4),
-            "split_i3_bulk4_b4" => Some(Self::SplitI3Bulk4B4),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Clone)]
 pub(crate) struct RunOptions {
     pub(crate) foreground: bool,
@@ -78,9 +58,6 @@ pub(crate) struct RunOptions {
     pub(crate) embedding_dimension: Option<usize>,
     pub(crate) embedding_timeout_ms: u64,
     pub(crate) resident_embedding: Option<ResidentEmbeddingClient>,
-    pub(crate) publication_resident_embedding: Option<ResidentEmbeddingClient>,
-    #[cfg(feature = "resident-role-isolation-experiment")]
-    pub(crate) resident_role_isolation_arm: Option<ResidentRoleIsolationArm>,
     pub(crate) search_vectorization: SearchPublicationVectorization,
     pub(crate) worker_interval_ms: Option<u64>,
     pub(crate) max_worker_ticks: Option<usize>,
@@ -126,9 +103,6 @@ impl Default for RunOptions {
             embedding_dimension: None,
             embedding_timeout_ms: DEFAULT_EMBEDDING_TIMEOUT_MS,
             resident_embedding: None,
-            publication_resident_embedding: None,
-            #[cfg(feature = "resident-role-isolation-experiment")]
-            resident_role_isolation_arm: None,
             search_vectorization: SearchPublicationVectorization::default(),
             worker_interval_ms: None,
             max_worker_ticks: None,
@@ -344,18 +318,6 @@ pub(crate) fn parse(args: &[String]) -> Result<RunOptions> {
                 options.embedding_timeout_ms = positive_u64(args.get(index + 1))?;
                 index += 2;
             }
-            #[cfg(feature = "resident-role-isolation-experiment")]
-            "--resident-role-isolation-arm" => {
-                if options.resident_role_isolation_arm.is_some() {
-                    return Err(DaemonError::usage(usage()));
-                }
-                let value = non_empty(args.get(index + 1))?;
-                options.resident_role_isolation_arm = ResidentRoleIsolationArm::parse(&value);
-                if options.resident_role_isolation_arm.is_none() {
-                    return Err(DaemonError::usage(usage()));
-                }
-                index += 2;
-            }
             "--worker-interval-ms" => {
                 options.worker_interval_ms = Some(positive_u64(args.get(index + 1))?);
                 index += 2;
@@ -457,54 +419,7 @@ fn loopback_addr(value: &str) -> Result<SocketAddr> {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "resident-role-isolation-experiment")]
-    use super::ResidentRoleIsolationArm;
     use super::{parse, ParentLifecycleMode};
-
-    #[cfg(not(feature = "resident-role-isolation-experiment"))]
-    #[test]
-    fn ordinary_build_rejects_role_isolation_arm() {
-        assert!(parse(&[
-            "--foreground".into(),
-            "--resident-role-isolation-arm".into(),
-            "shared_i3_b4".into(),
-        ])
-        .is_err());
-    }
-
-    #[cfg(feature = "resident-role-isolation-experiment")]
-    #[test]
-    fn role_isolation_arm_parser_is_closed_and_single_assignment() {
-        for (value, expected) in [
-            ("shared_i3_b4", ResidentRoleIsolationArm::SharedI3B4),
-            (
-                "split_i3_bulk3_b4",
-                ResidentRoleIsolationArm::SplitI3Bulk3B4,
-            ),
-            (
-                "split_i3_bulk4_b4",
-                ResidentRoleIsolationArm::SplitI3Bulk4B4,
-            ),
-        ] {
-            let options = parse(&[
-                "--foreground".into(),
-                "--resident-role-isolation-arm".into(),
-                value.into(),
-            ])
-            .unwrap();
-            assert_eq!(options.resident_role_isolation_arm, Some(expected));
-        }
-        for values in [vec!["unknown"], vec!["shared_i3_b4", "split_i3_bulk3_b4"]] {
-            let mut args = vec!["--foreground".to_string()];
-            for value in values {
-                args.extend([
-                    "--resident-role-isolation-arm".to_string(),
-                    value.to_string(),
-                ]);
-            }
-            assert!(parse(&args).is_err());
-        }
-    }
 
     #[test]
     fn supervised_generation_requires_one_strict_launch_id() {
