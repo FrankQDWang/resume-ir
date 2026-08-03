@@ -1,5 +1,32 @@
 # Progress
 
+## Issue #341 resident-pool report contract
+
+The default-off runtime and daemon prerequisites merged through PRs #347 and
+#348 at `207c0f1358291fc7595dbbf5aa105ee1795ba071` and
+`601e01788edddb140dd460455d5c3105e1975697`. This slice adds only the closed
+public aggregate contract needed before a runner may measure those capabilities;
+it does not run a matrix or change the production shared-three-thread topology.
+
+The report fixes the three public arms, complete B4 grouping and ordinal
+dispatch, whole-head 512 input, model/runtime identity, 2 QPS interactive load,
+epoch-aware outcome classes, direct resident queue wait, private/anonymous
+process-tree memory and all lifecycle/correctness guards. It recomputes the 15%
+public throughput threshold, paired positive CI, 5%/10% p95/p99 limits, 200 ms
+queue limit and 1536 MiB resource ceiling, rejects non-finite or private data,
+and caps the aggregate at 64 KiB. The synthetic valid fixture is illustrative,
+not observed performance evidence. The focused checker passes all 23 negative
+mutations; no runner, smoke, formal matrix, private product claim or winner is
+included in this contract slice.
+
+Focused governance, performance, autonomous-goal, loop-state, privacy and diff
+checks pass. The full verifier stopped in the unchanged
+`installed_acceptance_holder_contends_with_production_publication_lock` test
+while preparing its temporary witness (`No such file or directory`). The exact
+test passed immediately on this branch and again in an untouched detached
+worktree at exact `origin/main` `601e017`; the failure did not reproduce and no
+Rust file or timing threshold is changed.
+
 ## Issue #341 resident-pool daemon composition
 
 The runtime-primitives prerequisite merged through PR #347 at
