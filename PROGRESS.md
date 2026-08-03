@@ -1,5 +1,37 @@
 # Progress
 
+## Issue #366 persistent product memory budgets doubled
+
+After #364 merged through PR #365, the user explicitly requested a separate
+long-lived repository resource-policy change rather than another experiment
+exception. #366 doubles the product and formal acceptance memory envelopes:
+H0/H1/H2 private-or-anonymous budgets are now 1,024/2,048/3,072 MiB, their
+Tantivy writer heaps are 128/256/512 MiB, first-scan daemon and first-import
+redlines are 512/1,536 MiB, the GUI RSS redline is 1,024 MiB, and the standalone
+full-text writer default is 100,000,000 bytes. Matching benchmark-runner,
+embedding-prepacking, OCR publication-load and mixed-import fixture values use
+the same doubled policy.
+
+This is not a performance claim and no private benchmark is part of the slice.
+The 12/20 GiB hardware-tier boundaries, parser/OCR/vector/agent/query
+concurrency, resident topology, models, index formats and query semantics stay
+unchanged. IPC framing, request/response/report, resume/query/model/PDF input,
+queue and other privacy or safety payload caps also remain unchanged. Historical
+measurements retain their originally observed resource values rather than being
+rewritten under the new policy.
+
+Focused validation passed the two import resource-policy boundary tests, the
+benchmark-runner hardware-profile boundary test, all 38 `index-fulltext` unit
+tests, all 11 embedding-prepacking helper self-tests, formatting, warnings-
+denied Clippy for every affected Rust crate, mixed-import contract validation
+and the performance/autonomous/loop/governance contract gates. The full
+`verify-local.sh` run passed contract, format, clippy, workspace,
+no-default-feature and closed-loop stages before reaching the existing native
+`s4_daemon` watcher test prerequisite. It stopped because the reviewed local
+classifier runtime pack is absent; the identical focused failure reproduced on
+untouched merged main `ece05f5e7001ffa573aa74e9c954b8fea1f18429`, so it is not
+caused by #366.
+
 ## Issue #364 bulk-only ONNX memory-pattern experiment result
 
 Issue #361 remains open with its exact 7,328-document query sample outstanding,

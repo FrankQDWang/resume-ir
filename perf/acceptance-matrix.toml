@@ -481,8 +481,8 @@ burst_100_files_converged_ms = 10000
 zero_change_content_open_count = 0
 zero_change_parse_count = 0
 zero_change_index_mutation_count = 0
-daemon_private_or_anonymous_peak_mb = 256
-first_import_private_or_anonymous_peak_mb = 768
+daemon_private_or_anonymous_peak_mb = 512
+first_import_private_or_anonymous_peak_mb = 1536
 content_bytes_read_must_report = true
 docs_per_second_must_report = true
 mib_per_second_must_report = true
@@ -619,25 +619,25 @@ h2_total_memory_gib_min_exclusive = 20
 content_read_concurrency = 1
 parser_concurrency = 1
 ocr_vector_concurrency = 0
-writer_heap_mb = 64
+writer_heap_mb = 128
 agent_concurrency = 2
-max_private_or_anonymous_mb = 512
+max_private_or_anonymous_mb = 1024
 
 [governor_profiles.H1_Balanced]
 content_read_concurrency = 2
 parser_concurrency = 2
 ocr_vector_concurrency = 1
-writer_heap_mb = 128
+writer_heap_mb = 256
 agent_concurrency = 8
-max_private_or_anonymous_mb = 1024
+max_private_or_anonymous_mb = 2048
 
 [governor_profiles.H2_Aggressive]
 content_read_concurrency = 4
 parser_concurrency = 3
 ocr_vector_concurrency = 4
-writer_heap_mb = 256
+writer_heap_mb = 512
 agent_concurrency = 16
-max_private_or_anonymous_mb = 1536
+max_private_or_anonymous_mb = 3072
 
 [governor_redlines]
 sample_window_seconds = 10
@@ -685,7 +685,7 @@ stable_card_height_required = true
 scroll_update_hz_min = 10
 interactive_search_qps_min = 10
 idle_cpu_pct_max = 5
-rss_mb_max = 512
+rss_mb_max = 1024
 cold_start_ms_max = 3000
 input_to_paint_p95_ms = 100
 frame_time_p95_ms = 16.7

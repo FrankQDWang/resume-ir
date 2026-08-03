@@ -71,8 +71,8 @@
   },
   "resource_budget": {
     "h_tier": "H0_Eco",
-    "aggregate_mb": 512,
-    "writer_heap_mb": 64,
+    "aggregate_mb": 1024,
+    "writer_heap_mb": 128,
     "parser_workers": 1
   },
   "privacy": {

@@ -136,12 +136,12 @@ pub(crate) const fn primary_parse_version_for(extension: &FileExtension) -> &'st
         FileExtension::Image | FileExtension::Other(_) => PARSE_VERSION,
     }
 }
-const H0_MAX_PRIVATE_OR_ANONYMOUS_MB: u16 = 512;
-const H1_MAX_PRIVATE_OR_ANONYMOUS_MB: u16 = 1024;
-const H2_MAX_PRIVATE_OR_ANONYMOUS_MB: u16 = 1536;
-const H0_INDEX_WRITER_HEAP_BYTES: usize = 64 * 1024 * 1024;
-const H1_INDEX_WRITER_HEAP_BYTES: usize = 128 * 1024 * 1024;
-const H2_INDEX_WRITER_HEAP_BYTES: usize = 256 * 1024 * 1024;
+const H0_MAX_PRIVATE_OR_ANONYMOUS_MB: u16 = 1024;
+const H1_MAX_PRIVATE_OR_ANONYMOUS_MB: u16 = 2048;
+const H2_MAX_PRIVATE_OR_ANONYMOUS_MB: u16 = 3072;
+const H0_INDEX_WRITER_HEAP_BYTES: usize = 128 * 1024 * 1024;
+const H1_INDEX_WRITER_HEAP_BYTES: usize = 256 * 1024 * 1024;
+const H2_INDEX_WRITER_HEAP_BYTES: usize = 512 * 1024 * 1024;
 const H0_MEMORY_CEILING_BYTES: u64 = 12 * BYTES_PER_GIB;
 const H1_MEMORY_CEILING_BYTES: u64 = 20 * BYTES_PER_GIB;
 
@@ -3140,8 +3140,8 @@ mod tests {
         ));
         assert_eq!(h0.hardware_tier, ImportHardwareTier::H0Eco);
         assert_eq!(h0.parse_workers.get(), 1);
-        assert_eq!(h0.index_writer_heap_bytes, 64 * 1024 * 1024);
-        assert_eq!(h0.max_private_or_anonymous_mb, 512);
+        assert_eq!(h0.index_writer_heap_bytes, 128 * 1024 * 1024);
+        assert_eq!(h0.max_private_or_anonymous_mb, 1024);
 
         let h1 = ImportResourcePolicy::for_hardware(ImportHardwareProfile::new(
             Some(16 * BYTES_PER_GIB),
@@ -3149,8 +3149,8 @@ mod tests {
         ));
         assert_eq!(h1.hardware_tier, ImportHardwareTier::H1Balanced);
         assert_eq!(h1.parse_workers.get(), 2);
-        assert_eq!(h1.index_writer_heap_bytes, 128 * 1024 * 1024);
-        assert_eq!(h1.max_private_or_anonymous_mb, 1024);
+        assert_eq!(h1.index_writer_heap_bytes, 256 * 1024 * 1024);
+        assert_eq!(h1.max_private_or_anonymous_mb, 2048);
 
         let h2 = ImportResourcePolicy::for_hardware(ImportHardwareProfile::new(
             Some(32 * BYTES_PER_GIB),
@@ -3158,8 +3158,8 @@ mod tests {
         ));
         assert_eq!(h2.hardware_tier, ImportHardwareTier::H2Aggressive);
         assert_eq!(h2.parse_workers.get(), 3);
-        assert_eq!(h2.index_writer_heap_bytes, 256 * 1024 * 1024);
-        assert_eq!(h2.max_private_or_anonymous_mb, 1536);
+        assert_eq!(h2.index_writer_heap_bytes, 512 * 1024 * 1024);
+        assert_eq!(h2.max_private_or_anonymous_mb, 3072);
 
         let high_memory_single_core = ImportResourcePolicy::for_hardware(
             ImportHardwareProfile::new(Some(32 * BYTES_PER_GIB), 1),
@@ -3171,7 +3171,7 @@ mod tests {
         assert_eq!(high_memory_single_core.parse_workers.get(), 1);
 
         let h2_options = ImportOptions::for_resource_policy(h2);
-        assert_eq!(h2_options.index_writer_heap_bytes, 256 * 1024 * 1024);
+        assert_eq!(h2_options.index_writer_heap_bytes, 512 * 1024 * 1024);
     }
 
     #[test]

@@ -63,7 +63,7 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 #[cfg(windows)]
 use std::os::windows::fs::OpenOptionsExt;
 
-const DEFAULT_WRITER_HEAP_BYTES: usize = 50_000_000;
+const DEFAULT_WRITER_HEAP_BYTES: usize = 100_000_000;
 const DEFAULT_LIMIT: usize = 10;
 const MAX_LIMIT: usize = 100;
 const SNAPSHOTS_DIR: &str = "snapshots";

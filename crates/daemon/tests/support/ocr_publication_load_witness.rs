@@ -25,7 +25,7 @@ const SYNTHETIC_SUPERVISOR_GENERATION: u64 = 1;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(2);
 const WITNESS_TIMEOUT: Duration = Duration::from_secs(600);
-const MAX_DAEMON_RSS_KIB: u64 = 512 * 1_024;
+const MAX_DAEMON_RSS_KIB: u64 = 1_024 * 1_024;
 
 const QUERY_REDLINE_MS: [(&str, u128); 3] = [("fulltext", 120), ("semantic", 500), ("hybrid", 250)];
 
@@ -269,7 +269,7 @@ fn continuous_ocr_publications_keep_interactive_queries_and_supervision_within_r
     }
     assert!(
         peak_rss_kib <= MAX_DAEMON_RSS_KIB,
-        "daemon RSS peak {:.1}MiB exceeded the 512MiB witness redline",
+        "daemon RSS peak {:.1}MiB exceeded the 1024MiB witness redline",
         peak_rss_kib as f64 / 1_024.0
     );
     let cpu_capacity = std::thread::available_parallelism().unwrap().get() as f64 * 100.0;
