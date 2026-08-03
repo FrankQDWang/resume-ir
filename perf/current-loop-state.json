@@ -5,7 +5,7 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "21dbf9d78503cd3126726ab130d3330feabb8739e8c00334b0bcff1a2fee3c68",
+    "active_goal_sha256": "961748496a5b9f53623baa8cf0982da43542f1f37d3cbc14bfff9b014f54cbfa",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
@@ -16,7 +16,7 @@
   "hypothesis": {
     "id": "issue-375-cpu-int4-weight-only-bulk-embedding",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "one exact CPU-only symmetric INT4 weight-only MatMulNBits candidate first improves public-synthetic B4x512 throughput by at least 10 percent, then lowers the exact OCR-enabled 8720-document no-OCR-drain endpoint from 513.675 seconds to at most 472.581 seconds while ten real-query semantic and hybrid sanity checks show no obvious relevance failure",
+    "expected_effect": "one exact CPU-only symmetric INT4 weight-only MatMulNBits plus block-quantized Gather candidate first improves public-synthetic B4x512 throughput by at least 10 percent, then lowers the exact OCR-enabled 8720-document no-OCR-drain endpoint from 513.675 seconds to at most 472.581 seconds while ten real-query semantic and hybrid sanity checks show no obvious relevance failure",
     "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/375"
   },
   "transition_history": [
@@ -3263,10 +3263,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-375-cpu-int4-weight-only-bulk-embedding-2026-08-04",
-  "state_version": 610,
-  "previous_state_hash": "f9b71b3216f217b3cb64fbba5650f566d9d670d9356cf833e7b20efc555eafa7",
-  "expected_state_version": 610,
-  "last_confirmed_side_effect": "issue_375_opened_and_hypothesis_registered",
+  "state_version": 611,
+  "previous_state_hash": "0f244e063e079100db6596d80db638066651c37a2a5b170b8d7502501bc543c0",
+  "expected_state_version": 611,
+  "last_confirmed_side_effect": "issue_375_candidate_coverage_contract_corrected_before_private_execution",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
