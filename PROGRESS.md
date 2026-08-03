@@ -17,19 +17,12 @@ Focused checks pass. A full branch verifier hit the unchanged daemon-handoff tim
 exact rerun passed; exact unmodified main passed daemon, hit the unchanged PDF-timeout timing test,
 and its exact rerun passed. Neither timing gate was changed.
 
-## Issue #319 resident role-isolation aggregate observer restored after admission repair
+## Issue #319 resident role-isolation aggregate observer removed
 
-The default-off aggregate observer is restored only after the deterministic admission repair, core
-capability and closed report contract merged. It remains feature-gated and environment-selected,
-writes only bounded counters to an owner-only temporary file, and does not add IPC, diagnostics or
-ordinary runtime behavior. This prerequisite runs no matrix, reads no private corpus and makes no
-throughput or latency claim; it only lets the future runner prove exact B4 x 512 publication work.
-
-Fresh verification passes both aggregate observer tests, all 116 feature-mode daemon unit tests
-and every runnable integration test, warnings-denied feature Clippy, the governance/privacy checks
-and the complete default `verify-local.sh` gate. Poisoned observer state now fails the experimental
-publication closed instead of silently continuing with untrustworthy counters. The ordinary build
-remains observer-free.
+After the formal matrix returned no unique winner and its runner was removed, the default-off
+aggregate observer, owner-file environment selector and observer-only tests are removed next in
+reverse dependency order. The closed report contract and core experiment capability remain for
+their own isolated rollback steps; ordinary production behavior remains unchanged.
 
 ## Issue #319 resident role-isolation report contract restored
 
