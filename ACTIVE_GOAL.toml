@@ -13,16 +13,16 @@ acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩�
 
 [scope.active_slice]
 issue = "#375"
-name = "cpu_int4_weight_only_bulk_embedding_experiment"
+name = "cpu_int4_weight_only_bulk_embedding_negative_closeout"
 contract_change_allowed = true
-production_code_allowed = true
-private_benchmark_allowed = true
-configured_private_roots_required = true
+production_code_allowed = false
+private_benchmark_allowed = false
+configured_private_roots_required = false
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #375 evaluates one CPU-only symmetric INT4 weight-only MatMulNBits plus block-quantized Gather artifact against the exact current main baseline. The bounded experiment capability, focused tests, two local runners and six contract-state files fit the normal PR budget."
+scope_exception_reason = "No exception is used. Issue #375 is a contract-only negative closeout after the exact CPU INT4 weight-only candidate failed the mandatory public-synthetic performance gate. The loader, generator, runner changes and all local artifacts were removed before this closeout; only contract-state files remain."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -30,27 +30,21 @@ allowed_paths = [
   "perf/active-slice-transition.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-  "crates/embedding-runtime/src/main.rs",
-  "crates/embedding-runtime/src/artifact_experiment.rs",
-  "crates/embedding-runtime/src/artifact_experiment_tests.rs",
-  "crates/embedding-runtime/src/tests.rs",
-  "scripts/local/embedding-int4-experiment.py",
-  "scripts/local/ocr-on-import-attribution.py",
 ]
-allowed_paths_role = "cpu_int4_weight_only_bulk_embedding_experiment_paths"
+allowed_paths_role = "cpu_int4_weight_only_bulk_embedding_closeout_state_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
 observation_stage = "L1_cpu_int4_weight_only_bulk_embedding_experiment"
 optimization_layer = "L1"
 optimization_layer_selected = true
-hypothesis = "Transformer-preoptimized symmetric INT4 weight-only MatMulNBits plus block-quantized Gather with block size 128 reduces CPU bulk B4x512 inference enough to lower the OCR-enabled 8720-document non-OCR endpoint by at least 8 percent without an obvious retrieval-quality failure"
-expected_delta = "pass a public-synthetic B4x512 entry gate with at least 10 percent throughput improvement, then complete the exact private product endpoint at or below 472.581 seconds versus the retained 513.675-second current-main baseline"
+hypothesis = "rejected: the exact Transformer-preoptimized symmetric INT4 weight-only MatMulNBits plus block-quantized Gather candidate was materially slower than the retained Dynamic U8S8 control on CPU B4x512"
+expected_delta = "failed: wall throughput was 32.723 percent lower with a paired bootstrap 95 percent interval from -32.943 to -30.845 percent; ONNX throughput was 32.609 percent lower"
 negative_control = "the retained Issue #372 Dynamic U8S8 whole-head 512 runtime pack on ORT 1.27 with fixed B4x512 bulk Session, interactive 3t plus bulk 2x3t topology, memory patterns enabled for bulk, CPU arena disabled and prepacking disabled"
-implementation_boundary = "one exact experimental artifact only: upstream revision 614241f622f53c4eeff9890bdc4f31cfecc418b3, Transformer preoptimization that preserves attention MatMul and embedding Gather quantization sites, symmetric INT4 weight-only, block size 128, QOperator MatMulNBits plus block-quantized Gather and CPU EP; synthetic screening must pass before any private run; a winner may only open a later production migration Issue"
+implementation_boundary = "the experimental loader, strict manifest, generator, runner support and local models have been removed; only contract-state files may change for negative closeout"
 resident_pool_workload = "keep macOS ARM interactive 3t plus bulk 2x3t, two concurrent bulk publication calls, whole-head 512, fixed B4x512 bulk routing, current tokenizer, prefixes, input order, pooling, memory patterns and CPU arena false unchanged; only model weight representation changes"
-resident_pool_acceptance = "synthetic B4x512 throughput improves by at least 10 percent with bounded finite normalized vectors, coherent token accounting, unchanged ordering and lifecycle semantics, and the conservative H2 process-tree private or anonymous footprint stays at or below 3072 MiB"
-full_product_acceptance = "reuse the exact accepted #372 main baseline of 513.675 seconds only after reconciling main and workload identity; candidate completes the OCR-enabled 8720-document no-OCR-drain endpoint at or below 472.581 seconds with coherent aggregate counts; at least 10 authorized real queries each succeed in semantic and hybrid modes without partial or empty responses or an obvious relevance anomaly; no query_hot_path claim is made"
+resident_pool_acceptance = "failed: resource, finite-vector, token-accounting and lifecycle guards passed, but the candidate missed the required 10 percent synthetic throughput improvement by 42.723 percentage points; minimum control-candidate cosine was 0.914384"
+full_product_acceptance = "not run because the mandatory public-synthetic entry gate failed with a wholly negative paired interval; the retained #372 OCR-enabled 8720-document 513.675-second result remains the current product baseline and no real query was read"
 raw_profile_boundary = "public evidence is limited to bounded aggregate wall time, counts, throughput, resource maximum, query-review counts and privacy booleans; no private path, filename, resume text, raw query, candidate result, token, vector, PID, log, trace, raw hash, database, index or model cache may enter git or GitHub"
-rollback_condition = "remove the experimental loader, generator, runner support and local artifact if the synthetic entry gate fails, the private endpoint exceeds 472.581 seconds, counts or lifecycle regress, the H2 ceiling is exceeded, or the authorized real-query review finds a failure, partial response, empty result or obvious relevance anomaly"
+rollback_condition = "satisfied: the synthetic entry gate failed, so the experimental loader, generator, runner support and all generated models were removed without a private corpus import or real-query read"
 forbidden_scope = [
   "production_embedding_input_change",
   "production_model_id_change",
@@ -61,6 +55,7 @@ forbidden_scope = [
   "pooling_change",
   "batch_size_composition_or_order_change",
   "cpu_arena_enablement",
+  "model_file_rewrite_or_new_model_id",
   "padding_or_dummy_input_change",
   "new_topology_or_thread_arm",
   "work_stealing",
@@ -76,8 +71,15 @@ forbidden_scope = [
   "raw_query_or_result_output",
   "gate_weakening",
   "coreml",
+  "offline_graph_optimization",
   "batch8_batch16_or_batch32",
 ]
+
+[[performance_history.closed_hypotheses]]
+id = "embedding_cpu_int4_weight_only_matmul_gather"
+status = "rejected"
+evidence_refs = ["#375"]
+reopen_requires = ["material_ort_change", "material_model_change", "material_kernel_change", "material_hardware_change"]
 
 [[performance_history.closed_hypotheses]]
 id = "embedding_bulk_fixed_b4x512"
