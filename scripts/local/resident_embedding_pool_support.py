@@ -34,6 +34,7 @@ physical_footprint = RESOURCE["physical_footprint"]
 
 OBSERVER_SCHEMA = "resume-ir.resident-embedding-pool-observer.v1"
 STREAM_SCHEMA = "resume-ir.embedding-stream.v1"
+BULK_ROLE_ARGUMENT = "--resident-embedding-pool-role=bulk"
 MODEL_ID = "intfloat-multilingual-e5-small-qint8-r1"
 DIMENSION, SEED, MAX_REPORT_BYTES = 384, 20260803, 64 * 1024
 ARMS = tuple(CONTRACT["ARMS"])
@@ -422,13 +423,23 @@ def process_commands() -> dict[int, tuple[int, str]]:
     return table
 
 
-def embedding_children(root: int, binary: Path) -> list[int]:
+def matches_embedding_process(
+    command: str, binary: Path, role_argument: str | None = None
+) -> bool:
+    arguments = command.split()
+    return (
+        bool(arguments)
+        and Path(arguments[0]).name == binary.name
+        and (role_argument is None or role_argument in arguments)
+    )
+
+
+def embedding_children(root: int, binary: Path, role_argument: str | None = None) -> list[int]:
     table = process_commands()
     members = process_descendants(table, {root})
-    expected = binary.name
     return sorted(
         pid for pid in members - {root}
-        if Path(table[pid][1].split()[0]).name == expected
+        if matches_embedding_process(table[pid][1], binary, role_argument)
     )
 
 
@@ -566,7 +577,8 @@ def wait_observer_flush(path: Path, completed_bulk: int, timeout: float) -> dict
 
 
 def crash_bulk_child(process: object, embedding: Path, expected_count: int) -> int:
-    children = embedding_children(process.process.pid, embedding)  # type: ignore[attr-defined]
+    root = process.process.pid  # type: ignore[attr-defined]
+    children = embedding_children(root, embedding, BULK_ROLE_ARGUMENT)
     if len(children) != expected_count:
         raise ExperimentError("resident_process_count_invalid")
     victim = children[-1]
@@ -578,7 +590,8 @@ def child_restarted(process: object, embedding: Path, victim: int,
                     expected_count: int, timeout: float) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        children = embedding_children(process.process.pid, embedding)  # type: ignore[attr-defined]
+        root = process.process.pid  # type: ignore[attr-defined]
+        children = embedding_children(root, embedding, BULK_ROLE_ARGUMENT)
         if victim not in children and len(children) == expected_count:
             return True
         time.sleep(0.05)
@@ -720,7 +733,19 @@ def self_test() -> int:
         "nonconforming_calls": 0,
     }
     assert queue_after(2, after) == [3.0, 4.0]
-    print(json.dumps({"status": "self_test_pass", "checks": 5}, separators=(",", ":")))
+    assert matches_embedding_process(
+        "/release/resume-embedding-runtime --resident-embedding-pool-experiment "
+        + BULK_ROLE_ARGUMENT,
+        Path("/release/resume-embedding-runtime"),
+        BULK_ROLE_ARGUMENT,
+    )
+    assert not matches_embedding_process(
+        "/release/resume-embedding-runtime --resident-embedding-pool-experiment "
+        "--resident-embedding-pool-role=interactive",
+        Path("/release/resume-embedding-runtime"),
+        BULK_ROLE_ARGUMENT,
+    )
+    print(json.dumps({"status": "self_test_pass", "checks": 6}, separators=(",", ":")))
     return 0
 
 

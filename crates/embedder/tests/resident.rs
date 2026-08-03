@@ -5,6 +5,8 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "resident-embedding-pool-experiment")]
+use embedder::ResidentEmbeddingPoolRole;
 use embedder::{
     EmbeddingBudget, EmbeddingError, EmbeddingInput, EmbeddingPriority, LocalEmbeddingCommandSpec,
     ResidentEmbeddingOwner, ResidentEmbeddingSpec, ResidentEmbeddingStatus,
@@ -465,6 +467,7 @@ impl TestWorker {
         ResidentEmbeddingOwner::start(
             ResidentEmbeddingSpec::for_pool_experiment(
                 self.command().with_timeout_ms(10_000).unwrap(),
+                ResidentEmbeddingPoolRole::Bulk,
                 threads,
             )
             .unwrap(),

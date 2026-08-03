@@ -57,6 +57,20 @@ pub(super) fn parse_run_mode(
                 thread_policy: ResidentThreadPolicy::PoolExperiment,
             }))
         }
+        #[cfg(feature = "resident-embedding-pool-experiment")]
+        [mode, role]
+            if mode == "--resident-embedding-pool-experiment"
+                && matches!(
+                    role.as_str(),
+                    "--resident-embedding-pool-role=interactive"
+                        | "--resident-embedding-pool-role=bulk"
+                ) =>
+        {
+            Ok(RunMode::Resident(ResidentMode {
+                profiling: ProfilingMode::Disabled,
+                thread_policy: ResidentThreadPolicy::PoolExperiment,
+            }))
+        }
         _ => Err(RuntimeError::EnvironmentInvalid),
     }
 }

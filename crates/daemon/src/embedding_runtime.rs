@@ -2,13 +2,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(feature = "resident-embedding-pool-experiment")]
-use embedder::ResidentEmbeddingTelemetryObserver;
 use embedder::{
     EmbeddingBudget, EmbeddingError, EmbeddingInput, EmbeddingPriority, EmbeddingVector,
     LocalEmbeddingCommandSpec, ResidentEmbeddingClient, ResidentEmbeddingOwner,
     ResidentEmbeddingSpec, ResidentEmbeddingStatus,
 };
+#[cfg(feature = "resident-embedding-pool-experiment")]
+use embedder::{ResidentEmbeddingPoolRole, ResidentEmbeddingTelemetryObserver};
 use import_pipeline::{
     ImportResourcePolicy, SearchPublicationEmbeddingFailure, SearchPublicationEmbeddingInput,
     SearchPublicationEmbeddingOutput, SearchPublicationTelemetrySnapshot,
@@ -178,16 +178,24 @@ fn start_pool(
         return Err(DaemonError::embedding(EmbeddingError::InvalidRequest));
     }
     let interactive = ResidentEmbeddingOwner::start(
-        ResidentEmbeddingSpec::for_pool_experiment(command.clone(), /*intra_threads*/ 3)
-            .map_err(DaemonError::embedding)?,
+        ResidentEmbeddingSpec::for_pool_experiment(
+            command.clone(),
+            ResidentEmbeddingPoolRole::Interactive,
+            /*intra_threads*/ 3,
+        )
+        .map_err(DaemonError::embedding)?,
     )
     .map_err(DaemonError::embedding)?;
     let mut bulk = Vec::with_capacity(bulk_threads.len());
     for &threads in bulk_threads {
         bulk.push(
             ResidentEmbeddingOwner::start(
-                ResidentEmbeddingSpec::for_pool_experiment(command.clone(), threads)
-                    .map_err(DaemonError::embedding)?,
+                ResidentEmbeddingSpec::for_pool_experiment(
+                    command.clone(),
+                    ResidentEmbeddingPoolRole::Bulk,
+                    threads,
+                )
+                .map_err(DaemonError::embedding)?,
             )
             .map_err(DaemonError::embedding)?,
         );
