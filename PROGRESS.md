@@ -1,5 +1,17 @@
 # Progress
 
+## Issue #341 blocked rollback: runner support removed
+
+The public matrix orchestrator was removed through PR #356 after exact-main
+smoke remained externally invalid. This second reverse step removes its
+local-only support module and the corresponding performance-contract self-test
+hook. No benchmark command or private-data reader remains.
+
+The report checker and default-off Rust pool/observer capability are still
+present only for the remaining ordered rollback steps. Production continues to
+use exactly one shared three-thread resident, and this deletion adds no
+performance claim.
+
 ## Issue #341 blocked rollback: public matrix runner removed
 
 Exact merged-main smoke never produced an acceptable report. Attested branch
