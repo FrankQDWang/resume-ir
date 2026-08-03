@@ -28,6 +28,12 @@ SYNTHETIC_TEXTS = (
 )
 
 
+def benchmark_texts(workload: str) -> tuple[str, ...]:
+    if workload == "max-length":
+        return tuple(" ".join([text] * 160) for text in SYNTHETIC_TEXTS)
+    return SYNTHETIC_TEXTS
+
+
 def read_exact(stream: object, size: int, timeout_seconds: float) -> bytes:
     file_descriptor = stream.fileno()  # type: ignore[attr-defined]
     deadline = time.monotonic() + timeout_seconds
@@ -81,6 +87,9 @@ def run_variant(
     dimension: int,
     repetitions: int,
     timeout_seconds: float,
+    resident_mode: str,
+    intra_threads: int,
+    workload: str,
 ) -> tuple[dict[str, object], dict[int, list[list[float]]]]:
     environment = os.environ.copy()
     environment.update(
@@ -88,11 +97,17 @@ def run_variant(
             "RESUME_IR_EMBEDDING_RUNTIME_DIR": str(runtime_dir),
             "RESUME_IR_EMBEDDING_MODEL_ID": model_id,
             "RESUME_IR_EMBEDDING_DIMENSION": str(dimension),
-            "RESUME_IR_EMBEDDING_INTRA_THREADS": "1",
+            "RESUME_IR_EMBEDDING_INTRA_THREADS": str(intra_threads),
         }
     )
+    resident_args = ["--resident"]
+    if resident_mode == "bulk":
+        resident_args = [
+            "--resident-embedding-pool-experiment",
+            "--resident-embedding-pool-role=bulk",
+        ]
     process = subprocess.Popen(
-        [str(binary), "--resident"],
+        [str(binary), *resident_args],
         env=environment,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -113,10 +128,11 @@ def run_variant(
         measurements: list[dict[str, object]] = []
         vectors_by_size: dict[int, list[list[float]]] = {}
         request_id = 1
+        texts = benchmark_texts(workload)
         for batch_size in BATCH_SIZES:
             inputs = [
                 {"role": "passage", "text": text}
-                for text in SYNTHETIC_TEXTS[:batch_size]
+                for text in texts[:batch_size]
             ]
             request = {
                 "schema_version": SCHEMA_VERSION,
@@ -184,9 +200,23 @@ def main() -> int:
     parser.add_argument("--dimension", type=int, default=DEFAULT_DIMENSION)
     parser.add_argument("--repetitions", type=int, default=8)
     parser.add_argument("--timeout-seconds", type=float, default=30.0)
+    parser.add_argument(
+        "--resident-mode", choices=("default", "bulk"), default="default"
+    )
+    parser.add_argument("--intra-threads", type=int, default=1)
+    parser.add_argument(
+        "--workload", choices=("standard", "max-length"), default="standard"
+    )
     args = parser.parse_args()
-    if args.dimension <= 0 or args.repetitions <= 0 or args.timeout_seconds <= 0:
-        parser.error("dimension, repetitions, and timeout-seconds must be positive")
+    if (
+        args.dimension <= 0
+        or args.repetitions <= 0
+        or args.timeout_seconds <= 0
+        or args.intra_threads <= 0
+    ):
+        parser.error(
+            "dimension, repetitions, timeout-seconds, and intra-threads must be positive"
+        )
 
     baseline, baseline_vectors = run_variant(
         "base",
@@ -196,6 +226,9 @@ def main() -> int:
         args.dimension,
         args.repetitions,
         args.timeout_seconds,
+        args.resident_mode,
+        args.intra_threads,
+        args.workload,
     )
     candidate, candidate_vectors = run_variant(
         "head",
@@ -205,6 +238,9 @@ def main() -> int:
         args.dimension,
         args.repetitions,
         args.timeout_seconds,
+        args.resident_mode,
+        args.intra_threads,
+        args.workload,
     )
     baseline_by_size = {
         item["batch_size"]: item for item in baseline["measurements"]  # type: ignore[index]
@@ -257,6 +293,9 @@ def main() -> int:
         "source": "synthetic_public_fixture",
         "claim": "local_synthetic_microbenchmark_only",
         "repetitions": args.repetitions,
+        "resident_mode": args.resident_mode,
+        "intra_threads": args.intra_threads,
+        "workload": args.workload,
         "variants": [baseline, candidate],
         "speedups": speedups,
     }

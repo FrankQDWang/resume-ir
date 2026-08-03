@@ -357,6 +357,24 @@ fn tokenizer_batch_uses_batch_longest_padding_and_keeps_input_order() {
 }
 
 #[test]
+fn fixed_session_selection_requires_an_actual_b4x512_tensor() {
+    assert!(use_fixed_b4x512_session(4, 512, true));
+    for (input_count, sequence_length, available) in [
+        (1, 512, true),
+        (2, 512, true),
+        (3, 512, true),
+        (4, 511, true),
+        (4, 512, false),
+    ] {
+        assert!(!use_fixed_b4x512_session(
+            input_count,
+            sequence_length,
+            available
+        ));
+    }
+}
+
+#[test]
 fn resident_runtime_telemetry_preserves_b1_b2_b4_phase_and_token_relationships() {
     for input_count in [1_usize, 2, 4] {
         let request = EmbedRequest::new(
