@@ -1,5 +1,23 @@
 # Progress
 
+## Issue #341 resident-pool runner support prerequisite
+
+The public matrix needs one privacy-bounded owner for direct runtime preflight,
+epoch-consistent query classification, resident observer parsing, child
+crash/restart detection, process-tree private/anonymous peak measurement and
+exact-revision attestation. A local-only support module now centralizes those
+operations before the smaller session orchestrator is added. Its self-test
+passes the fixed result-oracle, wrong-result rejection, paired-CI and retained
+queue-sequence probes; Pyright reports zero errors. The full local verifier
+again stopped only at the unchanged daemon
+`unconsumed_install_timeout_withdraws_and_allows_the_next_publication` timing
+assertion, and that exact test passed immediately on its isolated rerun.
+
+This prerequisite does not yet provide a smoke or formal command, run a daemon
+session, record evidence, read a private corpus, or change production behavior.
+It writes only caller-supplied temporary synthetic workload/report paths and
+retains no raw query, result identity, vector, PID or local path in public output.
+
 ## Issue #341 direct resident observer prerequisite
 
 The merged report contract requires a direct maximum interactive resident queue
