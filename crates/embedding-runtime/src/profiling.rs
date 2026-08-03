@@ -15,14 +15,6 @@ pub(super) enum RunMode {
 #[derive(Debug, Eq, PartialEq)]
 pub(super) struct ResidentMode {
     pub(super) profiling: ProfilingMode,
-    pub(super) thread_policy: ResidentThreadPolicy,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ResidentThreadPolicy {
-    Production,
-    #[cfg(feature = "resident-role-isolation-experiment")]
-    RoleIsolationExperiment,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -39,7 +31,6 @@ pub(super) fn parse_run_mode(
         [] => Ok(RunMode::OneShot),
         [mode] if mode == "--resident" => Ok(RunMode::Resident(ResidentMode {
             profiling: ProfilingMode::Disabled,
-            thread_policy: ResidentThreadPolicy::Production,
         })),
         [mode] if mode == "--resident-profile" => {
             let output_prefix = validate_output_prefix(
@@ -47,14 +38,6 @@ pub(super) fn parse_run_mode(
             )?;
             Ok(RunMode::Resident(ResidentMode {
                 profiling: ProfilingMode::OperatorTrace(output_prefix),
-                thread_policy: ResidentThreadPolicy::Production,
-            }))
-        }
-        #[cfg(feature = "resident-role-isolation-experiment")]
-        [mode] if mode == "--resident-role-isolation-experiment" => {
-            Ok(RunMode::Resident(ResidentMode {
-                profiling: ProfilingMode::Disabled,
-                thread_policy: ResidentThreadPolicy::RoleIsolationExperiment,
             }))
         }
         _ => Err(RuntimeError::EnvironmentInvalid),

@@ -30,16 +30,12 @@ After runner and observer removal, the experiment-only 64 KiB schema, checker, s
 and governance pin are removed in the third reverse dependency step. The formal aggregate result
 remains recorded above and in #319; production behavior remains unchanged.
 
-## Issue #319 resident role-isolation capability restored after admission repair
+## Issue #319 resident role-isolation core capability removed
 
-The default-off three-arm capability is restored on merged main only after #328 proved that a
-fresh release daemon can admit, claim and publish a synthetic import and that an unsupported writer
-transition rejects both import entry points before mutation. The ordinary build still owns one
-shared three-thread resident; no production default, model, input, Batch, IPC, persistence, index,
-desktop or packaging contract changes. This prerequisite runs no formal matrix and makes no
-performance-improvement claim. Fresh verification passes the complete feature-mode daemon suite,
-the ordinary-build rejection checks, warnings-denied Clippy for all three affected crates, every
-governance/privacy check and the full local verifier on the post-#328 base.
+The default-off three-arm daemon/embedder/runtime capability and its experiment-only tests are
+removed last after runner, observer and report rollback. This restores the exact post-#328 shared
+resident implementation: one three-thread resident remains the production topology, with no model,
+input, Batch, IPC, persistence, index, desktop or packaging change.
 
 ## Issue #328 deterministic daemon import admission
 
