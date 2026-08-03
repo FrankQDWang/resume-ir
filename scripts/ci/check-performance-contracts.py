@@ -1750,6 +1750,12 @@ def main() -> int:
         mixed_main()
     except (OSError, ValueError) as exc:
         fail(f"mixed-import contract check failed: {exc}")
+    pool_support = runpy.run_path(
+        str(ROOT / "scripts" / "local" / "resident_embedding_pool_support.py")
+    )
+    pool_self_test = pool_support.get("self_test")
+    if not callable(pool_self_test) or pool_self_test() != 0:
+        fail("resident embedding pool support self-test failed")
     validate_experiment_report_schema(
         require_mapping(load_json(PERF / "experiment-report.schema.json"), "experiment schema"),
         matrix,
