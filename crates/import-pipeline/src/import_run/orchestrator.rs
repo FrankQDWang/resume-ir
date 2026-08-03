@@ -18,7 +18,7 @@ use super::scan::{import_scan_errors_from_crawl, mark_missing_documents_deleted}
 use super::scheduler::process_files_sequential;
 use crate::migration_rebuild::ensure_migration_rebuild_scan_is_complete;
 use crate::publication_coordinator::{
-    flush_pending_searchable_documents, PendingProjectionRemovals,
+    flush_pending_searchable_documents_with_handoff, PendingProjectionRemovals,
 };
 use crate::search_artifact_cache::{CurrentImportCacheMode, CurrentImportDocumentCache};
 use crate::source_dispositions::{ImportDispositionBatches, SearchableStagingState};
@@ -27,8 +27,8 @@ use crate::PipelineRunControl;
 use crate::{
     ImportCancelCheckPhase, ImportFailureCounts, ImportMilestoneTimings, ImportOptions,
     ImportPipelineError, ImportScanBudget, ImportScanBudgetKind, ImportStageTimings, ImportSummary,
-    ImportWorkerMetrics, PdfImportPolicy, Result, SearchProjectionRemovalReason,
-    IMPORT_CANCEL_POLL_INTERVAL_MS,
+    ImportWorkerMetrics, PdfImportPolicy, Result, SearchGenerationHandoff,
+    SearchProjectionRemovalReason, IMPORT_CANCEL_POLL_INTERVAL_MS,
 };
 
 pub(super) fn run_import(
@@ -40,6 +40,7 @@ pub(super) fn run_import(
     options: ImportOptions,
     processing_contract: &ImportProcessingContract,
     control: &PipelineRunControl,
+    generation_handoff: Option<&dyn SearchGenerationHandoff>,
 ) -> Result<ImportSummary> {
     ensure_import_can_continue(store, &task.id, control)?;
     let cancel_metrics = RefCell::new(CancelCheckMetrics::default());
@@ -215,6 +216,7 @@ pub(super) fn run_import(
             options.index_writer_heap_bytes,
             &options.search_vectorization,
             &options.linear_promotion,
+            generation_handoff,
         )?;
     } else {
         process_files_sequential(
@@ -235,6 +237,7 @@ pub(super) fn run_import(
             options.index_writer_heap_bytes,
             &options.search_vectorization,
             &options.linear_promotion,
+            generation_handoff,
         )?;
     }
 
@@ -267,7 +270,7 @@ pub(super) fn run_import(
         summary.deleted_documents = 0;
     }
     set_cancel_phase(ImportCancelCheckPhase::IndexPublication);
-    flush_pending_searchable_documents(
+    flush_pending_searchable_documents_with_handoff(
         store,
         now,
         &mut summary,
@@ -280,6 +283,7 @@ pub(super) fn run_import(
         import_started,
         options.index_writer_heap_bytes,
         &options.search_vectorization,
+        generation_handoff,
     )?;
     disposition_batches.searchable_staging_completed(
         SearchableStagingState::from_pending_documents(&pending_index_documents),

@@ -12,17 +12,17 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#360"
-name = "macos_arm_resident_pool_production_migration"
+issue = "#361"
+name = "main_import_generation_handoff"
 contract_change_allowed = true
 production_code_allowed = true
-private_benchmark_allowed = false
-configured_private_roots_required = false
+private_benchmark_allowed = true
+configured_private_roots_required = true
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #360 is the bounded production migration of the already measured #341 winner on macOS ARM. The three production files and six contract-state files fit the normal PR budget; no new private run, benchmark arm, threshold change or query-path fix is included."
+scope_exception_reason = "No exception is used. Issue #361 extends the existing bounded OCR generation handoff to ordinary main-import publication. Nine production/test files and six contract-state files fit the normal PR budget; no new query semantics, index format, schema, resident topology or benchmark threshold is included."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -30,24 +30,30 @@ allowed_paths = [
   "perf/active-slice-transition.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-  "crates/embedding-runtime/Cargo.toml",
-  "crates/daemon/Cargo.toml",
-  "crates/daemon/src/embedding_runtime.rs",
+  "crates/import-pipeline/src/lib.rs",
+  "crates/import-pipeline/src/import_run/mod.rs",
+  "crates/import-pipeline/src/import_run/orchestrator.rs",
+  "crates/import-pipeline/src/import_run/parallel.rs",
+  "crates/import-pipeline/src/import_run/scheduler.rs",
+  "crates/import-pipeline/src/publication_coordinator.rs",
+  "crates/daemon/src/import_worker.rs",
+  "crates/daemon/src/worker_runtime.rs",
+  "crates/daemon/src/main.rs",
 ]
-allowed_paths_role = "macos_arm_resident_pool_production_migration_paths"
-primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "L2_resident_pool_production_migration"
-optimization_layer = "L2"
+allowed_paths_role = "main_import_generation_handoff_paths"
+primary_benchmark_lane = "query_hot_path"
+observation_stage = "L3_main_import_generation_handoff"
+optimization_layer = "L3"
 optimization_layer_selected = true
-hypothesis = "making the already measured i3_bulk2x3_b4 topology the ordinary macOS ARM default preserves the 35.158 to 37.332 percent full-import endpoint improvement observed on exact main while retaining the existing resident lifecycle and output contracts"
-expected_delta = "the OCR-enabled no-OCR-drain 8720-document product endpoint remains at least 25 percent faster than the #282 shared_i3_b4 baseline; the two completed winner runs measured 760.147 and 786.509 seconds versus 1212.971 seconds with identical product counts"
-negative_control = "the #282 production shared_i3_b4 run on the same corpus is the frozen historical product control: 1212.971 seconds, 8720 discovered and processed, 7328 searchable and indexed, 265 OCR-required, 4 failed and 49 ignored"
-implementation_boundary = "enable the existing resident-pool capability in ordinary daemon and embedding-runtime builds and select i3_bulk2x3_b4 by default only on macOS ARM when no diagnostic arm is supplied; retain shared_i3_b4 selection on other targets; preserve one interactive 3-thread resident, two bulk 3-thread residents, daemon-lifetime ownership and grouped teardown"
-resident_pool_workload = "the accepted product evidence is the user-directed OCR-enabled 8720-document full import on the normal active machine environment, ending when all non-OCR documents are searchable and indexed without waiting for OCR drain; run 2 overlapped a user-reported 5000-plus-test pytest workload, which is context only and not a formal attribution claim"
-resident_pool_acceptance = "ordinary macOS ARM selection resolves to i3_bulk2x3_b4; complete Batch 4 groups enter two distinct bulk residents concurrently and outputs are reassembled in ordinal order; the interactive resident and both bulk residents reach Shutdown together; model, tokenizer, whole-head 512 input, Dynamic U8S8, ORT 1.27, prepacking-off, pooling, cancellation, timeout and restart behavior remain unchanged"
-full_product_acceptance = "the already completed two exact-main product runs both exceed the 25 percent wall-time threshold and preserve 8720 discovered and processed, 7328 searchable and indexed, 265 OCR-required, 4 failed and 49 ignored; this migration does not claim query_hot_path acceptance"
-raw_profile_boundary = "public evidence is limited to the bounded aggregate timings, topology identities, counts, cleanup result and privacy booleans already recorded on #341 and #360; no private path, filename, resume text, raw query, candidate result, token, vector, PID, log, trace, raw hash, database, index or model cache may enter git or GitHub"
-rollback_condition = "restore the production shared_i3_b4 default if the macOS ARM default does not select exactly one interactive 3-thread and two bulk 3-thread residents, changes counts/order/vectors/lifecycle semantics, leaves resident or OCR processes behind, or fails the existing focused gates; do not weaken thresholds or fold the independent #361 first-query repair into this slice"
+hypothesis = "preparing and staging each ordinary main-import query generation before its visible-epoch metadata commit, then activating it immediately after commit, removes the O(n) projection audit and cold reader open from the first interactive query without changing import or query semantics"
+expected_delta = "at 7328 searchable documents under OCR-on import, every first fulltext, semantic and hybrid query after a main-import visible-epoch advance succeeds within 500 ms and within 250 ms of its immediate warm repeat"
+negative_control = "exact-main a106ddee observations without the handoff reached 0.76 seconds at 1000, 1.86 seconds at 2024, and failed around 3.7 seconds at 3048 and 6120 searchable documents while immediate hot repeats recovered to 0.14 to 0.41 seconds"
+implementation_boundary = "reuse the existing OCR prepare/install/finalize protocol for each ordinary import publication: open the exact immutable fulltext/vector reader pair after artifact validation but before metadata visibility, activate only after matching commit, discard on abort and fail closed on unknown control state"
+resident_pool_workload = "the already merged macOS ARM i3_bulk2x3_b4 resident topology remains fixed; this slice neither remeasures nor changes embedding throughput topology"
+resident_pool_acceptance = "no resident topology, input, model, tokenizer, pooling, Batch 4 grouping, vector order, cancellation, timeout, restart or grouped teardown behavior changes"
+full_product_acceptance = "the private product witness reuses the OCR-enabled 8720-document import and no-OCR-drain endpoint only to observe first-query behavior after ordinary visible-epoch changes; overall import throughput is a non-regression context, not this slice's optimization claim"
+raw_profile_boundary = "public evidence is limited to bounded aggregate latency, success counts, visible searchable counts, cleanup result and privacy booleans; no private path, filename, resume text, raw query, candidate result, token, vector, PID, log, trace, raw hash, database, index or model cache may enter git or GitHub"
+rollback_condition = "remove the ordinary import handoff and retain the existing OCR-only handoff if preparation can occur after visibility, activation can mismatch the committed generation, abort leaves a pending reader pinned, control failure does not fail closed, query semantics change, or focused gates regress"
 forbidden_scope = [
   "production_embedding_input_change",
   "production_model_id_change",
@@ -61,15 +67,14 @@ forbidden_scope = [
   "dynamic_arm_addition",
   "work_stealing",
   "import_scoped_or_idle_timeout_resident_lifecycle",
-  "main_import_generation_preparation_fix_issue_361",
+  "resident_topology_or_thread_change",
+  "import_throughput_reoptimization",
   "query_semantics_change",
   "ipc_or_diagnostics_contract_change",
   "persistence_or_index_contract_change",
   "desktop_packaging_dmg_or_install",
   "ocr_drain",
   "windows_or_linux",
-  "query_hot_path_acceptance_claim",
-  "new_private_benchmark_run",
   "raw_private_output",
   "raw_query_or_result_output",
   "gate_weakening",

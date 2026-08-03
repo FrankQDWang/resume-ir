@@ -56,9 +56,7 @@ use daemon_policy::{
     STALE_IMPORT_TASK_SECONDS,
 };
 use import_watcher::ImportWatcher;
-use import_worker::{
-    recover_stale_import_tasks, run_import_worker_once, run_import_worker_once_with_retry_due,
-};
+use import_worker::{recover_stale_import_tasks, run_import_worker_once};
 use ocr_worker::run_ocr_worker_once;
 use parent_lifecycle::ParentLifecycleMode;
 use run_options::RunOptions;

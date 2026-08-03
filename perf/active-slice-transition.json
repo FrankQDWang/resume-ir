@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-341-to-360-resident-pool-production-migration-2026-08-03",
-  "from_issue": "#341",
-  "to_issue": "#360",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/341#issuecomment-5164156287",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/360",
-  "base_active_goal_sha256": "7f7474e0ccc4cd94aa3d0384e8d65674f9e30938953c22d2054be13e8ccbdbe6",
+  "transition_id": "issue-360-to-361-main-import-generation-handoff-2026-08-03",
+  "from_issue": "#360",
+  "to_issue": "#361",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/362",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/361",
+  "base_active_goal_sha256": "bd67c37f3407c4eea2cf96757a679d5b60633aa429820f7897d255d6b0085138",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",

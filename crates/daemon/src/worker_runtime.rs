@@ -11,15 +11,16 @@ use import_pipeline::{
 use meta_store::{ImportProcessingContract, OwnedMetaStore};
 
 use crate::daemon_error::{DaemonError, WorkerErrorDisposition, WorkerRetryClass};
+use crate::import_worker::run_import_worker_once_with_retry_due_and_handoff;
 use crate::ipc::{self, DaemonFatalError};
 use crate::rescan_schedule::CompletedRootRescanSchedule;
 use crate::{
     current_timestamp, migration_repair, print_import_worker_summary, print_ocr_worker_summary,
     print_search_artifact_worker_summary, recover_stale_import_tasks,
-    run_import_worker_once_with_retry_due, run_search_artifact_worker_once,
-    search_artifact_recovery_has_activity, timestamp_minus_seconds, ImportWatcher,
-    ImportWorkerSummary, RunOptions, DEFAULT_IMPORT_RESCAN_MIN_AGE_SECONDS,
-    DEFAULT_OCR_JOBS_PER_TICK, IMPORT_RETRY_BACKOFF_SECONDS, STALE_IMPORT_TASK_SECONDS,
+    run_search_artifact_worker_once, search_artifact_recovery_has_activity,
+    timestamp_minus_seconds, ImportWatcher, ImportWorkerSummary, RunOptions,
+    DEFAULT_IMPORT_RESCAN_MIN_AGE_SECONDS, DEFAULT_OCR_JOBS_PER_TICK, IMPORT_RETRY_BACKOFF_SECONDS,
+    STALE_IMPORT_TASK_SECONDS,
 };
 
 const RETRY_BACKOFF_MS: [u64; 5] = [250, 1_000, 4_000, 15_000, 30_000];
@@ -320,7 +321,7 @@ fn run_worker_tick(
                     if !runtime_gates(options, runtime.capability_state.as_ref()).pdf_import {
                         effective_options.pdf_import = import_pipeline::PdfImportPolicy::Frozen;
                     }
-                    import_summary.extend(run_import_worker_once_with_retry_due(
+                    import_summary.extend(run_import_worker_once_with_retry_due_and_handoff(
                         data_dir,
                         store,
                         &effective_options,
@@ -333,6 +334,7 @@ fn run_worker_tick(
                         ),
                         (*pipeline_control).clone(),
                         || runtime_gates(options, runtime.capability_state.as_ref()).import,
+                        runtime.generation_handoff.as_ref(),
                     )?);
                 }
                 if runtime.summary_output == WorkerSummaryOutput::Stdout
