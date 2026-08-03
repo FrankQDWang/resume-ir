@@ -24,19 +24,11 @@ aggregate observer, owner-file environment selector and observer-only tests are 
 reverse dependency order. The closed report contract and core experiment capability remain for
 their own isolated rollback steps; ordinary production behavior remains unchanged.
 
-## Issue #319 resident role-isolation report contract restored
+## Issue #319 resident role-isolation report contract removed
 
-The closed 64 KiB aggregate schema, semantic checker and synthetic positive/negative fixtures are
-restored after the post-#328 core capability merged. This prerequisite emits no observation, reads
-no private corpus, changes no runtime behavior and makes no performance-improvement claim; it only
-fails closed on workload, gate, privacy, finiteness and decision drift before a runner may measure.
-
-The focused checker passes its valid fixture and 18 closed negative cases, governance mutation
-coverage, performance/autonomy/loop contracts, the public-repository guard and the PR budget. Two
-early full-verifier attempts hit unrelated load-sensitive failures in the unchanged PDF timeout and
-daemon publication-timeout tests; both focused tests passed immediately. An exact unmodified-main
-worktree then passed the full Rust workspace and repeated complete daemon suites, and a final
-captured run of `verify-local.sh` passed end to end on this branch without weakening either gate.
+After runner and observer removal, the experiment-only 64 KiB schema, checker, synthetic fixtures
+and governance pin are removed in the third reverse dependency step. The formal aggregate result
+remains recorded above and in #319; production behavior remains unchanged.
 
 ## Issue #319 resident role-isolation capability restored after admission repair
 
