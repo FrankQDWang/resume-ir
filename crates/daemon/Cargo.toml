@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-default = []
+default = ["resident-embedding-pool-experiment"]
 native-runtime-tests = []
 resident-embedding-pool-experiment = ["embedder/resident-embedding-pool-experiment"]
 

@@ -12,17 +12,17 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#341"
-name = "fixed_b4_bulk_resident_pool_matrix"
+issue = "#360"
+name = "macos_arm_resident_pool_production_migration"
 contract_change_allowed = true
 production_code_allowed = true
-private_benchmark_allowed = true
-configured_private_roots_required = true
+private_benchmark_allowed = false
+configured_private_roots_required = false
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #341 is a bounded L2 experiment with one separate interactive resident and exactly one or two fixed-B4 bulk residents behind a default-off capability. It freezes Batch grouping and order, uses the #342 epoch-aware outcome oracle and direct interactive queue-wait telemetry, and cannot change the production shared-three-thread default; only a later linked migration Issue may adopt a unique public-and-private winner."
+scope_exception_reason = "No exception is used. Issue #360 is the bounded production migration of the already measured #341 winner on macOS ARM. The three production files and six contract-state files fit the normal PR budget; no new private run, benchmark arm, threshold change or query-path fix is included."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -30,54 +30,25 @@ allowed_paths = [
   "perf/active-slice-transition.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-  "Cargo.lock",
   "crates/embedding-runtime/Cargo.toml",
-  "crates/embedding-runtime/src/main.rs",
-  "crates/embedding-runtime/src/profiling.rs",
-  "crates/embedding-runtime/src/profiling_tests.rs",
-  "crates/embedding-runtime/tests/production_modes.rs",
-  "crates/embedder/Cargo.toml",
-  "crates/embedder/src/lib.rs",
-  "crates/embedder/src/resident.rs",
-  "crates/embedder/src/resident_pool.rs",
-  "crates/embedder/src/resident_pool_tests.rs",
-  "crates/embedder/tests/resident.rs",
   "crates/daemon/Cargo.toml",
-  "crates/daemon/src/bootstrap.rs",
-  "crates/daemon/src/embedding_pool.rs",
   "crates/daemon/src/embedding_runtime.rs",
-  "crates/daemon/src/run_options.rs",
-  "crates/daemon/src/search_runtime_config.rs",
-  "crates/daemon/src/worker_runtime.rs",
-  "crates/benchmark-runner/Cargo.toml",
-  "crates/benchmark-runner/src/bin/resume-benchmark.rs",
-  "crates/benchmark-runner/src/lib.rs",
-  "crates/benchmark-runner/src/resident_embedding_pool.rs",
-  "crates/benchmark-runner/src/resident_embedding_pool_tests.rs",
-  "perf/resident-embedding-pool.schema.json",
-  "perf/fixtures/resident-embedding-pool/invalid-cases.json",
-  "perf/fixtures/resident-embedding-pool/valid-public-report.json",
-  "scripts/ci/check-resident-embedding-pool.py",
-  "scripts/ci/test-governance-contract-mutations.py",
-  "scripts/local/resident-embedding-pool.py",
 ]
-allowed_paths_role = "fixed_b4_bulk_resident_pool_matrix_paths"
+allowed_paths_role = "macos_arm_resident_pool_production_migration_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "L2_fixed_B4_bulk_resident_pool_matrix"
+observation_stage = "L2_resident_pool_production_migration"
 optimization_layer = "L2"
 optimization_layer_selected = true
-hypothesis = "after separating interactive Batch 1 from bulk Batch 4, dispatching unchanged complete Batch 4 groups across two independent bounded bulk residents can increase saturated bulk throughput beyond one four-thread bulk resident while preserving interactive latency, direct queue wait, epoch-valid query outcomes, vectors, lifecycle semantics and H2 memory"
-expected_delta = "exactly one two-bulk-resident candidate is eligible only when public throughput improves by at least 15 percent over i3_bulk1x4_b4 with a positive paired 95 percent confidence interval, all corrected query and resource guards pass, and the later private full-product endpoint improves by at least 8 percent over production shared_i3_b4 with a positive paired 95 percent confidence interval"
-negative_control = "production remains shared_i3_b4; the public pool control is i3_bulk1x4_b4 with one daemon-lifetime interactive three-thread resident and one daemon-lifetime bulk four-thread resident"
-implementation_boundary = "capability is default-off and limited to resident ownership, deterministic whole-Batch dispatch and reassembly, daemon composition and worker gating, the experiment runner, and a closed schema, checker and fixtures; exactly three public arms are allowed: i3_bulk1x4_b4, i3_bulk2x2_b4 and i3_bulk2x3_b4; residents start with the daemon and are reclaimed together; ordinary production remains one shared three-thread resident and a winner may only open a later production migration Issue"
-resident_pool_workload = "a 120-second quiet-host and thermal preflight precedes ten Williams-balanced blocks and 30 independent attested macOS M4 H2 release daemon sessions; after 30 seconds warmup each session runs 60 seconds of saturated whole-head Batch 4 by 512 work while public-synthetic interactive Batch 1 by 32 queries arrive at fixed 2 QPS; inputs, exact complete-Batch grouping, ordinal dispatch and result reassembly are frozen before implementation"
-resident_pool_acceptance = "bulk throughput improves by at least 15 percent over i3_bulk1x4_b4 with a positive paired 95 percent confidence interval; query p95 and p99 regressions are at most 5 and 10 percent; directly observed maximum interactive resident queue wait is at most 200 ms; every attempt uses the #342 closed outcome set and an epoch-valid oracle, exact_expected and valid_epoch_result_change are valid completions, and deadline_partial, semantic_partial, overload, http_error, protocol_error, transport_error and cancelled counts must all be zero; H2 private or anonymous process-tree peak is at most 1536 MiB; vectors, complete-Batch grouping, counts, order, cancellation, timeout, crash, restart, Ready, publication atomicity and daemon-exit cleanup remain exact; thermal and host-load guards pass"
-full_product_acceptance = "only one unique public winner may enter at least five randomized AB or BA pairs against production shared_i3_b4 using #282's OCR-on no-OCR-drain endpoint; the frozen public-synthetic query workload runs from first vector-ready through the non-OCR endpoint; paired wall improvement must be at least 8 percent with a positive 95 percent confidence interval and every corrected query, direct-queue, resource, correctness and privacy guard must pass; product acceptance requires a valid quiet-host or dedicated-host lane"
-raw_profile_boundary = "the public report is a closed aggregate no larger than 64 KiB and contains only arm identities, bounded Batch and outcome counts, percentiles, directly observed queue-wait aggregates, confidence intervals, stage and resource aggregates, decision and privacy booleans; private paths, filenames, resume text, query text, candidate results, document or version IDs, token IDs, vectors, PIDs, logs, traces, direct raw hashes, databases, index files and model caches remain owner-only and are deleted"
-rollback_condition = "remove every experiment-only pool, split, runner and report capability and retain production shared_i3_b4 when no unique candidate clears every public and private gate; do not add arms, regroup Batch inputs, replace invalid blocks, tune the workload after evidence or weaken a threshold; close as blocked only after the same external or tool blocker persists across three distinct evidence paths"
+hypothesis = "making the already measured i3_bulk2x3_b4 topology the ordinary macOS ARM default preserves the 35.158 to 37.332 percent full-import endpoint improvement observed on exact main while retaining the existing resident lifecycle and output contracts"
+expected_delta = "the OCR-enabled no-OCR-drain 8720-document product endpoint remains at least 25 percent faster than the #282 shared_i3_b4 baseline; the two completed winner runs measured 760.147 and 786.509 seconds versus 1212.971 seconds with identical product counts"
+negative_control = "the #282 production shared_i3_b4 run on the same corpus is the frozen historical product control: 1212.971 seconds, 8720 discovered and processed, 7328 searchable and indexed, 265 OCR-required, 4 failed and 49 ignored"
+implementation_boundary = "enable the existing resident-pool capability in ordinary daemon and embedding-runtime builds and select i3_bulk2x3_b4 by default only on macOS ARM when no diagnostic arm is supplied; retain shared_i3_b4 selection on other targets; preserve one interactive 3-thread resident, two bulk 3-thread residents, daemon-lifetime ownership and grouped teardown"
+resident_pool_workload = "the accepted product evidence is the user-directed OCR-enabled 8720-document full import on the normal active machine environment, ending when all non-OCR documents are searchable and indexed without waiting for OCR drain; run 2 overlapped a user-reported 5000-plus-test pytest workload, which is context only and not a formal attribution claim"
+resident_pool_acceptance = "ordinary macOS ARM selection resolves to i3_bulk2x3_b4; complete Batch 4 groups enter two distinct bulk residents concurrently and outputs are reassembled in ordinal order; the interactive resident and both bulk residents reach Shutdown together; model, tokenizer, whole-head 512 input, Dynamic U8S8, ORT 1.27, prepacking-off, pooling, cancellation, timeout and restart behavior remain unchanged"
+full_product_acceptance = "the already completed two exact-main product runs both exceed the 25 percent wall-time threshold and preserve 8720 discovered and processed, 7328 searchable and indexed, 265 OCR-required, 4 failed and 49 ignored; this migration does not claim query_hot_path acceptance"
+raw_profile_boundary = "public evidence is limited to the bounded aggregate timings, topology identities, counts, cleanup result and privacy booleans already recorded on #341 and #360; no private path, filename, resume text, raw query, candidate result, token, vector, PID, log, trace, raw hash, database, index or model cache may enter git or GitHub"
+rollback_condition = "restore the production shared_i3_b4 default if the macOS ARM default does not select exactly one interactive 3-thread and two bulk 3-thread residents, changes counts/order/vectors/lifecycle semantics, leaves resident or OCR processes behind, or fails the existing focused gates; do not weaken thresholds or fold the independent #361 first-query repair into this slice"
 forbidden_scope = [
-  "production_default_topology_change",
-  "production_thread_policy_change",
   "production_embedding_input_change",
   "production_model_id_change",
   "production_vector_reindex",
@@ -86,11 +57,11 @@ forbidden_scope = [
   "metadata_schema_change",
   "pooling_change",
   "batch_size_composition_or_order_change",
-  "two_by_four_bulk_arm",
-  "three_by_two_bulk_arm",
+  "new_benchmark_arm",
   "dynamic_arm_addition",
   "work_stealing",
   "import_scoped_or_idle_timeout_resident_lifecycle",
+  "main_import_generation_preparation_fix_issue_361",
   "query_semantics_change",
   "ipc_or_diagnostics_contract_change",
   "persistence_or_index_contract_change",
@@ -98,11 +69,9 @@ forbidden_scope = [
   "ocr_drain",
   "windows_or_linux",
   "query_hot_path_acceptance_claim",
+  "new_private_benchmark_run",
   "raw_private_output",
   "raw_query_or_result_output",
-  "invented_failure_reason",
-  "post_hoc_outcome_reclassification",
-  "post_hoc_block_replacement",
   "gate_weakening",
   "coreml",
   "batch8_batch16_or_batch32",

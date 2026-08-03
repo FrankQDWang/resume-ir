@@ -1,28 +1,38 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
-  "experiment_state": "hypothesis_registered",
+  "workflow_state": "evidence_review",
+  "experiment_state": "correctness_passed",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "7f7474e0ccc4cd94aa3d0384e8d65674f9e30938953c22d2054be13e8ccbdbe6",
+    "active_goal_sha256": "bd67c37f3407c4eea2cf96757a679d5b60633aa429820f7897d255d6b0085138",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "61e4fe06c5586f38cb59ad79a513cf57138d1311"
+    "git_head_sha": "a106ddee56de99d5484d8d35aa7bc6cbb1f36e2a"
   },
-  "current_slice": "#341 fixed-B4 bulk resident pool matrix",
+  "current_slice": "#360 macOS ARM resident-pool production migration",
   "hypothesis": {
-    "id": "issue-341-fixed-b4-bulk-resident-pool",
+    "id": "issue-360-macos-arm-resident-pool-production-migration",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "exactly one two-bulk-resident candidate improves saturated fixed-B4 throughput by at least 15 percent over one bulk 4t resident with positive paired CI while the separate interactive 3t resident preserves epoch-valid query outcomes, p95 and p99 guards, direct queue wait, H2 memory, exact vectors and lifecycle semantics",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/341#issuecomment-5162039221",
-    "after_measurement_ref": null,
+    "expected_effect": "ordinary macOS ARM builds select one interactive 3-thread and two bulk 3-thread residents and preserve the 35.158 to 37.332 percent OCR-enabled no-OCR-drain product improvement already measured on exact main, with unchanged counts, Batch 4 order, vectors and grouped cleanup",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/360",
+    "after_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/341#issuecomment-5164156287",
     "reprofile_ref": null,
     "decision": "active"
   },
   "transition_history": [
+    {
+      "from": "implementation_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-360-macos-arm-resident-pool-production-migration-selected"
+    },
+    {
+      "from": "slice_selected",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/360"
+    },
     {
       "from": "evidence_review",
       "to": "slice_selected",
@@ -3111,15 +3121,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-341-fixed-b4-resident-pool-selected-2026-08-03",
-  "state_version": 589,
-  "previous_state_hash": "fea2616fd85f3d0fe1fc74a67adae78a8f1ac2b9975d2d40738ede43e945171d",
-  "expected_state_version": 589,
-  "last_confirmed_side_effect": "issue_342_formal_not_reproduced_and_issue_341_selected",
+  "run_id": "issue-360-resident-pool-production-migration-2026-08-03",
+  "state_version": 591,
+  "previous_state_hash": "58c00eb9f0550d49012258d01df1fc7ea8708f72052344453d51275dc0be2a60",
+  "expected_state_version": 591,
+  "last_confirmed_side_effect": "issue_360_production_migration_verified_with_unchanged_main_environment_failure_reproduced",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#341",
+    "primary_issue": "#360",
     "active_prs": [],
     "open_blockers": []
   }

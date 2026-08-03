@@ -1,5 +1,43 @@
 # Progress
 
+## Issue #360 macOS ARM resident-pool production migration selected
+
+Issue #341 completed the user-directed product experiment on exact merged main
+`a106ddee56de99d5484d8d35aa7bc6cbb1f36e2a`. Against #282's OCR-enabled,
+no-OCR-drain 1,212.971-second baseline, `i3_bulk2x3_b4` completed the same
+8,720-document endpoint in 760.147 and 786.509 seconds: 37.332% and 35.158%
+faster, with a 773.328-second mean and 36.245% mean improvement. Both runs
+preserved 8,720 discovered/processed, 7,328 searchable/indexed, 265
+OCR-required, 4 failed and 49 ignored. The second run still improved 35.158%
+while the user reported a separate 5,000-plus-test pytest workload; that ambient
+load is context only, not a formal attribution claim. `i3_bulk2x2_b4` measured
+791.322 seconds and remains a resource-efficiency fallback; `i3_bulk1x4_b4`
+measured 922.875 seconds and was rejected. All experiment process groups and
+temporary stores were removed.
+
+Issue #360 is the sole active L2 migration slice. It makes the existing
+resident-pool capability part of ordinary builds and selects one interactive
+3-thread plus two bulk 3-thread residents by default only on macOS ARM. Other
+targets retain the shared resident. Model identity, tokenizer, whole-head 512,
+Dynamic U8S8, ORT 1.27, prepacking-off, pooling, complete Batch 4 grouping and
+order, vector output, cancellation, timeout, restart and grouped cleanup remain
+unchanged. The independent main-import visible-epoch first-query preparation
+defect is tracked by #361 and is explicitly outside this migration; no
+`query_hot_path` acceptance is claimed here.
+
+The production migration passes its two focused daemon topology tests, all 9
+feature-enabled embedder resident tests, all 24 non-ignored embedding-runtime
+tests, warnings-denied Clippy for all three affected crates, and an ordinary
+release build of the daemon and embedding runtime. The performance,
+autonomous-goal, loop-state, governance-mutation, diff and public-repository
+gates pass. A full `verify-local.sh` run passed the workspace tests, including
+all 115 default daemon unit tests, then stopped when the native import-watcher
+test could not find its pre-existing classifier runtime pack under generated
+`target/tauri-resources`. The exact same test and missing-pack failure was
+reproduced on an unmodified detached `origin/main` worktree; the test sources
+are unchanged by this slice. No generated pack, private corpus or temporary
+main worktree is retained.
+
 ## Issue #341 blocked rollback: daemon observer removed
 
 The first three reverse steps removed the public matrix runner, its local
