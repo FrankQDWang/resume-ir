@@ -1,5 +1,28 @@
 # Progress
 
+## Issue #342 OCR-publication query outcome diagnosis selected
+
+A post-close audit corrected the interpretation of the #319 interactive aggregate without changing
+its recorded measurements or `inconclusive` decision. The runner counted only an exact match to the
+pre-import top-1 document/version as success; every other completed response, including a valid
+result change after the visible corpus grew, was labelled failure. All 1,200 samples contributed to
+p50/p95/p99, and only a transport/future failure would have contributed a 15,000 ms sample. Because
+every arm maximum stayed below 580 ms, the retained evidence proves completed responses but cannot
+classify their HTTP, partial or result-change reasons. Its former `max_queue_wait_upper_bound_ms`
+field was also end-to-end maximum latency, not direct queue telemetry.
+
+Exact current main passes the focused first-hybrid-query-after-OCR publication test in 27.04 seconds.
+The existing 7,328-document continuous three-publication witness clears all fulltext, semantic and
+hybrid query redlines, then fails its independent RSS guard at 533.9 MiB versus 512 MiB. Production
+currently separates OCR/import/search workers but still shares one three-thread resident between
+interactive query embedding and background publication embedding, plus daemon CPU, memory and disk.
+
+Issue #342 is therefore the sole active measurement/correctness prerequisite. It will classify every
+query outcome by visible epoch and separate first-versus-warm latency without changing production
+code, topology, model, input, Batch, query semantics, IPC, persistence, index format, desktop or
+packaging. #341 remains frozen but deferred because adding a resident pool before repairing the query
+oracle would increase the already-observed resource pressure and could select against a false guard.
+
 ## Issue #319 formal resident role-isolation matrix inconclusive; runner removed
 
 The exact-merged-main macOS M4/H2 matrix completed 10 balanced blocks and 30 independent release

@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-328-to-319-resident-role-isolation-resume-2026-08-02",
-  "from_issue": "#328",
-  "to_issue": "#319",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/328#issuecomment-5160291128",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/319#issuecomment-5160295338",
-  "base_active_goal_sha256": "0dc118bd661372dc9b64d49435d4183b525cab3bb738bd0fdf5ccdff85e1a422",
+  "transition_id": "issue-319-to-342-ocr-query-publication-diagnosis-2026-08-03",
+  "from_issue": "#319",
+  "to_issue": "#342",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/319#issuecomment-5161494423",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/342",
+  "base_active_goal_sha256": "6948233f2c6b9d2cf027092a00e56b887d77ef9e457aa7017609e671b2edc42e",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",

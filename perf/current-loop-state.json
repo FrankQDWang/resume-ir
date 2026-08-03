@@ -5,24 +5,34 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "6948233f2c6b9d2cf027092a00e56b887d77ef9e457aa7017609e671b2edc42e",
+    "active_goal_sha256": "372aa4e429d39a9cb5fbfe2d7b0912f2eeccc6f6e140dc69a6b22982af7c7d75",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "a7ae88a6de0fee896de9b3e1910da2d0ece7787b"
+    "git_head_sha": "2e8bb708322fcb11ac43cade4981a850d91e8f37"
   },
-  "current_slice": "#319 interactive and bulk resident embedding role-isolation matrix",
+  "current_slice": "#342 OCR publication query outcome and epoch-latency diagnosis",
   "hypothesis": {
-    "id": "issue-319-resident-embedding-role-isolation",
+    "id": "issue-342-ocr-query-outcome-classification",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "exactly one split resident topology improves public-synthetic bulk throughput and the paired full-product non-OCR endpoint by at least 8 percent with positive paired 95 percent confidence intervals while preserving every interactive latency, queue, memory, exact-vector and lifecycle guard",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/282#issuecomment-5150903774",
+    "expected_effect": "every attempted public-synthetic query is assigned to exactly one retained outcome class using an epoch-valid oracle, while first-versus-warm fulltext, semantic and hybrid latency after each OCR publication is attributed without inventing queue wait or failure reasons",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/319#issuecomment-5161494423",
     "after_measurement_ref": null,
     "reprofile_ref": null,
     "decision": "active"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/342"
+    },
+    {
+      "from": "slice_selected",
+      "to": "evidence_review",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/319#issuecomment-5161494423"
+    },
     {
       "from": "evidence_review",
       "to": "slice_selected",
@@ -3091,15 +3101,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-319-resident-embedding-role-isolation-resumed-2026-08-02",
-  "state_version": 587,
-  "previous_state_hash": "13596cf28290ac9109091d35afc08d8ad89bf3a47d096cf94f42e1dc4e328caa",
-  "expected_state_version": 587,
-  "last_confirmed_side_effect": "issue_319_reopened_after_328_release_smoke",
+  "run_id": "issue-342-ocr-query-publication-diagnosis-selected-2026-08-03",
+  "state_version": 588,
+  "previous_state_hash": "b79ff9676ae671e0fc30543020f02e455a1fc4c8079733dd0b60da4db9e9900f",
+  "expected_state_version": 588,
+  "last_confirmed_side_effect": "issue_319_measurement_semantics_corrected_and_issue_342_selected",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#319",
+    "primary_issue": "#342",
     "active_prs": [],
     "open_blockers": []
   }
