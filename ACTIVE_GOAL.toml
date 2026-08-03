@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #375 evaluates one CPU-only symmetric INT4 weight-only MatMulNBits artifact against the exact current main baseline. The bounded experiment capability, focused tests, two local runners and six contract-state files fit the normal PR budget."
+scope_exception_reason = "No exception is used. Issue #375 evaluates one CPU-only symmetric INT4 weight-only MatMulNBits plus block-quantized Gather artifact against the exact current main baseline. The bounded experiment capability, focused tests, two local runners and six contract-state files fit the normal PR budget."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -42,10 +42,10 @@ primary_benchmark_lane = "full_import_ocr_backlog"
 observation_stage = "L1_cpu_int4_weight_only_bulk_embedding_experiment"
 optimization_layer = "L1"
 optimization_layer_selected = true
-hypothesis = "Transformer-preoptimized symmetric INT4 weight-only MatMulNBits with block size 128 reduces CPU bulk B4x512 inference enough to lower the OCR-enabled 8720-document non-OCR endpoint by at least 8 percent without an obvious retrieval-quality failure"
+hypothesis = "Transformer-preoptimized symmetric INT4 weight-only MatMulNBits plus block-quantized Gather with block size 128 reduces CPU bulk B4x512 inference enough to lower the OCR-enabled 8720-document non-OCR endpoint by at least 8 percent without an obvious retrieval-quality failure"
 expected_delta = "pass a public-synthetic B4x512 entry gate with at least 10 percent throughput improvement, then complete the exact private product endpoint at or below 472.581 seconds versus the retained 513.675-second current-main baseline"
 negative_control = "the retained Issue #372 Dynamic U8S8 whole-head 512 runtime pack on ORT 1.27 with fixed B4x512 bulk Session, interactive 3t plus bulk 2x3t topology, memory patterns enabled for bulk, CPU arena disabled and prepacking disabled"
-implementation_boundary = "one exact experimental artifact only: upstream revision 614241f622f53c4eeff9890bdc4f31cfecc418b3, Transformer preoptimization, symmetric INT4 weight-only, block size 128, QOperator MatMulNBits and CPU EP; synthetic screening must pass before any private run; a winner may only open a later production migration Issue"
+implementation_boundary = "one exact experimental artifact only: upstream revision 614241f622f53c4eeff9890bdc4f31cfecc418b3, Transformer preoptimization that preserves attention MatMul and embedding Gather quantization sites, symmetric INT4 weight-only, block size 128, QOperator MatMulNBits plus block-quantized Gather and CPU EP; synthetic screening must pass before any private run; a winner may only open a later production migration Issue"
 resident_pool_workload = "keep macOS ARM interactive 3t plus bulk 2x3t, two concurrent bulk publication calls, whole-head 512, fixed B4x512 bulk routing, current tokenizer, prefixes, input order, pooling, memory patterns and CPU arena false unchanged; only model weight representation changes"
 resident_pool_acceptance = "synthetic B4x512 throughput improves by at least 10 percent with bounded finite normalized vectors, coherent token accounting, unchanged ordering and lifecycle semantics, and the conservative H2 process-tree private or anonymous footprint stays at or below 3072 MiB"
 full_product_acceptance = "reuse the exact accepted #372 main baseline of 513.675 seconds only after reconciling main and workload identity; candidate completes the OCR-enabled 8720-document no-OCR-drain endpoint at or below 472.581 seconds with coherent aggregate counts; at least 10 authorized real queries each succeed in semantic and hybrid modes without partial or empty responses or an obvious relevance anomaly; no query_hot_path claim is made"

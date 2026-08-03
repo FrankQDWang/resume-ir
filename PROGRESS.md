@@ -6,8 +6,18 @@
 bulk Session and established the exact current-main OCR-enabled 8,720-document
 non-OCR endpoint at 513.675 seconds. The new L1 hypothesis changes only the
 model weight representation: one exact upstream revision is Transformer-
-preoptimized and quantized as symmetric INT4 weight-only QOperator
-`MatMulNBits` with block size 128 for CPU EP execution.
+preoptimized while preserving attention MatMul and embedding Gather
+quantization sites, then quantized as symmetric INT4 weight-only QOperator
+`MatMulNBits` plus block-quantized Gather with block size 128 for CPU EP
+execution.
+
+The initial generator preflight exposed only 36 MatMul sites because attention
+fusion hid Q/K/V weights and embedding Gather weights remained FP32. That
+395.602 MiB incomplete-coverage graph was 21.510% slower in the synthetic
+diagnostic and exceeded the conservative H2 budget; it is not the registered
+candidate and did not read private inputs. The corrected generator disables
+only those two site-hiding fusions before applying the single registered
+MatMul-plus-Gather weight-only configuration.
 
 The public-synthetic B4x512 entry gate requires at least 10% throughput
 improvement, bounded finite normalized vectors, coherent token accounting,
