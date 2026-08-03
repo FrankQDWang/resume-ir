@@ -1,15 +1,14 @@
 # Progress
 
-## Issue #341 blocked rollback: daemon pool composition removed
+## Issue #341 blocked rollback: daemon observer removed
 
 The first three reverse steps removed the public matrix runner, its local
-support and the unused report contract. This fourth step removes the default-off
-daemon feature gate, split-resident composition, role observer and worker-gate
-wiring. The daemon again owns exactly one resident client and publishes through
-that same resident, matching the production shared-three-thread topology that
-remained active throughout the experiment.
+support and the unused report contract. This fourth step removes the
+experiment-only daemon owner-file observer and its resident telemetry wiring.
+No content-free queue-wait owner file can now be emitted.
 
-Only the lower runtime primitives remain for the final ordered rollback. This
+The default-off split-resident composition and lower runtime primitives remain
+for the next ordered rollback steps. Production shared 3t is unchanged. This
 step runs no benchmark, retains no performance result and makes no production
 default, IPC, schema, model, input, Batch or index change.
 
