@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-319-to-342-ocr-query-publication-diagnosis-2026-08-03",
-  "from_issue": "#319",
-  "to_issue": "#342",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/319#issuecomment-5161494423",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/342",
-  "base_active_goal_sha256": "6948233f2c6b9d2cf027092a00e56b887d77ef9e457aa7017609e671b2edc42e",
+  "transition_id": "issue-342-to-341-fixed-b4-resident-pool-2026-08-03",
+  "from_issue": "#342",
+  "to_issue": "#341",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/342#issuecomment-5162032649",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/341#issuecomment-5162039221",
+  "base_active_goal_sha256": "372aa4e429d39a9cb5fbfe2d7b0912f2eeccc6f6e140dc69a6b22982af7c7d75",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",

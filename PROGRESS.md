@@ -1,5 +1,50 @@
 # Progress
 
+## Issue #341 fixed-B4 bulk resident pool selected
+
+Issue #342 closed `not_reproduced` on exact merged main
+`61e4fe06c5586f38cb59ad79a513cf57138d1311`. Its corruption-capable smoke
+classified all 12 queries correctly. The formal public witness then observed
+three exact OCR visible-epoch advances and classified all 24 first/warm
+fulltext, semantic and hybrid queries as `exact_expected`; every partial,
+overload, HTTP, protocol, transport and cancellation count was zero. Fulltext,
+semantic and hybrid each produced zero signal epochs under the frozen
+first-versus-warm rule. The 11,546-byte mode-0600 report passes its checker and
+all 19 negative mutations. This evidence does not support a generation-
+publication fix and made no production change.
+
+The result narrows the remaining long-OCR concern to sustained shared-resource
+competition rather than the completed publication boundary alone. Production
+workers remain logically separate, but semantic/hybrid query embedding and
+background vector publication still share one non-preemptible three-thread
+resident plus host CPU, memory and disk. #319's retained aggregate still proves
+that split 4t observed 9.700% more bulk throughput with a positive paired CI and
+lower all-sample p95/p99; its signature mismatches are not proven request
+failures and its end-to-end maximum is not direct queue-wait telemetry.
+
+Issue #341 is therefore the sole active L2 slice. Its public control has one
+interactive 3t resident plus one bulk 4t resident; the only candidates use the
+same interactive resident plus two bulk 2t or two bulk 3t residents. Exact
+whole-Batch-4 grouping, order, whole-head 512, model/runtime identity and atomic
+publication remain frozen. The query guard now uses #342's epoch-aware outcome
+classes, treats a valid epoch result change as a completion, requires zero real
+partial/error/overload outcomes and measures resident queue wait directly. No
+throughput, CI, latency, memory, private-product or winner claim exists until a
+merged-main 30-session matrix clears every unchanged gate. This transition
+changes six governance files only; Rust and production behavior remain
+unchanged.
+
+Focused performance, autonomous-goal, loop-state, governance-mutation, privacy,
+diff and PR-budget checks pass. The full branch verifier stopped in the
+unchanged meta-store publication-lock timing test with `Timeout`; that exact
+test passed immediately both with and without the workspace-unified migration
+feature. An untouched detached worktree at exact main `61e4fe0` then ran the
+same workspace command: the meta-store test passed, and the run later stopped
+in the unchanged `pdf_parser_enforces_runtime_timeout` timing test after
+observing `Corrupted` instead of `Timeout`. That exact PDF test passed on its
+immediate exact-main rerun. No Rust file or timing threshold is changed in this
+contract transition.
+
 ## Issue #342 OCR-publication query outcome diagnosis selected
 
 A post-close audit corrected the interpretation of the #319 interactive aggregate without changing
