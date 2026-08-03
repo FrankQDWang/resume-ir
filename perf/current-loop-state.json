@@ -5,24 +5,34 @@
   "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "372aa4e429d39a9cb5fbfe2d7b0912f2eeccc6f6e140dc69a6b22982af7c7d75",
+    "active_goal_sha256": "7f7474e0ccc4cd94aa3d0384e8d65674f9e30938953c22d2054be13e8ccbdbe6",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "2e8bb708322fcb11ac43cade4981a850d91e8f37"
+    "git_head_sha": "61e4fe06c5586f38cb59ad79a513cf57138d1311"
   },
-  "current_slice": "#342 OCR publication query outcome and epoch-latency diagnosis",
+  "current_slice": "#341 fixed-B4 bulk resident pool matrix",
   "hypothesis": {
-    "id": "issue-342-ocr-query-outcome-classification",
+    "id": "issue-341-fixed-b4-bulk-resident-pool",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "every attempted public-synthetic query is assigned to exactly one retained outcome class using an epoch-valid oracle, while first-versus-warm fulltext, semantic and hybrid latency after each OCR publication is attributed without inventing queue wait or failure reasons",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/319#issuecomment-5161494423",
+    "expected_effect": "exactly one two-bulk-resident candidate improves saturated fixed-B4 throughput by at least 15 percent over one bulk 4t resident with positive paired CI while the separate interactive 3t resident preserves epoch-valid query outcomes, p95 and p99 guards, direct queue wait, H2 memory, exact vectors and lifecycle semantics",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/341#issuecomment-5162039221",
     "after_measurement_ref": null,
     "reprofile_ref": null,
     "decision": "active"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/341#issuecomment-5162039221"
+    },
+    {
+      "from": "slice_selected",
+      "to": "evidence_review",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/342#issuecomment-5162032649"
+    },
     {
       "from": "evidence_review",
       "to": "slice_selected",
@@ -3101,15 +3111,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-342-ocr-query-publication-diagnosis-selected-2026-08-03",
-  "state_version": 588,
-  "previous_state_hash": "b79ff9676ae671e0fc30543020f02e455a1fc4c8079733dd0b60da4db9e9900f",
-  "expected_state_version": 588,
-  "last_confirmed_side_effect": "issue_319_measurement_semantics_corrected_and_issue_342_selected",
+  "run_id": "issue-341-fixed-b4-resident-pool-selected-2026-08-03",
+  "state_version": 589,
+  "previous_state_hash": "fea2616fd85f3d0fe1fc74a67adae78a8f1ac2b9975d2d40738ede43e945171d",
+  "expected_state_version": 589,
+  "last_confirmed_side_effect": "issue_342_formal_not_reproduced_and_issue_341_selected",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#342",
+    "primary_issue": "#341",
     "active_prs": [],
     "open_blockers": []
   }
