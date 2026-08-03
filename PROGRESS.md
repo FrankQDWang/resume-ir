@@ -1,5 +1,86 @@
 # Progress
 
+## Issue #364 bulk-only ONNX memory-pattern experiment result
+
+Issue #361 remains open with its exact 7,328-document query sample outstanding,
+but PR #363 already merged the bounded main-import generation handoff and the
+user directed the next import optimization. #364 is now the sole active L3
+experiment. It reuses #282's attribution and #341's product results instead of
+rerunning a baseline: the current macOS ARM `i3_bulk2x3_b4` topology completed
+the OCR-enabled, no-OCR-drain 8,720-document endpoint in 760.147 and 786.509
+seconds, a 773.328-second mean.
+
+The candidate changes one Session option only. The two existing bulk residents
+enable ONNX Runtime memory-pattern reuse; interactive, role-less experiment,
+profiling, shared production resident and one-shot execution remain disabled.
+CPU arena, resident count, three-thread policy, Dynamic U8S8 model, tokenizer,
+whole-head 512, Batch grouping/order, pooling and lifecycle are frozen. ORT
+1.27 caches memory patterns by input shape, so the rare non-full B4 call does
+not require a padding or input-composition change in this slice.
+
+The primary product gate is at most 750.128 seconds, at least 3% faster than the
+retained mean, with the exact 8,720 processed, 7,328 searchable/indexed, 265
+OCR-required/queued, 4 failed and 49 ignored aggregate. Exact vectors,
+post-import query success, Ready/restart/cleanup semantics and the resident
+topology private or anonymous peak are mandatory guards. The pre-registered
+ceiling was 1536 MiB; after measurement the user explicitly raised this
+slice-specific ceiling to 3072 MiB without changing the global import writer
+heap or hardware-tier policy. Failure removes the
+candidate and retains current `i3_bulk2x3_b4`; this slice cannot expand to CPU
+arena, static model, padding, offline graph optimization, CoreML or another
+topology/thread arm.
+
+The focused RED failed because `ResidentMode` had no memory-pattern policy.
+GREEN makes the already parsed pool role select an explicit internal policy and
+passes all 23 runtime unit cases (22 passed, one pre-existing supervised-child
+probe ignored) plus all three production-mode tests. Two same-binary real-model
+synthetic controls kept maximum elementwise vector delta at exactly zero. The
+closer three-thread control measured B4 means of 9.196 ms disabled and 8.573 ms
+enabled, a 7.265% local synthetic improvement across 12 repetitions. B1 and B2
+also stayed elementwise exact. This is a capability signal only; it cannot
+replace the frozen full-product endpoint gate.
+
+The OCR-enabled private product witness then reached the exact no-OCR-drain
+endpoint in 610.483 seconds: 8,720 discovered/processed, 7,328
+searchable/indexed, 265 OCR-required/queued, 4 failed and 49 ignored. All
+source-fence, task-binding, durable-OCR, visible-epoch, coverage, atomicity and
+Batch-bound invariants passed. Against the retained 773.328-second mean this
+saves 162.845 seconds and improves wall time by 21.058%; against the retained
+760.147-second best run it saves 149.664 seconds and improves by 19.689%.
+Aggregate ONNX work was 822.858 seconds across the two concurrent bulk
+residents, with 1,833 batches and 7,328 inputs.
+
+The H2 three-resident physical-footprint witness measured 455.595 MiB for the
+unchanged interactive resident and 511.532 MiB for a bulk resident with memory
+patterns enabled. Conservatively summing one interactive plus two bulk peaks
+gives 1,478.659 MiB. This passed the original 1,536 MiB gate by 57.341 MiB and
+also passes the later user-authorized 3,072 MiB ceiling. The product-run
+process-tree RSS peak was 3,307.078 MiB, but RSS double-counts shared mappings
+across resident processes and is not substituted for the contracted physical
+footprint measurement.
+
+The exact vector, role-isolation, concurrent B4 ordering, interactive-during-
+bulk, Ready and grouped-shutdown tests pass. A real query sample was recovered
+from the authorized query-artifact root only after the product witness had
+cleaned its temporary store; the sole installed store reported `search service
+unavailable`, so no new private `query_hot_path` or exact-7,328 query claim is
+made. This is an evidence-availability limitation, not an observed candidate
+query failure: the candidate changes only the bulk Session option, the
+interactive Session remains byte-for-byte configured with memory patterns
+disabled, and the retained #361 evidence already covers live queries through
+7,144 searchable documents. The speedup and resource results therefore support
+retaining the bulk-only change, while the exact-7,328 real-query sample remains
+with #361 rather than being fabricated here.
+
+The full `./scripts/ci/verify-local.sh` run passed contract, format, clippy,
+workspace, no-default-feature and closed-loop stages before stopping at the
+native `s4_daemon` watcher test because the reviewed local classifier runtime
+pack was absent. The same focused test reproduced on untouched
+`f2a133e5dc65a44f607269957d883964039a1dfe` with the identical missing-pack
+failure, so this is an existing local-environment prerequisite and not a #364
+regression. All temporary #364 runner, report, checkpoint and attested-pack
+artifacts were moved to Trash after the aggregate result was recorded.
+
 ## Issue #361 main-import query-generation handoff evidence review
 
 Issue #360 merged through PR #362 at `168f180e38fa8c2b68d3bb4181a81a3e86fd6c16`.
