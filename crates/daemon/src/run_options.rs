@@ -19,26 +19,6 @@ const DEFAULT_OCR_PAGE_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_OCR_MAX_PAGES_PER_DOCUMENT: u32 = 100;
 const DEFAULT_EMBEDDING_TIMEOUT_MS: u64 = 30_000;
 
-#[cfg(feature = "resident-embedding-pool-experiment")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ResidentEmbeddingPoolArm {
-    I3Bulk1x4B4,
-    I3Bulk2x2B4,
-    I3Bulk2x3B4,
-}
-
-#[cfg(feature = "resident-embedding-pool-experiment")]
-impl ResidentEmbeddingPoolArm {
-    fn parse(value: &str) -> Option<Self> {
-        match value {
-            "i3_bulk1x4_b4" => Some(Self::I3Bulk1x4B4),
-            "i3_bulk2x2_b4" => Some(Self::I3Bulk2x2B4),
-            "i3_bulk2x3_b4" => Some(Self::I3Bulk2x3B4),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Clone)]
 pub(crate) struct RunOptions {
     pub(crate) foreground: bool,
@@ -78,9 +58,6 @@ pub(crate) struct RunOptions {
     pub(crate) embedding_dimension: Option<usize>,
     pub(crate) embedding_timeout_ms: u64,
     pub(crate) resident_embedding: Option<ResidentEmbeddingClient>,
-    pub(crate) publication_resident_embeddings: Vec<ResidentEmbeddingClient>,
-    #[cfg(feature = "resident-embedding-pool-experiment")]
-    pub(crate) resident_embedding_pool_arm: Option<ResidentEmbeddingPoolArm>,
     pub(crate) search_vectorization: SearchPublicationVectorization,
     pub(crate) worker_interval_ms: Option<u64>,
     pub(crate) max_worker_ticks: Option<usize>,
@@ -126,9 +103,6 @@ impl Default for RunOptions {
             embedding_dimension: None,
             embedding_timeout_ms: DEFAULT_EMBEDDING_TIMEOUT_MS,
             resident_embedding: None,
-            publication_resident_embeddings: Vec::new(),
-            #[cfg(feature = "resident-embedding-pool-experiment")]
-            resident_embedding_pool_arm: None,
             search_vectorization: SearchPublicationVectorization::default(),
             worker_interval_ms: None,
             max_worker_ticks: None,
@@ -344,18 +318,6 @@ pub(crate) fn parse(args: &[String]) -> Result<RunOptions> {
                 options.embedding_timeout_ms = positive_u64(args.get(index + 1))?;
                 index += 2;
             }
-            #[cfg(feature = "resident-embedding-pool-experiment")]
-            "--resident-embedding-pool-arm" => {
-                if options.resident_embedding_pool_arm.is_some() {
-                    return Err(DaemonError::usage(usage()));
-                }
-                let value = non_empty(args.get(index + 1))?;
-                options.resident_embedding_pool_arm = ResidentEmbeddingPoolArm::parse(&value);
-                if options.resident_embedding_pool_arm.is_none() {
-                    return Err(DaemonError::usage(usage()));
-                }
-                index += 2;
-            }
             "--worker-interval-ms" => {
                 options.worker_interval_ms = Some(positive_u64(args.get(index + 1))?);
                 index += 2;
@@ -375,16 +337,6 @@ pub(crate) fn parse(args: &[String]) -> Result<RunOptions> {
     }
     if options.ocr_command.is_some() && options.ocr_tesseract_command.is_some() {
         return Err(DaemonError::usage(usage()));
-    }
-    #[cfg(feature = "resident-embedding-pool-experiment")]
-    if options.resident_embedding_pool_arm.is_some()
-        && (options.embedding_command.is_none()
-            || options.embedding_model_id.is_none()
-            || options.embedding_dimension.is_none())
-    {
-        return Err(DaemonError::usage(
-            "usage: --resident-embedding-pool-arm requires a complete embedding runtime identity",
-        ));
     }
     validation::validate(&options)?;
     Ok(options)
@@ -467,67 +419,7 @@ fn loopback_addr(value: &str) -> Result<SocketAddr> {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "resident-embedding-pool-experiment")]
-    use super::ResidentEmbeddingPoolArm;
     use super::{parse, ParentLifecycleMode};
-
-    #[cfg(not(feature = "resident-embedding-pool-experiment"))]
-    #[test]
-    fn ordinary_build_rejects_resident_pool_arm() {
-        assert!(parse(&[
-            "--foreground".into(),
-            "--resident-embedding-pool-arm".into(),
-            "i3_bulk1x4_b4".into(),
-        ])
-        .is_err());
-    }
-
-    #[cfg(feature = "resident-embedding-pool-experiment")]
-    #[test]
-    fn resident_pool_arm_parser_is_closed_and_single_assignment() {
-        for (value, expected) in [
-            ("i3_bulk1x4_b4", ResidentEmbeddingPoolArm::I3Bulk1x4B4),
-            ("i3_bulk2x2_b4", ResidentEmbeddingPoolArm::I3Bulk2x2B4),
-            ("i3_bulk2x3_b4", ResidentEmbeddingPoolArm::I3Bulk2x3B4),
-        ] {
-            let options = parse(&resident_pool_args(value)).unwrap();
-            assert_eq!(options.resident_embedding_pool_arm, Some(expected));
-        }
-        for values in [vec!["unknown"], vec!["i3_bulk1x4_b4", "i3_bulk2x2_b4"]] {
-            let mut args = resident_pool_args(values[0]);
-            for value in values.into_iter().skip(1) {
-                args.extend([
-                    "--resident-embedding-pool-arm".to_string(),
-                    value.to_string(),
-                ]);
-            }
-            assert!(parse(&args).is_err());
-        }
-        assert!(parse(&[
-            "--foreground".into(),
-            "--resident-embedding-pool-arm".into(),
-            "i3_bulk1x4_b4".into(),
-        ])
-        .is_err());
-    }
-
-    #[cfg(feature = "resident-embedding-pool-experiment")]
-    fn resident_pool_args(arm: &str) -> Vec<String> {
-        [
-            "--foreground",
-            "--embedding-command",
-            "/synthetic/embedding-runtime",
-            "--embedding-model-id",
-            "synthetic-model",
-            "--embedding-dimension",
-            "4",
-            "--resident-embedding-pool-arm",
-            arm,
-        ]
-        .into_iter()
-        .map(str::to_string)
-        .collect()
-    }
 
     #[test]
     fn supervised_generation_requires_one_strict_launch_id() {

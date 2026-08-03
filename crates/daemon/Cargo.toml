@@ -8,7 +8,6 @@ publish.workspace = true
 [features]
 default = []
 native-runtime-tests = []
-resident-embedding-pool-experiment = ["embedder/resident-embedding-pool-experiment"]
 
 [[bin]]
 name = "resume-daemon"

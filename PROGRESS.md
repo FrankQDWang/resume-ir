@@ -1,5 +1,18 @@
 # Progress
 
+## Issue #341 blocked rollback: daemon pool composition removed
+
+The first three reverse steps removed the public matrix runner, its local
+support and the unused report contract. This fourth step removes the default-off
+daemon feature gate, split-resident composition, role observer and worker-gate
+wiring. The daemon again owns exactly one resident client and publishes through
+that same resident, matching the production shared-three-thread topology that
+remained active throughout the experiment.
+
+Only the lower runtime primitives remain for the final ordered rollback. This
+step runs no benchmark, retains no performance result and makes no production
+default, IPC, schema, model, input, Batch or index change.
+
 ## Issue #341 blocked rollback: report contract removed
 
 PRs #356 and #357 removed the public matrix runner and its support module. This

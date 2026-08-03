@@ -397,17 +397,10 @@ fn runtime_gates(
     control_state: Option<&ipc::ControlPlaneState>,
 ) -> RuntimeGates {
     let runtimes = control_state.map(|state| state.snapshot().runtimes);
-    let interactive_embedding_available = options
+    let embedding_available = options
         .resident_embedding
         .as_ref()
-        .is_some_and(|client| client.status() == ResidentEmbeddingStatus::Ready);
-    let publication_embedding_available = !options.publication_resident_embeddings.is_empty()
-        && options
-            .publication_resident_embeddings
-            .iter()
-            .all(|client| client.status() == ResidentEmbeddingStatus::Ready);
-    let embedding_available = interactive_embedding_available
-        && publication_embedding_available
+        .is_some_and(|client| client.status() == ResidentEmbeddingStatus::Ready)
         && runtimes.is_none_or(|runtimes| {
             runtimes.embedding.state == ipc::OptionalRuntimeState::Available
         });
