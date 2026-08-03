@@ -5,12 +5,12 @@ pub fn crate_name() -> &'static str {
 mod resident;
 
 pub use embedding_protocol::EmbeddingRole;
-#[cfg(feature = "resident-embedding-pool-experiment")]
-pub use resident::ResidentEmbeddingRequest;
 pub use resident::{
     EmbeddingPriority, ResidentEmbeddingClient, ResidentEmbeddingOwner, ResidentEmbeddingSpec,
     ResidentEmbeddingStatus,
 };
+#[cfg(feature = "resident-embedding-pool-experiment")]
+pub use resident::{ResidentEmbeddingRequest, ResidentEmbeddingTelemetryObserver};
 
 use std::{
     collections::BTreeMap,

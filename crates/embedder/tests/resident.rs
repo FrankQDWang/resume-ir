@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(feature = "resident-embedding-pool-experiment")]
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use embedder::{
@@ -8,6 +10,9 @@ use embedder::{
     ResidentEmbeddingOwner, ResidentEmbeddingSpec, ResidentEmbeddingStatus,
 };
 use tempfile::TempDir;
+
+#[cfg(feature = "resident-embedding-pool-experiment")]
+use embedder::ResidentEmbeddingTelemetryObserver;
 
 #[test]
 fn production_spec_rejects_four_threads() {
@@ -84,6 +89,62 @@ fn pool_requests_enter_distinct_residents_and_all_owners_shutdown_together() {
     ResidentEmbeddingOwner::shutdown_experiment_pool(&mut owners);
     wait_for_status(&first, ResidentEmbeddingStatus::Shutdown);
     wait_for_status(&second, ResidentEmbeddingStatus::Shutdown);
+}
+
+#[cfg(feature = "resident-embedding-pool-experiment")]
+#[test]
+fn pool_observer_receives_only_completed_content_free_telemetry() {
+    let worker =
+        TestWorker::compile_for_mode("pool_observer", "--resident-embedding-pool-experiment");
+    let owner = worker.pool_owner(/*threads*/ 3);
+    let observer = Arc::new(RecordingObserver::default());
+    let client = owner
+        .client()
+        .with_pool_experiment_telemetry_observer(observer.clone());
+    wait_ready(&client);
+
+    client
+        .embed_batch_with_cancel(
+            EmbeddingPriority::Interactive,
+            &[EmbeddingInput::query("query", "synthetic query")],
+            EmbeddingBudget::new(1, 64),
+            1_000,
+            || false,
+        )
+        .unwrap();
+    client
+        .enqueue_batch_with_telemetry(
+            EmbeddingPriority::Background,
+            &[EmbeddingInput::new("passage", "synthetic passage")],
+            EmbeddingBudget::new(1, 64),
+            1_000,
+        )
+        .unwrap()
+        .wait_with_cancel(|| false)
+        .unwrap();
+
+    let observations = observer.0.lock().unwrap();
+    assert_eq!(observations.len(), 2);
+    assert_eq!(observations[0].0, EmbeddingPriority::Interactive);
+    assert_eq!(observations[1].0, EmbeddingPriority::Background);
+    assert_eq!(observations[0].1.input_count, 0);
+    assert_eq!(observations[1].1.input_count, 0);
+}
+
+#[cfg(feature = "resident-embedding-pool-experiment")]
+#[derive(Default)]
+struct RecordingObserver(Mutex<Vec<(EmbeddingPriority, embedding_protocol::EmbeddingTelemetry)>>);
+
+#[cfg(feature = "resident-embedding-pool-experiment")]
+impl ResidentEmbeddingTelemetryObserver for RecordingObserver {
+    fn observe(
+        &self,
+        priority: EmbeddingPriority,
+        telemetry: &embedding_protocol::EmbeddingTelemetry,
+    ) -> Result<(), EmbeddingError> {
+        self.0.lock().unwrap().push((priority, *telemetry));
+        Ok(())
+    }
 }
 
 #[test]
