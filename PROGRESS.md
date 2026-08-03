@@ -1,5 +1,32 @@
 # Progress
 
+## Issue #341 resident-pool runtime primitives
+
+The first implementation prerequisite adds only default-off runtime primitives;
+it does not compose a daemon pool or run a performance experiment. The ordinary
+resident entry remains `--resident` with a three-thread maximum. Only a build
+that enables `resident-embedding-pool-experiment` exposes the separate
+`--resident-embedding-pool-experiment` mode and its four-thread ceiling.
+
+The embedder can now enqueue bounded requests without serially waiting for each
+response, so the later daemon vectorizer can start one unchanged complete B4 on
+each independent bulk resident before reassembling outputs in ordinal order.
+Dropped pending requests preserve cancellation, and the existing synchronous
+API is implemented through the same enqueue-and-wait path. Pool teardown first
+signals every owner and only then joins their supervisors; ordinary single-owner
+drop behavior is unchanged.
+
+RED feature tests first failed on the missing pool spec, concurrent request and
+group-shutdown APIs, and on the missing runtime thread policy. Focused default
+and feature tests now pass for `embedder` and `resume-embedding-runtime`. They
+prove two slow requests enter distinct resident workers before either response
+is awaited, both owners reach Shutdown after grouped teardown, the feature mode
+accepts four threads, and both the default build and ordinary resident mode
+reject the experiment boundary. Warnings-denied Clippy passes for both affected
+crates in default and feature builds. No daemon wiring, model/input/Batch/IPC/
+persistence/index change, public or private matrix, or performance improvement
+claim is included in this prerequisite.
+
 ## Issue #341 fixed-B4 bulk resident pool selected
 
 Issue #342 closed `not_reproduced` on exact merged main

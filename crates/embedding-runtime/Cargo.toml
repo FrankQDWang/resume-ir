@@ -9,6 +9,10 @@ publish.workspace = true
 name = "resume-embedding-runtime"
 path = "src/main.rs"
 
+[features]
+default = []
+resident-embedding-pool-experiment = []
+
 [dependencies]
 embedding-protocol = { path = "../embedding-protocol" }
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["api-24", "load-dynamic", "ndarray", "std"] }
