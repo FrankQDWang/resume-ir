@@ -1,25 +1,43 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
-  "experiment_state": "hypothesis_registered",
-  "evidence_lane": "w0_docs",
+  "workflow_state": "evidence_review",
+  "experiment_state": "accepted",
+  "evidence_lane": "w1_private",
   "contract_pins": {
     "active_goal_sha256": "4ed34825d693cb4ee6bf12897dc9e42d81049cdec6363f817e037c678d453dd6",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "17487b10983bdedf4cfe01351ddd6edc886ddceb"
+    "git_head_sha": "ecb492067b7e4e015bea4c6a582d5a72b3a4dc97"
   },
   "current_slice": "#372 fixed B4x512 production migration",
   "hypothesis": {
     "id": "issue-372-bulk-fixed-b4x512-production-migration",
     "acceptance_cell": "full_import_ocr_backlog",
     "expected_effect": "the fixed B4x512 Session retains at least 5 percent synthetic performance improvement, exact B1 and B2 fallback behavior, the 513.675-second OCR-enabled product result and the owner-approved current-candidate real-query sanity result without a comparative retrieval claim",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/372"
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/372",
+    "after_measurement_ref": "PROGRESS.md#issue-372-fixed-b4x512-production-migration-contract",
+    "reprofile_ref": "PROGRESS.md#issue-372-fixed-b4x512-production-migration-contract",
+    "decision": "accepted"
   },
   "transition_history": [
+    {
+      "from": "implementation_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-372-fixed-b4x512-production-migration-contract"
+    },
+    {
+      "from": "branch_active",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/372"
+    },
+    {
+      "from": "slice_selected",
+      "to": "branch_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/372"
+    },
     {
       "from": "evidence_review",
       "to": "slice_selected",
@@ -3223,10 +3241,15 @@
       {"command":"post-revert format, performance/autonomous/loop contracts, governance mutations, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-368-bulk-only-cpu-arena-negative-closeout"},
       {"command":"Issue #369 exact B4x512 fixed-Session vector correctness gate","exit_code":1,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/issues/369#issuecomment-5168708261"},
       {"command":"post-revert embedding-runtime tests, production-mode tests, warnings-denied Clippy and format","exit_code":0,"evidence_ref":"PROGRESS.md#issue-369-bulk-fixed-b4x512-negative-closeout"},
-      {"command":"post-revert performance/autonomous/loop contracts, governance mutations, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-369-bulk-fixed-b4x512-negative-closeout"}
+      {"command":"post-revert performance/autonomous/loop contracts, governance mutations, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-369-bulk-fixed-b4x512-negative-closeout"},
+      {"command":"Issue #372 public-synthetic fixed B4x512 performance, vector-drift, shape-routing and resource witness","exit_code":0,"evidence_ref":"PROGRESS.md#issue-372-fixed-b4x512-production-migration-contract"},
+      {"command":"Issue #372 OCR-enabled 8720-document no-OCR-drain import and owner-directed current-candidate real-query sanity witness","exit_code":0,"evidence_ref":"PROGRESS.md#issue-372-fixed-b4x512-production-migration-contract"},
+      {"command":"resume-embedding-runtime default and no-default-feature tests, production-mode tests, warnings-denied Clippy, Python compile and format","exit_code":0,"evidence_ref":"PROGRESS.md#issue-372-fixed-b4x512-production-migration-contract"},
+      {"command":"./scripts/ci/verify-local.sh stopped on missing reviewed classifier test runtime pack","exit_code":101,"evidence_ref":"PROGRESS.md#issue-372-fixed-b4x512-production-migration-contract"},
+      {"command":"untouched merged-main daemon watcher reproduced the identical missing classifier test runtime pack after PDFium prerequisite restoration","exit_code":101,"evidence_ref":"PROGRESS.md#issue-372-fixed-b4x512-production-migration-contract"}
     ],
     "all_required_commands_ran": true,
-    "claim": "partial"
+    "claim": "pass"
   },
   "privacy": {
     "contains_raw_resume_text": false,
@@ -3238,10 +3261,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-372-bulk-fixed-b4x512-production-migration-2026-08-04",
-  "state_version": 608,
-  "previous_state_hash": "48ec15d4797337afbb69d37c03728b69fe295b6b547ba08b55f98fc2fcf4f0bd",
-  "expected_state_version": 608,
-  "last_confirmed_side_effect": "issue_371_closed_with_follow_up_issue_372_selected",
+  "state_version": 609,
+  "previous_state_hash": "8fbfd5ac2e4f133cb72f4cb6994f3c760f92da29c0f613202b2a9734216114eb",
+  "expected_state_version": 609,
+  "last_confirmed_side_effect": "issue_372_local_product_evidence_accepted",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {

@@ -33,6 +33,17 @@ non-512 and all other modes retain the dynamic Session. Model ID, tokenizer,
 inputs, pooling, Batch composition/order, memory-pattern and CPU-arena policy,
 resident topology, threads, IPC, persistence, indexing and OCR are unchanged.
 
+Focused default-feature and no-default-feature embedding-runtime tests,
+production-mode tests, warnings-denied Clippy, Python runner compilation,
+format, performance/autonomous/loop contracts, governance mutations, diff and
+public-repository checks pass. `verify-local.sh` passed metadata, formatting,
+Clippy, workspace tests and both CLI/daemon closed-loop checks before stopping
+at the native daemon watcher because the reviewed test classifier model pack
+was absent. After supplying the isolated worktree's required PDFium static
+library, the exact watcher command reproduced the identical missing classifier
+pack failure on untouched merged `main`; this is an existing local test-runtime
+prerequisite, not a fixed-shape regression.
+
 ## Issue #371 fixed B4x512 retrieval-equivalence closeout
 
 #369 established that a bulk-only fixed B4x512 Session is not elementwise
