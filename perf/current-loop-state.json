@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
-  "experiment_state": "hypothesis_registered",
-  "evidence_lane": "w0_docs",
+  "workflow_state": "evidence_review",
+  "experiment_state": "reverted",
+  "evidence_lane": "smoke",
   "contract_pins": {
-    "active_goal_sha256": "961748496a5b9f53623baa8cf0982da43542f1f37d3cbc14bfff9b014f54cbfa",
+    "active_goal_sha256": "4287f6f5a88bf53514385c72263cb2e3526aed3cee58b2393f7677807b9080f5",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
@@ -16,10 +16,28 @@
   "hypothesis": {
     "id": "issue-375-cpu-int4-weight-only-bulk-embedding",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "one exact CPU-only symmetric INT4 weight-only MatMulNBits plus block-quantized Gather candidate first improves public-synthetic B4x512 throughput by at least 10 percent, then lowers the exact OCR-enabled 8720-document no-OCR-drain endpoint from 513.675 seconds to at most 472.581 seconds while ten real-query semantic and hybrid sanity checks show no obvious relevance failure",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/375"
+    "expected_effect": "the exact CPU-only symmetric INT4 weight-only candidate was 32.723 percent slower in public-synthetic B4x512 wall throughput with a wholly negative paired interval, so it was removed before private corpus or query access",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/375",
+    "after_measurement_ref": "PROGRESS.md#issue-375-cpu-int4-weight-only-negative-closeout",
+    "reprofile_ref": "PROGRESS.md#issue-375-cpu-int4-weight-only-negative-closeout",
+    "decision": "reverted"
   },
   "transition_history": [
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-375-cpu-int4-weight-only-negative-closeout"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#issue-375-cpu-int4-weight-only-negative-closeout"
+    },
+    {
+      "from": "slice_selected",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/375"
+    },
     {
       "from": "evidence_review",
       "to": "slice_selected",
@@ -3248,7 +3266,10 @@
       {"command":"Issue #372 OCR-enabled 8720-document no-OCR-drain import and owner-directed current-candidate real-query sanity witness","exit_code":0,"evidence_ref":"PROGRESS.md#issue-372-fixed-b4x512-production-migration-contract"},
       {"command":"resume-embedding-runtime default and no-default-feature tests, production-mode tests, warnings-denied Clippy, Python compile and format","exit_code":0,"evidence_ref":"PROGRESS.md#issue-372-fixed-b4x512-production-migration-contract"},
       {"command":"./scripts/ci/verify-local.sh stopped on missing reviewed classifier test runtime pack","exit_code":101,"evidence_ref":"PROGRESS.md#issue-372-fixed-b4x512-production-migration-contract"},
-      {"command":"untouched merged-main daemon watcher reproduced the identical missing classifier test runtime pack after PDFium prerequisite restoration","exit_code":101,"evidence_ref":"PROGRESS.md#issue-372-fixed-b4x512-production-migration-contract"}
+      {"command":"untouched merged-main daemon watcher reproduced the identical missing classifier test runtime pack after PDFium prerequisite restoration","exit_code":101,"evidence_ref":"PROGRESS.md#issue-372-fixed-b4x512-production-migration-contract"},
+      {"command":"Issue #375 six-block 12-session public-synthetic INT4 MatMulNBits plus Gather screen","exit_code":2,"evidence_ref":"PROGRESS.md#issue-375-cpu-int4-weight-only-negative-closeout"},
+      {"command":"post-revert embedding runtime and OCR attribution harness focused tests","exit_code":0,"evidence_ref":"PROGRESS.md#issue-375-cpu-int4-weight-only-negative-closeout"},
+      {"command":"post-revert format, warnings-denied Clippy, performance/autonomous/loop contracts, governance, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-375-cpu-int4-weight-only-negative-closeout"}
     ],
     "all_required_commands_ran": true,
     "claim": "pass"
@@ -3263,10 +3284,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-375-cpu-int4-weight-only-bulk-embedding-2026-08-04",
-  "state_version": 611,
-  "previous_state_hash": "0f244e063e079100db6596d80db638066651c37a2a5b170b8d7502501bc543c0",
-  "expected_state_version": 611,
-  "last_confirmed_side_effect": "issue_375_candidate_coverage_contract_corrected_before_private_execution",
+  "state_version": 612,
+  "previous_state_hash": "0145b467eb1dbd80c36ee95b84fcee3510be1b55c98c0ba73be949089cf2628b",
+  "expected_state_version": 612,
+  "last_confirmed_side_effect": "issue_375_candidate_reverted_and_local_artifacts_deleted",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {

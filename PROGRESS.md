@@ -1,44 +1,44 @@
 # Progress
 
-## Issue #375 CPU INT4 weight-only bulk-embedding experiment contract
+## Issue #375 CPU INT4 weight-only negative closeout
 
-#375 is the only active performance slice after #372 landed the fixed B4x512
-bulk Session and established the exact current-main OCR-enabled 8,720-document
-non-OCR endpoint at 513.675 seconds. The new L1 hypothesis changes only the
-model weight representation: one exact upstream revision is Transformer-
-preoptimized while preserving attention MatMul and embedding Gather
-quantization sites, then quantized as symmetric INT4 weight-only QOperator
-`MatMulNBits` plus block-quantized Gather with block size 128 for CPU EP
-execution.
+#375 tested one L1 model-representation hypothesis against the exact current
+Dynamic U8S8 fixed-B4x512 product runtime. The registered candidate used the
+same upstream revision, tokenizer, prefixes, pooling, inputs, Batch grouping,
+threads, resident topology and CPU EP. Transformer preoptimization preserved
+the attention MatMul and embedding Gather weight sites, then symmetric INT4
+weight-only block-128 quantization produced 72 `MatMulNBits` and three block-
+quantized Gather nodes. The remaining 24 MatMul nodes were activation-to-
+activation attention work, not constant weights. The valid model was 59.904
+MiB.
 
-The initial generator preflight exposed only 36 MatMul sites because attention
+An earlier generator preflight exposed only 36 MatMul sites because attention
 fusion hid Q/K/V weights and embedding Gather weights remained FP32. That
-395.602 MiB incomplete-coverage graph was 21.510% slower in the synthetic
-diagnostic and exceeded the conservative H2 budget; it is not the registered
-candidate and did not read private inputs. The corrected generator disables
-only those two site-hiding fusions before applying the single registered
-MatMul-plus-Gather weight-only configuration.
+395.602 MiB incomplete-coverage graph was discarded as a generator diagnostic,
+not counted as the candidate, and deleted before the corrected run.
 
-The public-synthetic B4x512 entry gate requires at least 10% throughput
-improvement, bounded finite normalized vectors, coherent token accounting,
-unchanged order and lifecycle semantics, and a conservative process-tree
-private or anonymous peak no higher than 3,072 MiB. Only a passing synthetic
-candidate may read the authorized private corpus.
+The exact six-block, 12-independent-session public-synthetic B4x512 screen
+decisively rejected the corrected candidate. Wall throughput was 32.723% lower
+than control, with a paired bootstrap 95% interval from -32.943% to -30.845%.
+ONNX throughput was 32.609% lower. The 1,703.393 MiB conservative H2 footprint
+passed the persistent 3,072 MiB ceiling, and finite normalized vectors, token
+accounting and lifecycle checks passed, but the minimum control-candidate
+cosine was only 0.914384.
 
-The product gate reuses the retained baseline only after exact `main` and
-workload reconciliation. OCR remains enabled throughout the complete managed-
-daemon import. Completion is the existing no-OCR-drain endpoint: all non-OCR
-work is complete while a durable OCR backlog may remain. The candidate must
-finish at or below 472.581 seconds, at least 8% below 513.675 seconds, with
-coherent aggregate counts.
+Because the mandatory public-synthetic entry gate required at least 10%
+improvement with a positive interval, the candidate did not receive authority
+to read the private corpus or query artifacts. No OCR-enabled 8,720-document
+import and no ten-query semantic/hybrid review ran. The accepted #372 product
+baseline remains 513.675 seconds; no claim is made about a candidate product
+endpoint or `query_hot_path`.
 
-At least ten authorized real queries must then succeed against the candidate
-index in both semantic and hybrid modes. Manual review checks for failures,
-partial or empty responses and obvious relevance anomalies; it is not an NDCG
-benchmark or a `query_hot_path` claim. Raw queries, results, paths, resume text,
-tokens, vectors, logs, private hashes, indexes and model artifacts remain local.
-Any failed gate removes the experiment capability and artifact; a winner may
-only open a separate production-migration Issue.
+The experimental loader, strict manifest, generator, runner support and all
+generated model/intermediate files were deleted. Focused runtime tests, Python
+self-tests, format and warnings-denied Clippy passed before rollback. Post-
+rollback runtime and harness tests plus the performance, autonomous-delivery,
+loop, governance, diff and public-repository gates pass. The hypothesis is
+closed and requires a material ORT kernel, model, hardware or runtime change to
+reopen.
 
 ## Issue #372 fixed B4x512 production-migration contract
 
