@@ -42,6 +42,12 @@ ARM_IDENTITY = {
     "i3_bulk2x2_b4": (2, 2, 3),
     "i3_bulk2x3_b4": (3, 2, 3),
 }
+COUNTER_KEYS = (
+    "completed_calls",
+    "completed_inputs",
+    "active_token_count",
+    "nonconforming_calls",
+)
 
 
 class ExperimentError(RuntimeError):
@@ -484,7 +490,16 @@ def read_observer(path: Path, timeout: float = 5.0) -> dict[str, object]:
 
 
 def counters(value: dict[str, object], role: str) -> dict[str, int]:
-    return value[role]  # type: ignore[return-value]
+    raw = value.get(role)
+    if not isinstance(raw, dict):
+        raise ExperimentError("observer_invalid")
+    result = {}
+    for key in COUNTER_KEYS:
+        item = raw.get(key)
+        if not isinstance(item, int) or isinstance(item, bool) or item < 0:
+            raise ExperimentError("observer_invalid")
+        result[key] = item
+    return result
 
 
 def delta(before: dict[str, int], after: dict[str, int]) -> dict[str, int]:
@@ -684,14 +699,28 @@ def self_test() -> int:
     assert classify_query(200, valid_probe("r", expected), "r", expected)[0] == "exact_expected"
     assert classify_query(200, valid_probe("r", ("x", "y")), "r", expected)[0] == "protocol_error"
     assert bootstrap_ci([15.5], SEED) == (15.5, 15.5)
-    synthetic: dict[str, object] = {
+    before: dict[str, object] = {
         "interactive": {
-            "completed_calls": 4, "first_retained_sequence": 2,
-            "queue_wait_us": [1000, 2000, 3000],
+            "completed_calls": 2, "completed_inputs": 2,
+            "active_token_count": 64, "nonconforming_calls": 0,
+            "first_retained_sequence": 1, "queue_wait_us": [1000, 2000],
         }
     }
-    assert queue_after(2, synthetic) == [2.0, 3.0]
-    print(json.dumps({"status": "self_test_pass", "checks": 4}, separators=(",", ":")))
+    after: dict[str, object] = {
+        "interactive": {
+            "completed_calls": 4, "completed_inputs": 4,
+            "active_token_count": 128, "nonconforming_calls": 0,
+            "first_retained_sequence": 2, "queue_wait_us": [2000, 3000, 4000],
+        }
+    }
+    assert delta(counters(before, "interactive"), counters(after, "interactive")) == {
+        "completed_calls": 2,
+        "completed_inputs": 2,
+        "active_token_count": 64,
+        "nonconforming_calls": 0,
+    }
+    assert queue_after(2, after) == [3.0, 4.0]
+    print(json.dumps({"status": "self_test_pass", "checks": 5}, separators=(",", ":")))
     return 0
 
 
