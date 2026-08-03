@@ -2,27 +2,47 @@
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
   "workflow_state": "evidence_review",
-  "experiment_state": "correctness_passed",
+  "experiment_state": "accepted",
   "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "fdb40a69d7f9bad6694371337279fbfb5f5bba0892ed727b8c4e09c2d3759e38",
+    "active_goal_sha256": "5346493e6c5e19eb745387569be859878b75f36baf4a6f31e99878416b0ef092",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "168f180e38fa8c2b68d3bb4181a81a3e86fd6c16"
+    "git_head_sha": "f2a133e5dc65a44f607269957d883964039a1dfe"
   },
-  "current_slice": "#361 main-import query-generation handoff",
+  "current_slice": "#364 bulk embedding memory pattern",
   "hypothesis": {
-    "id": "issue-361-main-import-generation-handoff",
-    "acceptance_cell": "query_hot_path",
-    "expected_effect": "ordinary main-import publication stages exact fulltext and vector readers before visible-epoch commit and activates them after commit, so every first fulltext, semantic and hybrid query succeeds within 500 ms and within 250 ms of its immediate warm repeat at 7328 searchable documents",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/361",
-    "after_measurement_ref": "PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review",
-    "reprofile_ref": null,
-    "decision": "active"
+    "id": "issue-364-bulk-embedding-memory-pattern",
+    "acceptance_cell": "full_import_ocr_backlog",
+    "expected_effect": "bulk-only ORT memory-pattern reuse preserves exact i3_bulk2x3_b4 behavior and completes the OCR-on 8720-document no-OCR-drain endpoint in at most 750.128 seconds",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/364",
+    "after_measurement_ref": "PROGRESS.md#issue-364-bulk-only-onnx-memory-pattern-experiment-result",
+    "reprofile_ref": "PROGRESS.md#issue-364-bulk-only-onnx-memory-pattern-experiment-result",
+    "decision": "accepted"
   },
   "transition_history": [
+    {
+      "from": "implementation_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-364-bulk-only-onnx-memory-pattern-experiment-result"
+    },
+    {
+      "from": "branch_active",
+      "to": "implementation_active",
+      "evidence_ref": "PROGRESS.md#issue-364-bulk-only-onnx-memory-pattern-experiment-result"
+    },
+    {
+      "from": "slice_selected",
+      "to": "branch_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/364"
+    },
+    {
+      "from": "evidence_review",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/364"
+    },
     {
       "from": "implementation_active",
       "to": "evidence_review",
@@ -3139,15 +3159,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-361-main-import-generation-handoff-2026-08-03",
-  "state_version": 593,
-  "previous_state_hash": "9aed294342670cbccd83aec4ea007c2fd24b5760d1be7c7f29546e0606f69afd",
-  "expected_state_version": 593,
-  "last_confirmed_side_effect": "issue_361_private_incremental_query_witness_completed_and_temporary_artifacts_cleaned",
+  "run_id": "issue-364-bulk-embedding-memory-pattern-2026-08-03",
+  "state_version": 597,
+  "previous_state_hash": "a419f21f3048eee56c5a7a6362b907bcb941825e8e0a3656e4432016da256cea",
+  "expected_state_version": 597,
+  "last_confirmed_side_effect": "issue_364_result_comment_5167557096_posted",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#361",
+    "primary_issue": "#364",
     "active_prs": [],
     "open_blockers": []
   }

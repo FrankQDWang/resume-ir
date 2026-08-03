@@ -29,8 +29,8 @@ mod runtime_pack;
 
 use batch::{mean_pool_batch, tokenized_batch};
 use profiling::{
-    parse_run_mode, ProfilingMode, ResidentMode, ResidentThreadPolicy, RunMode,
-    PROFILE_OUTPUT_PREFIX_ENV,
+    parse_run_mode, MemoryPatternPolicy, ProfilingMode, ResidentMode, ResidentThreadPolicy,
+    RunMode, PROFILE_OUTPUT_PREFIX_ENV,
 };
 #[cfg(test)]
 use runtime_pack::AssetIdentity;
@@ -105,7 +105,12 @@ fn run_one_shot() -> Result<(), RuntimeError> {
 
 fn run_resident(mode: ResidentMode) -> Result<(), RuntimeError> {
     start_resident_parent_death_guard()?;
-    let environment = ResidentEnvironment::read(mode.thread_policy)?;
+    let ResidentMode {
+        profiling,
+        thread_policy,
+        memory_pattern,
+    } = mode;
+    let environment = ResidentEnvironment::read(thread_policy)?;
     let pack = RuntimePack::load(&environment.runtime_dir)?;
     let model_id = pack.model_id().to_string();
     let dimension = pack.dimension();
@@ -117,7 +122,8 @@ fn run_resident(mode: ResidentMode) -> Result<(), RuntimeError> {
         &pack,
         &model_path,
         environment.intra_threads,
-        mode.profiling,
+        profiling,
+        memory_pattern,
     )?;
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -250,7 +256,13 @@ fn initialize_model(
     intra_threads: usize,
     profiling: ProfilingMode,
 ) -> Result<NativeEmbeddingModel, RuntimeError> {
-    initialize_model_from_path(pack, pack.file(FileRole::Model)?, intra_threads, profiling)
+    initialize_model_from_path(
+        pack,
+        pack.file(FileRole::Model)?,
+        intra_threads,
+        profiling,
+        MemoryPatternPolicy::Disabled,
+    )
 }
 
 fn initialize_model_from_path(
@@ -258,6 +270,7 @@ fn initialize_model_from_path(
     model_path: &Path,
     intra_threads: usize,
     profiling: ProfilingMode,
+    memory_pattern: MemoryPatternPolicy,
 ) -> Result<NativeEmbeddingModel, RuntimeError> {
     if !ort::init_from(pack.file(FileRole::RuntimeLibrary)?)
         .map_err(|_| RuntimeError::RuntimeUnavailable)?
@@ -266,7 +279,7 @@ fn initialize_model_from_path(
         return Err(RuntimeError::RuntimeUnavailable);
     }
     tokenizers::utils::parallelism::set_parallelism(false);
-    NativeEmbeddingModel::load(pack, model_path, intra_threads, profiling)
+    NativeEmbeddingModel::load(pack, model_path, intra_threads, profiling, memory_pattern)
 }
 
 fn prefixed_text(input: &EmbeddingRuntimeInput) -> String {
@@ -299,6 +312,7 @@ impl NativeEmbeddingModel {
         model_path: &Path,
         intra_threads: usize,
         profiling: ProfilingMode,
+        memory_pattern: MemoryPatternPolicy,
     ) -> Result<Self, RuntimeError> {
         let builder_error = |_| RuntimeError::ModelUnavailable;
         let builder = Session::builder()
@@ -307,7 +321,7 @@ impl NativeEmbeddingModel {
             .map_err(builder_error)?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(builder_error)?
-            .with_memory_pattern(false)
+            .with_memory_pattern(memory_pattern.enabled())
             .map_err(builder_error)?
             .with_prepacking(false)
             .map_err(builder_error)?

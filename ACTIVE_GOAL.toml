@@ -12,8 +12,8 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#361"
-name = "main_import_generation_handoff"
+issue = "#364"
+name = "bulk_embedding_memory_pattern"
 contract_change_allowed = true
 production_code_allowed = true
 private_benchmark_allowed = true
@@ -22,7 +22,7 @@ home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #361 extends the existing bounded OCR generation handoff to ordinary main-import publication. Nine production/test files and six contract-state files fit the normal PR budget; no new query semantics, index format, schema, resident topology or benchmark threshold is included."
+scope_exception_reason = "No exception is used. Issue #364 changes one ORT Session option only for the two existing bulk residents and keeps the interactive Session, CPU arena, topology, threads, model, inputs and Batch behavior fixed. Three production/test files and six contract-state files fit the normal PR budget."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -30,30 +30,24 @@ allowed_paths = [
   "perf/active-slice-transition.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-  "crates/import-pipeline/src/lib.rs",
-  "crates/import-pipeline/src/import_run/mod.rs",
-  "crates/import-pipeline/src/import_run/orchestrator.rs",
-  "crates/import-pipeline/src/import_run/parallel.rs",
-  "crates/import-pipeline/src/import_run/scheduler.rs",
-  "crates/import-pipeline/src/publication_coordinator.rs",
-  "crates/daemon/src/import_worker.rs",
-  "crates/daemon/src/worker_runtime.rs",
-  "crates/daemon/src/main.rs",
+  "crates/embedding-runtime/src/main.rs",
+  "crates/embedding-runtime/src/profiling.rs",
+  "crates/embedding-runtime/src/profiling_tests.rs",
 ]
-allowed_paths_role = "main_import_generation_handoff_paths"
-primary_benchmark_lane = "query_hot_path"
-observation_stage = "L3_main_import_generation_handoff"
+allowed_paths_role = "bulk_embedding_memory_pattern_paths"
+primary_benchmark_lane = "full_import_ocr_backlog"
+observation_stage = "L3_bulk_embedding_memory_pattern"
 optimization_layer = "L3"
 optimization_layer_selected = true
-hypothesis = "preparing and staging each ordinary main-import query generation before its visible-epoch metadata commit, then activating it immediately after commit, removes the O(n) projection audit and cold reader open from the first interactive query without changing import or query semantics"
-expected_delta = "at 7328 searchable documents under OCR-on import, every first fulltext, semantic and hybrid query after a main-import visible-epoch advance succeeds within 500 ms and within 250 ms of its immediate warm repeat"
-negative_control = "exact-main a106ddee observations without the handoff reached 0.76 seconds at 1000, 1.86 seconds at 2024, and failed around 3.7 seconds at 3048 and 6120 searchable documents while immediate hot repeats recovered to 0.14 to 0.41 seconds"
-implementation_boundary = "reuse the existing OCR prepare/install/finalize protocol for each ordinary import publication: open the exact immutable fulltext/vector reader pair after artifact validation but before metadata visibility, activate only after matching commit, discard on abort and fail closed on unknown control state"
-resident_pool_workload = "the already merged macOS ARM i3_bulk2x3_b4 resident topology remains fixed; this slice neither remeasures nor changes embedding throughput topology"
-resident_pool_acceptance = "no resident topology, input, model, tokenizer, pooling, Batch 4 grouping, vector order, cancellation, timeout, restart or grouped teardown behavior changes"
-full_product_acceptance = "the private product witness reuses the OCR-enabled 8720-document import and no-OCR-drain endpoint only to observe first-query behavior after ordinary visible-epoch changes; overall import throughput is a non-regression context, not this slice's optimization claim"
-raw_profile_boundary = "public evidence is limited to bounded aggregate latency, success counts, visible searchable counts, cleanup result and privacy booleans; no private path, filename, resume text, raw query, candidate result, token, vector, PID, log, trace, raw hash, database, index or model cache may enter git or GitHub"
-rollback_condition = "remove the ordinary import handoff and retain the existing OCR-only handoff if preparation can occur after visibility, activation can mismatch the committed generation, abort leaves a pending reader pinned, control failure does not fail closed, query semantics change, or focused gates regress"
+hypothesis = "enabling ONNX Runtime memory-pattern reuse only for the two existing bulk resident Sessions reduces repeated intermediate allocation planning across the nearly fixed B4 by 512 workload and shortens the real non-OCR import endpoint without changing inference math or resource policy"
+expected_delta = "the OCR-enabled 8720-document product import reaches 7328 searchable and indexed documents with embedding work drained in at most 750.128 seconds, at least 3 percent faster than the retained 773.328-second i3_bulk2x3_b4 mean"
+negative_control = "the retained i3_bulk2x3_b4 product runs completed in 760.147 and 786.509 seconds with memory patterns disabled for every Session; interactive and one-shot Sessions remain disabled in the candidate"
+implementation_boundary = "derive one explicit internal memory-pattern policy from the already existing resident pool role: bulk enables with_memory_pattern while interactive, role-less experiment, profiling, production shared resident and one-shot execution remain disabled; CPU arena remains false"
+resident_pool_workload = "keep the merged macOS ARM i3_bulk2x3_b4 topology, two concurrent bulk B4 publication calls, three intra-op threads per resident, whole-head 512 and Dynamic U8S8 unchanged"
+resident_pool_acceptance = "exact vectors and aggregate counts, model identity, tokenizer, prefix, pooling, Batch grouping and order, cancellation, timeout, restart, Ready and grouped cleanup remain unchanged; the user-authorized Issue #364 resident-topology private or anonymous peak stays at or below 3072 MiB without changing the global import writer heap or hardware-tier policy"
+full_product_acceptance = "run one new release product witness on the existing OCR-enabled 8720-document private root and stop at the same no-OCR-drain endpoint; retain only at 750.128 seconds or faster with 8720 processed, 7328 searchable and indexed, 265 OCR-required and queued, 4 failed and 49 ignored"
+raw_profile_boundary = "public evidence is limited to bounded aggregate wall time, counts, speedup, resource maximum, exact-vector and lifecycle booleans; no private path, filename, resume text, raw query, candidate result, token, vector, PID, log, trace, raw hash, database, index or model cache may enter git or GitHub"
+rollback_condition = "remove the bulk memory-pattern policy and retain current i3_bulk2x3_b4 if the product endpoint exceeds 750.128 seconds, aggregate counts or vectors differ, the Issue #364 resident-topology memory peak exceeds the user-authorized 3072 MiB ceiling, interactive configuration changes, or readiness, cancellation, restart or cleanup gates regress"
 forbidden_scope = [
   "production_embedding_input_change",
   "production_model_id_change",
@@ -63,12 +57,13 @@ forbidden_scope = [
   "metadata_schema_change",
   "pooling_change",
   "batch_size_composition_or_order_change",
-  "new_benchmark_arm",
-  "dynamic_arm_addition",
+  "cpu_arena_enablement",
+  "static_onnx_model_or_free_dimension_override",
+  "padding_or_dummy_input_change",
+  "new_topology_or_thread_arm",
   "work_stealing",
   "import_scoped_or_idle_timeout_resident_lifecycle",
   "resident_topology_or_thread_change",
-  "import_throughput_reoptimization",
   "query_semantics_change",
   "ipc_or_diagnostics_contract_change",
   "persistence_or_index_contract_change",
@@ -79,6 +74,7 @@ forbidden_scope = [
   "raw_query_or_result_output",
   "gate_weakening",
   "coreml",
+  "offline_graph_optimization",
   "batch8_batch16_or_batch32",
 ]
 

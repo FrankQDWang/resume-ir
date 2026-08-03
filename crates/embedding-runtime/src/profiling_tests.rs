@@ -31,6 +31,7 @@ fn ordinary_modes_do_not_read_profile_output() {
         RunMode::Resident(ResidentMode {
             profiling: ProfilingMode::Disabled,
             thread_policy: ResidentThreadPolicy::Production,
+            memory_pattern: MemoryPatternPolicy::Disabled,
         })
     );
     assert!(!read.get());
@@ -46,6 +47,7 @@ fn profiling_mode_requires_a_new_absolute_prefix_in_a_real_directory() {
         RunMode::Resident(ResidentMode {
             profiling: ProfilingMode::OperatorTrace(prefix.clone()),
             thread_policy: ResidentThreadPolicy::Production,
+            memory_pattern: MemoryPatternPolicy::Disabled,
         })
     );
 
@@ -68,9 +70,42 @@ fn pool_mode_is_explicit_and_does_not_read_profile_output() {
         RunMode::Resident(ResidentMode {
             profiling: ProfilingMode::Disabled,
             thread_policy: ResidentThreadPolicy::PoolExperiment,
+            memory_pattern: MemoryPatternPolicy::Disabled,
         })
     );
     assert!(!read.get());
+}
+
+#[cfg(feature = "resident-embedding-pool-experiment")]
+#[test]
+fn only_the_bulk_pool_role_enables_memory_patterns() {
+    let parse_role = |role: &str| {
+        parse_run_mode(
+            &[
+                "--resident-embedding-pool-experiment".into(),
+                format!("--resident-embedding-pool-role={role}"),
+            ],
+            || None,
+        )
+        .unwrap()
+    };
+
+    assert_eq!(
+        parse_role("interactive"),
+        RunMode::Resident(ResidentMode {
+            profiling: ProfilingMode::Disabled,
+            thread_policy: ResidentThreadPolicy::PoolExperiment,
+            memory_pattern: MemoryPatternPolicy::Disabled,
+        })
+    );
+    assert_eq!(
+        parse_role("bulk"),
+        RunMode::Resident(ResidentMode {
+            profiling: ProfilingMode::Disabled,
+            thread_policy: ResidentThreadPolicy::PoolExperiment,
+            memory_pattern: MemoryPatternPolicy::Enabled,
+        })
+    );
 }
 
 #[cfg(not(feature = "resident-embedding-pool-experiment"))]

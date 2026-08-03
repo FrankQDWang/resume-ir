@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-360-to-361-main-import-generation-handoff-2026-08-03",
-  "from_issue": "#360",
-  "to_issue": "#361",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/362",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/361",
-  "base_active_goal_sha256": "bd67c37f3407c4eea2cf96757a679d5b60633aa429820f7897d255d6b0085138",
+  "transition_id": "issue-361-to-364-bulk-memory-pattern-2026-08-03",
+  "from_issue": "#361",
+  "to_issue": "#364",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/363",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/364",
+  "base_active_goal_sha256": "fdb40a69d7f9bad6694371337279fbfb5f5bba0892ed727b8c4e09c2d3759e38",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",

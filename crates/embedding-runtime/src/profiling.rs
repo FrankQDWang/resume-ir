@@ -16,6 +16,7 @@ pub(super) enum RunMode {
 pub(super) struct ResidentMode {
     pub(super) profiling: ProfilingMode,
     pub(super) thread_policy: ResidentThreadPolicy,
+    pub(super) memory_pattern: MemoryPatternPolicy,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -23,6 +24,23 @@ pub(super) enum ResidentThreadPolicy {
     Production,
     #[cfg(feature = "resident-embedding-pool-experiment")]
     PoolExperiment,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum MemoryPatternPolicy {
+    Disabled,
+    #[cfg(feature = "resident-embedding-pool-experiment")]
+    Enabled,
+}
+
+impl MemoryPatternPolicy {
+    pub(super) fn enabled(self) -> bool {
+        match self {
+            Self::Disabled => false,
+            #[cfg(feature = "resident-embedding-pool-experiment")]
+            Self::Enabled => true,
+        }
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -40,6 +58,7 @@ pub(super) fn parse_run_mode(
         [mode] if mode == "--resident" => Ok(RunMode::Resident(ResidentMode {
             profiling: ProfilingMode::Disabled,
             thread_policy: ResidentThreadPolicy::Production,
+            memory_pattern: MemoryPatternPolicy::Disabled,
         })),
         [mode] if mode == "--resident-profile" => {
             let output_prefix = validate_output_prefix(
@@ -48,6 +67,7 @@ pub(super) fn parse_run_mode(
             Ok(RunMode::Resident(ResidentMode {
                 profiling: ProfilingMode::OperatorTrace(output_prefix),
                 thread_policy: ResidentThreadPolicy::Production,
+                memory_pattern: MemoryPatternPolicy::Disabled,
             }))
         }
         #[cfg(feature = "resident-embedding-pool-experiment")]
@@ -55,20 +75,29 @@ pub(super) fn parse_run_mode(
             Ok(RunMode::Resident(ResidentMode {
                 profiling: ProfilingMode::Disabled,
                 thread_policy: ResidentThreadPolicy::PoolExperiment,
+                memory_pattern: MemoryPatternPolicy::Disabled,
             }))
         }
         #[cfg(feature = "resident-embedding-pool-experiment")]
         [mode, role]
             if mode == "--resident-embedding-pool-experiment"
-                && matches!(
-                    role.as_str(),
-                    "--resident-embedding-pool-role=interactive"
-                        | "--resident-embedding-pool-role=bulk"
-                ) =>
+                && role == "--resident-embedding-pool-role=interactive" =>
         {
             Ok(RunMode::Resident(ResidentMode {
                 profiling: ProfilingMode::Disabled,
                 thread_policy: ResidentThreadPolicy::PoolExperiment,
+                memory_pattern: MemoryPatternPolicy::Disabled,
+            }))
+        }
+        #[cfg(feature = "resident-embedding-pool-experiment")]
+        [mode, role]
+            if mode == "--resident-embedding-pool-experiment"
+                && role == "--resident-embedding-pool-role=bulk" =>
+        {
+            Ok(RunMode::Resident(ResidentMode {
+                profiling: ProfilingMode::Disabled,
+                thread_policy: ResidentThreadPolicy::PoolExperiment,
+                memory_pattern: MemoryPatternPolicy::Enabled,
             }))
         }
         _ => Err(RuntimeError::EnvironmentInvalid),
