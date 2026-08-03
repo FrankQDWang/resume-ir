@@ -1,5 +1,16 @@
 # Progress
 
+## Issue #341 blocked rollback: report contract removed
+
+PRs #356 and #357 removed the public matrix runner and its support module. This
+third reverse step removes the unused resident-pool aggregate schema, checker,
+illustrative fixtures and governance-checker hook. No observed report ever
+passed this contract, so deleting it removes no retained performance evidence.
+
+Only the default-off Rust observer, daemon pool composition and runtime
+primitives remain for the final capability rollback. Production shared 3t is
+unchanged, and no private matrix ran.
+
 ## Issue #341 blocked rollback: runner support removed
 
 The public matrix orchestrator was removed through PR #356 after exact-main
