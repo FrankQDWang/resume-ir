@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-364-to-366-persistent-memory-budgets-2026-08-03",
-  "from_issue": "#364",
-  "to_issue": "#366",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/365",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/366",
-  "base_active_goal_sha256": "5346493e6c5e19eb745387569be859878b75f36baf4a6f31e99878416b0ef092",
+  "transition_id": "issue-368-to-369-bulk-fixed-b4x512-2026-08-03",
+  "from_issue": "#368",
+  "to_issue": "#369",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/368#issuecomment-5168363252",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/369",
+  "base_active_goal_sha256": "4c253d9de84165c3a554c1317a2058d6773f7deb0665bea69b6fd97015325a5e",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
@@ -14,7 +14,7 @@
     "perf/fixtures/valid/synthetic-smoke-baseline-report.json"
   ],
   "bootstrap_gate_change": false,
-  "production_code_changed": true,
+  "production_code_changed": false,
   "blind_holdout_reread": false,
   "gate_weakening": false,
   "privacy": {

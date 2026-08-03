@@ -1,5 +1,78 @@
 # Progress
 
+## Issue #369 bulk fixed B4x512 negative closeout
+
+Issue #369 tested one fixed-shape ONNX Runtime hypothesis after rejecting the
+CPU arena in #368. The temporary candidate added a second Session only to the
+bulk role, with free-dimension overrides `batch_size = 4` and
+`sequence_length = 512`. Only an actual B4x512 tensor selected it; B1, B2, B3,
+B4 below 512 and tail work retained the unchanged dynamic Session. The model,
+tokenizer, inputs, ordering, pooling, memory-pattern policy, CPU-arena policy,
+resident topology and three-thread policy were fixed.
+
+The focused RED/GREEN tests passed after implementation, and the release
+public-synthetic comparison showed a real compute improvement. Across 100
+exact B4x512 repetitions, control mean wall time was 301.001 ms and candidate
+mean was 278.972 ms, a 7.90% reduction. Median fell from 300.135 ms to
+280.192 ms, a 6.645% reduction. Candidate Ready time rose from 685.543 ms to
+822.779 ms. Its 662.798 MiB physical-footprint peak implies a conservative
+1,781.191 MiB total with the retained 455.595 MiB interactive resident and two
+candidate bulk residents, below the persistent 3,072 MiB H2 budget.
+
+The mandatory correctness gate nevertheless failed. Exact B4x512 output had
+maximum elementwise vector delta 0.007448727 and cosine similarity 0.999266127
+against control. B1 and B2 fallback outputs remained elementwise exact, which
+localizes the drift to the fixed Session rather than the shared input or
+comparison path. Because vector identity was a pre-registered gate, the run
+stopped immediately: no reverse-order confirmation and no private OCR-enabled
+8,720-document product import executed, so no full-import improvement claim is
+made.
+
+The fixed Session, selector, RED/GREEN tests and temporary runner capability
+were removed. Current production behavior and the accepted #364 dynamic bulk
+Session remain unchanged, with the 610.483-second product result retained as
+baseline. Both temporary release targets and the detached baseline worktree
+were deleted, and no experiment process remains. The hypothesis is rejected
+unless the ORT runtime, model, kernel or hardware changes materially. The
+post-revert embedding-runtime and production-mode suites, warnings-denied
+Clippy, format, performance/autonomous/loop contracts, governance mutation
+tests, public-repository guard and diff checks all pass.
+
+## Issue #368 bulk-only CPU-arena negative closeout
+
+Issue #368 tested one adjacent ONNX Runtime allocator hypothesis after the
+accepted #364 bulk-memory-pattern result. The control was exact merged main:
+`i3_bulk2x3_b4`, bulk memory patterns enabled and CPU arena disabled. The
+candidate enabled the CPU arena only for the two bulk pool roles. Interactive,
+role-less, profiling, shared and one-shot Sessions, resident topology, three
+threads, Dynamic U8S8, whole-head 512, tokenizer, Batch grouping/order and
+pooling remained fixed.
+
+The focused RED proved that no role-specific CPU-arena policy existed; the
+temporary GREEN implementation passed the complete embedding-runtime unit and
+production-mode suites. All B1, B2 and B4 comparisons kept maximum elementwise
+vector delta at exactly zero. The first 20-request forward/reverse observations
+showed order sensitivity, so the decision used the pre-registered longer
+balanced confirmation rather than the favorable first order.
+
+Across the 100-request AB and BA runs, B4 control mean wall time averaged
+9.225599 ms and the arena candidate averaged 8.885866 ms, a 3.682% reduction.
+The corresponding per-order medians averaged 9.096333 ms for control and
+8.800063 ms for candidate, a 3.257% reduction. Both are below the fixed 5%
+entry gate. The private OCR-enabled 8,720-document product run therefore did
+not execute, and no full-import or query performance claim is made.
+
+The CPU-arena production policy, RED/GREEN test and temporary runner capability
+were removed. Current main behavior remains the accepted bulk-only memory
+pattern topology from #364, with `with_arena_allocator(false)` for every
+Session and the 610.483-second result retained as the product baseline. The
+hypothesis is closed as rejected unless the ORT runtime, model, kernel or
+hardware changes materially. Only bounded synthetic aggregate timings and
+privacy booleans are recorded; no private path, resume text, query, result,
+token, vector, PID, log, trace, raw hash, database, index, model or runtime bytes
+enter Git or GitHub. Both temporary release target directories and the detached
+baseline worktree were deleted after measurement.
+
 ## Issue #366 persistent product memory budgets doubled
 
 After #364 merged through PR #365, the user explicitly requested a separate
