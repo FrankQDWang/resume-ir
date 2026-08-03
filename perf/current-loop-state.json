@@ -1,28 +1,35 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
-  "experiment_state": "reverted",
-  "evidence_lane": "smoke",
+  "workflow_state": "slice_selected",
+  "experiment_state": "hypothesis_registered",
+  "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "1580e8111af78df6342e855fb6e4eb59e22aa36629f987dc42e3d3f1455e985e",
+    "active_goal_sha256": "4ed34825d693cb4ee6bf12897dc9e42d81049cdec6363f817e037c678d453dd6",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "af81010be9fe762216ff1b9f03913f1f0a1c5c40"
+    "git_head_sha": "17487b10983bdedf4cfe01351ddd6edc886ddceb"
   },
-  "current_slice": "#369 bulk embedding fixed B4x512 Session",
+  "current_slice": "#372 fixed B4x512 production migration",
   "hypothesis": {
-    "id": "issue-369-bulk-embedding-fixed-b4x512",
+    "id": "issue-372-bulk-fixed-b4x512-production-migration",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "the fixed B4x512 Session passed the synthetic performance and resource gates but failed exact-vector correctness, so the candidate was removed and the private OCR-on product run did not execute",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/369",
-    "after_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/369#issuecomment-5168708261",
-    "reprofile_ref": "https://github.com/FrankQDWang/resume-ir/issues/369#issuecomment-5168708261",
-    "decision": "reverted"
+    "expected_effect": "the fixed B4x512 Session retains at least 5 percent synthetic performance improvement, exact B1 and B2 fallback behavior, the 513.675-second OCR-enabled product result and the owner-approved current-candidate real-query sanity result without a comparative retrieval claim",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/372"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/372"
+    },
+    {
+      "from": "evidence_review",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/371"
+    },
     {
       "from": "implementation_active",
       "to": "evidence_review",
@@ -3230,15 +3237,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-369-bulk-embedding-fixed-b4x512-2026-08-03",
-  "state_version": 606,
-  "previous_state_hash": "52d61481f6b9929f89a2cd7f660f615e69a761591fd44f8d6385312df4ba6f74",
-  "expected_state_version": 606,
-  "last_confirmed_side_effect": "issue_369_result_commented_and_issue_closed",
+  "run_id": "issue-372-bulk-fixed-b4x512-production-migration-2026-08-04",
+  "state_version": 608,
+  "previous_state_hash": "48ec15d4797337afbb69d37c03728b69fe295b6b547ba08b55f98fc2fcf4f0bd",
+  "expected_state_version": 608,
+  "last_confirmed_side_effect": "issue_371_closed_with_follow_up_issue_372_selected",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#369",
+    "primary_issue": "#372",
     "active_prs": [],
     "open_blockers": []
   }
