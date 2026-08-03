@@ -20,7 +20,7 @@ serde = "1"
 serde_json = "1"
 sha2 = "0.10"
 sysinfo = { version = "0.39.3", default-features = false, features = ["system"] }
-tokenizers = { version = "=0.22.2", default-features = false, features = ["fancy-regex"] }
+tokenizers = { version = "=0.23.1", default-features = false, features = ["fancy-regex"] }
 
 [dev-dependencies]
 tempfile = "3"
