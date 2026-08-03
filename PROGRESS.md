@@ -1,5 +1,87 @@
 # Progress
 
+## Issue #361 main-import query-generation handoff evidence review
+
+Issue #360 merged through PR #362 at `168f180e38fa8c2b68d3bb4181a81a3e86fd6c16`.
+The measured macOS ARM import winner is now the ordinary production topology;
+#361 is the sole active follow-up and does not reopen resident selection or the
+historical full-import baseline.
+
+The exact-main negative witness observed the first query after ordinary import
+publication growing from 0.76 seconds at 1,000 searchable documents to 1.86
+seconds at 2,024, then failing around 3.7 seconds at 3,048 and 6,120. Immediate
+hot repeats recovered to 0.14--0.41 seconds. Source inspection isolated the
+gap: PR #277 stages query generations for OCR publication, while the ordinary
+import worker called the publication pipeline without `GenerationHandoff`.
+
+The focused regression was made red before implementation: the import pipeline
+had no API capable of staging a query generation before metadata visibility.
+The implementation now threads one optional, bounded handoff through ordinary
+incremental publication. Artifact validation is followed by exact reader
+preparation while the old metadata head remains visible; a matching commit
+activates the staged generation, and abort discards it. Unknown or failed
+control state is surfaced as a fatal daemon control-plane failure. The OCR
+handoff and query semantics remain unchanged.
+
+Focused verification passed:
+
+- the synthetic ordinary-import regression passes and proves
+  `staged_before_visible -> activated_after_visible` ordering;
+- all 149 import-pipeline unit tests pass (one pre-existing ignored scale
+  witness remains ignored);
+- all 115 daemon unit tests pass;
+- `cargo check -p resume-daemon` and warnings-denied Clippy for the import
+  pipeline and daemon pass;
+- the performance, autonomous-goal, loop-state, governance-mutation, public
+  repository and diff gates pass;
+- `verify-local.sh` passed the workspace checks through 148/149 import-pipeline
+  tests and 114/115 daemon tests, then stopped on the unchanged
+  `unconsumed_install_timeout_withdraws_and_allows_the_next_publication` timing
+  assertion. Its exact isolated rerun passed. Issue #360 already reproduced the
+  same full-suite-only timing failure outside this slice; no timing threshold or
+  search-service runtime test is changed here.
+
+The authorized OCR-on private product witness completed the unchanged
+no-OCR-drain endpoint in 877.334 seconds: 8,720 discovered and processed,
+7,328 searchable and indexed, 265 durably queued for OCR, 4 failed and 49
+ignored. This is 27.671% faster than #282's historical 1,212.971-second
+baseline, so the resident-pool import gain remains material. It is 13.449%
+slower than the two-run #360 winner mean while one-minute host load rose from
+5.423 to 10.335 and query probes ran during import; that difference is ambient
+non-regression context, not an attribution or a new throughput claim.
+
+One trace-derived real query was kept only in an owner-only temporary file and
+all result bodies were suppressed. After ordinary main-import visible-epoch
+advances, first fulltext/semantic/hybrid requests all succeeded at the following
+searchable counts (milliseconds):
+
+| searchable | fulltext | semantic | hybrid |
+| ---: | ---: | ---: | ---: |
+| 2,024 | 181.051 | 185.924 | 181.517 |
+| 3,048 | 343.616 | 127.934 | 184.505 |
+| 4,072 | 227.413 | 127.942 | 240.161 |
+| 5,096 | 288.816 | 126.855 | 178.015 |
+| 6,120 | 233.707 | 222.374 | 337.058 |
+| 7,144 | 183.331 | 187.053 | 278.984 |
+
+Every observed first request stayed below 500 ms and within 250 ms of its
+immediate warm repeat. The exact-main negative control had failed around 3.7
+seconds at 3,048 and 6,120, so the seconds-scale first-query reconstruction and
+failure no longer reproduce through the last observable ordinary publication.
+At the 7,328 endpoint the bounded runner immediately cleaned up its daemon; the
+subsequent approximately 10 ms transport failures were cleanup observations,
+not product query failures, and are excluded. A second full witness was started
+only to hold that final endpoint open, then stopped and cleaned at the user's
+request not to repeat validation. Therefore this slice records correctness and
+large-scale query evidence through 7,144, but does not claim a separately
+observed exact-7,328 query sample or broader `query_hot_path` percentile gate.
+
+The private database, raw query, candidate output, trace-derived temporary
+files, runtime attestation staging, OCR processes and all experiment process
+groups were removed. No private path, filename, query, result, resume text,
+token, vector, PID, log, trace, raw hash, database or index is retained in the
+repository evidence.
+
 ## Issue #360 macOS ARM resident-pool production migration selected
 
 Issue #341 completed the user-directed product experiment on exact merged main

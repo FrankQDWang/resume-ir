@@ -3,26 +3,36 @@
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
   "workflow_state": "evidence_review",
   "experiment_state": "correctness_passed",
-  "evidence_lane": "w0_docs",
+  "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "bd67c37f3407c4eea2cf96757a679d5b60633aa429820f7897d255d6b0085138",
+    "active_goal_sha256": "fdb40a69d7f9bad6694371337279fbfb5f5bba0892ed727b8c4e09c2d3759e38",
     "acceptance_matrix_sha256": "f74e1eebf0d918f87a4f905ce61b75641971ddf705a4aa1368a9cee1b8079494",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "a106ddee56de99d5484d8d35aa7bc6cbb1f36e2a"
+    "git_head_sha": "168f180e38fa8c2b68d3bb4181a81a3e86fd6c16"
   },
-  "current_slice": "#360 macOS ARM resident-pool production migration",
+  "current_slice": "#361 main-import query-generation handoff",
   "hypothesis": {
-    "id": "issue-360-macos-arm-resident-pool-production-migration",
-    "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "ordinary macOS ARM builds select one interactive 3-thread and two bulk 3-thread residents and preserve the 35.158 to 37.332 percent OCR-enabled no-OCR-drain product improvement already measured on exact main, with unchanged counts, Batch 4 order, vectors and grouped cleanup",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/360",
-    "after_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/341#issuecomment-5164156287",
+    "id": "issue-361-main-import-generation-handoff",
+    "acceptance_cell": "query_hot_path",
+    "expected_effect": "ordinary main-import publication stages exact fulltext and vector readers before visible-epoch commit and activates them after commit, so every first fulltext, semantic and hybrid query succeeds within 500 ms and within 250 ms of its immediate warm repeat at 7328 searchable documents",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/361",
+    "after_measurement_ref": "PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review",
     "reprofile_ref": null,
     "decision": "active"
   },
   "transition_history": [
+    {
+      "from": "implementation_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review"
+    },
+    {
+      "from": "evidence_review",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/361"
+    },
     {
       "from": "implementation_active",
       "to": "evidence_review",
@@ -3107,7 +3117,15 @@
       {"command":"./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"PROGRESS.md#issue-295-embedding-artifact-matrix-result"},
       {"command":"cargo test and warnings-denied Clippy for resume-embedding-runtime","exit_code":0,"evidence_ref":"PROGRESS.md#issue-208-exact-cratesio-ort-rc13-dependency-contract"},
       {"command":"exact pre-change main versus rc.13 resident vector control","exit_code":0,"evidence_ref":"PROGRESS.md#issue-208-exact-cratesio-ort-rc13-dependency-contract"},
-      {"command":"three attested synthetic import, index, semantic and hybrid lifecycle cycles","exit_code":0,"evidence_ref":"PROGRESS.md#issue-208-exact-cratesio-ort-rc13-dependency-contract"}
+      {"command":"three attested synthetic import, index, semantic and hybrid lifecycle cycles","exit_code":0,"evidence_ref":"PROGRESS.md#issue-208-exact-cratesio-ort-rc13-dependency-contract"},
+      {"command":"ordinary main-import generation-handoff red/green regression","exit_code":0,"evidence_ref":"PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review"},
+      {"command":"cargo test -p import-pipeline --lib","exit_code":0,"evidence_ref":"PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review"},
+      {"command":"cargo test -p resume-daemon --bin resume-daemon","exit_code":0,"evidence_ref":"PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review"},
+      {"command":"warnings-denied Clippy for import-pipeline and resume-daemon","exit_code":0,"evidence_ref":"PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review"},
+      {"command":"OCR-on 8720-document private import with redacted incremental first-query observations","exit_code":0,"evidence_ref":"PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review"},
+      {"command":"./scripts/ci/verify-local.sh stopped on unchanged daemon handoff timing assertion","exit_code":101,"evidence_ref":"PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review"},
+      {"command":"exact isolated unconsumed_install_timeout daemon test rerun","exit_code":0,"evidence_ref":"PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review"},
+      {"command":"format, licenses, performance/autonomous/loop contracts, governance mutations, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-361-main-import-query-generation-handoff-evidence-review"}
     ],
     "all_required_commands_ran": true,
     "claim": "partial"
@@ -3121,15 +3139,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-360-resident-pool-production-migration-2026-08-03",
-  "state_version": 591,
-  "previous_state_hash": "58c00eb9f0550d49012258d01df1fc7ea8708f72052344453d51275dc0be2a60",
-  "expected_state_version": 591,
-  "last_confirmed_side_effect": "issue_360_production_migration_verified_with_unchanged_main_environment_failure_reproduced",
+  "run_id": "issue-361-main-import-generation-handoff-2026-08-03",
+  "state_version": 593,
+  "previous_state_hash": "9aed294342670cbccd83aec4ea007c2fd24b5760d1be7c7f29546e0606f69afd",
+  "expected_state_version": 593,
+  "last_confirmed_side_effect": "issue_361_private_incremental_query_witness_completed_and_temporary_artifacts_cleaned",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#360",
+    "primary_issue": "#361",
     "active_prs": [],
     "open_blockers": []
   }

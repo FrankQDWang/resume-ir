@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::mpsc;
@@ -6,7 +7,9 @@ use std::time::Duration;
 
 use import_pipeline::{
     finish_source_scan_failure, finish_source_scan_success, import_root_with_options_and_control,
-    ImportOptions, ImportPipelineErrorClass, ImportTaskOwnerLock, PipelineRunControl, ScanProfile,
+    import_root_with_options_control_and_handoff, ImportOptions, ImportPipelineErrorClass,
+    ImportTaskOwnerLock, PipelineRunControl, ScanProfile, SearchGenerationHandoff,
+    SearchGenerationPublicationDisposition,
 };
 use meta_store::{
     ImportProcessingContract, ImportScanBudgetKind, ImportScanProfile, ImportScanScope,
@@ -64,6 +67,29 @@ pub(crate) fn run_import_worker_once_with_retry_due(
     retryable_due_at: UnixTimestamp,
     run_control: PipelineRunControl,
     claim_allowed: impl Fn() -> bool,
+) -> Result<ImportWorkerSummary> {
+    run_import_worker_once_with_retry_due_and_handoff(
+        data_dir,
+        store,
+        options,
+        processing_contract,
+        retryable_due_at,
+        run_control,
+        claim_allowed,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_import_worker_once_with_retry_due_and_handoff(
+    data_dir: &Path,
+    store: &OwnedMetaStore,
+    options: &RunOptions,
+    processing_contract: &ImportProcessingContract,
+    retryable_due_at: UnixTimestamp,
+    run_control: PipelineRunControl,
+    claim_allowed: impl Fn() -> bool,
+    generation_handoff: Option<&crate::ipc::search_service::GenerationHandoff>,
 ) -> Result<ImportWorkerSummary> {
     let mut worker_summary = ImportWorkerSummary::default();
     let mut attempted = Vec::<ImportTaskId>::new();
@@ -181,16 +207,51 @@ pub(crate) fn run_import_worker_once_with_retry_due(
             }
         };
         let heartbeat = ImportTaskHeartbeat::start(store, task.id.clone())?;
-        let import_result = import_root_with_options_and_control(
+        let generation_adapter = generation_handoff.map(|handoff| MainImportGenerationHandoff {
             data_dir,
-            store,
-            &task,
-            Path::new(&scope.canonical_root_path),
-            now,
-            import_options,
-            run_control.clone(),
-        );
+            handoff,
+            control_unresponsive: Cell::new(false),
+            activation_failed: Cell::new(false),
+        });
+        let import_result = if let Some(generation_adapter) = generation_adapter.as_ref() {
+            import_root_with_options_control_and_handoff(
+                data_dir,
+                store,
+                &task,
+                Path::new(&scope.canonical_root_path),
+                now,
+                import_options,
+                run_control.clone(),
+                Some(generation_adapter),
+            )
+        } else {
+            import_root_with_options_and_control(
+                data_dir,
+                store,
+                &task,
+                Path::new(&scope.canonical_root_path),
+                now,
+                import_options,
+                run_control.clone(),
+            )
+        };
         drop(heartbeat);
+        if generation_adapter
+            .as_ref()
+            .is_some_and(|adapter| adapter.control_unresponsive.get())
+        {
+            return Err(DaemonError::control_plane(
+                "query generation control became unresponsive during import publication",
+            ));
+        }
+        if generation_adapter
+            .as_ref()
+            .is_some_and(|adapter| adapter.activation_failed.get())
+        {
+            return Err(DaemonError::control_plane(
+                "prepared main-import query generation could not be activated",
+            ));
+        }
         let import_summary = match import_result {
             Ok(import_summary) => import_summary,
             Err(error) => {
@@ -254,6 +315,61 @@ pub(crate) fn run_import_worker_once_with_retry_due(
         let _ = try_finalize_migration_rebuild(store, options, processing_contract, &run_control)?;
     }
     Ok(worker_summary)
+}
+
+struct MainImportGenerationHandoff<'a> {
+    data_dir: &'a Path,
+    handoff: &'a crate::ipc::search_service::GenerationHandoff,
+    control_unresponsive: Cell<bool>,
+    activation_failed: Cell<bool>,
+}
+
+impl SearchGenerationHandoff for MainImportGenerationHandoff<'_> {
+    fn stage(
+        &self,
+        publication: &meta_store::SearchPublicationRecord,
+        projections: &[meta_store::ActiveSearchProjection],
+    ) -> import_pipeline::Result<()> {
+        let prepared =
+            search_runtime::PreparedQueryGeneration::open(self.data_dir, publication, projections)
+                .map_err(|_| {
+                    import_pipeline::ImportPipelineError::query_generation_preparation()
+                })?;
+        match self.handoff.stage(prepared) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(import_pipeline::ImportPipelineError::query_generation_preparation()),
+            Err(_) => {
+                self.control_unresponsive.set(true);
+                Err(import_pipeline::ImportPipelineError::query_generation_preparation())
+            }
+        }
+    }
+
+    fn finish(
+        &self,
+        disposition: SearchGenerationPublicationDisposition,
+    ) -> import_pipeline::Result<()> {
+        let daemon_disposition = match disposition {
+            SearchGenerationPublicationDisposition::Committed => {
+                crate::ipc::search_service::PublicationDisposition::Committed
+            }
+            SearchGenerationPublicationDisposition::Aborted => {
+                crate::ipc::search_service::PublicationDisposition::Aborted
+            }
+        };
+        match self.handoff.finish_publication(daemon_disposition) {
+            Ok(true) => Ok(()),
+            Ok(false) if disposition == SearchGenerationPublicationDisposition::Aborted => Ok(()),
+            Ok(false) => {
+                self.activation_failed.set(true);
+                Err(import_pipeline::ImportPipelineError::query_generation_preparation())
+            }
+            Err(_) => {
+                self.control_unresponsive.set(true);
+                Err(import_pipeline::ImportPipelineError::query_generation_preparation())
+            }
+        }
+    }
 }
 
 fn schedule_next_pdf_reprocess(

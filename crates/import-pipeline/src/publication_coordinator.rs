@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use index_fulltext::IndexDocument;
 use meta_store::{
     Document, DocumentId, DocumentStatus, OwnedMetaStore, SearchProjectionServiceState,
-    SearchPublicationSession, SearchRepairReason, UnixTimestamp,
+    SearchPublicationSession, SearchPublicationState, SearchRepairReason, UnixTimestamp,
 };
 
 use crate::file_observation_fast_path::strong_store_observation;
@@ -21,7 +21,8 @@ use crate::{
     measure_result_stage, ImportCancelCheckPhase, ImportMilestoneTimings, ImportPipelineError,
     ImportResourcePolicy, ImportSummary, ImportWorkerMetrics, PendingSearchableDocument,
     PendingSearchablePublicationKind, Result, SearchArtifactPublicationSummary,
-    SearchProjectionRemoval, SearchProjectionRemovalReason, SearchPublicationVectorization,
+    SearchGenerationHandoff, SearchGenerationPublicationDisposition, SearchProjectionRemoval,
+    SearchProjectionRemovalReason, SearchPublicationVectorization,
 };
 
 struct ScheduledProjectionRemoval {
@@ -106,6 +107,7 @@ impl PendingProjectionRemovals {
 /// Publishes all currently staged searchable replacements and removals through
 /// one owner-bound session. Staging never becomes query-visible before the
 /// artifact validation and metadata CAS both succeed.
+#[cfg(test)]
 pub(super) fn flush_pending_searchable_documents(
     store: &OwnedMetaStore,
     now: UnixTimestamp,
@@ -119,6 +121,39 @@ pub(super) fn flush_pending_searchable_documents(
     import_started: Instant,
     index_writer_heap_bytes: usize,
     search_vectorization: &SearchPublicationVectorization,
+) -> Result<bool> {
+    flush_pending_searchable_documents_with_handoff(
+        store,
+        now,
+        summary,
+        pending_index_documents,
+        pending_excluded_doc_ids,
+        current_import_index_documents,
+        current_import_index_cache_mode,
+        ensure_not_cancelled,
+        set_cancel_phase,
+        import_started,
+        index_writer_heap_bytes,
+        search_vectorization,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn flush_pending_searchable_documents_with_handoff(
+    store: &OwnedMetaStore,
+    now: UnixTimestamp,
+    summary: &mut ImportSummary,
+    pending_index_documents: &mut Vec<PendingSearchableDocument>,
+    pending_excluded_doc_ids: &mut PendingProjectionRemovals,
+    current_import_index_documents: Option<&mut CurrentImportDocumentCache>,
+    current_import_index_cache_mode: CurrentImportCacheMode,
+    ensure_not_cancelled: &dyn Fn() -> Result<()>,
+    set_cancel_phase: &dyn Fn(ImportCancelCheckPhase),
+    import_started: Instant,
+    index_writer_heap_bytes: usize,
+    search_vectorization: &SearchPublicationVectorization,
+    generation_handoff: Option<&dyn SearchGenerationHandoff>,
 ) -> Result<bool> {
     if !pending_index_documents.is_empty() {
         set_cancel_phase(ImportCancelCheckPhase::DbWrite);
@@ -272,6 +307,7 @@ pub(super) fn flush_pending_searchable_documents(
     pending_documents.extend(pending_excluded_doc_ids.publication_documents().cloned());
 
     let index_elapsed = RefCell::new(None);
+    let generation_stage_attempted = std::cell::Cell::new(false);
     let write_result = publish_incremental_search_artifacts(
         &publication_session,
         now,
@@ -289,6 +325,17 @@ pub(super) fn flush_pending_searchable_documents(
         search_vectorization,
         |publication| {
             *index_elapsed.borrow_mut() = Some(index_started.elapsed());
+            if let Some(generation_handoff) = generation_handoff {
+                generation_stage_attempted.set(true);
+                let prepared_record = publication
+                    .publication_session()
+                    .owned_store()
+                    .search_publication(publication.fulltext().generation())
+                    .map_err(ImportPipelineError::store)?
+                    .filter(|record| record.state == SearchPublicationState::Validated)
+                    .ok_or_else(ImportPipelineError::store_invariant)?;
+                generation_handoff.stage(&prepared_record, publication.projections())?;
+            }
             set_cancel_phase(ImportCancelCheckPhase::DbWrite);
             let metadata_started = Instant::now();
             let result = measure_result_stage(&mut summary.stage_timings.db, || {
@@ -316,6 +363,19 @@ pub(super) fn flush_pending_searchable_documents(
     summary
         .worker_metrics
         .add_assign(&phase_worker_metrics.into_inner());
+    let disposition = if matches!(
+        &write_result,
+        Ok(crate::search_publication::SearchPublicationTransactionOutcome::Committed(_))
+    ) {
+        SearchGenerationPublicationDisposition::Committed
+    } else {
+        SearchGenerationPublicationDisposition::Aborted
+    };
+    if generation_stage_attempted.get() {
+        generation_handoff
+            .ok_or_else(ImportPipelineError::store_invariant)?
+            .finish(disposition)?;
+    }
     let committed_publication = write_result?.into_committed()?;
     committed_publication.release();
     summary.searchable_documents += unchanged_searchable_documents + new_searchable_count;

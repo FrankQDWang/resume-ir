@@ -15,14 +15,15 @@ use crate::file_processing::{
     PendingSearchableDocument, PendingSourceOccurrence,
 };
 use crate::publication_coordinator::{
-    flush_pending_searchable_documents, PendingProjectionRemovals,
+    flush_pending_searchable_documents_with_handoff, PendingProjectionRemovals,
 };
 use crate::search_artifact_cache::{CurrentImportCacheMode, CurrentImportDocumentCache};
 use crate::source_dispositions::{ImportDispositionBatches, ProcessedFile, SearchableStagingState};
 use crate::verified_content::ContentVerification;
 use crate::{
     ImportCancelCheckPhase, ImportFailureKind, ImportPipelineError, ImportSummary,
-    LinearPromotionPolicy, Result, SearchProjectionRemovalReason, SearchPublicationVectorization,
+    LinearPromotionPolicy, Result, SearchGenerationHandoff, SearchProjectionRemovalReason,
+    SearchPublicationVectorization,
 };
 
 pub(super) fn commit_ready_import_file_results(
@@ -45,6 +46,7 @@ pub(super) fn commit_ready_import_file_results(
     index_writer_heap_bytes: usize,
     search_vectorization: &SearchPublicationVectorization,
     linear_promotion: &LinearPromotionPolicy,
+    generation_handoff: Option<&dyn SearchGenerationHandoff>,
 ) -> Result<bool> {
     let mut committed = false;
     while let Some(result) = pending_results.remove(next_commit_index) {
@@ -83,6 +85,7 @@ pub(super) fn commit_ready_import_file_results(
             &result.file,
             result.processed,
             result.verification,
+            generation_handoff,
         )?;
         *next_commit_index += 1;
         committed = true;
@@ -109,6 +112,7 @@ pub(super) fn process_files_sequential(
     index_writer_heap_bytes: usize,
     search_vectorization: &SearchPublicationVectorization,
     linear_promotion: &LinearPromotionPolicy,
+    generation_handoff: Option<&dyn SearchGenerationHandoff>,
 ) -> Result<()> {
     let total_files = files.len();
     for (index, file) in files.into_iter().enumerate() {
@@ -147,6 +151,7 @@ pub(super) fn process_files_sequential(
             &file,
             processed,
             verification,
+            generation_handoff,
         )?;
     }
 
@@ -172,6 +177,7 @@ pub(super) fn process_indexed_files_sequential(
     total_files: usize,
     search_vectorization: &SearchPublicationVectorization,
     linear_promotion: &LinearPromotionPolicy,
+    generation_handoff: Option<&dyn SearchGenerationHandoff>,
 ) -> Result<()> {
     for (index, file) in files {
         set_cancel_phase(ImportCancelCheckPhase::SequentialParse);
@@ -209,6 +215,7 @@ pub(super) fn process_indexed_files_sequential(
             &file,
             processed,
             verification,
+            generation_handoff,
         )?;
     }
 
@@ -234,6 +241,7 @@ pub(crate) fn finish_import_file(
     file: &DiscoveredFile,
     processed: ProcessedFile,
     verification: ContentVerification,
+    generation_handoff: Option<&dyn SearchGenerationHandoff>,
 ) -> Result<()> {
     let source_read_failed = matches!(
         &processed,
@@ -353,7 +361,7 @@ pub(crate) fn finish_import_file(
         pending_index_documents.len(),
         summary.searchable_documents,
     ) {
-        flush_pending_searchable_documents(
+        flush_pending_searchable_documents_with_handoff(
             store,
             now,
             summary,
@@ -366,6 +374,7 @@ pub(crate) fn finish_import_file(
             import_started,
             index_writer_heap_bytes,
             search_vectorization,
+            generation_handoff,
         )?
     } else {
         false

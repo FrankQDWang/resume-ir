@@ -23,7 +23,7 @@ use crate::search_artifact_cache::CurrentImportDocumentCache;
 use crate::source_dispositions::ImportDispositionBatches;
 use crate::{
     ImportCancelCheckPhase, ImportParseWorkers, ImportSummary, LinearPromotionPolicy, Result,
-    SearchPublicationVectorization,
+    SearchGenerationHandoff, SearchPublicationVectorization,
 };
 
 pub(super) fn process_files_with_parse_workers(
@@ -44,6 +44,7 @@ pub(super) fn process_files_with_parse_workers(
     index_writer_heap_bytes: usize,
     search_vectorization: &SearchPublicationVectorization,
     linear_promotion: &LinearPromotionPolicy,
+    generation_handoff: Option<&dyn SearchGenerationHandoff>,
 ) -> Result<()> {
     let total_files = files.len();
     let worker_count = parse_workers.get().min(total_files);
@@ -70,6 +71,7 @@ pub(super) fn process_files_with_parse_workers(
             index_writer_heap_bytes,
             search_vectorization,
             linear_promotion,
+            generation_handoff,
         );
     }
 
@@ -116,6 +118,7 @@ pub(super) fn process_files_with_parse_workers(
             &file,
             processed,
             verification,
+            generation_handoff,
         )?;
     }
     remaining_files.extend(indexed_files);
@@ -148,6 +151,7 @@ pub(super) fn process_files_with_parse_workers(
             total_files,
             search_vectorization,
             linear_promotion,
+            generation_handoff,
         );
     }
 
@@ -191,6 +195,7 @@ pub(super) fn process_files_with_parse_workers(
                 index_writer_heap_bytes,
                 search_vectorization,
                 linear_promotion,
+                generation_handoff,
             )?;
 
             set_cancel_phase(ImportCancelCheckPhase::ParsePrepare);
@@ -250,6 +255,7 @@ pub(super) fn process_files_with_parse_workers(
                 index_writer_heap_bytes,
                 search_vectorization,
                 linear_promotion,
+                generation_handoff,
             )?;
         }
 
@@ -276,6 +282,7 @@ pub(super) fn process_files_with_parse_workers(
                 index_writer_heap_bytes,
                 search_vectorization,
                 linear_promotion,
+                generation_handoff,
             )? {
                 continue;
             }

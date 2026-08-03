@@ -14,6 +14,7 @@ use meta_store::{
 use crate::{
     current_import_processing_contract, index_recovery, ImportOptions, ImportPipelineError,
     ImportPipelineErrorClass, ImportPipelineErrorKind, ImportSummary, PipelineRunControl, Result,
+    SearchGenerationHandoff,
 };
 
 use orchestrator::{import_scan_scope_from_summary, run_import};
@@ -66,6 +67,22 @@ pub fn import_root_with_options_and_control(
     options: ImportOptions,
     control: PipelineRunControl,
 ) -> Result<ImportSummary> {
+    import_root_with_options_control_and_handoff(
+        data_dir, store, task, root, now, options, control, None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn import_root_with_options_control_and_handoff(
+    data_dir: &Path,
+    store: &OwnedMetaStore,
+    task: &ImportTask,
+    root: &Path,
+    now: UnixTimestamp,
+    options: ImportOptions,
+    control: PipelineRunControl,
+    generation_handoff: Option<&dyn SearchGenerationHandoff>,
+) -> Result<ImportSummary> {
     let import_started = Instant::now();
     let processing_contract = current_import_processing_contract(&options)?;
     let bound_contract_id = store
@@ -103,6 +120,7 @@ pub fn import_root_with_options_and_control(
         options,
         &processing_contract,
         &control,
+        generation_handoff,
     )
     .map_err(|error| normalize_shutdown_interruption(store, &task.id, &control, error));
     let finished_at = current_timestamp_or(now);

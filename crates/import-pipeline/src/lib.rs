@@ -79,7 +79,10 @@ use import_run::{
     document_path_is_deletion_candidate, finish_import_file, should_flush_searchable_documents,
     CancelCheckMetrics, ImportCancelPoller, ParseWorkerClock,
 };
-pub use import_run::{import_root, import_root_with_options, import_root_with_options_and_control};
+pub use import_run::{
+    import_root, import_root_with_options, import_root_with_options_and_control,
+    import_root_with_options_control_and_handoff,
+};
 pub use index_recovery::{
     finalize_migration_rebuild, reconcile_search_artifacts,
     reconcile_search_artifacts_for_offline_mutation, SearchArtifactRecoverySummary,
@@ -147,6 +150,28 @@ pub fn crate_name() -> &'static str {
 }
 
 pub type Result<T> = std::result::Result<T, ImportPipelineError>;
+
+/// Describes whether an already staged query generation became metadata-visible.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchGenerationPublicationDisposition {
+    Committed,
+    Aborted,
+}
+
+/// Bridges immutable search publication to a query runtime.
+///
+/// Implementations prepare the exact readers in `stage` before the publication
+/// metadata commit, then activate or discard those readers in `finish` after
+/// the commit outcome is known.
+pub trait SearchGenerationHandoff {
+    fn stage(
+        &self,
+        publication: &meta_store::SearchPublicationRecord,
+        projections: &[meta_store::ActiveSearchProjection],
+    ) -> Result<()>;
+
+    fn finish(&self, disposition: SearchGenerationPublicationDisposition) -> Result<()>;
+}
 
 /// Cooperative lifecycle control shared by supervised import and search
 /// artifact work.
@@ -1298,21 +1323,23 @@ mod tests {
         classify_language_set, commit_prepared_search_publication_for_test, current_timestamp_or,
         document_path_is_deletion_candidate, finish_import_file,
         flush_pending_searchable_documents, import_root_with_options,
-        import_root_with_options_and_control, index_claimed_ocr_text, process_file,
-        reconcile_search_artifacts, recv_parse_result_with_cancel_poll,
-        should_flush_searchable_documents, take_pending_searchable_documents,
-        write_incremental_search_artifacts_for_test, AdmissionDecision, CurrentImportCacheMode,
-        CurrentImportDocumentCache, ImportCancelCheckPhase, ImportFailureKind,
-        ImportHardwareProfile, ImportHardwareTier, ImportOptions, ImportParseWorkers,
-        ImportPipelineError, ImportPipelineErrorClass, ImportPipelineErrorKind,
-        ImportResourcePolicy, ImportStageTimings, ImportSummary, ImportWorkerMetrics,
-        IndexDocument, IndexSection, OcrTextIndexOutcome, ParseWorkOutcome, ParseWorkResult,
-        PendingProjectionRemovals, PendingSearchableDocument, PendingSearchablePublicationKind,
-        PipelineRunControl, ProcessedFile, SearchProjectionRemoval, SearchProjectionRemovalReason,
-        SearchPublicationEmbeddingFailure, SearchPublicationEmbeddingInput,
-        SearchPublicationEmbeddingOutput, SearchPublicationTelemetrySnapshot,
-        SearchPublicationVectorization, SearchPublicationVectorizer, Sectionizer,
-        SnapshotPublishPhase, BYTES_PER_GIB, H2_INDEX_WRITER_HEAP_BYTES,
+        import_root_with_options_and_control, import_root_with_options_control_and_handoff,
+        index_claimed_ocr_text, process_file, reconcile_search_artifacts,
+        recv_parse_result_with_cancel_poll, should_flush_searchable_documents,
+        take_pending_searchable_documents, write_incremental_search_artifacts_for_test,
+        AdmissionDecision, CurrentImportCacheMode, CurrentImportDocumentCache,
+        ImportCancelCheckPhase, ImportFailureKind, ImportHardwareProfile, ImportHardwareTier,
+        ImportOptions, ImportParseWorkers, ImportPipelineError, ImportPipelineErrorClass,
+        ImportPipelineErrorKind, ImportResourcePolicy, ImportStageTimings, ImportSummary,
+        ImportWorkerMetrics, IndexDocument, IndexSection, OcrTextIndexOutcome, ParseWorkOutcome,
+        ParseWorkResult, PendingProjectionRemovals, PendingSearchableDocument,
+        PendingSearchablePublicationKind, PipelineRunControl, ProcessedFile,
+        SearchGenerationHandoff, SearchGenerationPublicationDisposition, SearchProjectionRemoval,
+        SearchProjectionRemovalReason, SearchPublicationEmbeddingFailure,
+        SearchPublicationEmbeddingInput, SearchPublicationEmbeddingOutput,
+        SearchPublicationTelemetrySnapshot, SearchPublicationVectorization,
+        SearchPublicationVectorizer, Sectionizer, SnapshotPublishPhase, BYTES_PER_GIB,
+        H2_INDEX_WRITER_HEAP_BYTES,
     };
 
     #[path = "no_op_publication_tests.rs"]
@@ -3239,6 +3266,93 @@ mod tests {
         assert_eq!(version.raw_text, None);
     }
 
+    struct RecordingGenerationHandoff<'a> {
+        store: &'a OwnedMetaStore,
+        events: std::cell::RefCell<Vec<&'static str>>,
+        staged_generation: std::cell::RefCell<Option<String>>,
+    }
+
+    impl SearchGenerationHandoff for RecordingGenerationHandoff<'_> {
+        fn stage(
+            &self,
+            publication: &meta_store::SearchPublicationRecord,
+            projections: &[ActiveSearchProjection],
+        ) -> super::Result<()> {
+            let visible = self.store.search_projection_state().unwrap().publication;
+            assert_ne!(
+                visible.as_ref().map(|record| record.generation.as_str()),
+                Some(publication.generation.as_str())
+            );
+            assert_eq!(projections.len(), 1);
+            self.staged_generation
+                .replace(Some(publication.generation.clone()));
+            self.events.borrow_mut().push("staged_before_visible");
+            Ok(())
+        }
+
+        fn finish(&self, disposition: SearchGenerationPublicationDisposition) -> super::Result<()> {
+            assert_eq!(
+                disposition,
+                SearchGenerationPublicationDisposition::Committed
+            );
+            let staged = self.staged_generation.borrow();
+            let visible = self.store.search_projection_state().unwrap().publication;
+            assert_eq!(
+                visible.as_ref().map(|record| record.generation.as_str()),
+                staged.as_deref()
+            );
+            self.events.borrow_mut().push("activated_after_visible");
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn main_import_stages_query_generation_before_visibility_and_activates_after_commit() {
+        let temp = TestDir::new("main-import-generation-handoff");
+        let data_dir = temp.path().join("data");
+        let root = temp.path().join("resumes");
+        fs::create_dir_all(&data_dir).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("synthetic-resume.txt"),
+            synthetic_resume_text("Synthetic Candidate", "Rust Search"),
+        )
+        .unwrap();
+
+        let store = create_test_store(&data_dir);
+        let now = UnixTimestamp::from_unix_seconds(1_700_000_077);
+        initialize_ready_empty_search(&data_dir, &store, now);
+        let task = import_task(
+            "main-import-generation-handoff",
+            root.to_str().unwrap(),
+            now,
+        );
+        insert_test_import_task(&store, &task, &ImportOptions::default());
+        let handoff = RecordingGenerationHandoff {
+            store: &store,
+            events: std::cell::RefCell::default(),
+            staged_generation: std::cell::RefCell::default(),
+        };
+
+        let summary = import_root_with_options_control_and_handoff(
+            &data_dir,
+            &store,
+            &task,
+            &root,
+            now,
+            ImportOptions::default(),
+            PipelineRunControl::default(),
+            Some(&handoff),
+        )
+        .unwrap();
+
+        assert_eq!(summary.searchable_documents, 1);
+        assert_eq!(
+            *handoff.events.borrow(),
+            ["staged_before_visible", "activated_after_visible"]
+        );
+    }
+
     #[test]
     fn import_root_sanitizes_embedded_control_bytes_before_version_identity() {
         let temp = TestDir::new("import-pipeline-control-byte-normalization");
@@ -4670,6 +4784,7 @@ mod tests {
             &discovered,
             processed,
             verification,
+            None,
         )
         .unwrap_err();
 
