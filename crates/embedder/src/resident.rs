@@ -64,6 +64,23 @@ impl ResidentEmbeddingStatus {
     }
 }
 
+#[cfg(feature = "resident-embedding-pool-experiment")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResidentEmbeddingPoolRole {
+    Interactive,
+    Bulk,
+}
+
+#[cfg(feature = "resident-embedding-pool-experiment")]
+impl ResidentEmbeddingPoolRole {
+    fn argument(self) -> &'static str {
+        match self {
+            Self::Interactive => "--resident-embedding-pool-role=interactive",
+            Self::Bulk => "--resident-embedding-pool-role=bulk",
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct ResidentEmbeddingSpec {
     command: LocalEmbeddingCommandSpec,
@@ -75,7 +92,7 @@ pub struct ResidentEmbeddingSpec {
 enum ResidentEmbeddingMode {
     Production,
     #[cfg(feature = "resident-embedding-pool-experiment")]
-    PoolExperiment,
+    PoolExperiment(ResidentEmbeddingPoolRole),
 }
 
 impl ResidentEmbeddingMode {
@@ -83,7 +100,15 @@ impl ResidentEmbeddingMode {
         match self {
             Self::Production => "--resident",
             #[cfg(feature = "resident-embedding-pool-experiment")]
-            Self::PoolExperiment => "--resident-embedding-pool-experiment",
+            Self::PoolExperiment(_) => "--resident-embedding-pool-experiment",
+        }
+    }
+
+    fn role_argument(self) -> Option<&'static str> {
+        match self {
+            Self::Production => None,
+            #[cfg(feature = "resident-embedding-pool-experiment")]
+            Self::PoolExperiment(role) => Some(role.argument()),
         }
     }
 }
@@ -108,6 +133,7 @@ impl ResidentEmbeddingSpec {
     #[cfg(feature = "resident-embedding-pool-experiment")]
     pub fn for_pool_experiment(
         command: LocalEmbeddingCommandSpec,
+        role: ResidentEmbeddingPoolRole,
         intra_threads: usize,
     ) -> Result<Self, EmbeddingError> {
         if !(1..=4).contains(&intra_threads) {
@@ -116,7 +142,7 @@ impl ResidentEmbeddingSpec {
         Ok(Self {
             command,
             intra_threads,
-            mode: ResidentEmbeddingMode::PoolExperiment,
+            mode: ResidentEmbeddingMode::PoolExperiment(role),
         })
     }
 }
@@ -513,7 +539,11 @@ impl Supervisor {
         let mut command = Command::new(&self.spec.command.program);
         command
             .args(&self.spec.command.args)
-            .arg(self.spec.mode.argument())
+            .arg(self.spec.mode.argument());
+        if let Some(role) = self.spec.mode.role_argument() {
+            command.arg(role);
+        }
+        command
             .env("RESUME_IR_EMBEDDING_MODEL_ID", &self.spec.command.model_id)
             .env(
                 "RESUME_IR_EMBEDDING_DIMENSION",

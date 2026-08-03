@@ -10,7 +10,9 @@ pub use resident::{
     ResidentEmbeddingStatus,
 };
 #[cfg(feature = "resident-embedding-pool-experiment")]
-pub use resident::{ResidentEmbeddingRequest, ResidentEmbeddingTelemetryObserver};
+pub use resident::{
+    ResidentEmbeddingPoolRole, ResidentEmbeddingRequest, ResidentEmbeddingTelemetryObserver,
+};
 
 use std::{
     collections::BTreeMap,

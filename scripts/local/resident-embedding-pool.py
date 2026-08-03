@@ -232,20 +232,20 @@ def run_session(inputs: Inputs, block: int, arm: str, query: str,
                 restart_cleanup and restarted == baseline
             )
             victim = crash_bulk_child(
-                process, inputs.embedding, ARM_IDENTITY[arm][2]
+                process, inputs.embedding, ARM_IDENTITY[arm][1]
             )
             post_crash, _, _ = send_query(
                 transport, query, f"crash-query-{tag}", baseline
             )
-            restarted = child_restarted(
-                process, inputs.embedding, victim,
-                ARM_IDENTITY[arm][2], inputs.timeout,
-            )
-            correctness["crash_restart_exact"] &= (
-                post_crash == "exact_expected" and restarted
-            )
             start_import(transport, bulk_root)
             wait_saturated(observer, process, inputs.timeout)
+            correctness["crash_restart_exact"] &= (
+                post_crash == "exact_expected"
+                and child_restarted(
+                    process, inputs.embedding, victim,
+                    ARM_IDENTITY[arm][1], inputs.timeout,
+                )
+            )
             time.sleep(warmup)
             before = read_observer(observer)
             samples = round(measurement * 2)
