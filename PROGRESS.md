@@ -1,5 +1,36 @@
 # Progress
 
+## Issue #341 resident-pool daemon composition
+
+The runtime-primitives prerequisite merged through PR #347 at
+`207c0f1358291fc7595dbbf5aa105ee1795ba071`. This second prerequisite wires
+those primitives only behind the same default-off daemon feature. Ordinary
+builds still reject the experiment flag and start the existing shared resident;
+no production topology, model, input, IPC, persistence or index contract is
+changed.
+
+The feature parser accepts exactly `i3_bulk1x4_b4`, `i3_bulk2x2_b4` and
+`i3_bulk2x3_b4`, requires a complete embedding runtime identity and rejects
+duplicate or unknown arms. Every arm starts a daemon-lifetime interactive 3t
+resident. The control starts one bulk 4t resident and keeps publication calls
+at B4. The two candidates start exactly two bulk 2t or two bulk 3t residents;
+an eight-input publication call is split into two unchanged complete B4s,
+enqueued by ordinal, and reassembled in original input order. Query embedding
+uses only the interactive client. Bootstrap reaches Ready and workers may claim
+work only while the interactive resident and every bulk resident are Ready;
+daemon teardown signals the whole group before joining any owner.
+
+A deterministic synthetic barrier test proves both bulk B4 requests enter
+distinct residents before either can complete, then proves an interactive query
+still enters its third resident and releases the blocked bulk work. All eight
+output IDs retain exact order and telemetry records two embedding calls. The
+default daemon suite passes all 113 tests. The first feature-suite run hit the
+unchanged `unconsumed_install_timeout_withdraws_and_allows_the_next_publication`
+timing assertion; its exact rerun passed, and the complete feature suite then
+passed all 114 tests. Warnings-denied Clippy passes in both default and feature
+builds. No runner, public/private matrix, throughput result or winner claim is
+included in this capability prerequisite.
+
 ## Issue #341 resident-pool runtime primitives
 
 The first implementation prerequisite adds only default-off runtime primitives;
