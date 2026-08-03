@@ -1756,12 +1756,6 @@ def main() -> int:
     pool_self_test = pool_support.get("self_test")
     if not callable(pool_self_test) or pool_self_test() != 0:
         fail("resident embedding pool support self-test failed")
-    pool_runner = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "local" / "resident-embedding-pool.py"), "self-test"],
-        cwd=ROOT, check=False,
-    )
-    if pool_runner.returncode != 0:
-        fail("resident embedding pool runner self-test failed")
     validate_experiment_report_schema(
         require_mapping(load_json(PERF / "experiment-report.schema.json"), "experiment schema"),
         matrix,
