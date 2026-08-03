@@ -55,6 +55,24 @@ impl ResidentEmbeddingStatus {
 pub struct ResidentEmbeddingSpec {
     command: LocalEmbeddingCommandSpec,
     intra_threads: usize,
+    mode: ResidentEmbeddingMode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResidentEmbeddingMode {
+    Production,
+    #[cfg(feature = "resident-embedding-pool-experiment")]
+    PoolExperiment,
+}
+
+impl ResidentEmbeddingMode {
+    fn argument(self) -> &'static str {
+        match self {
+            Self::Production => "--resident",
+            #[cfg(feature = "resident-embedding-pool-experiment")]
+            Self::PoolExperiment => "--resident-embedding-pool-experiment",
+        }
+    }
 }
 
 impl ResidentEmbeddingSpec {
@@ -62,6 +80,7 @@ impl ResidentEmbeddingSpec {
         Self {
             command,
             intra_threads: 1,
+            mode: ResidentEmbeddingMode::Production,
         }
     }
 
@@ -72,6 +91,21 @@ impl ResidentEmbeddingSpec {
         self.intra_threads = intra_threads;
         Ok(self)
     }
+
+    #[cfg(feature = "resident-embedding-pool-experiment")]
+    pub fn for_pool_experiment(
+        command: LocalEmbeddingCommandSpec,
+        intra_threads: usize,
+    ) -> Result<Self, EmbeddingError> {
+        if !(1..=4).contains(&intra_threads) {
+            return Err(EmbeddingError::InvalidRequest);
+        }
+        Ok(Self {
+            command,
+            intra_threads,
+            mode: ResidentEmbeddingMode::PoolExperiment,
+        })
+    }
 }
 
 impl fmt::Debug for ResidentEmbeddingSpec {
@@ -80,6 +114,7 @@ impl fmt::Debug for ResidentEmbeddingSpec {
             .debug_struct("ResidentEmbeddingSpec")
             .field("command", &self.command)
             .field("intra_threads", &self.intra_threads)
+            .field("mode", &self.mode)
             .finish()
     }
 }
@@ -132,14 +167,32 @@ impl ResidentEmbeddingOwner {
     pub fn client(&self) -> ResidentEmbeddingClient {
         self.client.clone()
     }
+
+    fn request_shutdown(&self) {
+        self.shutdown.store(true, Ordering::Release);
+    }
+
+    fn join_worker(&mut self) {
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+
+    #[cfg(feature = "resident-embedding-pool-experiment")]
+    pub fn shutdown_experiment_pool(owners: &mut [&mut Self]) {
+        for owner in owners.iter() {
+            owner.request_shutdown();
+        }
+        for owner in owners {
+            owner.join_worker();
+        }
+    }
 }
 
 impl Drop for ResidentEmbeddingOwner {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Release);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
+        self.request_shutdown();
+        self.join_worker();
     }
 }
 
@@ -185,6 +238,29 @@ impl ResidentEmbeddingClient {
         timeout_ms: u64,
         is_cancelled: impl Fn() -> bool,
     ) -> Result<(Vec<EmbeddingVector>, EmbeddingTelemetry), EmbeddingError> {
+        self.enqueue_batch(priority, inputs, budget, timeout_ms)?
+            .wait_with_cancel(is_cancelled)
+    }
+
+    #[cfg(feature = "resident-embedding-pool-experiment")]
+    pub fn enqueue_batch_with_telemetry(
+        &self,
+        priority: EmbeddingPriority,
+        inputs: &[EmbeddingInput],
+        budget: EmbeddingBudget,
+        timeout_ms: u64,
+    ) -> Result<ResidentEmbeddingRequest, EmbeddingError> {
+        self.enqueue_batch(priority, inputs, budget, timeout_ms)
+            .map(|pending| ResidentEmbeddingRequest { pending })
+    }
+
+    fn enqueue_batch(
+        &self,
+        priority: EmbeddingPriority,
+        inputs: &[EmbeddingInput],
+        budget: EmbeddingBudget,
+        timeout_ms: u64,
+    ) -> Result<PendingEmbeddingRequest, EmbeddingError> {
         super::validate_embedding_inputs(inputs, budget)?;
         if inputs.is_empty() || inputs.len() > embedding_protocol::MAX_INPUTS || timeout_ms == 0 {
             return Err(EmbeddingError::InvalidRequest);
@@ -210,20 +286,73 @@ impl ResidentEmbeddingClient {
             Err(TrySendError::Full(_)) => return Err(EmbeddingError::Overloaded),
             Err(TrySendError::Disconnected(_)) => return Err(EmbeddingError::WorkerUnavailable),
         }
+        Ok(PendingEmbeddingRequest {
+            cancellation,
+            response_receiver,
+            deadline,
+            finished: false,
+        })
+    }
+}
 
+#[cfg(feature = "resident-embedding-pool-experiment")]
+pub struct ResidentEmbeddingRequest {
+    pending: PendingEmbeddingRequest,
+}
+
+#[cfg(feature = "resident-embedding-pool-experiment")]
+impl ResidentEmbeddingRequest {
+    pub fn wait_with_cancel(
+        self,
+        is_cancelled: impl Fn() -> bool,
+    ) -> Result<(Vec<EmbeddingVector>, EmbeddingTelemetry), EmbeddingError> {
+        self.pending.wait_with_cancel(is_cancelled)
+    }
+}
+
+struct PendingEmbeddingRequest {
+    cancellation: Arc<AtomicU8>,
+    response_receiver: Receiver<Result<(Vec<EmbeddingVector>, EmbeddingTelemetry), EmbeddingError>>,
+    deadline: Instant,
+    finished: bool,
+}
+
+impl PendingEmbeddingRequest {
+    fn wait_with_cancel(
+        mut self,
+        is_cancelled: impl Fn() -> bool,
+    ) -> Result<(Vec<EmbeddingVector>, EmbeddingTelemetry), EmbeddingError> {
         loop {
             if is_cancelled() {
-                let _ = cancellation.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire);
-            } else if Instant::now() >= deadline {
-                let _ = cancellation.compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire);
+                let _ =
+                    self.cancellation
+                        .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire);
+            } else if Instant::now() >= self.deadline {
+                let _ =
+                    self.cancellation
+                        .compare_exchange(0, 2, Ordering::AcqRel, Ordering::Acquire);
             }
-            match response_receiver.recv_timeout(SUPERVISOR_POLL) {
-                Ok(result) => return result,
+            match self.response_receiver.recv_timeout(SUPERVISOR_POLL) {
+                Ok(result) => {
+                    self.finished = true;
+                    return result;
+                }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => {
-                    return Err(EmbeddingError::WorkerUnavailable)
+                    self.finished = true;
+                    return Err(EmbeddingError::WorkerUnavailable);
                 }
             }
+        }
+    }
+}
+
+impl Drop for PendingEmbeddingRequest {
+    fn drop(&mut self) {
+        if !self.finished {
+            let _ = self
+                .cancellation
+                .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire);
         }
     }
 }
@@ -342,7 +471,7 @@ impl Supervisor {
         let mut command = Command::new(&self.spec.command.program);
         command
             .args(&self.spec.command.args)
-            .arg("--resident")
+            .arg(self.spec.mode.argument())
             .env("RESUME_IR_EMBEDDING_MODEL_ID", &self.spec.command.model_id)
             .env(
                 "RESUME_IR_EMBEDDING_DIMENSION",

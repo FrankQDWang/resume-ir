@@ -30,6 +30,7 @@ fn ordinary_modes_do_not_read_profile_output() {
         parse(&["--resident".into()]),
         RunMode::Resident(ResidentMode {
             profiling: ProfilingMode::Disabled,
+            thread_policy: ResidentThreadPolicy::Production,
         })
     );
     assert!(!read.get());
@@ -44,11 +45,41 @@ fn profiling_mode_requires_a_new_absolute_prefix_in_a_real_directory() {
         mode,
         RunMode::Resident(ResidentMode {
             profiling: ProfilingMode::OperatorTrace(prefix.clone()),
+            thread_policy: ResidentThreadPolicy::Production,
         })
     );
 
     std::fs::write(&prefix, b"occupied").unwrap();
     assert_invalid(Some(prefix.into_os_string()));
+}
+
+#[cfg(feature = "resident-embedding-pool-experiment")]
+#[test]
+fn pool_mode_is_explicit_and_does_not_read_profile_output() {
+    let read = Cell::new(false);
+    let mode = parse_run_mode(&["--resident-embedding-pool-experiment".into()], || {
+        read.set(true);
+        None
+    })
+    .unwrap();
+
+    assert_eq!(
+        mode,
+        RunMode::Resident(ResidentMode {
+            profiling: ProfilingMode::Disabled,
+            thread_policy: ResidentThreadPolicy::PoolExperiment,
+        })
+    );
+    assert!(!read.get());
+}
+
+#[cfg(not(feature = "resident-embedding-pool-experiment"))]
+#[test]
+fn default_build_does_not_expose_pool_mode() {
+    assert!(matches!(
+        parse_run_mode(&["--resident-embedding-pool-experiment".into()], || None),
+        Err(RuntimeError::EnvironmentInvalid)
+    ));
 }
 
 #[test]

@@ -10,6 +10,83 @@ use embedder::{
 use tempfile::TempDir;
 
 #[test]
+fn production_spec_rejects_four_threads() {
+    let worker = TestWorker::compile("production_limit");
+    assert!(matches!(
+        ResidentEmbeddingSpec::new(worker.command()).with_intra_threads(4),
+        Err(EmbeddingError::InvalidRequest)
+    ));
+}
+
+#[cfg(feature = "resident-embedding-pool-experiment")]
+#[test]
+fn pool_requests_enter_distinct_residents_and_all_owners_shutdown_together() {
+    let first_worker =
+        TestWorker::compile_for_mode("pool_first_slow", "--resident-embedding-pool-experiment");
+    let second_worker =
+        TestWorker::compile_for_mode("pool_second_slow", "--resident-embedding-pool-experiment");
+    let mut first_owner = first_worker.pool_owner(/*threads*/ 4);
+    let mut second_owner = second_worker.pool_owner(/*threads*/ 3);
+    let first = first_owner.client();
+    let second = second_owner.client();
+    wait_for_status_with_timeout(
+        &first,
+        ResidentEmbeddingStatus::Ready,
+        Duration::from_secs(10),
+    );
+    wait_for_status_with_timeout(
+        &second,
+        ResidentEmbeddingStatus::Ready,
+        Duration::from_secs(10),
+    );
+
+    let first_request = first
+        .enqueue_batch_with_telemetry(
+            EmbeddingPriority::Background,
+            &[EmbeddingInput::new("first", "synthetic passage one")],
+            EmbeddingBudget::new(1, 64),
+            2_000,
+        )
+        .unwrap();
+    let second_request = second
+        .enqueue_batch_with_telemetry(
+            EmbeddingPriority::Background,
+            &[EmbeddingInput::new("second", "synthetic passage two")],
+            EmbeddingBudget::new(1, 64),
+            2_000,
+        )
+        .unwrap();
+    first_worker.wait_for_request_count(1);
+    second_worker.wait_for_request_count(1);
+
+    let first_vectors = first_request.wait_with_cancel(|| false).unwrap().0;
+    let second_vectors = second_request.wait_with_cancel(|| false).unwrap().0;
+    assert_eq!(first_vectors[0].id(), "first");
+    assert_eq!(second_vectors[0].id(), "second");
+
+    let cancelled_request = first
+        .enqueue_batch_with_telemetry(
+            EmbeddingPriority::Background,
+            &[EmbeddingInput::new(
+                "cancelled",
+                "synthetic cancelled passage",
+            )],
+            EmbeddingBudget::new(1, 64),
+            2_000,
+        )
+        .unwrap();
+    first_worker.wait_for_request_count(2);
+    drop(cancelled_request);
+    first_worker.wait_for_ready_generation(2);
+    assert_eq!(first.status(), ResidentEmbeddingStatus::Ready);
+
+    let mut owners = [&mut first_owner, &mut second_owner];
+    ResidentEmbeddingOwner::shutdown_experiment_pool(&mut owners);
+    wait_for_status(&first, ResidentEmbeddingStatus::Shutdown);
+    wait_for_status(&second, ResidentEmbeddingStatus::Shutdown);
+}
+
+#[test]
 fn repeated_requests_reuse_one_generation_and_keep_payloads_redacted() {
     let worker = TestWorker::compile("fast");
     let owner = worker.owner();
@@ -238,7 +315,15 @@ fn wait_ready(client: &embedder::ResidentEmbeddingClient) {
 }
 
 fn wait_for_status(client: &embedder::ResidentEmbeddingClient, expected: ResidentEmbeddingStatus) {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    wait_for_status_with_timeout(client, expected, Duration::from_secs(2));
+}
+
+fn wait_for_status_with_timeout(
+    client: &embedder::ResidentEmbeddingClient,
+    expected: ResidentEmbeddingStatus,
+    timeout: Duration,
+) {
+    let deadline = Instant::now() + timeout;
     while client.status() != expected {
         assert!(
             Instant::now() < deadline,
@@ -255,13 +340,30 @@ struct TestWorker {
 
 impl TestWorker {
     fn compile(behavior: &str) -> Self {
+        Self::compile_for_mode(behavior, "--resident")
+    }
+
+    fn compile_for_mode(behavior: &str, expected_mode: &str) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let executable = directory.path().join(format!(
             "resident_worker_{behavior}{}",
             std::env::consts::EXE_SUFFIX
         ));
-        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../embedding-protocol/tests/fixtures/resident_worker.rs");
+        let original = fs::read_to_string(fixture).unwrap();
+        let generated = if expected_mode == "--resident" {
+            original
+        } else {
+            let generated = original.replace(
+                "Some(\"--resident\")",
+                &format!("Some(\"{expected_mode}\")"),
+            );
+            assert_ne!(generated, original);
+            generated
+        };
+        let source = directory.path().join("resident_worker.rs");
+        fs::write(&source, generated).unwrap();
         let status = Command::new(option_env!("RUSTC").unwrap_or("rustc"))
             .arg("--edition=2021")
             .arg(source)
@@ -277,7 +379,16 @@ impl TestWorker {
     }
 
     fn owner(&self) -> ResidentEmbeddingOwner {
-        let command = LocalEmbeddingCommandSpec::new(
+        ResidentEmbeddingOwner::start(
+            ResidentEmbeddingSpec::new(self.command())
+                .with_intra_threads(1)
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn command(&self) -> LocalEmbeddingCommandSpec {
+        LocalEmbeddingCommandSpec::new(
             &self.executable,
             Vec::<String>::new(),
             "fixture-local-model",
@@ -285,11 +396,17 @@ impl TestWorker {
         )
         .unwrap()
         .with_timeout_ms(2_000)
-        .unwrap();
+        .unwrap()
+    }
+
+    #[cfg(feature = "resident-embedding-pool-experiment")]
+    fn pool_owner(&self, threads: usize) -> ResidentEmbeddingOwner {
         ResidentEmbeddingOwner::start(
-            ResidentEmbeddingSpec::new(command)
-                .with_intra_threads(1)
-                .unwrap(),
+            ResidentEmbeddingSpec::for_pool_experiment(
+                self.command().with_timeout_ms(10_000).unwrap(),
+                threads,
+            )
+            .unwrap(),
         )
         .unwrap()
     }
@@ -306,6 +423,18 @@ impl TestWorker {
             .unwrap_or_default()
             .lines()
             .count()
+    }
+
+    #[cfg(feature = "resident-embedding-pool-experiment")]
+    fn wait_for_request_count(&self, expected: usize) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while self.request_count() < expected {
+            assert!(
+                Instant::now() < deadline,
+                "request did not reach resident worker"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn ready_count(&self) -> usize {
