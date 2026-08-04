@@ -24,6 +24,8 @@ use std::thread;
 use tokenizers::{AddedToken, PaddingParams, PaddingStrategy, Tokenizer, TruncationParams};
 
 mod batch;
+#[cfg(all(target_os = "macos", feature = "resident-embedding-pool-experiment"))]
+mod coreml_product_experiment;
 mod profiling;
 mod runtime_pack;
 
@@ -72,6 +74,10 @@ fn run_with_panic_boundary(
 
 fn run() -> Result<(), RuntimeError> {
     let args = env::args().skip(1).collect::<Vec<_>>();
+    #[cfg(all(target_os = "macos", feature = "resident-embedding-pool-experiment"))]
+    if let Some(role) = coreml_product_experiment::requested_role(&args)? {
+        return run_coreml_resident(role);
+    }
     match parse_run_mode(&args, || env::var_os(PROFILE_OUTPUT_PREFIX_ENV))? {
         RunMode::OneShot => run_one_shot(),
         RunMode::Resident(mode) => run_resident(mode),
@@ -127,13 +133,33 @@ fn run_resident(mode: ResidentMode) -> Result<(), RuntimeError> {
         memory_pattern,
         fixed_shape,
     )?;
+    serve_resident(&model_id, dimension, &mut model)
+}
+
+#[cfg(all(target_os = "macos", feature = "resident-embedding-pool-experiment"))]
+fn run_coreml_resident(role: coreml_product_experiment::CoreMlRole) -> Result<(), RuntimeError> {
+    start_resident_parent_death_guard()?;
+    let environment = ResidentEnvironment::read(ResidentThreadPolicy::PoolExperiment)?;
+    let pack = RuntimePack::load(&environment.runtime_dir)?;
+    if environment.dimension != DIMENSION {
+        return Err(RuntimeError::IdentityMismatch);
+    }
+    let mut model = coreml_product_experiment::CoreMlEmbeddingModel::load(&pack, role)?;
+    serve_resident(&environment.model_id, environment.dimension, &mut model)
+}
+
+fn serve_resident(
+    model_id: &str,
+    dimension: usize,
+    model: &mut impl ResidentBatchModel,
+) -> Result<(), RuntimeError> {
     let stdin = io::stdin();
     let stdout = io::stdout();
     let mut reader = BufReader::new(stdin.lock());
     let mut writer = BufWriter::new(stdout.lock());
     write_frame(
         &mut writer,
-        &ResidentResponse::ready(&model_id, dimension),
+        &ResidentResponse::ready(model_id, dimension),
         MAX_RESPONSE_BYTES,
     )
     .map_err(|_| RuntimeError::OutputInvalid)?;
@@ -183,7 +209,7 @@ fn run_resident(mode: ResidentMode) -> Result<(), RuntimeError> {
             continue;
         }
 
-        let response = match resident_success_response(&mut model, &request) {
+        let response = match resident_success_response(model, &request) {
             Ok(response) => response,
             Err(error) => {
                 write_frame(
@@ -214,6 +240,10 @@ trait ResidentBatchModel {
         &mut self,
         texts: &[String],
     ) -> Result<ResidentBatchOutput, RuntimeError>;
+
+    fn finish_profiling(&mut self) -> Result<(), RuntimeError> {
+        Ok(())
+    }
 }
 
 fn resident_success_response(
@@ -571,6 +601,10 @@ impl ResidentBatchModel for NativeEmbeddingModel {
                 child_started.elapsed(),
             ),
         })
+    }
+
+    fn finish_profiling(&mut self) -> Result<(), RuntimeError> {
+        NativeEmbeddingModel::finish_profiling(self)
     }
 }
 
