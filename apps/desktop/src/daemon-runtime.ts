@@ -39,6 +39,50 @@ export type RootControlState = "loading" | "unmanaged" | "active" | "paused" | "
 export type ManagedRootsReadFailure = "overload" | "error" | null
 export type ManagedRootsRefreshOutcome = Exclude<ManagedRootsReadFailure, null> | "success"
 
+const ACTIVE_SOURCE_SCAN_PHASES = new Set([
+  "queued",
+  "discovering",
+  "fingerprinting",
+  "classifying",
+  "parsing",
+  "ocr",
+  "publishing",
+])
+
+export function hasActiveManagedRootScan(roots: SourceRoot[]): boolean {
+  return roots.some((root) =>
+    root.last_scan !== null && ACTIVE_SOURCE_SCAN_PHASES.has(root.last_scan.phase),
+  )
+}
+
+export function startSerialManagedRootsPolling(input: {
+  refresh(): Promise<void>
+  clock: {
+    setTimeout(callback: () => void, delayMs: number): number
+    clearTimeout(timer: number): void
+  }
+}): () => void {
+  let stopped = false
+  let timer: number | null = null
+  const schedule = () => {
+    if (stopped) return
+    timer = input.clock.setTimeout(() => { void poll() }, 1000)
+  }
+  const poll = async () => {
+    timer = null
+    try {
+      await input.refresh()
+    } finally {
+      schedule()
+    }
+  }
+  schedule()
+  return () => {
+    stopped = true
+    if (timer !== null) input.clock.clearTimeout(timer)
+  }
+}
+
 export function managedRootsReadFailureAfterRefresh(
   outcome: ManagedRootsRefreshOutcome,
 ): ManagedRootsReadFailure {
@@ -443,6 +487,20 @@ export function useDaemonRuntime(input: {
     }
   }
 
+  const fastManagedRootRefresh = input.sourcePanelOpen
+    && hasActiveManagedRootScan(managedRoots)
+
+  useEffect(() => {
+    if (input.preview || !fastManagedRootRefresh) return
+    return startSerialManagedRootsPolling({
+      refresh: () => refreshManagedRoots(),
+      clock: {
+        setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
+        clearTimeout: (timer) => window.clearTimeout(timer),
+      },
+    })
+  }, [input.preview, fastManagedRootRefresh])
+
   useEffect(() => {
     if (input.preview) return
     return startSerialLifecyclePolling({
@@ -454,7 +512,7 @@ export function useDaemonRuntime(input: {
           const authority = await refreshStatus()
           if (authority && actionAuthorityIsCurrent(authority)) {
             const generationChanged = managedRootsGeneration.current !== snapshot.generation
-            if (generationChanged || input.sourcePanelOpen) {
+            if (generationChanged || (input.sourcePanelOpen && !fastManagedRootRefresh)) {
               managedRootsGeneration.current = snapshot.generation
               await refreshManagedRoots(generationChanged)
             }
@@ -476,7 +534,7 @@ export function useDaemonRuntime(input: {
         removeFocusListener: (listener) => window.removeEventListener("focus", listener),
       },
     })
-  }, [input.preview, input.sourcePanelOpen])
+  }, [input.preview, input.sourcePanelOpen, fastManagedRootRefresh])
 
   return {
     lifecycle,

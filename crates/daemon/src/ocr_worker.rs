@@ -1,5 +1,5 @@
 use std::cell::Cell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::Path;
 use std::sync::{mpsc, Condvar, Mutex, OnceLock};
@@ -28,7 +28,8 @@ use crate::source_file_authority::SourceFileError;
 use crate::worker_output::OcrWorkerSummary;
 use crate::worker_time::{current_timestamp, timestamp_minus_seconds};
 
-static ACTIVE_OCR_DOCUMENTS: OnceLock<(Mutex<HashSet<String>>, Condvar)> = OnceLock::new();
+static ACTIVE_OCR_DOCUMENTS: OnceLock<(Mutex<HashMap<String, CancellationToken>>, Condvar)> =
+    OnceLock::new();
 
 pub(crate) fn run_ocr_worker_once(
     data_dir: &Path,
@@ -104,7 +105,8 @@ pub(crate) fn run_ocr_worker_once_with_handoff(
             ..OcrWorkerSummary::default()
         });
     };
-    let _active_claim = ActiveOcrClaim::register(&job.job.document_id)?;
+    let cancellation = CancellationToken::new();
+    let _active_claim = ActiveOcrClaim::register(&job.job.document_id, cancellation.clone())?;
     if !store
         .ocr_claim_is_current(&job)
         .map_err(DaemonError::store)?
@@ -124,7 +126,7 @@ pub(crate) fn run_ocr_worker_once_with_handoff(
         &job,
         options,
         &runtime,
-        now,
+        OcrExecutionControl { now, cancellation },
         generation_handoff,
     ) {
         Ok(summary) => summary,
@@ -137,7 +139,10 @@ pub(crate) fn run_ocr_worker_once_with_handoff(
     Ok(summary)
 }
 
-pub(crate) fn wait_for_documents_to_quiesce(documents: &[DocumentId], timeout: Duration) -> bool {
+pub(crate) fn cancel_and_wait_for_documents_to_quiesce(
+    documents: &[DocumentId],
+    timeout: Duration,
+) -> bool {
     if documents.is_empty() {
         return true;
     }
@@ -146,13 +151,18 @@ pub(crate) fn wait_for_documents_to_quiesce(documents: &[DocumentId], timeout: D
         .map(|document| document.as_str())
         .collect::<HashSet<_>>();
     let (active, changed) =
-        ACTIVE_OCR_DOCUMENTS.get_or_init(|| (Mutex::new(HashSet::new()), Condvar::new()));
+        ACTIVE_OCR_DOCUMENTS.get_or_init(|| (Mutex::new(HashMap::new()), Condvar::new()));
     let Ok(mut active) = active.lock() else {
         return false;
     };
     let deadline = Instant::now() + timeout;
+    for document in &document_ids {
+        if let Some(cancellation) = active.get(*document) {
+            cancellation.cancel();
+        }
+    }
     while active
-        .iter()
+        .keys()
         .any(|document| document_ids.contains(document.as_str()))
     {
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -165,7 +175,7 @@ pub(crate) fn wait_for_documents_to_quiesce(documents: &[DocumentId], timeout: D
         active = next;
         if result.timed_out()
             && active
-                .iter()
+                .keys()
                 .any(|document| document_ids.contains(document.as_str()))
         {
             return false;
@@ -179,17 +189,22 @@ struct ActiveOcrClaim {
 }
 
 impl ActiveOcrClaim {
-    fn register(document_id: &DocumentId) -> Result<Self> {
+    fn register(document_id: &DocumentId, cancellation: CancellationToken) -> Result<Self> {
         let (active, _) =
-            ACTIVE_OCR_DOCUMENTS.get_or_init(|| (Mutex::new(HashSet::new()), Condvar::new()));
+            ACTIVE_OCR_DOCUMENTS.get_or_init(|| (Mutex::new(HashMap::new()), Condvar::new()));
         let mut active = active
             .lock()
             .map_err(|_| DaemonError::control_plane("OCR activity registry is unavailable"))?;
         let document_id = document_id.as_str().to_string();
-        if !active.insert(document_id.clone()) {
-            return Err(DaemonError::control_plane(
-                "OCR document was claimed concurrently",
-            ));
+        match active.entry(document_id.clone()) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(cancellation);
+            }
+            std::collections::hash_map::Entry::Occupied(_) => {
+                return Err(DaemonError::control_plane(
+                    "OCR document was claimed concurrently",
+                ));
+            }
         }
         Ok(Self { document_id })
     }
@@ -198,7 +213,7 @@ impl ActiveOcrClaim {
 impl Drop for ActiveOcrClaim {
     fn drop(&mut self) {
         let (active, changed) =
-            ACTIVE_OCR_DOCUMENTS.get_or_init(|| (Mutex::new(HashSet::new()), Condvar::new()));
+            ACTIVE_OCR_DOCUMENTS.get_or_init(|| (Mutex::new(HashMap::new()), Condvar::new()));
         if let Ok(mut active) = active.lock() {
             active.remove(&self.document_id);
             changed.notify_all();
@@ -244,9 +259,10 @@ fn run_claimed_ocr_job(
     job: &meta_store::ClaimedOcrJob,
     options: &RunOptions,
     runtime: &PreparedOcrRuntime,
-    now: UnixTimestamp,
+    control: OcrExecutionControl,
     generation_handoff: Option<&crate::ipc::search_service::GenerationHandoff>,
 ) -> Result<OcrWorkerSummary> {
+    let OcrExecutionControl { now, cancellation } = control;
     let Some(document) = store
         .document_by_id(&job.job.document_id)
         .map_err(DaemonError::store)?
@@ -259,7 +275,6 @@ fn run_claimed_ocr_job(
     };
     let content_hash = job.source_fingerprint().to_string();
 
-    let cancellation = CancellationToken::new();
     let _claim_monitor = OcrClaimMonitor::start(
         store.open_sibling().map_err(DaemonError::store)?,
         job.clone(),
@@ -681,6 +696,11 @@ fn run_claimed_ocr_job(
     })
 }
 
+struct OcrExecutionControl {
+    now: UnixTimestamp,
+    cancellation: CancellationToken,
+}
+
 fn cancelled_obsolete_claim(
     store: &OwnedMetaStore,
     job: &meta_store::ClaimedOcrJob,
@@ -920,4 +940,40 @@ fn recover_stale_ingest_jobs(store: &OwnedMetaStore, now: UnixTimestamp) -> Resu
             timestamp_minus_seconds(now, STALE_INGEST_JOB_SECONDS),
         )
         .map_err(DaemonError::store)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use meta_store::DocumentId;
+    use ocr_client::CancellationToken;
+
+    use super::{cancel_and_wait_for_documents_to_quiesce, ActiveOcrClaim};
+
+    #[test]
+    fn source_root_quiescence_cancels_active_ocr_before_durable_job_purge() {
+        let document_id = DocumentId::from_non_secret_parts(&[
+            "daemon-ocr-worker",
+            "source-root-deletion-quiescence",
+        ]);
+        let cancellation = CancellationToken::new();
+        let active = ActiveOcrClaim::register(&document_id, cancellation.clone()).unwrap();
+        let waited_document = document_id.clone();
+        let waiter = thread::spawn(move || {
+            cancel_and_wait_for_documents_to_quiesce(
+                std::slice::from_ref(&waited_document),
+                Duration::from_secs(1),
+            )
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !cancellation.is_cancelled() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(cancellation.is_cancelled());
+        drop(active);
+        assert!(waiter.join().unwrap());
+    }
 }

@@ -49,7 +49,9 @@ describe("truthful import progress presentation", () => {
     const presentation = importProgressPresentation(root(), "available")
     expect(presentation.observedPercent).toBe(80)
     expect(presentation.stageMessage).toBe("正在解析和处理")
-    expect(presentation.keywordMessage).toBe("关键词检索已部分可用")
+    expect(presentation.progressValueLabel).toBe("80% · 约 1 秒")
+    expect(presentation).not.toHaveProperty("keywordMessage")
+    expect(presentation).not.toHaveProperty("keywordState")
   })
 
   it("reports only the exact phase supplied by the backend", () => {
@@ -80,10 +82,9 @@ describe("truthful import progress presentation", () => {
     })
     const presentation = importProgressPresentation(candidate, "available")
     expect(presentation.stageMessage).toContain("OCR 正在后台继续")
-    expect(presentation.keywordState).toBe("partial")
   })
 
-  it("requires every strict gate before claiming all keyword search is available", () => {
+  it("uses the main stage sentence only after every keyword-ready gate passes", () => {
     const complete = root({
       current_counts: { ...root().current_counts, ocr: 0 },
       last_scan: {
@@ -94,11 +95,11 @@ describe("truthful import progress presentation", () => {
         completed_at_seconds: 2,
       },
     })
-    expect(importProgressPresentation(complete, "available").keywordMessage)
+    expect(importProgressPresentation(complete, "available").stageMessage)
       .toBe("关键词检索全部可用")
-    expect(importProgressPresentation(complete, "degraded").keywordState).toBe("partial")
-    expect(importProgressPresentation({ ...complete, last_scan: { ...complete.last_scan!, completeness: "partial" } }, "available").keywordState).toBe("partial")
-    expect(importProgressPresentation({ ...complete, last_scan: { ...complete.last_scan!, counts: { ...complete.last_scan!.counts, processed: 9 } } }, "available").keywordState).toBe("partial")
+    expect(importProgressPresentation(complete, "degraded").stageMessage).toBe("本轮扫描完成")
+    expect(importProgressPresentation({ ...complete, last_scan: { ...complete.last_scan!, completeness: "partial" } }, "available").stageMessage).toBe("本轮扫描完成")
+    expect(importProgressPresentation({ ...complete, last_scan: { ...complete.last_scan!, counts: { ...complete.last_scan!.counts, processed: 9 } } }, "available").stageMessage).toBe("本轮扫描完成")
   })
 
   it("never turns partial or failed terminal scans into complete readiness", () => {
@@ -113,7 +114,8 @@ describe("truthful import progress presentation", () => {
           completed_at_seconds: 2,
         },
       })
-      expect(importProgressPresentation(candidate, "available").keywordState).toBe("partial")
+      expect(importProgressPresentation(candidate, "available").stageMessage)
+        .toBe(phase === "partial" ? "本轮扫描不完整" : "本轮扫描失败")
     }
   })
 
@@ -128,6 +130,6 @@ describe("truthful import progress presentation", () => {
         completed_at_seconds: 2,
       },
     })
-    expect(importProgressPresentation(empty, "available").keywordState).toBe("waiting")
+    expect(importProgressPresentation(empty, "available").stageMessage).toBe("本轮扫描完成")
   })
 })

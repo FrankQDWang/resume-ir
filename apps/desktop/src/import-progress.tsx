@@ -18,8 +18,6 @@ export interface ImportProgressPresentation {
   exactCountLabel: string
   progressValueLabel: string
   stageMessage: string
-  keywordMessage: string
-  keywordState: "waiting" | "partial" | "complete"
   terminal: boolean
 }
 
@@ -48,11 +46,6 @@ export function importProgressPresentation(
     && root.current_counts.searchable > 0
     && root.current_counts.ocr === 0
     && keywordCapabilityState === "available"
-  const keywordState = fullyKeywordReady
-    ? "complete"
-    : root.current_counts.searchable > 0
-      ? "partial"
-      : "waiting"
 
   return {
     active,
@@ -61,17 +54,11 @@ export function importProgressPresentation(
       ? `${processed.toLocaleString()} / ${observedTotal.toLocaleString()}`
       : lastSyncLabel(scan?.updated_at_seconds),
     progressValueLabel: active
-      ? etaLabel(scan?.eta_seconds ?? null)
+      ? `${observedPercent}% · ${etaLabel(scan?.eta_seconds ?? null)}`
       : scan === null
         ? "未开始"
         : `${observedPercent}%`,
-    stageMessage: stageMessage(root),
-    keywordMessage: keywordState === "complete"
-      ? "关键词检索全部可用"
-      : keywordState === "partial"
-        ? "关键词检索已部分可用"
-        : "关键词检索尚未可用",
-    keywordState,
+    stageMessage: stageMessage(root, fullyKeywordReady),
     terminal,
   }
 }
@@ -121,29 +108,26 @@ export function ImportProgress({
       aria-valuetext={`${presentation.observedPercent}%`}
     >
       <span
-        className={`source-progress-fill${presentation.terminal ? " source-progress-fill-terminal" : ""}`}
-        style={{ width: `${visualPercent}%` }}
+        className={`source-progress-fill${presentation.active ? " source-progress-fill-active" : ""}${presentation.terminal ? " source-progress-fill-terminal" : ""}`}
+        style={{ transform: `scaleX(${visualPercent / 100})` }}
       />
     </div>
     <div className="source-progress-status">
       <span className="sr-only" role="status" aria-live="polite">
-        {presentation.stageMessage}。{presentation.keywordMessage}
+        {presentation.stageMessage}
       </span>
       <span
         key={presentation.stageMessage}
-        className="streaming-status-text"
+        className={`streaming-status-text${presentation.active ? " streaming-status-text-active" : ""}`}
         aria-hidden="true"
       >
         {presentation.stageMessage}
-      </span>
-      <span className={`keyword-readiness keyword-readiness-${presentation.keywordState}`}>
-        {presentation.keywordMessage}
       </span>
     </div>
   </div>
 }
 
-function stageMessage(root: SourceRoot): string {
+function stageMessage(root: SourceRoot, fullyKeywordReady: boolean): string {
   if (root.state === "deleting") return "正在删除本地派生数据"
   if (root.state === "offline") return "目录离线，等待恢复访问"
   if (root.watcher_state === "paused") return "目录监控已暂停"
@@ -151,6 +135,7 @@ function stageMessage(root: SourceRoot): string {
   const scan = root.last_scan
   if (scan === null) return "等待首次扫描"
   if (scan.phase === "complete") {
+    if (fullyKeywordReady) return "关键词检索全部可用"
     return root.current_counts.ocr > 0
       ? "本轮扫描完成，OCR 正在后台继续"
       : "本轮扫描完成"

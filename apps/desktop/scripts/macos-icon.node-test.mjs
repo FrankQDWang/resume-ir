@@ -148,6 +148,9 @@ test("import stage motion is continuous with a static reduced-motion fallback", 
   assert.doesNotMatch(styles, /typewriter-reveal/);
   assert.match(styles, /@keyframes status-message-enter/);
   assert.match(styles, /@keyframes status-message-flow/);
+  assert.match(styles, /\.streaming-status-text-active[^}]+status-message-flow[^;}]+infinite/);
+  assert.match(styles, /\.source-progress-fill-active[^}]+progress-fill-flow[^;}]+infinite/);
+  assert.doesNotMatch(styles, /\.keyword-readiness/);
   assert.match(styles, /prefers-reduced-motion: reduce/);
   assert.match(styles, /-webkit-text-fill-color: currentColor/);
 });

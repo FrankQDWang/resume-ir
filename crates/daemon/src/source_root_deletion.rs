@@ -215,10 +215,21 @@ fn resume(
         let documents = store
             .source_root_deletion_document_ids(root_id)
             .map_err(|_| CommandFailure::Internal)?;
+        if !crate::ocr_worker::cancel_and_wait_for_documents_to_quiesce(
+            &documents,
+            Duration::from_secs(5),
+        ) {
+            return Err(CommandFailure::ServiceUnavailable(
+                "source root OCR is quiescing",
+            ));
+        }
         store
             .purge_ingest_jobs_for_documents(&documents)
             .map_err(|_| CommandFailure::Internal)?;
-        if !crate::ocr_worker::wait_for_documents_to_quiesce(&documents, Duration::from_secs(5)) {
+        if !crate::ocr_worker::cancel_and_wait_for_documents_to_quiesce(
+            &documents,
+            Duration::from_secs(5),
+        ) {
             return Err(CommandFailure::ServiceUnavailable(
                 "source root OCR is quiescing",
             ));

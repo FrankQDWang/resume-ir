@@ -218,15 +218,15 @@ progress.progress-track::-moz-progress-bar { border-radius: inherit; background:
 .source-progress-values { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 5px; color: var(--muted-foreground); font-size: 11px; }
 .source-progress-values strong { color: var(--foreground); font-size: 11px; }
 .source-progress-track { width: 100%; height: 7px; overflow: hidden; border-radius: 999px; background: var(--muted); }
-.source-progress-fill { display: block; height: 100%; border-radius: inherit; background: var(--primary); transition: width 4s cubic-bezier(.2, .7, .2, 1); }
-.source-progress-fill-terminal { transition-duration: .3s; }
+.source-progress-fill { position: relative; display: block; width: 100%; height: 100%; overflow: hidden; border-radius: inherit; background: var(--primary); transform: scaleX(0); transform-origin: left center; transition: transform .9s cubic-bezier(.22, .72, .24, 1); will-change: transform; }
+.source-progress-fill-active::after { position: absolute; inset: 0; content: ""; background: linear-gradient(105deg, transparent 20%, rgb(255 255 255 / 38%) 48%, transparent 76%); transform: translate3d(-120%, 0, 0); animation: progress-fill-flow 1.8s cubic-bezier(.32, .64, .36, 1) infinite; }
+.source-progress-fill-terminal { transition-duration: .24s; will-change: auto; }
 .source-progress-status { display: flex; min-height: 24px; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; font-size: 11px; }
-.streaming-status-text { display: inline-block; max-width: 100%; color: transparent; background: linear-gradient(105deg, var(--foreground) 0 38%, color-mix(in srgb, var(--primary) 58%, white) 49%, var(--foreground) 60% 100%); background-position: 100% 50%; background-size: 260% 100%; background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; white-space: nowrap; will-change: transform, opacity, background-position; animation: status-message-enter .32s cubic-bezier(.2, .8, .2, 1) both, status-message-flow 1.2s cubic-bezier(.18, .72, .2, 1) .04s both; }
-.keyword-readiness { flex: 0 0 auto; border-radius: 999px; padding: 3px 7px; color: var(--muted-foreground); background: var(--muted); white-space: nowrap; }
-.keyword-readiness-partial { color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, white); }
-.keyword-readiness-complete { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, white); }
+.streaming-status-text { display: inline-block; max-width: 100%; color: var(--foreground); white-space: nowrap; animation: status-message-enter .32s cubic-bezier(.2, .8, .2, 1) both; }
+.streaming-status-text-active { color: transparent; background: linear-gradient(105deg, var(--foreground) 0 36%, color-mix(in srgb, var(--primary) 58%, white) 48%, var(--foreground) 61% 100%); background-position: 100% 50%; background-size: 260% 100%; background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent; will-change: transform, opacity, background-position; animation: status-message-enter .32s cubic-bezier(.2, .8, .2, 1) both, status-message-flow 2.2s linear .04s infinite; }
 @keyframes status-message-enter { from { opacity: .38; transform: translate3d(-5px, 0, 0); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
 @keyframes status-message-flow { from { background-position: 100% 50%; } to { background-position: -100% 50%; } }
+@keyframes progress-fill-flow { from { transform: translate3d(-120%, 0, 0); } to { transform: translate3d(120%, 0, 0); } }
 .source-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 0 0 12px; }
 .source-counts > div { min-width: 0; border-radius: 8px; padding: 6px 8px; background: var(--muted); }
 .source-counts dt { color: var(--muted-foreground); font-size: 10px; }
@@ -247,7 +247,8 @@ progress.progress-track::-moz-progress-bar { border-radius: inherit; background:
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; }
-  .sheet, .spin, .streaming-status-text { animation: none !important; }
+  .sheet, .spin, .streaming-status-text, .source-progress-fill-active::after { animation: none !important; }
+  .source-progress-fill-active::after { display: none; }
   .streaming-status-text { color: var(--foreground); background: none; -webkit-text-fill-color: currentColor; will-change: auto; }
   .source-progress-fill, progress.progress-track::-webkit-progress-value, progress.progress-track::-moz-progress-bar { transition: none !important; }
 }
