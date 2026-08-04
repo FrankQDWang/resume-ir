@@ -842,6 +842,16 @@ test("plans production sidecars and immutable arm64 runtime packs", async (conte
     "resume-coreml-embedding-worker-aarch64-apple-darwin",
   );
   assert.equal(
+    plan.coreMlWorker.source,
+    path.join(
+      repoRoot,
+      "apps",
+      "desktop",
+      "scripts",
+      "coreml-resident-worker.swift",
+    ),
+  );
+  assert.equal(
     plan.coreMlResourcePack.destination,
     path.join(repoRoot, "target", "tauri-resources", "embedding-runtime-pack", "coreml"),
   );

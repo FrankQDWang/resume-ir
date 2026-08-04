@@ -46,12 +46,17 @@ async function repositoryFixture(context) {
   git(["config", "user.email", "synthetic@example.invalid"], root);
   git(["config", "user.name", "Synthetic Test"], root);
   await mkdir(path.join(root, "apps", "desktop"), { recursive: true });
+  await mkdir(path.join(root, "apps", "desktop", "scripts"), { recursive: true });
   await mkdir(path.join(root, "crates", "sample", "src"), { recursive: true });
   await writeFile(path.join(root, "Cargo.lock"), "# synthetic\n");
   await writeFile(path.join(root, "Cargo.toml"), "[workspace]\n");
   await writeFile(
     path.join(root, "apps", "desktop", "package.json"),
     '{"private":true}\n',
+  );
+  await writeFile(
+    path.join(root, "apps", "desktop", "scripts", "coreml-resident-worker.swift"),
+    "let workerVersion = 1\n",
   );
   await writeFile(
     path.join(root, "crates", "sample", "src", "lib.rs"),
@@ -98,9 +103,38 @@ test("worktree identity includes tracked changes and untracked build inputs", as
       "Cargo.lock",
       "Cargo.toml",
       "apps/desktop/package.json",
+      "apps/desktop/scripts/coreml-resident-worker.swift",
       "apps/desktop/untracked.mjs",
       "crates/sample/src/lib.rs",
     ],
+  );
+});
+
+test("Core ML worker content is bound into worktree source identity", async (context) => {
+  const repoRoot = await repositoryFixture(context);
+  const original = await captureSourceIdentity({
+    repoRoot,
+    authority: "worktree_snapshot",
+  });
+
+  await writeFile(
+    path.join(
+      repoRoot,
+      "apps",
+      "desktop",
+      "scripts",
+      "coreml-resident-worker.swift",
+    ),
+    "let workerVersion = 2\n",
+  );
+  const changed = await captureSourceIdentity({
+    repoRoot,
+    authority: "worktree_snapshot",
+  });
+
+  assert.notEqual(
+    changed.identity.source_tree_sha256,
+    original.identity.source_tree_sha256,
   );
 });
 
@@ -144,9 +178,24 @@ test("serialized source identity is bounded and closed", () => {
 
 test("worktree identity rejects symlinked build inputs", async (context) => {
   const repoRoot = await repositoryFixture(context);
+  await unlink(
+    path.join(
+      repoRoot,
+      "apps",
+      "desktop",
+      "scripts",
+      "coreml-resident-worker.swift",
+    ),
+  );
   await symlink(
     path.join(repoRoot, "Cargo.toml"),
-    path.join(repoRoot, "apps", "desktop", "linked-input"),
+    path.join(
+      repoRoot,
+      "apps",
+      "desktop",
+      "scripts",
+      "coreml-resident-worker.swift",
+    ),
   );
   await assert.rejects(
     captureSourceIdentity({
@@ -171,6 +220,7 @@ test("worktree identity represents tracked deletions instead of reading removed 
     [
       "Cargo.lock",
       "Cargo.toml",
+      "apps/desktop/scripts/coreml-resident-worker.swift",
       "crates/sample/src/lib.rs",
     ],
   );

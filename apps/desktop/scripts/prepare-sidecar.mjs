@@ -488,7 +488,13 @@ function createCompositionPlan({
     coreMlWorker:
       targetTriple === "aarch64-apple-darwin"
         ? Object.freeze({
-            source: path.join(repoRoot, "scripts", "local", "coreml-resident-worker.swift"),
+            source: path.join(
+              repoRoot,
+              "apps",
+              "desktop",
+              "scripts",
+              "coreml-resident-worker.swift",
+            ),
             destination: path.join(
               repoRoot,
               "target",

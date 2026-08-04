@@ -1,5 +1,40 @@
 # Progress
 
+## Issue #402 immutable Worktree Core ML worker implementation
+
+The production Core ML Swift worker now lives under the desktop build tree, so
+its bytes are part of the existing Worktree source identity and immutable
+snapshot without admitting `scripts/local/`. Sidecar preparation resolves only
+that snapshot-local source. The immutable runtime-pack staging step now also
+copies the manifest-reviewed Core ML model pack beside the existing embedding,
+OCR, classifier and PDFium packs; no mutable-checkout fallback was added.
+
+Focused source-identity, snapshot, pack-staging and sidecar composition tests
+all pass. The standard `bundle:macos:worktree` command completed from the
+immutable snapshot and produced a 570,650,949-byte arm64 internal-test DMG with
+`resume-ir.macos-dmg-composition.v4` evidence, matching component digests, a
+valid ad-hoc signature, hardened runtime and the intended embedding-runtime-only
+library-validation entitlement. No install, release publication or runtime
+behavior change is part of this slice.
+
+## Issue #402 immutable Worktree Core ML worker contract
+
+Issue #402 is the sole active build-correctness slice. The standard Worktree
+DMG command captures root Cargo files plus `apps/desktop/` and `crates/`, while
+production sidecar preparation reads the Core ML Swift worker from
+`scripts/local/`. The immutable snapshot therefore omits a required production
+build input and fails before Tauri packaging; a clean exact-main build succeeds
+only because the Git commit is the complete source authority.
+
+This slice moves the desktop-owned worker under the already snapshot-bound
+desktop build tree, updates sidecar preparation to use that path, and stages the
+manifest-reviewed Core ML model pack beside the four existing immutable runtime
+packs. Synthetic proof binds worker content to source identity and the snapshot,
+and verifies the exact Core ML pack staging destination. Acceptance is the
+unchanged standard Worktree DMG command with v4 composition evidence. It does
+not widen the snapshot to local experiment scripts or change runtime, model,
+IPC, persistence, import, query or performance behavior.
+
 ## Issue #399 source-root deletion preemption implementation
 
 The backend failure was reproduced and separated from the frontend. The live
