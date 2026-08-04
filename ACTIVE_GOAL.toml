@@ -13,16 +13,16 @@ acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩�
 
 [scope.active_slice]
 issue = "#383"
-name = "native_coreml_macos_arm_production_default"
+name = "native_coreml_macos_arm_production_default_closeout"
 contract_change_allowed = true
-production_code_allowed = true
-private_benchmark_allowed = true
-configured_private_roots_required = true
+production_code_allowed = false
+private_benchmark_allowed = false
+configured_private_roots_required = false
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. After one complete OCR-enabled product witness improved the retained 513.675-second baseline to 297.095 seconds, the owner explicitly stopped the redundant second run, accepted the single complete run as the local M4 H2 baseline, and directed Issue #383 to ship the winning Core ML path as the pre-release macOS ARM production default. The production slice bundles and attests the fixed B1x512 and B4x512 Core ML resources plus worker, selects the isolated Core ML model identity by default, preserves the existing interactive plus two-bulk-resident topology, and verifies one normal production-composition import plus at least ten authorized real queries on this host only. No two-run mean, other-device, Windows or Linux claim is made."
+scope_exception_reason = "No exception is used. PR #388 merged the winning Core ML FP16 path as the macOS ARM production default. The formal production-composition OCR-enabled 8720-document witness finished in 298.570 seconds, 41.876 percent below the retained 513.675-second ORT baseline and within 0.497 percent of the owner-accepted 297.095-second local witness. Counts, publication, the 3072 MiB H2 limit, lifecycle cleanup and the bounded real-query review passed. This closeout changes only public contract state and makes no two-run mean, cross-device, query-hot-path, Windows or Linux claim."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -30,40 +30,21 @@ allowed_paths = [
   "perf/active-slice-transition.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-  "apps/desktop/resources/embedding/aarch64-apple-darwin/coreml-runtime-pack.json",
-  "apps/desktop/scripts/coreml-resident-worker.swift",
-  "apps/desktop/scripts/macos-bundle-composition.mjs",
-  "apps/desktop/scripts/macos-bundle-evidence.node-test.mjs",
-  "apps/desktop/scripts/prepare-sidecar.mjs",
-  "apps/desktop/scripts/prepare-sidecar.node-test.mjs",
-  "apps/desktop/scripts/verify-bundled-sidecar.mjs",
-  "apps/desktop/src-tauri/src/daemon_lifecycle/runtime_candidates.rs",
-  "apps/desktop/src-tauri/tauri.macos.conf.json",
-  "crates/embedding-runtime/src/main.rs",
-  "crates/embedding-runtime/src/coreml_experiment.rs",
-  "crates/embedding-runtime/src/coreml_experiment_tests.rs",
-  "scripts/local/coreml-b4x512-convert.py",
-  "scripts/local/coreml-resident-worker.swift",
-  "scripts/local/coreml-product-path-experiment.py",
-  "crates/embedding-runtime/src/coreml_product_experiment.rs",
-  "crates/embedding-runtime/src/coreml_product_experiment_tests.rs",
-  "crates/daemon/src/runtime_pack/embedding.rs",
-  "crates/daemon/src/runtime_pack/embedding_tests.rs",
 ]
-allowed_paths_role = "native_coreml_macos_arm_production_default_paths"
+allowed_paths_role = "native_coreml_macos_arm_production_default_closeout_state_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "L1_native_coreml_macos_arm_production_default"
+observation_stage = "L1_native_coreml_macos_arm_production_default_accepted"
 optimization_layer = "L1"
 optimization_layer_selected = true
-hypothesis = "the accepted 297.095-second #383 Core ML FP16 product witness survives formal macOS ARM resource packaging and default selection without a manual experiment switch, keeping one production-composition 8720-document no-OCR-drain import within 5 percent of that accepted local baseline while publication, lifecycle, H2 resources and real-query guards pass"
-expected_delta = "one complete OCR-enabled 8720-document production-composition import finishes at or below 311.950 seconds without a manual Core ML experiment switch, retains at least a 39 percent improvement versus the 513.675-second #372 ORT baseline, and preserves exact publication, lifecycle, H2 resource and at least ten authorized real-query guards; this owner-directed single-run acceptance makes no two-run mean or cross-device claim"
+hypothesis = "accepted: the Core ML FP16 worker and fixed B1x512 and B4x512 resources are attested in the macOS ARM production bundle and selected by default without a manual experiment switch"
+expected_delta = "passed: the formal OCR-enabled 8720-document production-composition import finished in 298.570 seconds, 41.876 percent below the 513.675-second #372 ORT baseline and below the 311.950-second acceptance ceiling"
 negative_control = "the retained Issue #372 Dynamic U8S8 whole-head 512 runtime pack on ORT 1.27 with fixed B4x512 bulk Session, interactive 3t plus bulk 2x3t topology, memory patterns enabled for bulk, CPU arena disabled and prepacking disabled"
-implementation_boundary = "the macOS ARM production bundle stages an exact reviewed Core ML resource pack and signed Swift tensor worker, passes their bundle-relative paths to the existing Rust embedding runtime automatically, and selects model identity intfloat-multilingual-e5-small-coreml-fp16-r1 without a user environment switch; Rust retains raw-text framing, tokenizer, prefixes, whole-head 512, Batch grouping, cancellation and lifecycle, while fixed B4x512 passage and B1x512 query MLPrograms own tensor inference; the existing qint8 ORT implementation remains source-available for explicit recovery or future non-Core-ML lanes but is no longer the macOS ARM production default"
+implementation_boundary = "PR #388 is merged and main now stages the exact Core ML resource pack and signed Swift worker, passes bundle-relative paths automatically, and selects intfloat-multilingual-e5-small-coreml-fp16-r1 as the macOS ARM production model identity; this closeout permits no further production change"
 resident_pool_workload = "keep the already-shipped interactive plus bulk 2x3 resident composition, fixed bulk B4, bulk memory pattern and request order; production Core ML residents delegate only tensor inference to attested compiled models, pad masked bulk tails without publishing placeholder outputs, and return the same bounded embedding protocol"
-resident_pool_acceptance = "one complete OCR-enabled 8720-document production-composition import finishes at or below 311.950 seconds at the no-OCR-drain endpoint, counts and atomic publication are exact, cancellation timeout restart cleanup pass, H2 process-tree peak stays at or below 3072 MiB, and the product launches the Core ML model identity without a manual experiment switch"
-full_product_acceptance = "after candidate import, at least ten authorized real queries spanning semantic and hybrid search have no obvious relevance failure under manual review; raw queries and results remain local; query latency is a non-regression guard and no query_hot_path performance claim is made"
+resident_pool_acceptance = "passed: 8720 discovered, 7328 searchable, 265 left in the running OCR backlog, four failed, 49 ignored and zero scan errors; process-tree peak was 2502.094 MiB, graceful shutdown passed and no process lingered"
+full_product_acceptance = "passed for this bounded slice: 20 of 20 semantic and hybrid requests succeeded, 19 returned a full Top 10, no empty snippets or duplicate documents were observed, and manual review found no global retrieval-quality collapse; one semantic-only multi-condition request was empty while its hybrid form returned reasonable candidates, so no query_hot_path or perfect-relevance claim is made"
 raw_profile_boundary = "public evidence is limited to bounded aggregate import milestones, counts, latency, resource, lifecycle and query-review pass or fail metrics plus privacy booleans; no private path, filename, resume text, raw query, candidate result, token, vector, PID, log, trace, direct raw hash, database, index, model or cache bytes may enter git or GitHub"
-rollback_condition = "do not complete the production migration if formal bundle composition cannot attest and launch the Core ML resources by default, if the complete import exceeds 311.950 seconds, if any count publication lifecycle query-quality or resource guard fails, or if model identities can mix; retain the already-reviewed ORT implementation as the recovery source path rather than claiming the default migration complete"
+rollback_condition = "not triggered: formal bundle composition, default selection, import time, counts, publication, lifecycle, H2 resources and bounded query review passed"
 forbidden_scope = [
   "production_embedding_input_change",
   "native_ort_runtime_upgrade",
@@ -87,6 +68,12 @@ forbidden_scope = [
   "offline_graph_optimization",
   "batch8_batch16_or_batch32",
 ]
+
+[[performance_history.closed_hypotheses]]
+id = "native_coreml_macos_arm_production_default"
+status = "won"
+evidence_refs = ["#383", "#388"]
+reopen_requires = ["material_coreml_change", "material_model_change", "material_packaging_change", "material_hardware_change"]
 
 [[performance_history.closed_hypotheses]]
 id = "native_coreml_fixed_b4x512_tensor_screen"
