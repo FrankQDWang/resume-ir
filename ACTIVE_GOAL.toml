@@ -12,41 +12,31 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#404"
-name = "separate_coreml_tokenizer_pack_from_onnx_inference_assets"
+issue = "#409"
+name = "deduplicate_coreml_b1_b4_weights_with_multifunction_model"
 contract_change_allowed = true
 production_code_allowed = true
-private_benchmark_allowed = false
-configured_private_roots_required = false
+private_benchmark_allowed = true
+configured_private_roots_required = true
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #404 is delivered as one contract-only transition followed by two buildable implementation PRs within the normal 15-file budget: the default Core ML-only macOS 15 composition first, then the separately named ONNX-only macOS 14 compatibility composition."
+scope_exception_reason = "No exception is used. Issue #409 is delivered as a contract transition, a bounded local multifunction asset screen, and only after that screen passes a review-sized production-pack migration within the normal PR budget."
 allowed_paths = [
-  "crates/embedding-runtime/src/main.rs",
-  "crates/embedding-runtime/src/runtime_pack.rs",
-  "crates/embedding-runtime/src/tests.rs",
-  "crates/daemon/src/runtime_pack/embedding.rs",
-  "crates/daemon/src/runtime_pack/embedding_tests.rs",
+  "scripts/local/coreml-b4x512-convert.py",
+  "scripts/local/coreml-b4x512-runner.swift",
+  "scripts/local/coreml-product-path-experiment.py",
+  "scripts/local/tests/test_coreml_product_path_experiment.py",
+  "apps/desktop/scripts/coreml-resident-worker.swift",
+  "crates/embedding-runtime/src/coreml_product_experiment.rs",
+  "crates/embedding-runtime/src/coreml_product_experiment_tests.rs",
   "apps/desktop/scripts/prepare-sidecar.mjs",
   "apps/desktop/scripts/prepare-sidecar.node-test.mjs",
-  "apps/desktop/resources/embedding/aarch64-apple-darwin/coreml-tokenizer-pack.json",
-  "apps/desktop/package.json",
-  "apps/desktop/scripts/macos-bundle-composition.mjs",
+  "apps/desktop/resources/embedding/aarch64-apple-darwin/coreml-runtime-pack.json",
+  "apps/desktop/scripts/verify-bundled-sidecar.mjs",
   "apps/desktop/scripts/macos-bundle-evidence.node-test.mjs",
   "apps/desktop/scripts/macos-dmg.node-test.mjs",
-  "apps/desktop/scripts/macos-test-release.mjs",
-  "apps/desktop/scripts/macos-worktree-install.mjs",
-  "apps/desktop/scripts/macos-worktree-install.node-test.mjs",
-  "apps/desktop/scripts/macos-worktree-release.mjs",
-  "apps/desktop/scripts/run-tauri.mjs",
-  "apps/desktop/scripts/verify-bundled-sidecar.mjs",
-  "apps/desktop/scripts/verify-macos-dmg.mjs",
-  "apps/desktop/src-tauri/Cargo.toml",
-  "apps/desktop/src-tauri/src/daemon_lifecycle/runtime_candidates.rs",
-  "apps/desktop/src-tauri/tauri.macos.conf.json",
-  "apps/desktop/src-tauri/tauri.macos14-onnx.conf.json",
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
   "perf/current-loop-state.json",
@@ -54,23 +44,25 @@ allowed_paths = [
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
 ]
-allowed_paths_role = "macos_coreml_and_onnx_provider_edition_runtime_pack_build_install_tests_and_state_paths"
-primary_benchmark_lane = "smoke"
-observation_stage = "L0_macos_provider_edition_composition"
-optimization_layer = "L0"
+allowed_paths_role = "coreml_multifunction_conversion_runtime_pack_worker_product_runner_packaging_tests_and_state_paths"
+primary_benchmark_lane = "full_import_ocr_backlog"
+observation_stage = "L1_coreml_model_asset_representation"
+optimization_layer = "L1"
 optimization_layer_selected = true
-hypothesis = "two explicit macOS ARM editions can remove duplicate inference providers without changing inference behavior: the default macOS 15 package contains only the existing Core ML provider plus reviewed tokenizer/config, while the separately named macOS 14 compatibility package contains only the existing Dynamic U8S8 ONNX provider"
-expected_delta = "both immutable Worktree DMG commands complete with edition-bound receipts and exact composition: Core ML declares macOS 15 and contains no ONNX model/runtime bytes; ONNX declares macOS 14 and contains no Core ML worker/model bytes; the default local install starts the Core ML model ID with all four runtimes and eight capabilities available"
-negative_control = "a mixed-provider package, mismatched artifact edition, wrong minimum OS, missing provider asset, unknown provider/schema, digest drift or model-ID mismatch must fail before install or resident readiness"
-implementation_boundary = "macOS ARM provider-specific runtime-pack parsing, daemon validation, desktop provider selection, Tauri package variants, immutable resource staging, DMG composition/identity and local internal-test installation only; no public release publication"
-resident_pool_workload = "public-synthetic runtime-pack and resident startup fixtures only; no private import or query run"
-resident_pool_acceptance = "Core ML and ONNX provider packs each validate only their exact role set and preserve the current resident request, cancellation, timeout and vector semantics"
-full_product_acceptance = "build and inspect one immutable Core ML-only macOS 15 DMG and one immutable ONNX-only macOS 14 DMG, then install only the Core ML edition locally and require process_state ready, all optional runtimes available and all eight capabilities available"
+hypothesis = "merging the existing fixed B1x512 and B4x512 Core ML functions into one macOS 15 multifunction MLProgram deduplicates shared E5 weights while preserving each fixed function graph, vector semantics, resident topology and warm inference performance"
+expected_delta = "the macOS 15 Core ML-only DMG is at most 320000000 bytes; public-synthetic B1 and B4 warm latency regress no more than 5 percent; the winning full-product no-OCR-drain endpoint is at most 313.499 seconds with the retained counts, resource and query sanity guards"
+negative_control = "the current two-model runtime pack remains the control; a multifunction asset without one physical shared-weight store, with an unknown function, wrong fixed shape, digest drift, vector drift, more than 5 percent B1 or B4 regression, oversized DMG or changed ONNX edition must fail closed"
+implementation_boundary = "macOS 15 Core ML asset conversion/merge, function-bound worker loading, exact runtime-pack validation, immutable resource staging, Core ML-only DMG composition and the existing product experiment runner; the macOS 14 ONNX edition is read-only and unchanged"
+resident_pool_workload = "the current public-synthetic fixed B1x512 and B4x512 tensor workloads with the existing interactive plus dual-bulk resident roles; only the winning candidate may read the configured private resume root"
+resident_pool_acceptance = "both fixed functions load from one multifunction asset, produce finite unit vectors with current Core ML parity, preserve cancellation/restart/cleanup, and keep warmed B1 and B4 latency within 5 percent of the two-model control"
+full_product_acceptance = "build and inspect one immutable macOS 15 Core ML-only DMG at or below 320000000 bytes, then run one OCR-enabled 8720-document product import to the established no-OCR-drain endpoint at or below 313.499 seconds, retain 7328 searchable/vector-indexed documents, stay within 3072 MiB, pass at least ten authorized semantic and hybrid query intents, and reach zero process residue"
 raw_profile_boundary = "no private path, filename, resume text, raw query, candidate result, token, PID, log, trace, database, index, model or cache bytes may enter tests, screenshots, git or GitHub"
-rollback_condition = "revert if tokenizer/model bytes change, inference or resident semantics change, either edition contains both providers or lacks its selected provider, minimum OS/edition identity can drift, ONNX compatibility weakens, or the installed Core ML edition cannot publish ready runtimes and capabilities"
+rollback_condition = "delete the multifunction candidate and retain the current two-model production pack if weight deduplication is not proven, the DMG exceeds 320000000 bytes, vector/function validation fails, B1 or B4 warm latency regresses over 5 percent, the full endpoint exceeds 313.499 seconds, counts/query/lifecycle regress, or H2 peak exceeds 3072 MiB"
 forbidden_scope = [
   "production_embedding_input_change",
   "production_model_id_change",
+  "upstream_model_weight_or_revision_change",
+  "coreml_compute_precision_change",
   "native_ort_runtime_upgrade",
   "metadata_schema_change",
   "pooling_change",
@@ -83,15 +75,14 @@ forbidden_scope = [
   "query_semantics_change",
   "ipc_or_diagnostics_contract_change",
   "persistence_schema_change",
-  "coreml_or_onnx_model_byte_change",
-  "coreml_worker_source_change",
+  "macos14_onnx_edition_change",
+  "onnx_model_or_runtime_change",
   "windows_or_linux",
   "raw_private_output",
   "raw_query_or_result_publication",
   "gate_weakening",
   "offline_graph_optimization",
   "batch8_batch16_or_batch32",
-  "private_full_import_execution",
   "public_release_publication",
   "tauri_command_change",
   "daemon_status_or_source_root_schema_change",

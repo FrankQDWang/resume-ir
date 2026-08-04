@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-402-to-404-macos-provider-editions-2026-08-04",
-  "from_issue": "#402",
-  "to_issue": "#404",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/402#issuecomment-5177514267",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/404",
-  "base_active_goal_sha256": "c80eedfff295f69ac90b25a6783768268466d4a480751faccb20618257debaa0",
+  "transition_id": "issue-404-to-409-coreml-multifunction-2026-08-04",
+  "from_issue": "#404",
+  "to_issue": "#409",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/404#issuecomment-5179256024",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/409",
+  "base_active_goal_sha256": "d06d60b902b60df64ec1b7a6d542c7a9dbd8a674ba15f38f9431b9d52f084ad7",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "perf/active-slice-transition.json",
