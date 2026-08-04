@@ -15,14 +15,14 @@ acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩�
 issue = "#390"
 name = "macos_arm_product_experiment_entrypoint"
 contract_change_allowed = true
-production_code_allowed = false
+production_code_allowed = true
 private_benchmark_allowed = false
 configured_private_roots_required = false
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #390 adds one small macOS ARM local experiment entrypoint that composes the existing attested release sidecars and reviewed embedding, Core ML, OCR, classifier and PDFium packs before any import. The implementation reuses existing daemon IPC and the established no-OCR-drain endpoint, adds deterministic public tests, and performs only a private-data-free local preflight during this slice."
+scope_exception_reason = "No exception is used. Issue #390 adds one small macOS ARM local experiment entrypoint and repairs the exact stale Core ML manifest pin that its private-data-free product preflight exposed. The implementation otherwise reuses existing daemon IPC and release composition contracts, adds deterministic public tests, and performs no private full import during this slice."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -33,6 +33,7 @@ allowed_paths = [
   "AGENTS.md",
   "scripts/local/coreml-product-path-experiment.py",
   "scripts/local/tests/test_coreml_product_path_experiment.py",
+  "crates/embedding-runtime/src/coreml_product_experiment.rs",
 ]
 allowed_paths_role = "macos_arm_product_experiment_entrypoint_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
@@ -40,9 +41,9 @@ observation_stage = "L0_product_experiment_orchestration"
 optimization_layer = "L0"
 optimization_layer_selected = true
 hypothesis = "a single repository-owned build-compose-preflight-run-cleanup entrypoint can eliminate the repeated late runtime, final-name, OCR-pack and model-identity failures without weakening any product or privacy contract"
-expected_delta = "the public self-tests and one real local preflight pass; preflight reads no private resume root, verifies all four runtimes and three import capabilities before any submission, exits with no lingering process, and invalid composition cannot reach import submission"
+expected_delta = "the public self-tests and one real local preflight pass; the packaged Core ML manifest identity matches the runtime pin; preflight reads no private resume root, verifies all four runtimes and three import capabilities before any submission, exits with no lingering process, and invalid composition cannot reach import submission"
 negative_control = "manual invocation of cargo, prepare-sidecar, runtime renaming, daemon startup and import monitoring across multiple temporary scripts"
-implementation_boundary = "add one Python orchestration entrypoint and its public tests, plus one AGENTS.md navigation bullet; call the existing macOS ARM release composition and daemon IPC contracts without changing them"
+implementation_boundary = "add one Python orchestration entrypoint and its public tests, plus one AGENTS.md navigation bullet; call the existing macOS ARM release composition and daemon IPC contracts, with only the stale Core ML runtime-pack byte/digest pin synchronized to the already-reviewed packaged manifest"
 resident_pool_workload = "preflight starts the product-equivalent daemon with import, OCR, embedding and index workers against an isolated empty data directory, waits for attested readiness, then stops; run mode uses fresh isolated data directories and submits each managed-root import exactly once"
 resident_pool_acceptance = "preflight validates final executable names, exact reviewed resource packs, Core ML production model identity, all optional runtime states and text_import, ocr_import and index_publication capabilities, then proves graceful zero-residue cleanup"
 full_product_acceptance = "this slice does not run a private full import; run-mode behavior is covered by deterministic public tests and future full-import experiments must use this entrypoint"
