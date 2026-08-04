@@ -1,25 +1,48 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
-  "experiment_state": "hypothesis_registered",
+  "workflow_state": "evidence_review",
+  "experiment_state": "accepted",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "fcce0d81709250ef345731dedac1def49efa569fb51ffca5fd9c3da38596333b",
+    "active_goal_sha256": "a49d97fa5bd077daf5ed1fa8fa18f8e4c8007ec0f1df756bcc1f06afd7fd5ad4",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "dfe3b4ba69f7dd379cd796df46e138b639362f25"
+    "git_head_sha": "9874a2e56b267969909c04e859362c92d04aaf1f"
   },
   "current_slice": "#390 macOS ARM product-composition experiment entrypoint",
   "hypothesis": {
     "id": "issue-390-macos-arm-product-experiment-entrypoint",
     "acceptance_cell": "full_import_ocr_backlog",
     "expected_effect": "one repository-owned entrypoint composes the attested macOS ARM product runtime, fails before import on invalid readiness, submits each managed-root import at most once, monitors the no-OCR-drain endpoint and leaves no process residue",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/390"
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/390",
+    "after_measurement_ref": "PROGRESS.md#issue-390-product-composition-experiment-entrypoint-closeout",
+    "reprofile_ref": "https://github.com/FrankQDWang/resume-ir/pull/394",
+    "decision": "accepted"
   },
   "transition_history": [
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-390-product-composition-experiment-entrypoint-closeout"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/394"
+    },
+    {
+      "from": "branch_active",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/394"
+    },
+    {
+      "from": "slice_selected",
+      "to": "branch_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/394"
+    },
     {
       "from": "evidence_review",
       "to": "slice_selected",
@@ -3349,7 +3372,13 @@
       {"command":"performance, autonomous, loop, governance, PR-budget, format, diff and public-repository gates","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/388"},
       {"command":"./scripts/ci/verify-local.sh stopped on unchanged search-publication handoff timing assertion","exit_code":101,"evidence_ref":"PROGRESS.md#issue-383-native-core-ml-macos-arm-production-default-closeout"},
       {"command":"exact unchanged search-publication handoff timing test isolated rerun","exit_code":0,"evidence_ref":"PROGRESS.md#issue-383-native-core-ml-macos-arm-production-default-closeout"},
-      {"command":"Hosted PR Lite","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/388"}
+      {"command":"Hosted PR Lite","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/388"},
+      {"command":"Issue #390 exact-commit private-data-free product composition preflight","exit_code":0,"evidence_ref":"PROGRESS.md#issue-390-product-composition-experiment-entrypoint-closeout"},
+      {"command":"six deterministic product experiment entrypoint tests and Python compile","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/394"},
+      {"command":"focused embedding runtime, daemon runtime probe and 24 sidecar composition tests","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/394"},
+      {"command":"./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/394"},
+      {"command":"performance, autonomous, loop, governance, exact PR-budget, format, diff and public-repository gates","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/394"},
+      {"command":"Hosted PR Lite","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/394"}
     ],
     "all_required_commands_ran": true,
     "claim": "pass"
@@ -3364,10 +3393,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-390-product-experiment-entrypoint-2026-08-04",
-  "state_version": 621,
-  "previous_state_hash": "472f409ee2bd0f450a5cf809ec50d9d96b8b032b25abb5f50727079870fd5410",
-  "expected_state_version": 621,
-  "last_confirmed_side_effect": "issue_390_scope_amended_for_bounded_ocr_readiness_false_negative_repair",
+  "state_version": 622,
+  "previous_state_hash": "5109f870c33e597a367ccc573b26582813da05515ff672440ebab2350e3d83f0",
+  "expected_state_version": 622,
+  "last_confirmed_side_effect": "issue_390_pr_394_merged_and_product_experiment_entrypoint_accepted",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {

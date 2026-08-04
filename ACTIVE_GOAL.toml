@@ -13,16 +13,16 @@ acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩�
 
 [scope.active_slice]
 issue = "#390"
-name = "macos_arm_product_experiment_entrypoint"
+name = "macos_arm_product_experiment_entrypoint_closeout"
 contract_change_allowed = true
-production_code_allowed = true
+production_code_allowed = false
 private_benchmark_allowed = false
 configured_private_roots_required = false
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #390 adds one small macOS ARM local experiment entrypoint and repairs two exact predecessor defects exposed by its private-data-free product preflight: the stale Core ML manifest pin and the OCR readiness probe's false 2-second failure under valid host noise. The implementation otherwise reuses existing daemon IPC and release composition contracts, adds deterministic public tests, and performs no private full import during this slice."
+scope_exception_reason = "No exception is used. PR #394 merged the repository-owned macOS ARM product experiment entrypoint, its public deterministic tests, the exact Core ML manifest pin repair and the bounded OCR readiness probe timeout repair. Exact-commit private-data-free preflight, the complete local verification suite, Hosted PR Lite, privacy and lifecycle cleanup all passed. This closeout changes only public contract state and performs no private full import."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -30,26 +30,21 @@ allowed_paths = [
   "perf/active-slice-transition.json",
   "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
   "perf/fixtures/valid/synthetic-smoke-baseline-report.json",
-  "AGENTS.md",
-  "scripts/local/coreml-product-path-experiment.py",
-  "scripts/local/tests/test_coreml_product_path_experiment.py",
-  "crates/embedding-runtime/src/coreml_product_experiment.rs",
-  "crates/daemon/src/runtime_probe.rs",
 ]
-allowed_paths_role = "macos_arm_product_experiment_entrypoint_paths"
+allowed_paths_role = "macos_arm_product_experiment_entrypoint_closeout_state_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "L0_product_experiment_orchestration"
+observation_stage = "L0_product_experiment_orchestration_accepted"
 optimization_layer = "L0"
 optimization_layer_selected = true
-hypothesis = "a single repository-owned build-compose-preflight-run-cleanup entrypoint can eliminate the repeated late runtime, final-name, OCR-pack and model-identity failures without weakening any product or privacy contract"
-expected_delta = "the public self-tests and one real local preflight pass; the packaged Core ML manifest identity matches the runtime pin; a valid OCR probe observed just above 2 seconds is no longer rejected; preflight reads no private resume root, verifies all four runtimes and three import capabilities before any submission, exits with no lingering process, and invalid composition cannot reach import submission"
+hypothesis = "accepted: one repository-owned build-compose-preflight-run-cleanup entrypoint now owns local macOS ARM full-import experiment composition without weakening product or privacy contracts"
+expected_delta = "passed: the exact merged implementation completed private-data-free preflight with all four runtimes and all three import capabilities available, source_dirty false, no import submission and zero lingering process; public tests cover single-submit, terminal fence, identity, tamper and run-count behavior"
 negative_control = "manual invocation of cargo, prepare-sidecar, runtime renaming, daemon startup and import monitoring across multiple temporary scripts"
-implementation_boundary = "add one Python orchestration entrypoint and its public tests, plus one AGENTS.md navigation bullet; call the existing macOS ARM release composition and daemon IPC contracts, synchronize the stale Core ML runtime-pack byte/digest pin, and raise only the bounded OCR readiness probe timeout from 2 to 10 seconds"
+implementation_boundary = "PR #394 is merged; the standard experiment entrypoint and one-line AGENTS navigation are now on main, the Core ML manifest pin matches the authoritative packaged manifest, and only the controlled OCR readiness probe ceiling changed from 2 to 10 seconds; this closeout permits no further production change"
 resident_pool_workload = "preflight starts the product-equivalent daemon with import, OCR, embedding and index workers against an isolated empty data directory, waits for attested readiness, then stops; run mode uses fresh isolated data directories and submits each managed-root import exactly once"
-resident_pool_acceptance = "preflight validates final executable names, exact reviewed resource packs, Core ML production model identity, all optional runtime states and text_import, ocr_import and index_publication capabilities, then proves graceful zero-residue cleanup"
-full_product_acceptance = "this slice does not run a private full import; run-mode behavior is covered by deterministic public tests and future full-import experiments must use this entrypoint"
+resident_pool_acceptance = "passed: exact-commit preflight reported embedding, OCR, PDFium and classifier runtimes plus text_import, ocr_import and index_publication capabilities available, then shut down with no experiment process or session residue"
+full_product_acceptance = "passed for this orchestration slice: deterministic public tests prove exact pack identity and digest rejection, platform-suffix staging, one scan POST after unknown acknowledgement, terminal no-OCR-drain fencing and bounded run counts; no private full import was run"
 raw_profile_boundary = "stdout and committed evidence contain only bounded state and aggregate fields; no private path, filename, resume text, raw query, candidate result, token, vector, PID, log, trace, database, index, model or cache bytes may enter git or GitHub"
-rollback_condition = "remove the new entrypoint if it cannot reuse the exact production composition, can submit twice after an unknown acknowledgement, reads a private root during preflight, leaves any child process, or requires weakening runtime, identity, OCR, IPC or privacy gates"
+rollback_condition = "not triggered: production composition reuse, fail-fast readiness, single-submit ownership, private-root isolation, runtime identity, privacy and cleanup guards passed"
 forbidden_scope = [
   "production_embedding_input_change",
   "production_model_id_change",
@@ -76,6 +71,12 @@ forbidden_scope = [
   "batch8_batch16_or_batch32",
   "private_full_import_execution",
 ]
+
+[[performance_history.closed_hypotheses]]
+id = "macos_arm_product_experiment_entrypoint"
+status = "won"
+evidence_refs = ["#390", "#394"]
+reopen_requires = ["material_release_composition_change", "material_runtime_identity_change", "material_import_endpoint_change"]
 
 [[performance_history.closed_hypotheses]]
 id = "native_coreml_macos_arm_production_default"
