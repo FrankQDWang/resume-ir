@@ -1,8 +1,8 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
-  "experiment_state": "hypothesis_registered",
+  "workflow_state": "verification_active",
+  "experiment_state": "correctness_passed",
   "evidence_lane": "smoke",
   "contract_pins": {
     "active_goal_sha256": "591830459854d8967db3e8aefdeb82ce7adb9b5831654ede2c62f11a7eb1467d",
@@ -18,11 +18,26 @@
     "acceptance_cell": "smoke",
     "expected_effect": "deletion during any active root-bound stage completes the durable receipt, removes all derived state, preserves source files and leaves the daemon responsive",
     "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/399",
-    "after_measurement_ref": "pending_issue_399_synthetic_red_green_evidence",
+    "after_measurement_ref": "PROGRESS.md#issue-399-source-root-deletion-preemption-implementation",
     "reprofile_ref": "not_applicable_product_correctness_slice",
     "decision": "pending"
   },
   "transition_history": [
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#issue-399-source-root-deletion-preemption-implementation"
+    },
+    {
+      "from": "red_check_written",
+      "to": "implementation_active",
+      "evidence_ref": "PROGRESS.md#issue-399-source-root-deletion-preemption-implementation"
+    },
+    {
+      "from": "slice_selected",
+      "to": "red_check_written",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/399"
+    },
     {
       "from": "evidence_review",
       "to": "slice_selected",
@@ -3422,7 +3437,7 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-399-source-root-privacy-revocation-2026-08-04",
-  "state_version": 625,
+  "state_version": 628,
   "previous_state_hash": "a0d5f1b7ee20894f0dc1d01603409e59523b68708ef80419319ef28a2737bfef",
   "expected_state_version": 625,
   "last_confirmed_side_effect": "issue_399_opened_and_source_root_privacy_revocation_hypothesis_registered",
