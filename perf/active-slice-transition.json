@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-396-to-399-source-root-privacy-revocation-2026-08-04",
-  "from_issue": "#396",
-  "to_issue": "#399",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/396#issuecomment-5176114794",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/399",
-  "base_active_goal_sha256": "9035b39e26f1a2e4555fe58746680105833b4e807a4592e0a6e7c08bee494d3b",
+  "transition_id": "issue-399-to-402-coreml-worktree-snapshot-2026-08-04",
+  "from_issue": "#399",
+  "to_issue": "#402",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/399#issuecomment-5177038203",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/402",
+  "base_active_goal_sha256": "591830459854d8967db3e8aefdeb82ce7adb9b5831654ede2c62f11a7eb1467d",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "PROGRESS.md",

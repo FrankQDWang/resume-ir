@@ -56,14 +56,20 @@ test("stages only manifest-reviewed runtime inputs into the exact build clone", 
           options.sourcePackRoot,
           path.join(sourceRepoRoot, ".cache", "resume-ir-native-e5-qint8-pack"),
         );
+        assert.equal(
+          options.sourceCoreMlPackRoot,
+          path.join(sourceRepoRoot, ".cache", "resume-ir-coreml-runtime-pack"),
+        );
         return {
           classifierResourcePack: resource("classifier"),
+          coreMlResourcePack: resource("coreml"),
           ocrResourcePack: resource("ocr"),
           pdfiumResourcePack: resource("pdfium"),
           resourcePack: resource("embedding"),
         };
       },
       stageClassifier: async (plan) => calls.push(["classifier", plan]),
+      stageCoreMl: async (plan) => calls.push(["coreml", plan]),
       stageEmbedding: async (plan) => calls.push(["embedding", plan]),
       stageOcr: async (plan) => calls.push(["ocr", plan]),
       stagePdfium: async (plan) => calls.push(["pdfium", plan]),
@@ -76,16 +82,22 @@ test("stages only manifest-reviewed runtime inputs into the exact build clone", 
     ]),
     [
       ["embedding", ".cache/resume-ir-native-e5-qint8-pack"],
+      ["coreml", ".cache/resume-ir-coreml-runtime-pack"],
       ["ocr", ".cache/resume-ir-macos-ocr-runtime-pack"],
       ["classifier", ".cache/resume-ir-classifier-model-pack"],
       ["pdfium", ".cache/resume-ir-macos-pdfium-static-pack"],
     ],
   );
   assert.deepEqual(
-    calls.slice(0, 3).map(([, plan]) => plan.expectedManifest),
-    ["/exact/embedding.json", "/exact/ocr.json", "/exact/classifier.json"],
+    calls.slice(0, 4).map(([, plan]) => plan.expectedManifest),
+    [
+      "/exact/embedding.json",
+      "/exact/coreml.json",
+      "/exact/ocr.json",
+      "/exact/classifier.json",
+    ],
   );
-  assert.equal(calls[3][1].sourceContract, "/exact/pdfium-source-contract.json");
+  assert.equal(calls[4][1].sourceContract, "/exact/pdfium-source-contract.json");
 });
 
 test("creates and removes an inode-bound exact-commit build clone", async (context) => {

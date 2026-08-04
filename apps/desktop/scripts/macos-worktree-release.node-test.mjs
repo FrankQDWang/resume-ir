@@ -37,6 +37,7 @@ async function repositoryFixture(context) {
   const frontendRoot = path.join(repoRoot, "apps", "desktop");
   const tauriRoot = path.join(frontendRoot, "src-tauri");
   await mkdir(tauriRoot, { recursive: true });
+  await mkdir(path.join(frontendRoot, "scripts"), { recursive: true });
   await mkdir(path.join(repoRoot, "crates", "sample", "src"), {
     recursive: true,
   });
@@ -58,6 +59,12 @@ async function repositoryFixture(context) {
     path.join(tauriRoot, "tauri.macos.conf.json"),
     '{"bundle":{"targets":["dmg"],"macOS":{"signingIdentity":"-","hardenedRuntime":true}}}\n',
   );
+  const coreMlWorker = path.join(
+    frontendRoot,
+    "scripts",
+    "coreml-resident-worker.swift",
+  );
+  await writeFile(coreMlWorker, "let workerVersion = 1\n");
   const sourceFile = path.join(repoRoot, "crates", "sample", "src", "lib.rs");
   await writeFile(sourceFile, "pub fn value() -> u8 { 1 }\n");
   git(["init"], repoRoot);
@@ -66,6 +73,7 @@ async function repositoryFixture(context) {
   git(["add", "."], repoRoot);
   git(["commit", "-m", "fixture"], repoRoot);
   await writeFile(sourceFile, "pub fn value() -> u8 { 2 }\n");
+  await writeFile(coreMlWorker, "let workerVersion = 2\n");
   return { repoRoot, root };
 }
 
@@ -114,6 +122,19 @@ test("builds and publishes a DMG only from the immutable worktree snapshot", asy
       "utf8",
     ),
     "pub fn value() -> u8 { 2 }\n",
+  );
+  assert.equal(
+    await readFile(
+      path.join(
+        releaseRepoRoot,
+        "apps",
+        "desktop",
+        "scripts",
+        "coreml-resident-worker.swift",
+      ),
+      "utf8",
+    ),
+    "let workerVersion = 2\n",
   );
   assert.equal(await sha256(result.artifact), result.receipt.dmg_sha256);
   assert.deepEqual(
