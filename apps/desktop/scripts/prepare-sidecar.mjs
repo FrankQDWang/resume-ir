@@ -54,6 +54,9 @@ const EXPECTED_PACK_ROLES = new Set([
   "special_tokens_map",
   "tokenizer_config",
 ]);
+const COREML_PACK_SCHEMA = "resume-ir.coreml-embedding-runtime-pack.v1";
+const COREML_PACK_ID = "intfloat-multilingual-e5-small-coreml-fp16-r1";
+const COREML_WORKER_BINARY = "resume-coreml-embedding-worker";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const RUNTIME_ATTESTATION_ENV =
   "RESUME_IR_RUNTIME_EXECUTABLE_ATTESTATION";
@@ -198,6 +201,7 @@ export function createDesktopCompositionPlan({
   targetTriple,
   debug,
   sourcePackRoot = path.join(repoRoot, ".cache", "resume-ir-native-e5-qint8-pack"),
+  sourceCoreMlPackRoot = path.join(repoRoot, ".cache", "resume-ir-coreml-runtime-pack"),
   sourceOcrPackRoot = path.join(repoRoot, ".cache", "resume-ir-macos-ocr-runtime-pack"),
   sourceClassifierPackRoot = path.join(
     repoRoot,
@@ -232,6 +236,15 @@ export function createDesktopCompositionPlan({
     "embedding",
     targetTriple ?? "missing-target",
     "runtime-pack.json",
+  ),
+  expectedCoreMlManifest = path.join(
+    repoRoot,
+    "apps",
+    "desktop",
+    "resources",
+    "embedding",
+    "aarch64-apple-darwin",
+    "coreml-runtime-pack.json",
   ),
   expectedOcrManifest = path.join(
     repoRoot,
@@ -354,6 +367,8 @@ export function createDesktopCompositionPlan({
       expectedClassifierManifest,
       sourcePdfiumPackRoot,
       macosPdfiumSourceContract,
+      sourceCoreMlPackRoot,
+      expectedCoreMlManifest,
     ].every(path.isAbsolute)
   ) {
     throw new Error("desktop resource paths must be absolute");
@@ -375,6 +390,8 @@ export function createDesktopCompositionPlan({
     expectedClassifierManifest,
     sourcePdfiumPackRoot,
     pdfiumSourceContract: macosPdfiumSourceContract,
+    sourceCoreMlPackRoot,
+    expectedCoreMlManifest,
   });
 }
 
@@ -392,6 +409,8 @@ function createCompositionPlan({
   expectedClassifierManifest,
   sourcePdfiumPackRoot,
   pdfiumSourceContract,
+  sourceCoreMlPackRoot,
+  expectedCoreMlManifest,
 }) {
   const sidecarOptions = { repoRoot, buildTargetDir, targetTriple, debug };
   return Object.freeze({
@@ -466,6 +485,34 @@ function createCompositionPlan({
       profile: debug ? "debug" : "release",
       targetTriple,
     }),
+    coreMlWorker:
+      targetTriple === "aarch64-apple-darwin"
+        ? Object.freeze({
+            source: path.join(repoRoot, "scripts", "local", "coreml-resident-worker.swift"),
+            destination: path.join(
+              repoRoot,
+              "target",
+              "tauri-sidecars",
+              `${COREML_WORKER_BINARY}-${targetTriple}`,
+            ),
+            targetTriple,
+          })
+        : null,
+    coreMlResourcePack:
+      targetTriple === "aarch64-apple-darwin"
+        ? Object.freeze({
+            destination: path.join(
+              repoRoot,
+              "target",
+              "tauri-resources",
+              "embedding-runtime-pack",
+              "coreml",
+            ),
+            expectedManifest: expectedCoreMlManifest,
+            sourcePackRoot: sourceCoreMlPackRoot,
+            targetTriple,
+          })
+        : null,
     targetTriple,
   });
 }
@@ -633,6 +680,64 @@ export function validateRuntimePackManifest(manifest) {
   return manifest;
 }
 
+export function validateCoreMlRuntimePackManifest(manifest) {
+  const expectedRoles = new Set([
+    "interactive_analytics",
+    "interactive_core_data",
+    "interactive_metadata",
+    "interactive_model",
+    "interactive_weights",
+    "bulk_analytics",
+    "bulk_core_data",
+    "bulk_metadata",
+    "bulk_model",
+    "bulk_weights",
+  ]);
+  if (
+    !manifest ||
+    manifest.schema_version !== COREML_PACK_SCHEMA ||
+    manifest.runtime_pack_id !== COREML_PACK_ID ||
+    manifest.model_id !== COREML_PACK_ID ||
+    manifest.upstream_model_id !== "intfloat/multilingual-e5-small" ||
+    manifest.upstream_revision !== "614241f622f53c4eeff9890bdc4f31cfecc418b3" ||
+    manifest.dimension !== 384 ||
+    manifest.provider !== "coreml" ||
+    manifest.compute_units !== "all" ||
+    manifest.network_access !== "disabled" ||
+    manifest.license_reviewed !== true ||
+    manifest.model_license !== "MIT" ||
+    manifest.target_triple !== "aarch64-apple-darwin" ||
+    JSON.stringify(manifest.fixed_shapes) !== JSON.stringify(["B1x512", "B4x512"]) ||
+    !Array.isArray(manifest.files) ||
+    manifest.files.length !== expectedRoles.size
+  ) {
+    throw new Error("Core ML runtime manifest contract is invalid");
+  }
+  const roles = new Set();
+  const files = new Set();
+  for (const entry of manifest.files) {
+    if (
+      !entry ||
+      !expectedRoles.has(entry.role) ||
+      roles.has(entry.role) ||
+      typeof entry.file !== "string" ||
+      !entry.file.startsWith(entry.role.startsWith("interactive_") ? "e5-b1x512.mlmodelc/" : "e5-b4x512.mlmodelc/") ||
+      path.isAbsolute(entry.file) ||
+      entry.file.split("/").some((part) => part.length === 0 || part === "." || part === "..") ||
+      files.has(entry.file) ||
+      !Number.isSafeInteger(entry.bytes) ||
+      entry.bytes <= 0 ||
+      typeof entry.sha256 !== "string" ||
+      !SHA256_PATTERN.test(entry.sha256)
+    ) {
+      throw new Error("Core ML runtime manifest file contract is invalid");
+    }
+    roles.add(entry.role);
+    files.add(entry.file);
+  }
+  return manifest;
+}
+
 async function readDirectRegularFile(file, label) {
   let metadata;
   try {
@@ -750,6 +855,119 @@ export async function stageEmbeddingResourcePack(plan) {
   });
 }
 
+export async function stageCoreMlResourcePack(plan) {
+  const sourceMetadata = await lstat(plan.sourcePackRoot).catch(() => null);
+  if (!sourceMetadata?.isDirectory() || sourceMetadata.isSymbolicLink()) {
+    throw new Error("Core ML resource source must be a regular directory");
+  }
+  const expectedPath = plan.expectedManifest;
+  const sourceManifestPath = path.join(plan.sourcePackRoot, "runtime-pack.json");
+  await readDirectRegularFile(expectedPath, "expected Core ML manifest");
+  await readDirectRegularFile(sourceManifestPath, "source Core ML manifest");
+  let expected;
+  let source;
+  try {
+    expected = validateCoreMlRuntimePackManifest(
+      JSON.parse(await readFile(expectedPath, "utf8")),
+    );
+    source = validateCoreMlRuntimePackManifest(
+      JSON.parse(await readFile(sourceManifestPath, "utf8")),
+    );
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error("Core ML runtime manifest is not valid JSON");
+    }
+    throw error;
+  }
+  if (JSON.stringify(source) !== JSON.stringify(expected)) {
+    throw new Error("Core ML resource source does not match reviewed manifest");
+  }
+  for (const entry of expected.files) {
+    const sourceFile = path.join(plan.sourcePackRoot, entry.file);
+    const metadata = await readDirectRegularFile(sourceFile, `Core ML resource ${entry.role}`);
+    if (metadata.size !== entry.bytes || (await sha256(sourceFile)) !== entry.sha256) {
+      throw new Error(`Core ML resource ${entry.role} does not match manifest`);
+    }
+  }
+
+  const parent = path.dirname(plan.destination);
+  const temporary = path.join(
+    parent,
+    `${path.basename(plan.destination)}.tmp-${process.pid}-${Date.now()}`,
+  );
+  const backup = path.join(
+    parent,
+    `${path.basename(plan.destination)}.old-${process.pid}-${Date.now()}`,
+  );
+  await mkdir(parent, { recursive: true });
+  await rm(temporary, { recursive: true, force: true });
+  await mkdir(temporary, { mode: 0o700 });
+  try {
+    await copyFile(expectedPath, path.join(temporary, "runtime-pack.json"));
+    await chmod(path.join(temporary, "runtime-pack.json"), 0o644);
+    for (const entry of expected.files) {
+      const destination = path.join(temporary, entry.file);
+      await mkdir(path.dirname(destination), { recursive: true });
+      await copyFile(path.join(plan.sourcePackRoot, entry.file), destination);
+      await chmod(destination, 0o644);
+    }
+    let previous = false;
+    try {
+      await rename(plan.destination, backup);
+      previous = true;
+    } catch (error) {
+      if (!error || error.code !== "ENOENT") throw error;
+    }
+    try {
+      await rename(temporary, plan.destination);
+    } catch (error) {
+      if (previous) await rename(backup, plan.destination);
+      throw error;
+    }
+    await rm(backup, { recursive: true, force: true });
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+    await rm(backup, { recursive: true, force: true });
+  }
+  return Object.freeze({
+    schema_version: "resume-ir.coreml-resource-stage.v1",
+    target_triple: plan.targetTriple,
+    resource_file_count: expected.files.length + 1,
+  });
+}
+
+export async function buildCoreMlWorker(plan, runner = spawnSync) {
+  const source = lstatSync(plan.source);
+  if (!source.isFile() || source.isSymbolicLink()) {
+    throw new Error("Core ML worker source must be a regular file");
+  }
+  await mkdir(path.dirname(plan.destination), { recursive: true });
+  const temporary = `${plan.destination}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    const result = runner(
+      "xcrun",
+      [
+        "swiftc",
+        "-parse-as-library",
+        "-O",
+        "-whole-module-optimization",
+        "-warnings-as-errors",
+        plan.source,
+        "-o",
+        temporary,
+      ],
+      { shell: false, stdio: "inherit" },
+    );
+    if (result.error || result.status !== 0) {
+      throw new Error("Core ML worker build failed");
+    }
+    await chmod(temporary, 0o755);
+    await rename(temporary, plan.destination);
+  } finally {
+    await rm(temporary, { force: true });
+  }
+}
+
 export function runSidecarBuild(plan, runner = spawnSync, environment = process.env) {
   prepareBuildTargetDirectory(plan);
   const env = environmentForSidecarBuild(plan, environment);
@@ -845,6 +1063,7 @@ export async function buildAttestedSidecars(
   plan,
   {
     cargoRunner = spawnSync,
+    coreMlRunner = spawnSync,
     environment = process.env,
   } = {},
 ) {
@@ -857,6 +1076,9 @@ export async function buildAttestedSidecars(
   for (const sidecar of runtimeSidecars) {
     runSidecarBuild(sidecar, cargoRunner, environment);
     await stageBuiltSidecar(sidecar);
+  }
+  if (plan.coreMlWorker) {
+    await buildCoreMlWorker(plan.coreMlWorker, coreMlRunner);
   }
   const attestationPath = await stageRuntimeExecutableAttestation(
     plan.runtimeExecutableAttestation,
@@ -883,6 +1105,9 @@ async function main() {
   });
   await buildAttestedSidecars(plan);
   await stageEmbeddingResourcePack(plan.resourcePack);
+  if (plan.coreMlResourcePack) {
+    await stageCoreMlResourcePack(plan.coreMlResourcePack);
+  }
   await stageOcrResourcePack(plan.ocrResourcePack);
   await stageClassifierResourcePack(plan.classifierResourcePack);
   if (plan.targetTriple === WINDOWS_TARGET_TRIPLE) {

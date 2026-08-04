@@ -4,6 +4,7 @@ import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import {
   chmod,
   copyFile,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -26,6 +27,7 @@ import {
   defaultSidecarBuildTargetDir,
   runSidecarBuild,
   stageEmbeddingResourcePack,
+  stageCoreMlResourcePack,
   stageBuiltSidecar,
   validateWindowsProcessContainmentContract,
 } from "./prepare-sidecar.mjs";
@@ -159,6 +161,56 @@ async function createSyntheticPack(root, { sourceSymlink = false } = {}) {
   await writeFile(path.join(source, "runtime-pack.json"), manifestBody);
   await writeFile(expectedManifest, manifestBody);
   return { expectedManifest, manifest, source };
+}
+
+async function createSyntheticCoreMlPack(root) {
+  const source = path.join(root, "source-coreml-pack");
+  const expectedManifest = path.join(
+    root, "apps", "desktop", "resources", "embedding", "aarch64-apple-darwin",
+    "coreml-runtime-pack.json",
+  );
+  const roles = [
+    ["interactive_analytics", "e5-b1x512.mlmodelc/analytics/coremldata.bin"],
+    ["interactive_core_data", "e5-b1x512.mlmodelc/coremldata.bin"],
+    ["interactive_metadata", "e5-b1x512.mlmodelc/metadata.json"],
+    ["interactive_model", "e5-b1x512.mlmodelc/model.mil"],
+    ["interactive_weights", "e5-b1x512.mlmodelc/weights/weight.bin"],
+    ["bulk_analytics", "e5-b4x512.mlmodelc/analytics/coremldata.bin"],
+    ["bulk_core_data", "e5-b4x512.mlmodelc/coremldata.bin"],
+    ["bulk_metadata", "e5-b4x512.mlmodelc/metadata.json"],
+    ["bulk_model", "e5-b4x512.mlmodelc/model.mil"],
+    ["bulk_weights", "e5-b4x512.mlmodelc/weights/weight.bin"],
+  ];
+  const files = [];
+  for (const [role, file] of roles) {
+    const body = Buffer.from(`synthetic-${role}`);
+    const destination = path.join(source, file);
+    await mkdir(path.dirname(destination), { recursive: true });
+    await writeFile(destination, body);
+    files.push({ role, file, bytes: body.length, sha256: sha256(body) });
+  }
+  const manifest = {
+    schema_version: "resume-ir.coreml-embedding-runtime-pack.v1",
+    runtime_pack_id: "intfloat-multilingual-e5-small-coreml-fp16-r1",
+    model_id: "intfloat-multilingual-e5-small-coreml-fp16-r1",
+    upstream_model_id: "intfloat/multilingual-e5-small",
+    upstream_revision: "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+    dimension: 384,
+    provider: "coreml",
+    compute_units: "all",
+    network_access: "disabled",
+    license_reviewed: true,
+    model_license: "MIT",
+    target_triple: "aarch64-apple-darwin",
+    fixed_shapes: ["B1x512", "B4x512"],
+    files,
+  };
+  const body = `${JSON.stringify(manifest, null, 2)}\n`;
+  await mkdir(source, { recursive: true });
+  await mkdir(path.dirname(expectedManifest), { recursive: true });
+  await writeFile(path.join(source, "runtime-pack.json"), body);
+  await writeFile(expectedManifest, body);
+  return { expectedManifest, source };
 }
 
 async function createSyntheticClassifierPack(root, { sourceSymlink = false } = {}) {
@@ -396,6 +448,7 @@ async function prepareSyntheticBundleComposition(
 ) {
   const targetTriple = "aarch64-apple-darwin";
   const pack = await createSyntheticPack(repoRoot);
+  const coremlPack = await createSyntheticCoreMlPack(repoRoot);
   const ocrPack = await createSyntheticOcrPack(repoRoot);
   const classifierPack = await createSyntheticClassifierPack(repoRoot);
   const plan = createDesktopCompositionPlan({
@@ -404,11 +457,15 @@ async function prepareSyntheticBundleComposition(
     debug: false,
     sourcePackRoot: pack.source,
     expectedManifest: pack.expectedManifest,
+    sourceCoreMlPackRoot: coremlPack.source,
+    expectedCoreMlManifest: coremlPack.expectedManifest,
     sourceOcrPackRoot: ocrPack.source,
     expectedOcrManifest: ocrPack.expectedManifest,
     sourceClassifierPackRoot: classifierPack.source,
     expectedClassifierManifest: classifierPack.expectedManifest,
   });
+  mkdirSync(path.dirname(plan.coreMlWorker.source), { recursive: true });
+  writeFileSync(plan.coreMlWorker.source, "synthetic Core ML worker source");
   const macosDirectory = path.join(appBundle, "Contents", "MacOS");
   await mkdir(macosDirectory, { recursive: true });
   const desktopBody = syntheticMachO("same-desktop");
@@ -455,7 +512,15 @@ async function prepareSyntheticBundleComposition(
     await writeExecutable(sidecar.destination, body);
     await writeExecutable(path.join(macosDirectory, sidecar.binaryName), body);
   }
+  const coreMlWorkerBody = syntheticMachO("same-coreml-worker");
+  await mkdir(path.dirname(plan.coreMlWorker.destination), { recursive: true });
+  await writeExecutable(plan.coreMlWorker.destination, coreMlWorkerBody);
+  await writeExecutable(
+    path.join(macosDirectory, "resume-coreml-embedding-worker"),
+    coreMlWorkerBody,
+  );
   await stageEmbeddingResourcePack(plan.resourcePack);
+  await stageCoreMlResourcePack(plan.coreMlResourcePack);
   await stageOcrResourcePack(plan.ocrResourcePack);
   await stageClassifierResourcePack(plan.classifierResourcePack);
   const bundledPack = path.join(
@@ -467,10 +532,13 @@ async function prepareSyntheticBundleComposition(
   );
   await mkdir(bundledPack, { recursive: true });
   for (const entry of await readdir(plan.resourcePack.destination)) {
-    await copyFile(
-      path.join(plan.resourcePack.destination, entry),
-      path.join(bundledPack, entry),
-    );
+    const source = path.join(plan.resourcePack.destination, entry);
+    const destination = path.join(bundledPack, entry);
+    if ((await lstat(source)).isDirectory()) {
+      await copyTree(source, destination);
+    } else {
+      await copyFile(source, destination);
+    }
   }
   const bundledOcrPack = path.join(
     appBundle,
@@ -491,6 +559,7 @@ async function prepareSyntheticBundleComposition(
   await createSyntheticInstalledPdfiumPack(repoRoot, appBundle);
   return {
     expectedClassifierManifest: classifierPack.expectedManifest,
+    expectedCoreMlManifest: coremlPack.expectedManifest,
     expectedManifest: pack.expectedManifest,
     expectedOcrManifest: ocrPack.expectedManifest,
     plan,
@@ -738,19 +807,22 @@ test("fails closed for an unsupported or missing target triple", () => {
   );
 });
 
-test("plans three sidecars and four immutable arm64 runtime packs", async (context) => {
+test("plans production sidecars and immutable arm64 runtime packs", async (context) => {
   const repoRoot = await mkdtemp(path.join(os.tmpdir(), "resume-ir-composition-plan-"));
   context.after(async () => {
     const { rm } = await import("node:fs/promises");
     await rm(repoRoot, { recursive: true, force: true });
   });
   const pack = await createSyntheticPack(repoRoot);
+  const coreml = await createSyntheticCoreMlPack(repoRoot);
   const plan = createDesktopCompositionPlan({
     repoRoot,
     targetTriple: "aarch64-apple-darwin",
     debug: false,
     sourcePackRoot: pack.source,
     expectedManifest: pack.expectedManifest,
+    sourceCoreMlPackRoot: coreml.source,
+    expectedCoreMlManifest: coreml.expectedManifest,
   });
 
   assert.deepEqual(
@@ -764,6 +836,14 @@ test("plans three sidecars and four immutable arm64 runtime packs", async (conte
   assert.equal(
     plan.resourcePack.destination,
     path.join(repoRoot, "target", "tauri-resources", "embedding-runtime-pack"),
+  );
+  assert.equal(
+    path.basename(plan.coreMlWorker.destination),
+    "resume-coreml-embedding-worker-aarch64-apple-darwin",
+  );
+  assert.equal(
+    plan.coreMlResourcePack.destination,
+    path.join(repoRoot, "target", "tauri-resources", "embedding-runtime-pack", "coreml"),
   );
   assert.equal(
     plan.classifierResourcePack.destination,
@@ -1018,6 +1098,8 @@ test("attested sidecar build stages runtimes before the daemon and injects the c
     targetTriple: "aarch64-apple-darwin",
     debug: false,
   });
+  mkdirSync(path.dirname(plan.coreMlWorker.source), { recursive: true });
+  writeFileSync(plan.coreMlWorker.source, "synthetic Core ML worker source");
   const calls = [];
   const byBinaryName = new Map(plan.sidecars.map((sidecar) => [sidecar.binaryName, sidecar]));
   const writeBuiltExecutable = (binaryName) => {
@@ -1034,6 +1116,11 @@ test("attested sidecar build stages runtimes before the daemon and injects the c
   };
   const attestationPath = await buildAttestedSidecars(plan, {
     cargoRunner,
+    coreMlRunner: (_command, args) => {
+      const output = args[args.indexOf("-o") + 1];
+      writeFileSync(output, syntheticMachO("resume-coreml-embedding-worker"));
+      return { status: 0 };
+    },
     environment: { RESUME_IR_RUNTIME_EXECUTABLE_ATTESTATION: "/stale/forbidden.json" },
   });
 
@@ -1173,7 +1260,7 @@ test("a failed Cargo build cannot replace a previously staged daemon", async (co
   assert.equal(await readFile(plan.destination, "utf8"), "previous-daemon");
 });
 
-test("desktop config prepares three sidecars and four resource packs", async () => {
+test("desktop config prepares the Core ML production sidecar on macOS", async () => {
   const configPath = new URL("../src-tauri/tauri.conf.json", import.meta.url);
   const bundleConfigPath = new URL(
     "../src-tauri/tauri.bundle.conf.json",
@@ -1181,6 +1268,10 @@ test("desktop config prepares three sidecars and four resource packs", async () 
   );
   const windowsConfigPath = new URL(
     "../src-tauri/tauri.windows.conf.json",
+    import.meta.url,
+  );
+  const macosConfigPath = new URL(
+    "../src-tauri/tauri.macos.conf.json",
     import.meta.url,
   );
   const tauriSchemaPath = new URL(
@@ -1191,6 +1282,7 @@ test("desktop config prepares three sidecars and four resource packs", async () 
   const config = JSON.parse(await readFile(configPath, "utf8"));
   const bundleConfig = JSON.parse(await readFile(bundleConfigPath, "utf8"));
   const windowsConfig = JSON.parse(await readFile(windowsConfigPath, "utf8"));
+  const macosConfig = JSON.parse(await readFile(macosConfigPath, "utf8"));
   const tauriSchema = JSON.parse(await readFile(tauriSchemaPath, "utf8"));
   const packageJson = JSON.parse(await readFile(packagePath, "utf8"));
 
@@ -1222,6 +1314,12 @@ test("desktop config prepares three sidecars and four resource packs", async () 
     "../../../target/tauri-resources/pdfium-static-runtime-pack/":
       "pdfium/runtime-pack/",
   });
+  assert.deepEqual(macosConfig.bundle.externalBin, [
+    "../../../target/tauri-sidecars/resume-daemon",
+    "../../../target/tauri-sidecars/resume-embedding-runtime",
+    "../../../target/tauri-sidecars/resume-pdf-render-runtime",
+    "../../../target/tauri-sidecars/resume-coreml-embedding-worker",
+  ]);
   assert.equal(windowsConfig.$schema, "https://schema.tauri.app/config/2");
   assert.deepEqual(windowsConfig.bundle.targets, ["nsis"]);
   assert.deepEqual(windowsConfig.bundle.windows, {
