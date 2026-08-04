@@ -135,10 +135,7 @@ impl RuntimePack {
         Self::load_with_expected_assets(runtime_dir, PackKind::Onnx, &MODEL_ASSETS)
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "activated by the next Issue #404 package slice")
-    )]
+    #[expect(dead_code, reason = "activated by the next Issue #404 package slice")]
     pub(super) fn load_coreml(runtime_dir: &Path) -> Result<Self, RuntimeError> {
         Self::load_with_expected_assets(runtime_dir, PackKind::CoreMl, &COREML_TOKENIZER_ASSETS)
     }
@@ -243,10 +240,6 @@ impl RuntimePack {
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum PackKind {
     Onnx,
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "activated by the next Issue #404 package slice")
-    )]
     CoreMl,
 }
 
