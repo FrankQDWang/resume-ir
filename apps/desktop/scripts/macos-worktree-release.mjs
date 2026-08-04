@@ -147,10 +147,12 @@ async function publishArtifact({
   receipt,
   source,
   version,
+  edition,
 }) {
   await requirePrivateDirectory(artifactRoot);
+  const editionName = edition === "coreml" ? "macos15_coreml" : "macos14_onnx";
   const artifactName =
-    `resume-ir_${version}_aarch64_${source.source_tree_sha256.slice(0, 12)}.dmg`;
+    `resume-ir_${version}_${editionName}_aarch64_${source.source_tree_sha256.slice(0, 12)}.dmg`;
   const artifact = path.join(artifactRoot, artifactName);
   const existing = await lstat(artifact).catch((error) => {
     if (error?.code === "ENOENT") return undefined;
@@ -181,6 +183,7 @@ async function publishArtifact({
   }
   const artifactReceipt = Object.freeze({
     schema_version: "resume-ir.macos-worktree-artifact.v1",
+    edition,
     source,
     artifact_file: artifactName,
     dmg_sha256: receipt.dmg_sha256,
@@ -214,12 +217,14 @@ export async function buildMacosWorktreeRelease({
   installDependencies = defaultInstallDependencies,
   runRelease = defaultRunRelease,
   stageRuntimePacks = stageImmutableRuntimePacks,
+  edition = "coreml",
 }) {
   if (
     platform !== "darwin" ||
     !path.isAbsolute(repoRoot ?? "") ||
     !path.isAbsolute(cacheRoot ?? "") ||
-    !path.isAbsolute(artifactRoot ?? "")
+    !path.isAbsolute(artifactRoot ?? "") ||
+    !new Set(["coreml", "onnx"]).has(edition)
   ) {
     throw releaseError();
   }
@@ -245,6 +250,7 @@ export async function buildMacosWorktreeRelease({
     CARGO_TARGET_DIR: cargoTargetDir,
     NPM_CONFIG_CACHE: npmCache,
     RESUME_IR_MACOS_SOURCE_IDENTITY: JSON.stringify(source),
+    RESUME_IR_MACOS_EMBEDDING_PROVIDER: edition,
   };
   const install = await installDependencies({
     frontendRoot,
@@ -291,6 +297,7 @@ export async function buildMacosWorktreeRelease({
     receipt,
     source,
     version: productVersion,
+    edition,
   });
 }
 
@@ -299,9 +306,13 @@ export function resolveMacosWorktreeRepoRoot(scriptUrl = import.meta.url) {
 }
 
 async function main() {
-  if (process.argv.length !== 2) throw releaseError();
+  const args = process.argv.slice(2);
+  if (args.length !== 0 && (args.length !== 2 || args[0] !== "--edition")) {
+    throw releaseError();
+  }
+  const edition = args[1] ?? "coreml";
   const repoRoot = resolveMacosWorktreeRepoRoot();
-  const result = await buildMacosWorktreeRelease({ repoRoot });
+  const result = await buildMacosWorktreeRelease({ repoRoot, edition });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }
 

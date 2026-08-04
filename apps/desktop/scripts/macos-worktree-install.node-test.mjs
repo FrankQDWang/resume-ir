@@ -54,17 +54,23 @@ function compositionReceipt(dmgSha256) {
   };
 }
 
-async function fixture() {
+async function fixture(edition = "coreml") {
   const root = await realpath(
     await mkdtemp(path.join(os.tmpdir(), "resume-ir-worktree-install-")),
   );
-  const dmg = path.join(root, "resume-ir_0.1.3_aarch64_bbbbbbbbbbbb.dmg");
+  const editionName =
+    edition === "coreml" ? "macos15_coreml" : "macos14_onnx";
+  const dmg = path.join(
+    root,
+    `resume-ir_0.1.3_${editionName}_aarch64_bbbbbbbbbbbb.dmg`,
+  );
   await writeFile(dmg, "dmg-bytes", { mode: 0o444 });
   await chmod(dmg, 0o444);
   const digest = await sha256(dmg);
   const receipt = compositionReceipt(digest);
   const manifest = {
     schema_version: "resume-ir.macos-worktree-artifact.v1",
+    edition,
     source: SOURCE,
     artifact_file: path.basename(dmg),
     dmg_sha256: digest,
@@ -84,7 +90,10 @@ test("installs a receipt-bound worktree snapshot without main provenance", async
   let verifiedInstalledApp = false;
   const verifyComposition = async ({ expectedSource }) => {
     assert.deepEqual(expectedSource, SOURCE);
-    return { composition_digest: "c".repeat(64) };
+    return {
+      composition_digest: "c".repeat(64),
+      runtime_manifests: [{ role: "coreml_embedding" }],
+    };
   };
   const result = await installMacosWorktreeArtifact({
     repoRoot: values.root,
@@ -170,6 +179,31 @@ test("rejects a copied App whose composition differs from the artifact", async (
       platform: "darwin",
       verifyComposition: async () => ({
         composition_digest: "d".repeat(64),
+        runtime_manifests: [{ role: "coreml_embedding" }],
+      }),
+      installDmg: async (options) =>
+        options.verifyApp({
+          appBundle: path.join(values.root, "installed.app"),
+        }),
+    }),
+    /App composition does not match/,
+  );
+});
+
+test("rejects a provider edition whose App composition has the other provider", async () => {
+  const values = await fixture("onnx");
+  await assert.rejects(
+    installMacosWorktreeArtifact({
+      repoRoot: values.root,
+      targetTriple: "aarch64-apple-darwin",
+      dmg: values.dmg,
+      artifactManifest: values.artifactManifest,
+      applicationsDirectory: "/Applications",
+      expectedVersion: "0.1.3",
+      platform: "darwin",
+      verifyComposition: async () => ({
+        composition_digest: "c".repeat(64),
+        runtime_manifests: [{ role: "coreml_embedding" }],
       }),
       installDmg: async (options) =>
         options.verifyApp({

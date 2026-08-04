@@ -151,12 +151,17 @@ async function readArtifactManifest({ dmg, artifactManifest }) {
     `${JSON.stringify(manifest)}\n` !== source ||
     !exactKeys(manifest, [
       "schema_version",
+      "edition",
       "source",
       "artifact_file",
       "dmg_sha256",
       "composition_receipt",
     ]) ||
     manifest.schema_version !== "resume-ir.macos-worktree-artifact.v1" ||
+    !new Set(["coreml", "onnx"]).has(manifest.edition) ||
+    !manifest.artifact_file.includes(
+      manifest.edition === "coreml" ? "macos15_coreml" : "macos14_onnx",
+    ) ||
     manifest.artifact_file !== path.basename(dmg) ||
     !SHA256.test(manifest.dmg_sha256 ?? "")
   ) {
@@ -171,6 +176,7 @@ async function readArtifactManifest({ dmg, artifactManifest }) {
     throw installError("macOS worktree artifact digest does not match");
   }
   return Object.freeze({
+    edition: manifest.edition,
     source: sourceIdentity,
     receipt: validateCompositionReceipt(
       manifest.composition_receipt,
@@ -254,7 +260,9 @@ export async function installMacosWorktreeArtifact({
         }),
     });
     if (
-      composition.composition_digest !== artifact.receipt.app_composition_digest
+      composition.composition_digest !== artifact.receipt.app_composition_digest ||
+      composition.runtime_manifests.some(({ role }) => role === "coreml_embedding") !==
+        (artifact.edition === "coreml")
     ) {
       throw installError("macOS worktree App composition does not match");
     }

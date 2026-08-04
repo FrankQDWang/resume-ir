@@ -16,6 +16,7 @@
     "acceptance:macos:installed-main": "node scripts/macos-installed-main-acceptance.mjs",
     "bundle:macos:test": "node scripts/macos-test-release.mjs",
     "bundle:macos:worktree": "node scripts/macos-worktree-release.mjs",
+    "bundle:macos14:onnx:worktree": "node scripts/macos-worktree-release.mjs --edition onnx",
     "install:macos:worktree": "node scripts/macos-worktree-install.mjs",
     "bundle:windows:daemon-sidecar": "node scripts/windows-daemon-sidecar.mjs",
     "bundle:windows:embedding-sidecar": "node scripts/windows-embedding-sidecar.mjs",

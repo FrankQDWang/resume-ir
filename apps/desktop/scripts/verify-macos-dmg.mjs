@@ -143,11 +143,11 @@ export async function verifyAdHocSignedApp({
         target: path.join(macosDirectory, "resume-pdf-render-runtime"),
         bundle: false,
       },
-      {
-        target: path.join(macosDirectory, "resume-coreml-embedding-worker"),
-        bundle: false,
-      },
     ];
+    const coreMlWorker = path.join(macosDirectory, "resume-coreml-embedding-worker");
+    if (await lstat(coreMlWorker).catch(() => null)) {
+      targets.push({ target: coreMlWorker, bundle: false });
+    }
     for (const { target, bundle } of targets) {
       await validateSignedTarget(target);
       const verification = await runner(MACOS_SYSTEM_TOOLS.codesign, [
@@ -424,11 +424,11 @@ export async function verifyMacosInternalTestEntitlements({
       target: path.join(macosDirectory, "resume-pdf-render-runtime"),
       expected: false,
     },
-    {
-      target: path.join(macosDirectory, "resume-coreml-embedding-worker"),
-      expected: false,
-    },
   ];
+  const coreMlWorker = path.join(macosDirectory, "resume-coreml-embedding-worker");
+  if (await lstat(coreMlWorker).catch(() => null)) {
+    targets.push({ target: coreMlWorker, expected: false });
+  }
   for (const { target, expected } of targets) {
     await validateSignedTarget(target);
     let result;

@@ -101,7 +101,11 @@ pub(super) fn configured_embedding_runtime(
     current_exe: &Path,
     resource_dir: &Path,
 ) -> Option<EmbeddingRuntime> {
-    let coreml = cfg!(all(target_os = "macos", target_arch = "aarch64"));
+    let coreml = cfg!(all(
+        target_os = "macos",
+        target_arch = "aarch64",
+        not(feature = "macos-onnx-edition")
+    ));
     let binary_dir = current_exe.parent()?;
     Some(EmbeddingRuntime {
         command: binary_dir.join(embedding_binary_name()),

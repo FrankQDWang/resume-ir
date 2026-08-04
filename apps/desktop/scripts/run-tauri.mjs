@@ -78,11 +78,27 @@ export function withDesktopComposition(cliArguments, ...configurations) {
 function main() {
   const { repoRoot, frontendRoot, cli } = resolveTauriPaths();
   const cliArguments = process.argv.slice(2);
+  const onnxEdition =
+    process.platform === "darwin" &&
+    process.env.RESUME_IR_MACOS_EMBEDDING_PROVIDER === "onnx";
+  const featureArguments =
+    onnxEdition && ["build", "dev"].includes(cliArguments[0])
+      ? [
+          cliArguments[0],
+          "--features",
+          "macos-onnx-edition",
+          ...cliArguments.slice(1),
+        ]
+      : cliArguments;
   const effectiveArguments = withDesktopComposition(
-    cliArguments,
+    featureArguments,
     path.join(frontendRoot, "src-tauri", "tauri.bundle.conf.json"),
     process.platform === "darwin"
-      ? path.join(frontendRoot, "src-tauri", "tauri.macos.conf.json")
+      ? path.join(
+          frontendRoot,
+          "src-tauri",
+          onnxEdition ? "tauri.macos14-onnx.conf.json" : "tauri.macos.conf.json",
+        )
       : undefined,
   );
   const environment = selectTauriEnvironment({

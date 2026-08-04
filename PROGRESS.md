@@ -1,5 +1,26 @@
 # Progress
 
+## Issue #404 macOS provider-edition closeout
+
+The standard Worktree entrypoint now produces a macOS 15 Core ML-only package;
+the separately named `bundle:macos14:onnx:worktree` entrypoint produces a macOS
+14 ONNX-only package. Edition identity is bound through build features, Tauri
+configuration, artifact names, receipts, installation checks and mounted-bundle
+composition checks, so neither edition may silently contain the other provider.
+
+Exact immutable-snapshot DMGs passed read-only mounted verification. The Core ML
+package is 479,075,356 bytes, requires macOS 15.0, contains fixed B1/B4 models and
+contains no ONNX model/runtime. The ONNX package is 135,486,572 bytes, requires
+macOS 14.0, contains the reviewed ONNX model/runtime and contains no Core ML
+model. Against the prior 570,650,949-byte mixed package, those are reductions of
+16.0% and 76.3%, respectively. Every Mach-O file in the ONNX bundle declares a
+minimum target no newer than 14.0. No macOS 14 native-host execution claim is
+made from the macOS 15 test machine.
+
+The currently installed local App remains the Core ML edition. Its daemon is
+ready, all four optional runtimes and all eight product capabilities are
+available, and no ONNX inference bytes are installed in the App bundle.
+
 ## Issue #404 macOS 15 Core ML-only default
 
 The default macOS ARM package now declares macOS 15 and stages only the Core ML
