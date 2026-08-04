@@ -1,28 +1,33 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "verification_active",
-  "experiment_state": "correctness_passed",
-  "evidence_lane": "smoke",
+  "workflow_state": "slice_active",
+  "experiment_state": "hypothesis_registered",
+  "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "c80eedfff295f69ac90b25a6783768268466d4a480751faccb20618257debaa0",
+    "active_goal_sha256": "d06d60b902b60df64ec1b7a6d542c7a9dbd8a674ba15f38f9431b9d52f084ad7",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "6ea3d3047a9b4e4e85700bfbfcbefb44e2eb6905"
+    "git_head_sha": "31583dcb180e9ae109820043039af2d78c15c2e5"
   },
-  "current_slice": "#402 bind Core ML worker into macOS Worktree snapshot",
+  "current_slice": "#404 split macOS 15 Core ML and macOS 14 ONNX editions",
   "hypothesis": {
-    "id": "issue-402-coreml-worktree-snapshot",
-    "acceptance_cell": "smoke",
-    "expected_effect": "the standard macOS Worktree DMG path binds the production Core ML worker into source identity and the immutable snapshot, then completes v4 composition without mutable-checkout fallback",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/402",
-    "after_measurement_ref": "PROGRESS.md#issue-402-immutable-worktree-core-ml-worker-implementation",
-    "reprofile_ref": "not_applicable_build_correctness_slice",
+    "id": "issue-404-macos-provider-editions",
+    "acceptance_cell": "w0_docs",
+    "expected_effect": "the default macOS 15 package contains only Core ML inference assets and the separate macOS 14 package contains only ONNX inference assets, with edition-bound build and install receipts",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/404",
+    "after_measurement_ref": "pending",
+    "reprofile_ref": "not_applicable_packaging_composition_slice",
     "decision": "pending"
   },
   "transition_history": [
+    {
+      "from": "verification_active",
+      "to": "slice_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/404"
+    },
     {
       "from": "implementation_active",
       "to": "verification_active",
@@ -3451,15 +3456,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-402-coreml-worktree-snapshot-2026-08-04",
-  "state_version": 631,
-  "previous_state_hash": "a42923aa830d41156e9dcf830a3c6a06d4f263c5d3dc74eaa2997b4c0704974f",
-  "expected_state_version": 629,
-  "last_confirmed_side_effect": "issue_402_worktree_snapshot_and_full_dmg_composition_passed",
+  "run_id": "issue-404-macos-provider-editions-2026-08-04",
+  "state_version": 632,
+  "previous_state_hash": "c5ee0d9b3d65ab5c6172e78f16384e41c2159e541da19ad52ccb06b868e998fe",
+  "expected_state_version": 631,
+  "last_confirmed_side_effect": "issue_404_opened_and_provider_edition_contract_selected",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#402",
+    "primary_issue": "#404",
     "active_prs": [],
     "open_blockers": []
   }
