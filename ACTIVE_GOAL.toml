@@ -12,17 +12,17 @@ loop_state_doc = "03_next_goal_高性能本地检索GUI闭环/13_Loop_Engineerin
 acceptance_doc = "03_next_goal_高性能本地检索GUI闭环/14_W0_W1验收矩阵与证据协议.md"
 
 [scope.active_slice]
-issue = "#380"
-name = "native_coreml_fixed_b4x512_tensor_experiment"
+issue = "#383"
+name = "native_coreml_local_product_path_experiment"
 contract_change_allowed = true
 production_code_allowed = true
-private_benchmark_allowed = false
-configured_private_roots_required = false
+private_benchmark_allowed = true
+configured_private_roots_required = true
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
 scope_exception = false
-scope_exception_reason = "No exception is used. Issue #380 evaluates one directly converted native Core ML FP16 fixed-B4x512 tensor candidate on the local macOS M4 H2 host. The bounded experimental runtime support, converter, Swift worker, runner, focused tests and six contract-state files fit the normal PR budget; no private corpus or production migration is authorized."
+scope_exception_reason = "No exception is used. Issue #383 integrates the #380 winner only as a local experimental resident path and evaluates it on the configured private 8720-document corpus plus at least ten authorized real queries on this M4 H2 host. Integration and evidence closeout remain separate review-sized PRs; production defaults and packaging stay unchanged."
 allowed_paths = [
   "ACTIVE_GOAL.toml",
   "PROGRESS.md",
@@ -34,23 +34,25 @@ allowed_paths = [
   "crates/embedding-runtime/src/coreml_experiment.rs",
   "crates/embedding-runtime/src/coreml_experiment_tests.rs",
   "scripts/local/coreml-b4x512-convert.py",
-  "scripts/local/coreml-b4x512-runner.swift",
-  "scripts/local/coreml-b4x512-experiment.py",
+  "scripts/local/coreml-resident-worker.swift",
+  "scripts/local/coreml-product-path-experiment.py",
+  "crates/embedding-runtime/src/coreml_product_experiment.rs",
+  "crates/embedding-runtime/src/coreml_product_experiment_tests.rs",
 ]
-allowed_paths_role = "native_coreml_fixed_b4x512_tensor_experiment_paths"
+allowed_paths_role = "native_coreml_local_product_path_experiment_paths"
 primary_benchmark_lane = "full_import_ocr_backlog"
-observation_stage = "L1_native_coreml_fixed_b4x512_tensor_experiment"
+observation_stage = "L1_native_coreml_local_product_path_experiment"
 optimization_layer = "L1"
 optimization_layer_selected = true
-hypothesis = "a directly converted FP16 Core ML MLProgram with fixed B4x512 inputs and in-model attention-mask mean pooling plus L2 normalization lowers warm B4 wall latency by at least 25 percent versus the retained ORT Dynamic U8S8 fixed-B4x512 control on the local M4 H2 host"
-expected_delta = "at least 25 percent lower paired warm B4 wall latency with a paired 95 percent interval wholly above zero, while source parity, compute placement, lifecycle and H2 resource guards pass"
+hypothesis = "the #380 native Core ML FP16 backend win survives the complete OCR-enabled local product path and lowers the 8720-document no-OCR-drain endpoint by at least 15 percent versus the retained 513.675-second #372 baseline on this M4 H2 host"
+expected_delta = "each of at least two complete candidate imports finishes at or below 436.624 seconds and the candidate mean improves at least 15 percent, while publication, lifecycle, H2 resources and at least ten authorized real-query relevance reviews pass"
 negative_control = "the retained Issue #372 Dynamic U8S8 whole-head 512 runtime pack on ORT 1.27 with fixed B4x512 bulk Session, interactive 3t plus bulk 2x3t topology, memory patterns enabled for bulk, CPU arena disabled and prepacking disabled"
-implementation_boundary = "one local tensor-level candidate only: exact upstream revision 614241f622f53c4eeff9890bdc4f31cfecc418b3, direct PyTorch conversion, FP16 MLProgram, fixed B4x512 integer token inputs, in-model mean pooling and L2 normalization, Core ML all compute units, and a private bounded Swift tensor worker; no raw-text Swift tokenizer, private corpus, public IPC, production model, runtime pack or package change"
-resident_pool_workload = "use identical public-synthetic pre-tokenized B4x512 input_ids and attention_mask for the current ORT fixed-shape control and one warmed compiled Core ML candidate; report cold compile and load separately; do not change the production interactive 3t plus bulk 2x3t resident topology"
-resident_pool_acceptance = "source PyTorch versus Core ML vectors are finite and unit-normalized with minimum cosine at least 0.995 and mean cosine at least 0.999; warm B4 wall latency falls at least 25 percent with a positive paired 95 percent interval; transformer-heavy estimated cost is not CPU-dominant; lifecycle passes and H2 private or anonymous footprint stays at or below 3072 MiB"
-full_product_acceptance = "not authorized in Issue #380: no private 8720-document import, real-query read, new model ID, reindex or query_hot_path claim; a passing tensor screen may only open a separate product-path Issue that reuses the retained 513.675-second #372 baseline"
-raw_profile_boundary = "public evidence is limited to bounded aggregate compile, load, warm latency, throughput, source-parity, compute-device cost, resource and lifecycle metrics plus privacy booleans; no private path, raw text, raw query, candidate result, token tensor, vector, PID, log, trace, raw hash, database, index, model or cache bytes may enter git or GitHub"
-rollback_condition = "delete the experimental Rust capability, Python converter and runner, Swift worker, compiled executable, generated MLProgram and all local artifacts if conversion or compilation is invalid, transformer-heavy work is CPU-dominant, source parity fails, warm B4 latency improves less than 25 percent, lifecycle fails or H2 footprint exceeds 3072 MiB"
+implementation_boundary = "one local experiment-only Core ML resident path: Rust retains raw-text framing, exact tokenizer, prefixes, whole-head 512, Batch grouping, cancellation and lifecycle; a private Swift tensor worker owns fixed B4x512 passage and fixed B1x512 query MLPrograms from exact revision 614241f622f53c4eeff9890bdc4f31cfecc418b3; the candidate uses a new isolated model identity and fresh data/index directory"
+resident_pool_workload = "keep production interactive plus bulk 2x3 resident composition and request order; experimental residents delegate only tensor inference to compiled Core ML, pad masked bulk tails without publishing placeholder outputs, and return the same bounded embedding protocol; retain ORT unchanged as the production default"
+resident_pool_acceptance = "two complete OCR-enabled 8720-document candidate imports each finish at or below 436.624 seconds at the #372 no-OCR-drain endpoint, candidate mean improves at least 15 percent, counts and atomic publication are exact, cancellation timeout restart cleanup pass, and H2 process-tree peak stays at or below 3072 MiB"
+full_product_acceptance = "after candidate import, at least ten authorized real queries spanning semantic and hybrid search have no obvious relevance failure under manual review; raw queries and results remain local; query latency is a non-regression guard and no query_hot_path performance claim is made"
+raw_profile_boundary = "public evidence is limited to bounded aggregate import milestones, counts, latency, resource, lifecycle and query-review pass or fail metrics plus privacy booleans; no private path, filename, resume text, raw query, candidate result, token, vector, PID, log, trace, direct raw hash, database, index, model or cache bytes may enter git or GitHub"
+rollback_condition = "remove the experimental product path and generated models, compiled workers, fresh data/index directory and local evidence if either full import misses 436.624 seconds, mean improvement misses 15 percent, any count publication lifecycle query-quality or resource guard fails, or model identities can mix; keep the current ORT production path unchanged"
 forbidden_scope = [
   "production_embedding_input_change",
   "production_model_id_change",
@@ -61,7 +63,6 @@ forbidden_scope = [
   "pooling_change",
   "batch_size_composition_or_order_change",
   "cpu_arena_enablement",
-  "padding_or_dummy_input_change",
   "new_topology_or_thread_arm",
   "work_stealing",
   "import_scoped_or_idle_timeout_resident_lifecycle",
@@ -73,11 +74,17 @@ forbidden_scope = [
   "ocr_drain",
   "windows_or_linux",
   "raw_private_output",
-  "raw_query_or_result_output",
+  "raw_query_or_result_publication",
   "gate_weakening",
   "offline_graph_optimization",
   "batch8_batch16_or_batch32",
 ]
+
+[[performance_history.closed_hypotheses]]
+id = "native_coreml_fixed_b4x512_tensor_screen"
+status = "won"
+evidence_refs = ["#380", "#382"]
+reopen_requires = ["material_coreml_change", "material_model_change", "material_hardware_change"]
 
 [[performance_history.closed_hypotheses]]
 id = "embedding_cpu_int4_weight_only_matmul_gather"

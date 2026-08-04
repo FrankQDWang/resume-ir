@@ -1,5 +1,32 @@
 # Progress
 
+## Issue #383 native Core ML local product-path experiment contract
+
+#383 is the sole active slice after #380 passed its fixed-B4x512 tensor screen.
+It asks one narrower product question on the current local M4/H2 host only:
+does the Core ML FP16 backend still improve the complete OCR-enabled 8,720-
+document no-OCR-drain endpoint after Rust tokenization, resident IPC, atomic
+vector publication and real retrieval are included?
+
+The current #372 ORT result of 513.675 seconds is the accepted before; it is not
+rerun. Rust remains the owner of raw text, tokenizer, prefixes, whole-head 512,
+Batch order, cancellation and lifecycle. One private Swift tensor worker uses
+separate fixed B4x512 passage and B1x512 query MLPrograms. The candidate has a
+new experimental model identity and a fresh isolated data/index directory, so
+candidate and retained qint8 vectors cannot mix. Production defaults, runtime
+pack, daemon IPC, desktop packaging and resident topology remain unchanged.
+
+OCR stays enabled. At least two complete candidate imports must each finish at
+or below 436.624 seconds, and their mean must improve at least 15%. Counts,
+atomic publication, cancellation, timeout, restart and cleanup must remain
+exact, and the H2 process-tree peak must stay within 3,072 MiB. After import,
+at least ten authorized real semantic and hybrid queries receive manual
+relevance review. Only bounded aggregate judgments may be published.
+
+A failure removes the entire experimental product path and all generated local
+artifacts. A winner may retain the reviewed experimental capability and open a
+separate production-migration Issue, but #383 cannot change production defaults.
+
 ## Issue #380 native Core ML fixed-B4x512 tensor experiment result
 
 #380 passed its bounded local macOS M4/H2 public-synthetic screen. The exact

@@ -1,11 +1,11 @@
 {
   "schema_version": "resume-ir.active-slice-transition.v1",
-  "transition_id": "issue-375-to-380-native-coreml-fixed-b4x512-2026-08-04",
-  "from_issue": "#375",
-  "to_issue": "#380",
-  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/375#issuecomment-5170201177",
-  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/380",
-  "base_active_goal_sha256": "4287f6f5a88bf53514385c72263cb2e3526aed3cee58b2393f7677807b9080f5",
+  "transition_id": "issue-380-to-383-native-coreml-product-path-2026-08-04",
+  "from_issue": "#380",
+  "to_issue": "#383",
+  "predecessor_terminal_evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/380#issuecomment-5174059709",
+  "successor_issue_ref": "https://github.com/FrankQDWang/resume-ir/issues/383",
+  "base_active_goal_sha256": "e1431c791d5aafdb8937c4c5e74853576807669b919ea8d0667ab58785ad17e8",
   "state_paths": [
     "ACTIVE_GOAL.toml",
     "PROGRESS.md",
