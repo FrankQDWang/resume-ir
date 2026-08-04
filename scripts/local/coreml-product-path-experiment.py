@@ -198,9 +198,7 @@ def build_composition(session: Path) -> Composition:
     verify_pack(ocr, "resume-ir.desktop-ocr-runtime-pack.v1", {"target_triple": TARGET})
     verify_pack(classifier, "resume-ir.desktop-classifier-model-pack.v1", {})
     verify_pack(pdfium, "resume-ir.pdfium-static-runtime-pack.v1", {"target_triple": TARGET})
-    source_commit = subprocess.check_output(
-        ["git", "rev-parse", "HEAD"], cwd=REPO, text=True, timeout=5
-    ).strip()
+    source_commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True, timeout=5).strip()
     if len(source_commit) != 40:
         raise ExperimentError("source_identity_invalid")
     source_dirty = any(subprocess.run(["git", *args], cwd=REPO).returncode != 0
