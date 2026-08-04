@@ -1,25 +1,48 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
-  "experiment_state": "hypothesis_registered",
-  "evidence_lane": "w0_docs",
+  "workflow_state": "evidence_review",
+  "experiment_state": "won",
+  "evidence_lane": "smoke",
   "contract_pins": {
     "active_goal_sha256": "e1431c791d5aafdb8937c4c5e74853576807669b919ea8d0667ab58785ad17e8",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "8f43ef3e2304a13a8333524719ba7d1ba85fbc17"
+    "git_head_sha": "f6564f2d038d923e791aae105b9b2cf5fe74c2c3"
   },
   "current_slice": "#380 native Core ML fixed B4x512 tensor experiment",
   "hypothesis": {
     "id": "issue-380-native-coreml-fixed-b4x512-tensor",
     "acceptance_cell": "full_import_ocr_backlog",
     "expected_effect": "a directly converted FP16 Core ML fixed-B4x512 candidate lowers paired warm B4 wall latency by at least 25 percent versus the current ORT Dynamic U8S8 control while source parity, compute placement, lifecycle and H2 resource guards pass",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/380"
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/380",
+    "after_measurement_ref": "PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result",
+    "reprofile_ref": "PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result",
+    "decision": "won"
   },
   "transition_history": [
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result"
+    },
+    {
+      "from": "branch_active",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/380"
+    },
+    {
+      "from": "slice_selected",
+      "to": "branch_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/380"
+    },
     {
       "from": "evidence_review",
       "to": "slice_selected",
@@ -3271,7 +3294,12 @@
       {"command":"untouched merged-main daemon watcher reproduced the identical missing classifier test runtime pack after PDFium prerequisite restoration","exit_code":101,"evidence_ref":"PROGRESS.md#issue-372-fixed-b4x512-production-migration-contract"},
       {"command":"Issue #375 six-block 12-session public-synthetic INT4 MatMulNBits plus Gather screen","exit_code":2,"evidence_ref":"PROGRESS.md#issue-375-cpu-int4-weight-only-negative-closeout"},
       {"command":"post-revert embedding runtime and OCR attribution harness focused tests","exit_code":0,"evidence_ref":"PROGRESS.md#issue-375-cpu-int4-weight-only-negative-closeout"},
-      {"command":"post-revert format, warnings-denied Clippy, performance/autonomous/loop contracts, governance, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-375-cpu-int4-weight-only-negative-closeout"}
+      {"command":"post-revert format, warnings-denied Clippy, performance/autonomous/loop contracts, governance, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-375-cpu-int4-weight-only-negative-closeout"},
+      {"command":"Issue #380 direct PyTorch to FP16 MLProgram conversion, device compilation and Swift lifecycle smoke","exit_code":0,"evidence_ref":"PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result"},
+      {"command":"Issue #380 ten-block 80-sample-per-arm public-synthetic fixed B4x512 tensor screen","exit_code":0,"evidence_ref":"PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result"},
+      {"command":"performance, autonomous, loop, governance, Python compile, Swift compile, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result"},
+      {"command":"./scripts/ci/verify-local.sh stopped on missing reviewed classifier test runtime pack","exit_code":101,"evidence_ref":"PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result"},
+      {"command":"untouched merged-main exact daemon watcher test reproduced the identical missing classifier test runtime pack","exit_code":101,"evidence_ref":"PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result"}
     ],
     "all_required_commands_ran": true,
     "claim": "pass"
@@ -3286,10 +3314,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-380-native-coreml-fixed-b4x512-tensor-2026-08-04",
-  "state_version": 613,
-  "previous_state_hash": "140199d7b5655b53251242477fdee4593a37dce861fafa124935334392d8084d",
-  "expected_state_version": 613,
-  "last_confirmed_side_effect": "issue_380_opened_and_hypothesis_registered",
+  "state_version": 614,
+  "previous_state_hash": "6f4d066d2aaa9452ada64a7e219f2888b5d8e9e0debcb13ba2bd635357b53f17",
+  "expected_state_version": 614,
+  "last_confirmed_side_effect": "issue_380_tensor_screen_passed_all_gates",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {

@@ -1,5 +1,38 @@
 # Progress
 
+## Issue #380 native Core ML fixed-B4x512 tensor experiment result
+
+#380 passed its bounded local macOS M4/H2 public-synthetic screen. The exact
+upstream revision was converted directly from PyTorch into one FP16 MLProgram
+with fixed B4x512 integer inputs and in-model attention-mask mean pooling plus
+L2 normalization. Ten alternating-order blocks produced 80 warmed measurements
+per arm on identical public-synthetic max-length inputs.
+
+The retained ORT Dynamic U8S8 control averaged 246.325 ms with p95 252.753 ms;
+the Core ML candidate averaged 67.308 ms with p95 73.819 ms. Paired mean
+improvement was 72.672%, with a 95% bootstrap interval of 72.293% to 73.014%,
+well above the 25% entry gate. Source-PyTorch versus Core-ML cosine was
+0.999968 minimum and 0.999970 mean, and every output was finite.
+
+`MLComputePlan` attributed 74.086% of estimated preferred-device cost to the
+Neural Engine, 25.400% to GPU and 0.515% to CPU. The conservative maximum child
+RSS was 989.875 MiB, below the 3,072 MiB H2 ceiling, and all ten candidate and
+control process lifecycles exited cleanly. The public aggregate report was
+1,388 bytes and all privacy booleans were false.
+
+This is a tensor-backend win, not a full-import claim. No private resume, real
+query, index, model identity, daemon IPC, runtime pack, desktop package or
+production default changed. The generated model, compiled model and raw local
+tensors/vectors remain outside git. Production-path integration, the retained
+513.675-second full-import comparison and real-query review require a separate
+Issue.
+
+The full local verification suite reached the native daemon watcher test and
+stopped because the reviewed classifier test runtime pack was absent. The exact
+test failed identically on an isolated, untouched `main@f6564f2`; all preceding
+workspace tests passed. This is the same environment prerequisite already
+recorded by #372, not a Core ML regression.
+
 ## Issue #380 native Core ML fixed-B4x512 tensor experiment contract
 
 #380 is the only active performance slice after the exact CPU INT4 candidate
