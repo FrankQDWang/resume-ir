@@ -1,5 +1,33 @@
 # Progress
 
+## Issue #383 owner-directed Core ML production-default migration
+
+The first complete OCR-enabled 8,720-document Core ML product witness finished
+at the established no-OCR-drain endpoint in 297.095 seconds versus the retained
+513.675-second #372 ORT baseline, reducing wall time by 42.163%. It discovered
+8,720 files, published 7,328 searchable documents and vectors atomically, left
+265 documents in the running OCR backlog, recorded four failed and 49 ignored
+documents with zero scan errors, and kept the process-tree peak at 1,938.109
+MiB under the 3,072 MiB H2 ceiling. Cleanup reached zero child processes.
+
+The owner explicitly stopped the redundant second run after 100 documents and
+accepted the single complete run as the new local M4/H2 baseline. That cancelled
+run is not benchmark evidence, and no two-run mean or cross-device claim is
+made. Ten authorized real queries then exercised both semantic and hybrid modes
+through the real daemon IPC interactive resident: all 20 requests succeeded,
+all returned ten results, and no response contained an empty snippet or a
+duplicate document. Raw queries and results remain local.
+
+Because the product has not shipped, the earlier experiment-only outcome is
+superseded by the owner's direction to make the winner the macOS ARM production
+default now. The next bounded implementation stages and attests the Core ML
+worker and fixed B1x512/B4x512 resources in the formal desktop composition,
+selects the isolated Core ML model identity without a user experiment switch,
+and keeps the already-shipped interactive plus two-bulk-resident topology,
+fixed bulk B4 and bulk memory pattern. One normal production-composition import
+on this host must finish within 5% of 297.095 seconds, at or below 311.950
+seconds, before the migration is complete.
+
 ## Issue #383 Core ML product identity readiness correction
 
 The first post-merge product-readiness attempt did not submit an import and is
