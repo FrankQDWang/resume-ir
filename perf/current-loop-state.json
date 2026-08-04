@@ -1,9 +1,9 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_active",
-  "experiment_state": "hypothesis_registered",
-  "evidence_lane": "w0_docs",
+  "workflow_state": "verification_active",
+  "experiment_state": "correctness_passed",
+  "evidence_lane": "smoke",
   "contract_pins": {
     "active_goal_sha256": "d06d60b902b60df64ec1b7a6d542c7a9dbd8a674ba15f38f9431b9d52f084ad7",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
@@ -23,6 +23,16 @@
     "decision": "pending"
   },
   "transition_history": [
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#issue-404-core-ml-provider-pack-foundation"
+    },
+    {
+      "from": "slice_active",
+      "to": "implementation_active",
+      "evidence_ref": "PROGRESS.md#issue-404-core-ml-provider-pack-foundation"
+    },
     {
       "from": "verification_active",
       "to": "slice_active",
@@ -3457,10 +3467,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-404-macos-provider-editions-2026-08-04",
-  "state_version": 632,
+  "state_version": 633,
   "previous_state_hash": "c5ee0d9b3d65ab5c6172e78f16384e41c2159e541da19ad52ccb06b868e998fe",
   "expected_state_version": 631,
-  "last_confirmed_side_effect": "issue_404_opened_and_provider_edition_contract_selected",
+  "last_confirmed_side_effect": "issue_404_coreml_provider_pack_foundation_ready_for_verification",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {

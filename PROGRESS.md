@@ -1,5 +1,19 @@
 # Progress
 
+## Issue #404 Core ML provider-pack foundation
+
+The embedding runtime now has an additive, not-yet-selected Core ML pack loader
+for an exact four-file tokenizer/config manifest. It rejects ONNX model/runtime
+roles, unknown fields, digest drift, wrong model identity and missing assets;
+the existing ONNX loader and default package path are unchanged. The reviewed
+manifest contains the same tokenizer/config byte identities already used by
+production and no inference-model bytes.
+
+Focused runtime tests prove the new loader accepts only that closed role set and
+that the ONNX path remains unchanged. The next Issue #404 PR will connect this
+foundation to daemon validation, deterministic staging and the default macOS 15
+Core ML-only package.
+
 ## Issue #402 immutable Worktree Core ML worker implementation
 
 The production Core ML Swift worker now lives under the desktop build tree, so
