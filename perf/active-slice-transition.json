@@ -8,7 +8,6 @@
   "base_active_goal_sha256": "c80eedfff295f69ac90b25a6783768268466d4a480751faccb20618257debaa0",
   "state_paths": [
     "ACTIVE_GOAL.toml",
-    "PROGRESS.md",
     "perf/active-slice-transition.json",
     "perf/current-loop-state.json",
     "perf/fixtures/valid/synthetic-smoke-artifact-manifest.json",
