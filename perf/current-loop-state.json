@@ -1,28 +1,30 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
-  "experiment_state": "won",
-  "evidence_lane": "smoke",
+  "workflow_state": "slice_selected",
+  "experiment_state": "hypothesis_registered",
+  "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "e1431c791d5aafdb8937c4c5e74853576807669b919ea8d0667ab58785ad17e8",
+    "active_goal_sha256": "23b025bf636277da7f511a59dc37e443598805fe787e49437fcf3418fb099512",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "f6564f2d038d923e791aae105b9b2cf5fe74c2c3"
+    "git_head_sha": "927a5c305c7de1ddad5bbccd94ecd0b0f3a90bf9"
   },
-  "current_slice": "#380 native Core ML fixed B4x512 tensor experiment",
+  "current_slice": "#383 native Core ML local product-path experiment",
   "hypothesis": {
-    "id": "issue-380-native-coreml-fixed-b4x512-tensor",
+    "id": "issue-383-native-coreml-local-product-path",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "a directly converted FP16 Core ML fixed-B4x512 candidate lowers paired warm B4 wall latency by at least 25 percent versus the current ORT Dynamic U8S8 control while source parity, compute placement, lifecycle and H2 resource guards pass",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/380",
-    "after_measurement_ref": "PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result",
-    "reprofile_ref": "PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result",
-    "decision": "won"
+    "expected_effect": "at least two complete OCR-enabled 8720-document candidate imports each finish at or below 436.624 seconds and improve at least 15 percent in the mean versus the retained 513.675-second baseline while publication, lifecycle, resource and ten-query relevance guards pass",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/383"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/383"
+    },
     {
       "from": "verification_active",
       "to": "evidence_review",
@@ -3313,15 +3315,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-380-native-coreml-fixed-b4x512-tensor-2026-08-04",
-  "state_version": 614,
-  "previous_state_hash": "6f4d066d2aaa9452ada64a7e219f2888b5d8e9e0debcb13ba2bd635357b53f17",
-  "expected_state_version": 614,
-  "last_confirmed_side_effect": "issue_380_tensor_screen_passed_all_gates",
+  "run_id": "issue-383-native-coreml-local-product-path-2026-08-04",
+  "state_version": 615,
+  "previous_state_hash": "8fb56678b83502274672d721256af9414c86d47b4cc5f1ad58c0cb4cfa82e626",
+  "expected_state_version": 615,
+  "last_confirmed_side_effect": "issue_383_opened_and_hypothesis_registered",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#380",
+    "primary_issue": "#383",
     "active_prs": [],
     "open_blockers": []
   }
