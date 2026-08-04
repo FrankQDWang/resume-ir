@@ -1,25 +1,48 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_selected",
-  "experiment_state": "hypothesis_registered",
-  "evidence_lane": "w0_docs",
+  "workflow_state": "evidence_review",
+  "experiment_state": "accepted",
+  "evidence_lane": "w1_private",
   "contract_pins": {
-    "active_goal_sha256": "4741d0ac920e9d61e61ec14c3af80b1251da57a95a3b1021b2183fb2143ef82d",
+    "active_goal_sha256": "0c0bef53b60e9deebe277b04e7488d002bc08612b8333c789064c72271e964da",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "05e8bed61aea8f3c9461d6030b80e6183245efc0"
+    "git_head_sha": "2ef5fbb928fbdee000162f91c390cec9b03b07a8"
   },
   "current_slice": "#383 native Core ML macOS ARM production default",
   "hypothesis": {
     "id": "issue-383-native-coreml-macos-arm-production-default",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "one complete OCR-enabled 8720-document production-composition import finishes at or below 311.950 seconds without a manual Core ML experiment switch, preserving the accepted 297.095-second local baseline within 5 percent while publication, lifecycle, resource and ten-query guards pass; no two-run mean or cross-device claim is made",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/383#issuecomment-5174468505"
+    "expected_effect": "the merged macOS ARM production bundle selects the attested Core ML worker and fixed B1x512 and B4x512 models by default, and one complete OCR-enabled 8720-document product-composition import finishes at or below 311.950 seconds while publication, lifecycle, resource and bounded real-query guards pass",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/383#issuecomment-5174468505",
+    "after_measurement_ref": "PROGRESS.md#issue-383-native-core-ml-macos-arm-production-default-closeout",
+    "reprofile_ref": "https://github.com/FrankQDWang/resume-ir/pull/388",
+    "decision": "accepted"
   },
   "transition_history": [
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-383-native-core-ml-macos-arm-production-default-closeout"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/388"
+    },
+    {
+      "from": "branch_active",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/388"
+    },
+    {
+      "from": "slice_selected",
+      "to": "branch_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/pull/388"
+    },
     {
       "from": "evidence_review",
       "to": "slice_selected",
@@ -3316,7 +3339,15 @@
       {"command":"Issue #380 ten-block 80-sample-per-arm public-synthetic fixed B4x512 tensor screen","exit_code":0,"evidence_ref":"PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result"},
       {"command":"performance, autonomous, loop, governance, Python compile, Swift compile, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result"},
       {"command":"./scripts/ci/verify-local.sh stopped on missing reviewed classifier test runtime pack","exit_code":101,"evidence_ref":"PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result"},
-      {"command":"untouched merged-main exact daemon watcher test reproduced the identical missing classifier test runtime pack","exit_code":101,"evidence_ref":"PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result"}
+      {"command":"untouched merged-main exact daemon watcher test reproduced the identical missing classifier test runtime pack","exit_code":101,"evidence_ref":"PROGRESS.md#issue-380-native-core-ml-fixed-b4x512-tensor-experiment-result"},
+      {"command":"signed macOS ARM production bundle composition and digest verification","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/388"},
+      {"command":"Issue #383 OCR-enabled 8720-document production-composition no-OCR-drain import","exit_code":0,"evidence_ref":"PROGRESS.md#issue-383-native-core-ml-macos-arm-production-default-closeout"},
+      {"command":"Issue #383 ten-intent semantic and hybrid production query review","exit_code":0,"evidence_ref":"PROGRESS.md#issue-383-native-core-ml-macos-arm-production-default-closeout"},
+      {"command":"focused embedding runtime, daemon runtime-pack and desktop composition suites","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/388"},
+      {"command":"performance, autonomous, loop, governance, PR-budget, format, diff and public-repository gates","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/388"},
+      {"command":"./scripts/ci/verify-local.sh stopped on unchanged search-publication handoff timing assertion","exit_code":101,"evidence_ref":"PROGRESS.md#issue-383-native-core-ml-macos-arm-production-default-closeout"},
+      {"command":"exact unchanged search-publication handoff timing test isolated rerun","exit_code":0,"evidence_ref":"PROGRESS.md#issue-383-native-core-ml-macos-arm-production-default-closeout"},
+      {"command":"Hosted PR Lite","exit_code":0,"evidence_ref":"https://github.com/FrankQDWang/resume-ir/pull/388"}
     ],
     "all_required_commands_ran": true,
     "claim": "pass"
@@ -3330,11 +3361,11 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-383-native-coreml-local-product-path-2026-08-04",
-  "state_version": 617,
-  "previous_state_hash": "0f04ac3d897e6be9a1d80eafe0f7f09f007b58d2bff19d7c19009383fb9b322b",
-  "expected_state_version": 617,
-  "last_confirmed_side_effect": "issue_383_owner_directed_coreml_production_default_registered",
+  "run_id": "issue-383-native-coreml-production-default-2026-08-04",
+  "state_version": 618,
+  "previous_state_hash": "29637a4ada2c4a8a0949a55bc84da863538d2f4194dc4cb4a51dc1397821363e",
+  "expected_state_version": 618,
+  "last_confirmed_side_effect": "issue_383_production_default_pr_388_merged_and_formal_witness_accepted",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {

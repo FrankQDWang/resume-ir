@@ -1,5 +1,40 @@
 # Progress
 
+## Issue #383 native Core ML macOS ARM production-default closeout
+
+PR #388 is merged. The signed macOS ARM application now bundles the attested
+Core ML worker plus fixed B1x512 and B4x512 model resources, supplies their
+bundle-relative paths automatically, and selects
+`intfloat-multilingual-e5-small-coreml-fp16-r1` as the production embedding
+model identity without an experiment switch. The existing interactive plus two
+bulk resident composition, whole-head 512 input, bulk B4 grouping, publication
+semantics and lifecycle ownership remain unchanged.
+
+The formal OCR-enabled 8,720-document production-composition import finished at
+the established no-OCR-drain endpoint in 298.570 seconds versus the retained
+513.675-second #372 ORT baseline, reducing wall time by 41.876%. It discovered
+8,720 documents, atomically published 7,328 searchable documents and vectors,
+left 265 documents in the running OCR backlog, recorded four failed and 49
+ignored documents with zero scan errors, and peaked at 2,502.094 MiB under the
+3,072 MiB H2 ceiling. Shutdown was graceful with zero lingering processes.
+
+The bounded production query review sent ten recruitment intents through both
+semantic and hybrid search. All 20 requests succeeded; 19 returned a full Top
+10; no response had an empty snippet or duplicate document. Manual review found
+the main recruitment clusters appropriate and no global retrieval-quality
+collapse. Two broad intents were weaker, and one semantic-only multi-condition
+request was empty while its hybrid form returned reasonable candidates. This
+is sufficient for the registered product sanity guard, but it is not a
+`query_hot_path`, perfect-relevance or cross-device claim. Raw queries and
+candidate results remain local.
+
+Focused Rust and desktop composition suites, signed bundle verification,
+performance/autonomous/loop/governance contracts, PR budget, formatting, diff
+and public-boundary checks passed. The broad local suite encountered one
+unchanged search-publication timing race; its exact isolated rerun passed. The
+Hosted PR Lite gate passed before normal protected merge. Issue #383 is accepted
+and closed here; future backend or model work requires a new bounded Issue.
+
 ## Issue #383 owner-directed Core ML production-default migration
 
 The first complete OCR-enabled 8,720-document Core ML product witness finished
