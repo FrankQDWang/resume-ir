@@ -329,6 +329,7 @@ async function resolveNativeSigningTargets(appBundle) {
     "resume-daemon",
     "resume-embedding-runtime",
     "resume-pdf-render-runtime",
+    "resume-coreml-embedding-worker",
   ];
   const components = [
     { target: appBundle, kind: "directory" },

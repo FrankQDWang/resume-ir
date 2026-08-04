@@ -32,6 +32,7 @@ const EXECUTABLES = Object.freeze([
   Object.freeze({ role: "daemon", file: "resume-daemon" }),
   Object.freeze({ role: "embedding_runtime", file: "resume-embedding-runtime" }),
   Object.freeze({ role: "pdf_renderer", file: "resume-pdf-render-runtime" }),
+  Object.freeze({ role: "coreml_worker", file: "resume-coreml-embedding-worker" }),
 ]);
 const RUNTIME_MANIFESTS = Object.freeze([
   Object.freeze({
@@ -43,6 +44,11 @@ const RUNTIME_MANIFESTS = Object.freeze([
     role: "embedding",
     file: "embedding/runtime-pack/runtime-pack.json",
     schema: "resume-ir.embedding-runtime-pack.v1",
+  }),
+  Object.freeze({
+    role: "coreml_embedding",
+    file: "embedding/runtime-pack/coreml/runtime-pack.json",
+    schema: "resume-ir.coreml-embedding-runtime-pack.v1",
   }),
   Object.freeze({
     role: "ocr",
@@ -459,9 +465,11 @@ async function verifyRuntimePack(manifestFile, expected) {
     }
   }
   const expectedFiles = ["runtime-pack.json", ...files].sort();
+  const actualFiles = (await recursiveFiles(path.dirname(manifestFile))).filter(
+    (file) => expected.role !== "embedding" || !file.startsWith("coreml/"),
+  );
   if (
-    JSON.stringify(await recursiveFiles(path.dirname(manifestFile))) !==
-    JSON.stringify(expectedFiles)
+    JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)
   ) {
     throw evidenceError("bundle composition runtime pack is invalid");
   }

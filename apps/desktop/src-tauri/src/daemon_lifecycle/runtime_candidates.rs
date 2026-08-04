@@ -6,6 +6,8 @@ const DESKTOP_IMPORT_RESCAN_MIN_AGE_SECONDS: i64 = 300;
 #[cfg(any(not(debug_assertions), test))]
 const PACKAGED_EMBEDDING_MODEL_ID: &str = "intfloat-multilingual-e5-small-qint8-r1";
 #[cfg(any(not(debug_assertions), test))]
+const PACKAGED_COREML_MODEL_ID: &str = "intfloat-multilingual-e5-small-coreml-fp16-r1";
+#[cfg(any(not(debug_assertions), test))]
 const PACKAGED_EMBEDDING_DIMENSION: usize = 384;
 const PACKAGED_OCR_LANG: &str = "eng+chi_sim";
 const OCR_JOBS_PER_TICK: usize = 1;
@@ -20,6 +22,8 @@ pub(super) struct EmbeddingRuntime {
     model_id: String,
     dimension: usize,
     resource_dir: Option<PathBuf>,
+    coreml_worker: Option<PathBuf>,
+    coreml_runtime_dir: Option<PathBuf>,
 }
 
 impl EmbeddingRuntime {
@@ -29,6 +33,11 @@ impl EmbeddingRuntime {
             .env("HF_HUB_OFFLINE", "1");
         if let Some(resource_dir) = &self.resource_dir {
             command.env("RESUME_IR_EMBEDDING_RUNTIME_DIR", resource_dir);
+        }
+        if let (Some(worker), Some(runtime_dir)) = (&self.coreml_worker, &self.coreml_runtime_dir) {
+            command
+                .env("RESUME_IR_COREML_WORKER_BIN", worker)
+                .env("RESUME_IR_COREML_RUNTIME_DIR", runtime_dir);
         }
     }
 }
@@ -82,6 +91,8 @@ pub(super) fn configured_embedding_runtime(
         model_id,
         dimension,
         resource_dir: None,
+        coreml_worker: bounded_env_path("RESUME_IR_COREML_WORKER_BIN"),
+        coreml_runtime_dir: bounded_env_path("RESUME_IR_COREML_RUNTIME_DIR"),
     })
 }
 
@@ -90,11 +101,20 @@ pub(super) fn configured_embedding_runtime(
     current_exe: &Path,
     resource_dir: &Path,
 ) -> Option<EmbeddingRuntime> {
+    let coreml = cfg!(all(target_os = "macos", target_arch = "aarch64"));
+    let binary_dir = current_exe.parent()?;
     Some(EmbeddingRuntime {
-        command: current_exe.parent()?.join(embedding_binary_name()),
-        model_id: PACKAGED_EMBEDDING_MODEL_ID.to_string(),
+        command: binary_dir.join(embedding_binary_name()),
+        model_id: if coreml {
+            PACKAGED_COREML_MODEL_ID
+        } else {
+            PACKAGED_EMBEDDING_MODEL_ID
+        }
+        .to_string(),
         dimension: PACKAGED_EMBEDDING_DIMENSION,
         resource_dir: Some(resource_dir.to_path_buf()),
+        coreml_worker: coreml.then(|| binary_dir.join(coreml_worker_name())),
+        coreml_runtime_dir: coreml.then(|| resource_dir.join("coreml")),
     })
 }
 
@@ -234,6 +254,11 @@ fn embedding_binary_name() -> &'static str {
 }
 
 #[cfg(not(debug_assertions))]
+fn coreml_worker_name() -> &'static str {
+    "resume-coreml-embedding-worker"
+}
+
+#[cfg(not(debug_assertions))]
 fn pdf_renderer_binary_name() -> &'static str {
     if cfg!(windows) {
         "resume-pdf-render-runtime.exe"
@@ -290,6 +315,8 @@ mod tests {
             model_id: PACKAGED_EMBEDDING_MODEL_ID.to_string(),
             dimension: PACKAGED_EMBEDDING_DIMENSION,
             resource_dir: Some(PathBuf::from("/tampered/runtime-pack")),
+            coreml_worker: None,
+            coreml_runtime_dir: None,
         };
         let ocr = OcrRuntime {
             engine_command: PathBuf::from("/missing/tesseract"),
@@ -313,5 +340,32 @@ mod tests {
         assert!(arguments.contains(&OsString::from("/missing/embedding-runtime")));
         assert!(arguments.contains(&OsString::from("/missing/tesseract")));
         assert!(arguments.contains(&OsString::from("/tampered/classifier.json")));
+    }
+
+    #[test]
+    fn coreml_default_coordinates_are_injected_into_the_daemon_environment() {
+        let embedding = EmbeddingRuntime {
+            command: PathBuf::from("/bundle/resume-embedding-runtime"),
+            model_id: PACKAGED_COREML_MODEL_ID.to_string(),
+            dimension: PACKAGED_EMBEDDING_DIMENSION,
+            resource_dir: Some(PathBuf::from("/bundle/embedding/runtime-pack")),
+            coreml_worker: Some(PathBuf::from("/bundle/resume-coreml-embedding-worker")),
+            coreml_runtime_dir: Some(PathBuf::from("/bundle/embedding/runtime-pack/coreml")),
+        };
+        let mut command = Command::new("/bundle/resume-daemon");
+        embedding.configure_command(&mut command);
+        let environment = command
+            .get_envs()
+            .map(|(name, value)| (name.to_owned(), value.map(OsString::from)))
+            .collect::<std::collections::BTreeMap<_, _>>();
+
+        assert_eq!(
+            environment.get(std::ffi::OsStr::new("RESUME_IR_COREML_WORKER_BIN")),
+            Some(&Some(OsString::from("/bundle/resume-coreml-embedding-worker")))
+        );
+        assert_eq!(
+            environment.get(std::ffi::OsStr::new("RESUME_IR_COREML_RUNTIME_DIR")),
+            Some(&Some(OsString::from("/bundle/embedding/runtime-pack/coreml")))
+        );
     }
 }

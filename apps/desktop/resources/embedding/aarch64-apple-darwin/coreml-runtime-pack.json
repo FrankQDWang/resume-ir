@@ -1,0 +1,27 @@
+{
+  "schema_version": "resume-ir.coreml-embedding-runtime-pack.v1",
+  "runtime_pack_id": "intfloat-multilingual-e5-small-coreml-fp16-r1",
+  "model_id": "intfloat-multilingual-e5-small-coreml-fp16-r1",
+  "upstream_model_id": "intfloat/multilingual-e5-small",
+  "upstream_revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+  "dimension": 384,
+  "provider": "coreml",
+  "compute_units": "all",
+  "network_access": "disabled",
+  "license_reviewed": true,
+  "model_license": "MIT",
+  "target_triple": "aarch64-apple-darwin",
+  "fixed_shapes": ["B1x512", "B4x512"],
+  "files": [
+    {"role":"interactive_analytics","file":"e5-b1x512.mlmodelc/analytics/coremldata.bin","bytes":243,"sha256":"bd65816f677e9e8657902ee40eb94e1d93ee6817571f8fe820a3ca89b08f26e5"},
+    {"role":"interactive_core_data","file":"e5-b1x512.mlmodelc/coremldata.bin","bytes":421,"sha256":"a2c5baceca2dd3a4113757a83ffc8c907ae895e03b943a1678040615a61b59b1"},
+    {"role":"interactive_metadata","file":"e5-b1x512.mlmodelc/metadata.json","bytes":2418,"sha256":"266e7397874c8385431ecc35da375f09066bbb67287c55e1de131eb1eefa7975"},
+    {"role":"interactive_model","file":"e5-b1x512.mlmodelc/model.mil","bytes":131086,"sha256":"c79a28ea478b4623daf91f48247905de6867b8a0f2bb20645cc33f5ce7a6672d"},
+    {"role":"interactive_weights","file":"e5-b1x512.mlmodelc/weights/weight.bin","bytes":235416192,"sha256":"85f2d1618a9085c27a132955148f72b0223f213e0355f848e53f4da0e2e97d1e"},
+    {"role":"bulk_analytics","file":"e5-b4x512.mlmodelc/analytics/coremldata.bin","bytes":243,"sha256":"97284ff40e122423bd0651ddd2363de243b395f08a15e5dae90e9b3fd56d4a12"},
+    {"role":"bulk_core_data","file":"e5-b4x512.mlmodelc/coremldata.bin","bytes":421,"sha256":"3344bece576df1879f5324537e0fbe963b38e3e87193b37118f30561520bf22e"},
+    {"role":"bulk_metadata","file":"e5-b4x512.mlmodelc/metadata.json","bytes":2418,"sha256":"cf41fe396deaaf018210eb3d3aef0f73754e8bd45f256af9a35bcd79e97b80f6"},
+    {"role":"bulk_model","file":"e5-b4x512.mlmodelc/model.mil","bytes":131086,"sha256":"9c28b69219428b4fe66d0d0ba289204e46b6fa2fbc182a37abfde7359ce225a7"},
+    {"role":"bulk_weights","file":"e5-b4x512.mlmodelc/weights/weight.bin","bytes":237775488,"sha256":"c288d069a7a39fa013a4f663b3e259f7b806d65389ba82bf938a76c8c39f1d9f"}
+  ]
+}

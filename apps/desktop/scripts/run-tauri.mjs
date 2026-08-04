@@ -64,14 +64,13 @@ export function selectTauriEnvironment({
     : environment;
 }
 
-export function withDesktopComposition(cliArguments, bundleConfig) {
+export function withDesktopComposition(cliArguments, ...configurations) {
   if (!["build", "dev"].includes(cliArguments[0])) return cliArguments;
   const delimiter = cliArguments.indexOf("--");
   const insertion = delimiter === -1 ? cliArguments.length : delimiter;
   return [
     ...cliArguments.slice(0, insertion),
-    "--config",
-    bundleConfig,
+    ...configurations.filter(Boolean).flatMap((config) => ["--config", config]),
     ...cliArguments.slice(insertion),
   ];
 }
@@ -82,6 +81,9 @@ function main() {
   const effectiveArguments = withDesktopComposition(
     cliArguments,
     path.join(frontendRoot, "src-tauri", "tauri.bundle.conf.json"),
+    process.platform === "darwin"
+      ? path.join(frontendRoot, "src-tauri", "tauri.macos.conf.json")
+      : undefined,
   );
   const environment = selectTauriEnvironment({
     arguments: cliArguments,

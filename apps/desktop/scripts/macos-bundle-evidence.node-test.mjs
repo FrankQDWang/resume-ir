@@ -82,6 +82,7 @@ async function bundleFixture(
   for (const directory of [
     "classifier/runtime-pack",
     "embedding/runtime-pack",
+    "embedding/runtime-pack/coreml",
     "ocr/runtime-pack",
     "pdfium/runtime-pack",
   ]) {
@@ -105,12 +106,33 @@ async function bundleFixture(
     "resume-daemon",
     "resume-embedding-runtime",
     "resume-pdf-render-runtime",
+    "resume-coreml-embedding-worker",
   ]) {
     await writeExecutable(
       path.join(macos, executable),
       syntheticMachO(`synthetic-${executable}`),
     );
   }
+  const coreMlDirectory = path.join(
+    resources,
+    "embedding",
+    "runtime-pack",
+    "coreml",
+  );
+  const coreMlPayload = Buffer.from("synthetic-coreml-payload");
+  await writeFile(path.join(coreMlDirectory, "model.bin"), coreMlPayload);
+  await writeFile(
+    path.join(coreMlDirectory, "runtime-pack.json"),
+    `${JSON.stringify({
+      schema_version: "resume-ir.coreml-embedding-runtime-pack.v1",
+      files: [{
+        role: "model",
+        file: "model.bin",
+        bytes: coreMlPayload.length,
+        sha256: sha256(coreMlPayload),
+      }],
+    })}\n`,
+  );
   for (const pack of ["classifier", "embedding", "ocr"]) {
     const packDirectory = path.join(resources, pack, "runtime-pack");
     const payload = Buffer.from(`synthetic-${pack}-payload`);
@@ -246,9 +268,9 @@ test("writes and verifies one canonical version-bound bundle composition", async
   });
 
   assert.deepEqual(verified, expected);
-  assert.equal(verified.executables.length, 4);
-  assert.equal(verified.runtime_manifests.length, 4);
-  assert.equal(verified.app_files.length, 18);
+  assert.equal(verified.executables.length, 5);
+  assert.equal(verified.runtime_manifests.length, 5);
+  assert.equal(verified.app_files.length, 21);
   assert.equal(
     verified.app_files.some(({ file }) => file === "Contents/Info.plist"),
     true,

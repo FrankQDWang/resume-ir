@@ -143,6 +143,10 @@ export async function verifyAdHocSignedApp({
         target: path.join(macosDirectory, "resume-pdf-render-runtime"),
         bundle: false,
       },
+      {
+        target: path.join(macosDirectory, "resume-coreml-embedding-worker"),
+        bundle: false,
+      },
     ];
     for (const { target, bundle } of targets) {
       await validateSignedTarget(target);
@@ -418,6 +422,10 @@ export async function verifyMacosInternalTestEntitlements({
     },
     {
       target: path.join(macosDirectory, "resume-pdf-render-runtime"),
+      expected: false,
+    },
+    {
+      target: path.join(macosDirectory, "resume-coreml-embedding-worker"),
       expected: false,
     },
   ];

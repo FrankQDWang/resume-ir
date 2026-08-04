@@ -74,6 +74,7 @@ async function createMountedLayout(root, { withComposition = false } = {}) {
   for (const directory of [
     "classifier/runtime-pack",
     "embedding/runtime-pack",
+    "embedding/runtime-pack/coreml",
     "ocr/runtime-pack",
     "pdfium/runtime-pack",
   ]) {
@@ -97,11 +98,32 @@ async function createMountedLayout(root, { withComposition = false } = {}) {
     "resume-daemon",
     "resume-embedding-runtime",
     "resume-pdf-render-runtime",
+    "resume-coreml-embedding-worker",
   ]) {
     const executablePath = path.join(macosDirectory, executable);
     await writeFile(executablePath, syntheticMachO(`synthetic-${executable}`));
     await chmod(executablePath, 0o755);
   }
+  const coreMlDirectory = path.join(
+    resourcesDirectory,
+    "embedding",
+    "runtime-pack",
+    "coreml",
+  );
+  const coreMlPayload = Buffer.from("synthetic-coreml-payload");
+  await writeFile(path.join(coreMlDirectory, "model.bin"), coreMlPayload);
+  await writeFile(
+    path.join(coreMlDirectory, "runtime-pack.json"),
+    `${JSON.stringify({
+      schema_version: "resume-ir.coreml-embedding-runtime-pack.v1",
+      files: [{
+        role: "model",
+        file: "model.bin",
+        bytes: coreMlPayload.length,
+        sha256: sha256(coreMlPayload),
+      }],
+    })}\n`,
+  );
   for (const pack of ["classifier", "embedding", "ocr"]) {
     const packDirectory = path.join(resourcesDirectory, pack, "runtime-pack");
     const payload = Buffer.from(`synthetic-${pack}-payload`);

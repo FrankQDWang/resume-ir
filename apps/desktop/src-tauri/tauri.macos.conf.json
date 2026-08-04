@@ -2,6 +2,12 @@
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
     "targets": ["dmg"],
+    "externalBin": [
+      "../../../target/tauri-sidecars/resume-daemon",
+      "../../../target/tauri-sidecars/resume-embedding-runtime",
+      "../../../target/tauri-sidecars/resume-pdf-render-runtime",
+      "../../../target/tauri-sidecars/resume-coreml-embedding-worker"
+    ],
     "icon": ["icons/icon.icns"],
     "macOS": {
       "signingIdentity": "-",
