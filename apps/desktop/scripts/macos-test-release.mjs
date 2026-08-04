@@ -329,8 +329,14 @@ async function resolveNativeSigningTargets(appBundle) {
     "resume-daemon",
     "resume-embedding-runtime",
     "resume-pdf-render-runtime",
-    "resume-coreml-embedding-worker",
   ];
+  if (
+    await lstat(
+      path.join(macosDirectory, "resume-coreml-embedding-worker"),
+    ).catch(() => null)
+  ) {
+    executableNames.push("resume-coreml-embedding-worker");
+  }
   const components = [
     { target: appBundle, kind: "directory" },
     { target: contents, kind: "directory" },
@@ -765,7 +771,12 @@ export async function buildMacosInternalTestRelease({
   verifyDmg = verifyMacosDmg,
   verifySource = resolveMacosBuildSource,
 }) {
-  if (!path.isAbsolute(repoRoot) || !path.isAbsolute(runTauri)) {
+  const edition = environment.RESUME_IR_MACOS_EMBEDDING_PROVIDER ?? "coreml";
+  if (
+    !path.isAbsolute(repoRoot) ||
+    !path.isAbsolute(runTauri) ||
+    !new Set(["coreml", "onnx"]).has(edition)
+  ) {
     throw releaseError(
       "release_contract_invalid",
       "macOS test release paths are invalid",
