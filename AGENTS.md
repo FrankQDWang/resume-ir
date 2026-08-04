@@ -35,6 +35,7 @@
   record the configured machine terminal/blocking state instead of asking for
   routine approval.
 - One task has one execution owner.
+- Standard macOS entrypoints: use `npm run bundle:macos:worktree --prefix apps/desktop` for production releases and only `python3 scripts/local/coreml-product-path-experiment.py ...` for local full-import experiments; never substitute one for the other.
 - For current-state, release-readiness, blocker, or gap questions, start with a
   read-only pass and report fresh evidence before proposing remediation.
 
