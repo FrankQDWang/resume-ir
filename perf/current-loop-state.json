@@ -1,28 +1,33 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "evidence_review",
-  "experiment_state": "reverted",
-  "evidence_lane": "w1_private",
+  "workflow_state": "slice_active",
+  "experiment_state": "hypothesis_registered",
+  "evidence_lane": "gui_manual",
   "contract_pins": {
-    "active_goal_sha256": "9ef80fa072529dec6625fbb295f18add67c67e536aca1f822f09b842f823ff83",
+    "active_goal_sha256": "527d6f6f02383aa5f4abbb0e374ff8d67cc5c63ad808699ac1444b12a7629b44",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "89d7802e434fa9760dc83dde45d199b6b27e765e"
+    "git_head_sha": "0ef6ff354f28596c2e1baaa255760361ef1ddc73"
   },
-  "current_slice": "#409 deduplicate Core ML B1/B4 weights with a multifunction model",
+  "current_slice": "#412 normalize macOS icon optical size and smooth import-stage motion",
   "hypothesis": {
-    "id": "issue-409-coreml-multifunction-shared-weights",
-    "acceptance_cell": "w0_docs",
-    "expected_effect": "one macOS 15 multifunction MLProgram shares the existing fixed B1x512 and B4x512 E5 weights, reduces the Core ML-only DMG to at most 320000000 bytes, and preserves warm inference plus the full-product endpoint within 5 percent",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/409",
-    "after_measurement_ref": "PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback",
-    "reprofile_ref": "PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback",
-    "decision": "reverted"
+    "id": "issue-412-gui-optical-motion",
+    "acceptance_cell": "gui_manual",
+    "expected_effect": "the unchanged icon artwork has a smaller centered macOS optical footprint and each complete observed import-stage sentence enters with continuous motion instead of discrete character steps",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/412",
+    "after_measurement_ref": "pending",
+    "reprofile_ref": "not_applicable_frontend_contract_slice",
+    "decision": "pending"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/412"
+    },
     {
       "from": "slice_selected",
       "to": "evidence_review",
@@ -3488,15 +3493,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-409-coreml-multifunction-rollback-2026-08-04",
-  "state_version": 636,
-  "previous_state_hash": "3e6fcf11841b3964a7a0fa82f1f8e486dbc73ae904e1af5a32c58e9450c0df63",
-  "expected_state_version": 636,
-  "last_confirmed_side_effect": "multifunction_full_import_rejected_and_production_rollback_complete",
+  "run_id": "issue-412-gui-optical-motion-2026-08-04",
+  "state_version": 637,
+  "previous_state_hash": "2e439fc83a4a1c84c1e1e6f0d71f4a397362d2b2b62cff0ca43f7a45a2533611",
+  "expected_state_version": 637,
+  "last_confirmed_side_effect": "issue_412_opened_and_gui_optical_motion_hypothesis_registered",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#409",
+    "primary_issue": "#412",
     "active_prs": [],
     "open_blockers": []
   }

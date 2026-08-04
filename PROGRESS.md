@@ -1,5 +1,17 @@
 # Progress
 
+## Issue #412 macOS icon and import-stage motion contract
+
+Issue #412 is the only active slice. It preserves the existing icon artwork and
+the truthful backend-derived import projection while correcting two bounded
+visual defects: the macOS icon optical footprint is reduced and centered, and
+the import-stage sentence no longer uses discrete character-step clipping.
+The replacement motion keeps the complete sentence stable, uses a short
+continuous entrance with a restrained light sweep, replaces stale stage motion,
+respects reduced-motion, and retains one complete polite assistive-technology
+announcement. No Rust, API, IPC, persistence, indexing, model, polling,
+progress truth, private benchmark, Windows or Linux work is authorized.
+
 ## Issue #409 Core ML multifunction shared-weight result and rollback
 
 The multifunction representation itself passed its bounded screen. One compiled
