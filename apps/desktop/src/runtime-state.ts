@@ -149,6 +149,7 @@ export interface LifecycleFocusEvents {
 export function startSerialLifecyclePolling(input: {
   readSnapshot: () => Promise<DaemonLifecycleSnapshot>
   onSnapshot: (snapshot: DaemonLifecycleSnapshot) => void | Promise<void>
+  pollDelayMs?: (snapshot: DaemonLifecycleSnapshot) => number
   onError: (error: unknown) => void
   clock: LifecyclePollClock
   focusEvents: LifecycleFocusEvents
@@ -178,8 +179,8 @@ export function startSerialLifecyclePolling(input: {
     try {
       const snapshot = await input.readSnapshot()
       if (stopped) return
-      delayMs = lifecyclePollDelayMs(snapshot.state)
       await input.onSnapshot(snapshot)
+      delayMs = input.pollDelayMs?.(snapshot) ?? lifecyclePollDelayMs(snapshot.state)
     } catch (error) {
       if (!stopped) input.onError(error)
     } finally {

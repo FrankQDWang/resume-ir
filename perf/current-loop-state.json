@@ -5,24 +5,44 @@
   "experiment_state": "correctness_passed",
   "evidence_lane": "gui_manual",
   "contract_pins": {
-    "active_goal_sha256": "adae540a719757d90d0d4ad4ad404f0751e707c47762f7cee08bd3478607899f",
+    "active_goal_sha256": "3483b6773a654a1b75c227921a92eaab3587696c9c192fb4099e4573e09b63fc",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "e25b01db07e588ebd56aa11bb1c6f95f2163109b"
+    "git_head_sha": "282856021a49cd03b1d7c651773e69f59490fbc8"
   },
-  "current_slice": "#415 continuous import progress and safe active-root deletion",
+  "current_slice": "#417 single authoritative managed-root progress presentation",
   "hypothesis": {
-    "id": "issue-415-continuous-import-progress-and-safe-root-deletion",
+    "id": "issue-417-single-managed-root-progress-owner",
     "acceptance_cell": "gui_manual",
-    "expected_effect": "active stage text and exact progress remain fluid, strict keyword readiness stays truthful, and active OCR is cancelled and quiesced before source-root deletion purges durable jobs",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/415",
+    "expected_effect": "one phase interpretation and one serial scheduler remove duplicate status paths while keeping exact progress responsive and transient deletion reads truthful",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/417",
     "after_measurement_ref": "pending",
     "reprofile_ref": "not_applicable_correctness_slice",
     "decision": "pending"
   },
   "transition_history": [
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#issue-417-implementation-and-local-verification"
+    },
+    {
+      "from": "slice_active",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/417"
+    },
+    {
+      "from": "evidence_review",
+      "to": "slice_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/417"
+    },
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/415#issuecomment-5181295241"
+    },
     {
       "from": "evidence_review",
       "to": "slice_active",
@@ -3507,7 +3527,11 @@
       {"command":"Issue #415 frontend Vitest, motion checks and production build","exit_code":0,"evidence_ref":"PROGRESS.md#issue-415-implementation-and-focused-verification"},
       {"command":"Issue #415 daemon unit tests, warnings-denied Clippy and OCR quiescence regression","exit_code":0,"evidence_ref":"PROGRESS.md#issue-415-implementation-and-focused-verification"},
       {"command":"./scripts/ci/verify-local.sh","exit_code":0,"evidence_ref":"PROGRESS.md#issue-415-implementation-and-focused-verification"},
-      {"command":"existing native deletion integration readiness on branch and untouched main","exit_code":101,"evidence_ref":"PROGRESS.md#issue-415-implementation-and-focused-verification"}
+      {"command":"existing native deletion integration readiness on branch and untouched main","exit_code":101,"evidence_ref":"PROGRESS.md#issue-415-implementation-and-focused-verification"},
+      {"command":"Issue #417 desktop Vitest and production frontend build","exit_code":0,"evidence_ref":"PROGRESS.md#issue-417-implementation-and-local-verification"},
+      {"command":"Issue #417 performance, autonomous, loop, governance, PR-budget, diff and public-repository gates","exit_code":0,"evidence_ref":"PROGRESS.md#issue-417-implementation-and-local-verification"},
+      {"command":"./scripts/ci/verify-local.sh stopped on unchanged daemon watcher configuration_invalid","exit_code":101,"evidence_ref":"PROGRESS.md#issue-417-implementation-and-local-verification"},
+      {"command":"untouched main@2828560 exact daemon watcher reproduced configuration_invalid","exit_code":101,"evidence_ref":"PROGRESS.md#issue-417-implementation-and-local-verification"}
     ],
     "all_required_commands_ran": true,
     "claim": "pass"
@@ -3521,15 +3545,15 @@
     "contains_diagnostics_package": false
   },
   "platform_lane": "macos_m4_discovery",
-  "run_id": "issue-415-continuous-import-progress-and-safe-root-deletion-2026-08-04",
-  "state_version": 640,
+  "run_id": "issue-417-single-managed-root-progress-owner-2026-08-04",
+  "state_version": 642,
   "previous_state_hash": "ec6d1e8e55379fb3cbda801008f6376371e6de79ad31eb328d552698597ecd7f",
-  "expected_state_version": 640,
-  "last_confirmed_side_effect": "issue_415_focused_and_full_local_verification_completed",
+  "expected_state_version": 642,
+  "last_confirmed_side_effect": "issue_417_frontend_implementation_and_local_verification_completed",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
-    "primary_issue": "#415",
+    "primary_issue": "#417",
     "active_prs": [],
     "open_blockers": []
   }

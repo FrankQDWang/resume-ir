@@ -11,6 +11,7 @@ import {
   type StatusBody,
 } from "./daemon"
 import { indexServicePresentation, lifecycleMessage, type RuntimeView } from "./daemon-health"
+import { hasActiveManagedRootScan } from "./import-progress"
 import {
   captureDaemonActionAuthority,
   captureLifecycleReadability,
@@ -39,54 +40,26 @@ export type RootControlState = "loading" | "unmanaged" | "active" | "paused" | "
 export type ManagedRootsReadFailure = "overload" | "error" | null
 export type ManagedRootsRefreshOutcome = Exclude<ManagedRootsReadFailure, null> | "success"
 
-const ACTIVE_SOURCE_SCAN_PHASES = new Set([
-  "queued",
-  "discovering",
-  "fingerprinting",
-  "classifying",
-  "parsing",
-  "ocr",
-  "publishing",
-])
-
-export function hasActiveManagedRootScan(roots: SourceRoot[]): boolean {
-  return roots.some((root) =>
-    root.last_scan !== null && ACTIVE_SOURCE_SCAN_PHASES.has(root.last_scan.phase),
-  )
+export interface ManagedRootsReadState {
+  consecutiveFailures: number
+  visibleFailure: ManagedRootsReadFailure
 }
 
-export function startSerialManagedRootsPolling(input: {
-  refresh(): Promise<void>
-  clock: {
-    setTimeout(callback: () => void, delayMs: number): number
-    clearTimeout(timer: number): void
-  }
-}): () => void {
-  let stopped = false
-  let timer: number | null = null
-  const schedule = () => {
-    if (stopped) return
-    timer = input.clock.setTimeout(() => { void poll() }, 1000)
-  }
-  const poll = async () => {
-    timer = null
-    try {
-      await input.refresh()
-    } finally {
-      schedule()
-    }
-  }
-  schedule()
-  return () => {
-    stopped = true
-    if (timer !== null) input.clock.clearTimeout(timer)
-  }
+export function initialManagedRootsReadState(): ManagedRootsReadState {
+  return { consecutiveFailures: 0, visibleFailure: null }
 }
 
-export function managedRootsReadFailureAfterRefresh(
+export function managedRootsReadStateAfterRefresh(
+  current: ManagedRootsReadState,
   outcome: ManagedRootsRefreshOutcome,
-): ManagedRootsReadFailure {
-  return outcome === "success" ? null : outcome
+  hasAuthoritativeSnapshot: boolean,
+): ManagedRootsReadState {
+  if (outcome === "success") return initialManagedRootsReadState()
+  const consecutiveFailures = current.consecutiveFailures + 1
+  return {
+    consecutiveFailures,
+    visibleFailure: !hasAuthoritativeSnapshot || consecutiveFailures >= 2 ? outcome : null,
+  }
 }
 
 export function sourcePanelBanner(
@@ -279,9 +252,16 @@ export function useDaemonRuntime(input: {
   const statusGenerationRef = useRef<number | null>(input.preview ? 1 : null)
   const resultSnapshot = useRef<ResultSnapshot | null>(input.preview ? { generation: 1, visibleEpoch: 1 } : null)
   const managedRootsGeneration = useRef<number | null>(null)
+  const managedRootsRef = useRef<SourceRoot[]>(input.previewImport ? PREVIEW_MANAGED_ROOTS : [])
+  const managedRootsSnapshotObserved = useRef(input.previewImport)
+  const managedRootsReadStateRef = useRef(initialManagedRootsReadState())
   const retryInFlight = useRef(false)
   const detailObserversRef = useRef<DetailRuntimeObservers>(NO_DETAIL_OBSERVERS)
   const authoritativeStatus = status !== null && statusAuthorityIsCurrent(lifecycle, statusGeneration) ? status : null
+
+  useEffect(() => {
+    managedRootsRef.current = managedRoots
+  }, [managedRoots])
 
   function bindDetailObservers(observers: DetailRuntimeObservers) {
     detailObserversRef.current = observers
@@ -448,7 +428,14 @@ export function useDaemonRuntime(input: {
       if (reply.http_status !== 200 || response.schema_version !== "resume-ir.source-roots.v2" || response.limit !== 16 || response.roots.length > response.limit) {
         throw new Error("managed root contract mismatch")
       }
-      setManagedRootsReadFailure(managedRootsReadFailureAfterRefresh("success"))
+      managedRootsSnapshotObserved.current = true
+      managedRootsReadStateRef.current = managedRootsReadStateAfterRefresh(
+        managedRootsReadStateRef.current,
+        "success",
+        true,
+      )
+      setManagedRootsReadFailure(managedRootsReadStateRef.current.visibleFailure)
+      managedRootsRef.current = response.roots
       setManagedRoots(response.roots)
       setSelectedRoot((current) => {
         const restored = current && response.roots.find((root) => root.root_id === current.root_id)
@@ -483,23 +470,14 @@ export function useDaemonRuntime(input: {
       ])))
     } catch (error) {
       const overload = bridgeFailureKind(error) === "overload"
-      setManagedRootsReadFailure(managedRootsReadFailureAfterRefresh(overload ? "overload" : "error"))
+      managedRootsReadStateRef.current = managedRootsReadStateAfterRefresh(
+        managedRootsReadStateRef.current,
+        overload ? "overload" : "error",
+        managedRootsSnapshotObserved.current,
+      )
+      setManagedRootsReadFailure(managedRootsReadStateRef.current.visibleFailure)
     }
   }
-
-  const fastManagedRootRefresh = input.sourcePanelOpen
-    && hasActiveManagedRootScan(managedRoots)
-
-  useEffect(() => {
-    if (input.preview || !fastManagedRootRefresh) return
-    return startSerialManagedRootsPolling({
-      refresh: () => refreshManagedRoots(),
-      clock: {
-        setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
-        clearTimeout: (timer) => window.clearTimeout(timer),
-      },
-    })
-  }, [input.preview, fastManagedRootRefresh])
 
   useEffect(() => {
     if (input.preview) return
@@ -512,7 +490,7 @@ export function useDaemonRuntime(input: {
           const authority = await refreshStatus()
           if (authority && actionAuthorityIsCurrent(authority)) {
             const generationChanged = managedRootsGeneration.current !== snapshot.generation
-            if (generationChanged || (input.sourcePanelOpen && !fastManagedRootRefresh)) {
+            if (generationChanged || input.sourcePanelOpen) {
               managedRootsGeneration.current = snapshot.generation
               await refreshManagedRoots(generationChanged)
             }
@@ -525,6 +503,11 @@ export function useDaemonRuntime(input: {
         setConnectionMessage(`生命周期不可读：${bridgeError(error).message}；操作权限已撤销`)
         revokeActionAuthority()
       },
+      pollDelayMs: (snapshot) => snapshot.state !== "running"
+        ? 1000
+        : input.sourcePanelOpen && hasActiveManagedRootScan(managedRootsRef.current)
+          ? 1000
+          : 5000,
       clock: {
         setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
         clearTimeout: (timer) => window.clearTimeout(timer),
@@ -534,7 +517,7 @@ export function useDaemonRuntime(input: {
         removeFocusListener: (listener) => window.removeEventListener("focus", listener),
       },
     })
-  }, [input.preview, input.sourcePanelOpen, fastManagedRootRefresh])
+  }, [input.preview, input.sourcePanelOpen])
 
   return {
     lifecycle,
