@@ -1,25 +1,30 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "implementation_active",
-  "experiment_state": "optimization_slice_active",
+  "workflow_state": "slice_selected",
+  "experiment_state": "hypothesis_registered",
   "evidence_lane": "w0_docs",
   "contract_pins": {
-    "active_goal_sha256": "33a0b6738b4f49a20270fd18d79e364ea075cde294920a2f1f410d08e3bf090b",
+    "active_goal_sha256": "4741d0ac920e9d61e61ec14c3af80b1251da57a95a3b1021b2183fb2143ef82d",
     "acceptance_matrix_sha256": "877b5615da11b5d485e14ef3c0ddc1518b6c7932d9277cfefa8eab60b4d4da6e",
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "0ba7681a9b68c76ee887cff50cac7772b6d9df29"
+    "git_head_sha": "05e8bed61aea8f3c9461d6030b80e6183245efc0"
   },
-  "current_slice": "#383 native Core ML local product-path experiment",
+  "current_slice": "#383 native Core ML macOS ARM production default",
   "hypothesis": {
-    "id": "issue-383-native-coreml-local-product-path",
+    "id": "issue-383-native-coreml-macos-arm-production-default",
     "acceptance_cell": "full_import_ocr_backlog",
-    "expected_effect": "at least two complete OCR-enabled 8720-document candidate imports each finish at or below 436.624 seconds and improve at least 15 percent in the mean versus the retained 513.675-second baseline while publication, lifecycle, resource and ten-query relevance guards pass",
-    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/383"
+    "expected_effect": "one complete OCR-enabled 8720-document production-composition import finishes at or below 311.950 seconds without a manual Core ML experiment switch, preserving the accepted 297.095-second local baseline within 5 percent while publication, lifecycle, resource and ten-query guards pass; no two-run mean or cross-device claim is made",
+    "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/383#issuecomment-5174468505"
   },
   "transition_history": [
+    {
+      "from": "evidence_review",
+      "to": "slice_selected",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/383#issuecomment-5174468505"
+    },
     {
       "from": "branch_active",
       "to": "implementation_active",
@@ -3326,10 +3331,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-383-native-coreml-local-product-path-2026-08-04",
-  "state_version": 616,
+  "state_version": 617,
   "previous_state_hash": "0f04ac3d897e6be9a1d80eafe0f7f09f007b58d2bff19d7c19009383fb9b322b",
-  "expected_state_version": 616,
-  "last_confirmed_side_effect": "issue_383_product_identity_readiness_correction_registered",
+  "expected_state_version": 617,
+  "last_confirmed_side_effect": "issue_383_owner_directed_coreml_production_default_registered",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
