@@ -1,5 +1,28 @@
 # Progress
 
+## Issue #396 truthful streaming import progress and system status contract
+
+Issue #396 is the sole active GUI slice. It moves the existing process/runtime/
+capability matrix from the search home into a dedicated `系统状态` sidebar sheet,
+removes redundant search-page chrome, and leaves the existing lifecycle pill,
+compact index state, search behavior and four-card result density unchanged.
+
+The UI may display backend observations a few seconds late, but it may not
+invent a skipped stage or predict work that the daemon has not confirmed.
+Exact processed/total counters update from the latest snapshot while only the
+visual bar eases toward that observed value. Stage text types only after the
+whole observed message is known, cancels stale animation, respects reduced
+motion and announces the complete message once to assistive technology.
+
+Most importantly, a nonzero searchable count is only partial keyword
+availability. `关键词检索全部可用` requires the current scan to be terminal
+`complete` with complete completeness, the root OCR backlog to be zero, and
+the global `keyword_search` capability to be `available`. Partial/failed scans,
+OCR backlog and unavailable capability can never claim complete readiness;
+non-resume, needs-review and failed counts remain separate. This is a
+frontend-only slice with no Rust, API, IPC, storage, indexing, model, import
+scheduler or performance-threshold change and no private full import.
+
 ## Issue #390 product-composition experiment entrypoint closeout
 
 PR #394 is merged. Local macOS ARM full-import experiments now have one
