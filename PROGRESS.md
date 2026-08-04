@@ -1,5 +1,38 @@
 # Progress
 
+## Issue #390 product-composition experiment entrypoint closeout
+
+PR #394 is merged. Local macOS ARM full-import experiments now have one
+repository-owned entrypoint: `preflight` builds and composes the proved release
+sidecars under their final daemon names, binds the reviewed embedding, Core ML,
+OCR, classifier and PDFium packs, checks runtime and capability readiness, and
+exits before reading any private resume root. `run` then owns fresh data roots,
+exactly one managed-root scan submission, the established no-OCR-drain terminal
+fence, bounded aggregate reporting, optional last-run retention and cleanup.
+
+The exact merged implementation passed private-data-free product preflight with
+embedding, OCR, PDFium and classifier runtimes plus text import, OCR import and
+index publication capabilities all available. The report bound the exact source
+commit, reported `source_dirty=false`, contained no private content and left no
+experiment process or session directory behind. No private full import was run
+in this orchestration slice.
+
+The preflight also found and repaired two predecessor defects rather than
+hiding them: the embedding runtime's stale pre-normalization Core ML manifest
+pin now matches the authoritative packaged manifest, and the controlled OCR
+readiness probe ceiling is 10 seconds after a valid reviewed-pack probe measured
+2.023 seconds and narrowly exceeded the old 2-second ceiling. OCR page/job
+timeouts, runtime identity, import concurrency and product behavior are
+unchanged.
+
+Six deterministic Python tests, focused embedding-runtime and daemon tests, 24
+sidecar composition tests, performance/autonomous/loop/governance checks, the
+complete `verify-local.sh` suite, formatting, diff and public-repository guards
+passed. Hosted PR Lite initially rejected an 802-line diff against the exact
+800-line budget; two formatting lines were removed without behavior change and
+the new run passed before normal protected merge. Issue #390 is accepted and
+closed; future complete local import experiments must use this entrypoint.
+
 ## Issue #390 product-composition experiment entrypoint contract
 
 The first private-data-free preflight exposed a predecessor production-default
