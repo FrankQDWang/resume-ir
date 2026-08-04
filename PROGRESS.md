@@ -1,5 +1,44 @@
 # Progress
 
+## Issue #409 Core ML multifunction shared-weight result and rollback
+
+The multifunction representation itself passed its bounded screen. One compiled
+asset exposed the fixed `interactive_b1` and `bulk_b4` functions through one
+238,562,048-byte weight store. B1 and B4 vectors were elementwise identical to
+the current production Core ML outputs. Six balanced warm blocks measured only
+0.491% B1 and 0.241% B4 mean regressions, both inside the frozen 5% guard. The
+exact Worktree Core ML DMG was 262,460,484 bytes versus the retained
+479,085,092-byte package, a 45.216% reduction, and its mounted composition
+contained one multifunction model root and no ONNX inference payload.
+
+The single authorized OCR-enabled 8,720-document product run nevertheless
+reached the no-OCR-drain endpoint in 332.287 seconds versus the retained
+298.570-second production baseline. That is an 11.293% regression and 18.788
+seconds beyond the frozen 313.499-second ceiling. Counts remained exact at
+7,328 searchable documents, 265 OCR-required documents, four failed and 49
+ignored entries; OCR stayed active with 262 queued at the endpoint, and the
+process-tree peak was 2,289.703 MiB under the 3,072 MiB guard. The endpoint is
+sampled every second, so the result is not the 30-second progress-print interval.
+Per the pre-registered stop rule, no redundant second import or query review was
+run, the multifunction production changes and generated package were removed,
+and the existing two-model Core ML production default was retained. The macOS
+14 ONNX edition and the installed App were unchanged. A post-rollback product
+preflight confirmed all four runtimes and all three import capabilities are
+available from the restored production composition.
+
+Preflight also caught a separate orchestration regression before private input:
+after the Core ML-only package split, the repository experiment runner still
+expected the retired qint8 ONNX manifest identity at the tokenizer-pack root.
+The retained one-line correction now verifies the production Core ML tokenizer
+schema and model ID; a focused test binds it to the reviewed manifest. This
+does not retain any multifunction model, function selection or packaging code.
+
+The complete local verification suite reached the PDF parser tests and hit one
+timing-sensitive 1 ms timeout case once, observing `Corrupted` instead of
+`Timeout`. The changed slice contains no Rust or PDF code. The exact case passed
+immediately in isolation, and the complete 14-test PDF suite also passed from a
+detached, unmodified `main@89d7802`; the broad failure was not reproducible.
+
 ## Issue #404 macOS provider-edition closeout
 
 The standard Worktree entrypoint now produces a macOS 15 Core ML-only package;

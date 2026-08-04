@@ -16,8 +16,8 @@ issue = "#409"
 name = "deduplicate_coreml_b1_b4_weights_with_multifunction_model"
 contract_change_allowed = true
 production_code_allowed = true
-private_benchmark_allowed = true
-configured_private_roots_required = true
+private_benchmark_allowed = false
+configured_private_roots_required = false
 home_mixed_root_requires_explicit_user_authorization = true
 home_mixed_root_authorized = false
 unconfigured_private_run_terminal = "blocked_permission"
@@ -89,6 +89,12 @@ forbidden_scope = [
   "backend_poll_frequency_change",
   "synthetic_backend_stage_invention",
 ]
+
+[[performance_history.closed_hypotheses]]
+id = "coreml_multifunction_shared_weights"
+status = "rejected"
+evidence_refs = ["#409"]
+reopen_requires = ["material_coreml_compiler_change", "material_model_packaging_change", "material_hardware_change"]
 
 [[performance_history.closed_hypotheses]]
 id = "macos_arm_product_experiment_entrypoint"

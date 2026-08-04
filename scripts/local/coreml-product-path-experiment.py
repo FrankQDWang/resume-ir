@@ -25,6 +25,7 @@ REPO = Path(__file__).resolve().parents[2]
 TARGET = "aarch64-apple-darwin"
 MODEL_ID = "intfloat-multilingual-e5-small-coreml-fp16-r1"
 MODEL_DIMENSION = 384
+COREML_TOKENIZER_SCHEMA = "resume-ir.embedding-tokenizer-pack.v1"
 IPC_SCHEMA = "resume-ir.daemon-ipc.v5"
 MAX_JSON_BYTES = 64 * 1024
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -185,8 +186,8 @@ def build_composition(session: Path) -> Composition:
     pdfium = resources / "pdfium-static-runtime-pack"
     verify_pack(
         embedding,
-        "resume-ir.embedding-runtime-pack.v1",
-        {"model_id": "intfloat-multilingual-e5-small-qint8-r1", "dimension": MODEL_DIMENSION},
+        COREML_TOKENIZER_SCHEMA,
+        {"model_id": MODEL_ID, "dimension": MODEL_DIMENSION},
     )
     coreml_manifest = verify_pack(
         coreml,
