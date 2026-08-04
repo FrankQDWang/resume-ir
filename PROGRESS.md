@@ -1,23 +1,5 @@
 # Progress
 
-## Issue #404 macOS provider-edition contract
-
-Issue #404 is now the sole active macOS packaging train after #402 closed via
-PR #403. The owner selected two explicit ARM editions: the default macOS 15+
-package will contain only Core ML inference assets, while the separately named
-macOS 14 compatibility package will contain only the existing Dynamic U8S8
-ONNX provider. macOS 11-13 and a mixed universal fallback package are outside
-the delivery boundary. Local builds and full product acceptance remain on the
-Core ML edition.
-
-The implementation is split into two buildable PRs under the ordinary 15-file
-budget. The first makes the default macOS 15 package Core ML-only, including an
-exact tokenizer/config pack and strict mixed-provider rejection. The second
-adds a separately named macOS 14 compatibility package containing only the
-existing Dynamic U8S8 ONNX provider. Local installation and acceptance remain
-on the Core ML edition. No macOS 14 native-host claim will be made from the
-current macOS 15 test machine.
-
 ## Issue #402 immutable Worktree Core ML worker implementation
 
 The production Core ML Swift worker now lives under the desktop build tree, so
