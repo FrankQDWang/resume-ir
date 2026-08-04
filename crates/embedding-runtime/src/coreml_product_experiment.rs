@@ -17,7 +17,7 @@ use super::{
 
 const WORKER_ENV: &str = "RESUME_IR_COREML_WORKER_BIN";
 const RUNTIME_DIR_ENV: &str = "RESUME_IR_COREML_RUNTIME_DIR";
-const MANIFEST_SHA256: &str = "2eb4126da855b69cd9e81f2ecaaaec1b9dea21e37a3efac81271726a2d9d8cb2";
+const MANIFEST_SHA256: &str = "11956a8103cbc0b708fd2db16d72e245f2cb8150c5803118ff99164e3e3a9a94";
 const TOKENS: usize = 512;
 const READY_BYTE: u8 = 0xa5;
 const PACK_FILES: [(&str, u64, &str); 10] = [
@@ -160,7 +160,7 @@ impl CoreMlRuntimePack {
         ] {
             regular_directory(&root.join(directory))?;
         }
-        validate_file(&root.join("runtime-pack.json"), 2_260, MANIFEST_SHA256)?;
+        validate_file(&root.join("runtime-pack.json"), 2_259, MANIFEST_SHA256)?;
         for (file, bytes, digest) in PACK_FILES {
             validate_file(&root.join(file), bytes, digest)?;
         }

@@ -8,7 +8,7 @@ use process_containment::ContainedChild;
 
 use crate::ipc::OptionalRuntimeReason;
 
-const OCR_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+const OCR_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 const OCR_PROBE_OUTPUT_MAX_BYTES: u64 = 64 * 1024;
 
 pub(crate) fn probe_ocr_with_cancel(
