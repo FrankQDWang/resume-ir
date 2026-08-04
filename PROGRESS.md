@@ -1,5 +1,14 @@
 # Progress
 
+## Issue #404 macOS 15 Core ML-only default
+
+The default macOS ARM package now declares macOS 15 and stages only the Core ML
+worker, fixed B1/B4 models and reviewed tokenizer/config pack. The resident and
+daemon select that exact Core ML identity; ONNX model/runtime bytes are absent.
+Bundle composition binds provider, minimum OS and all native/resources files,
+and rejects missing, mixed or unbound payloads. The unchanged ONNX provider is
+retained only for the following separately named macOS 14 package slice.
+
 ## Issue #404 Core ML provider-pack foundation
 
 The embedding runtime now has an additive, not-yet-selected Core ML pack loader

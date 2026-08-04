@@ -7,6 +7,7 @@ import path from "node:path";
 
 import { validateClassifierPackManifest } from "./classifier-pack.mjs";
 import {
+  validateCoreMlTokenizerPackManifest,
   validateCoreMlRuntimePackManifest,
   validateRuntimePackManifest,
 } from "./prepare-sidecar.mjs";
@@ -14,11 +15,10 @@ import { verifyOcrResourcePack } from "./ocr-pack.mjs";
 import { verifyMacosPdfiumRuntimePack } from "./macos-pdfium-static-pack.mjs";
 
 const APPLE_TARGETS = new Set(["aarch64-apple-darwin"]);
-const SIDECARS = [
+const BASE_SIDECARS = [
   "resume-daemon",
   "resume-embedding-runtime",
   "resume-pdf-render-runtime",
-  "resume-coreml-embedding-worker",
 ];
 const LC_CODE_SIGNATURE = 0x1d;
 const LC_SEGMENT_64 = 0x19;
@@ -174,6 +174,15 @@ export async function verifyBundledSidecar({
     targetTriple,
     "coreml-runtime-pack.json",
   ),
+  expectedCoreMlTokenizerManifest = path.join(
+    repoRoot,
+    "apps",
+    "desktop",
+    "resources",
+    "embedding",
+    targetTriple,
+    "coreml-tokenizer-pack.json",
+  ),
   expectedOcrManifest = path.join(
     repoRoot,
     "apps",
@@ -291,7 +300,31 @@ export async function verifyBundledSidecar({
   }
 
   const macosEntries = await readdir(macosDirectory);
-  for (const sidecarName of SIDECARS) {
+  const providerManifestPath = path.join(
+    appBundle,
+    "Contents",
+    "Resources",
+    "embedding",
+    "runtime-pack",
+    "runtime-pack.json",
+  );
+  let providerSchema;
+  try {
+    providerSchema = JSON.parse(await readFile(providerManifestPath, "utf8")).schema_version;
+  } catch {
+    throw new Error("required embedding resource manifest is missing or invalid");
+  }
+  const coreml = providerSchema === "resume-ir.embedding-tokenizer-pack.v1";
+  if (!coreml && providerSchema !== "resume-ir.embedding-runtime-pack.v1") {
+    throw new Error("required embedding resource manifest is missing or invalid");
+  }
+  const sidecars = coreml
+    ? [...BASE_SIDECARS, "resume-coreml-embedding-worker"]
+    : BASE_SIDECARS;
+  if (!coreml && macosEntries.some((entry) => entry.startsWith("resume-coreml-embedding-worker"))) {
+    throw new Error("ONNX edition must not contain the Core ML worker");
+  }
+  for (const sidecarName of sidecars) {
     const matchingEntries = macosEntries.filter((entry) =>
       entry.startsWith(sidecarName),
     );
@@ -379,13 +412,21 @@ export async function verifyBundledSidecar({
   let stagedManifest;
   let bundledManifest;
   try {
-    expected = validateRuntimePackManifest(
-      JSON.parse(await readFile(expectedManifest, "utf8")),
+    const validateManifest = coreml
+      ? validateCoreMlTokenizerPackManifest
+      : validateRuntimePackManifest;
+    expected = validateManifest(
+      JSON.parse(
+        await readFile(
+          coreml ? expectedCoreMlTokenizerManifest : expectedManifest,
+          "utf8",
+        ),
+      ),
     );
-    stagedManifest = validateRuntimePackManifest(
+    stagedManifest = validateManifest(
       JSON.parse(await readFile(path.join(stagedPack, "runtime-pack.json"), "utf8")),
     );
-    bundledManifest = validateRuntimePackManifest(
+    bundledManifest = validateManifest(
       JSON.parse(await readFile(path.join(bundledPack, "runtime-pack.json"), "utf8")),
     );
   } catch {
@@ -399,7 +440,7 @@ export async function verifyBundledSidecar({
     throw new Error("embedding resource manifest does not match reviewed composition");
   }
   const expectedEntries = [
-    "coreml",
+    ...(coreml ? ["coreml"] : []),
     "runtime-pack.json",
     ...expected.files.map(({ file }) => file),
   ].sort();
@@ -460,90 +501,125 @@ export async function verifyBundledSidecar({
 
   const stagedCoreMlPack = path.join(stagedPack, "coreml");
   const bundledCoreMlPack = path.join(bundledPack, "coreml");
-  let expectedCoreMl;
+  let expectedCoreMl = { files: [] };
   let stagedCoreMl;
   let bundledCoreMl;
-  try {
-    expectedCoreMl = validateCoreMlRuntimePackManifest(
-      JSON.parse(await readFile(expectedCoreMlManifest, "utf8")),
-    );
-    stagedCoreMl = validateCoreMlRuntimePackManifest(
-      JSON.parse(await readFile(path.join(stagedCoreMlPack, "runtime-pack.json"), "utf8")),
-    );
-    bundledCoreMl = validateCoreMlRuntimePackManifest(
-      JSON.parse(await readFile(path.join(bundledCoreMlPack, "runtime-pack.json"), "utf8")),
-    );
-  } catch {
-    throw new Error("required Core ML resource pack is missing or invalid");
-  }
-  const expectedCoreMlJson = JSON.stringify(expectedCoreMl);
-  if (
-    JSON.stringify(stagedCoreMl) !== expectedCoreMlJson ||
-    JSON.stringify(bundledCoreMl) !== expectedCoreMlJson
-  ) {
-    throw new Error("Core ML resource manifest does not match reviewed composition");
-  }
-  const coreMlEntries = ["e5-b1x512.mlmodelc", "e5-b4x512.mlmodelc", "runtime-pack.json"];
-  const [stagedCoreMlEntries, bundledCoreMlEntries] = await Promise.all([
-    readdir(stagedCoreMlPack),
-    readdir(bundledCoreMlPack),
-  ]);
-  if (
-    JSON.stringify(stagedCoreMlEntries.sort()) !== JSON.stringify(coreMlEntries) ||
-    JSON.stringify(bundledCoreMlEntries.sort()) !== JSON.stringify(coreMlEntries)
-  ) {
-    throw new Error("Core ML resource pack must contain exactly the reviewed roots");
-  }
   let coreMlResourceBytes = 0;
-  for (const directory of [
-    "e5-b1x512.mlmodelc",
-    "e5-b1x512.mlmodelc/analytics",
-    "e5-b1x512.mlmodelc/weights",
-    "e5-b4x512.mlmodelc",
-    "e5-b4x512.mlmodelc/analytics",
-    "e5-b4x512.mlmodelc/weights",
-  ]) {
-    const [stagedMetadata, bundledMetadata] = await Promise.all([
-      lstat(path.join(stagedCoreMlPack, directory)),
-      lstat(path.join(bundledCoreMlPack, directory)),
+  if (coreml) {
+    try {
+      expectedCoreMl = validateCoreMlRuntimePackManifest(
+        JSON.parse(await readFile(expectedCoreMlManifest, "utf8")),
+      );
+      stagedCoreMl = validateCoreMlRuntimePackManifest(
+        JSON.parse(
+          await readFile(
+            path.join(stagedCoreMlPack, "runtime-pack.json"),
+            "utf8",
+          ),
+        ),
+      );
+      bundledCoreMl = validateCoreMlRuntimePackManifest(
+        JSON.parse(
+          await readFile(
+            path.join(bundledCoreMlPack, "runtime-pack.json"),
+            "utf8",
+          ),
+        ),
+      );
+    } catch {
+      throw new Error("required Core ML resource pack is missing or invalid");
+    }
+    const expectedCoreMlJson = JSON.stringify(expectedCoreMl);
+    if (
+      JSON.stringify(stagedCoreMl) !== expectedCoreMlJson ||
+      JSON.stringify(bundledCoreMl) !== expectedCoreMlJson
+    ) {
+      throw new Error(
+        "Core ML resource manifest does not match reviewed composition",
+      );
+    }
+    const coreMlEntries = [
+      "e5-b1x512.mlmodelc",
+      "e5-b4x512.mlmodelc",
+      "runtime-pack.json",
+    ];
+    const [stagedCoreMlEntries, bundledCoreMlEntries] = await Promise.all([
+      readdir(stagedCoreMlPack),
+      readdir(bundledCoreMlPack),
     ]);
     if (
-      !stagedMetadata.isDirectory() ||
-      !bundledMetadata.isDirectory() ||
-      stagedMetadata.isSymbolicLink() ||
-      bundledMetadata.isSymbolicLink()
+      JSON.stringify(stagedCoreMlEntries.sort()) !==
+        JSON.stringify(coreMlEntries) ||
+      JSON.stringify(bundledCoreMlEntries.sort()) !==
+        JSON.stringify(coreMlEntries)
     ) {
-      throw new Error("Core ML model directory is invalid");
+      throw new Error(
+        "Core ML resource pack must contain exactly the reviewed roots",
+      );
     }
-  }
-  for (const entry of expectedCoreMl.files) {
-    const stagedFile = path.join(stagedCoreMlPack, entry.file);
-    const bundledFile = path.join(bundledCoreMlPack, entry.file);
-    const [stagedMetadata, bundledMetadata] = await Promise.all([
-      lstat(stagedFile),
-      lstat(bundledFile),
-    ]);
-    if (
-      !stagedMetadata.isFile() ||
-      !bundledMetadata.isFile() ||
-      stagedMetadata.isSymbolicLink() ||
-      bundledMetadata.isSymbolicLink() ||
-      stagedMetadata.size !== entry.bytes ||
-      bundledMetadata.size !== entry.bytes
-    ) {
-      throw new Error(`Core ML resource ${entry.role} bundle composition is invalid`);
+    for (const directory of [
+      "e5-b1x512.mlmodelc",
+      "e5-b1x512.mlmodelc/analytics",
+      "e5-b1x512.mlmodelc/weights",
+      "e5-b4x512.mlmodelc",
+      "e5-b4x512.mlmodelc/analytics",
+      "e5-b4x512.mlmodelc/weights",
+    ]) {
+      const [stagedMetadata, bundledMetadata] = await Promise.all([
+        lstat(path.join(stagedCoreMlPack, directory)),
+        lstat(path.join(bundledCoreMlPack, directory)),
+      ]);
+      if (
+        !stagedMetadata.isDirectory() ||
+        !bundledMetadata.isDirectory() ||
+        stagedMetadata.isSymbolicLink() ||
+        bundledMetadata.isSymbolicLink()
+      ) {
+        throw new Error("Core ML model directory is invalid");
+      }
     }
-    const [stagedDigest, bundledDigest] = await Promise.all([
-      sha256(stagedFile),
-      sha256(bundledFile),
-    ]);
-    if (stagedDigest !== entry.sha256 || bundledDigest !== entry.sha256) {
-      throw new Error(`Core ML resource ${entry.role} does not match reviewed bytes`);
+    for (const entry of expectedCoreMl.files) {
+      const stagedFile = path.join(stagedCoreMlPack, entry.file);
+      const bundledFile = path.join(bundledCoreMlPack, entry.file);
+      const [stagedMetadata, bundledMetadata] = await Promise.all([
+        lstat(stagedFile),
+        lstat(bundledFile),
+      ]);
+      if (
+        !stagedMetadata.isFile() ||
+        !bundledMetadata.isFile() ||
+        stagedMetadata.isSymbolicLink() ||
+        bundledMetadata.isSymbolicLink() ||
+        stagedMetadata.size !== entry.bytes ||
+        bundledMetadata.size !== entry.bytes
+      ) {
+        throw new Error(
+          `Core ML resource ${entry.role} bundle composition is invalid`,
+        );
+      }
+      const [stagedDigest, bundledDigest] = await Promise.all([
+        sha256(stagedFile),
+        sha256(bundledFile),
+      ]);
+      if (stagedDigest !== entry.sha256 || bundledDigest !== entry.sha256) {
+        throw new Error(
+          `Core ML resource ${entry.role} does not match reviewed bytes`,
+        );
+      }
+      if (await containsAnyMarker(bundledFile, buildMachineIdentityPrefixes)) {
+        throw new Error(
+          `Core ML resource ${entry.role} contains a build-machine identity path marker`,
+        );
+      }
+      coreMlResourceBytes += bundledMetadata.size;
     }
-    if (await containsAnyMarker(bundledFile, buildMachineIdentityPrefixes)) {
-      throw new Error(`Core ML resource ${entry.role} contains a build-machine identity path marker`);
-    }
-    coreMlResourceBytes += bundledMetadata.size;
+  } else if (
+    (await Promise.all([
+      lstat(stagedCoreMlPack).catch(() => undefined),
+      lstat(bundledCoreMlPack).catch(() => undefined),
+    ])).some(Boolean)
+  ) {
+    throw new Error("ONNX edition must not contain Core ML resources");
   }
 
   const stagedClassifierPack = path.join(
@@ -716,10 +792,10 @@ export async function verifyBundledSidecar({
     daemon_sidecar_count: 1,
     embedding_sidecar_count: 1,
     pdf_renderer_sidecar_count: 1,
-    coreml_worker_sidecar_count: 1,
+    coreml_worker_sidecar_count: coreml ? 1 : 0,
     embedding_resource_file_count: expected.files.length + 1,
     embedding_resource_bytes: resourceBytes,
-    coreml_resource_file_count: expectedCoreMl.files.length + 1,
+    coreml_resource_file_count: coreml ? expectedCoreMl.files.length + 1 : 0,
     coreml_resource_bytes: coreMlResourceBytes,
     classifier_resource_file_count: classifierEntries.length,
     classifier_resource_bytes: classifierResourceBytes,

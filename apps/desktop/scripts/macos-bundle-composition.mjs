@@ -27,28 +27,21 @@ const DIGEST = /^[a-f0-9]{64}$/;
 const VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 const MIN_VERSION = [0, 1, 2];
 
-const EXECUTABLES = Object.freeze([
+const BASE_EXECUTABLES = Object.freeze([
   Object.freeze({ role: "desktop", file: "resume-desktop" }),
   Object.freeze({ role: "daemon", file: "resume-daemon" }),
   Object.freeze({ role: "embedding_runtime", file: "resume-embedding-runtime" }),
   Object.freeze({ role: "pdf_renderer", file: "resume-pdf-render-runtime" }),
-  Object.freeze({ role: "coreml_worker", file: "resume-coreml-embedding-worker" }),
 ]);
-const RUNTIME_MANIFESTS = Object.freeze([
+const COREML_WORKER = Object.freeze({
+  role: "coreml_worker",
+  file: "resume-coreml-embedding-worker",
+});
+const BASE_RUNTIME_MANIFESTS = Object.freeze([
   Object.freeze({
     role: "classifier",
     file: "classifier/runtime-pack/runtime-pack.json",
     schema: "resume-ir.desktop-classifier-model-pack.v1",
-  }),
-  Object.freeze({
-    role: "embedding",
-    file: "embedding/runtime-pack/runtime-pack.json",
-    schema: "resume-ir.embedding-runtime-pack.v1",
-  }),
-  Object.freeze({
-    role: "coreml_embedding",
-    file: "embedding/runtime-pack/coreml/runtime-pack.json",
-    schema: "resume-ir.coreml-embedding-runtime-pack.v1",
   }),
   Object.freeze({
     role: "ocr",
@@ -61,8 +54,33 @@ const RUNTIME_MANIFESTS = Object.freeze([
     schema: "resume-ir.pdfium-static-runtime-pack.v1",
   }),
 ]);
+const ONNX_EMBEDDING_MANIFEST = Object.freeze({
+  role: "embedding",
+  file: "embedding/runtime-pack/runtime-pack.json",
+  schema: "resume-ir.embedding-runtime-pack.v1",
+});
+const COREML_EMBEDDING_MANIFESTS = Object.freeze([
+  Object.freeze({
+    role: "embedding",
+    file: "embedding/runtime-pack/runtime-pack.json",
+    schema: "resume-ir.embedding-tokenizer-pack.v1",
+  }),
+  Object.freeze({
+    role: "coreml_embedding",
+    file: "embedding/runtime-pack/coreml/runtime-pack.json",
+    schema: "resume-ir.coreml-embedding-runtime-pack.v1",
+  }),
+]);
+const executablesForEdition = (coreml) =>
+  coreml ? [...BASE_EXECUTABLES, COREML_WORKER] : BASE_EXECUTABLES;
+const manifestsForEdition = (coreml) => {
+  const [classifier, ocr, pdfium] = BASE_RUNTIME_MANIFESTS;
+  return coreml
+    ? [classifier, ...COREML_EMBEDDING_MANIFESTS, ocr, pdfium]
+    : [classifier, ONNX_EMBEDDING_MANIFEST, ocr, pdfium];
+};
 const EXECUTABLE_PATHS = new Set(
-  EXECUTABLES.map(({ file }) => `Contents/MacOS/${file}`),
+  [...BASE_EXECUTABLES, COREML_WORKER].map(({ file }) => `Contents/MacOS/${file}`),
 );
 const CODE_SIGNATURE_DIRECTORY = "Contents/_CodeSignature";
 const COMPOSITION_EVIDENCE_PATH = `Contents/Resources/${BUNDLE_COMPOSITION_FILE}`;
@@ -142,6 +160,11 @@ function validateCompositionShape(value) {
   } catch {
     throw evidenceError();
   }
+  const coreml = value?.runtime_manifests?.some(
+    ({ role }) => role === "coreml_embedding",
+  );
+  const executables = executablesForEdition(coreml);
+  const runtimeManifests = manifestsForEdition(coreml);
   if (
     !exactKeys(value, [
       "schema_version",
@@ -165,14 +188,14 @@ function validateCompositionShape(value) {
     value.mach_o_digest !== "sha256_without_code_signature_v1" ||
     value.file_digest !== "sha256" ||
     !Array.isArray(value.executables) ||
-    value.executables.length !== EXECUTABLES.length ||
+    value.executables.length !== executables.length ||
     !value.executables.every((entry, index) =>
-      validateEntry(entry, EXECUTABLES[index]),
+      validateEntry(entry, executables[index]),
     ) ||
     !Array.isArray(value.runtime_manifests) ||
-    value.runtime_manifests.length !== RUNTIME_MANIFESTS.length ||
+    value.runtime_manifests.length !== runtimeManifests.length ||
     !value.runtime_manifests.every((entry, index) =>
-      validateEntry(entry, RUNTIME_MANIFESTS[index]),
+      validateEntry(entry, runtimeManifests[index]),
     ) ||
     !exactKeys(value.icon, ["file", "sha256"]) ||
     value.icon.file !== EXPECTED_ICON_FILE ||
@@ -536,6 +559,7 @@ async function readIdentity(appBundle) {
     displayName: plistString(source, "CFBundleDisplayName"),
     iconFile: plistString(source, "CFBundleIconFile"),
     executable: plistString(source, "CFBundleExecutable"),
+    minimumSystemVersion: plistString(source, "LSMinimumSystemVersion"),
   };
   if (
     identity.bundleId !== EXPECTED_BUNDLE_ID ||
@@ -581,12 +605,20 @@ export async function createBundleComposition({
   } catch {
     throw evidenceError("bundle composition native payload is invalid");
   }
-  const expectedMacosEntries = EXECUTABLES.map(({ file }) => file).sort();
+  const coreml = macosEntries.includes(COREML_WORKER.file);
+  const executablesForBundle = executablesForEdition(coreml);
+  const manifestsForBundle = manifestsForEdition(coreml);
+  const expectedMacosEntries = executablesForBundle.map(({ file }) => file).sort();
   if (JSON.stringify(macosEntries) !== JSON.stringify(expectedMacosEntries)) {
     throw evidenceError("bundle composition native payload is invalid");
   }
   const executables = [];
-  for (const entry of EXECUTABLES) {
+  if (identity.minimumSystemVersion !== (coreml ? "15.0" : "14.0")) {
+    throw evidenceError(
+      "App minimum system version does not match its embedding provider",
+    );
+  }
+  for (const entry of executablesForBundle) {
     const file = path.join(macos, entry.file);
     await requireBoundFile(file, "bundle composition native payload is invalid");
     let digest;
@@ -598,7 +630,7 @@ export async function createBundleComposition({
     executables.push({ ...entry, sha256: digest });
   }
   const runtimeManifests = [];
-  for (const entry of RUNTIME_MANIFESTS) {
+  for (const entry of manifestsForBundle) {
     const file = path.join(resources, entry.file);
     await verifyRuntimePack(file, entry);
     runtimeManifests.push({
