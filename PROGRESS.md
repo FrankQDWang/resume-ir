@@ -1,5 +1,57 @@
 # Progress
 
+## Issue #415 continuous import progress and deletion regression contract
+
+Issue #415 is the only active slice. Installed-App observation showed that the
+stage-flow animation ended after one 1.2-second pass and that the source panel
+read exact managed-root counters only on the normal five-second lifecycle
+cadence. The fill then spent a fixed four seconds catching up to an already
+confirmed value, leaving it visually delayed and stop-start. This correction
+keeps active-stage motion continuous, uses serialized one-second source-root
+reads only while the panel is visible and a scan is active, and moves the fill
+on the compositor. It may display only the latest backend-confirmed percentage;
+the activity sheen conveys work without predicting document completion.
+The separate partial/full keyword-readiness chip is removed. Before the strict
+all-ready gate, the main sentence reports only the real processing stage; after
+complete scan, complete processed count, zero OCR backlog and available keyword
+capability are all confirmed, that sentence becomes “关键词检索全部可用”. Terminal
+and reduced-motion states remain static.
+
+Installed-App deletion during an OCR backlog exposed a regression in the recent
+#399/#401 repair: that test held a synthetic import owner and queued OCR work,
+but never exercised an actively running OCR claim. The deletion worker purged
+durable OCR jobs before waiting for active OCR to exit; a worker already near
+publication could then observe its claim disappear and terminate the daemon as
+`runtime_integrity`. The retained repair cancels and waits for active root-bound
+OCR both before and after durable purge, closing the claim race while preserving
+the existing deletion receipt, source files, API, schema and publication
+semantics. No model, query, private-data, Windows or Linux change is authorized.
+
+## Issue #415 implementation and focused verification
+
+The frontend now keeps the active stage sentence and a bounded progress sheen
+moving continuously, advances the exact fill with a compositor transform, and
+uses one serialized one-second source-root refresh only while the visible root
+has an active scan. The numeric percentage remains the latest backend-confirmed
+value. The separate keyword chip and partial state were removed; the main stage
+sentence changes to “关键词检索全部可用” only after every strict all-ready gate.
+
+Source-root deletion now keeps the active OCR cancellation token in the daemon
+activity registry. It cancels and waits for root-bound OCR before durable job
+purge and repeats the fence immediately after purge to close a concurrent-claim
+window. The existing API, receipt, metadata schema, source files and publication
+semantics are unchanged.
+
+All 48 desktop Vitest checks, three macOS icon/motion checks, the production
+frontend build, all 119 daemon unit tests, warnings-denied daemon Clippy, format,
+performance/autonomous/loop/governance contracts, PR budget, public-repository
+guard and diff check passed. The existing native #399/#401 integration test did
+not reach its deletion assertions: `text_import` readiness timed out twice on
+the branch and also on an untouched `main@e25b01d` worktree after 83 seconds.
+That unchanged runtime-readiness failure is recorded separately and is not used
+as positive evidence for this repair. Exact merged-App recovery of the observed
+incomplete deletion remains the final acceptance step.
+
 ## Issue #412 macOS icon and import-stage motion implementation
 
 The two visual corrections are complete without changing product behavior. The
