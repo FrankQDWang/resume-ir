@@ -42,6 +42,12 @@ const TEST_MODEL_ASSETS: [AssetIdentity; 5] = [
         "4386608228199a4cadf868cf00cc52b8eecbc2bbbccaef15e84fec5c35f41be0",
     ),
 ];
+const TEST_COREML_TOKENIZER_ASSETS: [AssetIdentity; 4] = [
+    TEST_MODEL_ASSETS[1],
+    TEST_MODEL_ASSETS[2],
+    TEST_MODEL_ASSETS[3],
+    TEST_MODEL_ASSETS[4],
+];
 
 #[test]
 fn parses_bounded_embedding_request() {
@@ -113,6 +119,35 @@ fn runtime_pack_requires_exact_identity_digests() {
     fixture.write_manifest(None);
     assert!(matches!(
         RuntimePack::load_with_expected_model_assets_for_test(fixture.root(), &TEST_MODEL_ASSETS),
+        Err(RuntimeError::RuntimePackInvalid)
+    ));
+}
+
+#[test]
+fn coreml_pack_requires_only_exact_tokenizer_assets() {
+    let fixture = RuntimePackFixture::new();
+    fixture.write_coreml_manifest();
+    fs::remove_file(fixture.root().join("model.onnx")).unwrap();
+    fs::remove_file(fixture.root().join("libonnxruntime.dylib")).unwrap();
+    let pack = RuntimePack::load_coreml_with_expected_assets_for_test(
+        fixture.root(),
+        &TEST_COREML_TOKENIZER_ASSETS,
+    )
+    .unwrap();
+    assert_eq!(pack.model_id(), COREML_MODEL_ID);
+    assert_eq!(pack.file_count(), 4);
+    assert!(matches!(
+        pack.file(FileRole::Model),
+        Err(RuntimeError::RuntimePackInvalid)
+    ));
+
+    fs::write(fixture.root().join("model.onnx"), b"mixed-provider-model").unwrap();
+    fixture.write_coreml_manifest_with_extra_model();
+    assert!(matches!(
+        RuntimePack::load_coreml_with_expected_assets_for_test(
+            fixture.root(),
+            &TEST_COREML_TOKENIZER_ASSETS,
+        ),
         Err(RuntimeError::RuntimePackInvalid)
     ));
 }
@@ -522,6 +557,56 @@ impl RuntimePackFixture {
             "license_reviewed": true,
             "model_license": "MIT",
             "onnxruntime_license": "MIT",
+            "files": entries,
+        });
+        fs::write(
+            self.root().join("runtime-pack.json"),
+            serde_json::to_vec_pretty(&manifest).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn write_coreml_manifest(&self) {
+        self.write_coreml_manifest_with_files(false);
+    }
+
+    fn write_coreml_manifest_with_extra_model(&self) {
+        self.write_coreml_manifest_with_files(true);
+    }
+
+    fn write_coreml_manifest_with_files(&self, include_model: bool) {
+        let mut files = vec![
+            ("tokenizer", "tokenizer.json"),
+            ("model_config", "config.json"),
+            ("special_tokens_map", "special_tokens_map.json"),
+            ("tokenizer_config", "tokenizer_config.json"),
+        ];
+        if include_model {
+            files.push(("model", "model.onnx"));
+        }
+        let entries = files
+            .iter()
+            .map(|(role, file)| {
+                let bytes = fs::read(self.root().join(file)).unwrap();
+                serde_json::json!({
+                    "role": role,
+                    "file": file,
+                    "bytes": bytes.len(),
+                    "sha256": format!("{:x}", Sha256::digest(&bytes)),
+                })
+            })
+            .collect::<Vec<_>>();
+        let manifest = serde_json::json!({
+            "schema_version": "resume-ir.embedding-tokenizer-pack.v1",
+            "runtime_pack_id": COREML_MODEL_ID,
+            "model_id": COREML_MODEL_ID,
+            "upstream_model_id": UPSTREAM_MODEL_ID,
+            "upstream_revision": UPSTREAM_REVISION,
+            "dimension": DIMENSION,
+            "provider": "coreml",
+            "network_access": "disabled",
+            "license_reviewed": true,
+            "model_license": "MIT",
             "files": entries,
         });
         fs::write(

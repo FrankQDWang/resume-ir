@@ -8,11 +8,12 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::{
-    RuntimeError, DIMENSION, MAX_MANIFEST_BYTES, MODEL_ID, PACK_ID, PACK_SCHEMA, UPSTREAM_MODEL_ID,
-    UPSTREAM_REVISION,
+    RuntimeError, COREML_MODEL_ID, DIMENSION, MAX_MANIFEST_BYTES, MODEL_ID, PACK_ID, PACK_SCHEMA,
+    UPSTREAM_MODEL_ID, UPSTREAM_REVISION,
 };
 
 const UPSTREAM_MODEL_FILE: &str = "onnx/model_qint8_avx512_vnni.onnx";
+const COREML_PACK_SCHEMA: &str = "resume-ir.embedding-tokenizer-pack.v1";
 const MAX_RUNTIME_LIBRARY_BYTES: u64 = 256 * 1024 * 1024;
 const MODEL_ASSETS: [AssetIdentity; 5] = [
     AssetIdentity::new(
@@ -41,7 +42,30 @@ const MODEL_ASSETS: [AssetIdentity; 5] = [
         "a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b",
     ),
 ];
+const COREML_TOKENIZER_ASSETS: [AssetIdentity; 4] = [
+    AssetIdentity::new(
+        FileRole::Tokenizer,
+        17_082_730,
+        "0b44a9d7b51c3c62626640cda0e2c2f70fdacdc25bbbd68038369d14ebdf4c39",
+    ),
+    AssetIdentity::new(
+        FileRole::ModelConfig,
+        655,
+        "69137736cab8b8903a07fe8afaafdda25aac55415a12a55d1bffa9f581abf959",
+    ),
+    AssetIdentity::new(
+        FileRole::SpecialTokensMap,
+        167,
+        "d05497f1da52c5e09554c0cd874037a083e1dc1b9cfd48034d1c717f1afc07a7",
+    ),
+    AssetIdentity::new(
+        FileRole::TokenizerConfig,
+        443,
+        "a1d6bc8734a6f635dc158508bef000f8e2e5a759c7d92f984b2c86e5ff53425b",
+    ),
+];
 
+#[derive(Clone, Copy)]
 pub(super) struct AssetIdentity {
     role: FileRole,
     bytes: u64,
@@ -66,14 +90,14 @@ struct RuntimePackManifest {
     model_id: String,
     upstream_model_id: String,
     upstream_revision: String,
-    upstream_model_file: String,
-    quantization: String,
+    upstream_model_file: Option<String>,
+    quantization: Option<String>,
     dimension: usize,
     provider: String,
     network_access: String,
     license_reviewed: bool,
     model_license: String,
-    onnxruntime_license: String,
+    onnxruntime_license: Option<String>,
     files: Vec<RuntimePackFile>,
 }
 
@@ -104,14 +128,24 @@ pub(super) struct RuntimePack {
 
 impl RuntimePack {
     pub(super) fn load(runtime_dir: &Path) -> Result<Self, RuntimeError> {
-        Self::load_with_expected_model_assets(runtime_dir, &MODEL_ASSETS)
+        Self::load_onnx(runtime_dir)
     }
 
-    fn load_with_expected_model_assets(
+    pub(super) fn load_onnx(runtime_dir: &Path) -> Result<Self, RuntimeError> {
+        Self::load_with_expected_assets(runtime_dir, PackKind::Onnx, &MODEL_ASSETS)
+    }
+
+    #[expect(dead_code, reason = "activated by the next Issue #404 package slice")]
+    pub(super) fn load_coreml(runtime_dir: &Path) -> Result<Self, RuntimeError> {
+        Self::load_with_expected_assets(runtime_dir, PackKind::CoreMl, &COREML_TOKENIZER_ASSETS)
+    }
+
+    fn load_with_expected_assets(
         runtime_dir: &Path,
+        kind: PackKind,
         expected_model_assets: &[AssetIdentity],
     ) -> Result<Self, RuntimeError> {
-        if expected_model_assets.len() != 5 {
+        if expected_model_assets.len() != kind.asset_count() {
             return Err(RuntimeError::RuntimePackInvalid);
         }
         let root = canonical_directory(runtime_dir)?;
@@ -128,7 +162,7 @@ impl RuntimePack {
             &fs::read(&manifest_path).map_err(|_| RuntimeError::RuntimePackInvalid)?,
         )
         .map_err(|_| RuntimeError::RuntimePackInvalid)?;
-        validate_manifest_identity(&manifest)?;
+        validate_manifest_identity(&manifest, kind)?;
 
         let mut files = BTreeMap::new();
         for entry in &manifest.files {
@@ -137,7 +171,9 @@ impl RuntimePack {
                 .iter()
                 .find(|expected| expected.role == entry.role);
             let invalid_asset = match entry.role {
-                FileRole::RuntimeLibrary => entry.bytes > MAX_RUNTIME_LIBRARY_BYTES,
+                FileRole::RuntimeLibrary if kind == PackKind::Onnx => {
+                    entry.bytes > MAX_RUNTIME_LIBRARY_BYTES
+                }
                 _ => expected.is_none_or(|expected| {
                     expected.bytes != entry.bytes || expected.sha256 != entry.sha256
                 }),
@@ -156,17 +192,8 @@ impl RuntimePack {
                 return Err(RuntimeError::RuntimePackInvalid);
             }
         }
-        if files.len() != 6
-            || [
-                FileRole::RuntimeLibrary,
-                FileRole::Model,
-                FileRole::Tokenizer,
-                FileRole::ModelConfig,
-                FileRole::SpecialTokensMap,
-                FileRole::TokenizerConfig,
-            ]
-            .iter()
-            .any(|role| !files.contains_key(role))
+        if files.len() != kind.roles().len()
+            || kind.roles().iter().any(|role| !files.contains_key(role))
         {
             return Err(RuntimeError::RuntimePackInvalid);
         }
@@ -178,7 +205,15 @@ impl RuntimePack {
         runtime_dir: &Path,
         expected_model_assets: &[AssetIdentity],
     ) -> Result<Self, RuntimeError> {
-        Self::load_with_expected_model_assets(runtime_dir, expected_model_assets)
+        Self::load_with_expected_assets(runtime_dir, PackKind::Onnx, expected_model_assets)
+    }
+
+    #[cfg(test)]
+    pub(super) fn load_coreml_with_expected_assets_for_test(
+        runtime_dir: &Path,
+        expected_assets: &[AssetIdentity],
+    ) -> Result<Self, RuntimeError> {
+        Self::load_with_expected_assets(runtime_dir, PackKind::CoreMl, expected_assets)
     }
 
     pub(super) fn model_id(&self) -> &str {
@@ -202,20 +237,77 @@ impl RuntimePack {
     }
 }
 
-fn validate_manifest_identity(manifest: &RuntimePackManifest) -> Result<(), RuntimeError> {
-    if manifest.schema_version != PACK_SCHEMA
-        || manifest.runtime_pack_id != PACK_ID
-        || manifest.model_id != MODEL_ID
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum PackKind {
+    Onnx,
+    CoreMl,
+}
+
+const ONNX_ROLES: [FileRole; 6] = [
+    FileRole::RuntimeLibrary,
+    FileRole::Model,
+    FileRole::Tokenizer,
+    FileRole::ModelConfig,
+    FileRole::SpecialTokensMap,
+    FileRole::TokenizerConfig,
+];
+const COREML_ROLES: [FileRole; 4] = [
+    FileRole::Tokenizer,
+    FileRole::ModelConfig,
+    FileRole::SpecialTokensMap,
+    FileRole::TokenizerConfig,
+];
+
+impl PackKind {
+    fn asset_count(self) -> usize {
+        match self {
+            Self::Onnx => MODEL_ASSETS.len(),
+            Self::CoreMl => COREML_TOKENIZER_ASSETS.len(),
+        }
+    }
+
+    fn roles(self) -> &'static [FileRole] {
+        match self {
+            Self::Onnx => &ONNX_ROLES,
+            Self::CoreMl => &COREML_ROLES,
+        }
+    }
+}
+
+fn validate_manifest_identity(
+    manifest: &RuntimePackManifest,
+    kind: PackKind,
+) -> Result<(), RuntimeError> {
+    let provider_valid = match kind {
+        PackKind::Onnx => {
+            manifest.schema_version == PACK_SCHEMA
+                && manifest.runtime_pack_id == PACK_ID
+                && manifest.model_id == MODEL_ID
+                && manifest.provider == "cpu"
+                && manifest.upstream_model_file.as_deref() == Some(UPSTREAM_MODEL_FILE)
+                && manifest.quantization.as_deref() == Some("dynamic_int8")
+                && manifest
+                    .onnxruntime_license
+                    .as_deref()
+                    .is_some_and(|value| value.eq_ignore_ascii_case("MIT"))
+        }
+        PackKind::CoreMl => {
+            manifest.schema_version == COREML_PACK_SCHEMA
+                && manifest.runtime_pack_id == COREML_MODEL_ID
+                && manifest.model_id == COREML_MODEL_ID
+                && manifest.provider == "coreml"
+                && manifest.upstream_model_file.is_none()
+                && manifest.quantization.is_none()
+                && manifest.onnxruntime_license.is_none()
+        }
+    };
+    if !provider_valid
         || manifest.upstream_model_id != UPSTREAM_MODEL_ID
         || manifest.upstream_revision != UPSTREAM_REVISION
-        || manifest.upstream_model_file != UPSTREAM_MODEL_FILE
-        || manifest.quantization != "dynamic_int8"
         || manifest.dimension != DIMENSION
-        || manifest.provider != "cpu"
         || manifest.network_access != "disabled"
         || !manifest.license_reviewed
         || !manifest.model_license.eq_ignore_ascii_case("MIT")
-        || !manifest.onnxruntime_license.eq_ignore_ascii_case("MIT")
     {
         return Err(RuntimeError::RuntimePackInvalid);
     }
