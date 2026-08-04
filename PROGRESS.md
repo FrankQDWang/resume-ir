@@ -1,5 +1,31 @@
 # Progress
 
+## Issue #412 macOS icon and import-stage motion implementation
+
+The two visual corrections are complete without changing product behavior. The
+approved 1024-pixel icon artwork is uniformly scaled to 90% and centered with a
+51-pixel transparent pad. Its colors, shapes and internal proportions are
+unchanged. The regenerated ICNS contains the same decoded 1024-pixel artwork;
+the deterministic check also locks the transparent optical margin and pixel
+digest so a future oversized or redrawn asset fails closed.
+
+Import-stage text no longer uses character-count variables, clipping, or CSS
+`steps()`. Each already-complete observed backend sentence now settles five
+pixels over 320 ms while one restrained 1.2-second highlight flows across the
+text. The existing message key replaces stale motion on a phase change. The
+separate complete polite screen-reader announcement is unchanged, and the
+reduced-motion path removes the animation, gradient and compositor hint.
+
+All 46 desktop Vitest checks passed. The focused macOS icon, DMG and bundle
+composition suites passed 54 checks, including extraction of the ICNS 1024
+slot and decoded-pixel equality. TypeScript, Vite and PDF.js production build
+also passed. An immutable Worktree build from implementation commit `e492716`
+produced one verified macOS 15 Core ML DMG of 478,035,665 bytes; the mounted
+composition contained the new 2,072,871-byte icon, matched its exact source
+tree, and passed read-only mount, digest, architecture and signature checks.
+No App installation, private corpus, backend, API, IPC, persistence, model,
+query, polling, Windows or Linux work was performed.
+
 ## Issue #412 macOS icon and import-stage motion contract
 
 Issue #412 is the only active slice. It preserves the existing icon artwork and

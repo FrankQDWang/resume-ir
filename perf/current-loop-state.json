@@ -1,8 +1,8 @@
 {
   "schema_version": "resume-ir.loop-state-report.v2",
   "goal_id": "resume-ir.performance-gui-loop.2026-06",
-  "workflow_state": "slice_active",
-  "experiment_state": "hypothesis_registered",
+  "workflow_state": "evidence_review",
+  "experiment_state": "accepted",
   "evidence_lane": "gui_manual",
   "contract_pins": {
     "active_goal_sha256": "527d6f6f02383aa5f4abbb0e374ff8d67cc5c63ad808699ac1444b12a7629b44",
@@ -10,7 +10,7 @@
     "loop_state_schema_sha256": "66bd37404d9c63f898c1fc6fd5eabb547894a4e2cd2960244367a4926a957e0a",
     "experiment_report_schema_sha256": "f91e49ff12d7347bdfc4deb0b2ca0912f2a8bd18158b68d32260ec79e7a2083e",
     "synthetic_smoke_artifact_manifest_schema_sha256": "b1f5483488e1b7b7e7d46cb8e12cd730281f39b74f14f68fbff49b4781d0a866",
-    "git_head_sha": "0ef6ff354f28596c2e1baaa255760361ef1ddc73"
+    "git_head_sha": "33d4878ad4588250295439cfc1e8878740823adf"
   },
   "current_slice": "#412 normalize macOS icon optical size and smooth import-stage motion",
   "hypothesis": {
@@ -18,11 +18,26 @@
     "acceptance_cell": "gui_manual",
     "expected_effect": "the unchanged icon artwork has a smaller centered macOS optical footprint and each complete observed import-stage sentence enters with continuous motion instead of discrete character steps",
     "before_measurement_ref": "https://github.com/FrankQDWang/resume-ir/issues/412",
-    "after_measurement_ref": "pending",
+    "after_measurement_ref": "PROGRESS.md#issue-412-macos-icon-and-import-stage-motion-implementation",
     "reprofile_ref": "not_applicable_frontend_contract_slice",
-    "decision": "pending"
+    "decision": "accepted"
   },
   "transition_history": [
+    {
+      "from": "verification_active",
+      "to": "evidence_review",
+      "evidence_ref": "PROGRESS.md#issue-412-macos-icon-and-import-stage-motion-implementation"
+    },
+    {
+      "from": "implementation_active",
+      "to": "verification_active",
+      "evidence_ref": "PROGRESS.md#issue-412-macos-icon-and-import-stage-motion-implementation"
+    },
+    {
+      "from": "slice_active",
+      "to": "implementation_active",
+      "evidence_ref": "https://github.com/FrankQDWang/resume-ir/issues/412"
+    },
     {
       "from": "evidence_review",
       "to": "slice_active",
@@ -3479,7 +3494,11 @@
       {"command":"Issue #409 multifunction production rollback and experiment cleanup","exit_code":0,"evidence_ref":"PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback"},
       {"command":"./scripts/ci/verify-local.sh stopped on one PDF 1 ms timeout classification","exit_code":101,"evidence_ref":"PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback"},
       {"command":"exact PDF timeout case isolated rerun","exit_code":0,"evidence_ref":"PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback"},
-      {"command":"unmodified main@89d7802 complete 14-test PDF suite","exit_code":0,"evidence_ref":"PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback"}
+      {"command":"unmodified main@89d7802 complete 14-test PDF suite","exit_code":0,"evidence_ref":"PROGRESS.md#issue-409-core-ml-multifunction-shared-weight-result-and-rollback"},
+      {"command":"npm exec -- vitest run","exit_code":0,"evidence_ref":"PROGRESS.md#issue-412-macos-icon-and-import-stage-motion-implementation"},
+      {"command":"macOS icon, DMG and bundle composition suites","exit_code":0,"evidence_ref":"PROGRESS.md#issue-412-macos-icon-and-import-stage-motion-implementation"},
+      {"command":"npm run build","exit_code":0,"evidence_ref":"PROGRESS.md#issue-412-macos-icon-and-import-stage-motion-implementation"},
+      {"command":"immutable Worktree macOS 15 Core ML DMG composition","exit_code":0,"evidence_ref":"PROGRESS.md#issue-412-macos-icon-and-import-stage-motion-implementation"}
     ],
     "all_required_commands_ran": true,
     "claim": "pass"
@@ -3494,10 +3513,10 @@
   },
   "platform_lane": "macos_m4_discovery",
   "run_id": "issue-412-gui-optical-motion-2026-08-04",
-  "state_version": 637,
-  "previous_state_hash": "2e439fc83a4a1c84c1e1e6f0d71f4a397362d2b2b62cff0ca43f7a45a2533611",
-  "expected_state_version": 637,
-  "last_confirmed_side_effect": "issue_412_opened_and_gui_optical_motion_hypothesis_registered",
+  "state_version": 638,
+  "previous_state_hash": "88e9b89928439516ee17eb27b99bfdcecf61da70b79753a93d5c111c1fb03cc5",
+  "expected_state_version": 638,
+  "last_confirmed_side_effect": "issue_412_implementation_and_exact_commit_macos_bundle_accepted",
   "blocked_count": 0,
   "same_blocker_key": "none",
   "github_ledger": {
