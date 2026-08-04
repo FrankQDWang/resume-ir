@@ -1,5 +1,24 @@
 # Progress
 
+## Issue #383 Core ML product identity readiness correction
+
+The first post-merge product-readiness attempt did not submit an import and is
+not a performance run. Direct B1/B4 resident protocol smoke had already passed,
+but the daemon correctly rejected the isolated Core ML candidate model ID
+against the reviewed Dynamic-U8S8 runtime-pack manifest. Reusing the old qint8
+ID would make two different vector spaces indistinguishable in persistence, so
+that shortcut is forbidden.
+
+The bounded correction keeps every reviewed runtime-pack digest and tokenizer
+asset check. Only when `RESUME_IR_COREML_PRODUCT_EXPERIMENT=1` is explicit may
+the daemon map the single frozen
+`intfloat-multilingual-e5-small-coreml-fp16-r1` candidate identity to the
+already-reviewed pack used for tokenizer assets. The ordinary qint8 identity
+remains accepted with or without the switch, every other model ID fails closed,
+and production defaults remain unchanged. OCR, PDFium and the resident
+executables must use the repository-staged exact-main attested composition;
+system Homebrew executables are not accepted as product evidence.
+
 ## Issue #383 native Core ML local product-path experiment contract
 
 #383 is the sole active slice after #380 passed its fixed-B4x512 tensor screen.
